@@ -1,0 +1,25 @@
+CREATE TABLE app_settings (
+    id INTEGER NOT NULL PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    receive_release_notes INTEGER NOT NULL,
+    default_environment TEXT NOT NULL,
+    prefer_fake_data INTEGER NOT NULL,
+    enable_verbose_logs INTEGER NOT NULL
+);
+
+selectSettings:
+SELECT *
+FROM app_settings
+WHERE id = 1;
+
+upsertSettings:
+INSERT OR REPLACE INTO app_settings(
+    id,
+    display_name,
+    email,
+    receive_release_notes,
+    default_environment,
+    prefer_fake_data,
+    enable_verbose_logs
+) VALUES (1, ?, ?, ?, ?, ?, ?);

@@ -1,0 +1,181 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="850.3dp"
+    android:height="850.3dp"
+    android:viewportWidth="850.3"
+    android:viewportHeight="850.3">
+
+    <!-- Panel principal -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M232,226
+            C232,201.7 251.7,182 276,182
+            L574.3,182
+            C598.6,182 618.3,201.7 618.3,226
+            L618.3,562
+            C618.3,586.3 598.6,606 574.3,606
+            L276,606
+            C251.7,606 232,586.3 232,562
+            Z" />
+
+    <!-- Barra superior -->
+    <path
+        android:fillColor="#13274a"
+        android:pathData="M232,226
+            C232,201.7 251.7,182 276,182
+            L574.3,182
+            C598.6,182 618.3,201.7 618.3,226
+            L618.3,273
+            L232,273 Z" />
+
+    <!-- Botones superiores -->
+    <path
+        android:fillColor="#9bca2e"
+        android:pathData="M286,228m-14,0a14,14 0,1 1,28 0a14,14 0,1 1,-28 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M332,228m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M368,228m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+
+    <!-- Menú lateral -->
+    <path
+        android:fillColor="#EAF0F7"
+        android:pathData="M262,305
+            L354,305
+            C363,305 370,312 370,321
+            L370,529
+            C370,538 363,545 354,545
+            L262,545
+            C253,545 246,538 246,529
+            L246,321
+            C246,312 253,305 262,305 Z" />
+
+    <!-- Bloques del menú -->
+    <path
+        android:fillColor="#13274a"
+        android:pathData="M271,336
+            L339,336
+            C346,336 351,341 351,348
+            C351,355 346,360 339,360
+            L271,360
+            C264,360 259,355 259,348
+            C259,341 264,336 271,336 Z" />
+    <path
+        android:fillColor="#9bca2e"
+        android:pathData="M271,388
+            L339,388
+            C346,388 351,393 351,400
+            C351,407 346,412 339,412
+            L271,412
+            C264,412 259,407 259,400
+            C259,393 264,388 271,388 Z" />
+    <path
+        android:fillColor="#13274a"
+        android:pathData="M271,440
+            L339,440
+            C346,440 351,445 351,452
+            C351,459 346,464 339,464
+            L271,464
+            C264,464 259,459 259,452
+            C259,445 264,440 271,440 Z" />
+
+    <!-- Área de widgets -->
+    <path
+        android:fillColor="#13274a"
+        android:pathData="M401,313
+            L563,313
+            C572,313 579,320 579,329
+            L579,392
+            C579,401 572,408 563,408
+            L401,408
+            C392,408 385,401 385,392
+            L385,329
+            C385,320 392,313 401,313 Z" />
+
+    <path
+        android:fillColor="#EAF0F7"
+        android:pathData="M401,433
+            L476,433
+            C485,433 492,440 492,449
+            L492,529
+            C492,538 485,545 476,545
+            L401,545
+            C392,545 385,538 385,529
+            L385,449
+            C385,440 392,433 401,433 Z" />
+
+    <path
+        android:fillColor="#EAF0F7"
+        android:pathData="M503,433
+            L563,433
+            C572,433 579,440 579,449
+            L579,529
+            C579,538 572,545 563,545
+            L503,545
+            C494,545 487,538 487,529
+            L487,449
+            C487,440 494,433 503,433 Z" />
+
+    <!-- Gráfico/barritas admin -->
+    <path
+        android:fillColor="#9bca2e"
+        android:pathData="M421,380
+            L421,347
+            C421,341 426,336 432,336
+            C438,336 443,341 443,347
+            L443,380
+            C443,386 438,391 432,391
+            C426,391 421,386 421,380 Z" />
+    <path
+        android:fillColor="#9bca2e"
+        android:pathData="M462,380
+            L462,327
+            C462,321 467,316 473,316
+            C479,316 484,321 484,327
+            L484,380
+            C484,386 479,391 473,391
+            C467,391 462,386 462,380 Z" />
+    <path
+        android:fillColor="#9bca2e"
+        android:pathData="M503,380
+            L503,357
+            C503,351 508,346 514,346
+            C520,346 525,351 525,357
+            L525,380
+            C525,386 520,391 514,391
+            C508,391 503,386 503,380 Z" />
+
+    <!-- Badge admin / seguridad -->
+    <path
+        android:fillColor="#9bca2e"
+        android:pathData="M621,553
+            m-92,0
+            a92,92 0,1 1,184 0
+            a92,92 0,1 1,-184 0" />
+
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M621,500
+            L664,517
+            L664,552
+            C664,592 637,617 621,624
+            C605,617 578,592 578,552
+            L578,517 Z" />
+
+    <path
+        android:fillColor="#13274a"
+        android:pathData="M610,566
+            l-16,-16
+            c-4,-4 -4,-10 0,-14
+            c4,-4 10,-4 14,0
+            l9,9
+            l31,-31
+            c4,-4 10,-4 14,0
+            c4,4 4,10 0,14
+            l-38,38
+            c-4,4 -10,4 -14,0 Z" />
+</vector>

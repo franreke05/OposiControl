@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Cleartext is disabled globally. Add a debug-only domain-config if a
+        local HTTP backend is needed during development.
+    -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

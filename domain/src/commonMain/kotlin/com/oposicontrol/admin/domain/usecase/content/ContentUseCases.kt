@@ -1,0 +1,183 @@
+package com.oposicontrol.admin.domain.usecase.content
+
+import com.oposicontrol.admin.core.common.result.AppError
+import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.domain.model.Exam
+import com.oposicontrol.admin.domain.model.ExamQuestion
+import com.oposicontrol.admin.domain.model.QuestionMoveDirection
+import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.repository.ContentRepository
+
+class ObserveSpecialtiesUseCase(
+    private val repository: ContentRepository,
+) {
+    operator fun invoke() = repository.observeSpecialties()
+}
+
+class RefreshSpecialtiesUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke() = repository.refreshSpecialties()
+}
+
+class UpsertSpecialtyUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(specialty: Specialty): AppResult<Specialty> {
+        if (specialty.name.isBlank()) {
+            return AppResult.Failure(AppError.Validation("La especialidad necesita nombre."))
+        }
+        return repository.upsertSpecialty(specialty)
+    }
+}
+
+class DeleteSpecialtyUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(specialtyId: String) = repository.deleteSpecialty(specialtyId)
+}
+
+class ObserveExamsUseCase(
+    private val repository: ContentRepository,
+) {
+    operator fun invoke() = repository.observeExams()
+}
+
+class RefreshExamsUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke() = repository.refreshExams()
+}
+
+class GetExamQuestionsUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(examId: String) = repository.getExamQuestions(examId)
+}
+
+class GetExamResourceAuditUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(examId: String) = repository.getExamResourceAudit(examId)
+}
+
+class UpsertExamUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(exam: Exam): AppResult<Exam> {
+        if (exam.specialtyId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("El examen necesita una especialidad."))
+        }
+        if (exam.title.isBlank()) {
+            return AppResult.Failure(AppError.Validation("El examen necesita titulo."))
+        }
+        return repository.upsertExam(exam)
+    }
+}
+
+class DeleteExamUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(examId: String) = repository.deleteExam(examId)
+}
+
+class UpsertQuestionUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(question: ExamQuestion): AppResult<ExamQuestion> {
+        if (question.title.isBlank()) {
+            return AppResult.Failure(AppError.Validation("La pregunta necesita titulo."))
+        }
+        if (question.statement.isBlank()) {
+            return AppResult.Failure(AppError.Validation("La pregunta necesita enunciado."))
+        }
+        if (question.options.size != 4) {
+            return AppResult.Failure(AppError.Validation("Cada pregunta debe tener exactamente 4 opciones."))
+        }
+        if (question.options.any { it.content.isBlank() }) {
+            return AppResult.Failure(AppError.Validation("Las 4 opciones deben tener contenido."))
+        }
+        if (question.options.count { it.isCorrect } != 1) {
+            return AppResult.Failure(AppError.Validation("Debes marcar una unica opcion correcta."))
+        }
+        val invalidResource = question.resources.firstOrNull { resource ->
+            when (resource.type) {
+                QuestionResourceType.TEXT -> resource.textBody.isNullOrBlank()
+                else -> resource.publicUrl.isNullOrBlank()
+            }
+        }
+        if (invalidResource != null) {
+            return AppResult.Failure(
+                AppError.Validation("Todos los recursos deben estar completos antes de guardar la pregunta."),
+            )
+        }
+        return repository.upsertQuestion(question)
+    }
+}
+
+class ImportQuestionsUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(examId: String, questions: List<ExamQuestion>): AppResult<List<ExamQuestion>> {
+        if (examId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona un examen antes de importar preguntas."))
+        }
+        if (questions.isEmpty()) {
+            return AppResult.Failure(AppError.Validation("No hay preguntas validas para importar."))
+        }
+        if (questions.size > 50) {
+            return AppResult.Failure(AppError.Validation("No puedes importar mas de 50 preguntas de una vez."))
+        }
+        questions.forEachIndexed { index, question ->
+            val line = index + 1
+            if (question.statement.isBlank()) {
+                return AppResult.Failure(AppError.Validation("La pregunta $line necesita enunciado."))
+            }
+            if (question.options.size != 4) {
+                return AppResult.Failure(AppError.Validation("La pregunta $line debe tener exactamente 4 opciones."))
+            }
+            if (question.options.any { it.content.isBlank() }) {
+                return AppResult.Failure(AppError.Validation("La pregunta $line tiene opciones vacias."))
+            }
+            if (question.options.count { it.isCorrect } != 1) {
+                return AppResult.Failure(AppError.Validation("La pregunta $line debe tener una unica opcion correcta."))
+            }
+        }
+        return repository.importQuestions(examId, questions)
+    }
+}
+
+class DeleteQuestionUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(examId: String, questionId: String) = repository.deleteQuestion(examId, questionId)
+}
+
+class MoveQuestionUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(
+        examId: String,
+        questionId: String,
+        direction: QuestionMoveDirection,
+    ) = repository.moveQuestion(examId, questionId, direction)
+}
+
+class UploadQuestionResourceUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(
+        questionId: String,
+        resourceId: String,
+        type: QuestionResourceType,
+        localPathOrUrl: String,
+        title: String,
+    ) = repository.uploadResource(
+        questionId = questionId,
+        resourceId = resourceId,
+        type = type,
+        localPathOrUrl = localPathOrUrl,
+        title = title,
+    )
+}

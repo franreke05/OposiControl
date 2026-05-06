@@ -1,0 +1,26 @@
+CREATE TABLE session_cache (
+    user_id TEXT NOT NULL PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    access_token TEXT NOT NULL,
+    refresh_token TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    role_ids_csv TEXT NOT NULL
+);
+
+selectSession:
+SELECT *
+FROM session_cache
+LIMIT 1;
+
+upsertSession:
+INSERT OR REPLACE INTO session_cache(
+    user_id,
+    display_name,
+    access_token,
+    refresh_token,
+    expires_at,
+    role_ids_csv
+) VALUES (?, ?, ?, ?, ?, ?);
+
+clearSession:
+DELETE FROM session_cache;
