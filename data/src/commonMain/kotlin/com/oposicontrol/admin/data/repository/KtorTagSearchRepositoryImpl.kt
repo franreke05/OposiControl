@@ -15,6 +15,7 @@ import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
+import io.ktor.http.isSuccess
 import kotlinx.serialization.Serializable
 
 class KtorTagSearchRepositoryImpl(
@@ -24,19 +25,29 @@ class KtorTagSearchRepositoryImpl(
     private val adapter: NetworkResultAdapter,
 ) : TagSearchRepository {
     override suspend fun findTags(query: String) = adapter.safeCall {
-        client.get("${backendUrl()}/tags") {
+        val response = client.get("${backendUrl()}/tags") {
+            expectSuccess = false
             backendHeaders()
             parameter("q", query)
-        }.body<List<TagDto>>().map { it.toDomain() }
+        }
+        if (!response.status.isSuccess()) {
+            error("backend ${response.status.value} /tags: ${response.bodyAsText().take(200)}")
+        }
+        response.body<List<TagDto>>().map { it.toDomain() }
     }
 
     override suspend fun search(query: TagSearchQuery) = adapter.safeCall {
-        client.get("${backendUrl()}/search") {
+        val response = client.get("${backendUrl()}/search") {
+            expectSuccess = false
             backendHeaders()
             parameter("q", query.text)
             if (query.tagSlugs.isNotEmpty()) parameter("tags", query.tagSlugs.joinToString(","))
             query.section?.takeIf { it.isNotBlank() }?.let { parameter("section", it) }
-        }.body<List<TaggedSearchResultDto>>().map { it.toDomain() }
+        }
+        if (!response.status.isSuccess()) {
+            error("backend ${response.status.value} /search: ${response.bodyAsText().take(200)}")
+        }
+        response.body<List<TaggedSearchResultDto>>().map { it.toDomain() }
     }
 
     override suspend fun reindex() = adapter.safeCall {

@@ -62,8 +62,22 @@ fun Application.module() {
         exception<IllegalArgumentException> { call, cause ->
             call.respond(HttpStatusCode.BadRequest, ErrorDto(cause.message ?: "Invalid request"))
         }
-        exception<IllegalStateException> { call, _ ->
-            call.respond(HttpStatusCode.Conflict, ErrorDto("Operation could not be completed"))
+        exception<IllegalStateException> { call, cause ->
+            System.err.println("[ktor] backend/supabase error: ${cause.message}")
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                ErrorDto(cause.message?.take(300) ?: "Backend error", error = "backend_supabase_error"),
+            )
+        }
+        exception<Throwable> { call, cause ->
+            System.err.println("[ktor] unexpected error ${cause::class.simpleName}: ${cause.message?.take(200)}")
+            call.respond(
+                HttpStatusCode.InternalServerError,
+                ErrorDto(
+                    "${cause::class.simpleName}: ${cause.message?.take(200)}",
+                    error = "backend_internal_error",
+                ),
+            )
         }
     }
     install(Authentication) {
@@ -212,7 +226,7 @@ fun io.ktor.server.application.ApplicationCall.requiredPath(name: String): Strin
 }
 
 @Serializable
-data class ErrorDto(val message: String)
+data class ErrorDto(val message: String, val error: String = "error")
 
 @Serializable
 data class SolucionarioDto(
@@ -433,8 +447,15 @@ private class SupabaseContentGateway private constructor(
             .header("Content-Type", "application/json")
         if (prefer != null) builder.header("Prefer", prefer)
         val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
-        val response = client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
-        if (response.statusCode() !in 200..299) throw IllegalStateException("Supabase request failed with status ${response.statusCode()}")
+        val response = try {
+            client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
+        } catch (e: Exception) {
+            throw IllegalStateException("Supabase network error on $method ${path.substringBefore('?')}: ${e::class.simpleName}: ${e.message}", e)
+        }
+        if (response.statusCode() !in 200..299) {
+            val preview = response.body().take(300)
+            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.statusCode()}: $preview")
+        }
         return response.body()
     }
 

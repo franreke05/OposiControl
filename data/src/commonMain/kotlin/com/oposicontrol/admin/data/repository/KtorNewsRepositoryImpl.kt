@@ -15,9 +15,11 @@ import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,9 +36,14 @@ class KtorNewsRepositoryImpl(
     override fun observeNews(): Flow<List<NewsArticle>> = news.asStateFlow()
 
     override suspend fun refreshNews() = adapter.safeCall {
-        client.get(newsUrl()) {
+        val response = client.get(newsUrl()) {
+            expectSuccess = false
             backendHeaders()
-        }.body<List<NoticiaDto>>()
+        }
+        if (!response.status.isSuccess()) {
+            error("backend ${response.status.value} /content/noticias: ${response.bodyAsText().take(200)}")
+        }
+        response.body<List<NoticiaDto>>()
             .map { it.toDomain() }
             .also { news.value = it }
     }
