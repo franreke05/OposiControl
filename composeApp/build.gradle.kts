@@ -112,7 +112,10 @@ android {
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
             buildConfigField("String", "APP_ENV", "\"dev\"")
-            buildConfigField("String", "BASE_URL", "\"http://192.168.0.18:8080\"")
+            buildConfigField(
+                "String", "BASE_URL",
+                localEnvValue("BASE_URL").ifBlank { "http://10.0.2.2:8080" }.toBuildConfigString(),
+            )
             buildConfigField("String", "BACKEND_TOKEN", backendTokenForBuild.toBuildConfigString())
             buildConfigField("String", "SUPABASE_URL", "\"\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
