@@ -9,5 +9,5 @@ data class AuditEventDto(
     val action: String,
     val target: String,
     val occurredAt: String,
-    val metadata: Map<String, String>,
+    val metadata: Map<String, String> = emptyMap(),
 )

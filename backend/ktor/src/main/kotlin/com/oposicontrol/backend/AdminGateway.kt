@@ -44,7 +44,7 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
         get("/audit") { call.respond(gateway.listAudit()) }
         post("/audit") {
             gateway.appendAudit(call.receive())
-            call.respond(HttpStatusCode.Created)
+            call.respond(HttpStatusCode.Created, mapOf("status" to "created"))
         }
         get("/news-types") { call.respond(gateway.listNewsTypes()) }
         post("/news-types") { call.respond(HttpStatusCode.Created, gateway.saveNewsType(call.receive())) }

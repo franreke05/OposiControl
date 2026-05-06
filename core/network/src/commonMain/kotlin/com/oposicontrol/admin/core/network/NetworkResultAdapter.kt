@@ -8,6 +8,7 @@ import io.ktor.client.plugins.RedirectResponseException
 import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.ServerResponseException
 import kotlinx.io.IOException
+import kotlinx.serialization.SerializationException
 
 class NetworkResultAdapter(
     private val logger: Logger,
@@ -28,10 +29,11 @@ class NetworkResultAdapter(
             is ClientRequestException -> AppError.Network("Client request failed", throwable.response.status.value)
             is ServerResponseException -> AppError.Network("Server response failed", throwable.response.status.value)
             is ResponseException -> AppError.Network("Unexpected response error", throwable.response.status.value)
+            is SerializationException -> AppError.Network("Respuesta del servidor no valida (parseo JSON fallido): ${throwable.message?.take(120)}")
             is IllegalArgumentException -> AppError.Validation(throwable.message ?: "Peticion invalida")
             is IllegalStateException -> AppError.Validation(throwable.message ?: "Configuracion incompleta")
             is IOException -> AppError.Network("Unable to reach the server")
-            else -> AppError.Unknown("Unknown network failure", throwable)
+            else -> AppError.Network("Respuesta inesperada del servidor: ${throwable::class.simpleName}: ${throwable.message?.take(120)}")
         }
     }
 }

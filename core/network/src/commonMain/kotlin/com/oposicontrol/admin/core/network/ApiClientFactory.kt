@@ -4,7 +4,6 @@ import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.common.logging.Logger
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.DefaultRequest
-import io.ktor.client.plugins.auth.Auth
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.logging.LogLevel
@@ -34,7 +33,6 @@ class ApiClientFactory(
                     },
                 )
             }
-            install(Auth)
             install(HttpTimeout) {
                 connectTimeoutMillis = 4_000
                 requestTimeoutMillis = 6_000
