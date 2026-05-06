@@ -22,7 +22,21 @@ node_modules/
 
 .ai
 .claude/
+
 # Local environment secrets
 .env
 .env.*
 !.env.example
+
+# Gradle worker and cache files
+gradle-worker-classpath*
+gradle-test/
+.gradle-test/
+
+# Keystore and lock files
+*.keystore
+*.lock
+
+# JVM/GC properties
+gc.properties
+cache.properties
