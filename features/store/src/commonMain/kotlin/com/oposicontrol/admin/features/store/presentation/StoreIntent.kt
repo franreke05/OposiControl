@@ -26,6 +26,7 @@ sealed interface StoreIntent {
     data class UpdateBurstTitle(val value: String) : StoreIntent
     data class UpdateBurstDescription(val value: String) : StoreIntent
     data class UpdateBurstType(val value: String) : StoreIntent
+    data class UpdateBurstLinkedExamId(val value: String) : StoreIntent
     data class UpdateBurstMultiplier(val value: String) : StoreIntent
     data class UpdateBurstRewardTickets(val value: String) : StoreIntent
     data class UpdateBurstStartsAt(val value: String) : StoreIntent

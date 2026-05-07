@@ -34,10 +34,20 @@ data class ExamRowDto(
     val estado: String,
     @SerialName("publicar_desde")
     val publishFrom: String? = null,
+    @SerialName("published_at")
+    val publishedAt: String? = null,
+    @SerialName("portada_url")
+    val coverUrl: String? = null,
+    @SerialName("portada_storage_path")
+    val coverStoragePath: String? = null,
+    @SerialName("portada_mime_type")
+    val coverMimeType: String? = null,
     @SerialName("created_at")
     val createdAt: String,
     @SerialName("updated_at")
     val updatedAt: String,
+    @SerialName("deleted_at")
+    val deletedAt: String? = null,
 )
 
 @Serializable
@@ -80,6 +90,14 @@ data class ResourceRowDto(
     @SerialName("tipo_recurso")
     val type: String,
     val url: String,
+    val titulo: String? = null,
+    @SerialName("storage_path")
+    val storagePath: String? = null,
+    @SerialName("public_url")
+    val publicUrl: String? = null,
+    @SerialName("mime_type")
+    val mimeType: String? = null,
+    val orden: Int = 0,
     @SerialName("created_at")
     val createdAt: String? = null,
     @SerialName("updated_at")
@@ -120,12 +138,18 @@ fun ExamRowDto.toDomain(
         specialtyName = specialtyName,
         title = titulo,
         description = "",
+        priceTickets = priceTickets,
         status = estado.toExamStatus(),
         publishFrom = publishFrom?.let(Instant::parse),
+        publishedAt = publishedAt?.let(Instant::parse),
         sortOrder = id ?: 0,
         questionCount = questionCount,
+        coverUrl = coverUrl,
+        coverStoragePath = coverStoragePath,
+        coverMimeType = coverMimeType,
         createdAt = Instant.parse(createdAt),
         updatedAt = Instant.parse(updatedAt),
+        deletedAt = deletedAt?.let(Instant::parse),
     )
 }
 
@@ -134,11 +158,16 @@ fun Exam.toRowDto(): ExamRowDto {
         id = id.toIntOrNull(),
         specialtyId = specialtyId.toIntOrNull() ?: 0,
         titulo = title,
-        priceTickets = 0,
+        priceTickets = priceTickets,
         estado = status.name.lowercase(),
         publishFrom = publishFrom?.toString(),
+        publishedAt = publishedAt?.toString(),
+        coverUrl = coverUrl,
+        coverStoragePath = coverStoragePath,
+        coverMimeType = coverMimeType,
         createdAt = createdAt.toString(),
         updatedAt = updatedAt.toString(),
+        deletedAt = deletedAt?.toString(),
     )
 }
 
@@ -197,12 +226,12 @@ fun ResourceRowDto.toDomain(): QuestionResource {
         id = id?.toString().orEmpty(),
         questionId = questionId.toString(),
         type = type.toQuestionResourceType(),
-        title = url.substringAfterLast('/').ifBlank { "Recurso" },
+        title = titulo ?: url.substringAfterLast('/').ifBlank { "Recurso" },
         textBody = if (type.toQuestionResourceType() == QuestionResourceType.TEXT) url else null,
-        storagePath = url.takeUnless { it.startsWith("http://") || it.startsWith("https://") },
-        publicUrl = url.takeIf { it.startsWith("http://") || it.startsWith("https://") },
-        mimeType = null,
-        sortOrder = id ?: 0,
+        storagePath = storagePath ?: url.takeUnless { it.startsWith("http://") || it.startsWith("https://") },
+        publicUrl = publicUrl ?: url.takeIf { it.startsWith("http://") || it.startsWith("https://") },
+        mimeType = mimeType,
+        sortOrder = orden,
     )
 }
 
@@ -212,6 +241,11 @@ fun QuestionResource.toRowDto(): ResourceRowDto {
         questionId = questionId.toIntOrNull() ?: 0,
         type = type.toStorageValue(),
         url = publicUrl ?: storagePath ?: textBody ?: "",
+        titulo = title,
+        storagePath = storagePath,
+        publicUrl = publicUrl,
+        mimeType = mimeType,
+        orden = sortOrder,
     )
 }
 
@@ -246,7 +280,7 @@ private fun QuestionResourceType.toStorageValue(): String {
         QuestionResourceType.IMAGE -> "image"
         QuestionResourceType.AUDIO -> "audio"
         QuestionResourceType.VIDEO -> "video"
-        QuestionResourceType.TEXT -> "text"
+        QuestionResourceType.TEXT -> "documento"
         QuestionResourceType.DOCUMENT -> "document"
     }
 }

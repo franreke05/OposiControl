@@ -158,12 +158,13 @@ private fun StoreCommerceBlocks(
     }
     FormSection(
         title = "Rafagas",
-        description = "Campanas de racha, multiplicadores y desbloqueos ligados a tienda.",
+        description = "Campanas de examen con multiplicador y recompensa de tickets.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedTextField(state.burstTitle, { onIntent(StoreIntent.UpdateBurstTitle(it)) }, label = { Text("Titulo rafaga") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.burstDescription, { onIntent(StoreIntent.UpdateBurstDescription(it)) }, label = { Text("Descripcion") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(state.burstType, { onIntent(StoreIntent.UpdateBurstType(it)) }, label = { Text("Tipo") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(state.burstType, { onIntent(StoreIntent.UpdateBurstType(it)) }, label = { Text("Tipo de examen") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(state.burstLinkedExamId, { onIntent(StoreIntent.UpdateBurstLinkedExamId(it)) }, label = { Text("ID examen") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.burstMultiplier, { onIntent(StoreIntent.UpdateBurstMultiplier(it)) }, label = { Text("Multiplicador") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.burstRewardTickets, { onIntent(StoreIntent.UpdateBurstRewardTickets(it)) }, label = { Text("Tickets recompensa") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.burstStartsAt, { onIntent(StoreIntent.UpdateBurstStartsAt(it)) }, label = { Text("Inicio ISO") }, modifier = Modifier.fillMaxWidth())
@@ -171,8 +172,8 @@ private fun StoreCommerceBlocks(
             Button(onClick = { onIntent(StoreIntent.SaveBurst) }, modifier = Modifier.fillMaxWidth()) { Text("Guardar rafaga") }
             AsyncStatePane(state.bursts, emptyMessage = "Sin rafagas.") { bursts ->
                 AdminTable(
-                    columns = listOf(AdminTableColumn("Titulo", 1f), AdminTableColumn("Tipo", 0.8f), AdminTableColumn("Estado", 0.7f)),
-                    rows = bursts.map { AdminTableRow(it.id, listOf(it.title, it.type, it.status), supporting = it.reward) },
+                    columns = listOf(AdminTableColumn("Titulo", 1f), AdminTableColumn("Examen", 0.7f), AdminTableColumn("Estado", 0.7f)),
+                    rows = bursts.map { AdminTableRow(it.id, listOf(it.title, it.linkedExamId.orEmpty(), it.status), supporting = it.reward) },
                 )
             }
         }

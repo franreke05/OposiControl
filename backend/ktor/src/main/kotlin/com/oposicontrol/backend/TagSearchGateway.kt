@@ -47,7 +47,7 @@ class SupabaseTagSearchGateway private constructor(
 ) {
     fun listTags(query: String): List<TagDto> {
         val normalized = query.trim().lowercase()
-        return request("GET", "/rest/v1/tag?select=*&order=nombre.asc&limit=250", null)
+        return request("GET", "/rest/v1/tag?select=id,nombre,slug,origen&order=nombre.asc&limit=250", null)
             .decodeList<TagRow>()
             .filter { row ->
                 normalized.isBlank() ||
@@ -66,13 +66,17 @@ class SupabaseTagSearchGateway private constructor(
         val normalizedQuery = query.trim().lowercase()
         val selectedTags = tagSlugs.map { it.toSlug() }.filter { it.isNotBlank() }.toSet()
         val normalizedSection = section?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-        val indexRows = request("GET", "/rest/v1/search_index?select=*&order=updated_at.desc&limit=500", null)
+        val indexRows = request(
+            "GET",
+            "/rest/v1/search_index?select=id,entity_type,entity_id,section,title,summary,searchable_text,updated_at&order=updated_at.desc&limit=500",
+            null,
+        )
             .decodeList<SearchIndexRow>()
         if (indexRows.isEmpty()) return emptyList()
-        val tagsById = request("GET", "/rest/v1/tag?select=*&limit=1000", null)
+        val tagsById = request("GET", "/rest/v1/tag?select=id,nombre,slug,origen&limit=1000", null)
             .decodeList<TagRow>()
             .associateBy { it.id }
-        val entityTags = request("GET", "/rest/v1/entity_tag?select=*&limit=3000", null)
+        val entityTags = request("GET", "/rest/v1/entity_tag?select=id,tag_id,entity_type,entity_id,score&limit=3000", null)
             .decodeList<EntityTagRow>()
             .groupBy { "${it.entityType}:${it.entityId}" }
         return indexRows.asSequence()
@@ -290,6 +294,7 @@ class SupabaseTagSearchGateway private constructor(
         body: String?,
         prefer: String? = null,
     ): String {
+        val endpoint = "$method ${path.substringBefore('?')}"
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
@@ -299,11 +304,15 @@ class SupabaseTagSearchGateway private constructor(
         val response = try {
             client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
         } catch (e: Exception) {
-            throw IllegalStateException("Supabase network error on $method ${path.substringBefore('?')}: ${e::class.simpleName}: ${e.message}", e)
+            val message = "Supabase network error on $endpoint: ${e::class.simpleName}: ${e.message.safeLogPreview()}"
+            System.err.println("[supabase-tag-search] $message")
+            throw IllegalStateException(message, e)
         }
         if (response.statusCode() !in 200..299) {
-            val preview = response.body().take(300)
-            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.statusCode()}: $preview")
+            val preview = response.body().safeLogPreview()
+            val message = "Supabase $endpoint -> ${response.statusCode()}: $preview"
+            System.err.println("[supabase-tag-search] $message")
+            throw IllegalStateException(message)
         }
         return response.body()
     }
@@ -724,4 +733,12 @@ private fun String.toDisplayName(): String {
     return split("-").filter { it.isNotBlank() }.joinToString(" ") { part ->
         part.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     }.ifBlank { this }
+}
+
+private fun String?.safeLogPreview(maxLength: Int = 300): String {
+    return orEmpty()
+        .replace(Regex("Bearer\\s+[A-Za-z0-9._~+/-]+=*"), "Bearer [redacted]")
+        .replace(Regex("apikey[=:]\\s*[A-Za-z0-9._~+/-]+=*"), "apikey=[redacted]")
+        .take(maxLength)
+        .ifBlank { "empty response body" }
 }

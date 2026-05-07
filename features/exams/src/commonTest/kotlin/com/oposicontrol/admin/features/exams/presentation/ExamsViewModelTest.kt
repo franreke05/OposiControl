@@ -18,6 +18,7 @@ import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.ImportQuestionsUseCase
@@ -28,6 +29,8 @@ import com.oposicontrol.admin.domain.usecase.content.RefreshExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
+import com.oposicontrol.admin.domain.usecase.content.UploadExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadQuestionResourceUseCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -49,6 +52,8 @@ class ExamsViewModelTest {
             observeSpecialtiesUseCase = ObserveSpecialtiesUseCase(repository),
             observeExamsUseCase = ObserveExamsUseCase(repository),
             refreshSpecialtiesUseCase = RefreshSpecialtiesUseCase(repository),
+            upsertSpecialtyUseCase = UpsertSpecialtyUseCase(repository),
+            deleteSpecialtyUseCase = DeleteSpecialtyUseCase(repository),
             refreshExamsUseCase = RefreshExamsUseCase(repository),
             getExamQuestionsUseCase = GetExamQuestionsUseCase(repository),
             getExamResourceAuditUseCase = GetExamResourceAuditUseCase(repository),
@@ -58,6 +63,7 @@ class ExamsViewModelTest {
             importQuestionsUseCase = ImportQuestionsUseCase(repository),
             deleteQuestionUseCase = DeleteQuestionUseCase(repository),
             moveQuestionUseCase = MoveQuestionUseCase(repository),
+            uploadExamCoverUseCase = UploadExamCoverUseCase(repository),
             uploadQuestionResourceUseCase = UploadQuestionResourceUseCase(repository),
             analyticsTracker = NoOpAnalyticsTracker,
         )
@@ -98,8 +104,10 @@ private class ExamsTestRepository : ContentRepository {
                 specialtyName = "TCAE",
                 title = "TCAE Marzo",
                 description = "",
+                priceTickets = 0,
                 status = ExamStatus.DRAFT,
                 publishFrom = null,
+                publishedAt = null,
                 sortOrder = 0,
                 questionCount = 2,
                 createdAt = now,
@@ -151,6 +159,15 @@ private class ExamsTestRepository : ContentRepository {
     override suspend fun deleteSpecialty(specialtyId: String): AppResult<Unit> = AppResult.Success(Unit)
     override suspend fun upsertExam(exam: Exam): AppResult<Exam> = AppResult.Success(exam)
     override suspend fun deleteExam(examId: String): AppResult<Unit> = AppResult.Success(Unit)
+    override suspend fun uploadExamCover(examId: String, localPathOrUri: String): AppResult<Exam> {
+        val saved = exams.value.first { it.id == examId }.copy(
+            coverUrl = "https://storage.local/exam-covers/$examId/cover.png",
+            coverStoragePath = "exam-covers/$examId/cover.png",
+            coverMimeType = "image/png",
+        )
+        exams.value = exams.value.map { if (it.id == examId) saved else it }
+        return AppResult.Success(saved)
+    }
     override suspend fun upsertQuestion(question: ExamQuestion): AppResult<ExamQuestion> {
         val bucket = questions.getOrPut(question.examId) { mutableListOf() }
         bucket.removeAll { it.id == question.id }

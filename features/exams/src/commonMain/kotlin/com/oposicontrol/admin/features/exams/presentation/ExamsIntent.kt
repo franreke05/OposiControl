@@ -6,6 +6,9 @@ sealed interface ExamsIntent {
     data object CreateNew : ExamsIntent
     data object SaveExam : ExamsIntent
     data object DeleteSelectedExam : ExamsIntent
+    data object CreateSpecialty : ExamsIntent
+    data object SaveSpecialty : ExamsIntent
+    data object DeleteSelectedSpecialty : ExamsIntent
     data object CreateQuestion : ExamsIntent
     data object SaveQuestion : ExamsIntent
     data object DeleteSelectedQuestion : ExamsIntent
@@ -16,11 +19,21 @@ sealed interface ExamsIntent {
     data class UpdateSearch(val value: String) : ExamsIntent
     data class UpdateStatusFilter(val value: String) : ExamsIntent
     data class UpdateQuestionResourceFilter(val value: String) : ExamsIntent
+    data class UpdateSpecialtySearch(val value: String) : ExamsIntent
+    data class SelectContentSpecialty(val id: String) : ExamsIntent
+    data class UpdateSpecialtyName(val value: String) : ExamsIntent
+    data class UpdateSpecialtyDescription(val value: String) : ExamsIntent
+    data class UpdateSpecialtySortOrder(val value: String) : ExamsIntent
+    data class ToggleSpecialtyActive(val value: Boolean) : ExamsIntent
     data class UpdateTitle(val value: String) : ExamsIntent
     data class UpdateDescription(val value: String) : ExamsIntent
+    data class UpdatePriceTickets(val value: String) : ExamsIntent
     data class UpdateSpecialtyId(val value: String) : ExamsIntent
     data class UpdateExamStatus(val value: String) : ExamsIntent
     data class UpdatePublishFrom(val value: String) : ExamsIntent
+    data class SelectExamCoverFile(val uri: String, val suggestedName: String, val mimeType: String?) : ExamsIntent
+    data object UploadExamCover : ExamsIntent
+    data object ClearExamCover : ExamsIntent
     data class UpdateQuestionTitle(val value: String) : ExamsIntent
     data class UpdateQuestionStatement(val value: String) : ExamsIntent
     data class UpdateOptionContent(val optionId: String, val value: String) : ExamsIntent

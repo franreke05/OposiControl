@@ -31,6 +31,7 @@ data class BurstCampaignRow(
     val title: String,
     val type: String,
     val reward: String,
+    val linkedExamId: String?,
     val linkedItemId: String?,
     val status: String,
 )

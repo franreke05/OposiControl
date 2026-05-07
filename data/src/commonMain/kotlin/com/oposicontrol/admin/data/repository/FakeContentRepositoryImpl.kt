@@ -313,6 +313,26 @@ class FakeContentRepositoryImpl : ContentRepository {
         )
     }
 
+    override suspend fun uploadExamCover(
+        examId: String,
+        localPathOrUri: String,
+    ): AppResult<Exam> {
+        val exam = examsFlow.value.firstOrNull { it.id == examId }
+            ?: return AppResult.Failure(AppError.NotFound("No se encontro el examen."))
+        val fileName = sanitizeSegment(localPathOrUri.substringAfterLast('/').substringAfterLast('\\')).ifBlank { "cover.png" }
+        val storagePath = "exam-covers/$examId/$fileName"
+        storageObjects[storagePath] = Instant.parse("2026-04-15T09:00:00Z")
+        val saved = exam.copy(
+            coverUrl = "https://fake.storage.oposicontrol.local/$storagePath",
+            coverStoragePath = storagePath,
+            coverMimeType = "image/png",
+            updatedAt = Instant.parse("2026-04-15T09:00:00Z"),
+        )
+        examsFlow.value = examsFlow.value.filterNot { it.id == examId } + saved
+        syncCounts()
+        return AppResult.Success(examsFlow.value.first { it.id == examId })
+    }
+
     private fun syncCounts() {
         val questionCounts = questionsByExam.mapValues { (_, questions) -> questions.size }
         val specialtyNameById = specialtiesFlow.value.associateBy({ it.id }, { it.name })
@@ -364,10 +384,15 @@ class FakeContentRepositoryImpl : ContentRepository {
                 specialtyName = "TCAE",
                 title = "TCAE Marzo",
                 description = "Bloque inicial de marzo con recursos de apoyo.",
+                priceTickets = 0,
                 status = ExamStatus.PUBLISHED,
                 publishFrom = Instant.parse("2026-04-10T08:00:00Z"),
+                publishedAt = Instant.parse("2026-04-10T08:00:00Z"),
                 sortOrder = 0,
                 questionCount = 0,
+                coverUrl = "https://fake.storage.oposicontrol.local/exam-covers/exam-tcae-marzo/cover.png",
+                coverStoragePath = "exam-covers/exam-tcae-marzo/cover.png",
+                coverMimeType = "image/png",
                 createdAt = Instant.parse("2026-04-10T08:00:00Z"),
                 updatedAt = Instant.parse("2026-04-10T08:00:00Z"),
             ),
@@ -377,8 +402,10 @@ class FakeContentRepositoryImpl : ContentRepository {
                 specialtyName = "Enfermeria",
                 title = "Simulacro Enfermeria 1",
                 description = "Simulacro corto con explicaciones ligadas a recurso.",
+                priceTickets = 0,
                 status = ExamStatus.DRAFT,
                 publishFrom = null,
+                publishedAt = null,
                 sortOrder = 1,
                 questionCount = 0,
                 createdAt = Instant.parse("2026-04-11T08:00:00Z"),

@@ -1,8 +1,10 @@
 package com.oposicontrol.backend
 
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.PartData
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.auth.Authentication
@@ -14,6 +16,7 @@ import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -25,6 +28,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -34,6 +39,8 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 private const val STORED_QUESTION_PREFIX = "__OPOSICONTROL_QUESTION_V1__\n"
+private const val COVER_MAX_BYTES = 10 * 1024 * 1024
+private const val RESOURCE_MAX_BYTES = 50 * 1024 * 1024
 
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
@@ -60,23 +67,25 @@ fun Application.module() {
     }
     install(StatusPages) {
         exception<IllegalArgumentException> { call, cause ->
-            call.respond(HttpStatusCode.BadRequest, ErrorDto(cause.message ?: "Invalid request"))
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorDto(error = "bad_request", message = cause.safeBackendMessage("Invalid request")),
+            )
         }
         exception<IllegalStateException> { call, cause ->
-            System.err.println("[ktor] backend/supabase error: ${cause.message}")
+            val message = cause.safeBackendMessage("Backend error")
+            System.err.println("[ktor] backend/supabase error: $message")
             call.respond(
                 HttpStatusCode.InternalServerError,
-                ErrorDto(cause.message?.take(300) ?: "Backend error", error = "backend_supabase_error"),
+                ErrorDto(error = "backend_supabase_error", message = message),
             )
         }
         exception<Throwable> { call, cause ->
-            System.err.println("[ktor] unexpected error ${cause::class.simpleName}: ${cause.message?.take(200)}")
+            val message = "${cause::class.simpleName}: ${cause.safeBackendMessage("Unexpected backend error", 200)}"
+            System.err.println("[ktor] unexpected error $message")
             call.respond(
                 HttpStatusCode.InternalServerError,
-                ErrorDto(
-                    "${cause::class.simpleName}: ${cause.message?.take(200)}",
-                    error = "backend_internal_error",
-                ),
+                ErrorDto(error = "backend_internal_error", message = message),
             )
         }
     }
@@ -139,6 +148,20 @@ fun Application.module() {
                         tagSearchGateway.remove("examen", id)
                         call.respond(HttpStatusCode.NoContent)
                     }
+                    post("/{solucionarioId}/portada") {
+                        call.respondBackendSupabaseResult("/content/solucionarios/{id}/portada") {
+                            val saved = gateway.uploadPortada(
+                                solucionarioId = call.requiredPath("solucionarioId"),
+                                file = call.receiveSingleFile(
+                                    maxBytes = COVER_MAX_BYTES,
+                                    requiredMimePrefix = "image/",
+                                    defaultFileName = "cover",
+                                ),
+                            )
+                            tagSearchGateway.indexSolucionario(saved)
+                            saved
+                        }
+                    }
                     get("/{solucionarioId}/preguntas") {
                         call.respond(gateway.listPreguntas(call.requiredPath("solucionarioId")))
                     }
@@ -166,6 +189,24 @@ fun Application.module() {
                     }
                 }
                 route("/preguntas") {
+                    post("/{preguntaId}/recursos/{resourceId}/upload") {
+                        call.respondBackendSupabaseResult("/content/preguntas/{id}/recursos/{id}/upload") {
+                            val saved = gateway.uploadRecurso(
+                                preguntaId = call.requiredPath("preguntaId"),
+                                resourceId = call.requiredPath("resourceId"),
+                                tipoRecurso = call.request.queryParameters["tipoRecurso"].orEmpty(),
+                                titulo = call.request.queryParameters["titulo"].orEmpty(),
+                                orden = call.request.queryParameters["orden"]?.toIntOrNull() ?: 0,
+                                file = call.receiveSingleFile(
+                                    maxBytes = RESOURCE_MAX_BYTES,
+                                    requiredMimePrefix = null,
+                                    defaultFileName = "resource",
+                                ),
+                            )
+                            tagSearchGateway.indexRecurso(saved)
+                            saved
+                        }
+                    }
                     post("/{preguntaId}/recursos") {
                         val saved = gateway.saveRecurso(call.requiredPath("preguntaId"), call.receive())
                         tagSearchGateway.indexRecurso(saved)
@@ -199,10 +240,12 @@ fun Application.module() {
                 }
             }
             get("/tags") {
-                call.respond(tagSearchGateway.listTags(call.request.queryParameters["q"].orEmpty()))
+                call.respondBackendSupabaseResult("/tags") {
+                    tagSearchGateway.listTags(call.request.queryParameters["q"].orEmpty())
+                }
             }
             get("/search") {
-                call.respond(
+                call.respondBackendSupabaseResult("/search") {
                     tagSearchGateway.search(
                         query = call.request.queryParameters["q"].orEmpty(),
                         tagSlugs = call.request.queryParameters["tags"].orEmpty()
@@ -210,8 +253,8 @@ fun Application.module() {
                             .map { it.trim() }
                             .filter { it.isNotBlank() },
                         section = call.request.queryParameters["section"],
-                    ),
-                )
+                    )
+                }
             }
             post("/search/reindex") {
                 call.respond(tagSearchGateway.reindexAll())
@@ -226,7 +269,69 @@ fun io.ktor.server.application.ApplicationCall.requiredPath(name: String): Strin
 }
 
 @Serializable
-data class ErrorDto(val message: String, val error: String = "error")
+data class ErrorDto(val error: String, val message: String)
+
+private data class BackendUploadedFile(
+    val fileName: String,
+    val mimeType: String,
+    val bytes: ByteArray,
+)
+
+private suspend inline fun <reified T : Any> ApplicationCall.respondBackendSupabaseResult(
+    routeName: String,
+    block: () -> T,
+) {
+    try {
+        respond(block())
+    } catch (cause: Throwable) {
+        val message = cause.safeBackendMessage("Supabase backend error")
+        System.err.println("[ktor] $routeName supabase failure ${cause::class.simpleName}: $message")
+        respond(
+            HttpStatusCode.InternalServerError,
+            ErrorDto(error = "backend_supabase_error", message = message),
+        )
+    }
+}
+
+private fun Throwable.safeBackendMessage(defaultMessage: String, maxLength: Int = 300): String {
+    return message
+        ?.replace(Regex("Bearer\\s+[A-Za-z0-9._~+/-]+=*"), "Bearer [redacted]")
+        ?.replace(Regex("apikey[=:]\\s*[A-Za-z0-9._~+/-]+=*"), "apikey=[redacted]")
+        ?.take(maxLength)
+        ?.ifBlank { null }
+        ?: defaultMessage
+}
+
+private suspend fun ApplicationCall.receiveSingleFile(
+    maxBytes: Int,
+    requiredMimePrefix: String?,
+    defaultFileName: String,
+): BackendUploadedFile {
+    var uploaded: BackendUploadedFile? = null
+    val multipart = receiveMultipart()
+    var part = multipart.readPart()
+    while (part != null) {
+        try {
+            if (part is PartData.FileItem && uploaded == null) {
+                val bytes = part.provider().readRemaining(maxBytes.toLong() + 1).readByteArray()
+                require(bytes.size <= maxBytes) { "El archivo supera el limite permitido." }
+                val mimeType = part.contentType?.toString().orEmpty().ifBlank { "application/octet-stream" }
+                if (requiredMimePrefix != null) {
+                    require(mimeType.startsWith(requiredMimePrefix)) { "Tipo de archivo no permitido: $mimeType." }
+                }
+                uploaded = BackendUploadedFile(
+                    fileName = part.originalFileName?.sanitizeStorageSegment()?.ifBlank { null } ?: defaultFileName,
+                    mimeType = mimeType,
+                    bytes = bytes,
+                )
+            }
+        } finally {
+            part.dispose.invoke()
+        }
+        part = multipart.readPart()
+    }
+    return uploaded ?: throw IllegalArgumentException("Falta el campo multipart file.")
+}
 
 @Serializable
 data class SolucionarioDto(
@@ -236,7 +341,15 @@ data class SolucionarioDto(
     val descripcion: String = "",
     val precioTickets: Int = 0,
     val estado: String = "draft",
+    val publicarDesde: String? = null,
+    val publishedAt: String? = null,
     val orden: Int = 0,
+    val portadaUrl: String? = null,
+    val portadaStoragePath: String? = null,
+    val portadaMimeType: String? = null,
+    val createdAt: String = "",
+    val updatedAt: String = "",
+    val deletedAt: String? = null,
 )
 
 @Serializable
@@ -268,6 +381,7 @@ data class RecursoPreguntaDto(
     val url: String = "",
     val storagePath: String? = null,
     val publicUrl: String? = null,
+    val mimeType: String? = null,
     val orden: Int = 0,
 )
 
@@ -288,6 +402,7 @@ data class EspecialidadDto(
 private class SupabaseContentGateway private constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
+    private val examResourcesBucket: String,
     private val json: Json,
     private val client: HttpClient = HttpClient.newHttpClient(),
 ) {
@@ -331,17 +446,76 @@ private class SupabaseContentGateway private constructor(
         require(input.titulo.isNotBlank()) { "El solucionario necesita un nombre." }
         require(input.especialidadId.isNotBlank()) { "El solucionario necesita una especialidad." }
         require(input.estado in setOf("draft", "published", "archived")) { "Estado de solucionario no valido." }
+        if (input.estado == "published") {
+            require(!input.portadaUrl.isNullOrBlank() || !input.portadaStoragePath.isNullOrBlank()) {
+                "Anade una portada antes de publicar el examen."
+            }
+        }
+        require(input.precioTickets >= 0) { "El precio en tickets no puede ser negativo." }
         val saved = request(
             "POST",
             "/rest/v1/examen?on_conflict=id",
-            json.encodeToString(listOf(input.toRow())),
+            json.encodeToString(listOf(input.normalizedForSave().toRow())),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<ExamenRow>().first()
         return saved.toDto("", 0)
     }
 
+    fun uploadPortada(solucionarioId: String, file: BackendUploadedFile): SolucionarioDto {
+        require(file.mimeType.startsWith("image/")) { "La portada debe ser una imagen." }
+        val objectPath = "exam-covers/${solucionarioId.toIntId()}/${file.fileName}"
+        storageUpload(objectPath, file.mimeType, file.bytes)
+        val publicUrl = storagePublicUrl(objectPath)
+        val saved = request(
+            "PATCH",
+            "/rest/v1/examen?id=eq.${solucionarioId.toIntId()}",
+            json.encodeToString(
+                mapOf(
+                    "portada_url" to publicUrl,
+                    "portada_storage_path" to objectPath,
+                    "portada_mime_type" to file.mimeType,
+                    "updated_at" to java.time.Instant.now().toString(),
+                ),
+            ),
+            prefer = "return=representation",
+        ).decodeList<ExamenRow>().first()
+        return saved.toDto("", 0)
+    }
+
     fun deleteSolucionario(solucionarioId: String) {
-        request("PATCH", "/rest/v1/examen?id=eq.${solucionarioId.toIntId()}", """{"deleted_at":"${java.time.Instant.now()}"}""")
+        val examId = solucionarioId.toIntId()
+        val deletedAt = java.time.Instant.now().toString()
+        val deleteBody = json.encodeToString(mapOf("deleted_at" to deletedAt))
+        val questions = request(
+            "GET",
+            "/rest/v1/pregunta?select=id&examen_id=eq.$examId&deleted_at=is.null",
+            null,
+        ).decodeList<PreguntaIdRow>()
+        val questionIds = questions.mapNotNull { it.id }
+        if (questionIds.isNotEmpty()) {
+            val idsFilter = questionIds.joinToString(",")
+            request(
+                "PATCH",
+                "/rest/v1/recurso_pregunta?pregunta_id=in.($idsFilter)&deleted_at=is.null",
+                deleteBody,
+            )
+            requestIfRelationExists(
+                "PATCH",
+                "/rest/v1/opcion_pregunta?pregunta_id=in.($idsFilter)&deleted_at=is.null",
+                deleteBody,
+            )
+            request(
+                "PATCH",
+                "/rest/v1/pregunta?id=in.($idsFilter)&deleted_at=is.null",
+                deleteBody,
+            )
+        }
+        request(
+            "PATCH",
+            "/rest/v1/acceso_examen_usuario?examen_id=eq.$examId",
+            """{"activo":false,"updated_at":"$deletedAt"}""",
+        )
+        request("PATCH", "/rest/v1/examen?id=eq.$examId", deleteBody)
     }
 
     fun listPreguntas(solucionarioId: String): List<PreguntaDto> {
@@ -403,6 +577,35 @@ private class SupabaseContentGateway private constructor(
         return saved.toDto()
     }
 
+    fun uploadRecurso(
+        preguntaId: String,
+        resourceId: String,
+        tipoRecurso: String,
+        titulo: String,
+        orden: Int,
+        file: BackendUploadedFile,
+    ): RecursoPreguntaDto {
+        val databaseType = tipoRecurso.toDatabaseResourceType()
+        validateResourceMime(databaseType, file.mimeType)
+        val objectPath = "questions/${preguntaId.toIntId()}/${resourceId.sanitizeStorageSegment()}-${file.fileName}"
+        storageUpload(objectPath, file.mimeType, file.bytes)
+        val publicUrl = storagePublicUrl(objectPath)
+        return saveRecurso(
+            preguntaId = preguntaId,
+            input = RecursoPreguntaDto(
+                id = resourceId,
+                preguntaId = preguntaId,
+                tipoRecurso = databaseType,
+                titulo = titulo.ifBlank { file.fileName },
+                url = publicUrl,
+                storagePath = objectPath,
+                publicUrl = publicUrl,
+                mimeType = file.mimeType,
+                orden = orden,
+            ),
+        )
+    }
+
     fun reorderRecursos(preguntaId: String, order: OrderDto): List<RecursoPreguntaDto> {
         val current = request(
             "GET",
@@ -440,6 +643,43 @@ private class SupabaseContentGateway private constructor(
         }
     }
 
+    private fun validateResourceMime(tipoRecurso: String, mimeType: String) {
+        val valid = when (tipoRecurso) {
+            "imagen" -> mimeType.startsWith("image/")
+            "audio" -> mimeType.startsWith("audio/")
+            "video" -> mimeType.startsWith("video/")
+            "documento" -> mimeType.startsWith("application/") || mimeType.startsWith("text/")
+            else -> false
+        }
+        require(valid) { "Tipo MIME $mimeType no permitido para $tipoRecurso." }
+    }
+
+    private fun storageUpload(objectPath: String, mimeType: String, bytes: ByteArray) {
+        val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
+        val path = "/storage/v1/object/$examResourcesBucket/$encodedPath"
+        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+            .header("Content-Type", mimeType)
+            .header("x-upsert", "true")
+        val response = try {
+            client.send(
+                builder.POST(HttpRequest.BodyPublishers.ofByteArray(bytes)).build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+        } catch (e: Exception) {
+            throw IllegalStateException("Supabase Storage network error on upload: ${e::class.simpleName}: ${e.message}", e)
+        }
+        if (response.statusCode() !in 200..299) {
+            throw IllegalStateException("Supabase Storage upload -> ${response.statusCode()}: ${response.body().take(300)}")
+        }
+    }
+
+    private fun storagePublicUrl(objectPath: String): String {
+        val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
+        return "$supabaseUrl/storage/v1/object/public/$examResourcesBucket/$encodedPath"
+    }
+
     private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .header("apikey", serviceRoleKey)
@@ -459,13 +699,27 @@ private class SupabaseContentGateway private constructor(
         return response.body()
     }
 
+    private fun requestIfRelationExists(method: String, path: String, body: String?, prefer: String? = null) {
+        try {
+            request(method, path, body, prefer)
+        } catch (error: IllegalStateException) {
+            val message = error.message.orEmpty()
+            val missingRelation = listOf("PGRST205", "42P01", "Could not find the table", "relation").any {
+                message.contains(it, ignoreCase = true)
+            }
+            if (!missingRelation) throw error
+            System.err.println("[ktor] optional Supabase relation skipped on ${path.substringBefore('?')}: ${message.take(160)}")
+        }
+    }
+
     private inline fun <reified T> String.decodeList(): List<T> = json.decodeFromString(this)
 
     companion object {
         fun fromEnvironment(json: Json): SupabaseContentGateway? {
             val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
             val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
-            return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseContentGateway(url, serviceRoleKey, json)
+            val bucket = System.getenv("SUPABASE_BUCKET_EXAM_RESOURCES").orEmpty().ifBlank { "exam-resources" }
+            return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseContentGateway(url, serviceRoleKey, bucket, json)
         }
     }
 }
@@ -487,9 +741,14 @@ private data class ExamenRow(
     @kotlinx.serialization.SerialName("precio_tickets") val precioTickets: Int = 0,
     @kotlinx.serialization.SerialName("especialidad_id") val especialidadId: Int,
     val estado: String = "draft",
+    @kotlinx.serialization.SerialName("portada_url") val portadaUrl: String? = null,
+    @kotlinx.serialization.SerialName("portada_storage_path") val portadaStoragePath: String? = null,
+    @kotlinx.serialization.SerialName("portada_mime_type") val portadaMimeType: String? = null,
     @kotlinx.serialization.SerialName("publicar_desde") val publicarDesde: String? = null,
+    @kotlinx.serialization.SerialName("published_at") val publishedAt: String? = null,
     @kotlinx.serialization.SerialName("created_at") val createdAt: String? = null,
     @kotlinx.serialization.SerialName("updated_at") val updatedAt: String? = null,
+    @kotlinx.serialization.SerialName("deleted_at") val deletedAt: String? = null,
 )
 
 @Serializable
@@ -509,6 +768,11 @@ private data class PreguntaRow(
 )
 
 @Serializable
+private data class PreguntaIdRow(
+    val id: Int? = null,
+)
+
+@Serializable
 private data class PreguntaCountRow(
     val id: Int? = null,
     @kotlinx.serialization.SerialName("examen_id") val examenId: Int,
@@ -520,6 +784,11 @@ private data class RecursoPreguntaRow(
     @kotlinx.serialization.SerialName("pregunta_id") val preguntaId: Int,
     @kotlinx.serialization.SerialName("tipo_recurso") val tipoRecurso: String,
     val url: String,
+    val titulo: String? = null,
+    @kotlinx.serialization.SerialName("storage_path") val storagePath: String? = null,
+    @kotlinx.serialization.SerialName("public_url") val publicUrl: String? = null,
+    @kotlinx.serialization.SerialName("mime_type") val mimeType: String? = null,
+    val orden: Int = 0,
 )
 
 @Serializable
@@ -553,7 +822,15 @@ private fun ExamenRow.toDto(specialtyName: String, questionCount: Int) = Solucio
     descripcion = specialtyName,
     precioTickets = precioTickets,
     estado = estado,
+    publicarDesde = publicarDesde,
+    publishedAt = publishedAt,
     orden = id ?: 0,
+    portadaUrl = portadaUrl,
+    portadaStoragePath = portadaStoragePath,
+    portadaMimeType = portadaMimeType,
+    createdAt = createdAt.orEmpty(),
+    updatedAt = updatedAt.orEmpty(),
+    deletedAt = deletedAt,
 )
 
 private fun SolucionarioDto.toRow() = ExamenRow(
@@ -562,7 +839,26 @@ private fun SolucionarioDto.toRow() = ExamenRow(
     precioTickets = precioTickets,
     especialidadId = especialidadId.toIntOrNull() ?: 1,
     estado = estado,
+    portadaUrl = portadaUrl,
+    portadaStoragePath = portadaStoragePath,
+    portadaMimeType = portadaMimeType,
+    publicarDesde = publicarDesde,
+    publishedAt = publishedAt,
+    updatedAt = updatedAt.ifBlank { java.time.Instant.now().toString() },
 )
+
+private fun SolucionarioDto.normalizedForSave(): SolucionarioDto {
+    val now = java.time.Instant.now().toString()
+    return copy(
+        publicarDesde = publicarDesde?.takeIf { it.isNotBlank() },
+        publishedAt = when {
+            estado == "published" && publishedAt.isNullOrBlank() -> now
+            estado == "published" -> publishedAt
+            else -> publishedAt?.takeIf { it.isNotBlank() }
+        },
+        updatedAt = now,
+    )
+}
 
 private fun PreguntaRow.toDto(resources: List<RecursoPreguntaDto>): PreguntaDto {
     val stored = enunciado.decodeStoredQuestion()
@@ -594,10 +890,12 @@ private fun RecursoPreguntaRow.toDto() = RecursoPreguntaDto(
     id = id?.toString().orEmpty(),
     preguntaId = preguntaId.toString(),
     tipoRecurso = tipoRecurso,
-    titulo = url.substringAfterLast('/').ifBlank { "Recurso" },
+    titulo = titulo ?: publicUrl?.substringAfterLast('/') ?: storagePath?.substringAfterLast('/') ?: url.substringAfterLast('/').ifBlank { "Recurso" },
     url = url,
-    storagePath = url.takeUnless { it.startsWith("http://") || it.startsWith("https://") },
-    publicUrl = url.takeIf { it.startsWith("http://") || it.startsWith("https://") },
+    storagePath = storagePath ?: url.takeUnless { it.startsWith("http://") || it.startsWith("https://") },
+    publicUrl = publicUrl ?: url.takeIf { it.startsWith("http://") || it.startsWith("https://") },
+    mimeType = mimeType,
+    orden = orden,
 )
 
 private fun RecursoPreguntaDto.toRow(questionId: String) = RecursoPreguntaRow(
@@ -605,6 +903,11 @@ private fun RecursoPreguntaDto.toRow(questionId: String) = RecursoPreguntaRow(
     preguntaId = questionId.toIntOrNull() ?: preguntaId.toIntOrNull() ?: 1,
     tipoRecurso = tipoRecurso.toDatabaseResourceType(),
     url = publicUrl ?: storagePath ?: url,
+    titulo = titulo,
+    storagePath = storagePath,
+    publicUrl = publicUrl,
+    mimeType = mimeType,
+    orden = orden,
 )
 
 private fun String.toDatabaseResourceType(): String {
@@ -619,6 +922,15 @@ private fun String.toDatabaseResourceType(): String {
 private fun String.toSlug(): String = lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "item" }
 
 private fun String.toIntId(): Int = toIntOrNull() ?: throw IllegalArgumentException("Id no valido.")
+
+private fun String.sanitizeStorageSegment(): String {
+    return lowercase()
+        .replace(Regex("[^a-z0-9._-]+"), "-")
+        .trim('-', '.', '_')
+        .ifBlank { "file" }
+}
+
+private fun String.urlEncode(): String = URLEncoder.encode(this, StandardCharsets.UTF_8).replace("+", "%20")
 
 private class InMemoryGateway {
     private val solucionarios = linkedMapOf<String, SolucionarioDto>()

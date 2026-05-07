@@ -466,6 +466,53 @@ class SupabaseContentRepositoryImpl(
         }
     }
 
+    override suspend fun uploadExamCover(
+        examId: String,
+        localPathOrUri: String,
+    ): AppResult<Exam> {
+        val accessToken = requireAccessToken("subir portada") ?: return authFailure("subir portada")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        val asset = when (val read = fileReader.read(localPathOrUri)) {
+            is AppResult.Failure -> return read
+            is AppResult.Success -> read.value
+        }
+        if (asset.bytes.size > COVER_MAX_BYTES) {
+            return AppResult.Failure(AppError.Validation("La portada supera el limite de 10 MB."))
+        }
+        if (asset.mimeType?.startsWith("image/") != true) {
+            return AppResult.Failure(AppError.Validation("La portada debe ser una imagen."))
+        }
+        val result = adapter.safeCall {
+            val numericExamId = examId.toIntId()
+            val objectPath = "exam-covers/$examId/${sanitizeSegment(asset.fileName)}"
+            client.post("${appConfig.supabaseUrl}/storage/v1/object/${appConfig.supabaseBucketExamResources}/$objectPath") {
+                header("apikey", appConfig.supabaseAnonKey)
+                header(HttpHeaders.Authorization, "Bearer $accessToken")
+                header("x-upsert", "true")
+                contentType(ContentType.parse(asset.mimeType))
+                setBody(asset.bytes)
+            }
+            val publicUrl = "${appConfig.supabaseUrl}/storage/v1/object/public/${appConfig.supabaseBucketExamResources}/$objectPath"
+            val saved: List<ExamRowDto> = client.patch("${appConfig.supabaseUrl}/rest/v1/examen?id=eq.$numericExamId") {
+                supabaseHeaders(accessToken)
+                header("Prefer", "return=representation")
+                contentType(ContentType.Application.Json)
+                setBody(
+                    mapOf(
+                        "portada_url" to publicUrl,
+                        "portada_storage_path" to objectPath,
+                        "portada_mime_type" to asset.mimeType,
+                        "updated_at" to Clock.System.now().toString(),
+                    ),
+                )
+            }.body()
+            val specialtyName = examsFlow.value.firstOrNull { it.id == examId }?.specialtyName.orEmpty()
+            saved.first().toDomain(specialtyName, examsFlow.value.firstOrNull { it.id == examId }?.questionCount ?: 0)
+        }
+        if (result is AppResult.Success) refreshExams()
+        return result
+    }
+
     private suspend fun fetchSpecialtyRows(accessToken: String): List<SpecialtyRowDto> {
         return client.get("${appConfig.supabaseUrl}/rest/v1/especialidad?select=*&deleted_at=is.null&order=nombre.asc") {
             supabaseHeaders(accessToken)
@@ -531,6 +578,10 @@ class SupabaseContentRepositoryImpl(
             QuestionResourceType.DOCUMENT -> "application/pdf"
             QuestionResourceType.IMAGE -> "image/png"
         }
+    }
+
+    private companion object {
+        const val COVER_MAX_BYTES = 10 * 1024 * 1024
     }
 
     private fun String.toResourceTypeFromPath(): QuestionResourceType {

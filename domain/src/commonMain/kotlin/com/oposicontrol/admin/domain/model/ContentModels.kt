@@ -19,12 +19,18 @@ data class Exam(
     val specialtyName: String,
     val title: String,
     val description: String,
+    val priceTickets: Int,
     val status: ExamStatus,
     val publishFrom: Instant?,
+    val publishedAt: Instant?,
     val sortOrder: Int,
     val questionCount: Int,
+    val coverUrl: String? = null,
+    val coverStoragePath: String? = null,
+    val coverMimeType: String? = null,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val deletedAt: Instant? = null,
 )
 
 enum class ExamStatus {

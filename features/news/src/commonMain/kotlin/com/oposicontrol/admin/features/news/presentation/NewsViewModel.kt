@@ -562,7 +562,6 @@ private fun String.toArticleType(): NewsArticleType {
     return when (trim().lowercase()) {
         "aviso" -> NewsArticleType.AVISO
         "oferta" -> NewsArticleType.OFERTA
-        "rafaga", "ráfaga", "racha" -> NewsArticleType.RAFAGA
         "recurso" -> NewsArticleType.RECURSO
         else -> NewsArticleType.CONVOCATORIA
     }

@@ -125,9 +125,14 @@ class SupabaseNewsGateway private constructor(
             .header("Content-Type", "application/json")
         if (prefer != null) builder.header("Prefer", prefer)
         val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
-        val response = client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
+        val response = try {
+            client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
+        } catch (e: Exception) {
+            throw IllegalStateException("Supabase network error on $method ${path.substringBefore('?')}: ${e::class.simpleName}: ${e.message}", e)
+        }
         if (response.statusCode() !in 200..299) {
-            throw IllegalStateException("Supabase request failed with status ${response.statusCode()}")
+            val preview = response.body().take(300)
+            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.statusCode()}: $preview")
         }
         return response.body()
     }

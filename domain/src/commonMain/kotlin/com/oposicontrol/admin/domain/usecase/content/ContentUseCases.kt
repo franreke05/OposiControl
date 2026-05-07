@@ -3,6 +3,7 @@ package com.oposicontrol.admin.domain.usecase.content
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.Exam
+import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.QuestionMoveDirection
 import com.oposicontrol.admin.domain.model.QuestionResourceType
@@ -71,6 +72,9 @@ class UpsertExamUseCase(
         }
         if (exam.title.isBlank()) {
             return AppResult.Failure(AppError.Validation("El examen necesita titulo."))
+        }
+        if (exam.status == ExamStatus.PUBLISHED && exam.coverUrl.isNullOrBlank()) {
+            return AppResult.Failure(AppError.Validation("Anade una portada antes de publicar el examen."))
         }
         return repository.upsertExam(exam)
     }
@@ -180,4 +184,21 @@ class UploadQuestionResourceUseCase(
         localPathOrUrl = localPathOrUrl,
         title = title,
     )
+}
+
+class UploadExamCoverUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(
+        examId: String,
+        localPathOrUri: String,
+    ): AppResult<Exam> {
+        if (examId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Guarda o selecciona un examen antes de subir portada."))
+        }
+        if (localPathOrUri.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona una imagen de portada."))
+        }
+        return repository.uploadExamCover(examId, localPathOrUri)
+    }
 }

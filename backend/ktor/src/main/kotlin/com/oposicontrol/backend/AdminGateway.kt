@@ -214,6 +214,7 @@ class SupabaseAdminGateway private constructor(
     }
 
     fun saveExamAccess(input: AdminExamAccessDto): AdminExamAccessDto {
+        require(input.accessType.isNotBlank()) { "El acceso necesita tipo_acceso." }
         val user = findUser(input.userName)
         val exam = findExam(input.examTitle)
         val saved = request(
@@ -222,6 +223,16 @@ class SupabaseAdminGateway private constructor(
             body = json.encodeToString(listOf(input.toRow(user.id.requireId("usuario"), exam.id.requireId("examen")))),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<ExamAccessRow>().first()
+        appendAudit(
+            AdminAuditEventDto(
+                id = "",
+                actorName = "backend-admin",
+                action = if (input.isActive) "EXAM_ACCESS_GRANT" else "EXAM_ACCESS_REVOKE",
+                target = "acceso_examen_usuario:${saved.id}",
+                occurredAt = Instant.now().toString(),
+                metadata = mapOf("usuario_id" to user.id.toString(), "examen_id" to exam.id.toString()),
+            ),
+        )
         return input.copy(id = saved.id?.toString().orEmpty())
     }
 
@@ -258,6 +269,7 @@ class SupabaseAdminGateway private constructor(
             .decodeList<TicketWalletRow>()
             .firstOrNull()
         val newBalance = (current?.saldo ?: 0.0) + input.amount
+        require(newBalance >= 0.0) { "Saldo insuficiente para crear el debito." }
         if (current == null) {
             request(
                 "POST",
@@ -283,6 +295,18 @@ class SupabaseAdminGateway private constructor(
             ),
             prefer = "return=representation",
         ).decodeList<TicketTransactionRow>().first().toDto(signedAmount = input.amount)
+            .also { transaction ->
+                appendAudit(
+                    AdminAuditEventDto(
+                        id = "",
+                        actorName = "backend-admin",
+                        action = "TICKET_TRANSACTION_CREATE",
+                        target = "transaccion_ticket:${transaction.id}",
+                        occurredAt = Instant.now().toString(),
+                        metadata = mapOf("usuario_id" to userId, "monto" to input.amount.toString()),
+                    ),
+                )
+            }
     }
 
     fun listSupportConversations(): List<AdminSupportConversationDto> {
@@ -378,6 +402,7 @@ class SupabaseAdminGateway private constructor(
 
     fun appendModerationAction(input: AdminModerationActionDto): AdminModerationActionDto {
         require(input.reason.isNotBlank()) { "La accion necesita razon." }
+        require(input.actionType in VALID_MODERATION_ACTION_TYPES) { "Tipo de accion de moderacion no valido." }
         val target = findUser(input.targetUser)
         val actor = findUser(input.executor)
         val saved = request(
@@ -386,6 +411,16 @@ class SupabaseAdminGateway private constructor(
             json.encodeToString(listOf(input.toRow(target.id.requireId("usuario objetivo"), actor.id.requireId("actor")))),
             prefer = "return=representation",
         ).decodeList<ModerationActionRow>().first()
+        appendAudit(
+            AdminAuditEventDto(
+                id = "",
+                actorName = actor.displayName(),
+                action = "MODERATION_ACTION_CREATE",
+                target = "moderation_action:${saved.id}",
+                occurredAt = Instant.now().toString(),
+                metadata = mapOf("target_usuario_id" to target.id.toString(), "action_type" to input.actionType),
+            ),
+        )
         return input.copy(id = saved.id?.toString().orEmpty(), createdAt = saved.createdAt)
     }
 
@@ -499,6 +534,14 @@ class SupabaseAdminGateway private constructor(
     private inline fun <reified T> String.decodeList(): List<T> = json.decodeFromString(this)
 
     companion object {
+        private val VALID_MODERATION_ACTION_TYPES = setOf(
+            "warning",
+            "mute",
+            "close_conversation",
+            "ban",
+            "internal_note",
+        )
+
         fun fromEnvironment(json: Json): SupabaseAdminGateway? {
             val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
             val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()

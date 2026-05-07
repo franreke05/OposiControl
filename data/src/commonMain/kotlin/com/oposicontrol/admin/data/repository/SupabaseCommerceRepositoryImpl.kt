@@ -235,7 +235,7 @@ private fun StoreItemRowDto.toDomain() = StoreItem(
 private fun StoreItem.toRowDto() = StoreItemRowDto(
     id = id.toIntOrNull(),
     nombre = name,
-    type = type.name.lowercase(),
+    type = type.toDatabaseType(),
     priceTickets = priceTickets,
     activo = status == CommerceStatus.ACTIVE,
     createdAt = createdAt.toString(),
@@ -317,9 +317,18 @@ private fun BurstCampaign.toRowDto() = BurstCampaignRowDto(
 private fun String.toStoreItemType() = when (lowercase()) {
     "protector" -> StoreItemType.PROTECTOR
     "streak", "racha" -> StoreItemType.STREAK
-    "exam_access" -> StoreItemType.EXAM_ACCESS
-    "resource" -> StoreItemType.RESOURCE
+    "potenciador", "potentiator" -> StoreItemType.POTENTIATOR
     else -> StoreItemType.CONSUMABLE
+}
+
+private fun StoreItemType.toDatabaseType() = when (this) {
+    StoreItemType.PROTECTOR -> "protector"
+    StoreItemType.STREAK -> "racha"
+    StoreItemType.POTENTIATOR -> "potenciador"
+    StoreItemType.CONSUMABLE,
+    StoreItemType.EXAM_ACCESS,
+    StoreItemType.RESOURCE,
+    -> "consumible"
 }
 
 private fun String.toBurstCampaignType() = when (lowercase()) {

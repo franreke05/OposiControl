@@ -3,6 +3,7 @@ package com.oposicontrol.admin.domain.usecase.commerce
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.BurstCampaign
+import com.oposicontrol.admin.domain.model.BurstCampaignType
 import com.oposicontrol.admin.domain.model.LimitedResourceWindow
 import com.oposicontrol.admin.domain.model.StoreItem
 import com.oposicontrol.admin.domain.model.StoreOffer
@@ -57,6 +58,8 @@ class UpsertLimitedResourceUseCase(private val repository: CommerceRepository) {
 class UpsertBurstCampaignUseCase(private val repository: CommerceRepository) {
     suspend operator fun invoke(campaign: BurstCampaign): AppResult<BurstCampaign> {
         if (campaign.title.isBlank()) return AppResult.Failure(AppError.Validation("La rafaga necesita titulo."))
+        if (campaign.type != BurstCampaignType.EXAM_BURST) return AppResult.Failure(AppError.Validation("La rafaga debe ser de tipo examen."))
+        if (campaign.linkedExamId.isNullOrBlank()) return AppResult.Failure(AppError.Validation("La rafaga necesita examen vinculado."))
         if (campaign.multiplier < 1.0) return AppResult.Failure(AppError.Validation("El multiplicador minimo es 1.0."))
         return repository.upsertBurstCampaign(campaign)
     }

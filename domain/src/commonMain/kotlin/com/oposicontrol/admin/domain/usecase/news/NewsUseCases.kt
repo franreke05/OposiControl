@@ -75,11 +75,6 @@ class ValidateNewsDraftUseCase {
                     errors += issue("offer_cta_required", "La oferta necesita una capa CTA visible.")
                 }
             }
-            NewsArticleType.RAFAGA -> {
-                if (article.linkedBurstCampaignId.isNullOrBlank()) {
-                    errors += issue("burst_link_required", "La noticia de rafaga necesita una campana vinculada.")
-                }
-            }
             NewsArticleType.RECURSO -> {
                 if (visibleLayers.none { it.kind == NewsLayerKind.IMAGE }) {
                     warnings += warning("resource_image_missing", "La noticia de recurso deberia incluir una capa de imagen.")

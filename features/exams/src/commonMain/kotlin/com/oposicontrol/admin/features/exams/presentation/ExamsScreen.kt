@@ -59,6 +59,7 @@ fun ExamsContent(
                         columns = listOf(
                             AdminTableColumn("Titulo", 1.2f),
                             AdminTableColumn("Especialidad", 0.9f),
+                            AdminTableColumn("Tickets", 0.5f),
                             AdminTableColumn("Estado", 0.7f),
                             AdminTableColumn("Preguntas", 0.6f),
                         ),
@@ -68,6 +69,7 @@ fun ExamsContent(
                                 cells = listOf(
                                     exam.title,
                                     exam.specialtyName,
+                                    exam.priceTickets.toString(),
                                     exam.status.name.lowercase(),
                                     exam.questionCount.toString(),
                                 ),
@@ -102,6 +104,13 @@ fun ExamsContent(
                         placeholder = "Resumen interno para organizar el examen",
                         singleLine = false,
                     )
+                    EditorField(
+                        label = "Precio tickets",
+                        value = state.editorPriceTickets,
+                        onValueChange = { onIntent(ExamsIntent.UpdatePriceTickets(it)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = "0",
+                    )
                     SpecialtySelector(
                         specialtiesState = state.specialties,
                         selectedId = state.editorSpecialtyId,
@@ -121,6 +130,7 @@ fun ExamsContent(
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = "2026-04-15T09:00:00Z",
                     )
+                    ExamDatabaseFieldsSummary(state)
                     GlassActionButton(
                         text = "Guardar examen",
                         onClick = { onIntent(ExamsIntent.SaveExam) },
@@ -143,6 +153,44 @@ fun ExamsContent(
             }
         },
     )
+}
+
+@Composable
+private fun ExamDatabaseFieldsSummary(state: ExamsState) {
+    val selected = (state.exams as? UiAsync.Success)
+        ?.value
+        ?.firstOrNull { it.id == state.selectedExamId }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = "Campos automaticos de examen",
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Text(
+            text = "id: ${selected?.id ?: "se asigna al guardar"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = "published_at: ${selected?.publishedAt?.toString() ?: "null"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = "created_at: ${selected?.createdAt?.toString() ?: "se asigna al guardar"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = "updated_at: ${selected?.updatedAt?.toString() ?: "se asigna al guardar"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = "deleted_at: ${selected?.deletedAt?.toString() ?: "null"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 @Composable

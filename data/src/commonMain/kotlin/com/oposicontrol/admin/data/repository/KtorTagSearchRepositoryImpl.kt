@@ -9,10 +9,12 @@ import com.oposicontrol.admin.domain.model.TaggedSearchResult
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
@@ -31,7 +33,8 @@ class KtorTagSearchRepositoryImpl(
             parameter("q", query)
         }
         if (!response.status.isSuccess()) {
-            error("backend ${response.status.value} /tags: ${response.bodyAsText().take(200)}")
+            println("[tag-search-client] ${response.failureDetail("/tags")}")
+            return@safeCall emptyList<Tag>()
         }
         response.body<List<TagDto>>().map { it.toDomain() }
     }
@@ -45,7 +48,8 @@ class KtorTagSearchRepositoryImpl(
             query.section?.takeIf { it.isNotBlank() }?.let { parameter("section", it) }
         }
         if (!response.status.isSuccess()) {
-            error("backend ${response.status.value} /search: ${response.bodyAsText().take(200)}")
+            println("[tag-search-client] ${response.failureDetail("/search")}")
+            return@safeCall emptyList<TaggedSearchResult>()
         }
         response.body<List<TaggedSearchResultDto>>().map { it.toDomain() }
     }
@@ -65,6 +69,11 @@ class KtorTagSearchRepositoryImpl(
             ?: return
         header(HttpHeaders.Authorization, "Bearer $token")
     }
+}
+
+private suspend fun HttpResponse.failureDetail(route: String): String {
+    val body = bodyAsText().take(200).ifBlank { "empty response body" }
+    return "backend ${status.value} $route: $body"
 }
 
 @Serializable

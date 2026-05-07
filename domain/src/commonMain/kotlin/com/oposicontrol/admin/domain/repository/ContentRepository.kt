@@ -41,4 +41,9 @@ interface ContentRepository {
         localPathOrUrl: String,
         title: String,
     ): AppResult<QuestionResource>
+
+    suspend fun uploadExamCover(
+        examId: String,
+        localPathOrUri: String,
+    ): AppResult<Exam>
 }

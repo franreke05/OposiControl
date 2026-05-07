@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -19,7 +21,10 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -30,10 +35,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -44,9 +51,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
-import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.StatusChip
@@ -56,17 +63,24 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamStatus
+import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.Tag
+import com.oposicontrol.admin.domain.model.TagSearchQuery
+import com.oposicontrol.admin.domain.model.TaggedSearchResult
+import com.oposicontrol.admin.domain.repository.TagSearchRepository
 import com.oposicontrol.admin.features.news.presentation.NewsIntent
 import com.oposicontrol.admin.features.news.presentation.NewsItem
 import com.oposicontrol.admin.features.news.presentation.NewsState
 import com.oposicontrol.admin.features.news.presentation.NewsViewModel
+import kotlinx.coroutines.delay
 import kotlinx.datetime.Instant
 
 @Composable
 fun MobileContentScreen(
     examsViewModel: ExamsViewModel,
     newsViewModel: NewsViewModel,
+    tagSearchRepository: TagSearchRepository? = null,
     initialView: MobileContentView = MobileContentView.Solucionarios,
     connectionDiagnostics: @Composable () -> Unit = {},
 ) {
@@ -77,6 +91,7 @@ fun MobileContentScreen(
         newsState = newsState,
         onIntent = examsViewModel::dispatch,
         onNewsIntent = newsViewModel::dispatch,
+        tagSearchRepository = tagSearchRepository,
         initialView = initialView,
         connectionDiagnostics = connectionDiagnostics,
     )
@@ -94,8 +109,10 @@ fun MobileContentScreenPreview() {
                     specialtyName = "TCAE",
                     title = "Examen de prueba",
                     description = "Descripcion",
+                    priceTickets = 0,
                     status = ExamStatus.PUBLISHED,
                     publishFrom = null,
+                    publishedAt = Instant.parse("2024-01-01T00:00:00Z"),
                     sortOrder = 0,
                     questionCount = 10,
                     createdAt = Instant.parse("2024-01-01T00:00:00Z"),
@@ -142,6 +159,7 @@ fun MobileContentScreenPreview() {
             newsState = mockNewsState,
             onIntent = {},
             onNewsIntent = {},
+            tagSearchRepository = null,
             initialView = MobileContentView.Noticias,
         )
     }
@@ -153,11 +171,24 @@ fun MobileContentContent(
     newsState: NewsState,
     onIntent: (ExamsIntent) -> Unit,
     onNewsIntent: (NewsIntent) -> Unit,
+    tagSearchRepository: TagSearchRepository? = null,
     initialView: MobileContentView = MobileContentView.Noticias,
     connectionDiagnostics: @Composable () -> Unit = {},
 ) {
     var activeView by rememberSaveable { mutableStateOf(initialView) }
     var isNewsFullscreen by rememberSaveable { mutableStateOf(false) }
+    val selectedExamTitle = (state.exams as? UiAsync.Success)
+        ?.value
+        ?.firstOrNull { it.id == state.selectedExamId }
+        ?.title
+
+    LockScreenOrientation(
+        if (isNewsFullscreen) {
+            ScreenOrientation.UNSET
+        } else {
+            ScreenOrientation.PORTRAIT
+        },
+    )
 
     if (isNewsFullscreen) {
         MobileLayeredNewsEditor(
@@ -208,11 +239,19 @@ fun MobileContentContent(
                                 onIntent(ExamsIntent.CreateNew)
                                 activeView = MobileContentView.Editor
                             },
+                            onCreateBurst = {
+                                onIntent(ExamsIntent.CreateNew)
+                                onIntent(ExamsIntent.UpdateTitle("Rafaga ${selectedExamTitle.orEmpty()}".trim()))
+                                onIntent(ExamsIntent.UpdateDescription("Examen tipo rafaga"))
+                                activeView = MobileContentView.Editor
+                            },
                         )
 
                         MobileContentView.Editor -> SolucionarioEditor(state = state, onIntent = onIntent)
                         MobileContentView.Preguntas -> QuestionsPanel(state = state, onIntent = onIntent)
                         MobileContentView.Recursos -> ResourceTray(state = state, onIntent = onIntent)
+                        MobileContentView.Especialidades -> MobileSpecialtiesPanel(state = state, onIntent = onIntent)
+                        MobileContentView.Etiquetas -> MobileTagSearchPanel(repository = tagSearchRepository)
                         MobileContentView.Noticias -> MobileNewsPanel(
                             state = newsState,
                             onIntent = onNewsIntent,
@@ -237,6 +276,8 @@ enum class MobileContentView(val label: String, val title: String, val icon: Mob
     Editor("Editor", "Solucionario", MobileIcon.Edit),
     Preguntas("Preguntas", "Preguntas", MobileIcon.Question),
     Recursos("Recursos", "Recursos", MobileIcon.Media),
+    Especialidades("Especialidades", "Especialidades", MobileIcon.Specialty),
+    Etiquetas("Etiquetas", "Etiquetas", MobileIcon.Search),
     Noticias("Noticias", "Noticias", MobileIcon.News),
 }
 
@@ -246,6 +287,8 @@ enum class MobileIcon {
     Question,
     Media,
     News,
+    Specialty,
+    Search,
     Plus,
     Import,
     Up,
@@ -309,20 +352,20 @@ private fun MobileBottomTabBar(
     ) {
         // Column inside BoxScope: tabs row + nav bar spacer (glass extends under system nav)
         Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
+            LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(UiSpacing.mobileBottomBar)
                     .padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MobileContentView.entries.forEach { view ->
+                items(MobileContentView.entries, key = { it.name }) { view ->
                     MobileTabItem(
                         view = view,
                         selected = view == activeView,
                         onSelected = onSelected,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.width(82.dp),
                     )
                 }
             }
@@ -389,6 +432,7 @@ private fun MobileActionPill(
     GlassSurface(
         modifier = modifier
             .defaultMinSize(minWidth = 88.dp, minHeight = 48.dp)
+            .widthIn(min = 96.dp)
             .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         tint = tint,
@@ -396,18 +440,53 @@ private fun MobileActionPill(
     ) {
         Row(
             modifier = Modifier
+                .fillMaxWidth()
                 .height(48.dp)
-                .padding(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LineIcon(icon = icon, modifier = Modifier.size(18.dp), color = foreground)
             Text(
                 text = label,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
                 color = foreground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private data class MobileActionSpec(
+    val icon: MobileIcon,
+    val label: String,
+    val minWidth: Int = 118,
+    val enabled: Boolean = true,
+    val onClick: () -> Unit,
+)
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ResponsiveActionRow(
+    actions: List<MobileActionSpec>,
+    modifier: Modifier = Modifier,
+    maxItemsInEachRow: Int = 2,
+) {
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        maxItemsInEachRow = maxItemsInEachRow,
+    ) {
+        actions.forEach { action ->
+            MobileActionPill(
+                icon = action.icon,
+                label = action.label,
+                modifier = Modifier.widthIn(min = action.minWidth.dp),
+                enabled = action.enabled,
+                onClick = action.onClick,
             )
         }
     }
@@ -472,6 +551,16 @@ private fun LineIcon(
                 drawLine(color, Offset(w * 0.28f, h * 0.52f), Offset(w * 0.72f, h * 0.52f), stroke.width, StrokeCap.Round)
                 drawLine(color, Offset(w * 0.28f, h * 0.68f), Offset(w * 0.58f, h * 0.68f), stroke.width, StrokeCap.Round)
             }
+            MobileIcon.Specialty -> {
+                drawRoundRect(color, Offset(w * 0.18f, h * 0.2f), Size(w * 0.64f, h * 0.6f), CornerRadius(w * 0.1f), style = stroke)
+                drawLine(color, Offset(w * 0.32f, h * 0.38f), Offset(w * 0.68f, h * 0.38f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.32f, h * 0.54f), Offset(w * 0.6f, h * 0.54f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.32f, h * 0.7f), Offset(w * 0.52f, h * 0.7f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Search -> {
+                drawCircle(color, radius = w * 0.24f, center = Offset(w * 0.42f, h * 0.42f), style = stroke)
+                drawLine(color, Offset(w * 0.6f, h * 0.6f), Offset(w * 0.82f, h * 0.82f), stroke.width, StrokeCap.Round)
+            }
             MobileIcon.Plus -> {
                 drawLine(color, Offset(w * 0.5f, h * 0.2f), Offset(w * 0.5f, h * 0.8f), stroke.width, StrokeCap.Round)
                 drawLine(color, Offset(w * 0.2f, h * 0.5f), Offset(w * 0.8f, h * 0.5f), stroke.width, StrokeCap.Round)
@@ -509,6 +598,9 @@ private fun SolucionarioEditor(
     state: ExamsState,
     onIntent: (ExamsIntent) -> Unit,
 ) {
+    val selectedExam = (state.exams as? UiAsync.Success)
+        ?.value
+        ?.firstOrNull { it.id == state.selectedExamId }
     GlassSurface(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -532,6 +624,11 @@ private fun SolucionarioEditor(
                 placeholder = "Nota interna",
                 singleLine = false,
             )
+            GlassTextField(
+                value = state.editorPriceTickets,
+                onValueChange = { onIntent(ExamsIntent.UpdatePriceTickets(it)) },
+                placeholder = "precio_tickets",
+            )
             MobileSpecialtyPicker(
                 specialtiesState = state.specialties,
                 selectedId = state.editorSpecialtyId,
@@ -545,19 +642,231 @@ private fun SolucionarioEditor(
             GlassTextField(
                 value = state.editorPublishFrom,
                 onValueChange = { onIntent(ExamsIntent.UpdatePublishFrom(it)) },
-                placeholder = "Publicar desde",
+                placeholder = "publicar_desde ISO opcional",
             )
+            ExamDatesSummary(selectedExam = selectedExam)
+            ExamCoverEditor(state = state, onIntent = onIntent)
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
                 StatusChip(status = state.editorStatus.ifBlank { "draft" })
-                StatusChip(status = "sin IDs")
+                StatusChip(status = if (state.editorCoverUrl.isNotBlank()) "con portada" else "sin portada")
             }
-            GlassActionButton(
-                text = "Guardar",
-                modifier = Modifier.fillMaxWidth(),
-                onClick = { onIntent(ExamsIntent.SaveExam) },
+            ResponsiveActionRow(
+                actions = listOf(
+                    MobileActionSpec(
+                        icon = MobileIcon.Save,
+                        label = "Guardar",
+                        minWidth = 132,
+                        onClick = { onIntent(ExamsIntent.SaveExam) },
+                    ),
+                    MobileActionSpec(
+                        icon = MobileIcon.Remove,
+                        label = "Eliminar",
+                        minWidth = 132,
+                        enabled = state.selectedExamId != null,
+                        onClick = { onIntent(ExamsIntent.DeleteSelectedExam) },
+                    ),
+                ),
             )
         }
     }
+}
+
+@Composable
+private fun ExamDatesSummary(selectedExam: Exam?) {
+    GlassSurface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "Datos de tabla examen",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "id: ${selectedExam?.id ?: "al guardar"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "Creado: ${selectedExam?.createdAt?.toString() ?: "al guardar"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "Actualizado: ${selectedExam?.updatedAt?.toString() ?: "al guardar"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "Publicar desde: ${selectedExam?.publishFrom?.toString() ?: "null"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "Publicado: ${selectedExam?.publishedAt?.toString() ?: "null"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "Borrado: ${selectedExam?.deletedAt?.toString() ?: "null"}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExamCoverEditor(
+    state: ExamsState,
+    onIntent: (ExamsIntent) -> Unit,
+) {
+    val coverPicker = rememberContentFilePickerLauncher(mimeType = "image/*") { picked ->
+        onIntent(ExamsIntent.SelectExamCoverFile(picked.uri, picked.name, picked.mimeType))
+    }
+    val hasRemoteCover = state.editorCoverUrl.isNotBlank() || state.editorCoverStoragePath.isNotBlank()
+    val hasLocalCover = state.editorCoverLocalUri.isNotBlank()
+    val isUploading = state.coverUploadState is UiAsync.Loading
+    val coverPreviewPath = when {
+        hasLocalCover -> state.editorCoverLocalUri
+        state.editorCoverUrl.isNotBlank() -> state.editorCoverUrl
+        else -> ""
+    }
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 164.dp),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(UiSpacing.normal),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Portada",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                StatusChip(
+                    status = when {
+                        isUploading -> "subiendo"
+                        hasRemoteCover -> "subida"
+                        hasLocalCover -> "seleccionada"
+                        else -> "pendiente"
+                    },
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(118.dp)
+                    .background(GlassTheme.tokens.glassFillStrong, RoundedCornerShape(14.dp))
+                    .padding(10.dp),
+                contentAlignment = Alignment.BottomStart,
+            ) {
+                if (coverPreviewPath.isNotBlank()) {
+                    NewsBackgroundImage(
+                        backgroundPath = coverPreviewPath,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(GlassTheme.tokens.glassFill, RoundedCornerShape(12.dp)),
+                    )
+                }
+                Text(
+                    text = when {
+                        hasLocalCover -> state.editorCoverFileName
+                        hasRemoteCover -> "Portada subida"
+                        else -> "Sin archivo seleccionado"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (coverPreviewPath.isBlank()) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        Color.White
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = if (coverPreviewPath.isBlank()) 0f else 0.42f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+            CoverUploadStatus(state.coverUploadState)
+            ResponsiveActionRow(
+                actions = listOf(
+                    MobileActionSpec(
+                        icon = MobileIcon.Import,
+                        label = "Imagen",
+                        minWidth = 118,
+                        onClick = { coverPicker.open() },
+                    ),
+                    MobileActionSpec(
+                        icon = MobileIcon.Up,
+                        label = "Subir",
+                        minWidth = 110,
+                        enabled = state.selectedExamId != null && hasLocalCover && !isUploading,
+                        onClick = { onIntent(ExamsIntent.UploadExamCover) },
+                    ),
+                    MobileActionSpec(
+                        icon = MobileIcon.Remove,
+                        label = "Quitar",
+                        minWidth = 114,
+                        enabled = hasRemoteCover || hasLocalCover,
+                        onClick = { onIntent(ExamsIntent.ClearExamCover) },
+                    ),
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CoverUploadStatus(uploadState: UiAsync<String>) {
+    val message = when (uploadState) {
+        is UiAsync.Error -> uploadState.error.message
+        is UiAsync.Success -> uploadState.value
+        UiAsync.Loading -> "Subiendo portada..."
+        UiAsync.Empty -> "Sin portada"
+        UiAsync.Idle -> "Imagen obligatoria para publicar"
+    }
+    val color = if (uploadState is UiAsync.Error) {
+        MaterialTheme.colorScheme.error
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Text(
+        text = message,
+        style = MaterialTheme.typography.bodySmall,
+        color = color,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 @Composable
@@ -605,26 +914,30 @@ private fun SolucionarioList(
     state: ExamsState,
     onIntent: (ExamsIntent) -> Unit,
     onCreate: () -> Unit,
+    onCreateBurst: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "Solucionarios",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            GlassActionButton(
-                text = "Nuevo",
-                modifier = Modifier
-                    .width(112.dp)
-                    .height(48.dp),
-                onClick = onCreate,
-            )
-        }
+        Text(
+            text = "Solucionarios",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        ResponsiveActionRow(
+            actions = listOf(
+                MobileActionSpec(
+                    icon = MobileIcon.Plus,
+                    label = "Nuevo",
+                    minWidth = 122,
+                    onClick = onCreate,
+                ),
+                MobileActionSpec(
+                    icon = MobileIcon.News,
+                    label = "Rafaga",
+                    minWidth = 126,
+                    onClick = onCreateBurst,
+                ),
+            ),
+        )
         when (val exams = state.exams) {
             is UiAsync.Success -> exams.value.forEach { exam ->
                 SolucionarioCard(
@@ -688,6 +1001,7 @@ private fun SolucionarioCard(
                 StatusChip(solucionario.status)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
+                StatusChip("${solucionario.priceTickets} tickets")
                 StatusChip("${solucionario.questionCount} preguntas")
                 StatusChip(if (solucionario.hasSelection) "seleccionado" else "editable")
             }
@@ -715,26 +1029,24 @@ private fun QuestionsPanel(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                MobileActionPill(
-                    icon = MobileIcon.Import,
-                    label = "Importar",
-                    modifier = Modifier
-                        .width(140.dp)
-                        .height(48.dp),
-                    enabled = state.selectedExamId != null,
-                    onClick = { importPicker.open() },
-                )
-                MobileActionPill(
-                    icon = MobileIcon.Plus,
-                    label = "Nueva",
-                    modifier = Modifier
-                        .width(140.dp)
-                        .height(48.dp),
-                    enabled = state.selectedExamId != null,
-                    onClick = { onIntent(ExamsIntent.CreateQuestion) },
-                )
-            }
+            ResponsiveActionRow(
+                actions = listOf(
+                    MobileActionSpec(
+                        icon = MobileIcon.Import,
+                        label = "Importar",
+                        minWidth = 138,
+                        enabled = state.selectedExamId != null,
+                        onClick = { importPicker.open() },
+                    ),
+                    MobileActionSpec(
+                        icon = MobileIcon.Plus,
+                        label = "Nueva",
+                        minWidth = 124,
+                        enabled = state.selectedExamId != null,
+                        onClick = { onIntent(ExamsIntent.CreateQuestion) },
+                    ),
+                ),
+            )
             when (val importState = state.importState) {
                 is UiAsync.Error -> Text(importState.error.message, color = MaterialTheme.colorScheme.error)
                 UiAsync.Loading -> Text("Importando preguntas...")
@@ -812,10 +1124,12 @@ private fun QuestionCard(
                 },
                 state = if (question.hasResources) DropTargetState.Linked else DropTargetState.Ready,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                MobileActionPill(icon = MobileIcon.Up, label = "Subir", modifier = Modifier.width(132.dp), onClick = onMoveUp)
-                MobileActionPill(icon = MobileIcon.Down, label = "Bajar", modifier = Modifier.width(132.dp), onClick = onMoveDown)
-            }
+            ResponsiveActionRow(
+                actions = listOf(
+                    MobileActionSpec(icon = MobileIcon.Up, label = "Subir", minWidth = 124, onClick = onMoveUp),
+                    MobileActionSpec(icon = MobileIcon.Down, label = "Bajar", minWidth = 124, onClick = onMoveDown),
+                ),
+            )
         }
     }
 }
@@ -869,26 +1183,43 @@ private fun QuestionEditor(
             singleLine = false,
         )
         state.editorOptions.sortedBy { it.sortOrder }.forEach { option ->
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                    StatusChip(if (option.isCorrect) "correcta" else "opcion ${option.label}")
-                    MobileActionPill(
-                        icon = MobileIcon.Save,
-                        label = option.label,
-                        modifier = Modifier.width(142.dp),
-                        onClick = { onIntent(ExamsIntent.SelectCorrectOption(option.id)) },
+            GlassSurface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
+                        StatusChip(if (option.isCorrect) "correcta" else "opcion ${option.label}")
+                    }
+                    ResponsiveActionRow(
+                        actions = listOf(
+                            MobileActionSpec(
+                                icon = MobileIcon.Save,
+                                label = if (option.isCorrect) "Correcta ${option.label}" else "Marcar ${option.label}",
+                                minWidth = 142,
+                                onClick = { onIntent(ExamsIntent.SelectCorrectOption(option.id)) },
+                            ),
+                        ),
+                    )
+                    GlassTextField(
+                        value = option.content,
+                        onValueChange = { onIntent(ExamsIntent.UpdateOptionContent(option.id, it)) },
+                        placeholder = "Respuesta ${option.label}",
                     )
                 }
-                GlassTextField(
-                    value = option.content,
-                    onValueChange = { onIntent(ExamsIntent.UpdateOptionContent(option.id, it)) },
-                    placeholder = "Respuesta ${option.label}",
-                )
             }
         }
-        GlassActionButton(
-            text = "Guardar pregunta",
-            modifier = Modifier.fillMaxWidth(),
+        MobileActionPill(
+            icon = MobileIcon.Save,
+            label = "Guardar pregunta",
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
             onClick = { onIntent(ExamsIntent.SaveQuestion) },
         )
     }
@@ -917,11 +1248,21 @@ private fun ResourceTray(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),
+                enabled = state.editorQuestionId != null,
                 onClick = { onIntent(ExamsIntent.AddResource) },
             )
+            if (state.editorQuestionId == null) {
+                Text(
+                    text = "Selecciona o crea una pregunta para anadir recursos.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             state.editorResources.sortedBy { it.sortOrder }.forEach { resource ->
                 ResourceTile(
                     resource = resource.toResourceTileUi(),
+                    uploadState = state.resourceUploadStates[resource.id] ?: UiAsync.Idle,
+                    hasQuestion = state.editorQuestionId != null,
                     onFilePicked = { picked ->
                         onIntent(
                             ExamsIntent.SelectResourceFile(
@@ -955,6 +1296,8 @@ private fun ResourceTile(
     type: String,
     title: String,
     value: String,
+    uploadState: UiAsync<String>,
+    hasQuestion: Boolean,
     onTypeChange: (String) -> Unit,
     onTitleChange: (String) -> Unit,
     onValueChange: (String) -> Unit,
@@ -963,6 +1306,17 @@ private fun ResourceTile(
     onRemove: () -> Unit,
 ) {
     val filePicker = rememberContentFilePickerLauncher(onPicked = onFilePicked)
+    val resourceType = type.toResourceType()
+    val isText = resourceType == QuestionResourceType.TEXT
+    val isUploading = uploadState is UiAsync.Loading
+    val hasManualUrl = value.startsWith("http://") || value.startsWith("https://")
+    val hasLocalFile = value.isNotBlank() && !hasManualUrl && !isText
+    val canUpload = hasQuestion && !isText && (hasManualUrl || hasLocalFile) && !isUploading
+    val displayValue = when {
+        value.startsWith("content://") -> ""
+        value.startsWith("file://") -> ""
+        else -> value
+    }
     GlassSurface(
         modifier = Modifier
             .fillMaxWidth()
@@ -977,25 +1331,30 @@ private fun ResourceTile(
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
                 StatusChip(resource.type)
-                StatusChip(if (resource.linked) "enlazado" else "pendiente")
+                StatusChip(resourceStatusLabel(resource, uploadState))
             }
-            GlassTextField(
-                value = type,
-                onValueChange = onTypeChange,
-                placeholder = "imagen | audio | video | documento",
-            )
+            ResourceTypeSelector(selected = type, onSelected = onTypeChange)
             GlassTextField(
                 value = title,
                 onValueChange = onTitleChange,
                 placeholder = "Nombre del recurso",
             )
-            GlassTextField(
-                value = value,
-                onValueChange = onValueChange,
-                placeholder = "URL o ruta local del recurso",
-                singleLine = false,
-            )
-            // SOLO MOSTRAR PREVIEW SI NO ES IMAGEN O SI ES NECESARIO, PERO OCULTAR DIRECCIONES LARGAS EN CAPAS
+            if (isText) {
+                GlassTextField(
+                    value = value,
+                    onValueChange = onValueChange,
+                    placeholder = "Contenido de texto",
+                    singleLine = false,
+                )
+            } else {
+                GlassTextField(
+                    value = displayValue,
+                    onValueChange = onValueChange,
+                    placeholder = "URL publica opcional",
+                    singleLine = false,
+                )
+            }
+            ResourceFileSummary(resource = resource, uploadState = uploadState)
             Text(
                 text = resource.valuePreview,
                 style = MaterialTheme.typography.bodySmall,
@@ -1003,10 +1362,498 @@ private fun ResourceTile(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
+            ResponsiveActionRow(
+                actions = listOf(
+                    MobileActionSpec(
+                        icon = MobileIcon.Import,
+                        label = "Archivo",
+                        minWidth = 122,
+                        enabled = !isText,
+                        onClick = { filePicker.open() },
+                    ),
+                    MobileActionSpec(
+                        icon = MobileIcon.Up,
+                        label = "Subir",
+                        minWidth = 110,
+                        enabled = canUpload,
+                        onClick = onUpload,
+                    ),
+                    MobileActionSpec(
+                        icon = MobileIcon.Remove,
+                        label = "Quitar",
+                        minWidth = 116,
+                        onClick = onRemove,
+                    ),
+                ),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ResourceTypeSelector(
+    selected: String,
+    onSelected: (String) -> Unit,
+) {
+    val options = listOf(
+        "image" to "Imagen",
+        "audio" to "Audio",
+        "video" to "Video",
+        "document" to "Documento",
+        "text" to "Texto",
+    )
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+        maxItemsInEachRow = 3,
+    ) {
+        options.forEach { (value, label) ->
+            TypePill(
+                label = label,
+                selected = selected == value,
+                modifier = Modifier.widthIn(min = if (value == "document") 128.dp else 88.dp),
+            ) {
+                onSelected(value)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TypePill(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    val tint = if (selected) GlassTheme.tokens.accent else GlassTheme.tokens.glassFillStrong
+    val foreground = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+    Box(
+        modifier = modifier
+            .height(38.dp)
+            .background(tint, RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            color = foreground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun ResourceFileSummary(
+    resource: ResourceTileUi,
+    uploadState: UiAsync<String>,
+) {
+    val statusText = when (uploadState) {
+        is UiAsync.Error -> uploadState.error.message
+        is UiAsync.Success -> uploadState.value
+        UiAsync.Loading -> "Subiendo..."
+        UiAsync.Empty -> "Pendiente"
+        UiAsync.Idle -> if (resource.fileName.isBlank()) "Sin archivo seleccionado" else "Archivo seleccionado"
+    }
+    val detail = listOf(resource.fileName, resource.mimeType)
+        .filter { it.isNotBlank() }
+        .joinToString(" | ")
+        .ifBlank { statusText }
+    Text(
+        text = detail,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (uploadState is UiAsync.Error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+private fun resourceStatusLabel(resource: ResourceTileUi, uploadState: UiAsync<String>): String {
+    return when (uploadState) {
+        is UiAsync.Error -> "error"
+        is UiAsync.Success -> if (resource.linked) "subido" else "seleccionado"
+        UiAsync.Loading -> "subiendo"
+        UiAsync.Empty -> "pendiente"
+        UiAsync.Idle -> if (resource.linked) "subido" else "pendiente"
+    }
+}
+
+@Composable
+private fun MobileSpecialtiesPanel(
+    state: ExamsState,
+    onIntent: (ExamsIntent) -> Unit,
+) {
+    val specialties = (state.specialties as? UiAsync.Success)?.value.orEmpty()
+    val query = state.specialtySearchQuery.trim().lowercase()
+    val filtered = specialties.filter { specialty ->
+        query.isBlank() ||
+            specialty.name.lowercase().contains(query) ||
+            specialty.description.lowercase().contains(query)
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.normal)) {
+        GlassSurface(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(UiSpacing.panel),
+                verticalArrangement = Arrangement.spacedBy(UiSpacing.normal),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Especialidades",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    MobileActionPill(
+                        icon = MobileIcon.Plus,
+                        label = "Nueva",
+                        modifier = Modifier.width(112.dp),
+                        onClick = { onIntent(ExamsIntent.CreateSpecialty) },
+                    )
+                }
+                GlassTextField(
+                    value = state.specialtySearchQuery,
+                    onValueChange = { onIntent(ExamsIntent.UpdateSpecialtySearch(it)) },
+                    placeholder = "Buscar especialidad",
+                )
+                when (val async = state.specialties) {
+                    is UiAsync.Success -> {
+                        if (filtered.isEmpty()) {
+                            DropZone("Sin especialidades para este filtro.", DropTargetState.Idle)
+                        } else {
+                            filtered.forEach { specialty ->
+                                SpecialtyMobileCard(
+                                    specialty = specialty,
+                                    selected = specialty.id == state.selectedContentSpecialtyId,
+                                    onClick = { onIntent(ExamsIntent.SelectContentSpecialty(specialty.id)) },
+                                )
+                            }
+                        }
+                    }
+
+                    UiAsync.Empty -> DropZone("No hay especialidades creadas.", DropTargetState.Idle)
+                    is UiAsync.Error -> EmptyStateCard("No se pudieron cargar especialidades", async.error.message)
+                    UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando especialidades.")
+                    UiAsync.Idle -> EmptyStateCard("Especialidades", "Sin carga activa.")
+                }
+            }
+        }
+        GlassSurface(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(UiSpacing.panel),
+                verticalArrangement = Arrangement.spacedBy(UiSpacing.normal),
+            ) {
+                Text(
+                    text = if (state.selectedContentSpecialtyId == null) "Crear especialidad" else "Editar especialidad",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                GlassTextField(
+                    value = state.specialtyEditorName,
+                    onValueChange = { onIntent(ExamsIntent.UpdateSpecialtyName(it)) },
+                    placeholder = "nombre",
+                )
+                GlassTextField(
+                    value = state.specialtyEditorDescription,
+                    onValueChange = { onIntent(ExamsIntent.UpdateSpecialtyDescription(it)) },
+                    placeholder = "slug o descripcion",
+                )
+                GlassTextField(
+                    value = state.specialtyEditorSortOrder,
+                    onValueChange = { onIntent(ExamsIntent.UpdateSpecialtySortOrder(it)) },
+                    placeholder = "orden",
+                )
+                ResponsiveActionRow(
+                    actions = listOf(
+                        MobileActionSpec(
+                            icon = MobileIcon.Specialty,
+                            label = if (state.specialtyEditorIsActive) "Activa" else "Inactiva",
+                            minWidth = 124,
+                            onClick = { onIntent(ExamsIntent.ToggleSpecialtyActive(!state.specialtyEditorIsActive)) },
+                        ),
+                        MobileActionSpec(
+                            icon = MobileIcon.Save,
+                            label = "Guardar",
+                            minWidth = 124,
+                            onClick = { onIntent(ExamsIntent.SaveSpecialty) },
+                        ),
+                        MobileActionSpec(
+                            icon = MobileIcon.Remove,
+                            label = "Eliminar",
+                            minWidth = 124,
+                            enabled = state.selectedContentSpecialtyId != null,
+                            onClick = { onIntent(ExamsIntent.DeleteSelectedSpecialty) },
+                        ),
+                    ),
+                )
+                when (val actionState = state.specialtyActionState) {
+                    is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
+                    UiAsync.Loading -> Text("Guardando especialidad...")
+                    is UiAsync.Success -> Text("Especialidad sincronizada.")
+                    else -> Unit
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpecialtyMobileCard(
+    specialty: Specialty,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        tint = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(modifier = Modifier.width(210.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = specialty.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = specialty.description.ifBlank { "Sin descripcion" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                StatusChip(if (specialty.isActive) "activa" else "inactiva")
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                MobileActionPill(icon = MobileIcon.Import, label = "Archivo", modifier = Modifier.width(96.dp), onClick = { filePicker.open() })
-                MobileActionPill(icon = MobileIcon.Up, label = "Subir", modifier = Modifier.width(96.dp), onClick = onUpload)
-                MobileActionPill(icon = MobileIcon.Remove, label = "Quitar", modifier = Modifier.width(96.dp), onClick = onRemove)
+                StatusChip("${specialty.linkedExams} examenes")
+                StatusChip("orden ${specialty.sortOrder}")
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileTagSearchPanel(
+    repository: TagSearchRepository?,
+) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var tags by remember { mutableStateOf<List<Tag>>(emptyList()) }
+    var selectedTags by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var results by remember { mutableStateOf<UiAsync<List<TaggedSearchResult>>>(UiAsync.Idle) }
+    var reindexState by remember { mutableStateOf<UiAsync<Unit>>(UiAsync.Idle) }
+
+    if (repository == null) {
+        EmptyStateCard("Etiquetas", "El buscador de etiquetas no esta disponible en este entorno.")
+        return
+    }
+
+    LaunchedEffect(query) {
+        delay(180)
+        when (val result = repository.findTags(query)) {
+            is AppResult.Failure -> Unit
+            is AppResult.Success -> tags = result.value
+        }
+    }
+
+    LaunchedEffect(query, selectedTags) {
+        delay(260)
+        if (query.isBlank() && selectedTags.isEmpty()) {
+            results = UiAsync.Idle
+            return@LaunchedEffect
+        }
+        results = UiAsync.Loading
+        results = when (
+            val result = repository.search(
+                TagSearchQuery(
+                    text = query,
+                    tagSlugs = selectedTags.toList(),
+                    section = null,
+                ),
+            )
+        ) {
+            is AppResult.Failure -> UiAsync.Error(result.error)
+            is AppResult.Success -> if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value)
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.normal)) {
+        GlassSurface(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(UiSpacing.panel),
+                verticalArrangement = Arrangement.spacedBy(UiSpacing.normal),
+            ) {
+                Text(
+                    text = "Buscador por etiquetas",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                GlassTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = "Texto o etiqueta",
+                )
+                LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    items(items = tags.take(24), key = { tag: Tag -> tag.slug }) { tag ->
+                        TypePill(
+                            label = "#${tag.slug}",
+                            selected = tag.slug in selectedTags,
+                            modifier = Modifier.widthIn(min = 118.dp),
+                        ) {
+                            selectedTags = if (tag.slug in selectedTags) {
+                                selectedTags - tag.slug
+                            } else {
+                                selectedTags + tag.slug
+                            }
+                        }
+                    }
+                }
+                ResponsiveActionRow(
+                    actions = listOf(
+                        MobileActionSpec(
+                            icon = MobileIcon.Remove,
+                            label = "Limpiar",
+                            minWidth = 118,
+                            enabled = query.isNotBlank() || selectedTags.isNotEmpty(),
+                            onClick = {
+                                query = ""
+                                selectedTags = emptySet<String>()
+                                results = UiAsync.Idle
+                            },
+                        ),
+                        MobileActionSpec(
+                            icon = MobileIcon.Search,
+                            label = "Reindexar",
+                            minWidth = 132,
+                            enabled = reindexState !is UiAsync.Loading,
+                            onClick = {
+                                reindexState = UiAsync.Loading
+                            },
+                        ),
+                    ),
+                )
+                if (reindexState is UiAsync.Loading) {
+                    LaunchedEffect(reindexState) {
+                        reindexState = when (val result = repository.reindex()) {
+                            is AppResult.Failure -> UiAsync.Error(result.error)
+                            is AppResult.Success -> UiAsync.Success(Unit)
+                        }
+                    }
+                }
+                when (val state = reindexState) {
+                    is UiAsync.Error -> Text(state.error.message, color = MaterialTheme.colorScheme.error)
+                    is UiAsync.Success<*> -> Text("Indice actualizado.")
+                    else -> Unit
+                }
+            }
+        }
+        SearchResultsMobilePane(results)
+    }
+}
+
+@Composable
+private fun SearchResultsMobilePane(
+    state: UiAsync<List<TaggedSearchResult>>,
+) {
+    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(UiSpacing.panel),
+            verticalArrangement = Arrangement.spacedBy(UiSpacing.compact),
+        ) {
+            when (state) {
+                UiAsync.Idle -> Text(
+                    text = "Selecciona etiquetas o escribe texto para buscar contenido.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                UiAsync.Loading -> Text("Buscando...")
+                UiAsync.Empty -> DropZone("Sin resultados para esta busqueda.", DropTargetState.Idle)
+                is UiAsync.Error -> EmptyStateCard("No se pudo buscar", state.error.message)
+                is UiAsync.Success -> state.value.take(20).forEach { result ->
+                    SearchResultMobileCard(result)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultMobileCard(result: TaggedSearchResult) {
+    GlassSurface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Text(
+                    text = result.title,
+                    modifier = Modifier.width(212.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                StatusChip(result.section)
+            }
+            Text(
+                text = result.summary.ifBlank { result.entityType },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (result.tags.isNotEmpty()) {
+                Text(
+                    text = result.tags.take(5).joinToString(" ") { "#${it.slug}" },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
@@ -1172,6 +2019,7 @@ private fun Exam.toSolucionarioUi(selected: Boolean): SolucionarioUi {
         title = title,
         specialty = specialtyName,
         status = status.name.lowercase(),
+        priceTickets = priceTickets,
         questionCount = questionCount,
         hasSelection = selected,
     )
@@ -1192,10 +2040,19 @@ private fun ExamQuestion.toQuestionUi(selected: Boolean): QuestionUi {
 
 private fun QuestionResourceDraft.toResourceTileUi(): ResourceTileUi {
     val linkedValue = publicUrl ?: storagePath
+    val hasLocalUri = inputValue.startsWith("content://") || inputValue.startsWith("file://")
     return ResourceTileUi(
         type = type.ifBlank { "documento" },
         title = title.ifBlank { "Recurso sin titulo" },
-        valuePreview = linkedValue ?: inputValue.ifBlank { "Pendiente de contenido o archivo" },
-        linked = linkedValue != null || inputValue.isNotBlank(),
+        valuePreview = when {
+            linkedValue != null -> linkedValue.substringAfterLast('/').ifBlank { "Recurso subido" }
+            localFileName.isNotBlank() -> localFileName
+            hasLocalUri -> "Archivo seleccionado"
+            inputValue.isNotBlank() -> inputValue
+            else -> "Pendiente de contenido o archivo"
+        },
+        fileName = localFileName,
+        mimeType = mimeType.orEmpty(),
+        linked = linkedValue != null,
     )
 }

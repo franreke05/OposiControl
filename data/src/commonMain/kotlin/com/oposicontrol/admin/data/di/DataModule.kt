@@ -80,6 +80,7 @@ val dataModule = module {
             client = get(),
             appConfig = appConfig,
             sessionLocalDataSource = get(),
+            fileReader = get(),
             adapter = get(),
         )
     }

@@ -54,6 +54,7 @@ enum class StoreItemType {
     CONSUMABLE,
     PROTECTOR,
     STREAK,
+    POTENTIATOR,
     EXAM_ACCESS,
     RESOURCE,
 }

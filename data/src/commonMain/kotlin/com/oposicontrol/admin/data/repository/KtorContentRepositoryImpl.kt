@@ -4,6 +4,8 @@ import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.storage.LocalBinaryAsset
+import com.oposicontrol.admin.data.storage.PlatformFileReader
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamResourceAudit
@@ -18,14 +20,19 @@ import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.delete
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -40,6 +47,7 @@ class KtorContentRepositoryImpl(
     private val client: HttpClient,
     private val appConfig: AppConfig,
     private val sessionLocalDataSource: SessionLocalDataSource,
+    private val fileReader: PlatformFileReader,
     private val adapter: NetworkResultAdapter,
 ) : ContentRepository {
     private val specialtiesFlow = MutableStateFlow<List<Specialty>>(emptyList())
@@ -183,6 +191,19 @@ class KtorContentRepositoryImpl(
         localPathOrUrl: String,
         title: String,
     ) = adapter.safeCall {
+        if (!localPathOrUrl.startsWith("http://") && !localPathOrUrl.startsWith("https://")) {
+            val asset = when (val read = fileReader.read(localPathOrUrl)) {
+                is AppResult.Failure -> throw IllegalStateException(read.error.message)
+                is AppResult.Success -> read.value
+            }
+            require(asset.bytes.size <= RESOURCE_MAX_BYTES) { "El recurso supera el limite de 50 MB." }
+            return@safeCall client.post("${contentUrl()}/preguntas/$questionId/recursos/$resourceId/upload") {
+                backendHeaders()
+                parameter("tipoRecurso", type.toDtoType())
+                parameter("titulo", title.ifBlank { asset.fileName })
+                setBody(asset.toMultipartBody())
+            }.body<RecursoPreguntaDto>().toDomain()
+        }
         client.post("${contentUrl()}/preguntas/$questionId/recursos") {
             backendHeaders()
             contentType(ContentType.Application.Json)
@@ -195,9 +216,31 @@ class KtorContentRepositoryImpl(
                     url = localPathOrUrl,
                     storagePath = localPathOrUrl.takeUnless { it.startsWith("http://") || it.startsWith("https://") },
                     publicUrl = localPathOrUrl.takeIf { it.startsWith("http://") || it.startsWith("https://") },
+                    mimeType = type.guessMime(),
                 ),
             )
         }.body<RecursoPreguntaDto>().toDomain()
+    }
+
+    override suspend fun uploadExamCover(
+        examId: String,
+        localPathOrUri: String,
+    ) = adapter.safeCall {
+        val asset = when (val read = fileReader.read(localPathOrUri)) {
+            is AppResult.Failure -> throw IllegalStateException(read.error.message)
+            is AppResult.Success -> read.value
+        }
+        require(asset.bytes.size <= COVER_MAX_BYTES) { "La portada supera el limite de 10 MB." }
+        require(asset.mimeType?.startsWith("image/") == true) { "La portada debe ser una imagen." }
+        client.post("${contentUrl()}/solucionarios/$examId/portada") {
+            backendHeaders()
+            setBody(asset.toMultipartBody())
+        }.body<SolucionarioDto>().toDomain(
+            specialtiesFlow.value.firstOrNull { it.id == examsFlow.value.firstOrNull { exam -> exam.id == examId }?.specialtyId }?.name.orEmpty(),
+        ).also { saved ->
+            examsFlow.value = examsFlow.value.map { if (it.id == saved.id) saved else it }
+            refreshExams()
+        }
     }
 
     private suspend inline fun <reified T, reified B> HttpClient.requestWithBody(
@@ -228,6 +271,28 @@ class KtorContentRepositoryImpl(
             ?: return
         header(HttpHeaders.Authorization, "Bearer $token")
     }
+
+    private fun LocalBinaryAsset.toMultipartBody(): MultiPartFormDataContent {
+        return MultiPartFormDataContent(
+            formData {
+                append(
+                    key = "file",
+                    value = bytes,
+                    headers = Headers.build {
+                        append(HttpHeaders.ContentDisposition, "form-data; name=\"file\"; filename=\"${fileName.sanitizeFilename()}\"")
+                        append(HttpHeaders.ContentType, mimeType ?: ContentType.Application.OctetStream.toString())
+                    },
+                )
+            },
+        )
+    }
+
+    private fun String.sanitizeFilename(): String = replace("\"", "").ifBlank { "upload.bin" }
+
+    private companion object {
+        const val COVER_MAX_BYTES = 10 * 1024 * 1024
+        const val RESOURCE_MAX_BYTES = 50 * 1024 * 1024
+    }
 }
 
 @Serializable
@@ -249,7 +314,15 @@ private data class SolucionarioDto(
     val descripcion: String = "",
     val precioTickets: Int = 0,
     val estado: String = "draft",
+    val publicarDesde: String? = null,
+    val publishedAt: String? = null,
     val orden: Int = 0,
+    val portadaUrl: String? = null,
+    val portadaStoragePath: String? = null,
+    val portadaMimeType: String? = null,
+    val createdAt: String = "",
+    val updatedAt: String = "",
+    val deletedAt: String? = null,
 )
 
 @Serializable
@@ -281,6 +354,7 @@ private data class RecursoPreguntaDto(
     val url: String = "",
     val storagePath: String? = null,
     val publicUrl: String? = null,
+    val mimeType: String? = null,
     val orden: Int = 0,
 )
 
@@ -312,12 +386,18 @@ private fun SolucionarioDto.toDomain(specialtyName: String) = Exam(
     specialtyName = specialtyName.ifBlank { descripcion },
     title = titulo,
     description = descripcion,
+    priceTickets = precioTickets,
     status = estado.toExamStatus(),
-    publishFrom = null,
+    publishFrom = publicarDesde.toInstantOrNull(),
+    publishedAt = publishedAt.toInstantOrNull(),
     sortOrder = orden,
     questionCount = 0,
-    createdAt = nowInstant(),
-    updatedAt = nowInstant(),
+    coverUrl = portadaUrl,
+    coverStoragePath = portadaStoragePath,
+    coverMimeType = portadaMimeType,
+    createdAt = createdAt.toInstantOrNow(),
+    updatedAt = updatedAt.toInstantOrNow(),
+    deletedAt = deletedAt.toInstantOrNull(),
 )
 
 private fun Exam.toDto() = SolucionarioDto(
@@ -325,9 +405,17 @@ private fun Exam.toDto() = SolucionarioDto(
     titulo = title,
     especialidadId = specialtyId,
     descripcion = description,
-    precioTickets = 0,
+    precioTickets = priceTickets,
     estado = status.name.lowercase(),
+    publicarDesde = publishFrom?.toString(),
+    publishedAt = publishedAt?.toString(),
     orden = sortOrder,
+    portadaUrl = coverUrl,
+    portadaStoragePath = coverStoragePath,
+    portadaMimeType = coverMimeType,
+    createdAt = createdAt.toString(),
+    updatedAt = updatedAt.toString(),
+    deletedAt = deletedAt?.toString(),
 )
 
 private fun PreguntaDto.toDomain() = ExamQuestion(
@@ -377,7 +465,7 @@ private fun RecursoPreguntaDto.toDomain() = QuestionResource(
     textBody = if (tipoRecurso.toResourceType() == QuestionResourceType.TEXT) url else null,
     storagePath = storagePath,
     publicUrl = publicUrl ?: url.takeIf { it.startsWith("http://") || it.startsWith("https://") },
-    mimeType = null,
+    mimeType = mimeType,
     sortOrder = orden,
 )
 
@@ -389,6 +477,7 @@ private fun QuestionResource.toDto() = RecursoPreguntaDto(
     url = publicUrl ?: storagePath ?: textBody.orEmpty(),
     storagePath = storagePath,
     publicUrl = publicUrl,
+    mimeType = mimeType,
     orden = sortOrder,
 )
 
@@ -438,8 +527,20 @@ private fun QuestionResourceType.toDtoType() = when (this) {
     QuestionResourceType.DOCUMENT -> "documento"
 }
 
+private fun QuestionResourceType.guessMime() = when (this) {
+    QuestionResourceType.IMAGE -> "image/png"
+    QuestionResourceType.AUDIO -> "audio/mpeg"
+    QuestionResourceType.VIDEO -> "video/mp4"
+    QuestionResourceType.TEXT -> "text/plain"
+    QuestionResourceType.DOCUMENT -> "application/pdf"
+}
+
 private fun String.toSlug(): String = lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "item" }
 
 private fun String.toInstantOrNow(): Instant = runCatching { Instant.parse(this) }.getOrElse { nowInstant() }
+
+private fun String?.toInstantOrNull(): Instant? = this?.let { value ->
+    runCatching { Instant.parse(value) }.getOrNull()
+}
 
 private fun nowInstant(): Instant = Instant.parse(Clock.System.now().toString())

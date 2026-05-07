@@ -56,7 +56,7 @@ import com.oposicontrol.admin.features.users.presentation.UsersViewModel
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
 import org.koin.compose.koinInject
 
-private const val TEMPORARILY_DISABLE_LOGIN = false
+private const val TEMPORARILY_DISABLE_LOGIN = true
 
 @Composable
 fun AppRoot(

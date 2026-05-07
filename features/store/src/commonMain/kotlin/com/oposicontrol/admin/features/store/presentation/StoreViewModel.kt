@@ -108,6 +108,7 @@ class StoreViewModel(
             is StoreIntent.UpdateBurstTitle -> updateState { it.copy(burstTitle = intent.value) }
             is StoreIntent.UpdateBurstDescription -> updateState { it.copy(burstDescription = intent.value) }
             is StoreIntent.UpdateBurstType -> updateState { it.copy(burstType = intent.value) }
+            is StoreIntent.UpdateBurstLinkedExamId -> updateState { it.copy(burstLinkedExamId = intent.value) }
             is StoreIntent.UpdateBurstMultiplier -> updateState { it.copy(burstMultiplier = intent.value) }
             is StoreIntent.UpdateBurstRewardTickets -> updateState { it.copy(burstRewardTickets = intent.value) }
             is StoreIntent.UpdateBurstStartsAt -> updateState { it.copy(burstStartsAt = intent.value) }
@@ -121,7 +122,7 @@ class StoreViewModel(
                 selectedId = null,
                 editorName = "",
                 editorDescription = "",
-                editorType = "consumable",
+                editorType = "consumible",
                 editorPriceTickets = "0",
                 editorStatus = "draft",
                 actionState = UiAsync.Idle,
@@ -220,17 +221,22 @@ class StoreViewModel(
     }
 
     private suspend fun saveBurst() {
+        val linkedExamId = currentState().burstLinkedExamId.trim()
+        if (linkedExamId.isBlank()) {
+            updateState { it.copy(actionState = UiAsync.Error(AppError.Validation("La rafaga necesita un examen vinculado."))) }
+            return
+        }
         val campaign = BurstCampaign(
             id = "",
             title = currentState().burstTitle.trim(),
             description = currentState().burstDescription.trim(),
-            type = currentState().burstType.toBurstCampaignType(),
+            type = BurstCampaignType.EXAM_BURST,
             startsAt = currentState().burstStartsAt.toInstantOrNull(),
             endsAt = currentState().burstEndsAt.toInstantOrNull(),
             multiplier = currentState().burstMultiplier.toDoubleOrNull() ?: 1.0,
             rewardTickets = currentState().burstRewardTickets.toIntOrNull() ?: 0,
-            linkedExamId = null,
-            linkedStoreItemId = currentState().selectedId,
+            linkedExamId = linkedExamId,
+            linkedStoreItemId = null,
             status = CommerceStatus.SCHEDULED,
         )
         saveChild(upsertBurstCampaignUseCase(campaign), "burst_campaign_save")
@@ -281,6 +287,7 @@ class StoreViewModel(
         title = title,
         type = type.name.lowercase(),
         reward = "x$multiplier + $rewardTickets tickets",
+        linkedExamId = linkedExamId,
         linkedItemId = linkedStoreItemId,
         status = status.name.lowercase(),
     )
@@ -288,8 +295,7 @@ class StoreViewModel(
     private fun String.toStoreItemType() = when (lowercase()) {
         "protector" -> StoreItemType.PROTECTOR
         "streak", "racha" -> StoreItemType.STREAK
-        "exam_access" -> StoreItemType.EXAM_ACCESS
-        "resource" -> StoreItemType.RESOURCE
+        "potenciador", "potentiator" -> StoreItemType.POTENTIATOR
         else -> StoreItemType.CONSUMABLE
     }
 

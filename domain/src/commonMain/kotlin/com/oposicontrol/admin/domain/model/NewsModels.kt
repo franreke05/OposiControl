@@ -93,7 +93,6 @@ enum class NewsArticleType {
     CONVOCATORIA,
     AVISO,
     OFERTA,
-    RAFAGA,
     RECURSO,
 }
 

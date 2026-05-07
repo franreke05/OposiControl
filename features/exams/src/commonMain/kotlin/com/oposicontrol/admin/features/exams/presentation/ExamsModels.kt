@@ -20,6 +20,7 @@ data class QuestionResourceDraft(
     val publicUrl: String? = null,
     val storagePath: String? = null,
     val mimeType: String? = null,
+    val localFileName: String = "",
     val sortOrder: Int = 0,
 )
 
@@ -27,6 +28,7 @@ data class SolucionarioUi(
     val title: String,
     val specialty: String,
     val status: String,
+    val priceTickets: Int,
     val questionCount: Int,
     val hasSelection: Boolean,
 )
@@ -44,6 +46,8 @@ data class ResourceTileUi(
     val type: String,
     val title: String,
     val valuePreview: String,
+    val fileName: String,
+    val mimeType: String,
     val linked: Boolean,
 )
 

@@ -21,3 +21,21 @@ dependencies {
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.kotlinx.serialization.json)
 }
+
+tasks.named<JavaExec>("run") {
+    val envFile = rootProject.file(".env")
+    if (envFile.exists()) {
+        envFile.readLines()
+            .filter { it.isNotBlank() && !it.trimStart().startsWith("#") }
+            .forEach { line ->
+                val eqIndex = line.indexOf('=')
+                if (eqIndex > 0) {
+                    val key = line.substring(0, eqIndex).trim()
+                    val value = line.substring(eqIndex + 1).trim()
+                    if (System.getenv(key).isNullOrBlank()) {
+                        environment(key, value)
+                    }
+                }
+            }
+    }
+}
