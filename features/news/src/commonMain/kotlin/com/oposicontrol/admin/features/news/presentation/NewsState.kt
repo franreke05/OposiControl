@@ -5,6 +5,8 @@ import com.oposicontrol.admin.domain.model.NewsValidationReport
 
 data class NewsState(
     val news: UiAsync<List<NewsItem>> = UiAsync.Loading,
+    val publishedNews: UiAsync<List<NewsItem>> = UiAsync.Loading,
+    val localNews: UiAsync<List<NewsItem>> = UiAsync.Loading,
     val searchQuery: String = "",
     val statusFilter: String = "all",
     val specialtyFilter: String = "all",

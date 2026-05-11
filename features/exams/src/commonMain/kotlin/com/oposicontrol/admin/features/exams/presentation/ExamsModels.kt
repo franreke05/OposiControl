@@ -25,6 +25,30 @@ data class QuestionResourceDraft(
 )
 
 data class SolucionarioUi(
+    val id: String,
+    val title: String,
+    val specialty: String,
+    val status: String,
+    val priceTickets: Int,
+    val questionCount: Int,
+    val coverUrl: String,
+    val coverStoragePath: String,
+    val isBurst: Boolean,
+    val hasSelection: Boolean,
+)
+
+data class QuestionUi(
+    val id: String,
+    val title: String,
+    val statement: String,
+    val correctOptionLabel: String,
+    val resourceCount: Int,
+    val hasResources: Boolean,
+    val selected: Boolean,
+)
+
+data class RafagaUi(
+    val id: String,
     val title: String,
     val specialty: String,
     val status: String,
@@ -33,12 +57,9 @@ data class SolucionarioUi(
     val hasSelection: Boolean,
 )
 
-data class QuestionUi(
-    val title: String,
+data class RafagaQuestionUi(
+    val id: String,
     val statement: String,
-    val correctOptionLabel: String,
-    val resourceCount: Int,
-    val hasResources: Boolean,
     val selected: Boolean,
 )
 
@@ -55,6 +76,11 @@ enum class DropTargetState {
     Idle,
     Ready,
     Linked,
+}
+
+enum class ExamEditorMode {
+    Solucionario,
+    Rafaga,
 }
 
 internal fun blankQuestionId(): String = randomUuid()

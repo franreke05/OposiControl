@@ -75,6 +75,9 @@ internal fun MobileLayeredNewsEditor(
     val imagePicker = rememberContentFilePickerLauncher(mimeType = "image/*") { picked ->
         onIntent(NewsIntent.AddLayerWithImage(picked.uri))
     }
+    val backgroundPicker = rememberContentFilePickerLauncher(mimeType = "image/*") { picked ->
+        onIntent(NewsIntent.SelectBackgroundFile(picked.uri, picked.name, picked.mimeType))
+    }
 
     if (isFullscreen) {
         LockScreenOrientation(ScreenOrientation.LANDSCAPE)
@@ -83,6 +86,7 @@ internal fun MobileLayeredNewsEditor(
             state = state,
             onIntent = onIntent,
             onPickImage = { imagePicker.open() },
+            onPickBackground = { backgroundPicker.open() },
             onClose = onToggleFullscreen,
         )
     } else {
@@ -92,6 +96,7 @@ internal fun MobileLayeredNewsEditor(
             state = state,
             onIntent = onIntent,
             onPickImage = { imagePicker.open() },
+            onPickBackground = { backgroundPicker.open() },
             onOpenFullscreen = onToggleFullscreen,
         )
     }
@@ -102,6 +107,7 @@ private fun MobileLayeredNewsEditorPreview(
     state: NewsState,
     onIntent: (NewsIntent) -> Unit,
     onPickImage: () -> Unit,
+    onPickBackground: () -> Unit,
     onOpenFullscreen: () -> Unit,
 ) {
     val selectedLayer = state.selectedLayer()
@@ -128,8 +134,10 @@ private fun MobileLayeredNewsEditorPreview(
                 onIntent = onIntent,
             )
             NewsEditorQuickActions(
+                onAddTitle = { onIntent(NewsIntent.AddTitleLayer) },
                 onAddText = { onIntent(NewsIntent.AddLayer) },
                 onAddImage = onPickImage,
+                onPickBackground = onPickBackground,
                 onValidate = { onIntent(NewsIntent.ValidateDraft) },
                 onSave = { onIntent(NewsIntent.SaveDraft) },
                 onPublish = { onIntent(NewsIntent.Publish) },
@@ -137,7 +145,7 @@ private fun MobileLayeredNewsEditorPreview(
                 onDelete = { onIntent(NewsIntent.DeleteSelected) },
                 canDelete = state.selectedId != null,
             )
-            NewsTemplateSelector(state = state, onIntent = onIntent)
+            if (state.editorBackgroundPath.isBlank()) NewsTemplateSelector(state = state, onIntent = onIntent)
             NewsLayerStrip(state = state, onIntent = onIntent)
             NewsEditorInspector(
                 state = state,
@@ -155,6 +163,7 @@ private fun MobileLayeredNewsEditorFullscreen(
     state: NewsState,
     onIntent: (NewsIntent) -> Unit,
     onPickImage: () -> Unit,
+    onPickBackground: () -> Unit,
     onClose: () -> Unit,
 ) {
     Box(
@@ -180,6 +189,7 @@ private fun MobileLayeredNewsEditorFullscreen(
                 state = state,
                 onIntent = onIntent,
                 onPickImage = onPickImage,
+                onPickBackground = onPickBackground,
                 onClose = onClose,
             )
         }
@@ -191,6 +201,7 @@ private fun NewsFullscreenPanel(
     state: NewsState,
     onIntent: (NewsIntent) -> Unit,
     onPickImage: () -> Unit,
+    onPickBackground: () -> Unit,
     onClose: () -> Unit,
 ) {
     val selectedLayer = state.selectedLayer()
@@ -219,8 +230,10 @@ private fun NewsFullscreenPanel(
             }
             item {
                 NewsEditorQuickActions(
+                    onAddTitle = { onIntent(NewsIntent.AddTitleLayer) },
                     onAddText = { onIntent(NewsIntent.AddLayer) },
                     onAddImage = onPickImage,
+                    onPickBackground = onPickBackground,
                     onValidate = { onIntent(NewsIntent.ValidateDraft) },
                     onSave = { onIntent(NewsIntent.SaveDraft) },
                     onPublish = { onIntent(NewsIntent.Publish) },
@@ -229,7 +242,7 @@ private fun NewsFullscreenPanel(
                     canDelete = state.selectedId != null,
                 )
             }
-            item { NewsTemplateSelector(state = state, onIntent = onIntent) }
+            if (state.editorBackgroundPath.isBlank()) item { NewsTemplateSelector(state = state, onIntent = onIntent) }
             item { NewsLayerStack(state = state, onIntent = onIntent) }
             item {
                 NewsEditorInspector(
@@ -316,8 +329,10 @@ private fun NewsTemplateSelector(
 
 @Composable
 private fun NewsEditorQuickActions(
+    onAddTitle: () -> Unit,
     onAddText: () -> Unit,
     onAddImage: () -> Unit,
+    onPickBackground: () -> Unit,
     onValidate: () -> Unit,
     onSave: () -> Unit,
     onPublish: () -> Unit,
@@ -327,12 +342,16 @@ private fun NewsEditorQuickActions(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NewsSmallButton("Guardar", width = 82, onClick = onSave)
+            NewsSmallButton("Guardar local", width = 104, onClick = onSave)
             NewsSmallButton("Publicar", width = 82, onClick = onPublish)
             NewsSmallButton("Programar", width = 88, onClick = onSchedule)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NewsSmallButton("Titulo", width = 70, onClick = onAddTitle)
             NewsSmallButton("Texto", width = 70, onClick = onAddText)
+            NewsSmallButton("Fondo", width = 70, onClick = onPickBackground)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             NewsSmallButton("Imagen", width = 78, onClick = onAddImage)
             NewsSmallButton("Validar", width = 82, onClick = onValidate)
         }
@@ -363,7 +382,18 @@ private fun NewsLayerCanvasViewport(
             .border(1.dp, palette.border, shape)
             .clickable { onIntent(NewsIntent.SelectBackground) },
     ) {
-        NewsTemplateArtwork(palette = palette)
+        if (state.editorBackgroundPath.isNotBlank()) {
+            NewsBackgroundImage(
+                backgroundPath = state.editorBackgroundPath,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.28f)),
+            )
+        }
+        if (state.editorBackgroundPath.isBlank()) NewsTemplateArtwork(palette = palette)
         Box(modifier = Modifier.fillMaxSize()) {
             state.editorLayers
                 .sortedBy { it.sortOrder }
@@ -681,6 +711,9 @@ private fun NewsArticleInspector(
             StatusChip(state.editorStatus.ifBlank { "draft" })
             StatusChip("${state.editorCanvasWidth}x${state.editorCanvasHeight}")
         }
+        if (state.editorBackgroundPath.isNotBlank()) {
+            StatusChip("fondo ${state.editorBackgroundPath.substringAfterLast('/').take(18)}")
+        }
         GlassTextField(
             value = state.editorTitle,
             onValueChange = { onIntent(NewsIntent.UpdateTitle(it)) },
@@ -710,6 +743,11 @@ private fun NewsArticleInspector(
             value = state.editorPublishFrom,
             onValueChange = { onIntent(NewsIntent.UpdatePublishFrom(it)) },
             placeholder = "Publicar desde",
+        )
+        GlassTextField(
+            value = state.editorBackgroundPath,
+            onValueChange = { onIntent(NewsIntent.UpdateBackgroundPath(it)) },
+            placeholder = "Imagen de fondo local o URL",
         )
     }
 }
@@ -856,7 +894,11 @@ private fun NewsActionState(state: NewsState) {
     when (val actionState = state.actionState) {
         is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         UiAsync.Loading -> Text("Guardando noticia...", style = MaterialTheme.typography.bodySmall)
-        is UiAsync.Success -> Text("Noticia lista.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+        is UiAsync.Success -> Text(
+            if (state.selectedId?.startsWith("local-") == true) "Borrador guardado localmente." else "Noticia sincronizada.",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.bodySmall,
+        )
         else -> Unit
     }
     state.validationReport?.let { report ->
@@ -956,7 +998,7 @@ private fun String.isTitleKind(): Boolean {
 private fun String.toLayerLabel(): String {
     return when {
         isImageKind() -> "imagen"
-        isTitleKind() -> "texto"
+        isTitleKind() -> "titulo"
         else -> "texto"
     }
 }

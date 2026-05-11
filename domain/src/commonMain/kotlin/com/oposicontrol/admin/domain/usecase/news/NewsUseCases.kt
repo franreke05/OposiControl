@@ -29,6 +29,10 @@ class UpsertNewsUseCase(private val repository: NewsRepository) {
     }
 }
 
+class UploadNewsAssetUseCase(private val repository: NewsRepository) {
+    suspend operator fun invoke(localPathOrUri: String) = repository.uploadNewsAsset(localPathOrUri)
+}
+
 class DeleteNewsUseCase(private val repository: NewsRepository) {
     suspend operator fun invoke(newsId: String) = repository.deleteNews(newsId)
 }

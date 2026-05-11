@@ -15,6 +15,7 @@ import com.oposicontrol.admin.data.remote.dto.toDomain
 import com.oposicontrol.admin.data.remote.dto.toRowDto
 import com.oposicontrol.admin.data.storage.PlatformFileReader
 import com.oposicontrol.admin.domain.model.Exam
+import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.ExamResourceAudit
 import com.oposicontrol.admin.domain.model.ExamResourceSummary
 import com.oposicontrol.admin.domain.model.ExamQuestion
@@ -22,6 +23,8 @@ import com.oposicontrol.admin.domain.model.QuestionResourceAudit
 import com.oposicontrol.admin.domain.model.QuestionMoveDirection
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.Rafaga
+import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.model.UnlinkedResource
 import com.oposicontrol.admin.domain.model.UnlinkedResourceReason
@@ -55,11 +58,14 @@ class SupabaseContentRepositoryImpl(
 ) : ContentRepository {
     private val specialtiesFlow = MutableStateFlow<List<Specialty>>(emptyList())
     private val examsFlow = MutableStateFlow<List<Exam>>(emptyList())
+    private val rafagasFlow = MutableStateFlow<List<Rafaga>>(emptyList())
     private var specialtyRowsCache: List<SpecialtyRowDto> = emptyList()
 
     override fun observeSpecialties(): Flow<List<Specialty>> = specialtiesFlow.asStateFlow()
 
     override fun observeExams(): Flow<List<Exam>> = examsFlow.asStateFlow()
+
+    override fun observeRafagas(): Flow<List<Rafaga>> = rafagasFlow.asStateFlow()
 
     override suspend fun refreshSpecialties(): AppResult<List<Specialty>> {
         val accessToken = requireAccessToken("cargar especialidades") ?: return authFailure("cargar especialidades")
@@ -94,6 +100,25 @@ class SupabaseContentRepositoryImpl(
         }
     }
 
+    override suspend fun refreshRafagas(): AppResult<List<Rafaga>> {
+        val accessToken = requireAccessToken("cargar rafagas") ?: return authFailure("cargar rafagas")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        return adapter.safeCall {
+            if (specialtyRowsCache.isEmpty()) specialtyRowsCache = fetchSpecialtyRows(accessToken)
+            val questionCounts = fetchRafagaQuestionCounts(accessToken).groupingBy { it.rafagaId.toString() }.eachCount()
+            val specialtyNames = specialtyRowsCache.associateBy({ it.id?.toString().orEmpty() }, { it.nombre })
+            val rows: List<RafagaRowDto> = client.get("${appConfig.supabaseUrl}/rest/v1/rafaga?select=*&deleted_at=is.null&order=created_at.desc") {
+                supabaseHeaders(accessToken)
+            }.body()
+            rows.map { row ->
+                row.toDomain(
+                    specialtyName = specialtyNames[row.specialtyId.toString()] ?: "Sin especialidad",
+                    questionCount = questionCounts[row.id?.toString().orEmpty()] ?: 0,
+                )
+            }.also { rafagasFlow.value = it }
+        }
+    }
+
     override suspend fun getExamQuestions(examId: String): AppResult<List<ExamQuestion>> {
         val accessToken = requireAccessToken("cargar preguntas") ?: return authFailure("cargar preguntas")
         ensureConfigured()?.let { return AppResult.Failure(it) }
@@ -121,6 +146,18 @@ class SupabaseContentRepositoryImpl(
                     )
                 }
             }
+        }
+    }
+
+    override suspend fun getRafagaQuestions(rafagaId: String): AppResult<List<RafagaQuestion>> {
+        val accessToken = requireAccessToken("cargar preguntas de rafaga") ?: return authFailure("cargar preguntas de rafaga")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        return adapter.safeCall {
+            val numericRafagaId = rafagaId.toIntId()
+            val questions: List<RafagaQuestionRowDto> = client.get(
+                "${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?select=*&rafaga_id=eq.$numericRafagaId&deleted_at=is.null&order=orden.asc",
+            ) { supabaseHeaders(accessToken) }.body()
+            questions.map { it.toDomain() }
         }
     }
 
@@ -265,6 +302,39 @@ class SupabaseContentRepositoryImpl(
             refreshExams()
             refreshSpecialties()
         }
+        return result
+    }
+
+    override suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga> {
+        val accessToken = requireAccessToken("guardar rafagas") ?: return authFailure("guardar rafagas")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        val result = adapter.safeCall {
+            val saved: List<RafagaRowDto> = client.post("${appConfig.supabaseUrl}/rest/v1/rafaga?on_conflict=id") {
+                supabaseHeaders(accessToken)
+                header("Prefer", "resolution=merge-duplicates,return=representation")
+                contentType(ContentType.Application.Json)
+                setBody(listOf(rafaga.toRowDto()))
+            }.body()
+            val specialtyName = specialtiesFlow.value.firstOrNull { it.id == rafaga.specialtyId }?.name ?: rafaga.specialtyName
+            saved.first().toDomain(specialtyName, rafaga.questionCount)
+        }
+        if (result is AppResult.Success) refreshRafagas()
+        return result
+    }
+
+    override suspend fun deleteRafaga(rafagaId: String): AppResult<Unit> {
+        val accessToken = requireAccessToken("borrar rafagas") ?: return authFailure("borrar rafagas")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        val result = adapter.safeCall {
+            val numericRafagaId = rafagaId.toIntId()
+            client.patch("${appConfig.supabaseUrl}/rest/v1/rafaga?id=eq.$numericRafagaId") {
+                supabaseHeaders(accessToken)
+                contentType(ContentType.Application.Json)
+                setBody(mapOf("deleted_at" to Clock.System.now().toString()))
+            }
+            Unit
+        }
+        if (result is AppResult.Success) refreshRafagas()
         return result
     }
 
@@ -416,6 +486,76 @@ class SupabaseContentRepositoryImpl(
         }
     }
 
+    override suspend fun upsertRafagaQuestion(question: RafagaQuestion): AppResult<RafagaQuestion> {
+        val accessToken = requireAccessToken("guardar preguntas de rafaga") ?: return authFailure("guardar preguntas de rafaga")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        val result = adapter.safeCall {
+            val savedRows: List<RafagaQuestionRowDto> = client.post("${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?on_conflict=id") {
+                supabaseHeaders(accessToken)
+                header("Prefer", "resolution=merge-duplicates,return=representation")
+                contentType(ContentType.Application.Json)
+                setBody(listOf(question.toRowDto()))
+            }.body()
+            savedRows.first().toDomain()
+        }
+        if (result is AppResult.Success) refreshRafagas()
+        return result
+    }
+
+    override suspend fun deleteRafagaQuestion(rafagaId: String, questionId: String): AppResult<Unit> {
+        val accessToken = requireAccessToken("borrar preguntas de rafaga") ?: return authFailure("borrar preguntas de rafaga")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        val result = adapter.safeCall {
+            client.patch("${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?id=eq.${questionId.toIntId()}&rafaga_id=eq.${rafagaId.toIntId()}") {
+                supabaseHeaders(accessToken)
+                contentType(ContentType.Application.Json)
+                setBody(mapOf("deleted_at" to Clock.System.now().toString()))
+            }
+            Unit
+        }
+        if (result is AppResult.Success) refreshRafagas()
+        return result
+    }
+
+    override suspend fun moveRafagaQuestion(
+        rafagaId: String,
+        questionId: String,
+        direction: QuestionMoveDirection,
+    ): AppResult<List<RafagaQuestion>> {
+        val accessToken = requireAccessToken("reordenar preguntas de rafaga") ?: return authFailure("reordenar preguntas de rafaga")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        return when (val current = getRafagaQuestions(rafagaId)) {
+            is AppResult.Failure -> current
+            is AppResult.Success -> {
+                val questions = current.value.sortedBy { it.sortOrder }.toMutableList()
+                val index = questions.indexOfFirst { it.id == questionId }
+                val target = when (direction) {
+                    QuestionMoveDirection.UP -> index - 1
+                    QuestionMoveDirection.DOWN -> index + 1
+                }
+                if (index == -1 || target !in questions.indices) {
+                    AppResult.Success(questions)
+                } else {
+                    val swap = questions[index]
+                    questions[index] = questions[target]
+                    questions[target] = swap
+                    val normalized = questions.mapIndexed { order, item -> item.copy(sortOrder = order) }
+                    val result = adapter.safeCall {
+                        client.post("${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?on_conflict=id") {
+                            supabaseHeaders(accessToken)
+                            header("Prefer", "resolution=merge-duplicates,return=minimal")
+                            contentType(ContentType.Application.Json)
+                            setBody(normalized.map { it.toRowDto() })
+                        }
+                        normalized
+                    }
+                    if (result is AppResult.Success) refreshRafagas()
+                    result
+                }
+            }
+        }
+    }
+
     override suspend fun uploadResource(
         questionId: String,
         resourceId: String,
@@ -525,6 +665,12 @@ class SupabaseContentRepositoryImpl(
         }.body()
     }
 
+    private suspend fun fetchRafagaQuestionCounts(accessToken: String): List<RafagaQuestionCountRowDto> {
+        return client.get("${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?select=id,rafaga_id&deleted_at=is.null") {
+            supabaseHeaders(accessToken)
+        }.body()
+    }
+
     private suspend fun fetchStorageObjects(accessToken: String): List<StorageObjectRowDto> {
         return runCatching {
             val bucket = appConfig.supabaseBucketExamResources.toSafePostgrestValue()
@@ -602,3 +748,93 @@ private data class StorageObjectRowDto(
     @SerialName("updated_at")
     val updatedAt: String? = null,
 )
+
+@Serializable
+private data class RafagaRowDto(
+    val id: Int? = null,
+    val titulo: String,
+    @SerialName("precio_tickets") val priceTickets: Int = 0,
+    @SerialName("especialidad_id") val specialtyId: Int,
+    val estado: String = "draft",
+    @SerialName("publicar_desde") val publishFrom: String? = null,
+    @SerialName("published_at") val publishedAt: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+)
+
+@Serializable
+private data class RafagaQuestionRowDto(
+    val id: Int? = null,
+    @SerialName("rafaga_id") val rafagaId: Int,
+    val enunciado: String,
+    val orden: Int = 0,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
+)
+
+@Serializable
+private data class RafagaQuestionCountRowDto(
+    val id: Int? = null,
+    @SerialName("rafaga_id") val rafagaId: Int,
+)
+
+private fun RafagaRowDto.toDomain(specialtyName: String, questionCount: Int) = Rafaga(
+    id = id?.toString().orEmpty(),
+    specialtyId = specialtyId.toString(),
+    specialtyName = specialtyName,
+    title = titulo,
+    priceTickets = priceTickets,
+    status = estado.toExamStatus(),
+    publishFrom = publishFrom.toInstantOrNull(),
+    publishedAt = publishedAt.toInstantOrNull(),
+    questionCount = questionCount,
+    createdAt = createdAt.toInstantOrNow(),
+    updatedAt = updatedAt.toInstantOrNow(),
+    deletedAt = deletedAt.toInstantOrNull(),
+)
+
+private fun Rafaga.toRowDto() = RafagaRowDto(
+    id = id.toIntOrNull(),
+    titulo = title,
+    priceTickets = priceTickets,
+    specialtyId = specialtyId.toIntOrNull() ?: 1,
+    estado = status.name.lowercase(),
+    publishFrom = publishFrom?.toString(),
+    publishedAt = publishedAt?.toString(),
+    updatedAt = Clock.System.now().toString(),
+)
+
+private fun RafagaQuestionRowDto.toDomain() = RafagaQuestion(
+    id = id?.toString().orEmpty(),
+    rafagaId = rafagaId.toString(),
+    statement = enunciado,
+    sortOrder = orden,
+    createdAt = createdAt.toInstantOrNow(),
+    updatedAt = updatedAt.toInstantOrNow(),
+    deletedAt = deletedAt.toInstantOrNull(),
+)
+
+private fun RafagaQuestion.toRowDto() = RafagaQuestionRowDto(
+    id = id.toIntOrNull(),
+    rafagaId = rafagaId.toIntOrNull() ?: 1,
+    enunciado = statement,
+    orden = sortOrder,
+    updatedAt = Clock.System.now().toString(),
+)
+
+private fun String.toExamStatus() = when (lowercase()) {
+    "published" -> ExamStatus.PUBLISHED
+    "archived" -> ExamStatus.ARCHIVED
+    else -> ExamStatus.DRAFT
+}
+
+private fun String?.toInstantOrNull(): Instant? = this?.let { value ->
+    runCatching { Instant.parse(value) }.getOrNull()
+}
+
+private fun String?.toInstantOrNow(): Instant {
+    return this?.let { value -> runCatching { Instant.parse(value) }.getOrNull() }
+        ?: Instant.parse(Clock.System.now().toString())
+}

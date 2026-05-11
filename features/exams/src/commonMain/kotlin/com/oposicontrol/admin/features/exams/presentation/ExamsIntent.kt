@@ -4,18 +4,28 @@ sealed interface ExamsIntent {
     data object RefreshAll : ExamsIntent
     data object RefreshResourceAudit : ExamsIntent
     data object CreateNew : ExamsIntent
+    data object CreateRafaga : ExamsIntent
     data object SaveExam : ExamsIntent
+    data object SaveRafaga : ExamsIntent
     data object DeleteSelectedExam : ExamsIntent
+    data object DeleteSelectedRafaga : ExamsIntent
     data object CreateSpecialty : ExamsIntent
     data object SaveSpecialty : ExamsIntent
     data object DeleteSelectedSpecialty : ExamsIntent
     data object CreateQuestion : ExamsIntent
+    data object CreateRafagaQuestion : ExamsIntent
     data object SaveQuestion : ExamsIntent
+    data object SaveRafagaQuestion : ExamsIntent
     data object DeleteSelectedQuestion : ExamsIntent
+    data object DeleteSelectedRafagaQuestion : ExamsIntent
     data class SelectExam(val id: String) : ExamsIntent
+    data class SelectRafaga(val id: String) : ExamsIntent
     data class SelectQuestion(val id: String) : ExamsIntent
+    data class SelectRafagaQuestion(val id: String) : ExamsIntent
     data class MoveQuestionUp(val id: String) : ExamsIntent
     data class MoveQuestionDown(val id: String) : ExamsIntent
+    data class MoveRafagaQuestionUp(val id: String) : ExamsIntent
+    data class MoveRafagaQuestionDown(val id: String) : ExamsIntent
     data class UpdateSearch(val value: String) : ExamsIntent
     data class UpdateStatusFilter(val value: String) : ExamsIntent
     data class UpdateQuestionResourceFilter(val value: String) : ExamsIntent

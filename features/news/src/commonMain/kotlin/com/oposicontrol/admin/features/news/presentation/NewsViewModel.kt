@@ -23,6 +23,7 @@ import com.oposicontrol.admin.domain.usecase.news.ObserveNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.PublishNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.RefreshNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.ScheduleNewsUseCase
+import com.oposicontrol.admin.domain.usecase.news.UploadNewsAssetUseCase
 import com.oposicontrol.admin.domain.usecase.news.UpsertNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.ValidateNewsDraftUseCase
 import kotlinx.coroutines.flow.collectLatest
@@ -42,6 +43,7 @@ class NewsViewModel(
     private val validateNewsDraftUseCase: ValidateNewsDraftUseCase,
     private val publishNewsUseCase: PublishNewsUseCase,
     private val scheduleNewsUseCase: ScheduleNewsUseCase,
+    private val uploadNewsAssetUseCase: UploadNewsAssetUseCase,
     private val archiveNewsUseCase: ArchiveNewsUseCase,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<NewsState, NewsIntent>(
@@ -69,6 +71,7 @@ class NewsViewModel(
 
     override suspend fun handleIntent(intent: NewsIntent) {
         when (intent) {
+            NewsIntent.Refresh -> refreshNewsUseCase()
             NewsIntent.CreateNew -> createNew()
             NewsIntent.Save -> saveDraft()
             NewsIntent.SaveDraft -> saveDraft()
@@ -78,22 +81,43 @@ class NewsViewModel(
             NewsIntent.ValidateDraft -> validateCurrentDraft()
             NewsIntent.DeleteSelected -> deleteSelected()
             NewsIntent.SelectBackground -> updateAndValidate { it.copy(selectedTarget = NewsEditorSelection.BACKGROUND, selectedLayerId = null) }
+            NewsIntent.AddTitleLayer -> addTitleLayer()
             NewsIntent.AddLayer -> addLayer()
             is NewsIntent.AddLayerWithImage -> addLayerWithImage(intent.uri)
             is NewsIntent.Select -> select(intent.id)
             is NewsIntent.SelectBackgroundFile -> updateAndValidate {
-                val backgroundName = intent.suggestedName.substringBeforeLast('.')
+                val titleLayers = it.editorLayers.withSingleTitleLayer(
+                    title = it.editorTitle.ifBlank { "Titulo de noticia" },
+                    canvasWidth = it.editorCanvasWidth,
+                    canvasHeight = it.editorCanvasHeight,
+                )
                 it.copy(
-                    editorBackgroundType = backgroundName.ifBlank { it.editorBackgroundType },
                     editorBackgroundPath = intent.uri,
                     editorBackgroundAssetStatus = if (intent.uri.startsWith("http") || intent.uri.startsWith("news/")) "linked" else "local",
+                    editorLayers = titleLayers,
                     selectedTarget = NewsEditorSelection.BACKGROUND,
+                    selectedLayerId = titleLayers.firstOrNull { layer -> layer.kind.toLayerKind() == NewsLayerKind.TITLE }?.id,
                     actionState = UiAsync.Idle,
                 )
             }
             is NewsIntent.SelectLayer -> updateState { it.copy(selectedTarget = NewsEditorSelection.LAYER, selectedLayerId = intent.id) }
             is NewsIntent.UpdateBackgroundType -> updateAndValidate { it.copy(editorBackgroundType = intent.value) }
-            is NewsIntent.UpdateBackgroundPath -> updateAndValidate { it.copy(editorBackgroundPath = intent.value) }
+            is NewsIntent.UpdateBackgroundPath -> updateAndValidate {
+                val nextLayers = if (intent.value.isBlank()) {
+                    it.editorLayers
+                } else {
+                    it.editorLayers.withSingleTitleLayer(
+                        title = it.editorTitle.ifBlank { "Titulo de noticia" },
+                        canvasWidth = it.editorCanvasWidth,
+                        canvasHeight = it.editorCanvasHeight,
+                    )
+                }
+                it.copy(
+                    editorBackgroundPath = intent.value,
+                    editorBackgroundAssetStatus = if (intent.value.isLocalAssetPath()) "local" else "linked",
+                    editorLayers = nextLayers,
+                )
+            }
             is NewsIntent.UpdateImagePath -> updateAndValidate { it.copy(editorImagePath = intent.value) }
             is NewsIntent.RemoveLayer -> removeLayer(intent.id)
             is NewsIntent.MoveLayerDown -> moveLayer(intent.id, -1)
@@ -141,7 +165,14 @@ class NewsViewModel(
                 publish()
             }
             is NewsIntent.UpdateText -> updateAndValidate { it.copy(editorText = intent.value) }
-            is NewsIntent.UpdateTitle -> updateAndValidate { it.copy(editorTitle = intent.value) }
+            is NewsIntent.UpdateTitle -> updateAndValidate {
+                it.copy(
+                    editorTitle = intent.value,
+                    editorLayers = it.editorLayers.map { layer ->
+                        if (layer.kind.toLayerKind() == NewsLayerKind.TITLE) layer.copy(content = intent.value.ifBlank { layer.content }) else layer
+                    },
+                )
+            }
             is NewsIntent.UpdateType -> updateAndValidate { it.copy(editorType = intent.value) }
             is NewsIntent.UpdateTypeFilter -> {
                 updateState { it.copy(typeFilter = intent.value) }
@@ -151,8 +182,9 @@ class NewsViewModel(
     }
 
     private fun createNew() {
+        val localId = "local-${randomUuid()}"
         val next = currentState().copy(
-            selectedId = null,
+            selectedId = localId,
             editorTitle = "",
             editorBackgroundType = "SKY",
             editorBackgroundPath = "",
@@ -238,11 +270,18 @@ class NewsViewModel(
                 (specialtyFilter == "all" || item.specialty.lowercase() == specialtyFilter) &&
                 (typeFilter == "all" || item.type.lowercase() == typeFilter)
         }
-        updateState { it.copy(news = if (filtered.isEmpty()) UiAsync.Empty else UiAsync.Success(filtered)) }
+        val published = filtered.filter { it.isPublishedRemote() }
+        val localOrDraft = filtered.filterNot { it.isPublishedRemote() }
+        updateState {
+            it.copy(
+                news = if (filtered.isEmpty()) UiAsync.Empty else UiAsync.Success(filtered),
+                publishedNews = if (published.isEmpty()) UiAsync.Empty else UiAsync.Success(published),
+                localNews = if (localOrDraft.isEmpty()) UiAsync.Empty else UiAsync.Success(localOrDraft),
+            )
+        }
     }
 
     private suspend fun saveDraft() {
-        rememberCurrentDraft()
         val draft = currentState().toDesignDraft()
         val report = validateNewsDraftUseCase(draft)
         updateState { it.copy(validationReport = report) }
@@ -250,16 +289,15 @@ class NewsViewModel(
             updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("El borrador no tiene contenido suficiente."))) }
             return
         }
-        val news = currentState().toNewsItem().copy(status = "draft")
-        updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = upsertNewsUseCase(news.toDomain())) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> {
-                analyticsTracker.trackAction("news_save_draft", mapOf("news_id" to result.value.id, "layers" to result.value.layers.size.toString()))
-                rememberSavedArticle(currentState().toNewsItem().copy(id = result.value.id, status = result.value.status))
-                updateState { it.copy(selectedId = result.value.id, editorStatus = result.value.status, actionState = UiAsync.Success(Unit)) }
-            }
-        }
+        val localId = currentState().selectedId ?: "local-${randomUuid()}"
+        val localState = currentState().copy(
+            selectedId = localId,
+            editorStatus = "draft",
+            actionState = UiAsync.Success(Unit),
+        )
+        updateState { localState }
+        rememberCurrentDraft(localState)
+        analyticsTracker.trackAction("news_save_local_draft", mapOf("news_id" to localId, "layers" to localState.editorLayers.size.toString()))
     }
 
     private suspend fun publishCurrent() {
@@ -271,12 +309,21 @@ class NewsViewModel(
     }
 
     private suspend fun archiveCurrent() {
+        val previousId = currentState().selectedId
+        if (previousId?.startsWith("local-") == true) {
+            localDrafts.remove(previousId)
+            rebuildNewsFromLocalAndRemote()
+            createNew()
+            updateState { it.copy(actionState = UiAsync.Success(Unit)) }
+            return
+        }
         val article = currentState().toNewsItem().toDomain()
         updateState { it.copy(actionState = UiAsync.Loading) }
         when (val result = archiveNewsUseCase(article)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("news_archive", mapOf("news_id" to result.value.id))
+                previousId?.takeIf { it.startsWith("local-") }?.let { localDrafts.remove(it) }
                 rememberSavedArticle(currentState().toNewsItem().copy(id = result.value.id, status = result.value.status))
                 updateState { it.copy(selectedId = result.value.id, editorStatus = result.value.status, actionState = UiAsync.Success(Unit)) }
             }
@@ -287,16 +334,21 @@ class NewsViewModel(
         actionName: String,
         persist: suspend (NewsArticle, NewsDesignDraft) -> AppResult<NewsArticle>,
     ) {
-        val draft = currentState().toDesignDraft()
+        updateState { it.copy(actionState = UiAsync.Loading) }
+        val prepared = prepareAssetsForRemotePublish() ?: return
+        val draft = prepared.toDesignDraft()
         val report = validateNewsDraftUseCase(draft)
         updateState { it.copy(validationReport = report) }
-        val article = currentState().toNewsItem().toDomain()
-        rememberCurrentDraft()
-        updateState { it.copy(actionState = UiAsync.Loading) }
+        val article = prepared.toNewsItem().copy(
+            id = prepared.selectedId.orEmpty().takeUnless { it.startsWith("local-") }.orEmpty(),
+            isLocalDraft = false,
+        ).toDomain()
+        val previousId = currentState().selectedId
         when (val result = persist(article, draft)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction(actionName, mapOf("news_id" to result.value.id, "layers" to result.value.layers.size.toString()))
+                previousId?.takeIf { it.startsWith("local-") }?.let { localDrafts.remove(it) }
                 rememberSavedArticle(currentState().toNewsItem().copy(id = result.value.id, status = result.value.status))
                 updateState { it.copy(selectedId = result.value.id, editorStatus = result.value.status, actionState = UiAsync.Success(Unit)) }
             }
@@ -305,6 +357,14 @@ class NewsViewModel(
 
     private suspend fun deleteSelected() {
         val id = currentState().selectedId ?: return
+        if (id.startsWith("local-")) {
+            localDrafts.remove(id)
+            if (localNewDraft?.id == id) localNewDraft = null
+            rebuildNewsFromLocalAndRemote()
+            createNew()
+            updateState { it.copy(actionState = UiAsync.Success(Unit)) }
+            return
+        }
         updateState { it.copy(actionState = UiAsync.Loading) }
         when (val result = deleteNewsUseCase(id)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
@@ -324,10 +384,33 @@ class NewsViewModel(
         updateAndValidate { it.copy(editorLayers = (layers + layer).normalizedLayerOrder(), selectedTarget = NewsEditorSelection.LAYER, selectedLayerId = layer.id) }
     }
 
+    private fun addTitleLayer() {
+        updateAndValidate { state ->
+            val layers = state.editorLayers.withSingleTitleLayer(
+                title = state.editorTitle.ifBlank { "Titulo de noticia" },
+                canvasWidth = state.editorCanvasWidth,
+                canvasHeight = state.editorCanvasHeight,
+            )
+            state.copy(
+                editorLayers = layers,
+                selectedTarget = NewsEditorSelection.LAYER,
+                selectedLayerId = layers.firstOrNull { it.kind.toLayerKind() == NewsLayerKind.TITLE }?.id,
+            )
+        }
+    }
+
     private fun addLayerWithImage(uri: String) {
         val layers = currentState().editorLayers
-        val layer = NewsLayerDraft(randomUuid(), "Imagen ${layers.size + 1}", "imagen", uri, 420, 110 + (layers.size * 12), 240, 180, 100, visible = true, sortOrder = layers.size)
-        updateAndValidate { it.copy(editorLayers = (layers + layer).normalizedLayerOrder(), selectedTarget = NewsEditorSelection.LAYER, selectedLayerId = layer.id) }
+        val layer = NewsLayerDraft(randomUuid(), "Imagen fondo ${layers.count { it.kind.toLayerKind() == NewsLayerKind.IMAGE } + 1}", "imagen", uri, 0, 0, NewsCanvasDefaultWidth, NewsCanvasDefaultHeight, 86, visible = true, sortOrder = 0)
+        updateAndValidate {
+            it.copy(
+                editorImagePath = uri,
+                editorImageAssetStatus = if (uri.startsWith("http") || uri.startsWith("news/")) "linked" else "local",
+                editorLayers = (listOf(layer) + layers.map { existing -> existing.copy(sortOrder = existing.sortOrder + 1) }).normalizedLayerOrder(),
+                selectedTarget = NewsEditorSelection.LAYER,
+                selectedLayerId = layer.id,
+            )
+        }
     }
 
     private fun removeLayer(id: String) {
@@ -427,7 +510,9 @@ class NewsViewModel(
     }
 
     private fun rememberCurrentDraft(state: NewsState = currentState()) {
-        val item = state.toNewsItem()
+        val localId = state.selectedId?.ifBlank { null } ?: "local-${randomUuid()}"
+        val item = state.copy(selectedId = localId).toNewsItem().copy(isLocalDraft = true)
+        if (state.selectedId.isNullOrBlank()) updateState { it.copy(selectedId = localId) }
         if (item.id.isBlank()) {
             localNewDraft = item
         } else {
@@ -440,16 +525,69 @@ class NewsViewModel(
 
     private fun rememberSavedArticle(item: NewsItem) {
         localNewDraft = null
-        localDrafts[item.id] = item
+        localDrafts.remove(item.id)
+        remoteNews = listOf(item.copy(isLocalDraft = false)) + remoteNews.filterNot { it.id == item.id }
         isEditingLocalDraft = false
         rebuildNewsFromLocalAndRemote()
         publish()
     }
 
     private fun rebuildNewsFromLocalAndRemote() {
-        val patched = remoteNews.map { remote -> localDrafts[remote.id] ?: remote }
+        val patched = remoteNews.map { remote -> localDrafts[remote.id] ?: remote.copy(isLocalDraft = false) }
         val localOnly = localDrafts.values.filter { draft -> patched.none { it.id == draft.id } }
-        allNews = localOnly + patched
+        allNews = localOnly.map { it.copy(isLocalDraft = true) } + patched + listOfNotNull(localNewDraft?.copy(isLocalDraft = true))
+    }
+
+    private suspend fun prepareAssetsForRemotePublish(): NewsState? {
+        var prepared = currentState()
+        val replacements = linkedMapOf<String, String>()
+        suspend fun uploadIfLocal(path: String): String? {
+            if (!path.isLocalAssetPath()) return path
+            replacements[path]?.let { return it }
+            return when (val result = uploadNewsAssetUseCase(path)) {
+                is AppResult.Failure -> {
+                    updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+                    null
+                }
+                is AppResult.Success -> result.value.publicUrl.ifBlank { result.value.path }.also { replacements[path] = it }
+            }
+        }
+        val backgroundPath = if (prepared.editorBackgroundPath.isBlank()) {
+            ""
+        } else {
+            uploadIfLocal(prepared.editorBackgroundPath) ?: return null
+        }
+        val imagePath = if (prepared.editorImagePath.isBlank()) {
+            ""
+        } else {
+            uploadIfLocal(prepared.editorImagePath) ?: return null
+        }
+        val layers = prepared.editorLayers.map { layer ->
+            if (layer.kind.toLayerKind() == NewsLayerKind.IMAGE && layer.content.isLocalAssetPath()) {
+                val uploaded = uploadIfLocal(layer.content) ?: return null
+                layer.copy(content = uploaded)
+            } else {
+                layer
+            }
+        }
+        prepared = prepared.copy(
+            editorBackgroundPath = backgroundPath,
+            editorImagePath = imagePath,
+            editorBackgroundAssetStatus = when {
+                backgroundPath.isBlank() -> "linked"
+                backgroundPath.isLocalAssetPath() -> prepared.editorBackgroundAssetStatus
+                else -> "uploaded"
+            },
+            editorImageAssetStatus = when {
+                imagePath.isBlank() -> "linked"
+                imagePath.isLocalAssetPath() -> prepared.editorImageAssetStatus
+                else -> "uploaded"
+            },
+            editorLayers = layers,
+        )
+        updateState { prepared }
+        rememberCurrentDraft(prepared)
+        return prepared
     }
 }
 
@@ -465,6 +603,37 @@ private fun List<NewsLayerDraft>.normalizedLayerOrder(): List<NewsLayerDraft> {
     return this.sortedBy { it.sortOrder }.mapIndexed { index, layer -> layer.copy(sortOrder = index) }
 }
 
+private fun List<NewsLayerDraft>.withSingleTitleLayer(
+    title: String,
+    canvasWidth: Int,
+    canvasHeight: Int,
+): List<NewsLayerDraft> {
+    val titleLayer = firstOrNull { it.kind.toLayerKind() == NewsLayerKind.TITLE }
+    val nonTitle = filterNot { it.kind.toLayerKind() == NewsLayerKind.TITLE }
+    val normalizedTitle = (titleLayer ?: NewsLayerDraft(
+        id = randomUuid(),
+        name = "Titulo",
+        kind = "titulo",
+        content = title.ifBlank { "Titulo de noticia" },
+        x = 48,
+        y = 42,
+        width = 460,
+        height = 92,
+        opacity = 100,
+        fontFamily = "sans",
+        textColor = "#FFFFFF",
+        visible = true,
+        sortOrder = nonTitle.size,
+    )).copy(
+        name = titleLayer?.name?.ifBlank { "Titulo" } ?: "Titulo",
+        kind = "titulo",
+        content = title.ifBlank { titleLayer?.content.orEmpty().ifBlank { "Titulo de noticia" } },
+        visible = true,
+        sortOrder = nonTitle.size,
+    )
+    return (nonTitle + normalizedTitle).map { it.coerceInsideCanvas(canvasWidth, canvasHeight) }.normalizedLayerOrder()
+}
+
 private fun NewsState.toNewsItem() = NewsItem(
     id = selectedId.orEmpty(),
     title = editorTitle,
@@ -477,6 +646,7 @@ private fun NewsState.toNewsItem() = NewsItem(
     text = editorText,
     imagePath = editorImagePath.ifBlank { null },
     layers = editorLayers.normalizedLayerOrder(),
+    isLocalDraft = selectedId?.startsWith("local-") == true,
 )
 
 private fun NewsState.toDesignDraft() = NewsDesignDraft(
@@ -609,6 +779,7 @@ private fun NewsArticle.toUi() = NewsItem(
     text = text,
     imagePath = imagePath,
     layers = layers.map { it.toUi() },
+    isLocalDraft = false,
 )
 
 private fun NewsItem.toDomain() = NewsArticle(
@@ -636,4 +807,12 @@ private fun String.toBoundedInt(fallback: Int, min: Int, max: Int): Int = toIntO
 private fun Int.normalizedDegrees(): Int {
     val mod = this % 360
     return if (mod < 0) mod + 360 else mod
+}
+
+private fun String.isLocalAssetPath(): Boolean {
+    return startsWith("content://", ignoreCase = true) || startsWith("file://", ignoreCase = true)
+}
+
+private fun NewsItem.isPublishedRemote(): Boolean {
+    return status.equals("published", ignoreCase = true) && !isLocalDraft && !id.startsWith("local-")
 }

@@ -1,12 +1,22 @@
 package com.oposicontrol.admin.app.root
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import com.oposicontrol.admin.core.common.config.AppConfig
+import com.oposicontrol.admin.features.exams.presentation.ExamsIntent
 import com.oposicontrol.admin.features.exams.presentation.ExamsViewModel
 import com.oposicontrol.admin.features.exams.presentation.MobileContentScreen
+import com.oposicontrol.admin.features.news.presentation.NewsIntent
 import com.oposicontrol.admin.features.news.presentation.NewsViewModel
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
 @Composable
@@ -17,14 +27,34 @@ fun MobileContentRoot(
     val newsViewModel: NewsViewModel = koinInject()
     val diagnosticsRepository: ConnectionDiagnosticsRepository = koinInject()
     val tagSearchRepository: TagSearchRepository = koinInject()
+    val scope = rememberCoroutineScope()
+    var diagnosticsRefreshSignal by remember { mutableIntStateOf(0) }
+    var backendRestarting by remember { mutableStateOf(false) }
+
     MobileContentScreen(
         examsViewModel = examsViewModel,
         newsViewModel = newsViewModel,
         tagSearchRepository = tagSearchRepository,
+        backendActionLabel = "Reinicio",
+        backendActionInProgress = backendRestarting,
+        onRestartBackend = {
+            if (backendRestarting) return@MobileContentScreen
+            scope.launch {
+                backendRestarting = true
+                diagnosticsRepository.requestBackendRestart()
+                delay(2_400)
+                diagnosticsRefreshSignal += 1
+                examsViewModel.dispatch(ExamsIntent.RefreshAll)
+                newsViewModel.dispatch(NewsIntent.Refresh)
+                delay(800)
+                backendRestarting = false
+            }
+        },
         connectionDiagnostics = {
             ConnectionDiagnosticsPanel(
                 appConfig = appConfig,
                 diagnosticsRepository = diagnosticsRepository,
+                refreshSignal = diagnosticsRefreshSignal,
             )
         },
     )

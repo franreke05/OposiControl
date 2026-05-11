@@ -16,6 +16,8 @@ import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceAudit
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.Rafaga
+import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import io.ktor.client.HttpClient
@@ -30,6 +32,7 @@ import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
@@ -52,10 +55,13 @@ class KtorContentRepositoryImpl(
 ) : ContentRepository {
     private val specialtiesFlow = MutableStateFlow<List<Specialty>>(emptyList())
     private val examsFlow = MutableStateFlow<List<Exam>>(emptyList())
+    private val rafagasFlow = MutableStateFlow<List<Rafaga>>(emptyList())
 
     override fun observeSpecialties(): Flow<List<Specialty>> = specialtiesFlow.asStateFlow()
 
     override fun observeExams(): Flow<List<Exam>> = examsFlow.asStateFlow()
+
+    override fun observeRafagas(): Flow<List<Rafaga>> = rafagasFlow.asStateFlow()
 
     override suspend fun refreshSpecialties() = adapter.safeCall {
         val response = client.get("${contentUrl()}/especialidades") {
@@ -84,9 +90,29 @@ class KtorContentRepositoryImpl(
             .also { examsFlow.value = it }
     }
 
+    override suspend fun refreshRafagas() = adapter.safeCall {
+        val specialtiesById = specialtiesFlow.value.associateBy { it.id }
+        val response = client.get("${contentUrl()}/rafaga") {
+            expectSuccess = false
+            backendHeaders()
+        }
+        if (!response.status.isSuccess()) {
+            error("backend ${response.status.value} /content/rafaga: ${response.bodyAsText().take(200)}")
+        }
+        response.body<List<RafagaDto>>()
+            .map { it.toDomain(specialtiesById[it.especialidadId]?.name.orEmpty()) }
+            .also { rafagasFlow.value = it }
+    }
+
     override suspend fun getExamQuestions(examId: String) = adapter.safeCall {
         client.get("${contentUrl()}/solucionarios/$examId/preguntas") { backendHeaders() }
             .body<List<PreguntaDto>>()
+            .map { it.toDomain() }
+    }
+
+    override suspend fun getRafagaQuestions(rafagaId: String) = adapter.safeCall {
+        client.get("${contentUrl()}/rafaga/$rafagaId/preguntas") { backendHeaders() }
+            .body<List<RafagaPreguntaDto>>()
             .map { it.toDomain() }
     }
 
@@ -108,6 +134,7 @@ class KtorContentRepositoryImpl(
 
     override suspend fun deleteSpecialty(specialtyId: String) = adapter.safeCall {
         client.delete("${contentUrl()}/especialidades/$specialtyId") { backendHeaders() }
+            .requireBackendSuccess("/content/especialidades/$specialtyId")
         refreshSpecialties()
         Unit
     }
@@ -126,7 +153,28 @@ class KtorContentRepositoryImpl(
 
     override suspend fun deleteExam(examId: String) = adapter.safeCall {
         client.delete("${contentUrl()}/solucionarios/$examId") { backendHeaders() }
+            .requireBackendSuccess("/content/solucionarios/$examId")
         refreshExams()
+        refreshSpecialties()
+        Unit
+    }
+
+    override suspend fun upsertRafaga(rafaga: Rafaga) = adapter.safeCall {
+        val saved: RafagaDto = client.requestWithBody(
+            url = "${contentUrl()}/rafaga",
+            create = rafaga.id.isBlank(),
+            body = rafaga.toDto(),
+        )
+        saved.toDomain(rafaga.specialtyName).also {
+            refreshRafagas()
+            refreshSpecialties()
+        }
+    }
+
+    override suspend fun deleteRafaga(rafagaId: String) = adapter.safeCall {
+        client.delete("${contentUrl()}/rafaga/$rafagaId") { backendHeaders() }
+            .requireBackendSuccess("/content/rafaga/$rafagaId")
+        refreshRafagas()
         refreshSpecialties()
         Unit
     }
@@ -153,6 +201,7 @@ class KtorContentRepositoryImpl(
 
     override suspend fun deleteQuestion(examId: String, questionId: String) = adapter.safeCall {
         client.delete("${contentUrl()}/solucionarios/$examId/preguntas/$questionId") { backendHeaders() }
+            .requireBackendSuccess("/content/solucionarios/$examId/preguntas/$questionId")
         refreshExams()
         Unit
     }
@@ -182,6 +231,49 @@ class KtorContentRepositoryImpl(
             contentType(ContentType.Application.Json)
             setBody(OrderDto(ids))
         }.body<List<PreguntaDto>>().map { it.toDomain() }
+    }
+
+    override suspend fun upsertRafagaQuestion(question: RafagaQuestion) = adapter.safeCall {
+        val saved: RafagaPreguntaDto = client.requestWithBody(
+            url = "${contentUrl()}/rafaga/${question.rafagaId}/preguntas",
+            create = question.id.isBlank(),
+            body = question.toDto(),
+        )
+        saved.toDomain().also { refreshRafagas() }
+    }
+
+    override suspend fun deleteRafagaQuestion(rafagaId: String, questionId: String) = adapter.safeCall {
+        client.delete("${contentUrl()}/rafaga/$rafagaId/preguntas/$questionId") { backendHeaders() }
+            .requireBackendSuccess("/content/rafaga/$rafagaId/preguntas/$questionId")
+        refreshRafagas()
+        Unit
+    }
+
+    override suspend fun moveRafagaQuestion(
+        rafagaId: String,
+        questionId: String,
+        direction: QuestionMoveDirection,
+    ) = adapter.safeCall {
+        val current = when (val result = getRafagaQuestions(rafagaId)) {
+            is AppResult.Failure -> throw IllegalStateException(result.error.message)
+            is AppResult.Success -> result.value.sortedBy { it.sortOrder }
+        }
+        val index = current.indexOfFirst { it.id == questionId }
+        val target = when (direction) {
+            QuestionMoveDirection.UP -> index - 1
+            QuestionMoveDirection.DOWN -> index + 1
+        }
+        if (index == -1 || target !in current.indices) return@safeCall current
+        val ids = current.toMutableList().also {
+            val item = it[index]
+            it[index] = it[target]
+            it[target] = item
+        }.map { it.id }
+        client.put("${contentUrl()}/rafaga/$rafagaId/preguntas/order") {
+            backendHeaders()
+            contentType(ContentType.Application.Json)
+            setBody(OrderDto(ids))
+        }.body<List<RafagaPreguntaDto>>().map { it.toDomain() }
     }
 
     override suspend fun uploadResource(
@@ -232,10 +324,13 @@ class KtorContentRepositoryImpl(
         }
         require(asset.bytes.size <= COVER_MAX_BYTES) { "La portada supera el limite de 10 MB." }
         require(asset.mimeType?.startsWith("image/") == true) { "La portada debe ser una imagen." }
-        client.post("${contentUrl()}/solucionarios/$examId/portada") {
+        val response = client.post("${contentUrl()}/solucionarios/$examId/portada") {
+            expectSuccess = false
             backendHeaders()
             setBody(asset.toMultipartBody())
-        }.body<SolucionarioDto>().toDomain(
+        }
+        response.requireBackendSuccess("/content/solucionarios/$examId/portada")
+        response.body<SolucionarioDto>().toDomain(
             specialtiesFlow.value.firstOrNull { it.id == examsFlow.value.firstOrNull { exam -> exam.id == examId }?.specialtyId }?.name.orEmpty(),
         ).also { saved ->
             examsFlow.value = examsFlow.value.map { if (it.id == saved.id) saved else it }
@@ -248,18 +343,28 @@ class KtorContentRepositoryImpl(
         create: Boolean,
         body: B,
     ): T {
-        return if (create) {
+        val response = if (create) {
             post(url) {
+                expectSuccess = false
                 backendHeaders()
                 contentType(ContentType.Application.Json)
                 setBody(body)
-            }.body()
+            }
         } else {
             put(url) {
+                expectSuccess = false
                 backendHeaders()
                 contentType(ContentType.Application.Json)
                 setBody(body)
-            }.body()
+            }
+        }
+        response.requireBackendSuccess(url.substringAfter(contentUrl(), "/content"))
+        return response.body()
+    }
+
+    private suspend fun HttpResponse.requireBackendSuccess(endpoint: String) {
+        if (!status.isSuccess()) {
+            error("backend ${status.value} $endpoint: ${bodyAsText().take(200)}")
         }
     }
 
@@ -326,6 +431,21 @@ private data class SolucionarioDto(
 )
 
 @Serializable
+private data class RafagaDto(
+    val id: String = "",
+    val titulo: String,
+    val especialidadId: String,
+    val precioTickets: Int = 0,
+    val estado: String = "draft",
+    val publicarDesde: String? = null,
+    val publishedAt: String? = null,
+    val questionCount: Int = 0,
+    val createdAt: String = "",
+    val updatedAt: String = "",
+    val deletedAt: String? = null,
+)
+
+@Serializable
 private data class PreguntaDto(
     val id: String = "",
     val solucionarioId: String = "",
@@ -334,6 +454,17 @@ private data class PreguntaDto(
     val orden: Int = 0,
     val opciones: List<OpcionDto> = emptyList(),
     val recursos: List<RecursoPreguntaDto> = emptyList(),
+)
+
+@Serializable
+private data class RafagaPreguntaDto(
+    val id: String = "",
+    val rafagaId: String = "",
+    val enunciado: String,
+    val orden: Int = 0,
+    val createdAt: String = "",
+    val updatedAt: String = "",
+    val deletedAt: String? = null,
 )
 
 @Serializable
@@ -400,6 +531,21 @@ private fun SolucionarioDto.toDomain(specialtyName: String) = Exam(
     deletedAt = deletedAt.toInstantOrNull(),
 )
 
+private fun RafagaDto.toDomain(specialtyName: String) = Rafaga(
+    id = id,
+    specialtyId = especialidadId,
+    specialtyName = specialtyName,
+    title = titulo,
+    priceTickets = precioTickets,
+    status = estado.toExamStatus(),
+    publishFrom = publicarDesde.toInstantOrNull(),
+    publishedAt = publishedAt.toInstantOrNull(),
+    questionCount = questionCount,
+    createdAt = createdAt.toInstantOrNow(),
+    updatedAt = updatedAt.toInstantOrNow(),
+    deletedAt = deletedAt.toInstantOrNull(),
+)
+
 private fun Exam.toDto() = SolucionarioDto(
     id = id,
     titulo = title,
@@ -418,6 +564,19 @@ private fun Exam.toDto() = SolucionarioDto(
     deletedAt = deletedAt?.toString(),
 )
 
+private fun Rafaga.toDto() = RafagaDto(
+    id = id,
+    titulo = title,
+    especialidadId = specialtyId,
+    precioTickets = priceTickets,
+    estado = status.name.lowercase(),
+    publicarDesde = publishFrom?.toString(),
+    publishedAt = publishedAt?.toString(),
+    createdAt = createdAt.toString(),
+    updatedAt = updatedAt.toString(),
+    deletedAt = deletedAt?.toString(),
+)
+
 private fun PreguntaDto.toDomain() = ExamQuestion(
     id = id,
     examId = solucionarioId,
@@ -430,6 +589,16 @@ private fun PreguntaDto.toDomain() = ExamQuestion(
     updatedAt = nowInstant(),
 )
 
+private fun RafagaPreguntaDto.toDomain() = RafagaQuestion(
+    id = id,
+    rafagaId = rafagaId,
+    statement = enunciado,
+    sortOrder = orden,
+    createdAt = createdAt.toInstantOrNow(),
+    updatedAt = updatedAt.toInstantOrNow(),
+    deletedAt = deletedAt.toInstantOrNull(),
+)
+
 private fun ExamQuestion.toDto() = PreguntaDto(
     id = id,
     solucionarioId = examId,
@@ -438,6 +607,16 @@ private fun ExamQuestion.toDto() = PreguntaDto(
     orden = sortOrder,
     opciones = options.map { it.toDto() },
     recursos = resources.map { it.toDto() },
+)
+
+private fun RafagaQuestion.toDto() = RafagaPreguntaDto(
+    id = id,
+    rafagaId = rafagaId,
+    enunciado = statement,
+    orden = sortOrder,
+    createdAt = createdAt.toString(),
+    updatedAt = updatedAt.toString(),
+    deletedAt = deletedAt?.toString(),
 )
 
 private fun OpcionDto.toDomain(questionId: String) = QuestionOption(

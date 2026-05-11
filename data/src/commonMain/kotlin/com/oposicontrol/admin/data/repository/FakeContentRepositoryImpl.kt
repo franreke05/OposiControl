@@ -13,6 +13,8 @@ import com.oposicontrol.admin.domain.model.QuestionMoveDirection
 import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.Rafaga
+import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.model.UnlinkedResource
 import com.oposicontrol.admin.domain.model.UnlinkedResourceReason
@@ -25,6 +27,7 @@ import kotlinx.datetime.Instant
 class FakeContentRepositoryImpl : ContentRepository {
     private val specialtiesFlow = MutableStateFlow(seedSpecialties())
     private val examsFlow = MutableStateFlow(seedExams())
+    private val rafagasFlow = MutableStateFlow(seedRafagas())
     private val storageObjects = mutableMapOf(
         "questions/question-tcae-2/resource-tcae-2-movilizacion.mp4" to Instant.parse("2026-04-12T09:00:00Z"),
         "questions/question-enf-1/resource-enf-1-prioridad.png" to Instant.parse("2026-04-12T09:10:00Z"),
@@ -93,6 +96,18 @@ class FakeContentRepositoryImpl : ContentRepository {
             ),
         ),
     )
+    private val questionsByRafaga = mutableMapOf(
+        "rafaga-tcae-1" to mutableListOf(
+            RafagaQuestion(
+                id = "rafaga-question-1",
+                rafagaId = "rafaga-tcae-1",
+                statement = "Resuelve esta situacion breve de higiene de manos en menos de 30 segundos.",
+                sortOrder = 0,
+                createdAt = Instant.parse("2026-04-12T08:00:00Z"),
+                updatedAt = Instant.parse("2026-04-12T08:00:00Z"),
+            ),
+        ),
+    )
 
     init {
         syncCounts()
@@ -102,12 +117,20 @@ class FakeContentRepositoryImpl : ContentRepository {
 
     override fun observeExams(): Flow<List<Exam>> = examsFlow.asStateFlow()
 
+    override fun observeRafagas(): Flow<List<Rafaga>> = rafagasFlow.asStateFlow()
+
     override suspend fun refreshSpecialties(): AppResult<List<Specialty>> = AppResult.Success(specialtiesFlow.value)
 
     override suspend fun refreshExams(): AppResult<List<Exam>> = AppResult.Success(examsFlow.value)
 
+    override suspend fun refreshRafagas(): AppResult<List<Rafaga>> = AppResult.Success(rafagasFlow.value)
+
     override suspend fun getExamQuestions(examId: String): AppResult<List<ExamQuestion>> {
         return AppResult.Success(questionsByExam[examId].orEmpty().sortedBy { it.sortOrder })
+    }
+
+    override suspend fun getRafagaQuestions(rafagaId: String): AppResult<List<RafagaQuestion>> {
+        return AppResult.Success(questionsByRafaga[rafagaId].orEmpty().sortedBy { it.sortOrder })
     }
 
     override suspend fun getExamResourceAudit(examId: String): AppResult<ExamResourceAudit> {
@@ -218,6 +241,32 @@ class FakeContentRepositoryImpl : ContentRepository {
         return AppResult.Success(Unit)
     }
 
+    override suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga> {
+        val specialty = specialtiesFlow.value.firstOrNull { it.id == rafaga.specialtyId }
+            ?: return AppResult.Failure(AppError.Validation("La especialidad seleccionada no existe."))
+        val now = Instant.parse("2026-04-15T09:00:00Z")
+        val existing = rafagasFlow.value.firstOrNull { it.id == rafaga.id }
+        val generatedId = rafaga.id.ifBlank { randomUuid() }
+        val saved = rafaga.copy(
+            id = generatedId,
+            specialtyName = specialty.name,
+            questionCount = questionsByRafaga[generatedId].orEmpty().size,
+            createdAt = existing?.createdAt ?: now,
+            updatedAt = now,
+        )
+        rafagasFlow.value = rafagasFlow.value.filterNot { it.id == saved.id } + saved
+        questionsByRafaga.getOrPut(saved.id) { mutableListOf() }
+        syncCounts()
+        return AppResult.Success(rafagasFlow.value.first { it.id == saved.id })
+    }
+
+    override suspend fun deleteRafaga(rafagaId: String): AppResult<Unit> {
+        rafagasFlow.value = rafagasFlow.value.filterNot { it.id == rafagaId }
+        questionsByRafaga.remove(rafagaId)
+        syncCounts()
+        return AppResult.Success(Unit)
+    }
+
     override suspend fun upsertQuestion(question: ExamQuestion): AppResult<ExamQuestion> {
         val existing = questionsByExam.getOrPut(question.examId) { mutableListOf() }
         val merged = (existing.filterNot { it.id == question.id } + question)
@@ -268,6 +317,49 @@ class FakeContentRepositoryImpl : ContentRepository {
         bucket[target] = current
         val reordered = bucket.mapIndexed { order, item -> item.copy(sortOrder = order) }.toMutableList()
         questionsByExam[examId] = reordered
+        syncCounts()
+        return AppResult.Success(reordered)
+    }
+
+    override suspend fun upsertRafagaQuestion(question: RafagaQuestion): AppResult<RafagaQuestion> {
+        val existing = questionsByRafaga.getOrPut(question.rafagaId) { mutableListOf() }
+        val saved = question.copy(id = question.id.ifBlank { randomUuid() })
+        val merged = (existing.filterNot { it.id == saved.id } + saved)
+            .sortedBy { it.sortOrder }
+            .mapIndexed { index, item -> item.copy(sortOrder = index) }
+            .toMutableList()
+        questionsByRafaga[question.rafagaId] = merged
+        syncCounts()
+        return AppResult.Success(merged.first { it.id == saved.id })
+    }
+
+    override suspend fun deleteRafagaQuestion(rafagaId: String, questionId: String): AppResult<Unit> {
+        val bucket = questionsByRafaga.getOrPut(rafagaId) { mutableListOf() }
+        questionsByRafaga[rafagaId] = bucket.filterNot { it.id == questionId }
+            .mapIndexed { index, item -> item.copy(sortOrder = index) }
+            .toMutableList()
+        syncCounts()
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun moveRafagaQuestion(
+        rafagaId: String,
+        questionId: String,
+        direction: QuestionMoveDirection,
+    ): AppResult<List<RafagaQuestion>> {
+        val bucket = questionsByRafaga[rafagaId].orEmpty().sortedBy { it.sortOrder }.toMutableList()
+        val index = bucket.indexOfFirst { it.id == questionId }
+        if (index == -1) return AppResult.Success(bucket)
+        val target = when (direction) {
+            QuestionMoveDirection.UP -> index - 1
+            QuestionMoveDirection.DOWN -> index + 1
+        }
+        if (target !in bucket.indices) return AppResult.Success(bucket)
+        val current = bucket[index]
+        bucket[index] = bucket[target]
+        bucket[target] = current
+        val reordered = bucket.mapIndexed { order, item -> item.copy(sortOrder = order) }.toMutableList()
+        questionsByRafaga[rafagaId] = reordered
         syncCounts()
         return AppResult.Success(reordered)
     }
@@ -335,6 +427,7 @@ class FakeContentRepositoryImpl : ContentRepository {
 
     private fun syncCounts() {
         val questionCounts = questionsByExam.mapValues { (_, questions) -> questions.size }
+        val rafagaQuestionCounts = questionsByRafaga.mapValues { (_, questions) -> questions.size }
         val specialtyNameById = specialtiesFlow.value.associateBy({ it.id }, { it.name })
         examsFlow.value = examsFlow.value
             .map { exam ->
@@ -344,8 +437,18 @@ class FakeContentRepositoryImpl : ContentRepository {
                 )
             }
             .sortedWith(compareBy<Exam> { it.sortOrder }.thenBy { it.title })
+        rafagasFlow.value = rafagasFlow.value
+            .map { rafaga ->
+                rafaga.copy(
+                    specialtyName = specialtyNameById[rafaga.specialtyId] ?: rafaga.specialtyName,
+                    questionCount = rafagaQuestionCounts[rafaga.id] ?: 0,
+                )
+            }
+            .sortedWith(compareBy<Rafaga> { it.createdAt }.thenBy { it.title })
 
-        val linkedCounts = examsFlow.value.groupingBy { it.specialtyId }.eachCount()
+        val linkedCounts = (examsFlow.value.map { it.specialtyId } + rafagasFlow.value.map { it.specialtyId })
+            .groupingBy { it }
+            .eachCount()
         specialtiesFlow.value = specialtiesFlow.value
             .map { specialty -> specialty.copy(linkedExams = linkedCounts[specialty.id] ?: 0) }
             .sortedWith(compareBy<Specialty> { it.sortOrder }.thenBy { it.name })
@@ -410,6 +513,24 @@ class FakeContentRepositoryImpl : ContentRepository {
                 questionCount = 0,
                 createdAt = Instant.parse("2026-04-11T08:00:00Z"),
                 updatedAt = Instant.parse("2026-04-11T08:00:00Z"),
+            ),
+        )
+    }
+
+    private fun seedRafagas(): List<Rafaga> {
+        return listOf(
+            Rafaga(
+                id = "rafaga-tcae-1",
+                specialtyId = "specialty-tcae",
+                specialtyName = "TCAE",
+                title = "Rafaga TCAE",
+                priceTickets = 2,
+                status = ExamStatus.DRAFT,
+                publishFrom = null,
+                publishedAt = null,
+                questionCount = 0,
+                createdAt = Instant.parse("2026-04-12T08:00:00Z"),
+                updatedAt = Instant.parse("2026-04-12T08:00:00Z"),
             ),
         )
     }

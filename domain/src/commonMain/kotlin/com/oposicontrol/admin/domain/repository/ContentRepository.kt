@@ -7,16 +7,21 @@ import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.QuestionMoveDirection
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.Rafaga
+import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import kotlinx.coroutines.flow.Flow
 
 interface ContentRepository {
     fun observeSpecialties(): Flow<List<Specialty>>
     fun observeExams(): Flow<List<Exam>>
+    fun observeRafagas(): Flow<List<Rafaga>>
 
     suspend fun refreshSpecialties(): AppResult<List<Specialty>>
     suspend fun refreshExams(): AppResult<List<Exam>>
+    suspend fun refreshRafagas(): AppResult<List<Rafaga>>
     suspend fun getExamQuestions(examId: String): AppResult<List<ExamQuestion>>
+    suspend fun getRafagaQuestions(rafagaId: String): AppResult<List<RafagaQuestion>>
     suspend fun getExamResourceAudit(examId: String): AppResult<ExamResourceAudit>
 
     suspend fun upsertSpecialty(specialty: Specialty): AppResult<Specialty>
@@ -24,6 +29,8 @@ interface ContentRepository {
 
     suspend fun upsertExam(exam: Exam): AppResult<Exam>
     suspend fun deleteExam(examId: String): AppResult<Unit>
+    suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga>
+    suspend fun deleteRafaga(rafagaId: String): AppResult<Unit>
 
     suspend fun upsertQuestion(question: ExamQuestion): AppResult<ExamQuestion>
     suspend fun importQuestions(examId: String, questions: List<ExamQuestion>): AppResult<List<ExamQuestion>>
@@ -33,6 +40,14 @@ interface ContentRepository {
         questionId: String,
         direction: QuestionMoveDirection,
     ): AppResult<List<ExamQuestion>>
+
+    suspend fun upsertRafagaQuestion(question: RafagaQuestion): AppResult<RafagaQuestion>
+    suspend fun deleteRafagaQuestion(rafagaId: String, questionId: String): AppResult<Unit>
+    suspend fun moveRafagaQuestion(
+        rafagaId: String,
+        questionId: String,
+        direction: QuestionMoveDirection,
+    ): AppResult<List<RafagaQuestion>>
 
     suspend fun uploadResource(
         questionId: String,

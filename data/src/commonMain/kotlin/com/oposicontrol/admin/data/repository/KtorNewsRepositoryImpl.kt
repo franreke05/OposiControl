@@ -2,9 +2,13 @@ package com.oposicontrol.admin.data.repository
 
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.common.id.randomUuid
+import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.storage.LocalBinaryAsset
+import com.oposicontrol.admin.data.storage.PlatformFileReader
 import com.oposicontrol.admin.domain.model.NewsArticle
+import com.oposicontrol.admin.domain.model.NewsAssetUpload
 import com.oposicontrol.admin.domain.model.NewsLayer
 import com.oposicontrol.admin.domain.repository.NewsRepository
 import io.ktor.client.HttpClient
@@ -15,9 +19,12 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -30,6 +37,7 @@ class KtorNewsRepositoryImpl(
     private val client: HttpClient,
     private val appConfig: AppConfig,
     private val sessionLocalDataSource: SessionLocalDataSource,
+    private val fileReader: PlatformFileReader,
     private val adapter: NetworkResultAdapter,
 ) : NewsRepository {
     private val news = MutableStateFlow<List<NewsArticle>>(emptyList())
@@ -77,6 +85,25 @@ class KtorNewsRepositoryImpl(
         Unit
     }
 
+    override suspend fun uploadNewsAsset(localPathOrUri: String) = adapter.safeCall {
+        val readPath = localPathOrUri.removePrefix("file://")
+        val asset = when (val read = fileReader.read(readPath)) {
+            is AppResult.Failure -> throw IllegalStateException(read.error.message)
+            is AppResult.Success -> read.value
+        }
+        require(asset.bytes.size <= NEWS_ASSET_MAX_BYTES) { "La imagen de noticia supera el limite de 10 MB." }
+        require(asset.mimeType?.startsWith("image/") == true) { "El asset de noticia debe ser una imagen." }
+        val response = client.post("${newsUrl()}/assets") {
+            expectSuccess = false
+            backendHeaders()
+            setBody(asset.toMultipartBody())
+        }
+        if (!response.status.isSuccess()) {
+            error("backend ${response.status.value} /content/noticias/assets: ${response.bodyAsText().take(200)}")
+        }
+        response.body<NewsAssetUploadDto>().toDomain()
+    }
+
     private fun newsUrl(): String = "${appConfig.baseUrl.trimEnd('/')}/content/noticias"
 
     private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
@@ -85,7 +112,35 @@ class KtorNewsRepositoryImpl(
             ?: return
         header(HttpHeaders.Authorization, "Bearer $token")
     }
+
+    private fun LocalBinaryAsset.toMultipartBody(): MultiPartFormDataContent {
+        return MultiPartFormDataContent(
+            formData {
+                append(
+                    key = "file",
+                    value = bytes,
+                    headers = Headers.build {
+                        append(HttpHeaders.ContentDisposition, "form-data; name=\"file\"; filename=\"${fileName.sanitizeFilename()}\"")
+                        append(HttpHeaders.ContentType, mimeType ?: ContentType.Application.OctetStream.toString())
+                    },
+                )
+            },
+        )
+    }
+
+    private fun String.sanitizeFilename(): String = replace("\"", "").ifBlank { "news-asset.bin" }
+
+    private companion object {
+        const val NEWS_ASSET_MAX_BYTES = 10 * 1024 * 1024
+    }
 }
+
+@Serializable
+private data class NewsAssetUploadDto(
+    val path: String,
+    val publicUrl: String,
+    val mimeType: String? = null,
+)
 
 @Serializable
 private data class NoticiaDto(
@@ -119,6 +174,12 @@ private data class NoticiaLayerDto(
     val locked: Boolean = false,
     val orden: Int,
     val rotationDegrees: Int = 0,
+)
+
+private fun NewsAssetUploadDto.toDomain() = NewsAssetUpload(
+    path = path,
+    publicUrl = publicUrl,
+    mimeType = mimeType,
 )
 
 private fun NoticiaDto.toDomain() = NewsArticle(

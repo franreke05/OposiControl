@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.exams.presentation
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +48,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -64,6 +67,8 @@ import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.Rafaga
+import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.model.Tag
 import com.oposicontrol.admin.domain.model.TagSearchQuery
@@ -82,6 +87,9 @@ fun MobileContentScreen(
     newsViewModel: NewsViewModel,
     tagSearchRepository: TagSearchRepository? = null,
     initialView: MobileContentView = MobileContentView.Solucionarios,
+    backendActionLabel: String = "Reinicio",
+    backendActionInProgress: Boolean = false,
+    onRestartBackend: () -> Unit = {},
     connectionDiagnostics: @Composable () -> Unit = {},
 ) {
     val examsState by examsViewModel.state.collectAsState()
@@ -93,6 +101,9 @@ fun MobileContentScreen(
         onNewsIntent = newsViewModel::dispatch,
         tagSearchRepository = tagSearchRepository,
         initialView = initialView,
+        backendActionLabel = backendActionLabel,
+        backendActionInProgress = backendActionInProgress,
+        onRestartBackend = onRestartBackend,
         connectionDiagnostics = connectionDiagnostics,
     )
 }
@@ -173,15 +184,13 @@ fun MobileContentContent(
     onNewsIntent: (NewsIntent) -> Unit,
     tagSearchRepository: TagSearchRepository? = null,
     initialView: MobileContentView = MobileContentView.Noticias,
+    backendActionLabel: String = "Reinicio",
+    backendActionInProgress: Boolean = false,
+    onRestartBackend: () -> Unit = {},
     connectionDiagnostics: @Composable () -> Unit = {},
 ) {
     var activeView by rememberSaveable { mutableStateOf(initialView) }
     var isNewsFullscreen by rememberSaveable { mutableStateOf(false) }
-    val selectedExamTitle = (state.exams as? UiAsync.Success)
-        ?.value
-        ?.firstOrNull { it.id == state.selectedExamId }
-        ?.title
-
     LockScreenOrientation(
         if (isNewsFullscreen) {
             ScreenOrientation.UNSET
@@ -199,6 +208,7 @@ fun MobileContentContent(
         )
     } else {
         val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        val swipeThresholdPx = with(LocalDensity.current) { 96.dp.toPx() }
         Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
@@ -208,6 +218,11 @@ fun MobileContentContent(
                         top = UiSpacing.mobileTopBar,
                         end = UiSpacing.screenMobile,
                         bottom = UiSpacing.mobileBottomBarClearance + navBarBottom,
+                    )
+                    .mobileContentSwipe(
+                        activeView = activeView,
+                        thresholdPx = swipeThresholdPx,
+                        onViewChange = { activeView = it },
                     ),
                 verticalArrangement = Arrangement.spacedBy(UiSpacing.normal),
             ) {
@@ -223,6 +238,10 @@ fun MobileContentContent(
                     } else {
                         state.editorStatus.ifBlank { "draft" }
                     },
+                    backendActionLabel = backendActionLabel,
+                    backendActionInProgress = backendActionInProgress,
+                    showBackendAction = activeView == MobileContentView.Solucionarios,
+                    onRestartBackend = onRestartBackend,
                 )
                 connectionDiagnostics()
                 Column(
@@ -240,14 +259,18 @@ fun MobileContentContent(
                                 activeView = MobileContentView.Editor
                             },
                             onCreateBurst = {
-                                onIntent(ExamsIntent.CreateNew)
-                                onIntent(ExamsIntent.UpdateTitle("Rafaga ${selectedExamTitle.orEmpty()}".trim()))
-                                onIntent(ExamsIntent.UpdateDescription("Examen tipo rafaga"))
+                                onIntent(ExamsIntent.CreateRafaga)
                                 activeView = MobileContentView.Editor
                             },
                         )
 
-                        MobileContentView.Editor -> SolucionarioEditor(state = state, onIntent = onIntent)
+                        MobileContentView.Editor -> {
+                            if (state.editorMode == ExamEditorMode.Rafaga) {
+                                RafagaEditor(state = state, onIntent = onIntent)
+                            } else {
+                                SolucionarioEditor(state = state, onIntent = onIntent)
+                            }
+                        }
                         MobileContentView.Preguntas -> QuestionsPanel(state = state, onIntent = onIntent)
                         MobileContentView.Recursos -> ResourceTray(state = state, onIntent = onIntent)
                         MobileContentView.Especialidades -> MobileSpecialtiesPanel(state = state, onIntent = onIntent)
@@ -281,6 +304,36 @@ enum class MobileContentView(val label: String, val title: String, val icon: Mob
     Noticias("Noticias", "Noticias", MobileIcon.News),
 }
 
+private fun Modifier.mobileContentSwipe(
+    activeView: MobileContentView,
+    thresholdPx: Float,
+    onViewChange: (MobileContentView) -> Unit,
+): Modifier = pointerInput(activeView, thresholdPx) {
+    var dragTotal = 0f
+    detectHorizontalDragGestures(
+        onDragStart = { dragTotal = 0f },
+        onHorizontalDrag = { _, dragAmount -> dragTotal += dragAmount },
+        onDragEnd = {
+            if (dragTotal > thresholdPx) {
+                activeView.previousView()?.let(onViewChange)
+            } else if (dragTotal < -thresholdPx) {
+                activeView.nextView()?.let(onViewChange)
+            }
+        },
+        onDragCancel = { dragTotal = 0f },
+    )
+}
+
+private fun MobileContentView.previousView(): MobileContentView? {
+    val index = MobileContentView.entries.indexOf(this)
+    return MobileContentView.entries.getOrNull(index - 1)
+}
+
+private fun MobileContentView.nextView(): MobileContentView? {
+    val index = MobileContentView.entries.indexOf(this)
+    return MobileContentView.entries.getOrNull(index + 1)
+}
+
 enum class MobileIcon {
     Stack,
     Edit,
@@ -295,6 +348,7 @@ enum class MobileIcon {
     Down,
     Save,
     Remove,
+    Refresh,
 }
 
 @Composable
@@ -302,39 +356,72 @@ private fun MobileTopBar(
     activeView: MobileContentView,
     subtitle: String,
     status: String,
+    backendActionLabel: String,
+    backendActionInProgress: Boolean,
+    showBackendAction: Boolean,
+    onRestartBackend: () -> Unit,
 ) {
     GlassSurface(modifier = Modifier.fillMaxWidth()) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(64.dp)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+                .height(if (showBackendAction) 112.dp else 64.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconBadge(activeView.icon, selected = true)
-                Column(verticalArrangement = Arrangement.spacedBy(1.dp), modifier = Modifier.width(176.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconBadge(activeView.icon, selected = true)
+                    Column(verticalArrangement = Arrangement.spacedBy(1.dp), modifier = Modifier.width(176.dp)) {
+                        Text(
+                            text = activeView.title,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                StatusChip(status = status)
+            }
+            if (showBackendAction) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        text = activeView.title,
-                        style = MaterialTheme.typography.titleLarge,
+                        text = "Backend Ktor",
+                        modifier = Modifier.width(132.dp),
+                        style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    MobileActionPill(
+                        icon = MobileIcon.Refresh,
+                        label = backendActionLabel,
+                        modifier = Modifier.width(184.dp),
+                        enabled = !backendActionInProgress,
+                        onClick = onRestartBackend,
+                    )
                 }
             }
-            StatusChip(status = status)
         }
     }
 }
@@ -484,7 +571,7 @@ private fun ResponsiveActionRow(
             MobileActionPill(
                 icon = action.icon,
                 label = action.label,
-                modifier = Modifier.widthIn(min = action.minWidth.dp),
+                modifier = Modifier.width(action.minWidth.dp),
                 enabled = action.enabled,
                 onClick = action.onClick,
             )
@@ -589,6 +676,47 @@ private fun LineIcon(
             MobileIcon.Remove -> {
                 drawLine(color, Offset(w * 0.24f, h * 0.5f), Offset(w * 0.76f, h * 0.5f), stroke.width, StrokeCap.Round)
             }
+            MobileIcon.Refresh -> {
+                drawArc(color, startAngle = 36f, sweepAngle = 260f, useCenter = false, topLeft = Offset(w * 0.2f, h * 0.2f), size = Size(w * 0.6f, h * 0.6f), style = stroke)
+                drawLine(color, Offset(w * 0.7f, h * 0.18f), Offset(w * 0.82f, h * 0.34f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.7f, h * 0.18f), Offset(w * 0.54f, h * 0.22f), stroke.width, StrokeCap.Round)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ExamStatusSelector(
+    selected: String,
+    onSelected: (String) -> Unit,
+) {
+    val options = listOf(
+        "draft" to "Borrador",
+        "published" to "Publicado",
+        "archived" to "Archivado",
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Estado",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            maxItemsInEachRow = 3,
+        ) {
+            options.forEach { (value, label) ->
+                TypePill(
+                    label = label,
+                    selected = selected == value,
+                    modifier = Modifier.width(104.dp),
+                ) {
+                    onSelected(value)
+                }
+            }
         }
     }
 }
@@ -598,9 +726,6 @@ private fun SolucionarioEditor(
     state: ExamsState,
     onIntent: (ExamsIntent) -> Unit,
 ) {
-    val selectedExam = (state.exams as? UiAsync.Success)
-        ?.value
-        ?.firstOrNull { it.id == state.selectedExamId }
     GlassSurface(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -619,32 +744,24 @@ private fun SolucionarioEditor(
                 placeholder = "Nombre del solucionario",
             )
             GlassTextField(
-                value = state.editorDescription,
-                onValueChange = { onIntent(ExamsIntent.UpdateDescription(it)) },
-                placeholder = "Nota interna",
-                singleLine = false,
-            )
-            GlassTextField(
                 value = state.editorPriceTickets,
-                onValueChange = { onIntent(ExamsIntent.UpdatePriceTickets(it)) },
-                placeholder = "precio_tickets",
+                onValueChange = { value -> onIntent(ExamsIntent.UpdatePriceTickets(value.filter { it.isDigit() }.take(9))) },
+                placeholder = "Tickets",
             )
             MobileSpecialtyPicker(
                 specialtiesState = state.specialties,
                 selectedId = state.editorSpecialtyId,
                 onSelected = { onIntent(ExamsIntent.UpdateSpecialtyId(it)) },
             )
-            GlassTextField(
-                value = state.editorStatus,
-                onValueChange = { onIntent(ExamsIntent.UpdateExamStatus(it)) },
-                placeholder = "draft | published | archived",
+            ExamStatusSelector(
+                selected = state.editorStatus,
+                onSelected = { onIntent(ExamsIntent.UpdateExamStatus(it)) },
             )
             GlassTextField(
                 value = state.editorPublishFrom,
                 onValueChange = { onIntent(ExamsIntent.UpdatePublishFrom(it)) },
-                placeholder = "publicar_desde ISO opcional",
+                placeholder = "Publicar desde ISO opcional",
             )
-            ExamDatesSummary(selectedExam = selectedExam)
             ExamCoverEditor(state = state, onIntent = onIntent)
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
                 StatusChip(status = state.editorStatus.ifBlank { "draft" })
@@ -672,63 +789,66 @@ private fun SolucionarioEditor(
 }
 
 @Composable
-private fun ExamDatesSummary(selectedExam: Exam?) {
-    GlassSurface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-    ) {
+private fun RafagaEditor(
+    state: ExamsState,
+    onIntent: (ExamsIntent) -> Unit,
+) {
+    GlassSurface(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(UiSpacing.panel),
+            verticalArrangement = Arrangement.spacedBy(UiSpacing.normal),
         ) {
             Text(
-                text = "Datos de tabla examen",
-                style = MaterialTheme.typography.labelLarge,
+                text = if (state.selectedRafagaId == null) "Crear rafaga" else "Editar rafaga",
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
-            Text(
-                text = "id: ${selectedExam?.id ?: "al guardar"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            GlassTextField(
+                value = state.editorTitle,
+                onValueChange = { onIntent(ExamsIntent.UpdateTitle(it)) },
+                placeholder = "titulo",
             )
-            Text(
-                text = "Creado: ${selectedExam?.createdAt?.toString() ?: "al guardar"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            GlassTextField(
+                value = state.editorPriceTickets,
+                onValueChange = { value -> onIntent(ExamsIntent.UpdatePriceTickets(value.filter { it.isDigit() }.take(9))) },
+                placeholder = "Tickets",
             )
-            Text(
-                text = "Actualizado: ${selectedExam?.updatedAt?.toString() ?: "al guardar"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            MobileSpecialtyPicker(
+                specialtiesState = state.specialties,
+                selectedId = state.editorSpecialtyId,
+                onSelected = { onIntent(ExamsIntent.UpdateSpecialtyId(it)) },
             )
-            Text(
-                text = "Publicar desde: ${selectedExam?.publishFrom?.toString() ?: "null"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            ExamStatusSelector(
+                selected = state.editorStatus,
+                onSelected = { onIntent(ExamsIntent.UpdateExamStatus(it)) },
             )
-            Text(
-                text = "Publicado: ${selectedExam?.publishedAt?.toString() ?: "null"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            GlassTextField(
+                value = state.editorPublishFrom,
+                onValueChange = { onIntent(ExamsIntent.UpdatePublishFrom(it)) },
+                placeholder = "Publicar desde ISO opcional",
             )
-            Text(
-                text = "Borrado: ${selectedExam?.deletedAt?.toString() ?: "null"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
+                StatusChip(status = state.editorStatus.ifBlank { "draft" })
+                StatusChip(status = "${state.editorPriceTickets.ifBlank { "0" }} tickets")
+            }
+            ResponsiveActionRow(
+                actions = listOf(
+                    MobileActionSpec(
+                        icon = MobileIcon.Save,
+                        label = "Guardar",
+                        minWidth = 132,
+                        onClick = { onIntent(ExamsIntent.SaveRafaga) },
+                    ),
+                    MobileActionSpec(
+                        icon = MobileIcon.Remove,
+                        label = "Eliminar",
+                        minWidth = 132,
+                        enabled = state.selectedRafagaId != null,
+                        onClick = { onIntent(ExamsIntent.DeleteSelectedRafaga) },
+                    ),
+                ),
             )
         }
     }
@@ -917,11 +1037,6 @@ private fun SolucionarioList(
     onCreateBurst: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-        Text(
-            text = "Solucionarios",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
         ResponsiveActionRow(
             actions = listOf(
                 MobileActionSpec(
@@ -939,11 +1054,16 @@ private fun SolucionarioList(
             ),
         )
         when (val exams = state.exams) {
-            is UiAsync.Success -> exams.value.forEach { exam ->
-                SolucionarioCard(
-                    solucionario = exam.toSolucionarioUi(selected = exam.id == state.selectedExamId),
-                    onClick = { onIntent(ExamsIntent.SelectExam(exam.id)) },
+            is UiAsync.Success -> {
+                val solucionarios = exams.value
+                    .map { it.toSolucionarioUi(selected = it.id == state.selectedExamId) }
+                SolucionarioCarousel(
+                    title = "Solucionarios",
+                    items = solucionarios,
+                    emptyText = "Sin solucionarios. Crea el primero para empezar.",
+                    onClick = { onIntent(ExamsIntent.SelectExam(it)) },
                 )
+                RafagaCarousel(state = state, onIntent = onIntent)
             }
 
             UiAsync.Empty -> EmptyStateCard("Sin solucionarios", "Crea el primer solucionario para empezar.")
@@ -955,13 +1075,85 @@ private fun SolucionarioList(
 }
 
 @Composable
+private fun RafagaCarousel(
+    state: ExamsState,
+    onIntent: (ExamsIntent) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Rafagas",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        when (val rafagas = state.rafagas) {
+            is UiAsync.Success -> LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(204.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                items(items = rafagas.value.map { it.toRafagaUi(it.id == state.selectedRafagaId) }, key = { it.id }) { item ->
+                    RafagaCard(
+                        rafaga = item,
+                        onClick = { onIntent(ExamsIntent.SelectRafaga(item.id)) },
+                    )
+                }
+            }
+
+            UiAsync.Empty -> DropZone("Sin rafagas. Crea una desde el boton Rafaga.", DropTargetState.Idle)
+            is UiAsync.Error -> EmptyStateCard("No se pudieron cargar rafagas", rafagas.error.message)
+            UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando rafagas.")
+            UiAsync.Idle -> EmptyStateCard("Rafagas", "Sin carga activa.")
+        }
+    }
+}
+
+@Composable
+private fun SolucionarioCarousel(
+    title: String,
+    items: List<SolucionarioUi>,
+    emptyText: String,
+    onClick: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (items.isEmpty()) {
+            DropZone(text = emptyText, state = DropTargetState.Idle)
+            return
+        }
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(244.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            items(items = items, key = { it.id }) { item ->
+                SolucionarioCard(
+                    solucionario = item,
+                    modifier = Modifier.width(276.dp),
+                    onClick = { onClick(item.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SolucionarioCard(
     solucionario: SolucionarioUi,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val coverPath = solucionario.coverUrl.ifBlank { solucionario.coverStoragePath }
     GlassSurface(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
+            .height(232.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(22.dp),
         tint = if (solucionario.hasSelection) {
@@ -973,16 +1165,39 @@ private fun SolucionarioCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(UiSpacing.panel),
+                .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(UiSpacing.compact),
         ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(104.dp)
+                    .background(GlassTheme.tokens.glassFillStrong, RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.BottomStart,
+            ) {
+                if (coverPath.isNotBlank()) {
+                    NewsBackgroundImage(
+                        backgroundPath = coverPath,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                Text(
+                    text = if (coverPath.isBlank()) "Sin portada" else if (solucionario.isBurst) "Rafaga" else "Portada",
+                    modifier = Modifier.padding(10.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (coverPath.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top,
             ) {
                 Column(
-                    modifier = Modifier.width(214.dp),
+                    modifier = Modifier.width(176.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
@@ -1003,7 +1218,76 @@ private fun SolucionarioCard(
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
                 StatusChip("${solucionario.priceTickets} tickets")
                 StatusChip("${solucionario.questionCount} preguntas")
-                StatusChip(if (solucionario.hasSelection) "seleccionado" else "editable")
+            }
+            StatusChip(if (solucionario.hasSelection) "seleccionado" else "editable")
+        }
+    }
+}
+
+@Composable
+private fun RafagaCard(
+    rafaga: RafagaUi,
+    onClick: () -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .width(246.dp)
+            .height(192.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(22.dp),
+        tint = if (rafaga.hasSelection) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+        } else {
+            GlassTheme.tokens.glassFill
+        },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(UiSpacing.compact),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(78.dp)
+                    .background(GlassTheme.tokens.glassFillStrong, RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(
+                    text = "rafaga",
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(modifier = Modifier.width(156.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = rafaga.title.ifBlank { "Rafaga sin nombre" },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = rafaga.specialty.ifBlank { "Sin especialidad" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                StatusChip(rafaga.status)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                StatusChip("${rafaga.priceTickets} tickets")
+                StatusChip("${rafaga.questionCount} preguntas")
             }
         }
     }
@@ -1014,6 +1298,10 @@ private fun QuestionsPanel(
     state: ExamsState,
     onIntent: (ExamsIntent) -> Unit,
 ) {
+    if (state.editorMode == ExamEditorMode.Rafaga) {
+        RafagaQuestionsPanel(state = state, onIntent = onIntent)
+        return
+    }
     val importPicker = rememberTextFilePickerLauncher { file ->
         onIntent(ExamsIntent.ImportQuestionsFromText(file.name, file.content))
     }
@@ -1054,14 +1342,10 @@ private fun QuestionsPanel(
                 else -> Unit
             }
             when (val questions = state.questions) {
-                is UiAsync.Success -> questions.value.forEach { question ->
-                    QuestionCard(
-                        question = question.toQuestionUi(selected = question.id == state.selectedQuestionId),
-                        onSelect = { onIntent(ExamsIntent.SelectQuestion(question.id)) },
-                        onMoveUp = { onIntent(ExamsIntent.MoveQuestionUp(question.id)) },
-                        onMoveDown = { onIntent(ExamsIntent.MoveQuestionDown(question.id)) },
-                    )
-                }
+                is UiAsync.Success -> QuestionSelectorRow(
+                    questions = questions.value.map { it.toQuestionUi(selected = it.id == state.selectedQuestionId) },
+                    onSelect = { onIntent(ExamsIntent.SelectQuestion(it)) },
+                )
 
                 UiAsync.Empty -> DropZone(
                     text = "Sin preguntas. Crea o importa la primera.",
@@ -1072,7 +1356,207 @@ private fun QuestionsPanel(
                 UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando preguntas.")
                 UiAsync.Idle -> EmptyStateCard("Selecciona un solucionario", "Las preguntas apareceran aqui.")
             }
-            QuestionEditor(state = state, onIntent = onIntent)
+            if (state.editorQuestionId != null) {
+                QuestionEditor(state = state, onIntent = onIntent)
+                QuestionResourcesSection(state = state, onIntent = onIntent)
+            } else {
+                DropZone("Selecciona una pregunta para desplegar su editor y recursos.", DropTargetState.Idle)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RafagaQuestionsPanel(
+    state: ExamsState,
+    onIntent: (ExamsIntent) -> Unit,
+) {
+    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(UiSpacing.panel),
+            verticalArrangement = Arrangement.spacedBy(UiSpacing.normal),
+        ) {
+            Text(
+                text = "Preguntas de rafaga",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            MobileActionPill(
+                icon = MobileIcon.Plus,
+                label = "Nueva",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                enabled = state.selectedRafagaId != null,
+                onClick = { onIntent(ExamsIntent.CreateRafagaQuestion) },
+            )
+            when (val questions = state.rafagaQuestions) {
+                is UiAsync.Success -> RafagaQuestionSelectorRow(
+                    questions = questions.value.map { it.toRafagaQuestionUi(selected = it.id == state.selectedRafagaQuestionId) },
+                    onSelect = { onIntent(ExamsIntent.SelectRafagaQuestion(it)) },
+                )
+
+                UiAsync.Empty -> DropZone("Sin preguntas. Crea la primera rafaga_pregunta.", DropTargetState.Idle)
+                is UiAsync.Error -> EmptyStateCard("No se pudieron cargar preguntas", questions.error.message)
+                UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando preguntas.")
+                UiAsync.Idle -> EmptyStateCard("Selecciona una rafaga", "Las preguntas apareceran aqui.")
+            }
+            if (state.editorQuestionId != null) {
+                RafagaQuestionEditor(state = state, onIntent = onIntent)
+            } else {
+                DropZone("Selecciona una pregunta para editar su enunciado.", DropTargetState.Idle)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RafagaQuestionSelectorRow(
+    questions: List<RafagaQuestionUi>,
+    onSelect: (String) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(106.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        items(items = questions, key = { it.id }) { question ->
+            GlassSurface(
+                modifier = Modifier
+                    .width(188.dp)
+                    .height(98.dp)
+                    .clickable { onSelect(question.id) },
+                shape = RoundedCornerShape(18.dp),
+                tint = if (question.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    StatusChip(if (question.selected) "seleccionada" else "rafaga_pregunta")
+                    Text(
+                        text = question.statement.ifBlank { "Sin enunciado" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RafagaQuestionEditor(
+    state: ExamsState,
+    onIntent: (ExamsIntent) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
+        Text(
+            text = "Editor rafaga_pregunta",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        GlassTextField(
+            value = state.editorQuestionStatement,
+            onValueChange = { onIntent(ExamsIntent.UpdateQuestionStatement(it)) },
+            placeholder = "enunciado",
+            singleLine = false,
+        )
+        ResponsiveActionRow(
+            actions = listOf(
+                MobileActionSpec(MobileIcon.Save, "Guardar", 118, onClick = { onIntent(ExamsIntent.SaveRafagaQuestion) }),
+                MobileActionSpec(
+                    icon = MobileIcon.Remove,
+                    label = "Eliminar",
+                    minWidth = 118,
+                    enabled = state.selectedRafagaQuestionId != null,
+                    onClick = { onIntent(ExamsIntent.DeleteSelectedRafagaQuestion) },
+                ),
+                MobileActionSpec(
+                    icon = MobileIcon.Up,
+                    label = "Subir",
+                    minWidth = 106,
+                    enabled = state.selectedRafagaQuestionId != null,
+                    onClick = { state.selectedRafagaQuestionId?.let { onIntent(ExamsIntent.MoveRafagaQuestionUp(it)) } },
+                ),
+                MobileActionSpec(
+                    icon = MobileIcon.Down,
+                    label = "Bajar",
+                    minWidth = 106,
+                    enabled = state.selectedRafagaQuestionId != null,
+                    onClick = { state.selectedRafagaQuestionId?.let { onIntent(ExamsIntent.MoveRafagaQuestionDown(it)) } },
+                ),
+            ),
+        )
+    }
+}
+
+@Composable
+private fun QuestionSelectorRow(
+    questions: List<QuestionUi>,
+    onSelect: (String) -> Unit,
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(126.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        items(items = questions, key = { it.id }) { question ->
+            QuestionSelectorCard(
+                question = question,
+                onSelect = { onSelect(question.id) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun QuestionSelectorCard(
+    question: QuestionUi,
+    onSelect: () -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .width(188.dp)
+            .height(118.dp)
+            .clickable(onClick = onSelect),
+        shape = RoundedCornerShape(18.dp),
+        tint = if (question.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                StatusChip("ok ${question.correctOptionLabel}")
+                StatusChip(if (question.hasResources) "${question.resourceCount}" else "0")
+            }
+            Text(
+                text = question.title.ifBlank { "Pregunta sin titulo" },
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = question.statement.ifBlank { "Sin enunciado" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -1214,14 +1698,192 @@ private fun QuestionEditor(
                 }
             }
         }
+        ResponsiveActionRow(
+            actions = listOf(
+                MobileActionSpec(
+                    icon = MobileIcon.Save,
+                    label = "Guardar",
+                    minWidth = 118,
+                    onClick = { onIntent(ExamsIntent.SaveQuestion) },
+                ),
+                MobileActionSpec(
+                    icon = MobileIcon.Remove,
+                    label = "Eliminar",
+                    minWidth = 118,
+                    enabled = state.selectedQuestionId != null,
+                    onClick = { onIntent(ExamsIntent.DeleteSelectedQuestion) },
+                ),
+                MobileActionSpec(
+                    icon = MobileIcon.Up,
+                    label = "Subir",
+                    minWidth = 106,
+                    enabled = state.selectedQuestionId != null,
+                    onClick = { state.selectedQuestionId?.let { onIntent(ExamsIntent.MoveQuestionUp(it)) } },
+                ),
+                MobileActionSpec(
+                    icon = MobileIcon.Down,
+                    label = "Bajar",
+                    minWidth = 106,
+                    enabled = state.selectedQuestionId != null,
+                    onClick = { state.selectedQuestionId?.let { onIntent(ExamsIntent.MoveQuestionDown(it)) } },
+                ),
+            ),
+        )
+    }
+}
+
+@Composable
+private fun QuestionResourcesSection(
+    state: ExamsState,
+    onIntent: (ExamsIntent) -> Unit,
+) {
+    val selectedQuestion = (state.questions as? UiAsync.Success)
+        ?.value
+        ?.firstOrNull { it.id == state.selectedQuestionId }
+    Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
+        Text(
+            text = "Recursos de la pregunta",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(42.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val linkedTypes = selectedQuestion?.resources.orEmpty().map { it.type }.toSet()
+            items(items = QuestionResourceType.entries, key = { it.name }) { type ->
+                ResourceTypeLegendChip(
+                    label = type.toLegendLabel(),
+                    linked = type in linkedTypes,
+                )
+            }
+        }
+        LinkedResourcesRow(selectedQuestion = selectedQuestion)
         MobileActionPill(
-            icon = MobileIcon.Save,
-            label = "Guardar pregunta",
+            icon = MobileIcon.Plus,
+            label = "Anadir recurso",
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp),
-            onClick = { onIntent(ExamsIntent.SaveQuestion) },
+            enabled = state.editorQuestionId != null,
+            onClick = { onIntent(ExamsIntent.AddResource) },
         )
+        state.editorResources.sortedBy { it.sortOrder }.forEach { resource ->
+            ResourceTile(
+                resource = resource.toResourceTileUi(),
+                uploadState = state.resourceUploadStates[resource.id] ?: UiAsync.Idle,
+                hasQuestion = state.editorQuestionId != null,
+                onFilePicked = { picked ->
+                    onIntent(
+                        ExamsIntent.SelectResourceFile(
+                            resourceId = resource.id,
+                            uri = picked.uri,
+                            suggestedName = picked.name,
+                            mimeType = picked.mimeType,
+                        ),
+                    )
+                },
+                onUpload = { onIntent(ExamsIntent.UploadResource(resource.id)) },
+                onRemove = { onIntent(ExamsIntent.RemoveResource(resource.id)) },
+                onTypeChange = { onIntent(ExamsIntent.UpdateResourceType(resource.id, it)) },
+                onTitleChange = { onIntent(ExamsIntent.UpdateResourceTitle(resource.id, it)) },
+                onValueChange = { onIntent(ExamsIntent.UpdateResourceValue(resource.id, it)) },
+                type = resource.type,
+                title = resource.title,
+                value = resource.inputValue,
+            )
+        }
+        if (state.editorResources.isEmpty()) {
+            DropZone("No hay recursos editables para esta pregunta.", DropTargetState.Idle)
+        }
+    }
+}
+
+@Composable
+private fun ResourceTypeLegendChip(
+    label: String,
+    linked: Boolean,
+) {
+    Box(
+        modifier = Modifier
+            .width(112.dp)
+            .height(38.dp)
+            .background(
+                color = if (linked) GlassTheme.tokens.accent else GlassTheme.tokens.glassFillStrong,
+                shape = RoundedCornerShape(14.dp),
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = if (linked) "$label enlazado" else label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (linked) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun LinkedResourcesRow(
+    selectedQuestion: ExamQuestion?,
+) {
+    val resources = selectedQuestion?.resources.orEmpty().sortedBy { it.sortOrder }
+    if (resources.isEmpty()) {
+        DropZone("La pregunta no tiene recursos enlazados guardados.", DropTargetState.Ready)
+        return
+    }
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(92.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        items(items = resources, key = { it.id }) { resource ->
+            GlassSurface(
+                modifier = Modifier
+                    .width(188.dp)
+                    .height(84.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    StatusChip(resource.type.toLegendLabel())
+                    Text(
+                        text = resource.title.ifBlank { "Recurso sin titulo" },
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = resource.publicUrl ?: resource.storagePath ?: resource.textBody.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun QuestionResourceType.toLegendLabel(): String {
+    return when (this) {
+        QuestionResourceType.IMAGE -> "Imagen"
+        QuestionResourceType.AUDIO -> "Audio"
+        QuestionResourceType.VIDEO -> "Video"
+        QuestionResourceType.TEXT -> "Texto"
+        QuestionResourceType.DOCUMENT -> "Documento"
     }
 }
 
@@ -1230,6 +1892,10 @@ private fun ResourceTray(
     state: ExamsState,
     onIntent: (ExamsIntent) -> Unit,
 ) {
+    if (state.editorMode == ExamEditorMode.Rafaga) {
+        EmptyStateCard("Recursos", "Las rafagas usan rafaga_pregunta: solo enunciado y orden.")
+        return
+    }
     GlassSurface(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -1904,27 +2570,71 @@ private fun MobileNewsPanel(
                         onValueChange = { onIntent(NewsIntent.UpdateSearch(it)) },
                         placeholder = "Buscar noticia",
                     )
-                    when (val news = state.news) {
-                        is UiAsync.Success -> news.value.forEach { item ->
-                            MobileNewsCard(
-                                item = item,
-                                selected = item.id == state.selectedId,
-                                onClick = { onIntent(NewsIntent.Select(item.id)) },
-                                onToggleActive = {
-                                    onIntent(NewsIntent.Select(item.id))
-                                    onIntent(NewsIntent.UpdateStatus(if (item.status == "published") "draft" else "published"))
-                                    onIntent(NewsIntent.Save)
-                                }
-                            )
-                        }
-
-                        UiAsync.Empty -> DropZone("Sin noticias para este filtro.", DropTargetState.Idle)
-                        is UiAsync.Error -> EmptyStateCard("No se pudieron cargar noticias", news.error.message)
-                        UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando noticias.")
-                        UiAsync.Idle -> EmptyStateCard("Noticias", "Sin carga activa.")
-                    }
+                    MobileNewsSection(
+                        title = "Publicadas",
+                        state = state.publishedNews,
+                        selectedId = state.selectedId,
+                        emptyMessage = "No hay noticias publicadas.",
+                        published = true,
+                        onIntent = onIntent,
+                    )
+                    MobileNewsSection(
+                        title = "Guardadas/locales",
+                        state = state.localNews,
+                        selectedId = state.selectedId,
+                        emptyMessage = "No hay noticias guardadas.",
+                        published = false,
+                        onIntent = onIntent,
+                    )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MobileNewsSection(
+    title: String,
+    state: UiAsync<List<NewsItem>>,
+    selectedId: String?,
+    emptyMessage: String,
+    published: Boolean,
+    onIntent: (NewsIntent) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        when (state) {
+            is UiAsync.Success -> state.value.forEach { item ->
+                MobileNewsCard(
+                    item = item,
+                    selected = item.id == selectedId,
+                    published = published,
+                    onClick = { onIntent(NewsIntent.Select(item.id)) },
+                    onSaveLocal = {
+                        onIntent(NewsIntent.Select(item.id))
+                        onIntent(NewsIntent.SaveDraft)
+                    },
+                    onPublish = {
+                        onIntent(NewsIntent.Select(item.id))
+                        onIntent(NewsIntent.Publish)
+                    },
+                    onArchive = {
+                        onIntent(NewsIntent.Select(item.id))
+                        onIntent(NewsIntent.Archive)
+                    },
+                )
+            }
+
+            UiAsync.Empty -> DropZone(emptyMessage, DropTargetState.Idle)
+            is UiAsync.Error -> EmptyStateCard("No se pudieron cargar noticias", state.error.message)
+            UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando noticias.")
+            UiAsync.Idle -> EmptyStateCard(title, "Sin carga activa.")
         }
     }
 }
@@ -1933,8 +2643,11 @@ private fun MobileNewsPanel(
 private fun MobileNewsCard(
     item: NewsItem,
     selected: Boolean,
+    published: Boolean,
     onClick: () -> Unit,
-    onToggleActive: () -> Unit,
+    onSaveLocal: () -> Unit,
+    onPublish: () -> Unit,
+    onArchive: () -> Unit,
 ) {
     GlassSurface(
         modifier = Modifier
@@ -1953,10 +2666,7 @@ private fun MobileNewsCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                NewsActiveToggle(
-                    isActive = item.status == "published",
-                    onToggle = onToggleActive
-                )
+                NewsCardPreview(item = item)
                 Column(
                     modifier = Modifier.width(218.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -1979,8 +2689,59 @@ private fun MobileNewsCard(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
                 StatusChip(item.status)
+                StatusChip("${item.layers.size} capas")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MobileActionPill(
+                    icon = MobileIcon.Edit,
+                    label = "Editar",
+                    modifier = Modifier.width(92.dp),
+                    onClick = onClick,
+                )
+                if (published) {
+                    MobileActionPill(
+                        icon = MobileIcon.Remove,
+                        label = "Archivar",
+                        modifier = Modifier.width(112.dp),
+                        onClick = onArchive,
+                    )
+                } else {
+                    MobileActionPill(
+                        icon = MobileIcon.Save,
+                        label = "Guardar",
+                        modifier = Modifier.width(102.dp),
+                        onClick = onSaveLocal,
+                    )
+                    MobileActionPill(
+                        icon = MobileIcon.Up,
+                        label = "Publicar",
+                        modifier = Modifier.width(110.dp),
+                        onClick = onPublish,
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun NewsCardPreview(item: NewsItem) {
+    val color = if (item.backgroundPath.isNullOrBlank()) GlassTheme.tokens.accent else MaterialTheme.colorScheme.secondary
+    Box(
+        modifier = Modifier
+            .width(52.dp)
+            .height(42.dp)
+            .background(color.copy(alpha = 0.16f), RoundedCornerShape(14.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = if (item.backgroundPath.isNullOrBlank()) item.backgroundType.ifBlank { "SKY" }.take(3) else "IMG",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = color,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -2016,6 +2777,22 @@ private fun NewsActiveToggle(
 
 private fun Exam.toSolucionarioUi(selected: Boolean): SolucionarioUi {
     return SolucionarioUi(
+        id = id,
+        title = title,
+        specialty = specialtyName,
+        status = status.name.lowercase(),
+        priceTickets = priceTickets,
+        questionCount = questionCount,
+        coverUrl = coverUrl.orEmpty(),
+        coverStoragePath = coverStoragePath.orEmpty(),
+        isBurst = false,
+        hasSelection = selected,
+    )
+}
+
+private fun Rafaga.toRafagaUi(selected: Boolean): RafagaUi {
+    return RafagaUi(
+        id = id,
         title = title,
         specialty = specialtyName,
         status = status.name.lowercase(),
@@ -2025,9 +2802,9 @@ private fun Exam.toSolucionarioUi(selected: Boolean): SolucionarioUi {
     )
 }
 
-
 private fun ExamQuestion.toQuestionUi(selected: Boolean): QuestionUi {
     return QuestionUi(
+        id = id,
         title = title,
         statement = statement,
         correctOptionLabel = options.firstOrNull { it.isCorrect }?.label ?: "-",
@@ -2037,6 +2814,13 @@ private fun ExamQuestion.toQuestionUi(selected: Boolean): QuestionUi {
     )
 }
 
+private fun RafagaQuestion.toRafagaQuestionUi(selected: Boolean): RafagaQuestionUi {
+    return RafagaQuestionUi(
+        id = id,
+        statement = statement,
+        selected = selected,
+    )
+}
 
 private fun QuestionResourceDraft.toResourceTileUi(): ResourceTileUi {
     val linkedValue = publicUrl ?: storagePath

@@ -13,20 +13,30 @@ import com.oposicontrol.admin.domain.model.QuestionMoveDirection
 import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.Rafaga
+import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
+import com.oposicontrol.admin.domain.usecase.content.GetRafagaQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.ImportQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.MoveRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.ObserveRafagasUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.RefreshRafagasUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadQuestionResourceUseCase
@@ -38,18 +48,26 @@ class ExamsViewModel(
     dispatcherProvider: DispatcherProvider,
     observeSpecialtiesUseCase: ObserveSpecialtiesUseCase,
     observeExamsUseCase: ObserveExamsUseCase,
+    observeRafagasUseCase: ObserveRafagasUseCase,
     private val refreshSpecialtiesUseCase: RefreshSpecialtiesUseCase,
     private val upsertSpecialtyUseCase: UpsertSpecialtyUseCase,
     private val deleteSpecialtyUseCase: DeleteSpecialtyUseCase,
     private val refreshExamsUseCase: RefreshExamsUseCase,
+    private val refreshRafagasUseCase: RefreshRafagasUseCase,
     private val getExamQuestionsUseCase: GetExamQuestionsUseCase,
+    private val getRafagaQuestionsUseCase: GetRafagaQuestionsUseCase,
     private val getExamResourceAuditUseCase: GetExamResourceAuditUseCase,
     private val upsertExamUseCase: UpsertExamUseCase,
     private val deleteExamUseCase: DeleteExamUseCase,
+    private val upsertRafagaUseCase: UpsertRafagaUseCase,
+    private val deleteRafagaUseCase: DeleteRafagaUseCase,
     private val upsertQuestionUseCase: UpsertQuestionUseCase,
     private val importQuestionsUseCase: ImportQuestionsUseCase,
     private val deleteQuestionUseCase: DeleteQuestionUseCase,
     private val moveQuestionUseCase: MoveQuestionUseCase,
+    private val upsertRafagaQuestionUseCase: UpsertRafagaQuestionUseCase,
+    private val deleteRafagaQuestionUseCase: DeleteRafagaQuestionUseCase,
+    private val moveRafagaQuestionUseCase: MoveRafagaQuestionUseCase,
     private val uploadExamCoverUseCase: UploadExamCoverUseCase,
     private val uploadQuestionResourceUseCase: UploadQuestionResourceUseCase,
     private val analyticsTracker: AnalyticsTracker,
@@ -59,7 +77,9 @@ class ExamsViewModel(
 ) {
     private var allSpecialties: List<Specialty> = emptyList()
     private var allExams: List<Exam> = emptyList()
+    private var allRafagas: List<Rafaga> = emptyList()
     private var currentQuestions: List<ExamQuestion> = emptyList()
+    private var currentRafagaQuestions: List<RafagaQuestion> = emptyList()
 
     init {
         scope.launch {
@@ -88,6 +108,19 @@ class ExamsViewModel(
                 }
             }
         }
+        scope.launch {
+            observeRafagasUseCase().collectLatest { rafagas ->
+                allRafagas = rafagas
+                updateState {
+                    it.copy(
+                        rafagas = if (rafagas.isEmpty()) UiAsync.Empty else UiAsync.Success(rafagas),
+                    )
+                }
+                if (currentState().selectedRafagaId != null && rafagas.none { it.id == currentState().selectedRafagaId }) {
+                    resetExamEditor()
+                }
+            }
+        }
         dispatch(ExamsIntent.RefreshAll)
     }
 
@@ -95,29 +128,39 @@ class ExamsViewModel(
         when (intent) {
             ExamsIntent.AddResource -> addResource()
             ExamsIntent.CreateNew -> resetExamEditor()
+            ExamsIntent.CreateRafaga -> resetRafagaEditor()
             ExamsIntent.CreateQuestion -> createQuestion()
+            ExamsIntent.CreateRafagaQuestion -> createRafagaQuestion()
             ExamsIntent.CreateSpecialty -> createSpecialty()
             ExamsIntent.DeleteSelectedExam -> deleteSelectedExam()
             ExamsIntent.DeleteSelectedQuestion -> deleteSelectedQuestion()
+            ExamsIntent.DeleteSelectedRafaga -> deleteSelectedRafaga()
+            ExamsIntent.DeleteSelectedRafagaQuestion -> deleteSelectedRafagaQuestion()
             ExamsIntent.DeleteSelectedSpecialty -> deleteSelectedSpecialty()
             ExamsIntent.RefreshAll -> refreshAll()
             ExamsIntent.RefreshResourceAudit -> refreshResourceAudit()
             ExamsIntent.SaveExam -> saveExam()
             ExamsIntent.SaveQuestion -> saveQuestion()
+            ExamsIntent.SaveRafaga -> saveRafaga()
+            ExamsIntent.SaveRafagaQuestion -> saveRafagaQuestion()
             ExamsIntent.SaveSpecialty -> saveSpecialty()
             ExamsIntent.UploadExamCover -> uploadExamCover()
             ExamsIntent.ClearExamCover -> clearExamCover()
             is ExamsIntent.MoveQuestionDown -> moveQuestion(intent.id, QuestionMoveDirection.DOWN)
             is ExamsIntent.MoveQuestionUp -> moveQuestion(intent.id, QuestionMoveDirection.UP)
+            is ExamsIntent.MoveRafagaQuestionDown -> moveRafagaQuestion(intent.id, QuestionMoveDirection.DOWN)
+            is ExamsIntent.MoveRafagaQuestionUp -> moveRafagaQuestion(intent.id, QuestionMoveDirection.UP)
             is ExamsIntent.RemoveResource -> removeResource(intent.resourceId)
             is ExamsIntent.SelectCorrectOption -> selectCorrectOption(intent.optionId)
             is ExamsIntent.SelectContentSpecialty -> selectContentSpecialty(intent.id)
             is ExamsIntent.SelectExam -> selectExam(intent.id)
             is ExamsIntent.SelectQuestion -> selectQuestion(intent.id)
+            is ExamsIntent.SelectRafaga -> selectRafaga(intent.id)
+            is ExamsIntent.SelectRafagaQuestion -> selectRafagaQuestion(intent.id)
             is ExamsIntent.ToggleSpecialtyActive -> updateState { it.copy(specialtyEditorIsActive = intent.value) }
             is ExamsIntent.UpdateDescription -> updateState { it.copy(editorDescription = intent.value) }
             is ExamsIntent.UpdateExamStatus -> updateState { it.copy(editorStatus = intent.value) }
-            is ExamsIntent.UpdatePriceTickets -> updateState { it.copy(editorPriceTickets = intent.value.filter { char -> char.isDigit() }) }
+            is ExamsIntent.UpdatePriceTickets -> updateState { it.copy(editorPriceTickets = intent.value.filter { char -> char.isDigit() }.take(9)) }
             is ExamsIntent.UpdateOptionContent -> updateOption(intent.optionId, intent.value)
             is ExamsIntent.UpdatePublishFrom -> updateState { it.copy(editorPublishFrom = intent.value) }
             is ExamsIntent.SelectExamCoverFile -> selectExamCoverFile(intent.uri, intent.suggestedName, intent.mimeType)
@@ -172,6 +215,10 @@ class ExamsViewModel(
         when (val exams = refreshExamsUseCase()) {
             is AppResult.Failure -> updateState { it.copy(exams = UiAsync.Error(exams.error)) }
             is AppResult.Success -> publishExams()
+        }
+        when (val rafagas = refreshRafagasUseCase()) {
+            is AppResult.Failure -> updateState { it.copy(rafagas = UiAsync.Error(rafagas.error)) }
+            is AppResult.Success -> Unit
         }
         analyticsTracker.trackScreen("exams")
     }
@@ -274,6 +321,8 @@ class ExamsViewModel(
         updateState {
             it.copy(
                 selectedExamId = exam.id,
+                selectedRafagaId = null,
+                editorMode = ExamEditorMode.Solucionario,
                 editorTitle = exam.title,
                 editorDescription = exam.description,
                 editorPriceTickets = exam.priceTickets.toString(),
@@ -287,6 +336,7 @@ class ExamsViewModel(
                 editorCoverFileName = "",
                 coverUploadState = UiAsync.Idle,
                 selectedQuestionId = null,
+                selectedRafagaQuestionId = null,
                 editorQuestionId = null,
                 editorQuestionTitle = "",
                 editorQuestionStatement = "",
@@ -298,6 +348,42 @@ class ExamsViewModel(
             )
         }
         loadQuestions(exam.id)
+    }
+
+    private suspend fun selectRafaga(id: String) {
+        val rafaga = allRafagas.firstOrNull { it.id == id } ?: return
+        updateState {
+            it.copy(
+                editorMode = ExamEditorMode.Rafaga,
+                selectedExamId = null,
+                selectedRafagaId = rafaga.id,
+                editorTitle = rafaga.title,
+                editorDescription = "",
+                editorPriceTickets = rafaga.priceTickets.toString(),
+                editorSpecialtyId = rafaga.specialtyId,
+                editorStatus = rafaga.status.name.lowercase(),
+                editorPublishFrom = rafaga.publishFrom?.toString().orEmpty(),
+                editorCoverUrl = "",
+                editorCoverStoragePath = "",
+                editorCoverMimeType = "",
+                editorCoverLocalUri = "",
+                editorCoverFileName = "",
+                coverUploadState = UiAsync.Idle,
+                questions = UiAsync.Empty,
+                resourceAudit = UiAsync.Idle,
+                selectedQuestionId = null,
+                selectedRafagaQuestionId = null,
+                editorQuestionId = null,
+                editorQuestionTitle = "",
+                editorQuestionStatement = "",
+                editorOptions = emptyList(),
+                editorResources = emptyList(),
+                uploadState = UiAsync.Idle,
+                resourceUploadStates = emptyMap(),
+                actionState = UiAsync.Idle,
+            )
+        }
+        loadRafagaQuestions(rafaga.id)
     }
 
     private suspend fun loadQuestions(examId: String) {
@@ -316,6 +402,21 @@ class ExamsViewModel(
         }
     }
 
+    private suspend fun loadRafagaQuestions(rafagaId: String) {
+        updateState { it.copy(rafagaQuestions = UiAsync.Loading) }
+        when (val result = getRafagaQuestionsUseCase(rafagaId)) {
+            is AppResult.Failure -> updateState { it.copy(rafagaQuestions = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                currentRafagaQuestions = result.value.sortedBy { it.sortOrder }
+                updateState {
+                    it.copy(
+                        rafagaQuestions = if (currentRafagaQuestions.isEmpty()) UiAsync.Empty else UiAsync.Success(currentRafagaQuestions),
+                    )
+                }
+            }
+        }
+    }
+
     private suspend fun refreshResourceAudit() {
         val examId = currentState().selectedExamId ?: return
         updateState { it.copy(resourceAudit = UiAsync.Loading) }
@@ -330,6 +431,8 @@ class ExamsViewModel(
         updateState {
             it.copy(
                 selectedExamId = null,
+                selectedRafagaId = null,
+                editorMode = ExamEditorMode.Solucionario,
                 editorTitle = "",
                 editorDescription = "",
                 editorPriceTickets = "0",
@@ -343,8 +446,48 @@ class ExamsViewModel(
                 editorCoverFileName = "",
                 coverUploadState = UiAsync.Idle,
                 questions = UiAsync.Empty,
+                rafagaQuestions = UiAsync.Empty,
                 resourceAudit = UiAsync.Idle,
                 selectedQuestionId = null,
+                selectedRafagaQuestionId = null,
+                editorQuestionId = null,
+                editorQuestionTitle = "",
+                editorQuestionStatement = "",
+                editorOptions = emptyList(),
+                editorResources = emptyList(),
+                uploadState = UiAsync.Idle,
+                resourceUploadStates = emptyMap(),
+                importState = UiAsync.Idle,
+                importSummary = "",
+                actionState = UiAsync.Idle,
+            )
+        }
+    }
+
+    private fun resetRafagaEditor() {
+        currentRafagaQuestions = emptyList()
+        updateState {
+            it.copy(
+                editorMode = ExamEditorMode.Rafaga,
+                selectedExamId = null,
+                selectedRafagaId = null,
+                editorTitle = "",
+                editorDescription = "",
+                editorPriceTickets = "0",
+                editorSpecialtyId = allSpecialties.firstOrNull()?.id.orEmpty(),
+                editorStatus = "draft",
+                editorPublishFrom = "",
+                editorCoverUrl = "",
+                editorCoverStoragePath = "",
+                editorCoverMimeType = "",
+                editorCoverLocalUri = "",
+                editorCoverFileName = "",
+                coverUploadState = UiAsync.Idle,
+                questions = UiAsync.Empty,
+                rafagaQuestions = UiAsync.Empty,
+                resourceAudit = UiAsync.Idle,
+                selectedQuestionId = null,
+                selectedRafagaQuestionId = null,
                 editorQuestionId = null,
                 editorQuestionTitle = "",
                 editorQuestionStatement = "",
@@ -436,6 +579,71 @@ class ExamsViewModel(
         }
     }
 
+    private suspend fun saveRafaga() {
+        val now = Clock.System.now()
+        val existing = allRafagas.firstOrNull { it.id == currentState().selectedRafagaId }
+        val specialty = allSpecialties.firstOrNull { it.id == currentState().editorSpecialtyId }
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona una especialidad valida.")))
+            }
+        val priceTickets = currentState().editorPriceTickets.toIntOrNull()
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("El precio en tickets debe ser un numero valido.")))
+            }
+        val publishFrom = currentState().editorPublishFrom.takeIf { it.isNotBlank() }?.let {
+            runCatching { kotlinx.datetime.Instant.parse(it) }.getOrNull()
+                ?: return updateState {
+                    it.copy(actionState = UiAsync.Error(AppError.Validation("publicar_desde debe tener formato ISO, por ejemplo 2026-04-15T09:00:00Z.")))
+                }
+        }
+        updateState { it.copy(actionState = UiAsync.Loading) }
+        val status = currentState().editorStatus.toExamStatus()
+        val rafaga = Rafaga(
+            id = existing?.id.orEmpty(),
+            specialtyId = specialty.id,
+            specialtyName = specialty.name,
+            title = currentState().editorTitle.trim(),
+            priceTickets = priceTickets,
+            status = status,
+            publishFrom = when (status) {
+                ExamStatus.PUBLISHED -> existing?.publishFrom ?: publishFrom ?: now
+                else -> publishFrom ?: existing?.publishFrom
+            },
+            publishedAt = when (status) {
+                ExamStatus.PUBLISHED -> existing?.publishedAt ?: now
+                else -> existing?.publishedAt
+            },
+            questionCount = currentRafagaQuestions.size,
+            createdAt = existing?.createdAt ?: now,
+            updatedAt = now,
+            deletedAt = existing?.deletedAt,
+        )
+        when (val result = upsertRafagaUseCase(rafaga)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("rafaga_save", mapOf("rafaga_id" to result.value.id))
+                updateState { it.copy(selectedRafagaId = result.value.id, actionState = UiAsync.Success(Unit)) }
+                selectRafaga(result.value.id)
+            }
+        }
+    }
+
+    private suspend fun deleteSelectedRafaga() {
+        val selectedRafagaId = currentState().selectedRafagaId
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona una rafaga para borrarla.")))
+            }
+        updateState { it.copy(actionState = UiAsync.Loading) }
+        when (val result = deleteRafagaUseCase(selectedRafagaId)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("rafaga_delete", mapOf("rafaga_id" to selectedRafagaId))
+                resetRafagaEditor()
+                updateState { it.copy(actionState = UiAsync.Success(Unit)) }
+            }
+        }
+    }
+
     private fun createQuestion() {
         val examId = currentState().selectedExamId
             ?: return updateState {
@@ -450,6 +658,27 @@ class ExamsViewModel(
                 editorQuestionStatement = "",
                 editorOptions = blankOptionDrafts(questionId),
                 editorResources = listOf(blankResourceDraft()),
+                uploadState = UiAsync.Idle,
+                resourceUploadStates = emptyMap(),
+                importState = UiAsync.Idle,
+                actionState = UiAsync.Idle,
+            )
+        }
+    }
+
+    private fun createRafagaQuestion() {
+        val rafagaId = currentState().selectedRafagaId
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("Primero guarda o selecciona una rafaga.")))
+            }
+        updateState {
+            it.copy(
+                selectedRafagaQuestionId = null,
+                editorQuestionId = blankQuestionId(),
+                editorQuestionTitle = "",
+                editorQuestionStatement = "",
+                editorOptions = emptyList(),
+                editorResources = emptyList(),
                 uploadState = UiAsync.Idle,
                 resourceUploadStates = emptyMap(),
                 importState = UiAsync.Idle,
@@ -491,6 +720,24 @@ class ExamsViewModel(
                         sortOrder = resource.sortOrder,
                     )
                 },
+                uploadState = UiAsync.Idle,
+                resourceUploadStates = emptyMap(),
+                importState = UiAsync.Idle,
+                actionState = UiAsync.Idle,
+            )
+        }
+    }
+
+    private fun selectRafagaQuestion(id: String) {
+        val question = currentRafagaQuestions.firstOrNull { it.id == id } ?: return
+        updateState {
+            it.copy(
+                selectedRafagaQuestionId = question.id,
+                editorQuestionId = question.id,
+                editorQuestionTitle = "",
+                editorQuestionStatement = question.statement,
+                editorOptions = emptyList(),
+                editorResources = emptyList(),
                 uploadState = UiAsync.Idle,
                 resourceUploadStates = emptyMap(),
                 importState = UiAsync.Idle,
@@ -577,6 +824,59 @@ class ExamsViewModel(
         }
     }
 
+    private suspend fun saveRafagaQuestion() {
+        val rafagaId = currentState().selectedRafagaId
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona una rafaga antes de guardar preguntas.")))
+            }
+        val questionId = currentState().editorQuestionId
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("Crea o selecciona una pregunta de rafaga.")))
+            }
+        val existing = currentRafagaQuestions.firstOrNull { it.id == questionId }
+        val now = Clock.System.now()
+        updateState { it.copy(actionState = UiAsync.Loading) }
+        val question = RafagaQuestion(
+            id = questionId,
+            rafagaId = rafagaId,
+            statement = currentState().editorQuestionStatement.trim(),
+            sortOrder = existing?.sortOrder ?: currentRafagaQuestions.size,
+            createdAt = existing?.createdAt ?: now,
+            updatedAt = now,
+            deletedAt = existing?.deletedAt,
+        )
+        when (val result = upsertRafagaQuestionUseCase(question)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("rafaga_question_save", mapOf("rafaga_id" to rafagaId, "question_id" to result.value.id))
+                loadRafagaQuestions(rafagaId)
+                updateState { it.copy(selectedRafagaQuestionId = result.value.id, editorQuestionId = result.value.id, actionState = UiAsync.Success(Unit)) }
+                selectRafagaQuestion(result.value.id)
+            }
+        }
+    }
+
+    private suspend fun deleteSelectedRafagaQuestion() {
+        val rafagaId = currentState().selectedRafagaId
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona una rafaga.")))
+            }
+        val questionId = currentState().selectedRafagaQuestionId
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona una pregunta guardada para borrarla.")))
+            }
+        updateState { it.copy(actionState = UiAsync.Loading) }
+        when (val result = deleteRafagaQuestionUseCase(rafagaId, questionId)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("rafaga_question_delete", mapOf("question_id" to questionId))
+                loadRafagaQuestions(rafagaId)
+                createRafagaQuestion()
+                updateState { it.copy(actionState = UiAsync.Success(Unit)) }
+            }
+        }
+    }
+
     private suspend fun moveQuestion(questionId: String, direction: QuestionMoveDirection) {
         val examId = currentState().selectedExamId ?: return
         when (val result = moveQuestionUseCase(examId, questionId, direction)) {
@@ -586,6 +886,22 @@ class ExamsViewModel(
                 updateState {
                     it.copy(
                         questions = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value),
+                        actionState = UiAsync.Success(Unit),
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun moveRafagaQuestion(questionId: String, direction: QuestionMoveDirection) {
+        val rafagaId = currentState().selectedRafagaId ?: return
+        when (val result = moveRafagaQuestionUseCase(rafagaId, questionId, direction)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                currentRafagaQuestions = result.value
+                updateState {
+                    it.copy(
+                        rafagaQuestions = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value),
                         actionState = UiAsync.Success(Unit),
                     )
                 }

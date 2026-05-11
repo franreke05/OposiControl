@@ -12,6 +12,7 @@ data class NewsItem(
     val text: String,
     val imagePath: String? = null,
     val layers: List<NewsLayerDraft> = emptyList(),
+    val isLocalDraft: Boolean = false,
 )
 
 data class NewsLayerDraft(

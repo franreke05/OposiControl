@@ -2,9 +2,12 @@ package com.oposicontrol.admin.features.exams.presentation
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -97,17 +100,9 @@ fun ExamsContent(
                         placeholder = "Ej. Simulacro bloque 1",
                     )
                     EditorField(
-                        label = "Descripcion",
-                        value = state.editorDescription,
-                        onValueChange = { onIntent(ExamsIntent.UpdateDescription(it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = "Resumen interno para organizar el examen",
-                        singleLine = false,
-                    )
-                    EditorField(
                         label = "Precio tickets",
                         value = state.editorPriceTickets,
-                        onValueChange = { onIntent(ExamsIntent.UpdatePriceTickets(it)) },
+                        onValueChange = { onIntent(ExamsIntent.UpdatePriceTickets(it.filter { char -> char.isDigit() }.take(9))) },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = "0",
                     )
@@ -116,12 +111,9 @@ fun ExamsContent(
                         selectedId = state.editorSpecialtyId,
                         onSelected = { onIntent(ExamsIntent.UpdateSpecialtyId(it)) },
                     )
-                    EditorField(
-                        label = "Estado",
-                        value = state.editorStatus,
-                        onValueChange = { onIntent(ExamsIntent.UpdateExamStatus(it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = "draft | published | archived",
+                    StatusSelectorField(
+                        selected = state.editorStatus,
+                        onSelected = { onIntent(ExamsIntent.UpdateExamStatus(it)) },
                     )
                     EditorField(
                         label = "Publicar desde (ISO)",
@@ -130,19 +122,12 @@ fun ExamsContent(
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = "2026-04-15T09:00:00Z",
                     )
-                    ExamDatabaseFieldsSummary(state)
-                    GlassActionButton(
-                        text = "Guardar examen",
-                        onClick = { onIntent(ExamsIntent.SaveExam) },
-                        modifier = Modifier.fillMaxWidth(),
+                    ResponsiveGlassActions(
+                        actions = listOf(
+                            FormAction("Guardar examen", 176, true) { onIntent(ExamsIntent.SaveExam) },
+                            FormAction("Eliminar examen", 176, state.selectedExamId != null) { onIntent(ExamsIntent.DeleteSelectedExam) },
+                        ),
                     )
-                    if (state.selectedExamId != null) {
-                        GlassActionButton(
-                            text = "Eliminar examen",
-                            onClick = { onIntent(ExamsIntent.DeleteSelectedExam) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
                     when (val actionState = state.actionState) {
                         is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
                         UiAsync.Loading -> Text("Guardando...")
@@ -155,41 +140,71 @@ fun ExamsContent(
     )
 }
 
+private data class FormAction(
+    val text: String,
+    val width: Int,
+    val enabled: Boolean = true,
+    val onClick: () -> Unit,
+)
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ExamDatabaseFieldsSummary(state: ExamsState) {
-    val selected = (state.exams as? UiAsync.Success)
-        ?.value
-        ?.firstOrNull { it.id == state.selectedExamId }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+private fun ResponsiveGlassActions(
+    actions: List<FormAction>,
+) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        maxItemsInEachRow = 2,
+    ) {
+        actions.forEach { action ->
+            GlassActionButton(
+                text = action.text,
+                enabled = action.enabled,
+                modifier = Modifier.width(action.width.dp),
+                onClick = action.onClick,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun StatusSelectorField(
+    selected: String,
+    onSelected: (String) -> Unit,
+) {
+    val options = listOf("draft" to "Borrador", "published" to "Publicado", "archived" to "Archivado")
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
-            text = "Campos automaticos de examen",
+            text = "Estado",
             style = MaterialTheme.typography.labelMedium,
         )
-        Text(
-            text = "id: ${selected?.id ?: "se asigna al guardar"}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = "published_at: ${selected?.publishedAt?.toString() ?: "null"}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = "created_at: ${selected?.createdAt?.toString() ?: "se asigna al guardar"}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = "updated_at: ${selected?.updatedAt?.toString() ?: "se asigna al guardar"}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text = "deleted_at: ${selected?.deletedAt?.toString() ?: "null"}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            maxItemsInEachRow = 3,
+        ) {
+            options.forEach { (value, label) ->
+                GlassActionButton(
+                    text = label,
+                    modifier = Modifier.width(132.dp),
+                    tint = if (selected == value) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
+                    textColor = if (selected == value) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    onClick = { onSelected(value) },
+                )
+            }
+        }
     }
 }
 

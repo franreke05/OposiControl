@@ -30,6 +30,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
+import java.io.File
 import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -37,6 +38,8 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import kotlin.concurrent.thread
+import kotlin.system.exitProcess
 
 private const val STORED_QUESTION_PREFIX = "__OPOSICONTROL_QUESTION_V1__\n"
 private const val COVER_MAX_BYTES = 10 * 1024 * 1024
@@ -110,6 +113,21 @@ fun Application.module() {
         }
         authenticate("gateway-auth") {
             adminRoutes(adminGateway)
+            post("/admin/backend/restart") {
+                val restart = BackendRestartRequest.fromEnvironment()
+                if (restart == null) {
+                    call.respond(
+                        HttpStatusCode.Forbidden,
+                        ErrorDto(
+                            error = "backend_restart_disabled",
+                            message = "Reinicio backend desactivado. Define OPOSICONTROL_ENABLE_BACKEND_RESTART=true en desarrollo.",
+                        ),
+                    )
+                } else {
+                    call.respond(HttpStatusCode.Accepted, mapOf("status" to "restarting"))
+                    restart.schedule()
+                }
+            }
             route("/content") {
                 route("/especialidades") {
                     get { call.respond(gateway.listEspecialidades()) }
@@ -158,7 +176,10 @@ fun Application.module() {
                                     defaultFileName = "cover",
                                 ),
                             )
-                            tagSearchGateway.indexSolucionario(saved)
+                            runCatching { tagSearchGateway.indexSolucionario(saved) }
+                                .onFailure { error ->
+                                    System.err.println("[ktor] optional tag index skipped on cover upload: ${error.safeBackendMessage("index error", 160)}")
+                                }
                             saved
                         }
                     }
@@ -186,6 +207,38 @@ fun Application.module() {
                     }
                     put("/{solucionarioId}/preguntas/order") {
                         call.respond(gateway.reorderPreguntas(call.requiredPath("solucionarioId"), call.receive()))
+                    }
+                }
+                route("/rafaga") {
+                    get { call.respond(gateway.listRafagas()) }
+                    post {
+                        call.respond(HttpStatusCode.Created, gateway.saveRafaga(call.receive()))
+                    }
+                    put {
+                        call.respond(gateway.saveRafaga(call.receive()))
+                    }
+                    delete("/{rafagaId}") {
+                        gateway.deleteRafaga(call.requiredPath("rafagaId"))
+                        call.respond(HttpStatusCode.NoContent)
+                    }
+                    get("/{rafagaId}/preguntas") {
+                        call.respond(gateway.listRafagaPreguntas(call.requiredPath("rafagaId")))
+                    }
+                    post("/{rafagaId}/preguntas") {
+                        call.respond(
+                            HttpStatusCode.Created,
+                            gateway.saveRafagaPregunta(call.requiredPath("rafagaId"), call.receive()),
+                        )
+                    }
+                    put("/{rafagaId}/preguntas") {
+                        call.respond(gateway.saveRafagaPregunta(call.requiredPath("rafagaId"), call.receive()))
+                    }
+                    delete("/{rafagaId}/preguntas/{preguntaId}") {
+                        gateway.deleteRafagaPregunta(call.requiredPath("rafagaId"), call.requiredPath("preguntaId"))
+                        call.respond(HttpStatusCode.NoContent)
+                    }
+                    put("/{rafagaId}/preguntas/order") {
+                        call.respond(gateway.reorderRafagaPreguntas(call.requiredPath("rafagaId"), call.receive()))
                     }
                 }
                 route("/preguntas") {
@@ -221,6 +274,22 @@ fun Application.module() {
                 }
                 route("/noticias") {
                     get { call.respond(newsGateway.listNoticias()) }
+                    post("/assets") {
+                        call.respondBackendSupabaseResult("/content/noticias/assets") {
+                            val file = call.receiveSingleFile(
+                                maxBytes = COVER_MAX_BYTES,
+                                requiredMimePrefix = "image/",
+                                defaultFileName = "news-asset",
+                            )
+                            newsGateway.uploadAsset(
+                                NewsUploadedFile(
+                                    fileName = file.fileName,
+                                    mimeType = file.mimeType,
+                                    bytes = file.bytes,
+                                ),
+                            )
+                        }
+                    }
                     post {
                         val saved = newsGateway.saveNoticia(call.receive())
                         tagSearchGateway.indexNoticia(saved)
@@ -271,6 +340,49 @@ fun io.ktor.server.application.ApplicationCall.requiredPath(name: String): Strin
 @Serializable
 data class ErrorDto(val error: String, val message: String)
 
+private class BackendRestartRequest(
+    private val projectRoot: File,
+) {
+    fun schedule() {
+        thread(name = "oposicontrol-backend-restart", isDaemon = false) {
+            Thread.sleep(750)
+            val command = if (System.getProperty("os.name").contains("Windows", ignoreCase = true)) {
+                listOf("cmd", "/c", "gradlew.bat", ":backend:ktor:run")
+            } else {
+                listOf("./gradlew", ":backend:ktor:run")
+            }
+            ProcessBuilder(command)
+                .directory(projectRoot)
+                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+                .redirectError(ProcessBuilder.Redirect.INHERIT)
+                .start()
+            Thread.sleep(250)
+            exitProcess(0)
+        }
+    }
+
+    companion object {
+        fun fromEnvironment(): BackendRestartRequest? {
+            val enabled = System.getenv("OPOSICONTROL_ENABLE_BACKEND_RESTART")
+                ?.toBooleanStrictOrNull()
+                ?: false
+            if (!enabled) return null
+            return findProjectRoot(File(System.getProperty("user.dir")))?.let(::BackendRestartRequest)
+        }
+
+        private fun findProjectRoot(start: File): File? {
+            var current: File? = start.absoluteFile
+            while (current != null) {
+                if (File(current, "settings.gradle.kts").exists() && File(current, "gradlew.bat").exists()) {
+                    return current
+                }
+                current = current.parentFile
+            }
+            return null
+        }
+    }
+}
+
 private data class BackendUploadedFile(
     val fileName: String,
     val mimeType: String,
@@ -283,6 +395,13 @@ private suspend inline fun <reified T : Any> ApplicationCall.respondBackendSupab
 ) {
     try {
         respond(block())
+    } catch (cause: IllegalArgumentException) {
+        val message = cause.safeBackendMessage("Supabase backend request error")
+        System.err.println("[ktor] $routeName request failure ${cause::class.simpleName}: $message")
+        respond(
+            HttpStatusCode.BadRequest,
+            ErrorDto(error = "bad_request", message = message),
+        )
     } catch (cause: Throwable) {
         val message = cause.safeBackendMessage("Supabase backend error")
         System.err.println("[ktor] $routeName supabase failure ${cause::class.simpleName}: $message")
@@ -364,6 +483,32 @@ data class PreguntaDto(
 )
 
 @Serializable
+data class RafagaDto(
+    val id: String = "",
+    val titulo: String,
+    val especialidadId: String,
+    val precioTickets: Int = 0,
+    val estado: String = "draft",
+    val publicarDesde: String? = null,
+    val publishedAt: String? = null,
+    val questionCount: Int = 0,
+    val createdAt: String = "",
+    val updatedAt: String = "",
+    val deletedAt: String? = null,
+)
+
+@Serializable
+data class RafagaPreguntaDto(
+    val id: String = "",
+    val rafagaId: String = "",
+    val enunciado: String,
+    val orden: Int = 0,
+    val createdAt: String = "",
+    val updatedAt: String = "",
+    val deletedAt: String? = null,
+)
+
+@Serializable
 data class OpcionDto(
     val id: String = "",
     val label: String,
@@ -406,6 +551,9 @@ private class SupabaseContentGateway private constructor(
     private val json: Json,
     private val client: HttpClient = HttpClient.newHttpClient(),
 ) {
+    @Volatile
+    private var storageBucketChecked = false
+
     fun listEspecialidades(): List<EspecialidadDto> {
         val rows = request("GET", "/rest/v1/especialidad?select=*&deleted_at=is.null&order=nombre.asc", null)
             .decodeList<EspecialidadRow>()
@@ -442,6 +590,16 @@ private class SupabaseContentGateway private constructor(
             .map { it.toDto(specialties[it.especialidadId.toString()]?.nombre.orEmpty(), counts[it.id?.toString().orEmpty()] ?: 0) }
     }
 
+    fun listRafagas(): List<RafagaDto> {
+        val counts = request("GET", "/rest/v1/rafaga_pregunta?select=id,rafaga_id&deleted_at=is.null", null)
+            .decodeList<RafagaPreguntaCountRow>()
+            .groupingBy { it.rafagaId.toString() }
+            .eachCount()
+        return request("GET", "/rest/v1/rafaga?select=*&deleted_at=is.null&order=created_at.desc", null)
+            .decodeList<RafagaRow>()
+            .map { it.toDto(counts[it.id?.toString().orEmpty()] ?: 0) }
+    }
+
     fun saveSolucionario(input: SolucionarioDto): SolucionarioDto {
         require(input.titulo.isNotBlank()) { "El solucionario necesita un nombre." }
         require(input.especialidadId.isNotBlank()) { "El solucionario necesita una especialidad." }
@@ -461,24 +619,58 @@ private class SupabaseContentGateway private constructor(
         return saved.toDto("", 0)
     }
 
+    fun saveRafaga(input: RafagaDto): RafagaDto {
+        require(input.titulo.isNotBlank()) { "La rafaga necesita un nombre." }
+        require(input.especialidadId.isNotBlank()) { "La rafaga necesita una especialidad." }
+        require(input.estado in setOf("draft", "published", "archived")) { "Estado de rafaga no valido." }
+        require(input.precioTickets >= 0) { "El precio en tickets no puede ser negativo." }
+        val normalized = input.normalizedForSave()
+        val saved = if (normalized.id.isBlank()) {
+            request(
+                "POST",
+                "/rest/v1/rafaga",
+                json.encodeToString(listOf(normalized.toRow())),
+                prefer = "return=representation",
+            ).decodeList<RafagaRow>().first()
+        } else {
+            request(
+                "PATCH",
+                "/rest/v1/rafaga?id=eq.${normalized.id.toIntId()}",
+                json.encodeToString(normalized.toRow()),
+                prefer = "return=representation",
+            ).decodeList<RafagaRow>().first()
+        }
+        return saved.toDto(questionCount = 0)
+    }
+
     fun uploadPortada(solucionarioId: String, file: BackendUploadedFile): SolucionarioDto {
         require(file.mimeType.startsWith("image/")) { "La portada debe ser una imagen." }
         val objectPath = "exam-covers/${solucionarioId.toIntId()}/${file.fileName}"
         storageUpload(objectPath, file.mimeType, file.bytes)
         val publicUrl = storagePublicUrl(objectPath)
-        val saved = request(
-            "PATCH",
-            "/rest/v1/examen?id=eq.${solucionarioId.toIntId()}",
-            json.encodeToString(
-                mapOf(
-                    "portada_url" to publicUrl,
-                    "portada_storage_path" to objectPath,
-                    "portada_mime_type" to file.mimeType,
-                    "updated_at" to java.time.Instant.now().toString(),
+        val saved = try {
+            request(
+                "PATCH",
+                "/rest/v1/examen?id=eq.${solucionarioId.toIntId()}",
+                json.encodeToString(
+                    mapOf(
+                        "portada_url" to publicUrl,
+                        "portada_storage_path" to objectPath,
+                        "portada_mime_type" to file.mimeType,
+                        "updated_at" to java.time.Instant.now().toString(),
+                    ),
                 ),
-            ),
-            prefer = "return=representation",
-        ).decodeList<ExamenRow>().first()
+                prefer = "return=representation",
+            ).decodeList<ExamenRow>().firstOrNull()
+                ?: throw IllegalArgumentException("No existe el solucionario $solucionarioId.")
+        } catch (error: IllegalStateException) {
+            if (error.isMissingCoverColumnError()) {
+                throw IllegalArgumentException(
+                    "Faltan columnas de portada en public.examen. Ejecuta docs/supabase/20260507_exam_cover_resource_uploads.sql en Supabase.",
+                )
+            }
+            throw error
+        }
         return saved.toDto("", 0)
     }
 
@@ -510,12 +702,23 @@ private class SupabaseContentGateway private constructor(
                 deleteBody,
             )
         }
-        request(
+        request("PATCH", "/rest/v1/examen?id=eq.$examId", deleteBody)
+        requestIfRelationExists(
             "PATCH",
             "/rest/v1/acceso_examen_usuario?examen_id=eq.$examId",
             """{"activo":false,"updated_at":"$deletedAt"}""",
         )
-        request("PATCH", "/rest/v1/examen?id=eq.$examId", deleteBody)
+    }
+
+    fun deleteRafaga(rafagaId: String) {
+        val deletedAt = java.time.Instant.now().toString()
+        val deleteBody = json.encodeToString(mapOf("deleted_at" to deletedAt))
+        request(
+            "PATCH",
+            "/rest/v1/rafaga_pregunta?rafaga_id=eq.${rafagaId.toIntId()}&deleted_at=is.null",
+            deleteBody,
+        )
+        request("PATCH", "/rest/v1/rafaga?id=eq.${rafagaId.toIntId()}", deleteBody)
     }
 
     fun listPreguntas(solucionarioId: String): List<PreguntaDto> {
@@ -534,6 +737,14 @@ private class SupabaseContentGateway private constructor(
         return questions.map { row -> row.toDto(resources[row.id].orEmpty().map { it.toDto() }) }
     }
 
+    fun listRafagaPreguntas(rafagaId: String): List<RafagaPreguntaDto> {
+        return request(
+            "GET",
+            "/rest/v1/rafaga_pregunta?select=*&rafaga_id=eq.${rafagaId.toIntId()}&deleted_at=is.null&order=orden.asc",
+            null,
+        ).decodeList<RafagaPreguntaRow>().map { it.toDto() }
+    }
+
     fun savePregunta(solucionarioId: String, input: PreguntaDto): PreguntaDto {
         validatePregunta(input)
         val saved = request(
@@ -547,8 +758,23 @@ private class SupabaseContentGateway private constructor(
         return saved.toDto(input.recursos.map { it.copy(preguntaId = savedId.toString()) })
     }
 
+    fun saveRafagaPregunta(rafagaId: String, input: RafagaPreguntaDto): RafagaPreguntaDto {
+        require(input.enunciado.isNotBlank()) { "La pregunta de rafaga necesita enunciado." }
+        val saved = request(
+            "POST",
+            "/rest/v1/rafaga_pregunta?on_conflict=id",
+            json.encodeToString(listOf(input.toRow(rafagaId))),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<RafagaPreguntaRow>().first()
+        return saved.toDto()
+    }
+
     fun deletePregunta(solucionarioId: String, preguntaId: String) {
         request("PATCH", "/rest/v1/pregunta?id=eq.${preguntaId.toIntId()}&examen_id=eq.${solucionarioId.toIntId()}", """{"deleted_at":"${java.time.Instant.now()}"}""")
+    }
+
+    fun deleteRafagaPregunta(rafagaId: String, preguntaId: String) {
+        request("PATCH", "/rest/v1/rafaga_pregunta?id=eq.${preguntaId.toIntId()}&rafaga_id=eq.${rafagaId.toIntId()}", """{"deleted_at":"${java.time.Instant.now()}"}""")
     }
 
     fun reorderPreguntas(solucionarioId: String, order: OrderDto): List<PreguntaDto> {
@@ -561,6 +787,20 @@ private class SupabaseContentGateway private constructor(
             "POST",
             "/rest/v1/pregunta?on_conflict=id",
             json.encodeToString(rows),
+            prefer = "resolution=merge-duplicates,return=minimal",
+        )
+        return reordered
+    }
+
+    fun reorderRafagaPreguntas(rafagaId: String, order: OrderDto): List<RafagaPreguntaDto> {
+        val current = listRafagaPreguntas(rafagaId)
+        require(order.ids.toSet() == current.map { it.id }.toSet()) { "El orden debe contener las mismas preguntas." }
+        val byId = current.associateBy { it.id }
+        val reordered = order.ids.mapIndexed { index, id -> byId.getValue(id).copy(orden = index) }
+        request(
+            "POST",
+            "/rest/v1/rafaga_pregunta?on_conflict=id",
+            json.encodeToString(reordered.map { it.toRow(rafagaId) }),
             prefer = "resolution=merge-duplicates,return=minimal",
         )
         return reordered
@@ -655,6 +895,7 @@ private class SupabaseContentGateway private constructor(
     }
 
     private fun storageUpload(objectPath: String, mimeType: String, bytes: ByteArray) {
+        ensureStorageBucketExists()
         val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
         val path = "/storage/v1/object/$examResourcesBucket/$encodedPath"
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
@@ -673,6 +914,26 @@ private class SupabaseContentGateway private constructor(
         if (response.statusCode() !in 200..299) {
             throw IllegalStateException("Supabase Storage upload -> ${response.statusCode()}: ${response.body().take(300)}")
         }
+    }
+
+    private fun ensureStorageBucketExists() {
+        if (storageBucketChecked) return
+        val bucketId = examResourcesBucket.toStorageBucketId()
+        val body = """{"id":"$bucketId","name":"$bucketId","public":true}"""
+        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/bucket"))
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+            .header("Content-Type", "application/json")
+        val response = try {
+            client.send(builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
+        } catch (error: Exception) {
+            throw IllegalStateException("Supabase Storage bucket check network error: ${error::class.simpleName}: ${error.message}", error)
+        }
+        if (response.statusCode() in 200..299 || response.statusCode() == 409) {
+            storageBucketChecked = true
+            return
+        }
+        throw IllegalStateException("Supabase Storage bucket check -> ${response.statusCode()}: ${response.body().take(300)}")
     }
 
     private fun storagePublicUrl(objectPath: String): String {
@@ -704,7 +965,7 @@ private class SupabaseContentGateway private constructor(
             request(method, path, body, prefer)
         } catch (error: IllegalStateException) {
             val message = error.message.orEmpty()
-            val missingRelation = listOf("PGRST205", "42P01", "Could not find the table", "relation").any {
+            val missingRelation = listOf("PGRST205", "42P01", "42703", "Could not find the table", "relation", "column").any {
                 message.contains(it, ignoreCase = true)
             }
             if (!missingRelation) throw error
@@ -779,6 +1040,37 @@ private data class PreguntaCountRow(
 )
 
 @Serializable
+private data class RafagaRow(
+    val id: Int? = null,
+    val titulo: String,
+    @kotlinx.serialization.SerialName("precio_tickets") val precioTickets: Int = 0,
+    @kotlinx.serialization.SerialName("especialidad_id") val especialidadId: Int,
+    val estado: String = "draft",
+    @kotlinx.serialization.SerialName("publicar_desde") val publicarDesde: String? = null,
+    @kotlinx.serialization.SerialName("published_at") val publishedAt: String? = null,
+    @kotlinx.serialization.SerialName("created_at") val createdAt: String? = null,
+    @kotlinx.serialization.SerialName("updated_at") val updatedAt: String? = null,
+    @kotlinx.serialization.SerialName("deleted_at") val deletedAt: String? = null,
+)
+
+@Serializable
+private data class RafagaPreguntaRow(
+    val id: Int? = null,
+    @kotlinx.serialization.SerialName("rafaga_id") val rafagaId: Int,
+    val enunciado: String,
+    val orden: Int = 0,
+    @kotlinx.serialization.SerialName("created_at") val createdAt: String? = null,
+    @kotlinx.serialization.SerialName("updated_at") val updatedAt: String? = null,
+    @kotlinx.serialization.SerialName("deleted_at") val deletedAt: String? = null,
+)
+
+@Serializable
+private data class RafagaPreguntaCountRow(
+    val id: Int? = null,
+    @kotlinx.serialization.SerialName("rafaga_id") val rafagaId: Int,
+)
+
+@Serializable
 private data class RecursoPreguntaRow(
     val id: Int? = null,
     @kotlinx.serialization.SerialName("pregunta_id") val preguntaId: Int,
@@ -847,6 +1139,44 @@ private fun SolucionarioDto.toRow() = ExamenRow(
     updatedAt = updatedAt.ifBlank { java.time.Instant.now().toString() },
 )
 
+private fun RafagaRow.toDto(questionCount: Int) = RafagaDto(
+    id = id?.toString().orEmpty(),
+    titulo = titulo,
+    especialidadId = especialidadId.toString(),
+    precioTickets = precioTickets,
+    estado = estado,
+    publicarDesde = publicarDesde,
+    publishedAt = publishedAt,
+    questionCount = questionCount,
+    createdAt = createdAt.orEmpty(),
+    updatedAt = updatedAt.orEmpty(),
+    deletedAt = deletedAt,
+)
+
+private fun RafagaDto.toRow() = RafagaRow(
+    id = id.toIntOrNull(),
+    titulo = titulo,
+    precioTickets = precioTickets,
+    especialidadId = especialidadId.toIntOrNull() ?: 1,
+    estado = estado,
+    publicarDesde = publicarDesde,
+    publishedAt = publishedAt,
+    updatedAt = updatedAt.ifBlank { java.time.Instant.now().toString() },
+)
+
+private fun RafagaDto.normalizedForSave(): RafagaDto {
+    val now = java.time.Instant.now().toString()
+    return copy(
+        publicarDesde = publicarDesde?.takeIf { it.isNotBlank() },
+        publishedAt = when {
+            estado == "published" && publishedAt.isNullOrBlank() -> now
+            estado == "published" -> publishedAt
+            else -> publishedAt?.takeIf { it.isNotBlank() }
+        },
+        updatedAt = now,
+    )
+}
+
 private fun SolucionarioDto.normalizedForSave(): SolucionarioDto {
     val now = java.time.Instant.now().toString()
     return copy(
@@ -878,6 +1208,24 @@ private fun PreguntaDto.toRow(examId: String, json: Json) = PreguntaRow(
     examenId = examId.toIntOrNull() ?: solucionarioId.toIntOrNull() ?: 1,
     enunciado = STORED_QUESTION_PREFIX + json.encodeToString(StoredQuestion(titulo = titulo, enunciado = enunciado, opciones = opciones)),
     orden = orden,
+)
+
+private fun RafagaPreguntaRow.toDto() = RafagaPreguntaDto(
+    id = id?.toString().orEmpty(),
+    rafagaId = rafagaId.toString(),
+    enunciado = enunciado,
+    orden = orden,
+    createdAt = createdAt.orEmpty(),
+    updatedAt = updatedAt.orEmpty(),
+    deletedAt = deletedAt,
+)
+
+private fun RafagaPreguntaDto.toRow(parentRafagaId: String) = RafagaPreguntaRow(
+    id = id.toIntOrNull(),
+    rafagaId = parentRafagaId.toIntOrNull() ?: rafagaId.toIntOrNull() ?: 1,
+    enunciado = enunciado,
+    orden = orden,
+    updatedAt = updatedAt.ifBlank { java.time.Instant.now().toString() },
 )
 
 private fun String.decodeStoredQuestion(): StoredQuestion {
@@ -922,6 +1270,22 @@ private fun String.toDatabaseResourceType(): String {
 private fun String.toSlug(): String = lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "item" }
 
 private fun String.toIntId(): Int = toIntOrNull() ?: throw IllegalArgumentException("Id no valido.")
+
+private fun String.toStorageBucketId(): String {
+    require(matches(Regex("[A-Za-z0-9._-]+"))) { "Bucket de storage no valido." }
+    return this
+}
+
+private fun Throwable.isMissingCoverColumnError(): Boolean {
+    val message = message.orEmpty()
+    val coverColumn = listOf("portada_url", "portada_storage_path", "portada_mime_type").any {
+        message.contains(it, ignoreCase = true)
+    }
+    val missingColumn = listOf("PGRST204", "PGRST205", "42703", "column").any {
+        message.contains(it, ignoreCase = true)
+    }
+    return coverColumn && missingColumn
+}
 
 private fun String.sanitizeStorageSegment(): String {
     return lowercase()

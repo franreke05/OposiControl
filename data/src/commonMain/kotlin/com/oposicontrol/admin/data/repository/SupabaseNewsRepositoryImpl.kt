@@ -7,6 +7,7 @@ import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.domain.model.NewsArticle
+import com.oposicontrol.admin.domain.model.NewsAssetUpload
 import com.oposicontrol.admin.domain.model.NewsLayer
 import com.oposicontrol.admin.domain.repository.NewsRepository
 import io.ktor.client.HttpClient
@@ -107,6 +108,10 @@ class SupabaseNewsRepositoryImpl(
         }
         if (result is AppResult.Success) refreshNews()
         return result
+    }
+
+    override suspend fun uploadNewsAsset(localPathOrUri: String): AppResult<NewsAssetUpload> {
+        return AppResult.Failure(AppError.Validation("La subida de assets de noticia requiere el backend Ktor."))
     }
 
     private fun HttpRequestBuilder.supabaseHeaders(accessToken: String) {

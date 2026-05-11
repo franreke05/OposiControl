@@ -10,6 +10,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.request.post
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
@@ -60,6 +61,16 @@ class KtorConnectionDiagnosticsRepositoryImpl(
             }.diagnosticDetail()
         }
         ConnectionDiagnosticReport(checks)
+    }
+
+    override suspend fun requestBackendRestart() = adapter.safeCall {
+        val baseUrl = appConfig.baseUrl.trimEnd('/')
+        val response = client.post("$baseUrl/admin/backend/restart") {
+            backendHeaders()
+        }
+        if (!response.status.isSuccess()) {
+            error(response.status.toDiagnosticDetail(response.bodyAsText().take(120)))
+        }
     }
 
     private suspend fun runCheck(

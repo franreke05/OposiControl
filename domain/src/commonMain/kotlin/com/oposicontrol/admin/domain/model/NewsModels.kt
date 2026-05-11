@@ -14,6 +14,12 @@ data class NewsArticle(
     val layers: List<NewsLayer>,
 )
 
+data class NewsAssetUpload(
+    val path: String,
+    val publicUrl: String,
+    val mimeType: String?,
+)
+
 data class NewsDesignDraft(
     val article: NewsArticleDraft,
     val canvas: NewsCanvasDraft,

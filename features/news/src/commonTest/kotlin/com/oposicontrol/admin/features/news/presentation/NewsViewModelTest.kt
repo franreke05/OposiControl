@@ -5,6 +5,7 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.NewsArticle
+import com.oposicontrol.admin.domain.model.NewsAssetUpload
 import com.oposicontrol.admin.domain.repository.NewsRepository
 import com.oposicontrol.admin.domain.usecase.news.ArchiveNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.DeleteNewsUseCase
@@ -12,6 +13,7 @@ import com.oposicontrol.admin.domain.usecase.news.ObserveNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.PublishNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.RefreshNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.ScheduleNewsUseCase
+import com.oposicontrol.admin.domain.usecase.news.UploadNewsAssetUseCase
 import com.oposicontrol.admin.domain.usecase.news.UpsertNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.ValidateNewsDraftUseCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -333,6 +335,79 @@ class NewsViewModelTest {
         assertEquals("published", viewModel.state.value.editorStatus)
     }
 
+    @Test
+    fun `create new appears in local news section`() = runTest {
+        val viewModel = createViewModel(StandardTestDispatcher(testScheduler))
+
+        viewModel.dispatch(NewsIntent.CreateNew)
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertTrue(state.selectedId.orEmpty().startsWith("local-"))
+        val localItems = (state.localNews as UiAsync.Success).value
+        assertTrue(localItems.any { it.id == state.selectedId && it.isLocalDraft })
+    }
+
+    @Test
+    fun `save draft does not call backend`() = runTest {
+        val repository = FakeNewsRepositoryForTest()
+        val viewModel = createViewModel(StandardTestDispatcher(testScheduler), repository)
+
+        viewModel.dispatch(NewsIntent.CreateNew)
+        viewModel.dispatch(NewsIntent.UpdateTitle("Borrador local"))
+        viewModel.dispatch(NewsIntent.SaveDraft)
+        advanceUntilIdle()
+
+        assertEquals(0, repository.upsertCount)
+        assertTrue(viewModel.state.value.selectedId.orEmpty().startsWith("local-"))
+    }
+
+    @Test
+    fun `publishing local draft creates remote published news`() = runTest {
+        val repository = FakeNewsRepositoryForTest()
+        val viewModel = createViewModel(StandardTestDispatcher(testScheduler), repository)
+
+        viewModel.dispatch(NewsIntent.CreateNew)
+        viewModel.dispatch(NewsIntent.UpdateTitle("Convocatoria publicada"))
+        viewModel.dispatch(NewsIntent.Publish)
+        advanceUntilIdle()
+
+        assertEquals(1, repository.upsertCount)
+        assertEquals("published", viewModel.state.value.editorStatus)
+        assertFalse(viewModel.state.value.selectedId.orEmpty().startsWith("local-"))
+        assertTrue(repository.lastUpsertedId.isBlank())
+    }
+
+    @Test
+    fun `selecting background keeps exactly one title layer`() = runTest {
+        val viewModel = createViewModel(StandardTestDispatcher(testScheduler))
+
+        viewModel.dispatch(NewsIntent.CreateNew)
+        viewModel.dispatch(NewsIntent.AddTitleLayer)
+        viewModel.dispatch(NewsIntent.SelectBackgroundFile("content://media/background.png", "background.png", "image/png"))
+        advanceUntilIdle()
+
+        val titleLayers = viewModel.state.value.editorLayers.filter { it.kind == "titulo" }
+        assertEquals(1, titleLayers.size)
+        assertEquals("SKY", viewModel.state.value.editorBackgroundType)
+    }
+
+    @Test
+    fun `local background is uploaded before publishing`() = runTest {
+        val repository = FakeNewsRepositoryForTest()
+        val viewModel = createViewModel(StandardTestDispatcher(testScheduler), repository)
+
+        viewModel.dispatch(NewsIntent.CreateNew)
+        viewModel.dispatch(NewsIntent.UpdateTitle("Con fondo local"))
+        viewModel.dispatch(NewsIntent.SelectBackgroundFile("content://media/background.png", "background.png", "image/png"))
+        viewModel.dispatch(NewsIntent.Publish)
+        advanceUntilIdle()
+
+        assertEquals(1, repository.uploadCount)
+        assertEquals("uploaded", viewModel.state.value.editorBackgroundAssetStatus)
+        assertTrue(viewModel.state.value.editorBackgroundPath.startsWith("https://cdn.oposicontrol.local/"))
+    }
+
     private fun createViewModel(
         dispatcher: TestDispatcher,
         repository: FakeNewsRepositoryForTest = FakeNewsRepositoryForTest(),
@@ -347,6 +422,7 @@ class NewsViewModelTest {
             validateNewsDraftUseCase = validate,
             publishNewsUseCase = PublishNewsUseCase(repository, validate),
             scheduleNewsUseCase = ScheduleNewsUseCase(repository, validate),
+            uploadNewsAssetUseCase = UploadNewsAssetUseCase(repository),
             archiveNewsUseCase = ArchiveNewsUseCase(repository),
             analyticsTracker = NoOpAnalyticsTracker,
         )
@@ -354,6 +430,12 @@ class NewsViewModelTest {
 }
 
 private class FakeNewsRepositoryForTest : NewsRepository {
+    var upsertCount = 0
+        private set
+    var uploadCount = 0
+        private set
+    var lastUpsertedId = ""
+        private set
     private val items = MutableStateFlow(
         listOf(
             NewsArticle(
@@ -390,6 +472,8 @@ private class FakeNewsRepositoryForTest : NewsRepository {
     override suspend fun refreshNews(): AppResult<List<NewsArticle>> = AppResult.Success(items.value)
 
     override suspend fun upsertNews(article: NewsArticle): AppResult<NewsArticle> {
+        upsertCount += 1
+        lastUpsertedId = article.id
         val saved = article.copy(id = article.id.ifBlank { "news-${items.value.size + 1}" })
         items.value = items.value.filterNot { it.id == saved.id } + saved
         return AppResult.Success(saved)
@@ -398,6 +482,19 @@ private class FakeNewsRepositoryForTest : NewsRepository {
     override suspend fun deleteNews(newsId: String): AppResult<Unit> {
         items.value = items.value.filterNot { it.id == newsId }
         return AppResult.Success(Unit)
+    }
+
+    override suspend fun uploadNewsAsset(localPathOrUri: String): AppResult<NewsAssetUpload> {
+        uploadCount += 1
+        val fileName = localPathOrUri.substringAfterLast('/').ifBlank { "asset.png" }
+        val path = "news-assets/test/$fileName"
+        return AppResult.Success(
+            NewsAssetUpload(
+                path = path,
+                publicUrl = "https://cdn.oposicontrol.local/$path",
+                mimeType = "image/png",
+            ),
+        )
     }
 
     fun replaceRemote(news: List<NewsArticle>) {

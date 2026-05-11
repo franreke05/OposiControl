@@ -14,21 +14,31 @@ import com.oposicontrol.admin.domain.model.QuestionMoveDirection
 import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.Rafaga
+import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
+import com.oposicontrol.admin.domain.usecase.content.GetRafagaQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.ImportQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.MoveRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.ObserveRafagasUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.RefreshRafagasUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadQuestionResourceUseCase
@@ -51,18 +61,26 @@ class ExamsViewModelTest {
             dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
             observeSpecialtiesUseCase = ObserveSpecialtiesUseCase(repository),
             observeExamsUseCase = ObserveExamsUseCase(repository),
+            observeRafagasUseCase = ObserveRafagasUseCase(repository),
             refreshSpecialtiesUseCase = RefreshSpecialtiesUseCase(repository),
             upsertSpecialtyUseCase = UpsertSpecialtyUseCase(repository),
             deleteSpecialtyUseCase = DeleteSpecialtyUseCase(repository),
             refreshExamsUseCase = RefreshExamsUseCase(repository),
+            refreshRafagasUseCase = RefreshRafagasUseCase(repository),
             getExamQuestionsUseCase = GetExamQuestionsUseCase(repository),
+            getRafagaQuestionsUseCase = GetRafagaQuestionsUseCase(repository),
             getExamResourceAuditUseCase = GetExamResourceAuditUseCase(repository),
             upsertExamUseCase = UpsertExamUseCase(repository),
             deleteExamUseCase = DeleteExamUseCase(repository),
+            upsertRafagaUseCase = UpsertRafagaUseCase(repository),
+            deleteRafagaUseCase = DeleteRafagaUseCase(repository),
             upsertQuestionUseCase = UpsertQuestionUseCase(repository),
             importQuestionsUseCase = ImportQuestionsUseCase(repository),
             deleteQuestionUseCase = DeleteQuestionUseCase(repository),
             moveQuestionUseCase = MoveQuestionUseCase(repository),
+            upsertRafagaQuestionUseCase = UpsertRafagaQuestionUseCase(repository),
+            deleteRafagaQuestionUseCase = DeleteRafagaQuestionUseCase(repository),
+            moveRafagaQuestionUseCase = MoveRafagaQuestionUseCase(repository),
             uploadExamCoverUseCase = UploadExamCoverUseCase(repository),
             uploadQuestionResourceUseCase = UploadQuestionResourceUseCase(repository),
             analyticsTracker = NoOpAnalyticsTracker,
@@ -115,6 +133,8 @@ private class ExamsTestRepository : ContentRepository {
             ),
         ),
     )
+    private val rafagas = MutableStateFlow<List<Rafaga>>(emptyList())
+    private val rafagaQuestions = mutableMapOf<String, MutableList<RafagaQuestion>>()
     private val questions = mutableMapOf(
         "exam-tcae-marzo" to mutableListOf(
             question("question-tcae-1", "exam-tcae-marzo", 0),
@@ -124,10 +144,15 @@ private class ExamsTestRepository : ContentRepository {
 
     override fun observeSpecialties(): Flow<List<Specialty>> = specialties
     override fun observeExams(): Flow<List<Exam>> = exams
+    override fun observeRafagas(): Flow<List<Rafaga>> = rafagas
     override suspend fun refreshSpecialties(): AppResult<List<Specialty>> = AppResult.Success(specialties.value)
     override suspend fun refreshExams(): AppResult<List<Exam>> = AppResult.Success(exams.value)
+    override suspend fun refreshRafagas(): AppResult<List<Rafaga>> = AppResult.Success(rafagas.value)
     override suspend fun getExamQuestions(examId: String): AppResult<List<ExamQuestion>> {
         return AppResult.Success(questions[examId].orEmpty())
+    }
+    override suspend fun getRafagaQuestions(rafagaId: String): AppResult<List<RafagaQuestion>> {
+        return AppResult.Success(rafagaQuestions[rafagaId].orEmpty())
     }
     override suspend fun getExamResourceAudit(examId: String): AppResult<ExamResourceAudit> {
         val rows = questions[examId].orEmpty()
@@ -159,6 +184,8 @@ private class ExamsTestRepository : ContentRepository {
     override suspend fun deleteSpecialty(specialtyId: String): AppResult<Unit> = AppResult.Success(Unit)
     override suspend fun upsertExam(exam: Exam): AppResult<Exam> = AppResult.Success(exam)
     override suspend fun deleteExam(examId: String): AppResult<Unit> = AppResult.Success(Unit)
+    override suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga> = AppResult.Success(rafaga)
+    override suspend fun deleteRafaga(rafagaId: String): AppResult<Unit> = AppResult.Success(Unit)
     override suspend fun uploadExamCover(examId: String, localPathOrUri: String): AppResult<Exam> {
         val saved = exams.value.first { it.id == examId }.copy(
             coverUrl = "https://storage.local/exam-covers/$examId/cover.png",
@@ -185,6 +212,18 @@ private class ExamsTestRepository : ContentRepository {
         questionId: String,
         direction: QuestionMoveDirection,
     ): AppResult<List<ExamQuestion>> = AppResult.Success(questions[examId].orEmpty())
+    override suspend fun upsertRafagaQuestion(question: RafagaQuestion): AppResult<RafagaQuestion> {
+        val bucket = rafagaQuestions.getOrPut(question.rafagaId) { mutableListOf() }
+        bucket.removeAll { it.id == question.id }
+        bucket += question
+        return AppResult.Success(question)
+    }
+    override suspend fun deleteRafagaQuestion(rafagaId: String, questionId: String): AppResult<Unit> = AppResult.Success(Unit)
+    override suspend fun moveRafagaQuestion(
+        rafagaId: String,
+        questionId: String,
+        direction: QuestionMoveDirection,
+    ): AppResult<List<RafagaQuestion>> = AppResult.Success(rafagaQuestions[rafagaId].orEmpty())
     override suspend fun uploadResource(
         questionId: String,
         resourceId: String,

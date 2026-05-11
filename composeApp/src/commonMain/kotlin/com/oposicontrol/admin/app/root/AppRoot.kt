@@ -28,6 +28,7 @@ import com.oposicontrol.admin.features.exams.presentation.QuestionsResourcesScre
 import com.oposicontrol.admin.features.moderation.presentation.ModerationIntent
 import com.oposicontrol.admin.features.moderation.presentation.ModerationScreen
 import com.oposicontrol.admin.features.moderation.presentation.ModerationViewModel
+import com.oposicontrol.admin.features.news.presentation.NewsIntent
 import com.oposicontrol.admin.features.news.presentation.NewsScreen
 import com.oposicontrol.admin.features.news.presentation.NewsViewModel
 import com.oposicontrol.admin.features.newstypes.presentation.NewsTypesIntent
@@ -200,7 +201,7 @@ private fun adminSectionRoute(
         AdminSection.NEWS -> {
             val viewModel: NewsViewModel = koinInject()
             AdminSectionRoute(
-                onPrimaryAction = null,
+                onPrimaryAction = { viewModel.dispatch(NewsIntent.CreateNew) },
                 content = { NewsScreen(viewModel) },
             )
         }

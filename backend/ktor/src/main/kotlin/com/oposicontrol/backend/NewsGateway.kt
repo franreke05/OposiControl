@@ -19,7 +19,21 @@ interface NewsGateway {
     fun listNoticias(): List<NoticiaDto>
     fun saveNoticia(input: NoticiaDto): NoticiaDto
     fun deleteNoticia(noticiaId: String)
+    fun uploadAsset(file: NewsUploadedFile): NewsAssetUploadDto
 }
+
+data class NewsUploadedFile(
+    val fileName: String,
+    val mimeType: String,
+    val bytes: ByteArray,
+)
+
+@Serializable
+data class NewsAssetUploadDto(
+    val path: String,
+    val publicUrl: String,
+    val mimeType: String? = null,
+)
 
 @Serializable
 data class NoticiaDto(
@@ -70,14 +84,23 @@ class InMemoryNewsGateway : NewsGateway {
     override fun deleteNoticia(noticiaId: String) {
         noticias.remove(noticiaId)
     }
+
+    override fun uploadAsset(file: NewsUploadedFile): NewsAssetUploadDto {
+        val path = "news-assets/local/${file.fileName.sanitizeStorageSegment()}"
+        return NewsAssetUploadDto(path = path, publicUrl = path, mimeType = file.mimeType)
+    }
 }
 
 class SupabaseNewsGateway private constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
+    private val newsAssetsBucket: String,
     private val json: Json,
     private val client: HttpClient = HttpClient.newHttpClient(),
 ) : NewsGateway {
+    @Volatile
+    private var storageBucketChecked = false
+
     override fun listNoticias(): List<NoticiaDto> {
         val rows = request(
             method = "GET",
@@ -111,6 +134,61 @@ class SupabaseNewsGateway private constructor(
             path = "/rest/v1/noticia?id=eq.$numericId",
             body = """{"deleted_at":"${java.time.Instant.now()}"}""",
         )
+    }
+
+    override fun uploadAsset(file: NewsUploadedFile): NewsAssetUploadDto {
+        require(file.mimeType.startsWith("image/")) { "El asset de noticia debe ser una imagen." }
+        val objectPath = "news/${UUID.randomUUID()}/${file.fileName.sanitizeStorageSegment()}"
+        storageUpload(objectPath, file.mimeType, file.bytes)
+        return NewsAssetUploadDto(
+            path = objectPath,
+            publicUrl = storagePublicUrl(objectPath),
+            mimeType = file.mimeType,
+        )
+    }
+
+    private fun storageUpload(objectPath: String, mimeType: String, bytes: ByteArray) {
+        ensureStorageBucketExists()
+        val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
+        val path = "/storage/v1/object/$newsAssetsBucket/$encodedPath"
+        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+            .header("Content-Type", mimeType)
+            .header("x-upsert", "true")
+        val response = try {
+            client.send(builder.POST(HttpRequest.BodyPublishers.ofByteArray(bytes)).build(), HttpResponse.BodyHandlers.ofString())
+        } catch (e: Exception) {
+            throw IllegalStateException("Supabase Storage network error on news asset upload: ${e::class.simpleName}: ${e.message}", e)
+        }
+        if (response.statusCode() !in 200..299) {
+            throw IllegalStateException("Supabase Storage news asset upload -> ${response.statusCode()}: ${response.body().take(300)}")
+        }
+    }
+
+    private fun ensureStorageBucketExists() {
+        if (storageBucketChecked) return
+        val bucketId = newsAssetsBucket.toStorageBucketId()
+        val body = """{"id":"$bucketId","name":"$bucketId","public":true}"""
+        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/bucket"))
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+            .header("Content-Type", "application/json")
+        val response = try {
+            client.send(builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
+        } catch (error: Exception) {
+            throw IllegalStateException("Supabase Storage bucket check network error: ${error::class.simpleName}: ${error.message}", error)
+        }
+        if (response.statusCode() in 200..299 || response.statusCode() == 409) {
+            storageBucketChecked = true
+            return
+        }
+        throw IllegalStateException("Supabase Storage bucket check -> ${response.statusCode()}: ${response.body().take(300)}")
+    }
+
+    private fun storagePublicUrl(objectPath: String): String {
+        val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
+        return "$supabaseUrl/storage/v1/object/public/$newsAssetsBucket/$encodedPath"
     }
 
     private fun request(
@@ -175,7 +253,8 @@ class SupabaseNewsGateway private constructor(
         fun fromEnvironment(json: Json): SupabaseNewsGateway? {
             val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
             val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
-            return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseNewsGateway(url, serviceRoleKey, json)
+            val bucket = System.getenv("SUPABASE_BUCKET_NEWS_ASSETS").orEmpty().ifBlank { "news-assets" }
+            return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseNewsGateway(url, serviceRoleKey, bucket, json)
         }
     }
 }
@@ -278,3 +357,17 @@ private fun String.toClientBackground(): String {
 private fun String.toPostgrestValue(): String {
     return URLEncoder.encode(this, StandardCharsets.UTF_8.toString())
 }
+
+private fun String.sanitizeStorageSegment(): String {
+    return lowercase()
+        .replace(Regex("[^a-z0-9._-]+"), "-")
+        .trim('-', '.', '_')
+        .ifBlank { "file" }
+}
+
+private fun String.toStorageBucketId(): String {
+    require(matches(Regex("[A-Za-z0-9._-]+"))) { "Bucket de storage no valido." }
+    return this
+}
+
+private fun String.urlEncode(): String = URLEncoder.encode(this, StandardCharsets.UTF_8).replace("+", "%20")

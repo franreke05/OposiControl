@@ -1,6 +1,7 @@
 package com.oposicontrol.admin.features.news.presentation
 
 sealed interface NewsIntent {
+    data object Refresh : NewsIntent
     data object CreateNew : NewsIntent
     data object Save : NewsIntent
     data object SaveDraft : NewsIntent
@@ -30,6 +31,7 @@ sealed interface NewsIntent {
     data class UpdateBackgroundAssetStatus(val value: String) : NewsIntent
     data class UpdateImageAssetStatus(val value: String) : NewsIntent
     data object ToggleCanvasFullscreen : NewsIntent
+    data object AddTitleLayer : NewsIntent
     data object AddLayer : NewsIntent
     data class AddLayerWithImage(val uri: String) : NewsIntent
     data class SelectLayer(val id: String) : NewsIntent

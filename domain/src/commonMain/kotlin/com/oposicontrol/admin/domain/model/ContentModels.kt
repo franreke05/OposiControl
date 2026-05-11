@@ -33,6 +33,21 @@ data class Exam(
     val deletedAt: Instant? = null,
 )
 
+data class Rafaga(
+    val id: String,
+    val specialtyId: String,
+    val specialtyName: String,
+    val title: String,
+    val priceTickets: Int,
+    val status: ExamStatus,
+    val publishFrom: Instant?,
+    val publishedAt: Instant?,
+    val questionCount: Int,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+    val deletedAt: Instant? = null,
+)
+
 enum class ExamStatus {
     DRAFT,
     PUBLISHED,
@@ -49,6 +64,16 @@ data class ExamQuestion(
     val resources: List<QuestionResource>,
     val createdAt: Instant,
     val updatedAt: Instant,
+)
+
+data class RafagaQuestion(
+    val id: String,
+    val rafagaId: String,
+    val statement: String,
+    val sortOrder: Int,
+    val createdAt: Instant,
+    val updatedAt: Instant,
+    val deletedAt: Instant? = null,
 )
 
 data class QuestionOption(

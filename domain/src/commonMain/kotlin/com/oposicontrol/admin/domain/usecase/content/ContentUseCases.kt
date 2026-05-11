@@ -7,6 +7,8 @@ import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.QuestionMoveDirection
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.Rafaga
+import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.ContentRepository
 
@@ -45,16 +47,34 @@ class ObserveExamsUseCase(
     operator fun invoke() = repository.observeExams()
 }
 
+class ObserveRafagasUseCase(
+    private val repository: ContentRepository,
+) {
+    operator fun invoke() = repository.observeRafagas()
+}
+
 class RefreshExamsUseCase(
     private val repository: ContentRepository,
 ) {
     suspend operator fun invoke() = repository.refreshExams()
 }
 
+class RefreshRafagasUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke() = repository.refreshRafagas()
+}
+
 class GetExamQuestionsUseCase(
     private val repository: ContentRepository,
 ) {
     suspend operator fun invoke(examId: String) = repository.getExamQuestions(examId)
+}
+
+class GetRafagaQuestionsUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(rafagaId: String) = repository.getRafagaQuestions(rafagaId)
 }
 
 class GetExamResourceAuditUseCase(
@@ -84,6 +104,29 @@ class DeleteExamUseCase(
     private val repository: ContentRepository,
 ) {
     suspend operator fun invoke(examId: String) = repository.deleteExam(examId)
+}
+
+class UpsertRafagaUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(rafaga: Rafaga): AppResult<Rafaga> {
+        if (rafaga.specialtyId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("La rafaga necesita una especialidad."))
+        }
+        if (rafaga.title.isBlank()) {
+            return AppResult.Failure(AppError.Validation("La rafaga necesita titulo."))
+        }
+        if (rafaga.priceTickets < 0) {
+            return AppResult.Failure(AppError.Validation("El precio en tickets no puede ser negativo."))
+        }
+        return repository.upsertRafaga(rafaga)
+    }
+}
+
+class DeleteRafagaUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(rafagaId: String) = repository.deleteRafaga(rafagaId)
 }
 
 class UpsertQuestionUseCase(
@@ -166,6 +209,36 @@ class MoveQuestionUseCase(
         questionId: String,
         direction: QuestionMoveDirection,
     ) = repository.moveQuestion(examId, questionId, direction)
+}
+
+class UpsertRafagaQuestionUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(question: RafagaQuestion): AppResult<RafagaQuestion> {
+        if (question.rafagaId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona una rafaga antes de guardar preguntas."))
+        }
+        if (question.statement.isBlank()) {
+            return AppResult.Failure(AppError.Validation("La pregunta de rafaga necesita enunciado."))
+        }
+        return repository.upsertRafagaQuestion(question)
+    }
+}
+
+class DeleteRafagaQuestionUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(rafagaId: String, questionId: String) = repository.deleteRafagaQuestion(rafagaId, questionId)
+}
+
+class MoveRafagaQuestionUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(
+        rafagaId: String,
+        questionId: String,
+        direction: QuestionMoveDirection,
+    ) = repository.moveRafagaQuestion(rafagaId, questionId, direction)
 }
 
 class UploadQuestionResourceUseCase(
