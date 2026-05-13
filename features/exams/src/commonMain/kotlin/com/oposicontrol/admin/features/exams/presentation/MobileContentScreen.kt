@@ -1,5 +1,9 @@
 package com.oposicontrol.admin.features.exams.presentation
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,11 +22,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -30,7 +36,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -91,6 +99,7 @@ fun MobileContentScreen(
     backendActionInProgress: Boolean = false,
     onRestartBackend: () -> Unit = {},
     connectionDiagnostics: @Composable () -> Unit = {},
+    adminContent: @Composable () -> Unit = {},
 ) {
     val examsState by examsViewModel.state.collectAsState()
     val newsState by newsViewModel.state.collectAsState()
@@ -105,6 +114,7 @@ fun MobileContentScreen(
         backendActionInProgress = backendActionInProgress,
         onRestartBackend = onRestartBackend,
         connectionDiagnostics = connectionDiagnostics,
+        adminContent = adminContent,
     )
 }
 
@@ -188,6 +198,7 @@ fun MobileContentContent(
     backendActionInProgress: Boolean = false,
     onRestartBackend: () -> Unit = {},
     connectionDiagnostics: @Composable () -> Unit = {},
+    adminContent: @Composable () -> Unit = {},
 ) {
     var activeView by rememberSaveable { mutableStateOf(initialView) }
     var isNewsFullscreen by rememberSaveable { mutableStateOf(false) }
@@ -207,15 +218,37 @@ fun MobileContentContent(
             onToggleFullscreen = { isNewsFullscreen = false }
         )
     } else {
+        if (state.pendingDeleteTarget != null) {
+            AlertDialog(
+                onDismissRequest = { onIntent(ExamsIntent.DismissPendingDelete) },
+                title = { Text("Confirmar eliminacion") },
+                text = { Text(state.pendingDeleteMessage.ifBlank { "Esta accion no se puede deshacer." }) },
+                confirmButton = {
+                    TextButton(onClick = { onIntent(ExamsIntent.ConfirmPendingDelete) }) {
+                        Text("Eliminar")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { onIntent(ExamsIntent.DismissPendingDelete) }) {
+                        Text("Cancelar")
+                    }
+                },
+            )
+        }
         val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val swipeThresholdPx = with(LocalDensity.current) { 96.dp.toPx() }
-        Box(modifier = Modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .imePadding(),
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .statusBarsPadding()
                     .padding(
                         start = UiSpacing.screenMobile,
-                        top = UiSpacing.mobileTopBar,
+                        top = 12.dp,
                         end = UiSpacing.screenMobile,
                         bottom = UiSpacing.mobileBottomBarClearance + navBarBottom,
                     )
@@ -228,15 +261,15 @@ fun MobileContentContent(
             ) {
                 MobileTopBar(
                     activeView = activeView,
-                    subtitle = if (activeView == MobileContentView.Noticias) {
-                        newsState.editorTitle.ifBlank { "Sin seleccion" }
-                    } else {
-                        state.editorTitle.ifBlank { "Sin seleccion" }
+                    subtitle = when (activeView) {
+                        MobileContentView.Noticias -> newsState.editorTitle.ifBlank { "Sin seleccion" }
+                        MobileContentView.Admin -> "Panel de administracion"
+                        else -> state.editorTitle.ifBlank { "Sin seleccion" }
                     },
-                    status = if (activeView == MobileContentView.Noticias) {
-                        newsState.editorStatus.ifBlank { "draft" }
-                    } else {
-                        state.editorStatus.ifBlank { "draft" }
+                    status = when (activeView) {
+                        MobileContentView.Noticias -> newsState.editorStatus.ifBlank { "draft" }
+                        MobileContentView.Admin -> "active"
+                        else -> state.editorStatus.ifBlank { "draft" }
                     },
                     backendActionLabel = backendActionLabel,
                     backendActionInProgress = backendActionInProgress,
@@ -247,40 +280,47 @@ fun MobileContentContent(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
+                        .verticalScroll(rememberScrollState())
+                        .padding(bottom = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(UiSpacing.block),
                 ) {
-                    when (activeView) {
-                        MobileContentView.Solucionarios -> SolucionarioList(
-                            state = state,
-                            onIntent = onIntent,
-                            onCreate = {
-                                onIntent(ExamsIntent.CreateNew)
-                                activeView = MobileContentView.Editor
-                            },
-                            onCreateBurst = {
-                                onIntent(ExamsIntent.CreateRafaga)
-                                activeView = MobileContentView.Editor
-                            },
-                        )
+                    Crossfade(
+                        targetState = activeView,
+                        animationSpec = tween(durationMillis = 220),
+                    ) { view ->
+                        when (view) {
+                            MobileContentView.Solucionarios -> SolucionarioList(
+                                state = state,
+                                onIntent = onIntent,
+                                onCreate = {
+                                    onIntent(ExamsIntent.CreateNew)
+                                    activeView = MobileContentView.Editor
+                                },
+                                onCreateBurst = {
+                                    onIntent(ExamsIntent.CreateRafaga)
+                                    activeView = MobileContentView.Editor
+                                },
+                            )
 
-                        MobileContentView.Editor -> {
-                            if (state.editorMode == ExamEditorMode.Rafaga) {
-                                RafagaEditor(state = state, onIntent = onIntent)
-                            } else {
-                                SolucionarioEditor(state = state, onIntent = onIntent)
+                            MobileContentView.Editor -> {
+                                if (state.editorMode == ExamEditorMode.Rafaga) {
+                                    RafagaEditor(state = state, onIntent = onIntent)
+                                } else {
+                                    SolucionarioEditor(state = state, onIntent = onIntent)
+                                }
                             }
+                            MobileContentView.Preguntas -> QuestionsPanel(state = state, onIntent = onIntent)
+                            MobileContentView.Recursos -> ResourceTray(state = state, onIntent = onIntent)
+                            MobileContentView.Especialidades -> MobileSpecialtiesPanel(state = state, onIntent = onIntent)
+                            MobileContentView.Etiquetas -> MobileTagSearchPanel(repository = tagSearchRepository)
+                            MobileContentView.Noticias -> MobileNewsPanel(
+                                state = newsState,
+                                onIntent = onNewsIntent,
+                                isFullscreen = false,
+                                onToggleFullscreen = { isNewsFullscreen = true }
+                            )
+                            MobileContentView.Admin -> adminContent()
                         }
-                        MobileContentView.Preguntas -> QuestionsPanel(state = state, onIntent = onIntent)
-                        MobileContentView.Recursos -> ResourceTray(state = state, onIntent = onIntent)
-                        MobileContentView.Especialidades -> MobileSpecialtiesPanel(state = state, onIntent = onIntent)
-                        MobileContentView.Etiquetas -> MobileTagSearchPanel(repository = tagSearchRepository)
-                        MobileContentView.Noticias -> MobileNewsPanel(
-                            state = newsState,
-                            onIntent = onNewsIntent,
-                            isFullscreen = false,
-                            onToggleFullscreen = { isNewsFullscreen = true }
-                        )
                     }
                 }
             }
@@ -302,6 +342,7 @@ enum class MobileContentView(val label: String, val title: String, val icon: Mob
     Especialidades("Especialidades", "Especialidades", MobileIcon.Specialty),
     Etiquetas("Etiquetas", "Etiquetas", MobileIcon.Search),
     Noticias("Noticias", "Noticias", MobileIcon.News),
+    Admin("Admin", "Admin", MobileIcon.Admin),
 }
 
 private fun Modifier.mobileContentSwipe(
@@ -349,6 +390,22 @@ enum class MobileIcon {
     Save,
     Remove,
     Refresh,
+    Admin,
+    Users,
+    Key,
+    Wallet,
+    Chat,
+    Gear,
+    Back,
+    Check,
+    Upload,
+    Clock,
+    Photo,
+    Trash,
+    Eye,
+    Lock,
+    Unlock,
+    Copy,
 }
 
 @Composable
@@ -433,7 +490,9 @@ private fun MobileBottomTabBar(
     modifier: Modifier = Modifier,
 ) {
     GlassSurface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp),
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         tint = GlassTheme.tokens.glassFillStrong,
     ) {
@@ -452,7 +511,7 @@ private fun MobileBottomTabBar(
                         view = view,
                         selected = view == activeView,
                         onSelected = onSelected,
-                        modifier = Modifier.width(82.dp),
+                        modifier = Modifier.width(78.dp),
                     )
                 }
             }
@@ -473,6 +532,14 @@ private fun MobileTabItem(
     onSelected: (MobileContentView) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val indicatorWidth by animateDpAsState(
+        targetValue = if (selected) 24.dp else 0.dp,
+        animationSpec = tween(durationMillis = 160),
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (selected) GlassTheme.tokens.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(durationMillis = 160),
+    )
     Column(
         modifier = modifier
             .fillMaxHeight()
@@ -483,23 +550,23 @@ private fun MobileTabItem(
     ) {
         Box(
             modifier = Modifier
-                .width(if (selected) 24.dp else 0.dp)
+                .width(indicatorWidth)
                 .height(3.dp)
                 .background(
-                    color = if (selected) GlassTheme.tokens.accent else Color.Transparent,
+                    color = contentColor.copy(alpha = if (selected) 1f else 0f),
                     shape = RoundedCornerShape(2.dp),
                 )
         )
         LineIcon(
             icon = view.icon,
             modifier = Modifier.size(22.dp),
-            color = if (selected) GlassTheme.tokens.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = contentColor,
         )
         Text(
             text = view.label,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) GlassTheme.tokens.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = contentColor,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -507,7 +574,7 @@ private fun MobileTabItem(
 }
 
 @Composable
-private fun MobileActionPill(
+fun MobileActionPill(
     icon: MobileIcon,
     label: String,
     modifier: Modifier = Modifier,
@@ -546,7 +613,7 @@ private fun MobileActionPill(
     }
 }
 
-private data class MobileActionSpec(
+data class MobileActionSpec(
     val icon: MobileIcon,
     val label: String,
     val minWidth: Int = 118,
@@ -556,7 +623,7 @@ private data class MobileActionSpec(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ResponsiveActionRow(
+fun ResponsiveActionRow(
     actions: List<MobileActionSpec>,
     modifier: Modifier = Modifier,
     maxItemsInEachRow: Int = 2,
@@ -580,7 +647,7 @@ private fun ResponsiveActionRow(
 }
 
 @Composable
-private fun IconBadge(
+fun IconBadge(
     icon: MobileIcon,
     selected: Boolean,
 ) {
@@ -601,7 +668,7 @@ private fun IconBadge(
 }
 
 @Composable
-private fun LineIcon(
+fun LineIcon(
     icon: MobileIcon,
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -681,6 +748,102 @@ private fun LineIcon(
                 drawLine(color, Offset(w * 0.7f, h * 0.18f), Offset(w * 0.82f, h * 0.34f), stroke.width, StrokeCap.Round)
                 drawLine(color, Offset(w * 0.7f, h * 0.18f), Offset(w * 0.54f, h * 0.22f), stroke.width, StrokeCap.Round)
             }
+            MobileIcon.Admin -> {
+                drawRoundRect(color, Offset(w * 0.2f, h * 0.18f), Size(w * 0.6f, h * 0.64f), CornerRadius(w * 0.12f), style = stroke)
+                drawLine(color, Offset(w * 0.34f, h * 0.38f), Offset(w * 0.66f, h * 0.38f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.34f, h * 0.52f), Offset(w * 0.66f, h * 0.52f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.34f, h * 0.66f), Offset(w * 0.54f, h * 0.66f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Users -> {
+                drawCircle(color, radius = w * 0.16f, center = Offset(w * 0.38f, h * 0.34f), style = stroke)
+                drawArc(color, startAngle = 180f, sweepAngle = 180f, useCenter = false, topLeft = Offset(w * 0.1f, h * 0.52f), size = Size(w * 0.56f, h * 0.3f), style = stroke)
+                drawCircle(color, radius = w * 0.12f, center = Offset(w * 0.68f, h * 0.32f), style = stroke)
+                drawArc(color, startAngle = 180f, sweepAngle = 180f, useCenter = false, topLeft = Offset(w * 0.46f, h * 0.5f), size = Size(w * 0.44f, h * 0.24f), style = stroke)
+            }
+            MobileIcon.Key -> {
+                drawCircle(color, radius = w * 0.22f, center = Offset(w * 0.38f, h * 0.38f), style = stroke)
+                drawLine(color, Offset(w * 0.56f, h * 0.56f), Offset(w * 0.82f, h * 0.82f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.72f, h * 0.68f), Offset(w * 0.72f, h * 0.8f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.82f, h * 0.72f), Offset(w * 0.82f, h * 0.84f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Wallet -> {
+                drawRoundRect(color, Offset(w * 0.14f, h * 0.26f), Size(w * 0.72f, h * 0.52f), CornerRadius(w * 0.1f), style = stroke)
+                drawRoundRect(color, Offset(w * 0.58f, h * 0.42f), Size(w * 0.28f, h * 0.22f), CornerRadius(w * 0.06f), style = stroke)
+                drawCircle(color, radius = w * 0.04f, center = Offset(w * 0.72f, h * 0.53f))
+            }
+            MobileIcon.Chat -> {
+                drawRoundRect(color, Offset(w * 0.14f, h * 0.18f), Size(w * 0.72f, h * 0.52f), CornerRadius(w * 0.1f), style = stroke)
+                drawLine(color, Offset(w * 0.28f, h * 0.36f), Offset(w * 0.72f, h * 0.36f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.28f, h * 0.5f), Offset(w * 0.58f, h * 0.5f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.24f, h * 0.7f), Offset(w * 0.4f, h * 0.56f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Gear -> {
+                drawCircle(color, radius = w * 0.2f, center = Offset(w * 0.5f, h * 0.5f), style = stroke)
+                val cx = w * 0.5f; val cy = h * 0.5f; val r = w * 0.4f
+                for (i in 0..5) {
+                    val angle = kotlin.math.PI / 3.0 * i
+                    val sx = cx + (r * 0.75f * kotlin.math.cos(angle).toFloat())
+                    val sy = cy + (r * 0.75f * kotlin.math.sin(angle).toFloat())
+                    val ex = cx + (r * kotlin.math.cos(angle).toFloat())
+                    val ey = cy + (r * kotlin.math.sin(angle).toFloat())
+                    drawLine(color, Offset(sx, sy), Offset(ex, ey), stroke.width, StrokeCap.Round)
+                }
+            }
+            MobileIcon.Back -> {
+                drawLine(color, Offset(w * 0.62f, h * 0.22f), Offset(w * 0.28f, h * 0.5f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.28f, h * 0.5f), Offset(w * 0.62f, h * 0.78f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Check -> {
+                drawLine(color, Offset(w * 0.2f, h * 0.52f), Offset(w * 0.44f, h * 0.74f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.44f, h * 0.74f), Offset(w * 0.8f, h * 0.28f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Upload -> {
+                drawLine(color, Offset(w * 0.5f, h * 0.74f), Offset(w * 0.5f, h * 0.22f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.28f, h * 0.45f), Offset(w * 0.5f, h * 0.22f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.72f, h * 0.45f), Offset(w * 0.5f, h * 0.22f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.18f, h * 0.82f), Offset(w * 0.82f, h * 0.82f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Clock -> {
+                drawCircle(color, radius = w * 0.35f, center = Offset(w * 0.5f, h * 0.5f), style = stroke)
+                drawLine(color, Offset(w * 0.5f, h * 0.28f), Offset(w * 0.5f, h * 0.5f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.5f, h * 0.5f), Offset(w * 0.67f, h * 0.62f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Photo -> {
+                drawRoundRect(color, Offset(w * 0.12f, h * 0.2f), Size(w * 0.76f, h * 0.58f), CornerRadius(w * 0.08f), style = stroke)
+                drawCircle(color, radius = w * 0.09f, center = Offset(w * 0.34f, h * 0.4f), style = stroke)
+                drawLine(color, Offset(w * 0.18f, h * 0.68f), Offset(w * 0.42f, h * 0.52f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.42f, h * 0.52f), Offset(w * 0.62f, h * 0.62f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.62f, h * 0.62f), Offset(w * 0.82f, h * 0.5f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Trash -> {
+                drawLine(color, Offset(w * 0.16f, h * 0.28f), Offset(w * 0.84f, h * 0.28f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.38f, h * 0.18f), Offset(w * 0.62f, h * 0.18f), stroke.width, StrokeCap.Round)
+                drawRoundRect(color, Offset(w * 0.22f, h * 0.34f), Size(w * 0.56f, h * 0.48f), CornerRadius(w * 0.06f), style = stroke)
+                drawLine(color, Offset(w * 0.38f, h * 0.44f), Offset(w * 0.38f, h * 0.72f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.62f, h * 0.44f), Offset(w * 0.62f, h * 0.72f), stroke.width, StrokeCap.Round)
+            }
+            MobileIcon.Eye -> {
+                drawArc(color, startAngle = 180f, sweepAngle = -180f, useCenter = false, topLeft = Offset(w * 0.1f, h * 0.2f), size = Size(w * 0.8f, h * 0.6f), style = stroke)
+                drawArc(color, startAngle = 0f, sweepAngle = 180f, useCenter = false, topLeft = Offset(w * 0.1f, h * 0.2f), size = Size(w * 0.8f, h * 0.6f), style = stroke)
+                drawCircle(color, radius = w * 0.13f, center = Offset(w * 0.5f, h * 0.5f), style = stroke)
+            }
+            MobileIcon.Lock -> {
+                drawArc(color, startAngle = 0f, sweepAngle = -180f, useCenter = false, topLeft = Offset(w * 0.3f, h * 0.1f), size = Size(w * 0.4f, h * 0.42f), style = stroke)
+                drawLine(color, Offset(w * 0.3f, h * 0.31f), Offset(w * 0.3f, h * 0.46f), stroke.width, StrokeCap.Round)
+                drawLine(color, Offset(w * 0.7f, h * 0.31f), Offset(w * 0.7f, h * 0.46f), stroke.width, StrokeCap.Round)
+                drawRoundRect(color, Offset(w * 0.18f, h * 0.46f), Size(w * 0.64f, h * 0.4f), CornerRadius(w * 0.08f), style = stroke)
+                drawCircle(color, radius = w * 0.06f, center = Offset(w * 0.5f, h * 0.64f))
+            }
+            MobileIcon.Unlock -> {
+                drawArc(color, startAngle = 0f, sweepAngle = -180f, useCenter = false, topLeft = Offset(w * 0.3f, h * 0.1f), size = Size(w * 0.4f, h * 0.42f), style = stroke)
+                drawLine(color, Offset(w * 0.3f, h * 0.31f), Offset(w * 0.3f, h * 0.46f), stroke.width, StrokeCap.Round)
+                drawRoundRect(color, Offset(w * 0.18f, h * 0.46f), Size(w * 0.64f, h * 0.4f), CornerRadius(w * 0.08f), style = stroke)
+                drawCircle(color, radius = w * 0.06f, center = Offset(w * 0.5f, h * 0.64f))
+            }
+            MobileIcon.Copy -> {
+                drawRoundRect(color, Offset(w * 0.3f, h * 0.12f), Size(w * 0.52f, h * 0.52f), CornerRadius(w * 0.07f), style = stroke)
+                drawRoundRect(color, Offset(w * 0.18f, h * 0.32f), Size(w * 0.52f, h * 0.52f), CornerRadius(w * 0.07f), style = stroke)
+            }
         }
     }
 }
@@ -738,6 +901,7 @@ private fun SolucionarioEditor(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
+            MobileSectionLabel("Datos principales")
             GlassTextField(
                 value = state.editorTitle,
                 onValueChange = { onIntent(ExamsIntent.UpdateTitle(it)) },
@@ -753,20 +917,18 @@ private fun SolucionarioEditor(
                 selectedId = state.editorSpecialtyId,
                 onSelected = { onIntent(ExamsIntent.UpdateSpecialtyId(it)) },
             )
+            MobileSectionLabel("Estado")
             ExamStatusSelector(
                 selected = state.editorStatus,
                 onSelected = { onIntent(ExamsIntent.UpdateExamStatus(it)) },
             )
-            GlassTextField(
-                value = state.editorPublishFrom,
-                onValueChange = { onIntent(ExamsIntent.UpdatePublishFrom(it)) },
-                placeholder = "Publicar desde ISO opcional",
-            )
+            MobileSectionLabel("Portada")
             ExamCoverEditor(state = state, onIntent = onIntent)
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                StatusChip(status = state.editorStatus.ifBlank { "draft" })
+                StatusChip(status = state.editorStatus.ifBlank { "draft" }.toReadableStatus())
                 StatusChip(status = if (state.editorCoverUrl.isNotBlank()) "con portada" else "sin portada")
             }
+            MobileSectionLabel("Acciones")
             ResponsiveActionRow(
                 actions = listOf(
                     MobileActionSpec(
@@ -775,12 +937,17 @@ private fun SolucionarioEditor(
                         minWidth = 132,
                         onClick = { onIntent(ExamsIntent.SaveExam) },
                     ),
+                ),
+            )
+            MobileSectionLabel("Eliminar contenido")
+            ResponsiveActionRow(
+                actions = listOf(
                     MobileActionSpec(
                         icon = MobileIcon.Remove,
                         label = "Eliminar",
                         minWidth = 132,
                         enabled = state.selectedExamId != null,
-                        onClick = { onIntent(ExamsIntent.DeleteSelectedExam) },
+                        onClick = { onIntent(ExamsIntent.RequestDeleteSelectedExam) },
                     ),
                 ),
             )
@@ -805,6 +972,7 @@ private fun RafagaEditor(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
             )
+            MobileSectionLabel("Datos principales")
             GlassTextField(
                 value = state.editorTitle,
                 onValueChange = { onIntent(ExamsIntent.UpdateTitle(it)) },
@@ -820,19 +988,16 @@ private fun RafagaEditor(
                 selectedId = state.editorSpecialtyId,
                 onSelected = { onIntent(ExamsIntent.UpdateSpecialtyId(it)) },
             )
+            MobileSectionLabel("Estado")
             ExamStatusSelector(
                 selected = state.editorStatus,
                 onSelected = { onIntent(ExamsIntent.UpdateExamStatus(it)) },
             )
-            GlassTextField(
-                value = state.editorPublishFrom,
-                onValueChange = { onIntent(ExamsIntent.UpdatePublishFrom(it)) },
-                placeholder = "Publicar desde ISO opcional",
-            )
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                StatusChip(status = state.editorStatus.ifBlank { "draft" })
+                StatusChip(status = state.editorStatus.ifBlank { "draft" }.toReadableStatus())
                 StatusChip(status = "${state.editorPriceTickets.ifBlank { "0" }} tickets")
             }
+            MobileSectionLabel("Acciones")
             ResponsiveActionRow(
                 actions = listOf(
                     MobileActionSpec(
@@ -841,12 +1006,17 @@ private fun RafagaEditor(
                         minWidth = 132,
                         onClick = { onIntent(ExamsIntent.SaveRafaga) },
                     ),
+                ),
+            )
+            MobileSectionLabel("Eliminar contenido")
+            ResponsiveActionRow(
+                actions = listOf(
                     MobileActionSpec(
                         icon = MobileIcon.Remove,
                         label = "Eliminar",
                         minWidth = 132,
                         enabled = state.selectedRafagaId != null,
-                        onClick = { onIntent(ExamsIntent.DeleteSelectedRafaga) },
+                        onClick = { onIntent(ExamsIntent.RequestDeleteSelectedRafaga) },
                     ),
                 ),
             )
@@ -918,6 +1088,11 @@ private fun ExamCoverEditor(
                             .background(GlassTheme.tokens.glassFill, RoundedCornerShape(12.dp)),
                     )
                 }
+                if (isUploading) {
+                    Box(modifier = Modifier.align(Alignment.Center)) {
+                        StatusChip("subiendo")
+                    }
+                }
                 Text(
                     text = when {
                         hasLocalCover -> state.editorCoverFileName
@@ -942,14 +1117,14 @@ private fun ExamCoverEditor(
                 actions = listOf(
                     MobileActionSpec(
                         icon = MobileIcon.Import,
-                        label = "Imagen",
-                        minWidth = 118,
+                        label = "Elegir imagen",
+                        minWidth = 150,
                         onClick = { coverPicker.open() },
                     ),
                     MobileActionSpec(
                         icon = MobileIcon.Up,
-                        label = "Subir",
-                        minWidth = 110,
+                        label = "Guardar imagen",
+                        minWidth = 162,
                         enabled = state.selectedExamId != null && hasLocalCover && !isUploading,
                         onClick = { onIntent(ExamsIntent.UploadExamCover) },
                     ),
@@ -958,7 +1133,7 @@ private fun ExamCoverEditor(
                         label = "Quitar",
                         minWidth = 114,
                         enabled = hasRemoteCover || hasLocalCover,
-                        onClick = { onIntent(ExamsIntent.ClearExamCover) },
+                        onClick = { onIntent(ExamsIntent.RequestClearExamCover) },
                     ),
                 ),
             )
@@ -973,7 +1148,7 @@ private fun CoverUploadStatus(uploadState: UiAsync<String>) {
         is UiAsync.Success -> uploadState.value
         UiAsync.Loading -> "Subiendo portada..."
         UiAsync.Empty -> "Sin portada"
-        UiAsync.Idle -> "Imagen obligatoria para publicar"
+        UiAsync.Idle -> "Elige una imagen si quieres mostrar portada"
     }
     val color = if (uploadState is UiAsync.Error) {
         MaterialTheme.colorScheme.error
@@ -987,6 +1162,19 @@ private fun CoverUploadStatus(uploadState: UiAsync<String>) {
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
+}
+
+private fun String.toReadableStatus(): String {
+    return when (trim().lowercase()) {
+        "published" -> "Publicado"
+        "draft" -> "Borrador"
+        "archived" -> "Archivado"
+        "scheduled" -> "Programado"
+        "pending" -> "Pendiente"
+        "active" -> "Activo"
+        "inactive" -> "Inactivo"
+        else -> ifBlank { "Pendiente" }
+    }
 }
 
 @Composable
@@ -1011,7 +1199,7 @@ private fun MobileSpecialtyPicker(
                             onSelected(it.id)
                         }
                     },
-                    placeholder = "Escribe el nombre exacto",
+                    placeholder = "Busca o escribe la especialidad",
                 )
                 Text(
                     text = specialtiesState.value.joinToString(prefix = "Disponibles: ") { it.name },
@@ -1089,7 +1277,7 @@ private fun RafagaCarousel(
             is UiAsync.Success -> LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(204.dp),
+                    .height(220.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.Top,
             ) {
@@ -1129,7 +1317,7 @@ private fun SolucionarioCarousel(
         LazyRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(244.dp),
+                .height(220.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.Top,
         ) {
@@ -1153,7 +1341,7 @@ private fun SolucionarioCard(
     val coverPath = solucionario.coverUrl.ifBlank { solucionario.coverStoragePath }
     GlassSurface(
         modifier = modifier
-            .height(232.dp)
+            .height(208.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(22.dp),
         tint = if (solucionario.hasSelection) {
@@ -1161,6 +1349,12 @@ private fun SolucionarioCard(
         } else {
             GlassTheme.tokens.glassFill
         },
+        strokeColor = if (solucionario.hasSelection) {
+            GlassTheme.tokens.accent.copy(alpha = 0.62f)
+        } else {
+            GlassTheme.tokens.glassStroke
+        },
+        shadowElevation = if (solucionario.hasSelection) 14.dp else 8.dp,
     ) {
         Column(
             modifier = Modifier
@@ -1171,7 +1365,7 @@ private fun SolucionarioCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(104.dp)
+                    .height(76.dp)
                     .background(GlassTheme.tokens.glassFillStrong, RoundedCornerShape(16.dp))
                     .clip(RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.BottomStart,
@@ -1183,7 +1377,7 @@ private fun SolucionarioCard(
                     )
                 }
                 Text(
-                    text = if (coverPath.isBlank()) "Sin portada" else if (solucionario.isBurst) "Rafaga" else "Portada",
+                    text = if (coverPath.isBlank()) "Sin portada" else if (solucionario.isBurst) "Rafaga" else "Portada guardada",
                     modifier = Modifier.padding(10.dp),
                     style = MaterialTheme.typography.labelLarge,
                     color = if (coverPath.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else Color.White,
@@ -1197,7 +1391,7 @@ private fun SolucionarioCard(
                 verticalAlignment = Alignment.Top,
             ) {
                 Column(
-                    modifier = Modifier.width(176.dp),
+                    modifier = Modifier.width(154.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
@@ -1211,17 +1405,60 @@ private fun SolucionarioCard(
                         text = solucionario.specialty.ifBlank { "Sin especialidad asignada" },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                StatusChip(solucionario.status)
+                StatusChip(solucionario.status.toReadableStatus(), modifier = Modifier.width(118.dp))
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                StatusChip("${solucionario.priceTickets} tickets")
-                StatusChip("${solucionario.questionCount} preguntas")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ContentInfoPill(
+                    label = "Precio",
+                    value = solucionario.priceTickets.toTicketLabel(),
+                    modifier = Modifier.width(118.dp),
+                )
+                ContentInfoPill(
+                    label = "Preguntas",
+                    value = solucionario.questionCount.toString(),
+                    modifier = Modifier.width(118.dp),
+                )
             }
-            StatusChip(if (solucionario.hasSelection) "seleccionado" else "editable")
         }
     }
+}
+
+@Composable
+private fun ContentInfoPill(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .height(34.dp)
+            .background(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
+                shape = RoundedCornerShape(14.dp),
+            )
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text = "$label: $value",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+private fun Int.toTicketLabel(): String {
+    return if (this <= 0) "Gratis" else "$this tickets"
 }
 
 @Composable
@@ -1231,8 +1468,8 @@ private fun RafagaCard(
 ) {
     GlassSurface(
         modifier = Modifier
-            .width(246.dp)
-            .height(192.dp)
+            .width(276.dp)
+            .height(208.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(22.dp),
         tint = if (rafaga.hasSelection) {
@@ -1240,6 +1477,12 @@ private fun RafagaCard(
         } else {
             GlassTheme.tokens.glassFill
         },
+        strokeColor = if (rafaga.hasSelection) {
+            GlassTheme.tokens.accent.copy(alpha = 0.62f)
+        } else {
+            GlassTheme.tokens.glassStroke
+        },
+        shadowElevation = if (rafaga.hasSelection) 14.dp else 8.dp,
     ) {
         Column(
             modifier = Modifier
@@ -1250,7 +1493,7 @@ private fun RafagaCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(78.dp)
+                    .height(76.dp)
                     .background(GlassTheme.tokens.glassFillStrong, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.CenterStart,
             ) {
@@ -1283,11 +1526,22 @@ private fun RafagaCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
-                StatusChip(rafaga.status)
+                StatusChip(rafaga.status.toReadableStatus(), modifier = Modifier.width(118.dp))
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                StatusChip("${rafaga.priceTickets} tickets")
-                StatusChip("${rafaga.questionCount} preguntas")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ContentInfoPill(
+                    label = "Precio",
+                    value = rafaga.priceTickets.toTicketLabel(),
+                    modifier = Modifier.width(118.dp),
+                )
+                ContentInfoPill(
+                    label = "Preguntas",
+                    value = rafaga.questionCount.toString(),
+                    modifier = Modifier.width(118.dp),
+                )
             }
         }
     }
@@ -1478,7 +1732,7 @@ private fun RafagaQuestionEditor(
                     label = "Eliminar",
                     minWidth = 118,
                     enabled = state.selectedRafagaQuestionId != null,
-                    onClick = { onIntent(ExamsIntent.DeleteSelectedRafagaQuestion) },
+                    onClick = { onIntent(ExamsIntent.RequestDeleteSelectedRafagaQuestion) },
                 ),
                 MobileActionSpec(
                     icon = MobileIcon.Up,
@@ -1532,6 +1786,8 @@ private fun QuestionSelectorCard(
             .clickable(onClick = onSelect),
         shape = RoundedCornerShape(18.dp),
         tint = if (question.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
+        strokeColor = if (question.selected) GlassTheme.tokens.accent.copy(alpha = 0.62f) else GlassTheme.tokens.glassStroke,
+        shadowElevation = if (question.selected) 14.dp else 8.dp,
     ) {
         Column(
             modifier = Modifier
@@ -1623,11 +1879,15 @@ private fun DropZone(
     text: String,
     state: DropTargetState,
 ) {
-    val color = when (state) {
+    val targetColor = when (state) {
         DropTargetState.Idle -> MaterialTheme.colorScheme.surfaceVariant
         DropTargetState.Ready -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
         DropTargetState.Linked -> GlassTheme.tokens.accent.copy(alpha = 0.14f)
     }
+    val color by animateColorAsState(
+        targetValue = targetColor,
+        animationSpec = tween(durationMillis = 180),
+    )
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1711,7 +1971,7 @@ private fun QuestionEditor(
                     label = "Eliminar",
                     minWidth = 118,
                     enabled = state.selectedQuestionId != null,
-                    onClick = { onIntent(ExamsIntent.DeleteSelectedQuestion) },
+                    onClick = { onIntent(ExamsIntent.RequestDeleteSelectedQuestion) },
                 ),
                 MobileActionSpec(
                     icon = MobileIcon.Up,
@@ -1787,7 +2047,7 @@ private fun QuestionResourcesSection(
                     )
                 },
                 onUpload = { onIntent(ExamsIntent.UploadResource(resource.id)) },
-                onRemove = { onIntent(ExamsIntent.RemoveResource(resource.id)) },
+                onRemove = { onIntent(ExamsIntent.RequestRemoveResource(resource.id)) },
                 onTypeChange = { onIntent(ExamsIntent.UpdateResourceType(resource.id, it)) },
                 onTitleChange = { onIntent(ExamsIntent.UpdateResourceTitle(resource.id, it)) },
                 onValueChange = { onIntent(ExamsIntent.UpdateResourceValue(resource.id, it)) },
@@ -1918,10 +2178,9 @@ private fun ResourceTray(
                 onClick = { onIntent(ExamsIntent.AddResource) },
             )
             if (state.editorQuestionId == null) {
-                Text(
-                    text = "Selecciona o crea una pregunta para anadir recursos.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                DropZone(
+                    "Selecciona una pregunta para gestionar sus recursos.",
+                    DropTargetState.Idle,
                 )
             }
             state.editorResources.sortedBy { it.sortOrder }.forEach { resource ->
@@ -1940,7 +2199,7 @@ private fun ResourceTray(
                         )
                     },
                     onUpload = { onIntent(ExamsIntent.UploadResource(resource.id)) },
-                    onRemove = { onIntent(ExamsIntent.RemoveResource(resource.id)) },
+                    onRemove = { onIntent(ExamsIntent.RequestRemoveResource(resource.id)) },
                     onTypeChange = { onIntent(ExamsIntent.UpdateResourceType(resource.id, it)) },
                     onTitleChange = { onIntent(ExamsIntent.UpdateResourceTitle(resource.id, it)) },
                     onValueChange = { onIntent(ExamsIntent.UpdateResourceValue(resource.id, it)) },
@@ -1949,8 +2208,11 @@ private fun ResourceTray(
                     value = resource.inputValue,
                 )
             }
-            if (state.editorResources.isEmpty()) {
-                DropZone("No hay recursos en la bandeja.", DropTargetState.Idle)
+            if (state.editorResources.isEmpty() && state.editorQuestionId != null) {
+                DropZone(
+                    "Esta pregunta no tiene recursos. Usa Anadir recurso para crear el primero.",
+                    DropTargetState.Ready,
+                )
             }
         }
     }
@@ -2094,8 +2356,14 @@ private fun TypePill(
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
-    val tint = if (selected) GlassTheme.tokens.accent else GlassTheme.tokens.glassFillStrong
-    val foreground = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+    val tint by animateColorAsState(
+        targetValue = if (selected) GlassTheme.tokens.accent else GlassTheme.tokens.glassFillStrong,
+        animationSpec = tween(durationMillis = 160),
+    )
+    val foreground by animateColorAsState(
+        targetValue = if (selected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(durationMillis = 160),
+    )
     Box(
         modifier = modifier
             .height(38.dp)
@@ -2111,6 +2379,18 @@ private fun TypePill(
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+@Composable
+private fun MobileSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 @Composable
@@ -2224,6 +2504,7 @@ private fun MobileSpecialtiesPanel(
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
+                MobileSectionLabel("Informacion")
                 GlassTextField(
                     value = state.specialtyEditorName,
                     onValueChange = { onIntent(ExamsIntent.UpdateSpecialtyName(it)) },
@@ -2239,6 +2520,8 @@ private fun MobileSpecialtiesPanel(
                     onValueChange = { onIntent(ExamsIntent.UpdateSpecialtySortOrder(it)) },
                     placeholder = "orden",
                 )
+                MobileSectionLabel("Estado")
+                StatusChip(if (state.specialtyEditorIsActive) "Activa" else "Inactiva")
                 ResponsiveActionRow(
                     actions = listOf(
                         MobileActionSpec(
@@ -2253,12 +2536,17 @@ private fun MobileSpecialtiesPanel(
                             minWidth = 124,
                             onClick = { onIntent(ExamsIntent.SaveSpecialty) },
                         ),
+                    ),
+                )
+                MobileSectionLabel("Eliminar especialidad")
+                ResponsiveActionRow(
+                    actions = listOf(
                         MobileActionSpec(
                             icon = MobileIcon.Remove,
                             label = "Eliminar",
                             minWidth = 124,
                             enabled = state.selectedContentSpecialtyId != null,
-                            onClick = { onIntent(ExamsIntent.DeleteSelectedSpecialty) },
+                            onClick = { onIntent(ExamsIntent.RequestDeleteSelectedSpecialty) },
                         ),
                     ),
                 )
@@ -2285,6 +2573,8 @@ private fun SpecialtyMobileCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         tint = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
+        strokeColor = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.62f) else GlassTheme.tokens.glassStroke,
+        shadowElevation = if (selected) 14.dp else 8.dp,
     ) {
         Column(
             modifier = Modifier
@@ -2655,6 +2945,8 @@ private fun MobileNewsCard(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         tint = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
+        strokeColor = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.62f) else GlassTheme.tokens.glassStroke,
+        shadowElevation = if (selected) 14.dp else 8.dp,
     ) {
         Column(
             modifier = Modifier
@@ -2688,7 +2980,7 @@ private fun MobileNewsCard(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                StatusChip(item.status)
+                StatusChip(item.status.ifBlank { "draft" }.toReadableStatus())
                 StatusChip("${item.layers.size} capas")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

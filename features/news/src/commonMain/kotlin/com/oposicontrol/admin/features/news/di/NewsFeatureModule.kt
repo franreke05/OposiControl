@@ -9,6 +9,7 @@ import com.oposicontrol.admin.domain.usecase.news.ScheduleNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.UploadNewsAssetUseCase
 import com.oposicontrol.admin.domain.usecase.news.UpsertNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.ValidateNewsDraftUseCase
+import com.oposicontrol.admin.data.local.NewsEditorDraftLocalDataSource
 import com.oposicontrol.admin.features.news.presentation.NewsViewModel
 import org.koin.dsl.module
 
@@ -22,5 +23,5 @@ val newsFeatureModule = module {
     factory { ScheduleNewsUseCase(get(), get()) }
     factory { UploadNewsAssetUseCase(get()) }
     factory { ArchiveNewsUseCase(get()) }
-    factory { NewsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { NewsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 }

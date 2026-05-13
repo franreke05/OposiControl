@@ -18,9 +18,11 @@ import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
+import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetRafagaQuestionsUseCase
@@ -69,7 +71,9 @@ class ExamsViewModel(
     private val deleteRafagaQuestionUseCase: DeleteRafagaQuestionUseCase,
     private val moveRafagaQuestionUseCase: MoveRafagaQuestionUseCase,
     private val uploadExamCoverUseCase: UploadExamCoverUseCase,
+    private val clearExamCoverUseCase: ClearExamCoverUseCase,
     private val uploadQuestionResourceUseCase: UploadQuestionResourceUseCase,
+    private val deleteQuestionResourceUseCase: DeleteQuestionResourceUseCase,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<ExamsState, ExamsIntent>(
     initialState = ExamsState(),
@@ -137,6 +141,14 @@ class ExamsViewModel(
             ExamsIntent.DeleteSelectedRafaga -> deleteSelectedRafaga()
             ExamsIntent.DeleteSelectedRafagaQuestion -> deleteSelectedRafagaQuestion()
             ExamsIntent.DeleteSelectedSpecialty -> deleteSelectedSpecialty()
+            ExamsIntent.RequestDeleteSelectedExam -> requestDelete(PendingDeleteTarget.Exam, "Eliminar solucionario y sus preguntas/recursos?")
+            ExamsIntent.RequestDeleteSelectedQuestion -> requestDelete(PendingDeleteTarget.Question, "Eliminar esta pregunta y sus recursos?")
+            ExamsIntent.RequestDeleteSelectedRafaga -> requestDelete(PendingDeleteTarget.Rafaga, "Eliminar esta rafaga y sus preguntas?")
+            ExamsIntent.RequestDeleteSelectedRafagaQuestion -> requestDelete(PendingDeleteTarget.RafagaQuestion, "Eliminar esta pregunta de rafaga?")
+            ExamsIntent.RequestDeleteSelectedSpecialty -> requestDelete(PendingDeleteTarget.Specialty, "Eliminar esta especialidad?")
+            ExamsIntent.RequestClearExamCover -> requestDelete(PendingDeleteTarget.ExamCover, "Quitar portada guardada y borrar su archivo?")
+            ExamsIntent.ConfirmPendingDelete -> confirmPendingDelete()
+            ExamsIntent.DismissPendingDelete -> updateState { it.copy(pendingDeleteTarget = null, pendingDeleteMessage = "") }
             ExamsIntent.RefreshAll -> refreshAll()
             ExamsIntent.RefreshResourceAudit -> refreshResourceAudit()
             ExamsIntent.SaveExam -> saveExam()
@@ -151,6 +163,7 @@ class ExamsViewModel(
             is ExamsIntent.MoveRafagaQuestionDown -> moveRafagaQuestion(intent.id, QuestionMoveDirection.DOWN)
             is ExamsIntent.MoveRafagaQuestionUp -> moveRafagaQuestion(intent.id, QuestionMoveDirection.UP)
             is ExamsIntent.RemoveResource -> removeResource(intent.resourceId)
+            is ExamsIntent.RequestRemoveResource -> requestDelete(PendingDeleteTarget.Resource(intent.resourceId), "Eliminar este recurso y su archivo asociado?")
             is ExamsIntent.SelectCorrectOption -> selectCorrectOption(intent.optionId)
             is ExamsIntent.SelectContentSpecialty -> selectContentSpecialty(intent.id)
             is ExamsIntent.SelectExam -> selectExam(intent.id)
@@ -204,6 +217,24 @@ class ExamsViewModel(
 
             is ExamsIntent.UpdateTitle -> updateState { it.copy(editorTitle = intent.value) }
             is ExamsIntent.UploadResource -> uploadResource(intent.resourceId)
+        }
+    }
+
+    private fun requestDelete(target: PendingDeleteTarget, message: String) {
+        updateState { it.copy(pendingDeleteTarget = target, pendingDeleteMessage = message) }
+    }
+
+    private suspend fun confirmPendingDelete() {
+        val target = currentState().pendingDeleteTarget ?: return
+        updateState { it.copy(pendingDeleteTarget = null, pendingDeleteMessage = "") }
+        when (target) {
+            PendingDeleteTarget.Exam -> deleteSelectedExam()
+            PendingDeleteTarget.Rafaga -> deleteSelectedRafaga()
+            PendingDeleteTarget.Question -> deleteSelectedQuestion()
+            PendingDeleteTarget.RafagaQuestion -> deleteSelectedRafagaQuestion()
+            PendingDeleteTarget.Specialty -> deleteSelectedSpecialty()
+            PendingDeleteTarget.ExamCover -> clearExamCover()
+            is PendingDeleteTarget.Resource -> deleteResource(target.resourceId)
         }
     }
 
@@ -957,6 +988,40 @@ class ExamsViewModel(
         }
     }
 
+    private suspend fun deleteResource(resourceId: String) {
+        val questionId = currentState().editorQuestionId
+        val resource = currentState().editorResources.firstOrNull { it.id == resourceId }
+        if (questionId.isNullOrBlank() || resource == null || currentQuestions.none { it.id == questionId }) {
+            removeResource(resourceId)
+            return
+        }
+        updateState {
+            it.copy(
+                uploadState = UiAsync.Loading,
+                resourceUploadStates = it.resourceUploadStates + (resourceId to UiAsync.Loading),
+            )
+        }
+        when (val result = deleteQuestionResourceUseCase(questionId, resourceId)) {
+            is AppResult.Failure -> updateState {
+                it.copy(
+                    uploadState = UiAsync.Error(result.error),
+                    resourceUploadStates = it.resourceUploadStates + (resourceId to UiAsync.Error(result.error)),
+                )
+            }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("question_resource_delete", mapOf("question_id" to questionId, "resource_id" to resourceId))
+                removeResource(resourceId)
+                loadQuestions(currentState().selectedExamId.orEmpty())
+                updateState {
+                    it.copy(
+                        uploadState = UiAsync.Success("Recurso eliminado"),
+                        resourceUploadStates = it.resourceUploadStates - resourceId,
+                    )
+                }
+            }
+        }
+    }
+
     private fun updateResource(resourceId: String, transform: QuestionResourceDraft.() -> QuestionResourceDraft) {
         updateState {
             it.copy(
@@ -1036,16 +1101,37 @@ class ExamsViewModel(
         }
     }
 
-    private fun clearExamCover() {
-        updateState {
-            it.copy(
-                editorCoverUrl = "",
-                editorCoverStoragePath = "",
-                editorCoverMimeType = "",
-                editorCoverLocalUri = "",
-                editorCoverFileName = "",
-                coverUploadState = UiAsync.Idle,
-            )
+    private suspend fun clearExamCover() {
+        val examId = currentState().selectedExamId
+        if (examId.isNullOrBlank()) {
+            updateState {
+                it.copy(
+                    editorCoverUrl = "",
+                    editorCoverStoragePath = "",
+                    editorCoverMimeType = "",
+                    editorCoverLocalUri = "",
+                    editorCoverFileName = "",
+                    coverUploadState = UiAsync.Idle,
+                )
+            }
+            return
+        }
+        updateState { it.copy(coverUploadState = UiAsync.Loading) }
+        when (val result = clearExamCoverUseCase(examId)) {
+            is AppResult.Failure -> updateState { it.copy(coverUploadState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("exam_cover_clear", mapOf("exam_id" to examId))
+                updateState {
+                    it.copy(
+                        editorCoverUrl = result.value.coverUrl.orEmpty(),
+                        editorCoverStoragePath = result.value.coverStoragePath.orEmpty(),
+                        editorCoverMimeType = result.value.coverMimeType.orEmpty(),
+                        editorCoverLocalUri = "",
+                        editorCoverFileName = "",
+                        coverUploadState = UiAsync.Success("Portada eliminada"),
+                    )
+                }
+            }
         }
     }
 

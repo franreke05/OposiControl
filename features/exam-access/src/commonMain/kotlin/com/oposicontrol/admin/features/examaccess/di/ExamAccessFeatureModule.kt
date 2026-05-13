@@ -4,5 +4,5 @@ import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessViewMod
 import org.koin.dsl.module
 
 val examAccessFeatureModule = module {
-    factory { ExamAccessViewModel(get(), get(), get()) }
+    single { ExamAccessViewModel(get(), get(), get()) }
 }

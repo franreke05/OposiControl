@@ -10,5 +10,5 @@ val usersFeatureModule = module {
     factory { ObserveUsersUseCase(get()) }
     factory { UpsertUserUseCase(get()) }
     factory { DeleteUserUseCase(get()) }
-    factory { UsersViewModel(get(), get(), get(), get(), get()) }
+    single { UsersViewModel(get(), get(), get(), get(), get()) }
 }

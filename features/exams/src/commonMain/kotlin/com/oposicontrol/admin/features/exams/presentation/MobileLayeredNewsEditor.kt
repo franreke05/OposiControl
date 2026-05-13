@@ -144,6 +144,7 @@ private fun MobileLayeredNewsEditorPreview(
                 onSchedule = { onIntent(NewsIntent.Schedule) },
                 onDelete = { onIntent(NewsIntent.DeleteSelected) },
                 canDelete = state.selectedId != null,
+                hasTitleLayer = state.editorLayers.any { it.kind.isTitleKind() },
             )
             if (state.editorBackgroundPath.isBlank()) NewsTemplateSelector(state = state, onIntent = onIntent)
             NewsLayerStrip(state = state, onIntent = onIntent)
@@ -240,6 +241,7 @@ private fun NewsFullscreenPanel(
                     onSchedule = { onIntent(NewsIntent.Schedule) },
                     onDelete = { onIntent(NewsIntent.DeleteSelected) },
                     canDelete = state.selectedId != null,
+                    hasTitleLayer = state.editorLayers.any { it.kind.isTitleKind() },
                 )
             }
             if (state.editorBackgroundPath.isBlank()) item { NewsTemplateSelector(state = state, onIntent = onIntent) }
@@ -339,23 +341,62 @@ private fun NewsEditorQuickActions(
     onSchedule: () -> Unit,
     onDelete: () -> Unit,
     canDelete: Boolean,
+    hasTitleLayer: Boolean = false,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NewsSmallButton("Guardar local", width = 104, onClick = onSave)
-            NewsSmallButton("Publicar", width = 82, onClick = onPublish)
-            NewsSmallButton("Programar", width = 88, onClick = onSchedule)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            MobileActionPill(
+                icon = MobileIcon.Upload,
+                label = "Publicar",
+                modifier = Modifier.weight(1.4f),
+                onClick = onPublish,
+            )
+            NewsActionButton(
+                icon = MobileIcon.Clock,
+                label = "Programar",
+                modifier = Modifier.weight(1.2f),
+                onClick = onSchedule,
+            )
+            NewsActionButton(
+                icon = MobileIcon.Save,
+                label = "Guardar",
+                modifier = Modifier.weight(1f),
+                onClick = onSave,
+            )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NewsSmallButton("Titulo", width = 70, onClick = onAddTitle)
-            NewsSmallButton("Texto", width = 70, onClick = onAddText)
-            NewsSmallButton("Fondo", width = 70, onClick = onPickBackground)
+        NewsSectionLabel("Añadir capa")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            NewsLayerChip("Título", MobileIcon.Plus, Modifier.weight(1f), enabled = !hasTitleLayer, onClick = onAddTitle)
+            NewsLayerChip("Texto", MobileIcon.News, Modifier.weight(1f), onClick = onAddText)
+            NewsLayerChip("Imagen", MobileIcon.Photo, Modifier.weight(1f), onClick = onAddImage)
+            NewsLayerChip("Fondo", MobileIcon.Media, Modifier.weight(1f), onClick = onPickBackground)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NewsSmallButton("Imagen", width = 78, onClick = onAddImage)
-            NewsSmallButton("Validar", width = 82, onClick = onValidate)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            NewsActionButton(
+                icon = MobileIcon.Check,
+                label = "Validar",
+                modifier = if (canDelete) Modifier.weight(1f) else Modifier.fillMaxWidth(),
+                onClick = onValidate,
+            )
+            if (canDelete) {
+                NewsActionButton(
+                    icon = MobileIcon.Trash,
+                    label = "Borrar",
+                    modifier = Modifier.weight(1f),
+                    danger = true,
+                    onClick = onDelete,
+                )
+            }
         }
-        NewsSmallButton("Borrar noticia", width = 172, enabled = canDelete, onClick = onDelete)
     }
 }
 
@@ -654,33 +695,50 @@ private fun NewsLayerTile(
     selected: Boolean,
     onIntent: (NewsIntent) -> Unit,
 ) {
+    val isTitle = layer.kind.isTitleKind()
+    val tokens = GlassTheme.tokens
+    val accentStroke = if (isTitle) tokens.accent.copy(alpha = if (selected) 0.85f else 0.45f) else if (selected) tokens.accent.copy(alpha = 0.65f) else tokens.glassStroke
+    val tint = if (selected) tokens.accent.copy(alpha = 0.22f) else tokens.glassFill
     GlassSurface(
         modifier = Modifier
             .width(132.dp)
             .height(58.dp)
             .clickable { onIntent(NewsIntent.SelectLayer(layer.id)) },
         shape = RoundedCornerShape(14.dp),
-        tint = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.22f) else GlassTheme.tokens.glassFill,
-        strokeColor = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.65f) else GlassTheme.tokens.glassStroke,
+        tint = tint,
+        strokeColor = accentStroke,
     ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(
-                text = layer.name.ifBlank { "Capa" },
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "${layer.kind.toLayerLabel()} | ${layer.width}x${layer.height}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    text = layer.name.ifBlank { "Capa" },
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "${layer.kind.toLayerLabel()} | ${layer.width}x${layer.height}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (isTitle) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(5.dp)
+                        .background(tokens.accent.copy(alpha = 0.22f), RoundedCornerShape(5.dp))
+                        .padding(horizontal = 4.dp, vertical = 1.dp),
+                ) {
+                    Text("T", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = tokens.accent)
+                }
+            }
         }
     }
 }
@@ -706,48 +764,35 @@ private fun NewsArticleInspector(
     state: NewsState,
     onIntent: (NewsIntent) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusChip(state.editorStatus.ifBlank { "draft" })
-            StatusChip("${state.editorCanvasWidth}x${state.editorCanvasHeight}")
+            StatusChip(state.editorStatus.toNewsStatusLabel())
+            if (state.selectedId?.startsWith("local-") == true) StatusChip("solo en dispositivo")
         }
-        if (state.editorBackgroundPath.isNotBlank()) {
-            StatusChip("fondo ${state.editorBackgroundPath.substringAfterLast('/').take(18)}")
-        }
+        NewsSectionLabel("Título de la noticia")
         GlassTextField(
             value = state.editorTitle,
             onValueChange = { onIntent(NewsIntent.UpdateTitle(it)) },
-            placeholder = "Titulo de la noticia",
+            placeholder = "Ej: Convocatoria TCAE Andalucía 2025",
         )
+        NewsSectionLabel("Descripción")
         GlassTextField(
             value = state.editorText,
             onValueChange = { onIntent(NewsIntent.UpdateText(it)) },
-            placeholder = "Texto de la noticia",
+            placeholder = "Texto que verán los usuarios",
             singleLine = false,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GlassTextField(
-                value = state.editorSpecialty,
-                onValueChange = { onIntent(NewsIntent.UpdateSpecialty(it)) },
-                placeholder = "Especialidad",
-                modifier = Modifier.width(128.dp),
-            )
-            GlassTextField(
-                value = state.editorType,
-                onValueChange = { onIntent(NewsIntent.UpdateType(it)) },
-                placeholder = "Tipo",
-                modifier = Modifier.width(128.dp),
-            )
-        }
-        GlassTextField(
-            value = state.editorPublishFrom,
-            onValueChange = { onIntent(NewsIntent.UpdatePublishFrom(it)) },
-            placeholder = "Publicar desde",
+        NewsSectionLabel("Especialidad")
+        NewsChipSelector(
+            options = listOf("TCAE" to "1", "EIR" to "2", "MIR" to "3", "FIR" to "4"),
+            selected = state.editorSpecialty,
+            onSelect = { onIntent(NewsIntent.UpdateSpecialty(it)) },
         )
-        GlassTextField(
-            value = state.editorBackgroundPath,
-            onValueChange = { onIntent(NewsIntent.UpdateBackgroundPath(it)) },
-            placeholder = "Imagen de fondo local o URL",
+        NewsSectionLabel("Tipo de noticia")
+        NewsChipSelector(
+            options = listOf("Convocatoria" to "1", "Aviso" to "2", "Oferta" to "3", "Recurso" to "4"),
+            selected = state.editorType,
+            onSelect = { onIntent(NewsIntent.UpdateType(it)) },
         )
     }
 }
@@ -866,45 +911,236 @@ private fun NewsLayerCommands(
     compact: Boolean,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NewsSmallButton("Subir", width = 70, onClick = { onIntent(NewsIntent.MoveLayerUp(layer.id)) })
-            NewsSmallButton("Bajar", width = 70, onClick = { onIntent(NewsIntent.MoveLayerDown(layer.id)) })
-            NewsSmallButton("Copiar", width = 78, onClick = { onIntent(NewsIntent.DuplicateLayer(layer.id)) })
+        NewsSectionLabel("Orden en capas")
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            NewsActionButton(MobileIcon.Up, "Subir", Modifier.weight(1f)) { onIntent(NewsIntent.MoveLayerUp(layer.id)) }
+            NewsActionButton(MobileIcon.Down, "Bajar", Modifier.weight(1f)) { onIntent(NewsIntent.MoveLayerDown(layer.id)) }
+            NewsActionButton(MobileIcon.Upload, "Frente", Modifier.weight(1f)) { onIntent(NewsIntent.BringLayerToFront(layer.id)) }
+            NewsActionButton(MobileIcon.Import, "Atrás", Modifier.weight(1f)) { onIntent(NewsIntent.SendLayerToBack(layer.id)) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NewsSmallButton("Frente", width = 70, onClick = { onIntent(NewsIntent.BringLayerToFront(layer.id)) })
-            NewsSmallButton("Fondo", width = 70, onClick = { onIntent(NewsIntent.SendLayerToBack(layer.id)) })
-            NewsSmallButton("Centrar", width = 78, onClick = { onIntent(NewsIntent.CenterLayer(layer.id)) })
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            NewsActionButton(MobileIcon.Copy, "Copiar", Modifier.weight(1f)) { onIntent(NewsIntent.DuplicateLayer(layer.id)) }
+            NewsActionButton(MobileIcon.Check, "Centrar", Modifier.weight(1f)) { onIntent(NewsIntent.CenterLayer(layer.id)) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NewsSmallButton(if (layer.visible) "Ocultar" else "Mostrar", width = 82, onClick = { onIntent(NewsIntent.ToggleLayerVisible(layer.id)) })
-            NewsSmallButton(if (layer.locked) "Desbloq." else "Bloquear", width = 88, onClick = { onIntent(NewsIntent.ToggleLayerLocked(layer.id)) })
-            if (!compact) {
-                NewsSmallButton("Quitar", width = 72, onClick = { onIntent(NewsIntent.RemoveLayer(layer.id)) })
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            NewsActionButton(
+                icon = MobileIcon.Eye,
+                label = if (layer.visible) "Ocultar" else "Mostrar",
+                modifier = Modifier.weight(1f),
+                onClick = { onIntent(NewsIntent.ToggleLayerVisible(layer.id)) },
+            )
+            NewsActionButton(
+                icon = if (layer.locked) MobileIcon.Unlock else MobileIcon.Lock,
+                label = if (layer.locked) "Desbloquear" else "Bloquear",
+                modifier = Modifier.weight(1f),
+                onClick = { onIntent(NewsIntent.ToggleLayerLocked(layer.id)) },
+            )
+        }
+        if (!layer.kind.isTitleKind()) {
+            NewsActionButton(
+                icon = MobileIcon.Trash,
+                label = "Quitar capa",
+                modifier = Modifier.fillMaxWidth(),
+                danger = true,
+                onClick = { onIntent(NewsIntent.RemoveLayer(layer.id)) },
+            )
+        } else {
+            GlassSurface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                tint = GlassTheme.tokens.accent.copy(alpha = 0.08f),
+                strokeColor = GlassTheme.tokens.accent.copy(alpha = 0.25f),
+            ) {
+                Text(
+                    "La capa de título es única y no puede eliminarse.",
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = GlassTheme.tokens.accent.copy(alpha = 0.7f),
+                )
             }
-        }
-        if (compact) {
-            NewsSmallButton("Quitar capa", width = 120, onClick = { onIntent(NewsIntent.RemoveLayer(layer.id)) })
         }
     }
 }
 
 @Composable
 private fun NewsActionState(state: NewsState) {
-    when (val actionState = state.actionState) {
-        is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-        UiAsync.Loading -> Text("Guardando noticia...", style = MaterialTheme.typography.bodySmall)
-        is UiAsync.Success -> Text(
-            if (state.selectedId?.startsWith("local-") == true) "Borrador guardado localmente." else "Noticia sincronizada.",
-            color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        else -> Unit
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        when (val actionState = state.actionState) {
+            is UiAsync.Error -> GlassSurface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                tint = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.36f),
+                strokeColor = MaterialTheme.colorScheme.error.copy(alpha = 0.32f),
+            ) {
+                Text(
+                    actionState.error.message,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            UiAsync.Loading -> GlassSurface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Text(
+                    "Guardando...",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            is UiAsync.Success -> GlassSurface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                tint = GlassTheme.tokens.accent.copy(alpha = 0.12f),
+                strokeColor = GlassTheme.tokens.accent.copy(alpha = 0.32f),
+            ) {
+                Text(
+                    if (state.selectedId?.startsWith("local-") == true) "Borrador guardado localmente." else "Noticia sincronizada.",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 9.dp),
+                    color = GlassTheme.tokens.accent,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            else -> Unit
+        }
+        state.validationReport?.let { report ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatusChip(if (report.canSave) "guardable" else "incompleta")
+                StatusChip(if (report.canPublish) "publicable" else "bloqueada")
+            }
+        }
     }
-    state.validationReport?.let { report ->
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            StatusChip(if (report.canSave) "guardable" else "incompleta")
-            StatusChip(if (report.canPublish) "publicable" else "bloqueada")
+}
+
+@Composable
+private fun NewsActionButton(
+    icon: MobileIcon,
+    label: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    danger: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val tokens = GlassTheme.tokens
+    val tint = when {
+        !enabled -> tokens.glassFillStrong
+        danger -> Color(0xFFFF453A).copy(alpha = 0.18f)
+        else -> tokens.glassFill
+    }
+    val strokeColor = when {
+        danger && enabled -> Color(0xFFFF453A).copy(alpha = 0.45f)
+        else -> tokens.glassStroke
+    }
+    val foreground = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant
+        danger -> Color(0xFFFF453A)
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    GlassSurface(
+        modifier = modifier
+            .height(42.dp)
+            .clickable(enabled = enabled, onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        tint = tint,
+        strokeColor = strokeColor,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LineIcon(icon = icon, modifier = Modifier.size(16.dp), color = foreground)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = foreground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NewsLayerChip(
+    label: String,
+    icon: MobileIcon,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val tokens = GlassTheme.tokens
+    val iconColor = if (enabled) tokens.textSecondary else tokens.textSecondary.copy(alpha = 0.38f)
+    val textColor = if (enabled) tokens.textSecondary else tokens.textSecondary.copy(alpha = 0.38f)
+    GlassSurface(
+        modifier = modifier
+            .height(36.dp)
+            .clickable(enabled = enabled, onClick = onClick),
+        shape = RoundedCornerShape(11.dp),
+        tint = if (enabled) tokens.glassFill else tokens.glassFillStrong,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            LineIcon(icon = icon, modifier = Modifier.size(13.dp), color = iconColor)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = textColor,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NewsSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = GlassTheme.tokens.textSecondary,
+    )
+}
+
+@Composable
+private fun NewsChipSelector(
+    options: List<Pair<String, String>>,
+    selected: String,
+    onSelect: (String) -> Unit,
+) {
+    val tokens = GlassTheme.tokens
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        options.forEach { (label, id) ->
+            val isSelected = selected == id
+            GlassSurface(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(38.dp)
+                    .clickable { onSelect(id) },
+                shape = RoundedCornerShape(11.dp),
+                tint = if (isSelected) tokens.accent.copy(alpha = 0.22f) else tokens.glassFill,
+                strokeColor = if (isSelected) tokens.accent.copy(alpha = 0.65f) else tokens.glassStroke,
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                        color = if (isSelected) tokens.accent else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }
@@ -1010,6 +1246,14 @@ private fun String.toNewsFontFamily(): FontFamily {
         "cursive" -> FontFamily.Cursive
         else -> FontFamily.SansSerif
     }
+}
+
+private fun String.toNewsStatusLabel(): String = when (trim().lowercase()) {
+    "draft" -> "borrador"
+    "published" -> "publicada"
+    "scheduled" -> "programada"
+    "archived" -> "archivada"
+    else -> this.ifBlank { "borrador" }
 }
 
 private fun String.toNewsColor(fallback: Color): Color {

@@ -13,6 +13,11 @@ import com.oposicontrol.admin.features.exams.presentation.ExamsViewModel
 import com.oposicontrol.admin.features.exams.presentation.MobileContentScreen
 import com.oposicontrol.admin.features.news.presentation.NewsIntent
 import com.oposicontrol.admin.features.news.presentation.NewsViewModel
+import com.oposicontrol.admin.features.users.presentation.UsersViewModel
+import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessViewModel
+import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
+import com.oposicontrol.admin.features.support.presentation.SupportViewModel
+import com.oposicontrol.admin.features.settings.presentation.SettingsViewModel
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
 import kotlinx.coroutines.delay
@@ -25,6 +30,11 @@ fun MobileContentRoot(
 ) {
     val examsViewModel: ExamsViewModel = koinInject()
     val newsViewModel: NewsViewModel = koinInject()
+    val usersViewModel: UsersViewModel = koinInject()
+    val accessViewModel: ExamAccessViewModel = koinInject()
+    val ticketsViewModel: TicketsViewModel = koinInject()
+    val supportViewModel: SupportViewModel = koinInject()
+    val settingsViewModel: SettingsViewModel = koinInject()
     val diagnosticsRepository: ConnectionDiagnosticsRepository = koinInject()
     val tagSearchRepository: TagSearchRepository = koinInject()
     val scope = rememberCoroutineScope()
@@ -35,14 +45,14 @@ fun MobileContentRoot(
         examsViewModel = examsViewModel,
         newsViewModel = newsViewModel,
         tagSearchRepository = tagSearchRepository,
-        backendActionLabel = "Reinicio",
+        backendActionLabel = "Reconectar",
         backendActionInProgress = backendRestarting,
         onRestartBackend = {
             if (backendRestarting) return@MobileContentScreen
             scope.launch {
                 backendRestarting = true
-                diagnosticsRepository.requestBackendRestart()
-                delay(2_400)
+                diagnosticsRepository.requestConnectionRestart()
+                delay(8_000)
                 diagnosticsRefreshSignal += 1
                 examsViewModel.dispatch(ExamsIntent.RefreshAll)
                 newsViewModel.dispatch(NewsIntent.Refresh)
@@ -55,6 +65,15 @@ fun MobileContentRoot(
                 appConfig = appConfig,
                 diagnosticsRepository = diagnosticsRepository,
                 refreshSignal = diagnosticsRefreshSignal,
+            )
+        },
+        adminContent = {
+            MobileAdminPanel(
+                usersViewModel = usersViewModel,
+                accessViewModel = accessViewModel,
+                ticketsViewModel = ticketsViewModel,
+                supportViewModel = supportViewModel,
+                settingsViewModel = settingsViewModel,
             )
         },
     )

@@ -68,7 +68,7 @@ class SupabaseTagSearchGateway private constructor(
         val normalizedSection = section?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
         val indexRows = request(
             "GET",
-            "/rest/v1/search_index?select=id,entity_type,entity_id,section,title,summary,searchable_text,updated_at&order=updated_at.desc&limit=500",
+            "/rest/v1/search_index?select=id,entity_type,entity_id,section,title,summary,searchable_text&order=id.desc&limit=500",
             null,
         )
             .decodeList<SearchIndexRow>()
@@ -102,7 +102,7 @@ class SupabaseTagSearchGateway private constructor(
             .sortedWith(
                 compareByDescending<Pair<SearchIndexRow, List<TagDto>>> { (_, tags) ->
                     tags.count { it.slug in selectedTags }
-                }.thenByDescending { (row, _) -> row.updatedAt },
+                }.thenByDescending { (row, _) -> row.id ?: 0 },
             )
             .take(60)
             .map { (row, tags) ->
@@ -113,7 +113,7 @@ class SupabaseTagSearchGateway private constructor(
                     title = row.title,
                     summary = row.summary,
                     tags = tags,
-                    updatedAt = row.updatedAt,
+                    updatedAt = "",
                 )
             }
             .toList()
@@ -193,7 +193,6 @@ class SupabaseTagSearchGateway private constructor(
                         title = input.title.take(220),
                         summary = input.summary.take(500),
                         searchableText = searchableText,
-                        updatedAt = java.time.Instant.now().toString(),
                     ),
                 ),
             ),
@@ -244,31 +243,31 @@ class SupabaseTagSearchGateway private constructor(
     }
 
     private fun listEspecialidades(): List<EspecialidadSearchRow> =
-        request("GET", "/rest/v1/especialidad?select=*&deleted_at=is.null&limit=1000", null).decodeList()
+        request("GET", "/rest/v1/especialidad?select=*&limit=1000", null).decodeList()
 
     private fun listTiposNoticia(): List<TipoNoticiaSearchRow> =
-        request("GET", "/rest/v1/tipo_noticia?select=*&deleted_at=is.null&limit=1000", null).decodeList()
+        request("GET", "/rest/v1/tipo_noticia?select=*&limit=1000", null).decodeList()
 
     private fun listExamenes(): List<ExamenSearchRow> =
-        request("GET", "/rest/v1/examen?select=*&deleted_at=is.null&limit=1000", null).decodeList()
+        request("GET", "/rest/v1/examen?select=*&limit=1000", null).decodeList()
 
     private fun listPreguntas(): List<PreguntaSearchRow> =
-        request("GET", "/rest/v1/pregunta?select=*&deleted_at=is.null&limit=2000", null).decodeList()
+        request("GET", "/rest/v1/pregunta?select=*&limit=2000", null).decodeList()
 
     private fun listRecursos(): List<RecursoSearchRow> =
-        request("GET", "/rest/v1/recurso_pregunta?select=*&deleted_at=is.null&limit=2000", null).decodeList()
+        request("GET", "/rest/v1/recurso_pregunta?select=*&limit=2000", null).decodeList()
 
     private fun listNoticias(): List<NoticiaSearchRow> =
-        request("GET", "/rest/v1/noticia?select=*&deleted_at=is.null&limit=1000", null).decodeList()
+        request("GET", "/rest/v1/noticia?select=*&limit=1000", null).decodeList()
 
     private fun listUsuarios(): List<UsuarioSearchRow> =
-        request("GET", "/rest/v1/usuario?select=*&deleted_at=is.null&limit=1000", null).decodeList()
+        request("GET", "/rest/v1/usuario?select=*&limit=1000", null).decodeList()
 
     private fun listRoles(): List<RoleSearchRow> =
         request("GET", "/rest/v1/app_role?select=*&limit=1000", null).decodeList()
 
     private fun listArticulos(): List<ArticuloSearchRow> =
-        request("GET", "/rest/v1/articulo_tienda?select=*&deleted_at=is.null&limit=1000", null).decodeList()
+        request("GET", "/rest/v1/articulo_tienda?select=*&limit=1000", null).decodeList()
 
     private fun listTicketTransactions(): List<TicketSearchRow> =
         request("GET", "/rest/v1/transaccion_ticket?select=*&limit=1000", null).decodeList()
@@ -378,7 +377,6 @@ private data class SearchIndexRow(
     val title: String,
     val summary: String = "",
     @SerialName("searchable_text") val searchableText: String = "",
-    @SerialName("updated_at") val updatedAt: String = "",
 )
 
 @Serializable
@@ -389,7 +387,6 @@ private data class SearchIndexUpsertRow(
     val title: String,
     val summary: String,
     @SerialName("searchable_text") val searchableText: String,
-    @SerialName("updated_at") val updatedAt: String,
 )
 
 @Serializable

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -97,9 +98,10 @@ private fun DiagnosticLine(check: ConnectionDiagnosticCheck) {
         )
         Text(
             text = "${check.name}: ${check.detail}",
+            modifier = Modifier.widthIn(max = 680.dp),
             style = MaterialTheme.typography.bodySmall,
             color = if (check.ok) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-            maxLines = 3,
+            maxLines = 8,
             overflow = TextOverflow.Ellipsis,
         )
     }

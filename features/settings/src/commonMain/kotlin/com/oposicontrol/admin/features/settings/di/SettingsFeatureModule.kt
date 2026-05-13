@@ -10,5 +10,5 @@ val settingsFeatureModule = module {
     factory { ObserveSettingsUseCase(get()) }
     factory { RefreshSettingsUseCase(get()) }
     factory { UpdateSettingsUseCase(get()) }
-    factory { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
+    single { SettingsViewModel(get(), get(), get(), get(), get(), get()) }
 }

@@ -4,5 +4,5 @@ import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
 import org.koin.dsl.module
 
 val ticketsFeatureModule = module {
-    factory { TicketsViewModel(get(), get(), get()) }
+    single { TicketsViewModel(get(), get(), get()) }
 }

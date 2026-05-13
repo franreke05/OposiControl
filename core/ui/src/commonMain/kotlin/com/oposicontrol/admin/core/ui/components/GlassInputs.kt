@@ -1,5 +1,8 @@
 package com.oposicontrol.admin.core.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -13,10 +16,14 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.VisualTransformation
@@ -36,8 +43,17 @@ fun GlassTextField(
     visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     val tokens = GlassTheme.tokens
+    var focused by remember { mutableStateOf(false) }
+    val animatedStroke by animateColorAsState(
+        targetValue = if (focused) tokens.accent.copy(alpha = 0.48f) else tokens.glassStroke,
+        animationSpec = tween(durationMillis = 160),
+    )
+    val animatedTint by animateColorAsState(
+        targetValue = if (focused) tokens.glassFillStrong else tokens.glassFill,
+        animationSpec = tween(durationMillis = 160),
+    )
     BasicTextField(
-        modifier = modifier,
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
         value = value,
         onValueChange = onValueChange,
         singleLine = singleLine,
@@ -50,8 +66,8 @@ fun GlassTextField(
                     .fillMaxWidth()
                     .defaultMinSize(minHeight = 54.dp),
                 shape = RoundedCornerShape(16.dp),
-                tint = tokens.glassFill,
-                strokeColor = tokens.glassStroke,
+                tint = animatedTint,
+                strokeColor = animatedStroke,
             ) {
                 Box(
                     modifier = Modifier.padding(
@@ -83,11 +99,16 @@ fun GlassSearchBar(
 ) {
     val tokens = GlassTheme.tokens
     val affordanceStyle = MaterialTheme.typography.labelMedium
+    var focused by remember { mutableStateOf(false) }
+    val animatedStroke by animateColorAsState(
+        targetValue = if (focused) tokens.accent.copy(alpha = 0.48f) else tokens.glassStroke,
+        animationSpec = tween(durationMillis = 160),
+    )
     GlassSurface(
         modifier = modifier.defaultMinSize(minHeight = 52.dp),
         shape = RoundedCornerShape(16.dp),
         tint = tokens.glassFill,
-        strokeColor = tokens.glassStroke,
+        strokeColor = animatedStroke,
     ) {
         Row(
             modifier = Modifier.padding(
@@ -108,7 +129,9 @@ fun GlassSearchBar(
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(color = tokens.textPrimary),
                 cursorBrush = SolidColor(tokens.accent),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .onFocusChanged { focused = it.isFocused },
                 decorationBox = { innerTextField ->
                     if (value.isBlank()) {
                         Text(
@@ -120,20 +143,23 @@ fun GlassSearchBar(
                     innerTextField()
                 },
             )
-            if (value.isNotBlank()) {
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = "Limpiar",
-                    style = affordanceStyle,
-                    color = tokens.textSecondary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = { onValueChange("") },
-                        ),
-                )
+            AnimatedVisibility(visible = value.isNotBlank()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Limpiar",
+                        style = affordanceStyle,
+                        color = tokens.textSecondary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { onValueChange("") },
+                            )
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                    )
+                }
             }
         }
     }

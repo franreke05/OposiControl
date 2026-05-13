@@ -120,9 +120,9 @@ class SupabaseAdminGateway private constructor(
 
     fun deleteUser(userId: String) {
         request(
-            method = "PATCH",
+            method = "DELETE",
             path = "/rest/v1/usuario?id=eq.${userId.toIntId()}",
-            body = """{"deleted_at":"${Instant.now()}"}""",
+            body = null,
             prefer = "return=minimal",
         )
     }
@@ -156,7 +156,7 @@ class SupabaseAdminGateway private constructor(
 
     fun listAudit(): List<AdminAuditEventDto> {
         val usersById = usuarios().associateBy { it.id }
-        return request("GET", "/rest/v1/audit_log?select=*&order=created_at.desc&limit=200", null)
+        return request("GET", "/rest/v1/audit_log?select=*&order=id.desc&limit=200", null)
             .decodeList<AuditRow>()
             .map { row ->
                 AdminAuditEventDto(
@@ -166,7 +166,7 @@ class SupabaseAdminGateway private constructor(
                     },
                     action = row.action,
                     target = listOf(row.resource, row.resourceId.orEmpty()).filter(String::isNotBlank).joinToString(":"),
-                    occurredAt = row.createdAt,
+                    occurredAt = "",
                     metadata = row.metadata ?: emptyMap(),
                 )
             }
@@ -182,7 +182,7 @@ class SupabaseAdminGateway private constructor(
     }
 
     fun listNewsTypes(): List<AdminNewsTypeDto> {
-        return request("GET", "/rest/v1/tipo_noticia?select=id,nombre,slug,activo&deleted_at=is.null&order=nombre.asc", null)
+        return request("GET", "/rest/v1/tipo_noticia?select=id,nombre,slug,activo&order=nombre.asc", null)
             .decodeList<NewsTypeRow>()
             .map { it.toDto() }
     }
@@ -200,7 +200,7 @@ class SupabaseAdminGateway private constructor(
     fun listExamAccess(): List<AdminExamAccessDto> {
         val usersById = usuarios().associateBy { it.id }
         val examsById = examenes().associateBy { it.id }
-        return request("GET", "/rest/v1/acceso_examen_usuario?select=*&order=created_at.desc", null)
+        return request("GET", "/rest/v1/acceso_examen_usuario?select=*&order=id.desc", null)
             .decodeList<ExamAccessRow>()
             .map { row ->
                 AdminExamAccessDto(
@@ -239,7 +239,7 @@ class SupabaseAdminGateway private constructor(
     fun listTicketWallets(): List<AdminTicketWalletDto> {
         val usersById = usuarios().associateBy { it.id }
         val specialtiesById = especialidades().associateBy { it.id }
-        return request("GET", "/rest/v1/cartera_tickets?select=*&order=updated_at.desc", null)
+        return request("GET", "/rest/v1/cartera_tickets?select=*&order=usuario_id.desc", null)
             .decodeList<TicketWalletRow>()
             .map { row ->
                 val user = usersById[row.usuarioId]
@@ -256,7 +256,7 @@ class SupabaseAdminGateway private constructor(
     fun listTicketTransactions(userId: String): List<AdminTicketTransactionDto> {
         return request(
             "GET",
-            "/rest/v1/transaccion_ticket?select=*&usuario_id=eq.${userId.toIntId()}&order=created_at.desc&limit=100",
+            "/rest/v1/transaccion_ticket?select=*&usuario_id=eq.${userId.toIntId()}&order=id.desc&limit=100",
             null,
         ).decodeList<TicketTransactionRow>().map { it.toDto() }
     }
@@ -312,10 +312,10 @@ class SupabaseAdminGateway private constructor(
     fun listSupportConversations(): List<AdminSupportConversationDto> {
         val usersById = usuarios().associateBy { it.id }
         val messages = supportMessages().groupBy { it.conversationId }
-        return request("GET", "/rest/v1/support_conversation?select=*&order=updated_at.desc", null)
+        return request("GET", "/rest/v1/support_conversation?select=*&order=id.desc", null)
             .decodeList<SupportConversationRow>()
             .map { row ->
-                val latest = messages[row.id].orEmpty().maxByOrNull { it.createdAt }
+                val latest = messages[row.id].orEmpty().maxByOrNull { it.id ?: 0 }
                 AdminSupportConversationDto(
                     id = row.id?.toString().orEmpty(),
                     userName = usersById[row.studentUsuarioId]?.displayName().orEmpty().ifBlank { "Usuario ${row.studentUsuarioId}" },
@@ -331,7 +331,7 @@ class SupabaseAdminGateway private constructor(
         val usersById = usuarios().associateBy { it.id }
         return request(
             "GET",
-            "/rest/v1/support_message?select=*&conversation_id=eq.${conversationId.toIntId()}&order=created_at.asc",
+            "/rest/v1/support_message?select=*&conversation_id=eq.${conversationId.toIntId()}&order=id.asc",
             null,
         ).decodeList<SupportMessageRow>().map { row ->
             AdminSupportMessageDto(
@@ -339,7 +339,7 @@ class SupabaseAdminGateway private constructor(
                 conversationId = row.conversationId.toString(),
                 authorName = usersById[row.senderUsuarioId]?.displayName().orEmpty().ifBlank { "Usuario ${row.senderUsuarioId}" },
                 text = row.body.orEmpty(),
-                timestamp = row.createdAt,
+                timestamp = "",
                 internal = row.internalNote,
                 attachmentLabel = row.attachmentPath,
             )
@@ -372,13 +372,12 @@ class SupabaseAdminGateway private constructor(
             ),
             prefer = "return=representation",
         ).decodeList<SupportMessageRow>().first()
-        request("PATCH", "/rest/v1/support_conversation?id=eq.${conversationId.toIntId()}", """{"updated_at":"${Instant.now()}"}""")
         return AdminSupportMessageDto(
             id = saved.id?.toString().orEmpty(),
             conversationId = conversationId,
             authorName = sender.displayName(),
             text = saved.body.orEmpty(),
-            timestamp = saved.createdAt,
+            timestamp = "",
             internal = saved.internalNote,
             attachmentLabel = saved.attachmentPath,
         )
@@ -386,7 +385,7 @@ class SupabaseAdminGateway private constructor(
 
     fun listModerationActions(): List<AdminModerationActionDto> {
         val usersById = usuarios().associateBy { it.id }
-        return request("GET", "/rest/v1/moderation_action?select=*&order=created_at.desc&limit=200", null)
+        return request("GET", "/rest/v1/moderation_action?select=*&order=id.desc&limit=200", null)
             .decodeList<ModerationActionRow>()
             .map { row ->
                 AdminModerationActionDto(
@@ -395,7 +394,7 @@ class SupabaseAdminGateway private constructor(
                     targetUser = usersById[row.targetUsuarioId]?.displayName().orEmpty().ifBlank { "Usuario ${row.targetUsuarioId}" },
                     executor = usersById[row.actorUsuarioId]?.displayName().orEmpty().ifBlank { "Usuario ${row.actorUsuarioId}" },
                     reason = row.reason,
-                    createdAt = row.createdAt,
+                    createdAt = "",
                 )
             }
     }
@@ -421,17 +420,17 @@ class SupabaseAdminGateway private constructor(
                 metadata = mapOf("target_usuario_id" to target.id.toString(), "action_type" to input.actionType),
             ),
         )
-        return input.copy(id = saved.id?.toString().orEmpty(), createdAt = saved.createdAt)
+        return input.copy(id = saved.id?.toString().orEmpty(), createdAt = "")
     }
 
     fun dashboardMetrics(): AdminDashboardMetricsDto {
         val specialties = especialidades()
         val exams = examenes()
-        val questions = request("GET", "/rest/v1/pregunta?select=id,examen_id&deleted_at=is.null&limit=10000", null)
+        val questions = request("GET", "/rest/v1/pregunta?select=id,examen_id&limit=10000", null)
             .decodeList<QuestionCountRow>()
-        val resources = request("GET", "/rest/v1/recurso_pregunta?select=id,pregunta_id&deleted_at=is.null&limit=10000", null)
+        val resources = request("GET", "/rest/v1/recurso_pregunta?select=id,pregunta_id&limit=10000", null)
             .decodeList<ResourceCountRow>()
-        val news = request("GET", "/rest/v1/noticia?select=id,estado&deleted_at=is.null&limit=10000", null)
+        val news = request("GET", "/rest/v1/noticia?select=id,estado&limit=10000", null)
             .decodeList<NewsCountRow>()
         val questionsWithResources = resources.map { it.preguntaId }.toSet()
         return AdminDashboardMetricsDto(
@@ -448,7 +447,7 @@ class SupabaseAdminGateway private constructor(
             publishedNews = news.count { it.estado == "published" },
             draftNews = news.count { it.estado == "draft" },
             activeStoreItems = runCatching {
-                request("GET", "/rest/v1/articulo_tienda?select=id&activo=eq.true&deleted_at=is.null", null)
+                request("GET", "/rest/v1/articulo_tienda?select=id&activo=eq.true", null)
                     .decodeList<IdOnlyRow>().size
             }.getOrDefault(0),
             activeOffers = 0,
@@ -461,15 +460,15 @@ class SupabaseAdminGateway private constructor(
     }
 
     private fun usuarios(): List<UsuarioRow> {
-        return request("GET", "/rest/v1/usuario?select=*&deleted_at=is.null&order=created_at.desc", null).decodeList()
+        return request("GET", "/rest/v1/usuario?select=*&order=id.desc", null).decodeList()
     }
 
     private fun especialidades(): List<EspecialidadAdminRow> {
-        return request("GET", "/rest/v1/especialidad?select=id,nombre&deleted_at=is.null", null).decodeList()
+        return request("GET", "/rest/v1/especialidad?select=id,nombre", null).decodeList()
     }
 
     private fun examenes(): List<ExamRow> {
-        return request("GET", "/rest/v1/examen?select=id,titulo,estado&deleted_at=is.null", null).decodeList()
+        return request("GET", "/rest/v1/examen?select=id,titulo,estado", null).decodeList()
     }
 
     private fun roleAssignments(): Map<Int?, List<String>> {
@@ -493,7 +492,7 @@ class SupabaseAdminGateway private constructor(
     }
 
     private fun supportMessages(): List<SupportMessageRow> {
-        return request("GET", "/rest/v1/support_message?select=*&order=created_at.desc&limit=1000", null).decodeList()
+        return request("GET", "/rest/v1/support_message?select=*&order=id.desc&limit=1000", null).decodeList()
     }
 
     private fun findUser(query: String): UsuarioRow {
@@ -684,7 +683,6 @@ private data class UsuarioRow(
     val email: String? = null,
     val nombre: String? = null,
     @SerialName("especialidad_id") val especialidadId: Int? = null,
-    @SerialName("created_at") val createdAt: String = "",
 )
 
 @Serializable
@@ -705,7 +703,6 @@ private data class AuditRow(
     val resource: String,
     @SerialName("resource_id") val resourceId: String? = null,
     val metadata: Map<String, String>? = null,
-    @SerialName("created_at") val createdAt: String,
 )
 
 @Serializable
@@ -733,7 +730,6 @@ private data class TicketTransactionRow(
     val tipo: String,
     val monto: Double,
     val razon: String,
-    @SerialName("created_at") val createdAt: String,
 )
 
 @Serializable
@@ -761,7 +757,6 @@ private data class SupportMessageRow(
     val body: String? = null,
     @SerialName("attachment_path") val attachmentPath: String? = null,
     @SerialName("internal_note") val internalNote: Boolean = false,
-    @SerialName("created_at") val createdAt: String,
 )
 
 @Serializable
@@ -779,7 +774,6 @@ private data class ModerationActionRow(
     @SerialName("actor_usuario_id") val actorUsuarioId: Int,
     @SerialName("action_type") val actionType: String,
     val reason: String,
-    @SerialName("created_at") val createdAt: String,
 )
 
 @Serializable
@@ -814,7 +808,7 @@ private fun UsuarioRow.toDto(roleIds: List<String>) = AdminUserDto(
     email = email.orEmpty(),
     roleIds = roleIds,
     isActive = true,
-    createdAt = createdAt,
+    createdAt = "",
 )
 
 private fun AdminUserDto.toRow() = UsuarioRow(
@@ -846,7 +840,6 @@ private fun AdminAuditEventDto.toRow(): AuditRow {
         resource = parts.firstOrNull().orEmpty().ifBlank { "admin" },
         resourceId = parts.getOrNull(1),
         metadata = metadata,
-        createdAt = occurredAt.ifBlank { Instant.now().toString() },
     )
 }
 
@@ -878,7 +871,7 @@ private fun TicketTransactionRow.toDto(signedAmount: Double? = null) = AdminTick
     type = tipo,
     amount = signedAmount ?: if (tipo == "debito") -monto else monto,
     reason = razon,
-    occurredAt = createdAt,
+    occurredAt = "",
 )
 
 private fun AdminModerationActionDto.toRow(targetUserId: Int, actorUserId: Int) = ModerationActionInsertRow(

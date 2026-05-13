@@ -2,9 +2,11 @@ package com.oposicontrol.admin.features.exams.di
 
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
+import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetRafagaQuestionsUseCase
@@ -51,8 +53,10 @@ val examsFeatureModule = module {
     factory { DeleteRafagaQuestionUseCase(get()) }
     factory { MoveRafagaQuestionUseCase(get()) }
     factory { UploadExamCoverUseCase(get()) }
+    factory { ClearExamCoverUseCase(get()) }
     factory { UploadQuestionResourceUseCase(get()) }
-    factory {
+    factory { DeleteQuestionResourceUseCase(get()) }
+    single {
         ExamsViewModel(
             dispatcherProvider = get(),
             observeSpecialtiesUseCase = get(),
@@ -78,7 +82,9 @@ val examsFeatureModule = module {
             deleteRafagaQuestionUseCase = get(),
             moveRafagaQuestionUseCase = get(),
             uploadExamCoverUseCase = get(),
+            clearExamCoverUseCase = get(),
             uploadQuestionResourceUseCase = get(),
+            deleteQuestionResourceUseCase = get(),
             analyticsTracker = get(),
         )
     }

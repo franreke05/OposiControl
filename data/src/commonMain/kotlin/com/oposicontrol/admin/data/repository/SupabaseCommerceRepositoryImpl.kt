@@ -50,21 +50,21 @@ class SupabaseCommerceRepositoryImpl(
         val token = requireAccessToken("cargar tienda") ?: return authFailure("cargar tienda")
         ensureConfigured()?.let { return AppResult.Failure(it) }
         return adapter.safeCall {
-            items.value = client.get("${appConfig.supabaseUrl}/rest/v1/articulo_tienda?select=*&deleted_at=is.null&order=nombre.asc") {
+            items.value = client.get("${appConfig.supabaseUrl}/rest/v1/articulo_tienda?select=*&order=nombre.asc") {
                 supabaseHeaders(token)
             }.body<List<StoreItemRowDto>>().map { it.toDomain() }
             offers.value = runCatching {
-                client.get("${appConfig.supabaseUrl}/rest/v1/oferta_tienda?select=*&deleted_at=is.null&order=starts_at.desc") {
+                client.get("${appConfig.supabaseUrl}/rest/v1/oferta_tienda?select=*&order=starts_at.desc") {
                     supabaseHeaders(token)
                 }.body<List<StoreOfferRowDto>>().map { it.toDomain() }
             }.getOrElse { emptyList() }
             limited.value = runCatching {
-                client.get("${appConfig.supabaseUrl}/rest/v1/recurso_temporal_tienda?select=*&deleted_at=is.null&order=starts_at.desc") {
+                client.get("${appConfig.supabaseUrl}/rest/v1/recurso_temporal_tienda?select=*&order=starts_at.desc") {
                     supabaseHeaders(token)
                 }.body<List<LimitedResourceRowDto>>().map { it.toDomain() }
             }.getOrElse { emptyList() }
             bursts.value = runCatching {
-                client.get("${appConfig.supabaseUrl}/rest/v1/campana_rafaga?select=*&deleted_at=is.null&order=starts_at.desc") {
+                client.get("${appConfig.supabaseUrl}/rest/v1/campana_rafaga?select=*&order=starts_at.desc") {
                     supabaseHeaders(token)
                 }.body<List<BurstCampaignRowDto>>().map { it.toDomain() }
             }.getOrElse { emptyList() }
@@ -160,10 +160,6 @@ private data class StoreItemRowDto(
     @SerialName("precio_tickets")
     val priceTickets: Int,
     val activo: Boolean,
-    @SerialName("created_at")
-    val createdAt: String,
-    @SerialName("updated_at")
-    val updatedAt: String,
 )
 
 @Serializable
@@ -228,8 +224,8 @@ private fun StoreItemRowDto.toDomain() = StoreItem(
     priceTickets = priceTickets,
     status = if (activo) CommerceStatus.ACTIVE else CommerceStatus.DRAFT,
     sortOrder = id ?: 0,
-    createdAt = Instant.parse(createdAt),
-    updatedAt = Instant.parse(updatedAt),
+    createdAt = Instant.fromEpochMilliseconds(0),
+    updatedAt = Instant.fromEpochMilliseconds(0),
 )
 
 private fun StoreItem.toRowDto() = StoreItemRowDto(
@@ -238,8 +234,6 @@ private fun StoreItem.toRowDto() = StoreItemRowDto(
     type = type.toDatabaseType(),
     priceTickets = priceTickets,
     activo = status == CommerceStatus.ACTIVE,
-    createdAt = createdAt.toString(),
-    updatedAt = updatedAt.toString(),
 )
 
 private fun StoreOfferRowDto.toDomain() = StoreOffer(

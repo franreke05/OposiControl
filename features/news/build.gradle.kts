@@ -2,6 +2,7 @@ plugins {
     id("kmp-library-convention")
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.kotlinSerialization)
 }
 
 kotlin {
@@ -9,6 +10,7 @@ kotlin {
         commonMain.dependencies {
             implementation(projects.core.common)
             implementation(projects.core.ui)
+            implementation(projects.data)
             implementation(projects.domain)
             implementation(libs.compose.foundation)
             implementation(libs.compose.material3)
@@ -16,6 +18,7 @@ kotlin {
             implementation(libs.compose.ui)
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.koin.core)
+            implementation(libs.kotlinx.serialization.json)
         }
         commonTest.dependencies {
             implementation(projects.core.testing)

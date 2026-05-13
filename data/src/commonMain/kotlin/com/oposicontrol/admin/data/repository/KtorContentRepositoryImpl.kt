@@ -314,6 +314,12 @@ class KtorContentRepositoryImpl(
         }.body<RecursoPreguntaDto>().toDomain()
     }
 
+    override suspend fun deleteResource(questionId: String, resourceId: String) = adapter.safeCall {
+        client.delete("${contentUrl()}/preguntas/$questionId/recursos/$resourceId") { backendHeaders() }
+            .requireBackendSuccess("/content/preguntas/$questionId/recursos/$resourceId")
+        Unit
+    }
+
     override suspend fun uploadExamCover(
         examId: String,
         localPathOrUri: String,
@@ -328,6 +334,20 @@ class KtorContentRepositoryImpl(
             expectSuccess = false
             backendHeaders()
             setBody(asset.toMultipartBody())
+        }
+        response.requireBackendSuccess("/content/solucionarios/$examId/portada")
+        response.body<SolucionarioDto>().toDomain(
+            specialtiesFlow.value.firstOrNull { it.id == examsFlow.value.firstOrNull { exam -> exam.id == examId }?.specialtyId }?.name.orEmpty(),
+        ).also { saved ->
+            examsFlow.value = examsFlow.value.map { if (it.id == saved.id) saved else it }
+            refreshExams()
+        }
+    }
+
+    override suspend fun clearExamCover(examId: String) = adapter.safeCall {
+        val response = client.delete("${contentUrl()}/solucionarios/$examId/portada") {
+            expectSuccess = false
+            backendHeaders()
         }
         response.requireBackendSuccess("/content/solucionarios/$examId/portada")
         response.body<SolucionarioDto>().toDomain(
@@ -693,8 +713,8 @@ private fun String.toExamStatus() = when (lowercase()) {
 private fun String.toResourceType() = when (lowercase()) {
     "audio" -> QuestionResourceType.AUDIO
     "video" -> QuestionResourceType.VIDEO
+    "texto", "text" -> QuestionResourceType.TEXT
     "documento", "document" -> QuestionResourceType.DOCUMENT
-    "text" -> QuestionResourceType.TEXT
     else -> QuestionResourceType.IMAGE
 }
 
@@ -702,7 +722,7 @@ private fun QuestionResourceType.toDtoType() = when (this) {
     QuestionResourceType.IMAGE -> "imagen"
     QuestionResourceType.AUDIO -> "audio"
     QuestionResourceType.VIDEO -> "video"
-    QuestionResourceType.TEXT -> "documento"
+    QuestionResourceType.TEXT -> "texto"
     QuestionResourceType.DOCUMENT -> "documento"
 }
 

@@ -6,4 +6,5 @@ import com.oposicontrol.admin.domain.model.ConnectionDiagnosticReport
 interface ConnectionDiagnosticsRepository {
     suspend fun runChecks(): AppResult<ConnectionDiagnosticReport>
     suspend fun requestBackendRestart(): AppResult<Unit>
+    suspend fun requestConnectionRestart(): AppResult<Unit>
 }

@@ -126,7 +126,6 @@ data class UnlinkedResource(
     val type: QuestionResourceType,
     val reason: UnlinkedResourceReason,
     val suggestedQuestionId: String?,
-    val updatedAt: Instant?,
 )
 
 enum class UnlinkedResourceReason {

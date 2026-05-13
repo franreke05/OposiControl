@@ -17,6 +17,7 @@ import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
+import io.ktor.server.request.host
 import io.ktor.server.response.respond
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -109,7 +110,13 @@ fun Application.module() {
     }
     routing {
         get("/health") {
-            call.respond(mapOf("status" to "ok"))
+            call.respond(
+                mapOf(
+                    "status" to "ok",
+                    "build" to "20260512-no-legacy-columns",
+                    "restartEnabled" to BackendRestartRequest.isEnabled().toString(),
+                ),
+            )
         }
         authenticate("gateway-auth") {
             adminRoutes(adminGateway)
@@ -125,6 +132,21 @@ fun Application.module() {
                     )
                 } else {
                     call.respond(HttpStatusCode.Accepted, mapOf("status" to "restarting"))
+                    restart.schedule()
+                }
+            }
+            post("/admin/dev/restart-connection") {
+                val restart = BackendRestartRequest.fromEnvironment(ngrokHost = call.ngrokHostForRestart())
+                if (restart == null) {
+                    call.respond(
+                        HttpStatusCode.Forbidden,
+                        ErrorDto(
+                            error = "backend_restart_disabled",
+                            message = "Reconexion desactivada. Define OPOSICONTROL_ENABLE_BACKEND_RESTART=true en desarrollo.",
+                        ),
+                    )
+                } else {
+                    call.respond(HttpStatusCode.Accepted, mapOf("status" to "reconnecting"))
                     restart.schedule()
                 }
             }
@@ -179,6 +201,16 @@ fun Application.module() {
                             runCatching { tagSearchGateway.indexSolucionario(saved) }
                                 .onFailure { error ->
                                     System.err.println("[ktor] optional tag index skipped on cover upload: ${error.safeBackendMessage("index error", 160)}")
+                                }
+                            saved
+                        }
+                    }
+                    delete("/{solucionarioId}/portada") {
+                        call.respondBackendSupabaseResult("/content/solucionarios/{id}/portada") {
+                            val saved = gateway.clearPortada(call.requiredPath("solucionarioId"))
+                            runCatching { tagSearchGateway.indexSolucionario(saved) }
+                                .onFailure { error ->
+                                    System.err.println("[ktor] optional tag index skipped on cover clear: ${error.safeBackendMessage("index error", 160)}")
                                 }
                             saved
                         }
@@ -268,6 +300,15 @@ fun Application.module() {
                             saved,
                         )
                     }
+                    delete("/{preguntaId}/recursos/{resourceId}") {
+                        val id = call.requiredPath("resourceId")
+                        gateway.deleteRecurso(
+                            preguntaId = call.requiredPath("preguntaId"),
+                            resourceId = id,
+                        )
+                        tagSearchGateway.remove("recurso_pregunta", id)
+                        call.respond(HttpStatusCode.NoContent)
+                    }
                     put("/{preguntaId}/recursos/order") {
                         call.respond(gateway.reorderRecursos(call.requiredPath("preguntaId"), call.receive()))
                     }
@@ -342,32 +383,91 @@ data class ErrorDto(val error: String, val message: String)
 
 private class BackendRestartRequest(
     private val projectRoot: File,
+    private val ngrokHost: String? = null,
 ) {
     fun schedule() {
         thread(name = "oposicontrol-backend-restart", isDaemon = false) {
             Thread.sleep(750)
-            val command = if (System.getProperty("os.name").contains("Windows", ignoreCase = true)) {
-                listOf("cmd", "/c", "gradlew.bat", ":backend:ktor:run")
-            } else {
-                listOf("./gradlew", ":backend:ktor:run")
-            }
-            ProcessBuilder(command)
-                .directory(projectRoot)
-                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-                .redirectError(ProcessBuilder.Redirect.INHERIT)
-                .start()
+            restartNgrokIfNeeded()
+            startBackend()
             Thread.sleep(250)
             exitProcess(0)
         }
     }
 
+    private fun restartNgrokIfNeeded() {
+        val host = ngrokHost ?: return
+        val script = File(projectRoot, "scripts/restart-ngrok-dev.ps1")
+        if (!script.exists()) {
+            System.err.println("[ktor] ngrok restart skipped: ${script.path} not found.")
+            return
+        }
+        val command = if (isWindows()) {
+            listOf(
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                script.absolutePath,
+                "-Domain",
+                host,
+                "-Port",
+                "8080",
+            )
+        } else {
+            listOf("pwsh", "-NoProfile", "-File", script.absolutePath, "-Domain", host, "-Port", "8080")
+        }
+        runCatching {
+            ProcessBuilder(command)
+                .directory(projectRoot)
+                .redirectOutput(File(projectRoot, "ngrok-restart.out.log"))
+                .redirectError(File(projectRoot, "ngrok-restart.err.log"))
+                .start()
+            Thread.sleep(1_500)
+        }.onFailure { error ->
+            System.err.println("[ktor] ngrok restart failed: ${error.safeBackendMessage("ngrok restart error", 180)}")
+        }
+    }
+
+    private fun startBackend() {
+        val script = File(projectRoot, "scripts/run-backend-dev.ps1")
+        val command = if (script.exists() && isWindows()) {
+            listOf(
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                script.absolutePath,
+            )
+        } else if (script.exists()) {
+            listOf("pwsh", "-NoProfile", "-File", script.absolutePath)
+        } else if (isWindows()) {
+            listOf("cmd", "/c", "gradlew.bat", "--no-daemon", ":backend:ktor:run")
+        } else {
+            listOf("./gradlew", "--no-daemon", ":backend:ktor:run")
+        }
+        ProcessBuilder(command)
+            .directory(projectRoot)
+            .redirectOutput(File(projectRoot, "backend-restart.out.log"))
+            .redirectError(File(projectRoot, "backend-restart.err.log"))
+            .start()
+    }
+
     companion object {
-        fun fromEnvironment(): BackendRestartRequest? {
-            val enabled = System.getenv("OPOSICONTROL_ENABLE_BACKEND_RESTART")
-                ?.toBooleanStrictOrNull()
-                ?: false
-            if (!enabled) return null
-            return findProjectRoot(File(System.getProperty("user.dir")))?.let(::BackendRestartRequest)
+        fun fromEnvironment(ngrokHost: String? = null): BackendRestartRequest? {
+            if (!isEnabled()) return null
+            return findProjectRoot(File(System.getProperty("user.dir")))
+                ?.let { BackendRestartRequest(projectRoot = it, ngrokHost = ngrokHost) }
+        }
+
+        fun isEnabled(): Boolean {
+            val explicit = System.getenv("OPOSICONTROL_ENABLE_BACKEND_RESTART")?.toBooleanStrictOrNull()
+            if (explicit != null) return explicit
+            val appEnv = System.getenv("APP_ENV").orEmpty().ifBlank { "dev" }
+            return !appEnv.equals("prod", ignoreCase = true) &&
+                !appEnv.equals("production", ignoreCase = true)
         }
 
         private fun findProjectRoot(start: File): File? {
@@ -380,6 +480,26 @@ private class BackendRestartRequest(
             }
             return null
         }
+
+        private fun isWindows(): Boolean {
+            return System.getProperty("os.name").contains("Windows", ignoreCase = true)
+        }
+    }
+}
+
+private fun ApplicationCall.ngrokHostForRestart(): String? {
+    val forwardedHost = request.headers["X-Forwarded-Host"]
+        ?.substringBefore(',')
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+    val host = (forwardedHost ?: request.host())
+        .substringBefore(':')
+        .trim()
+        .lowercase()
+    return host.takeIf {
+        it.endsWith(".ngrok-free.dev") ||
+            it.endsWith(".ngrok.app") ||
+            it.endsWith(".ngrok.io")
     }
 }
 
@@ -555,9 +675,9 @@ private class SupabaseContentGateway private constructor(
     private var storageBucketChecked = false
 
     fun listEspecialidades(): List<EspecialidadDto> {
-        val rows = request("GET", "/rest/v1/especialidad?select=*&deleted_at=is.null&order=nombre.asc", null)
+        val rows = request("GET", "/rest/v1/especialidad?select=*&order=nombre.asc", null)
             .decodeList<EspecialidadRow>()
-        val linkedCounts = request("GET", "/rest/v1/examen?select=id,especialidad_id&deleted_at=is.null", null)
+        val linkedCounts = request("GET", "/rest/v1/examen?select=id,especialidad_id", null)
             .decodeList<ExamenCountRow>()
             .groupingBy { it.especialidadId.toString() }
             .eachCount()
@@ -576,26 +696,26 @@ private class SupabaseContentGateway private constructor(
     }
 
     fun deleteEspecialidad(especialidadId: String) {
-        request("PATCH", "/rest/v1/especialidad?id=eq.${especialidadId.toIntId()}", """{"deleted_at":"${java.time.Instant.now()}"}""")
+        request("DELETE", "/rest/v1/especialidad?id=eq.${especialidadId.toIntId()}", null)
     }
 
     fun listSolucionarios(): List<SolucionarioDto> {
         val specialties = listEspecialidades().associateBy { it.id }
-        val counts = request("GET", "/rest/v1/pregunta?select=id,examen_id&deleted_at=is.null", null)
+        val counts = request("GET", "/rest/v1/pregunta?select=id,examen_id", null)
             .decodeList<PreguntaCountRow>()
             .groupingBy { it.examenId.toString() }
             .eachCount()
-        return request("GET", "/rest/v1/examen?select=*&deleted_at=is.null&order=created_at.desc", null)
+        return request("GET", "/rest/v1/examen?select=*&order=id.desc", null)
             .decodeList<ExamenRow>()
             .map { it.toDto(specialties[it.especialidadId.toString()]?.nombre.orEmpty(), counts[it.id?.toString().orEmpty()] ?: 0) }
     }
 
     fun listRafagas(): List<RafagaDto> {
-        val counts = request("GET", "/rest/v1/rafaga_pregunta?select=id,rafaga_id&deleted_at=is.null", null)
+        val counts = request("GET", "/rest/v1/rafaga_pregunta?select=id,rafaga_id", null)
             .decodeList<RafagaPreguntaCountRow>()
             .groupingBy { it.rafagaId.toString() }
             .eachCount()
-        return request("GET", "/rest/v1/rafaga?select=*&deleted_at=is.null&order=created_at.desc", null)
+        return request("GET", "/rest/v1/rafaga?select=*&order=id.desc", null)
             .decodeList<RafagaRow>()
             .map { it.toDto(counts[it.id?.toString().orEmpty()] ?: 0) }
     }
@@ -645,19 +765,24 @@ private class SupabaseContentGateway private constructor(
 
     fun uploadPortada(solucionarioId: String, file: BackendUploadedFile): SolucionarioDto {
         require(file.mimeType.startsWith("image/")) { "La portada debe ser una imagen." }
-        val objectPath = "exam-covers/${solucionarioId.toIntId()}/${file.fileName}"
+        val examId = solucionarioId.toIntId()
+        val previous = request(
+            "GET",
+            "/rest/v1/examen?select=portada_storage_path&id=eq.$examId&limit=1",
+            null,
+        ).decodeList<ExamenCoverPathRow>().firstOrNull()
+        val objectPath = "exam-covers/$examId/${file.fileName.sanitizeStorageSegment()}"
         storageUpload(objectPath, file.mimeType, file.bytes)
         val publicUrl = storagePublicUrl(objectPath)
         val saved = try {
             request(
                 "PATCH",
-                "/rest/v1/examen?id=eq.${solucionarioId.toIntId()}",
+                "/rest/v1/examen?id=eq.$examId",
                 json.encodeToString(
                     mapOf(
                         "portada_url" to publicUrl,
                         "portada_storage_path" to objectPath,
                         "portada_mime_type" to file.mimeType,
-                        "updated_at" to java.time.Instant.now().toString(),
                     ),
                 ),
                 prefer = "return=representation",
@@ -671,67 +796,116 @@ private class SupabaseContentGateway private constructor(
             }
             throw error
         }
+        previous?.portadaStoragePath
+            ?.takeIf { it.isNotBlank() && it != objectPath }
+            ?.let(::storageDelete)
+        return saved.toDto("", 0)
+    }
+
+    fun clearPortada(solucionarioId: String): SolucionarioDto {
+        val examId = solucionarioId.toIntId()
+        val previous = request(
+            "GET",
+            "/rest/v1/examen?select=portada_storage_path&id=eq.$examId&limit=1",
+            null,
+        ).decodeList<ExamenCoverPathRow>().firstOrNull()
+            ?: throw IllegalArgumentException("No existe el solucionario $solucionarioId.")
+        val saved = request(
+            "PATCH",
+            "/rest/v1/examen?id=eq.$examId",
+            json.encodeToString(
+                mapOf(
+                    "portada_url" to null,
+                    "portada_storage_path" to null,
+                    "portada_mime_type" to null,
+                ),
+            ),
+            prefer = "return=representation",
+        ).decodeList<ExamenRow>().firstOrNull()
+            ?: throw IllegalArgumentException("No existe el solucionario $solucionarioId.")
+        previous.portadaStoragePath?.takeIf { it.isNotBlank() }?.let(::storageDelete)
         return saved.toDto("", 0)
     }
 
     fun deleteSolucionario(solucionarioId: String) {
         val examId = solucionarioId.toIntId()
-        val deletedAt = java.time.Instant.now().toString()
-        val deleteBody = json.encodeToString(mapOf("deleted_at" to deletedAt))
+        val activeExam = request(
+            "GET",
+            "/rest/v1/examen?select=portada_storage_path&id=eq.$examId&limit=1",
+            null,
+        ).decodeList<ExamenCoverPathRow>().firstOrNull()
+            ?: throw IllegalArgumentException("El solucionario no existe en la base de datos.")
+        val coverPath = activeExam.portadaStoragePath
         val questions = request(
             "GET",
-            "/rest/v1/pregunta?select=id&examen_id=eq.$examId&deleted_at=is.null",
+            "/rest/v1/pregunta?select=id&examen_id=eq.$examId",
             null,
         ).decodeList<PreguntaIdRow>()
         val questionIds = questions.mapNotNull { it.id }
+        val resourcePaths = if (questionIds.isEmpty()) {
+            emptyList()
+        } else {
+            val idsFilter = questionIds.joinToString(",")
+            request(
+                "GET",
+                "/rest/v1/recurso_pregunta?select=storage_path&pregunta_id=in.($idsFilter)",
+                null,
+            ).decodeList<RecursoStoragePathRow>().mapNotNull { it.storagePath?.takeIf(String::isNotBlank) }
+        }
         if (questionIds.isNotEmpty()) {
             val idsFilter = questionIds.joinToString(",")
             request(
-                "PATCH",
-                "/rest/v1/recurso_pregunta?pregunta_id=in.($idsFilter)&deleted_at=is.null",
-                deleteBody,
+                "DELETE",
+                "/rest/v1/recurso_pregunta?pregunta_id=in.($idsFilter)",
+                null,
             )
             requestIfRelationExists(
-                "PATCH",
-                "/rest/v1/opcion_pregunta?pregunta_id=in.($idsFilter)&deleted_at=is.null",
-                deleteBody,
+                "DELETE",
+                "/rest/v1/opcion_pregunta?pregunta_id=in.($idsFilter)",
+                null,
             )
             request(
-                "PATCH",
-                "/rest/v1/pregunta?id=in.($idsFilter)&deleted_at=is.null",
-                deleteBody,
+                "DELETE",
+                "/rest/v1/pregunta?id=in.($idsFilter)",
+                null,
             )
         }
-        request("PATCH", "/rest/v1/examen?id=eq.$examId", deleteBody)
+        request("DELETE", "/rest/v1/examen?id=eq.$examId", null)
         requestIfRelationExists(
-            "PATCH",
+            "DELETE",
             "/rest/v1/acceso_examen_usuario?examen_id=eq.$examId",
-            """{"activo":false,"updated_at":"$deletedAt"}""",
+            null,
         )
+        (listOfNotNull(coverPath) + resourcePaths).distinct().forEach(::storageDelete)
     }
 
     fun deleteRafaga(rafagaId: String) {
-        val deletedAt = java.time.Instant.now().toString()
-        val deleteBody = json.encodeToString(mapOf("deleted_at" to deletedAt))
+        val numericRafagaId = rafagaId.toIntId()
+        val activeRafaga = request(
+            "GET",
+            "/rest/v1/rafaga?select=id&id=eq.$numericRafagaId&limit=1",
+            null,
+        ).decodeList<IdRow>().firstOrNull()
+            ?: throw IllegalArgumentException("La rafaga no existe en la base de datos.")
         request(
-            "PATCH",
-            "/rest/v1/rafaga_pregunta?rafaga_id=eq.${rafagaId.toIntId()}&deleted_at=is.null",
-            deleteBody,
+            "DELETE",
+            "/rest/v1/rafaga_pregunta?rafaga_id=eq.$numericRafagaId",
+            null,
         )
-        request("PATCH", "/rest/v1/rafaga?id=eq.${rafagaId.toIntId()}", deleteBody)
+        request("DELETE", "/rest/v1/rafaga?id=eq.$numericRafagaId", null)
     }
 
     fun listPreguntas(solucionarioId: String): List<PreguntaDto> {
         val questions = request(
             "GET",
-            "/rest/v1/pregunta?select=*&examen_id=eq.${solucionarioId.toIntId()}&deleted_at=is.null&order=orden.asc",
+            "/rest/v1/pregunta?select=*&examen_id=eq.${solucionarioId.toIntId()}&order=orden.asc",
             null,
         ).decodeList<PreguntaRow>()
         if (questions.isEmpty()) return emptyList()
         val ids = questions.mapNotNull { it.id }.joinToString(",")
         val resources = request(
             "GET",
-            "/rest/v1/recurso_pregunta?select=*&pregunta_id=in.($ids)&deleted_at=is.null&order=id.asc",
+            "/rest/v1/recurso_pregunta?select=*&pregunta_id=in.($ids)&order=id.asc",
             null,
         ).decodeList<RecursoPreguntaRow>().groupBy { it.preguntaId }
         return questions.map { row -> row.toDto(resources[row.id].orEmpty().map { it.toDto() }) }
@@ -740,7 +914,7 @@ private class SupabaseContentGateway private constructor(
     fun listRafagaPreguntas(rafagaId: String): List<RafagaPreguntaDto> {
         return request(
             "GET",
-            "/rest/v1/rafaga_pregunta?select=*&rafaga_id=eq.${rafagaId.toIntId()}&deleted_at=is.null&order=orden.asc",
+            "/rest/v1/rafaga_pregunta?select=*&rafaga_id=eq.${rafagaId.toIntId()}&order=orden.asc",
             null,
         ).decodeList<RafagaPreguntaRow>().map { it.toDto() }
     }
@@ -770,11 +944,19 @@ private class SupabaseContentGateway private constructor(
     }
 
     fun deletePregunta(solucionarioId: String, preguntaId: String) {
-        request("PATCH", "/rest/v1/pregunta?id=eq.${preguntaId.toIntId()}&examen_id=eq.${solucionarioId.toIntId()}", """{"deleted_at":"${java.time.Instant.now()}"}""")
+        val resourcePaths = request(
+            "GET",
+            "/rest/v1/recurso_pregunta?select=storage_path&pregunta_id=eq.${preguntaId.toIntId()}",
+            null,
+        ).decodeList<RecursoStoragePathRow>().mapNotNull { it.storagePath?.takeIf(String::isNotBlank) }
+        request("DELETE", "/rest/v1/recurso_pregunta?pregunta_id=eq.${preguntaId.toIntId()}", null)
+        requestIfRelationExists("DELETE", "/rest/v1/opcion_pregunta?pregunta_id=eq.${preguntaId.toIntId()}", null)
+        request("DELETE", "/rest/v1/pregunta?id=eq.${preguntaId.toIntId()}&examen_id=eq.${solucionarioId.toIntId()}", null)
+        resourcePaths.distinct().forEach(::storageDelete)
     }
 
     fun deleteRafagaPregunta(rafagaId: String, preguntaId: String) {
-        request("PATCH", "/rest/v1/rafaga_pregunta?id=eq.${preguntaId.toIntId()}&rafaga_id=eq.${rafagaId.toIntId()}", """{"deleted_at":"${java.time.Instant.now()}"}""")
+        request("DELETE", "/rest/v1/rafaga_pregunta?id=eq.${preguntaId.toIntId()}&rafaga_id=eq.${rafagaId.toIntId()}", null)
     }
 
     fun reorderPreguntas(solucionarioId: String, order: OrderDto): List<PreguntaDto> {
@@ -846,10 +1028,25 @@ private class SupabaseContentGateway private constructor(
         )
     }
 
+    fun deleteRecurso(preguntaId: String, resourceId: String) {
+        val resource = request(
+            "GET",
+            "/rest/v1/recurso_pregunta?select=*&id=eq.${resourceId.toIntId()}&pregunta_id=eq.${preguntaId.toIntId()}&limit=1",
+            null,
+        ).decodeList<RecursoPreguntaRow>().firstOrNull()
+            ?: throw IllegalArgumentException("El recurso no existe.")
+        request(
+            "DELETE",
+            "/rest/v1/recurso_pregunta?id=eq.${resourceId.toIntId()}&pregunta_id=eq.${preguntaId.toIntId()}",
+            null,
+        )
+        resource.storagePath?.takeIf { it.isNotBlank() }?.let(::storageDelete)
+    }
+
     fun reorderRecursos(preguntaId: String, order: OrderDto): List<RecursoPreguntaDto> {
         val current = request(
             "GET",
-            "/rest/v1/recurso_pregunta?select=*&pregunta_id=eq.${preguntaId.toIntId()}&deleted_at=is.null&order=id.asc",
+            "/rest/v1/recurso_pregunta?select=*&pregunta_id=eq.${preguntaId.toIntId()}&order=id.asc",
             null,
         ).decodeList<RecursoPreguntaRow>().map { it.toDto() }
         require(order.ids.toSet() == current.map { it.id }.toSet()) { "El orden debe contener los mismos recursos." }
@@ -857,6 +1054,12 @@ private class SupabaseContentGateway private constructor(
     }
 
     private fun replaceResources(questionId: Int, resources: List<RecursoPreguntaDto>) {
+        val previousStoragePaths = request(
+            "GET",
+            "/rest/v1/recurso_pregunta?select=storage_path&pregunta_id=eq.$questionId",
+            null,
+        ).decodeList<RecursoStoragePathRow>().mapNotNull { it.storagePath?.takeIf(String::isNotBlank) }
+        val nextStoragePaths = resources.mapNotNull { it.storagePath?.takeIf(String::isNotBlank) }.toSet()
         request("DELETE", "/rest/v1/recurso_pregunta?pregunta_id=eq.$questionId", null)
         if (resources.isNotEmpty()) {
             request(
@@ -866,6 +1069,7 @@ private class SupabaseContentGateway private constructor(
                 prefer = "return=minimal",
             )
         }
+        previousStoragePaths.filterNot { it in nextStoragePaths }.distinct().forEach(::storageDelete)
     }
 
     private fun validatePregunta(pregunta: PreguntaDto) {
@@ -877,7 +1081,7 @@ private class SupabaseContentGateway private constructor(
     }
 
     private fun validateRecurso(recurso: RecursoPreguntaDto) {
-        require(recurso.tipoRecurso in setOf("imagen", "audio", "video", "documento")) { "Tipo de recurso no valido." }
+        require(recurso.tipoRecurso in setOf("imagen", "audio", "video", "documento", "texto")) { "Tipo de recurso no valido." }
         require(recurso.url.isNotBlank() || !recurso.storagePath.isNullOrBlank() || !recurso.publicUrl.isNullOrBlank()) {
             "El recurso necesita una URL o ruta de archivo."
         }
@@ -888,6 +1092,7 @@ private class SupabaseContentGateway private constructor(
             "imagen" -> mimeType.startsWith("image/")
             "audio" -> mimeType.startsWith("audio/")
             "video" -> mimeType.startsWith("video/")
+            "texto" -> mimeType.startsWith("text/")
             "documento" -> mimeType.startsWith("application/") || mimeType.startsWith("text/")
             else -> false
         }
@@ -913,6 +1118,23 @@ private class SupabaseContentGateway private constructor(
         }
         if (response.statusCode() !in 200..299) {
             throw IllegalStateException("Supabase Storage upload -> ${response.statusCode()}: ${response.body().take(300)}")
+        }
+    }
+
+    private fun storageDelete(objectPath: String) {
+        ensureStorageBucketExists()
+        val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
+        val path = "/storage/v1/object/$examResourcesBucket/$encodedPath"
+        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+        val response = try {
+            client.send(builder.DELETE().build(), HttpResponse.BodyHandlers.ofString())
+        } catch (e: Exception) {
+            throw IllegalStateException("Supabase Storage network error on object delete: ${e::class.simpleName}: ${e.message}", e)
+        }
+        if (response.statusCode() !in 200..299 && response.statusCode() != 404) {
+            throw IllegalStateException("Supabase Storage object delete -> ${response.statusCode()}: ${response.body().take(300)}")
         }
     }
 
@@ -991,8 +1213,6 @@ private data class EspecialidadRow(
     val nombre: String,
     val slug: String = "",
     val activa: Boolean = true,
-    @kotlinx.serialization.SerialName("created_at") val createdAt: String? = null,
-    @kotlinx.serialization.SerialName("updated_at") val updatedAt: String? = null,
 )
 
 @Serializable
@@ -1005,11 +1225,6 @@ private data class ExamenRow(
     @kotlinx.serialization.SerialName("portada_url") val portadaUrl: String? = null,
     @kotlinx.serialization.SerialName("portada_storage_path") val portadaStoragePath: String? = null,
     @kotlinx.serialization.SerialName("portada_mime_type") val portadaMimeType: String? = null,
-    @kotlinx.serialization.SerialName("publicar_desde") val publicarDesde: String? = null,
-    @kotlinx.serialization.SerialName("published_at") val publishedAt: String? = null,
-    @kotlinx.serialization.SerialName("created_at") val createdAt: String? = null,
-    @kotlinx.serialization.SerialName("updated_at") val updatedAt: String? = null,
-    @kotlinx.serialization.SerialName("deleted_at") val deletedAt: String? = null,
 )
 
 @Serializable
@@ -1019,17 +1234,25 @@ private data class ExamenCountRow(
 )
 
 @Serializable
+private data class ExamenCoverPathRow(
+    @kotlinx.serialization.SerialName("portada_storage_path") val portadaStoragePath: String? = null,
+)
+
+@Serializable
 private data class PreguntaRow(
     val id: Int? = null,
     @kotlinx.serialization.SerialName("examen_id") val examenId: Int,
     val enunciado: String,
     val orden: Int = 0,
-    @kotlinx.serialization.SerialName("created_at") val createdAt: String? = null,
-    @kotlinx.serialization.SerialName("updated_at") val updatedAt: String? = null,
 )
 
 @Serializable
 private data class PreguntaIdRow(
+    val id: Int? = null,
+)
+
+@Serializable
+private data class IdRow(
     val id: Int? = null,
 )
 
@@ -1046,11 +1269,6 @@ private data class RafagaRow(
     @kotlinx.serialization.SerialName("precio_tickets") val precioTickets: Int = 0,
     @kotlinx.serialization.SerialName("especialidad_id") val especialidadId: Int,
     val estado: String = "draft",
-    @kotlinx.serialization.SerialName("publicar_desde") val publicarDesde: String? = null,
-    @kotlinx.serialization.SerialName("published_at") val publishedAt: String? = null,
-    @kotlinx.serialization.SerialName("created_at") val createdAt: String? = null,
-    @kotlinx.serialization.SerialName("updated_at") val updatedAt: String? = null,
-    @kotlinx.serialization.SerialName("deleted_at") val deletedAt: String? = null,
 )
 
 @Serializable
@@ -1059,9 +1277,6 @@ private data class RafagaPreguntaRow(
     @kotlinx.serialization.SerialName("rafaga_id") val rafagaId: Int,
     val enunciado: String,
     val orden: Int = 0,
-    @kotlinx.serialization.SerialName("created_at") val createdAt: String? = null,
-    @kotlinx.serialization.SerialName("updated_at") val updatedAt: String? = null,
-    @kotlinx.serialization.SerialName("deleted_at") val deletedAt: String? = null,
 )
 
 @Serializable
@@ -1084,6 +1299,11 @@ private data class RecursoPreguntaRow(
 )
 
 @Serializable
+private data class RecursoStoragePathRow(
+    @kotlinx.serialization.SerialName("storage_path") val storagePath: String? = null,
+)
+
+@Serializable
 private data class StoredQuestion(
     val titulo: String = "",
     val enunciado: String = "",
@@ -1096,8 +1316,8 @@ private fun EspecialidadRow.toDto(linkedExams: Int) = EspecialidadDto(
     slug = slug,
     activa = activa,
     linkedExams = linkedExams,
-    createdAt = createdAt.orEmpty(),
-    updatedAt = updatedAt.orEmpty(),
+    createdAt = "",
+    updatedAt = "",
 )
 
 private fun EspecialidadDto.toRow() = EspecialidadRow(
@@ -1114,15 +1334,15 @@ private fun ExamenRow.toDto(specialtyName: String, questionCount: Int) = Solucio
     descripcion = specialtyName,
     precioTickets = precioTickets,
     estado = estado,
-    publicarDesde = publicarDesde,
-    publishedAt = publishedAt,
+    publicarDesde = null,
+    publishedAt = null,
     orden = id ?: 0,
     portadaUrl = portadaUrl,
     portadaStoragePath = portadaStoragePath,
     portadaMimeType = portadaMimeType,
-    createdAt = createdAt.orEmpty(),
-    updatedAt = updatedAt.orEmpty(),
-    deletedAt = deletedAt,
+    createdAt = "",
+    updatedAt = "",
+    deletedAt = null,
 )
 
 private fun SolucionarioDto.toRow() = ExamenRow(
@@ -1134,9 +1354,6 @@ private fun SolucionarioDto.toRow() = ExamenRow(
     portadaUrl = portadaUrl,
     portadaStoragePath = portadaStoragePath,
     portadaMimeType = portadaMimeType,
-    publicarDesde = publicarDesde,
-    publishedAt = publishedAt,
-    updatedAt = updatedAt.ifBlank { java.time.Instant.now().toString() },
 )
 
 private fun RafagaRow.toDto(questionCount: Int) = RafagaDto(
@@ -1145,12 +1362,12 @@ private fun RafagaRow.toDto(questionCount: Int) = RafagaDto(
     especialidadId = especialidadId.toString(),
     precioTickets = precioTickets,
     estado = estado,
-    publicarDesde = publicarDesde,
-    publishedAt = publishedAt,
+    publicarDesde = null,
+    publishedAt = null,
     questionCount = questionCount,
-    createdAt = createdAt.orEmpty(),
-    updatedAt = updatedAt.orEmpty(),
-    deletedAt = deletedAt,
+    createdAt = "",
+    updatedAt = "",
+    deletedAt = null,
 )
 
 private fun RafagaDto.toRow() = RafagaRow(
@@ -1159,9 +1376,6 @@ private fun RafagaDto.toRow() = RafagaRow(
     precioTickets = precioTickets,
     especialidadId = especialidadId.toIntOrNull() ?: 1,
     estado = estado,
-    publicarDesde = publicarDesde,
-    publishedAt = publishedAt,
-    updatedAt = updatedAt.ifBlank { java.time.Instant.now().toString() },
 )
 
 private fun RafagaDto.normalizedForSave(): RafagaDto {
@@ -1173,7 +1387,6 @@ private fun RafagaDto.normalizedForSave(): RafagaDto {
             estado == "published" -> publishedAt
             else -> publishedAt?.takeIf { it.isNotBlank() }
         },
-        updatedAt = now,
     )
 }
 
@@ -1186,7 +1399,6 @@ private fun SolucionarioDto.normalizedForSave(): SolucionarioDto {
             estado == "published" -> publishedAt
             else -> publishedAt?.takeIf { it.isNotBlank() }
         },
-        updatedAt = now,
     )
 }
 
@@ -1215,9 +1427,9 @@ private fun RafagaPreguntaRow.toDto() = RafagaPreguntaDto(
     rafagaId = rafagaId.toString(),
     enunciado = enunciado,
     orden = orden,
-    createdAt = createdAt.orEmpty(),
-    updatedAt = updatedAt.orEmpty(),
-    deletedAt = deletedAt,
+    createdAt = "",
+    updatedAt = "",
+    deletedAt = null,
 )
 
 private fun RafagaPreguntaDto.toRow(parentRafagaId: String) = RafagaPreguntaRow(
@@ -1225,7 +1437,6 @@ private fun RafagaPreguntaDto.toRow(parentRafagaId: String) = RafagaPreguntaRow(
     rafagaId = parentRafagaId.toIntOrNull() ?: rafagaId.toIntOrNull() ?: 1,
     enunciado = enunciado,
     orden = orden,
-    updatedAt = updatedAt.ifBlank { java.time.Instant.now().toString() },
 )
 
 private fun String.decodeStoredQuestion(): StoredQuestion {
@@ -1262,7 +1473,7 @@ private fun String.toDatabaseResourceType(): String {
     return when (lowercase()) {
         "image" -> "imagen"
         "document" -> "documento"
-        "text" -> "documento"
+        "text" -> "texto"
         else -> lowercase()
     }
 }
@@ -1384,7 +1595,7 @@ private class InMemoryGateway {
     }
 
     private fun validateRecurso(recurso: RecursoPreguntaDto) {
-        require(recurso.tipoRecurso in setOf("imagen", "audio", "video", "documento")) {
+        require(recurso.tipoRecurso in setOf("imagen", "audio", "video", "documento", "texto")) {
             "Tipo de recurso no valido."
         }
         require(recurso.url.isNotBlank() || !recurso.storagePath.isNullOrBlank() || !recurso.publicUrl.isNullOrBlank()) {

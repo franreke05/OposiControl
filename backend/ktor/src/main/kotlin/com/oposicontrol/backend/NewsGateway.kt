@@ -104,7 +104,7 @@ class SupabaseNewsGateway private constructor(
     override fun listNoticias(): List<NoticiaDto> {
         val rows = request(
             method = "GET",
-            path = "/rest/v1/noticia?select=*&deleted_at=is.null&order=created_at.desc",
+            path = "/rest/v1/noticia?select=*&order=id.desc",
             body = null,
         ).decodeList<SupabaseNoticiaRow>()
         return rows.map { row -> row.toDto(json) }
@@ -130,9 +130,9 @@ class SupabaseNewsGateway private constructor(
     override fun deleteNoticia(noticiaId: String) {
         val numericId = noticiaId.toIntOrNull() ?: throw IllegalArgumentException("Id de noticia no valido.")
         request(
-            method = "PATCH",
+            method = "DELETE",
             path = "/rest/v1/noticia?id=eq.$numericId",
-            body = """{"deleted_at":"${java.time.Instant.now()}"}""",
+            body = null,
         )
     }
 
@@ -223,7 +223,7 @@ class SupabaseNewsGateway private constructor(
         return resolveCatalogId(
             value = value,
             table = "especialidad",
-            defaultId = 1,
+            label = "especialidad",
         )
     }
 
@@ -231,22 +231,23 @@ class SupabaseNewsGateway private constructor(
         return resolveCatalogId(
             value = value,
             table = "tipo_noticia",
-            defaultId = 1,
+            label = "tipo de noticia",
         )
     }
 
-    private fun resolveCatalogId(value: String, table: String, defaultId: Int): Int {
+    private fun resolveCatalogId(value: String, table: String, label: String): Int {
         value.toIntOrNull()?.let { return it }
         val query = value.trim()
-        if (query.isBlank()) return defaultId
+        require(query.isNotBlank()) { "La noticia necesita $label valida." }
         val encoded = query.toPostgrestValue()
-        return runCatching {
+        val resolved = runCatching {
             request(
                 method = "GET",
-                path = "/rest/v1/$table?select=id&or=(slug.eq.$encoded,nombre.eq.$encoded)&deleted_at=is.null&limit=1",
+                path = "/rest/v1/$table?select=id&or=(slug.eq.$encoded,nombre.eq.$encoded)&limit=1",
                 body = null,
             ).decodeList<CatalogIdRow>().firstOrNull()?.id
-        }.getOrNull() ?: defaultId
+        }.getOrNull()
+        return resolved ?: throw IllegalArgumentException("No existe $label '$query'.")
     }
 
     companion object {
@@ -278,8 +279,6 @@ private data class SupabaseNoticiaRow(
     @SerialName("imagen_path")
     val imagenPath: String? = null,
     val estado: String = "draft",
-    @SerialName("publicar_desde")
-    val publicarDesde: String? = null,
 )
 
 @Serializable
@@ -298,7 +297,7 @@ private fun SupabaseNoticiaRow.toDto(json: Json): NoticiaDto {
         fondo = fondo.toClientBackground(),
         fondoPath = imagenPath,
         estado = estado,
-        publicarDesde = publicarDesde.orEmpty(),
+        publicarDesde = "",
         texto = stored.body,
         imagenPath = imagenPath,
         capas = stored.capas,
@@ -319,7 +318,6 @@ private fun NoticiaDto.toSupabaseRow(
         tipoNoticiaId = resolveTipoNoticiaId(tipo),
         imagenPath = imagenPath ?: fondoPath,
         estado = estado.ifBlank { "draft" },
-        publicarDesde = publicarDesde.ifBlank { null },
     )
 }
 

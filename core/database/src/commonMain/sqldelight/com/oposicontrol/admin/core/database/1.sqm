@@ -1,0 +1,15 @@
+CREATE TABLE news_editor_draft (
+    id INTEGER NOT NULL PRIMARY KEY,
+    news_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    text_content TEXT NOT NULL,
+    specialty TEXT NOT NULL,
+    type TEXT NOT NULL,
+    background_type TEXT NOT NULL,
+    background_path TEXT NOT NULL,
+    image_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    layers_json TEXT NOT NULL,
+    canvas_width INTEGER NOT NULL,
+    canvas_height INTEGER NOT NULL
+);

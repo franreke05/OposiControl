@@ -9,15 +9,23 @@ sealed interface ExamsIntent {
     data object SaveRafaga : ExamsIntent
     data object DeleteSelectedExam : ExamsIntent
     data object DeleteSelectedRafaga : ExamsIntent
+    data object RequestDeleteSelectedExam : ExamsIntent
+    data object RequestDeleteSelectedRafaga : ExamsIntent
     data object CreateSpecialty : ExamsIntent
     data object SaveSpecialty : ExamsIntent
     data object DeleteSelectedSpecialty : ExamsIntent
+    data object RequestDeleteSelectedSpecialty : ExamsIntent
     data object CreateQuestion : ExamsIntent
     data object CreateRafagaQuestion : ExamsIntent
     data object SaveQuestion : ExamsIntent
     data object SaveRafagaQuestion : ExamsIntent
     data object DeleteSelectedQuestion : ExamsIntent
     data object DeleteSelectedRafagaQuestion : ExamsIntent
+    data object RequestDeleteSelectedQuestion : ExamsIntent
+    data object RequestDeleteSelectedRafagaQuestion : ExamsIntent
+    data object RequestClearExamCover : ExamsIntent
+    data object ConfirmPendingDelete : ExamsIntent
+    data object DismissPendingDelete : ExamsIntent
     data class SelectExam(val id: String) : ExamsIntent
     data class SelectRafaga(val id: String) : ExamsIntent
     data class SelectQuestion(val id: String) : ExamsIntent
@@ -50,6 +58,7 @@ sealed interface ExamsIntent {
     data class SelectCorrectOption(val optionId: String) : ExamsIntent
     data object AddResource : ExamsIntent
     data class RemoveResource(val resourceId: String) : ExamsIntent
+    data class RequestRemoveResource(val resourceId: String) : ExamsIntent
     data class UpdateResourceType(val resourceId: String, val value: String) : ExamsIntent
     data class UpdateResourceTitle(val resourceId: String, val value: String) : ExamsIntent
     data class UpdateResourceValue(val resourceId: String, val value: String) : ExamsIntent

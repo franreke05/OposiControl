@@ -160,7 +160,6 @@ class FakeContentRepositoryImpl : ContentRepository {
                     type = path.toResourceTypeFromPath(),
                     reason = UnlinkedResourceReason.STORAGE_WITHOUT_DATABASE_ROW,
                     suggestedQuestionId = questionIds.firstOrNull { path.contains(it) },
-                    updatedAt = updatedAt,
                 )
             }
         val pendingLocal = questions.flatMap { question ->
@@ -173,7 +172,6 @@ class FakeContentRepositoryImpl : ContentRepository {
                     type = resource.type,
                     reason = UnlinkedResourceReason.LOCAL_PENDING_NOT_SAVED,
                     suggestedQuestionId = question.id,
-                    updatedAt = null,
                 )
             }
         }
@@ -405,6 +403,26 @@ class FakeContentRepositoryImpl : ContentRepository {
         )
     }
 
+    override suspend fun deleteResource(questionId: String, resourceId: String): AppResult<Unit> {
+        questionsByExam.keys.forEach { examId ->
+            questionsByExam[examId] = questionsByExam[examId].orEmpty()
+                .map { question ->
+                    if (question.id == questionId) {
+                        question.resources
+                            .firstOrNull { it.id == resourceId }
+                            ?.storagePath
+                            ?.let { storageObjects.remove(it) }
+                        question.copy(resources = question.resources.filterNot { it.id == resourceId })
+                    } else {
+                        question
+                    }
+                }
+                .toMutableList()
+        }
+        syncCounts()
+        return AppResult.Success(Unit)
+    }
+
     override suspend fun uploadExamCover(
         examId: String,
         localPathOrUri: String,
@@ -418,6 +436,21 @@ class FakeContentRepositoryImpl : ContentRepository {
             coverUrl = "https://fake.storage.oposicontrol.local/$storagePath",
             coverStoragePath = storagePath,
             coverMimeType = "image/png",
+            updatedAt = Instant.parse("2026-04-15T09:00:00Z"),
+        )
+        examsFlow.value = examsFlow.value.filterNot { it.id == examId } + saved
+        syncCounts()
+        return AppResult.Success(examsFlow.value.first { it.id == examId })
+    }
+
+    override suspend fun clearExamCover(examId: String): AppResult<Exam> {
+        val exam = examsFlow.value.firstOrNull { it.id == examId }
+            ?: return AppResult.Failure(AppError.NotFound("No se encontro el examen."))
+        exam.coverStoragePath?.let { storageObjects.remove(it) }
+        val saved = exam.copy(
+            coverUrl = null,
+            coverStoragePath = null,
+            coverMimeType = null,
             updatedAt = Instant.parse("2026-04-15T09:00:00Z"),
         )
         examsFlow.value = examsFlow.value.filterNot { it.id == examId } + saved

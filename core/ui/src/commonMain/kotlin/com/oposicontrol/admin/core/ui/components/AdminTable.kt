@@ -1,5 +1,8 @@
 package com.oposicontrol.admin.core.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -17,6 +20,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,17 +74,20 @@ fun AdminTable(
             HorizontalDivider()
             LazyColumn {
                 items(rows, key = { it.key }) { row ->
+                    val rowBackground by animateColorAsState(
+                        targetValue = if (row.selected) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        },
+                        animationSpec = tween(durationMillis = 180),
+                    )
                     Column(
                         modifier = Modifier
                             .width(tableWidth)
                             .heightIn(min = 58.dp)
-                            .background(
-                                color = if (row.selected) {
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f)
-                                } else {
-                                    MaterialTheme.colorScheme.surface
-                                },
-                            )
+                            .animateContentSize(animationSpec = tween(durationMillis = 180))
+                            .background(color = rowBackground)
                             .then(
                                 if (onRowClick != null) {
                                     Modifier.clickable { onRowClick(row.key) }

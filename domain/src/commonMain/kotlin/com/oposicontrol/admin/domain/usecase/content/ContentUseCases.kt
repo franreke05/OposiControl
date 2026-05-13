@@ -259,6 +259,20 @@ class UploadQuestionResourceUseCase(
     )
 }
 
+class DeleteQuestionResourceUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(questionId: String, resourceId: String): AppResult<Unit> {
+        if (questionId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona una pregunta antes de borrar recursos."))
+        }
+        if (resourceId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona un recurso para borrarlo."))
+        }
+        return repository.deleteResource(questionId, resourceId)
+    }
+}
+
 class UploadExamCoverUseCase(
     private val repository: ContentRepository,
 ) {
@@ -273,5 +287,16 @@ class UploadExamCoverUseCase(
             return AppResult.Failure(AppError.Validation("Selecciona una imagen de portada."))
         }
         return repository.uploadExamCover(examId, localPathOrUri)
+    }
+}
+
+class ClearExamCoverUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(examId: String): AppResult<Exam> {
+        if (examId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona un examen antes de limpiar portada."))
+        }
+        return repository.clearExamCover(examId)
     }
 }

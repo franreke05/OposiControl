@@ -51,5 +51,7 @@ data class ExamsState(
     val resourceUploadStates: Map<String, UiAsync<String>> = emptyMap(),
     val importState: UiAsync<Int> = UiAsync.Idle,
     val importSummary: String = "",
+    val pendingDeleteTarget: PendingDeleteTarget? = null,
+    val pendingDeleteMessage: String = "",
     val actionState: UiAsync<Unit> = UiAsync.Idle,
 )

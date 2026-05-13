@@ -59,20 +59,25 @@ class KtorNewsRepositoryImpl(
 
     override suspend fun upsertNews(article: NewsArticle) = adapter.safeCall {
         val body = article.toDto()
-        val saved: NoticiaDto = if (article.id.isBlank()) {
+        val response = if (article.id.isBlank()) {
             client.post(newsUrl()) {
+                expectSuccess = false
                 backendHeaders()
                 contentType(ContentType.Application.Json)
                 setBody(body)
-            }.body()
+            }
         } else {
             client.put(newsUrl()) {
+                expectSuccess = false
                 backendHeaders()
                 contentType(ContentType.Application.Json)
                 setBody(body)
-            }.body()
+            }
         }
-        saved.toDomain().also { savedArticle ->
+        if (!response.status.isSuccess()) {
+            error("backend ${response.status.value}: ${response.bodyAsText().take(300)}")
+        }
+        response.body<NoticiaDto>().toDomain().also { savedArticle ->
             news.value = listOf(savedArticle) + news.value.filterNot { it.id == savedArticle.id }
         }
     }
@@ -145,14 +150,14 @@ private data class NewsAssetUploadDto(
 @Serializable
 private data class NoticiaDto(
     val id: String = "",
-    val titulo: String,
+    val titulo: String = "",
     val especialidad: String = "",
     val tipo: String = "",
     val fondo: String = "SKY",
     val fondoPath: String? = null,
     val estado: String = "draft",
     val publicarDesde: String = "",
-    val texto: String,
+    val texto: String = "",
     val imagenPath: String? = null,
     val capas: List<NoticiaLayerDto> = emptyList(),
 )

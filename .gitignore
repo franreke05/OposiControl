@@ -40,3 +40,8 @@ gradle-test/
 # JVM/GC properties
 gc.properties
 cache.properties
+
+# Local dev process logs
+backend-run*.log
+backend-restart*.log
+ngrok*.log

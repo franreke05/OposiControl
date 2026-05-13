@@ -31,6 +31,7 @@ import com.oposicontrol.admin.domain.model.UnlinkedResourceReason
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -38,16 +39,18 @@ import io.ktor.client.request.header
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlin.time.Clock
 
 class SupabaseContentRepositoryImpl(
     private val client: HttpClient,
@@ -85,7 +88,7 @@ class SupabaseContentRepositoryImpl(
             if (specialtyRowsCache.isEmpty()) specialtyRowsCache = fetchSpecialtyRows(accessToken)
             val questionCounts = fetchQuestionCounts(accessToken).groupingBy { it.examId.toString() }.eachCount()
             val specialtyNames = specialtyRowsCache.associateBy({ it.id?.toString().orEmpty() }, { it.nombre })
-            val rows: List<ExamRowDto> = client.get("${appConfig.supabaseUrl}/rest/v1/examen?select=*&deleted_at=is.null&order=created_at.desc") {
+            val rows: List<ExamRowDto> = client.get("${appConfig.supabaseUrl}/rest/v1/examen?select=*&order=id.desc") {
                 supabaseHeaders(accessToken)
             }.body()
             rows.map { row ->
@@ -107,7 +110,7 @@ class SupabaseContentRepositoryImpl(
             if (specialtyRowsCache.isEmpty()) specialtyRowsCache = fetchSpecialtyRows(accessToken)
             val questionCounts = fetchRafagaQuestionCounts(accessToken).groupingBy { it.rafagaId.toString() }.eachCount()
             val specialtyNames = specialtyRowsCache.associateBy({ it.id?.toString().orEmpty() }, { it.nombre })
-            val rows: List<RafagaRowDto> = client.get("${appConfig.supabaseUrl}/rest/v1/rafaga?select=*&deleted_at=is.null&order=created_at.desc") {
+            val rows: List<RafagaRowDto> = client.get("${appConfig.supabaseUrl}/rest/v1/rafaga?select=*&order=id.desc") {
                 supabaseHeaders(accessToken)
             }.body()
             rows.map { row ->
@@ -125,17 +128,17 @@ class SupabaseContentRepositoryImpl(
         return adapter.safeCall {
             val numericExamId = examId.toIntId()
             val questions: List<QuestionRowDto> = client.get(
-                "${appConfig.supabaseUrl}/rest/v1/pregunta?select=*&examen_id=eq.$numericExamId&deleted_at=is.null&order=orden.asc",
+                "${appConfig.supabaseUrl}/rest/v1/pregunta?select=*&examen_id=eq.$numericExamId&order=orden.asc",
             ) { supabaseHeaders(accessToken) }.body()
             if (questions.isEmpty()) {
                 emptyList()
             } else {
                 val ids = questions.mapNotNull { it.id }.joinToString(",")
                 val options: List<OptionRowDto> = client.get(
-                    "${appConfig.supabaseUrl}/rest/v1/opcion_pregunta?select=*&pregunta_id=in.($ids)&deleted_at=is.null&order=orden.asc",
+                    "${appConfig.supabaseUrl}/rest/v1/opcion_pregunta?select=*&pregunta_id=in.($ids)&order=orden.asc",
                 ) { supabaseHeaders(accessToken) }.body()
                 val resources: List<ResourceRowDto> = client.get(
-                    "${appConfig.supabaseUrl}/rest/v1/recurso_pregunta?select=*&pregunta_id=in.($ids)&deleted_at=is.null&order=id.asc",
+                    "${appConfig.supabaseUrl}/rest/v1/recurso_pregunta?select=*&pregunta_id=in.($ids)&order=id.asc",
                 ) { supabaseHeaders(accessToken) }.body()
                 val optionsByQuestion = options.groupBy { it.questionId.toString() }.mapValues { it.value.map(OptionRowDto::toDomain) }
                 val resourcesByQuestion = resources.groupBy { it.questionId.toString() }.mapValues { it.value.map(ResourceRowDto::toDomain) }
@@ -155,7 +158,7 @@ class SupabaseContentRepositoryImpl(
         return adapter.safeCall {
             val numericRafagaId = rafagaId.toIntId()
             val questions: List<RafagaQuestionRowDto> = client.get(
-                "${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?select=*&rafaga_id=eq.$numericRafagaId&deleted_at=is.null&order=orden.asc",
+                "${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?select=*&rafaga_id=eq.$numericRafagaId&order=orden.asc",
             ) { supabaseHeaders(accessToken) }.body()
             questions.map { it.toDomain() }
         }
@@ -195,7 +198,6 @@ class SupabaseContentRepositoryImpl(
                         type = row.name.toResourceTypeFromPath(),
                         reason = UnlinkedResourceReason.STORAGE_WITHOUT_DATABASE_ROW,
                         suggestedQuestionId = questionIds.firstOrNull { row.name.contains(it) },
-                        updatedAt = row.updatedAt?.let { runCatching { Instant.parse(it) }.getOrNull() },
                     )
                 }
             val pendingLocal = questions.flatMap { question ->
@@ -208,7 +210,6 @@ class SupabaseContentRepositoryImpl(
                         type = resource.type,
                         reason = UnlinkedResourceReason.LOCAL_PENDING_NOT_SAVED,
                         suggestedQuestionId = question.id,
-                        updatedAt = null,
                     )
                 }
             }
@@ -254,10 +255,8 @@ class SupabaseContentRepositoryImpl(
         ensureConfigured()?.let { return AppResult.Failure(it) }
         val result = adapter.safeCall {
             val numericSpecialtyId = specialtyId.toIntId()
-            client.patch("${appConfig.supabaseUrl}/rest/v1/especialidad?id=eq.$numericSpecialtyId") {
+            client.delete("${appConfig.supabaseUrl}/rest/v1/especialidad?id=eq.$numericSpecialtyId") {
                 supabaseHeaders(accessToken)
-                contentType(ContentType.Application.Json)
-                setBody(mapOf("deleted_at" to Clock.System.now().toString()))
             }
             Unit
         }
@@ -291,10 +290,53 @@ class SupabaseContentRepositoryImpl(
         ensureConfigured()?.let { return AppResult.Failure(it) }
         val result = adapter.safeCall {
             val numericExamId = examId.toIntId()
-            client.patch("${appConfig.supabaseUrl}/rest/v1/examen?id=eq.$numericExamId") {
+            val currentRows: List<ExamRowDto> = client.get(
+                "${appConfig.supabaseUrl}/rest/v1/examen?select=*&id=eq.$numericExamId&limit=1",
+            ) { supabaseHeaders(accessToken) }.body()
+            val current = currentRows.firstOrNull()
+                ?: throw IllegalArgumentException("El solucionario no existe en la base de datos.")
+            val questions: List<QuestionRowDto> = client.get(
+                "${appConfig.supabaseUrl}/rest/v1/pregunta?select=*&examen_id=eq.$numericExamId",
+            ) { supabaseHeaders(accessToken) }.body()
+            val questionIds = questions.mapNotNull { it.id }
+            val resourcePaths = if (questionIds.isEmpty()) {
+                emptyList()
+            } else {
+                val ids = questionIds.joinToString(",")
+                val resources: List<ResourceRowDto> = client.get(
+                    "${appConfig.supabaseUrl}/rest/v1/recurso_pregunta?select=*&pregunta_id=in.($ids)",
+                ) { supabaseHeaders(accessToken) }.body()
+                resources.mapNotNull { it.storagePath?.takeIf(String::isNotBlank) }
+            }
+            if (questionIds.isNotEmpty()) {
+                val ids = questionIds.joinToString(",")
+                client.delete("${appConfig.supabaseUrl}/rest/v1/recurso_pregunta?pregunta_id=in.($ids)") {
+                    expectSuccess = false
+                    supabaseHeaders(accessToken)
+                }.requireSupabaseSuccess("borrar recursos del solucionario")
+                client.delete("${appConfig.supabaseUrl}/rest/v1/opcion_pregunta?pregunta_id=in.($ids)") {
+                    expectSuccess = false
+                    supabaseHeaders(accessToken)
+                }.requireSupabaseSuccess("borrar opciones del solucionario")
+                client.delete("${appConfig.supabaseUrl}/rest/v1/pregunta?id=in.($ids)") {
+                    expectSuccess = false
+                    supabaseHeaders(accessToken)
+                }.requireSupabaseSuccess("borrar preguntas del solucionario")
+            }
+            val deleteResponse: HttpResponse = client.delete("${appConfig.supabaseUrl}/rest/v1/examen?id=eq.$numericExamId") {
+                expectSuccess = false
                 supabaseHeaders(accessToken)
-                contentType(ContentType.Application.Json)
-                setBody(mapOf("deleted_at" to Clock.System.now().toString()))
+                header("Prefer", "return=representation")
+            }
+            val deleted: List<ExamRowDto> = deleteResponse.requireSupabaseRepresentation("borrar solucionario")
+            if (deleted.isEmpty()) {
+                throw IllegalArgumentException("Supabase no confirmo el borrado del solucionario.")
+            }
+            current.coverStoragePath?.takeIf { it.isNotBlank() }?.let { storagePath ->
+                deleteStorageObject(accessToken, storagePath)
+            }
+            resourcePaths.distinct().forEach { storagePath ->
+                deleteStorageObject(accessToken, storagePath)
             }
             Unit
         }
@@ -327,14 +369,31 @@ class SupabaseContentRepositoryImpl(
         ensureConfigured()?.let { return AppResult.Failure(it) }
         val result = adapter.safeCall {
             val numericRafagaId = rafagaId.toIntId()
-            client.patch("${appConfig.supabaseUrl}/rest/v1/rafaga?id=eq.$numericRafagaId") {
+            val currentRows: List<RafagaRowDto> = client.get(
+                "${appConfig.supabaseUrl}/rest/v1/rafaga?select=*&id=eq.$numericRafagaId&limit=1",
+            ) { supabaseHeaders(accessToken) }.body()
+            if (currentRows.isEmpty()) {
+                throw IllegalArgumentException("La rafaga no existe en la base de datos.")
+            }
+            client.delete("${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?rafaga_id=eq.$numericRafagaId") {
+                expectSuccess = false
                 supabaseHeaders(accessToken)
-                contentType(ContentType.Application.Json)
-                setBody(mapOf("deleted_at" to Clock.System.now().toString()))
+            }.requireSupabaseSuccess("borrar preguntas de la rafaga")
+            val deleteResponse: HttpResponse = client.delete("${appConfig.supabaseUrl}/rest/v1/rafaga?id=eq.$numericRafagaId") {
+                expectSuccess = false
+                supabaseHeaders(accessToken)
+                header("Prefer", "return=representation")
+            }
+            val deleted: List<RafagaRowDto> = deleteResponse.requireSupabaseRepresentation("borrar rafaga")
+            if (deleted.isEmpty()) {
+                throw IllegalArgumentException("Supabase no confirmo el borrado de la rafaga.")
             }
             Unit
         }
-        if (result is AppResult.Success) refreshRafagas()
+        if (result is AppResult.Success) {
+            refreshRafagas()
+            refreshSpecialties()
+        }
         return result
     }
 
@@ -436,10 +495,14 @@ class SupabaseContentRepositoryImpl(
         ensureConfigured()?.let { return AppResult.Failure(it) }
         val result = adapter.safeCall {
             val numericQuestionId = questionId.toIntId()
-            client.patch("${appConfig.supabaseUrl}/rest/v1/pregunta?id=eq.$numericQuestionId") {
+            client.delete("${appConfig.supabaseUrl}/rest/v1/recurso_pregunta?pregunta_id=eq.$numericQuestionId") {
                 supabaseHeaders(accessToken)
-                contentType(ContentType.Application.Json)
-                setBody(mapOf("deleted_at" to Clock.System.now().toString()))
+            }
+            client.delete("${appConfig.supabaseUrl}/rest/v1/opcion_pregunta?pregunta_id=eq.$numericQuestionId") {
+                supabaseHeaders(accessToken)
+            }
+            client.delete("${appConfig.supabaseUrl}/rest/v1/pregunta?id=eq.$numericQuestionId&examen_id=eq.${examId.toIntId()}") {
+                supabaseHeaders(accessToken)
             }
             Unit
         }
@@ -506,10 +569,8 @@ class SupabaseContentRepositoryImpl(
         val accessToken = requireAccessToken("borrar preguntas de rafaga") ?: return authFailure("borrar preguntas de rafaga")
         ensureConfigured()?.let { return AppResult.Failure(it) }
         val result = adapter.safeCall {
-            client.patch("${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?id=eq.${questionId.toIntId()}&rafaga_id=eq.${rafagaId.toIntId()}") {
+            client.delete("${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?id=eq.${questionId.toIntId()}&rafaga_id=eq.${rafagaId.toIntId()}") {
                 supabaseHeaders(accessToken)
-                contentType(ContentType.Application.Json)
-                setBody(mapOf("deleted_at" to Clock.System.now().toString()))
             }
             Unit
         }
@@ -606,6 +667,30 @@ class SupabaseContentRepositoryImpl(
         }
     }
 
+    override suspend fun deleteResource(questionId: String, resourceId: String): AppResult<Unit> {
+        val accessToken = requireAccessToken("borrar recursos") ?: return authFailure("borrar recursos")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        val result = adapter.safeCall {
+            val numericQuestionId = questionId.toIntId()
+            val numericResourceId = resourceId.toIntId()
+            val rows: List<ResourceRowDto> = client.get(
+                "${appConfig.supabaseUrl}/rest/v1/recurso_pregunta?select=*&id=eq.$numericResourceId&pregunta_id=eq.$numericQuestionId&limit=1",
+            ) { supabaseHeaders(accessToken) }.body()
+            val resource = rows.firstOrNull() ?: throw IllegalArgumentException("El recurso no existe.")
+            client.delete("${appConfig.supabaseUrl}/rest/v1/recurso_pregunta?id=eq.$numericResourceId&pregunta_id=eq.$numericQuestionId") {
+                supabaseHeaders(accessToken)
+            }
+            resource.storagePath?.takeIf { it.isNotBlank() }?.let { storagePath ->
+                client.delete("${appConfig.supabaseUrl}/storage/v1/object/${appConfig.supabaseBucketExamResources}/$storagePath") {
+                    header("apikey", appConfig.supabaseAnonKey)
+                    header(HttpHeaders.Authorization, "Bearer $accessToken")
+                }
+            }
+            Unit
+        }
+        return result
+    }
+
     override suspend fun uploadExamCover(
         examId: String,
         localPathOrUri: String,
@@ -622,6 +707,7 @@ class SupabaseContentRepositoryImpl(
         if (asset.mimeType?.startsWith("image/") != true) {
             return AppResult.Failure(AppError.Validation("La portada debe ser una imagen."))
         }
+        val previousStoragePath = examsFlow.value.firstOrNull { it.id == examId }?.coverStoragePath
         val result = adapter.safeCall {
             val numericExamId = examId.toIntId()
             val objectPath = "exam-covers/$examId/${sanitizeSegment(asset.fileName)}"
@@ -642,31 +728,77 @@ class SupabaseContentRepositoryImpl(
                         "portada_url" to publicUrl,
                         "portada_storage_path" to objectPath,
                         "portada_mime_type" to asset.mimeType,
-                        "updated_at" to Clock.System.now().toString(),
                     ),
                 )
             }.body()
             val specialtyName = examsFlow.value.firstOrNull { it.id == examId }?.specialtyName.orEmpty()
             saved.first().toDomain(specialtyName, examsFlow.value.firstOrNull { it.id == examId }?.questionCount ?: 0)
         }
-        if (result is AppResult.Success) refreshExams()
+        if (result is AppResult.Success) {
+            previousStoragePath
+                ?.takeIf { it.isNotBlank() && it != result.value.coverStoragePath }
+                ?.let { storagePath ->
+                    adapter.safeCall {
+                        client.delete("${appConfig.supabaseUrl}/storage/v1/object/${appConfig.supabaseBucketExamResources}/$storagePath") {
+                            header("apikey", appConfig.supabaseAnonKey)
+                            header(HttpHeaders.Authorization, "Bearer $accessToken")
+                        }
+                    }
+                }
+            refreshExams()
+        }
+        return result
+    }
+
+    override suspend fun clearExamCover(examId: String): AppResult<Exam> {
+        val accessToken = requireAccessToken("limpiar portada") ?: return authFailure("limpiar portada")
+        ensureConfigured()?.let { return AppResult.Failure(it) }
+        val previousStoragePath = examsFlow.value.firstOrNull { it.id == examId }?.coverStoragePath
+        val result = adapter.safeCall {
+            val numericExamId = examId.toIntId()
+            val saved: List<ExamRowDto> = client.patch("${appConfig.supabaseUrl}/rest/v1/examen?id=eq.$numericExamId") {
+                supabaseHeaders(accessToken)
+                header("Prefer", "return=representation")
+                contentType(ContentType.Application.Json)
+                setBody(
+                    mapOf(
+                        "portada_url" to null,
+                        "portada_storage_path" to null,
+                        "portada_mime_type" to null,
+                    ),
+                )
+            }.body()
+            val specialtyName = examsFlow.value.firstOrNull { it.id == examId }?.specialtyName.orEmpty()
+            saved.first().toDomain(specialtyName, examsFlow.value.firstOrNull { it.id == examId }?.questionCount ?: 0)
+        }
+        if (result is AppResult.Success) {
+            previousStoragePath?.takeIf { it.isNotBlank() }?.let { storagePath ->
+                adapter.safeCall {
+                    client.delete("${appConfig.supabaseUrl}/storage/v1/object/${appConfig.supabaseBucketExamResources}/$storagePath") {
+                        header("apikey", appConfig.supabaseAnonKey)
+                        header(HttpHeaders.Authorization, "Bearer $accessToken")
+                    }
+                }
+            }
+            refreshExams()
+        }
         return result
     }
 
     private suspend fun fetchSpecialtyRows(accessToken: String): List<SpecialtyRowDto> {
-        return client.get("${appConfig.supabaseUrl}/rest/v1/especialidad?select=*&deleted_at=is.null&order=nombre.asc") {
+        return client.get("${appConfig.supabaseUrl}/rest/v1/especialidad?select=*&order=nombre.asc") {
             supabaseHeaders(accessToken)
         }.body()
     }
 
     private suspend fun fetchQuestionCounts(accessToken: String): List<QuestionCountRowDto> {
-        return client.get("${appConfig.supabaseUrl}/rest/v1/pregunta?select=id,examen_id&deleted_at=is.null") {
+        return client.get("${appConfig.supabaseUrl}/rest/v1/pregunta?select=id,examen_id") {
             supabaseHeaders(accessToken)
         }.body()
     }
 
     private suspend fun fetchRafagaQuestionCounts(accessToken: String): List<RafagaQuestionCountRowDto> {
-        return client.get("${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?select=id,rafaga_id&deleted_at=is.null") {
+        return client.get("${appConfig.supabaseUrl}/rest/v1/rafaga_pregunta?select=id,rafaga_id") {
             supabaseHeaders(accessToken)
         }.body()
     }
@@ -675,11 +807,32 @@ class SupabaseContentRepositoryImpl(
         return runCatching {
             val bucket = appConfig.supabaseBucketExamResources.toSafePostgrestValue()
             client.get(
-                "${appConfig.supabaseUrl}/rest/v1/objects?select=name,updated_at&bucket_id=eq.$bucket",
+                "${appConfig.supabaseUrl}/rest/v1/objects?select=name&bucket_id=eq.$bucket",
             ) {
                 supabaseHeaders(accessToken)
             }.body<List<StorageObjectRowDto>>()
         }.getOrElse { emptyList() }
+    }
+
+    private suspend fun HttpResponse.requireSupabaseSuccess(operation: String) {
+        if (!status.isSuccess()) {
+            throw IllegalStateException("Supabase no pudo $operation (${status.value}): ${bodyAsText().take(200)}")
+        }
+    }
+
+    private suspend inline fun <reified T> HttpResponse.requireSupabaseRepresentation(operation: String): List<T> {
+        requireSupabaseSuccess(operation)
+        return body()
+    }
+
+    private suspend fun deleteStorageObject(accessToken: String, storagePath: String) {
+        val response = client.delete("${appConfig.supabaseUrl}/storage/v1/object/${appConfig.supabaseBucketExamResources}/$storagePath") {
+            expectSuccess = false
+            header("apikey", appConfig.supabaseAnonKey)
+            header(HttpHeaders.Authorization, "Bearer $accessToken")
+        }
+        if (response.status.value == 404) return
+        response.requireSupabaseSuccess("borrar archivo asociado")
     }
 
     private fun syncSpecialtiesWithLinkedCounts() {
@@ -745,8 +898,6 @@ class SupabaseContentRepositoryImpl(
 @Serializable
 private data class StorageObjectRowDto(
     val name: String,
-    @SerialName("updated_at")
-    val updatedAt: String? = null,
 )
 
 @Serializable
@@ -756,11 +907,6 @@ private data class RafagaRowDto(
     @SerialName("precio_tickets") val priceTickets: Int = 0,
     @SerialName("especialidad_id") val specialtyId: Int,
     val estado: String = "draft",
-    @SerialName("publicar_desde") val publishFrom: String? = null,
-    @SerialName("published_at") val publishedAt: String? = null,
-    @SerialName("created_at") val createdAt: String? = null,
-    @SerialName("updated_at") val updatedAt: String? = null,
-    @SerialName("deleted_at") val deletedAt: String? = null,
 )
 
 @Serializable
@@ -769,9 +915,6 @@ private data class RafagaQuestionRowDto(
     @SerialName("rafaga_id") val rafagaId: Int,
     val enunciado: String,
     val orden: Int = 0,
-    @SerialName("created_at") val createdAt: String? = null,
-    @SerialName("updated_at") val updatedAt: String? = null,
-    @SerialName("deleted_at") val deletedAt: String? = null,
 )
 
 @Serializable
@@ -787,12 +930,12 @@ private fun RafagaRowDto.toDomain(specialtyName: String, questionCount: Int) = R
     title = titulo,
     priceTickets = priceTickets,
     status = estado.toExamStatus(),
-    publishFrom = publishFrom.toInstantOrNull(),
-    publishedAt = publishedAt.toInstantOrNull(),
+    publishFrom = null,
+    publishedAt = null,
     questionCount = questionCount,
-    createdAt = createdAt.toInstantOrNow(),
-    updatedAt = updatedAt.toInstantOrNow(),
-    deletedAt = deletedAt.toInstantOrNull(),
+    createdAt = Instant.fromEpochMilliseconds(0),
+    updatedAt = Instant.fromEpochMilliseconds(0),
+    deletedAt = null,
 )
 
 private fun Rafaga.toRowDto() = RafagaRowDto(
@@ -801,9 +944,6 @@ private fun Rafaga.toRowDto() = RafagaRowDto(
     priceTickets = priceTickets,
     specialtyId = specialtyId.toIntOrNull() ?: 1,
     estado = status.name.lowercase(),
-    publishFrom = publishFrom?.toString(),
-    publishedAt = publishedAt?.toString(),
-    updatedAt = Clock.System.now().toString(),
 )
 
 private fun RafagaQuestionRowDto.toDomain() = RafagaQuestion(
@@ -811,9 +951,9 @@ private fun RafagaQuestionRowDto.toDomain() = RafagaQuestion(
     rafagaId = rafagaId.toString(),
     statement = enunciado,
     sortOrder = orden,
-    createdAt = createdAt.toInstantOrNow(),
-    updatedAt = updatedAt.toInstantOrNow(),
-    deletedAt = deletedAt.toInstantOrNull(),
+    createdAt = Instant.fromEpochMilliseconds(0),
+    updatedAt = Instant.fromEpochMilliseconds(0),
+    deletedAt = null,
 )
 
 private fun RafagaQuestion.toRowDto() = RafagaQuestionRowDto(
@@ -821,20 +961,10 @@ private fun RafagaQuestion.toRowDto() = RafagaQuestionRowDto(
     rafagaId = rafagaId.toIntOrNull() ?: 1,
     enunciado = statement,
     orden = sortOrder,
-    updatedAt = Clock.System.now().toString(),
 )
 
 private fun String.toExamStatus() = when (lowercase()) {
     "published" -> ExamStatus.PUBLISHED
     "archived" -> ExamStatus.ARCHIVED
     else -> ExamStatus.DRAFT
-}
-
-private fun String?.toInstantOrNull(): Instant? = this?.let { value ->
-    runCatching { Instant.parse(value) }.getOrNull()
-}
-
-private fun String?.toInstantOrNow(): Instant {
-    return this?.let { value -> runCatching { Instant.parse(value) }.getOrNull() }
-        ?: Instant.parse(Clock.System.now().toString())
 }

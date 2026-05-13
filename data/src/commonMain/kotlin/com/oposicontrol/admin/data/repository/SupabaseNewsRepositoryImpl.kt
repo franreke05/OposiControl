@@ -16,7 +16,6 @@ import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.http.ContentType
@@ -27,7 +26,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import kotlin.time.Clock
 
 class SupabaseNewsRepositoryImpl(
     private val client: HttpClient,
@@ -43,7 +41,7 @@ class SupabaseNewsRepositoryImpl(
         val token = requireAccessToken("cargar noticias") ?: return authFailure("cargar noticias")
         ensureConfigured()?.let { return AppResult.Failure(it) }
         return adapter.safeCall {
-            val rows: List<NewsRowDto> = client.get("${appConfig.supabaseUrl}/rest/v1/noticia?select=*&deleted_at=is.null&order=created_at.desc") {
+            val rows: List<NewsRowDto> = client.get("${appConfig.supabaseUrl}/rest/v1/noticia?select=*&order=id.desc") {
                 supabaseHeaders(token)
             }.body()
             val layers = if (rows.isEmpty()) {
@@ -51,7 +49,7 @@ class SupabaseNewsRepositoryImpl(
             } else {
                 val ids = rows.mapNotNull { it.id }.joinToString(",")
                 runCatching {
-                    client.get("${appConfig.supabaseUrl}/rest/v1/noticia_layer?select=*&noticia_id=in.($ids)&deleted_at=is.null&order=sort_order.asc") {
+                    client.get("${appConfig.supabaseUrl}/rest/v1/noticia_layer?select=*&noticia_id=in.($ids)&order=sort_order.asc") {
                         supabaseHeaders(token)
                     }.body<List<NewsLayerRowDto>>()
                 }.getOrElse { emptyList() }
@@ -98,10 +96,8 @@ class SupabaseNewsRepositoryImpl(
         val numericId = newsId.toIntOrNull()
         val result = adapter.safeCall {
             if (numericId != null) {
-                client.patch("${appConfig.supabaseUrl}/rest/v1/noticia?id=eq.$numericId") {
+                client.delete("${appConfig.supabaseUrl}/rest/v1/noticia?id=eq.$numericId") {
                     supabaseHeaders(token)
-                    contentType(ContentType.Application.Json)
-                    setBody(mapOf("deleted_at" to Clock.System.now().toString()))
                 }
             }
             Unit
@@ -146,8 +142,6 @@ private data class NewsRowDto(
     @SerialName("imagen_path")
     val imagePath: String? = null,
     val estado: String = "draft",
-    @SerialName("publicar_desde")
-    val publishFrom: String? = null,
 )
 
 @Serializable
@@ -180,7 +174,7 @@ private fun NewsRowDto.toDomain(layers: List<NewsLayer>) = NewsArticle(
     backgroundType = backgroundType,
     backgroundPath = imagePath,
     status = estado,
-    publishFrom = publishFrom.orEmpty(),
+    publishFrom = "",
     text = texto,
     imagePath = imagePath,
     layers = layers,
@@ -190,12 +184,24 @@ private fun NewsArticle.toRowDto() = NewsRowDto(
     id = id.toIntOrNull(),
     titulo = title,
     backgroundType = backgroundType,
-    specialty = specialty.toIntOrNull() ?: 1,
+    specialty = when (specialty.trim().uppercase()) {
+        "TCAE", "1" -> 1
+        "EIR", "2" -> 2
+        "MIR", "3" -> 3
+        "FIR", "4" -> 4
+        "OPE", "5" -> 5
+        else -> specialty.toIntOrNull() ?: 1
+    },
     texto = text,
-    type = type.toIntOrNull() ?: 1,
+    type = when (type.trim().lowercase()) {
+        "convocatoria", "1" -> 1
+        "aviso", "2" -> 2
+        "oferta", "3" -> 3
+        "recurso", "4" -> 4
+        else -> type.toIntOrNull() ?: 1
+    },
     imagePath = imagePath ?: backgroundPath,
     estado = status,
-    publishFrom = publishFrom.ifBlank { null },
 )
 
 private fun NewsLayerRowDto.toDomain() = NewsLayer(

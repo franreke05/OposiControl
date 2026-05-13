@@ -83,6 +83,16 @@ enum class ExamEditorMode {
     Rafaga,
 }
 
+sealed interface PendingDeleteTarget {
+    data object Exam : PendingDeleteTarget
+    data object Rafaga : PendingDeleteTarget
+    data object Question : PendingDeleteTarget
+    data object RafagaQuestion : PendingDeleteTarget
+    data object Specialty : PendingDeleteTarget
+    data object ExamCover : PendingDeleteTarget
+    data class Resource(val resourceId: String) : PendingDeleteTarget
+}
+
 internal fun blankQuestionId(): String = randomUuid()
 
 internal fun blankOptionDrafts(questionId: String): List<QuestionOptionDraft> {

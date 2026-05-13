@@ -17,10 +17,6 @@ data class SpecialtyRowDto(
     val nombre: String,
     val slug: String = "",
     val activa: Boolean = true,
-    @SerialName("created_at")
-    val createdAt: String,
-    @SerialName("updated_at")
-    val updatedAt: String,
 )
 
 @Serializable
@@ -32,22 +28,12 @@ data class ExamRowDto(
     @SerialName("precio_tickets")
     val priceTickets: Int = 0,
     val estado: String,
-    @SerialName("publicar_desde")
-    val publishFrom: String? = null,
-    @SerialName("published_at")
-    val publishedAt: String? = null,
     @SerialName("portada_url")
     val coverUrl: String? = null,
     @SerialName("portada_storage_path")
     val coverStoragePath: String? = null,
     @SerialName("portada_mime_type")
     val coverMimeType: String? = null,
-    @SerialName("created_at")
-    val createdAt: String,
-    @SerialName("updated_at")
-    val updatedAt: String,
-    @SerialName("deleted_at")
-    val deletedAt: String? = null,
 )
 
 @Serializable
@@ -64,10 +50,6 @@ data class QuestionRowDto(
     val examId: Int,
     val enunciado: String,
     val orden: Int,
-    @SerialName("created_at")
-    val createdAt: String,
-    @SerialName("updated_at")
-    val updatedAt: String,
 )
 
 @Serializable
@@ -98,10 +80,6 @@ data class ResourceRowDto(
     @SerialName("mime_type")
     val mimeType: String? = null,
     val orden: Int = 0,
-    @SerialName("created_at")
-    val createdAt: String? = null,
-    @SerialName("updated_at")
-    val updatedAt: String? = null,
 )
 
 fun SpecialtyRowDto.toDomain(linkedExams: Int): Specialty {
@@ -112,8 +90,8 @@ fun SpecialtyRowDto.toDomain(linkedExams: Int): Specialty {
         isActive = activa,
         sortOrder = id ?: 0,
         linkedExams = linkedExams,
-        createdAt = Instant.parse(createdAt),
-        updatedAt = Instant.parse(updatedAt),
+        createdAt = Instant.fromEpochMilliseconds(0),
+        updatedAt = Instant.fromEpochMilliseconds(0),
     )
 }
 
@@ -123,8 +101,6 @@ fun Specialty.toRowDto(): SpecialtyRowDto {
         nombre = name,
         slug = description.ifBlank { name.toSlug() },
         activa = isActive,
-        createdAt = createdAt.toString(),
-        updatedAt = updatedAt.toString(),
     )
 }
 
@@ -140,16 +116,16 @@ fun ExamRowDto.toDomain(
         description = "",
         priceTickets = priceTickets,
         status = estado.toExamStatus(),
-        publishFrom = publishFrom?.let(Instant::parse),
-        publishedAt = publishedAt?.let(Instant::parse),
+        publishFrom = null,
+        publishedAt = null,
         sortOrder = id ?: 0,
         questionCount = questionCount,
         coverUrl = coverUrl,
         coverStoragePath = coverStoragePath,
         coverMimeType = coverMimeType,
-        createdAt = Instant.parse(createdAt),
-        updatedAt = Instant.parse(updatedAt),
-        deletedAt = deletedAt?.let(Instant::parse),
+        createdAt = Instant.fromEpochMilliseconds(0),
+        updatedAt = Instant.fromEpochMilliseconds(0),
+        deletedAt = null,
     )
 }
 
@@ -160,14 +136,9 @@ fun Exam.toRowDto(): ExamRowDto {
         titulo = title,
         priceTickets = priceTickets,
         estado = status.name.lowercase(),
-        publishFrom = publishFrom?.toString(),
-        publishedAt = publishedAt?.toString(),
         coverUrl = coverUrl,
         coverStoragePath = coverStoragePath,
         coverMimeType = coverMimeType,
-        createdAt = createdAt.toString(),
-        updatedAt = updatedAt.toString(),
-        deletedAt = deletedAt?.toString(),
     )
 }
 
@@ -183,8 +154,8 @@ fun QuestionRowDto.toDomain(
         sortOrder = orden,
         options = options.sortedBy { it.sortOrder },
         resources = resources.sortedBy { it.sortOrder },
-        createdAt = Instant.parse(createdAt),
-        updatedAt = Instant.parse(updatedAt),
+        createdAt = Instant.fromEpochMilliseconds(0),
+        updatedAt = Instant.fromEpochMilliseconds(0),
     )
 }
 
@@ -194,8 +165,6 @@ fun ExamQuestion.toRowDto(): QuestionRowDto {
         examId = examId.toIntOrNull() ?: 0,
         enunciado = statement,
         orden = sortOrder,
-        createdAt = createdAt.toString(),
-        updatedAt = updatedAt.toString(),
     )
 }
 
@@ -268,7 +237,7 @@ private fun String.toQuestionResourceType(): QuestionResourceType {
     return when (lowercase()) {
         "audio" -> QuestionResourceType.AUDIO
         "video" -> QuestionResourceType.VIDEO
-        "text" -> QuestionResourceType.TEXT
+        "texto", "text" -> QuestionResourceType.TEXT
         "document", "documento" -> QuestionResourceType.DOCUMENT
         "imagen", "image" -> QuestionResourceType.IMAGE
         else -> QuestionResourceType.IMAGE
@@ -280,7 +249,7 @@ private fun QuestionResourceType.toStorageValue(): String {
         QuestionResourceType.IMAGE -> "image"
         QuestionResourceType.AUDIO -> "audio"
         QuestionResourceType.VIDEO -> "video"
-        QuestionResourceType.TEXT -> "documento"
+        QuestionResourceType.TEXT -> "texto"
         QuestionResourceType.DOCUMENT -> "document"
     }
 }

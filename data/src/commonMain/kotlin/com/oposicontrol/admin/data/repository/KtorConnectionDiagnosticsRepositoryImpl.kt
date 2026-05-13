@@ -69,7 +69,17 @@ class KtorConnectionDiagnosticsRepositoryImpl(
             backendHeaders()
         }
         if (!response.status.isSuccess()) {
-            error(response.status.toDiagnosticDetail(response.bodyAsText().take(120)))
+            error(response.status.toDiagnosticDetail(response.bodyAsText().toBodyPreview()))
+        }
+    }
+
+    override suspend fun requestConnectionRestart() = adapter.safeCall {
+        val baseUrl = appConfig.baseUrl.trimEnd('/')
+        val response = client.post("$baseUrl/admin/dev/restart-connection") {
+            backendHeaders()
+        }
+        if (!response.status.isSuccess()) {
+            error(response.status.toDiagnosticDetail(response.bodyAsText().toBodyPreview()))
         }
     }
 
@@ -97,11 +107,7 @@ class KtorConnectionDiagnosticsRepositoryImpl(
 
     private suspend fun HttpResponse.diagnosticDetail(): String {
         val text = bodyAsText()
-        val preview = text
-            .replace('\n', ' ')
-            .replace('\r', ' ')
-            .take(120)
-            .ifBlank { "sin cuerpo" }
+        val preview = text.toBodyPreview()
         if (!status.isSuccess()) {
             error(status.toDiagnosticDetail(preview))
         }
@@ -116,6 +122,14 @@ class KtorConnectionDiagnosticsRepositoryImpl(
             in 500..599 -> "$value ${description}: backend/Supabase fallo. Body: $bodyPreview"
             else -> "$value ${description}: $bodyPreview"
         }
+    }
+
+    private fun String.toBodyPreview(): String {
+        return replace('\n', ' ')
+            .replace('\r', ' ')
+            .replace(Regex("\\s+"), " ")
+            .take(520)
+            .ifBlank { "sin cuerpo" }
     }
 
     private fun Throwable.toDiagnosticDetail(baseUrl: String): String {

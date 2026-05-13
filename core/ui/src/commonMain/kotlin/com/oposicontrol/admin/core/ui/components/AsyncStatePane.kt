@@ -1,11 +1,11 @@
 package com.oposicontrol.admin.core.ui.components
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,26 +23,28 @@ fun <T> AsyncStatePane(
     content: @Composable (T) -> Unit,
 ) {
     Box(modifier = modifier.fillMaxWidth()) {
-        when (state) {
-            UiAsync.Empty -> EmptyStateCard(
-                title = "Sin resultados",
-                message = emptyMessage,
-                modifier = Modifier.align(Alignment.Center),
-            )
+        Crossfade(
+            targetState = state,
+            animationSpec = tween(durationMillis = 220),
+            modifier = Modifier.fillMaxWidth(),
+        ) { targetState ->
+            when (targetState) {
+                UiAsync.Empty -> EmptyStateCard(
+                    title = "Sin resultados",
+                    message = emptyMessage,
+                )
 
-            is UiAsync.Error -> EmptyStateCard(
-                title = "No se pudo cargar",
-                message = state.error.message,
-                modifier = Modifier.align(Alignment.Center),
-            )
+                is UiAsync.Error -> EmptyStateCard(
+                    title = "No se pudo cargar",
+                    message = targetState.error.message,
+                )
 
-            UiAsync.Idle -> StateMessage(text = "Listo para cargar.")
-            UiAsync.Loading -> CircularProgressIndicator(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(24.dp),
-            )
-            is UiAsync.Success -> content(state.value)
+                UiAsync.Idle -> StateMessage(text = "Listo para cargar.")
+                UiAsync.Loading -> LoadingStateCard(
+                    rows = 4,
+                )
+                is UiAsync.Success -> content(targetState.value)
+            }
         }
     }
 }

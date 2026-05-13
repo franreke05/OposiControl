@@ -1,10 +1,20 @@
 package com.oposicontrol.admin.core.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -19,22 +29,48 @@ fun StatusChip(
 ) {
     val normalized = status.trim().lowercase()
     val (background, foreground) = when (normalized) {
-        "active", "published", "open", "resolved", "success", "correcta" -> GlassTheme.tokens.accent.copy(alpha = 0.16f) to GlassTheme.tokens.accent
-        "draft", "scheduled", "pending", "idle" -> MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) to MaterialTheme.colorScheme.primary
-        "inactive", "archived", "closed", "error", "ban", "muted" -> MaterialTheme.colorScheme.error.copy(alpha = 0.12f) to MaterialTheme.colorScheme.error
+        "active", "activo", "published", "publicado", "open", "resolved", "success", "correcta", "visible", "guardable", "publicable" -> {
+            GlassTheme.tokens.accent.copy(alpha = 0.16f) to GlassTheme.tokens.accent
+        }
+        "draft", "borrador", "scheduled", "programado", "pending", "pendiente", "idle", "editable", "programable" -> {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) to MaterialTheme.colorScheme.primary
+        }
+        "inactive", "inactivo", "archived", "archivado", "closed", "error", "ban", "muted", "bloqueada", "incompleta", "oculta" -> {
+            MaterialTheme.colorScheme.error.copy(alpha = 0.12f) to MaterialTheme.colorScheme.error
+        }
         else -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Text(
-        text = status,
-        modifier = modifier
-            .background(color = background, shape = MaterialTheme.shapes.extraLarge)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        style = MaterialTheme.typography.labelMedium,
-        fontWeight = FontWeight.SemiBold,
-        color = foreground.takeOrElse { Color.Unspecified },
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+    val animatedBackground by animateColorAsState(
+        targetValue = background,
+        animationSpec = tween(durationMillis = 180),
     )
+    val animatedForeground by animateColorAsState(
+        targetValue = foreground.takeOrElse { Color.Unspecified },
+        animationSpec = tween(durationMillis = 180),
+    )
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = 30.dp)
+            .animateContentSize(animationSpec = tween(durationMillis = 180))
+            .background(color = animatedBackground, shape = MaterialTheme.shapes.extraLarge)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(6.dp)
+                .background(animatedForeground.copy(alpha = 0.84f), MaterialTheme.shapes.extraLarge),
+        )
+        Text(
+            text = status,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = animatedForeground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 private fun Color.takeOrElse(fallback: () -> Color): Color {

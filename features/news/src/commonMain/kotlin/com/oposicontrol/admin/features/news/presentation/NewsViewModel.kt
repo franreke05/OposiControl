@@ -6,6 +6,11 @@ import com.oposicontrol.admin.core.common.id.randomUuid
 import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.data.local.NewsEditorDraftLocalDataSource
+import com.oposicontrol.admin.data.local.NewsEditorDraftSnapshot
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import com.oposicontrol.admin.domain.model.NewsArticle
 import com.oposicontrol.admin.domain.model.NewsArticleDraft
 import com.oposicontrol.admin.domain.model.NewsArticleType
@@ -34,6 +39,47 @@ private const val NewsCanvasDefaultHeight = 500
 private const val NewsLayerMinWidth = 24
 private const val NewsLayerMinHeight = 24
 
+private val draftJson = Json { ignoreUnknownKeys = true; coerceInputValues = true }
+
+@Serializable
+private data class NewsLayerDraftJson(
+    val id: String,
+    val name: String,
+    val kind: String,
+    val content: String,
+    val x: Int,
+    val y: Int,
+    val width: Int,
+    val height: Int,
+    val opacity: Int,
+    val fontFamily: String = "sans",
+    val textColor: String = "",
+    val visible: Boolean,
+    val locked: Boolean = false,
+    val sortOrder: Int,
+    val rotationDegrees: Int = 0,
+)
+
+private fun NewsLayerDraft.toJson() = NewsLayerDraftJson(
+    id = id, name = name, kind = kind, content = content,
+    x = x, y = y, width = width, height = height, opacity = opacity,
+    fontFamily = fontFamily, textColor = textColor, visible = visible,
+    locked = locked, sortOrder = sortOrder, rotationDegrees = rotationDegrees,
+)
+
+private fun NewsLayerDraftJson.toDraft() = NewsLayerDraft(
+    id = id, name = name, kind = kind, content = content,
+    x = x, y = y, width = width, height = height, opacity = opacity,
+    fontFamily = fontFamily, textColor = textColor, visible = visible,
+    locked = locked, sortOrder = sortOrder, rotationDegrees = rotationDegrees,
+)
+
+private fun List<NewsLayerDraft>.encodeToJsonString(): String =
+    runCatching { draftJson.encodeToString(map { it.toJson() }) }.getOrElse { "[]" }
+
+private fun String.decodeLayersFromJson(): List<NewsLayerDraft> =
+    runCatching { draftJson.decodeFromString<List<NewsLayerDraftJson>>(this).map { it.toDraft() } }.getOrElse { emptyList() }
+
 class NewsViewModel(
     dispatcherProvider: DispatcherProvider,
     observeNewsUseCase: ObserveNewsUseCase,
@@ -46,6 +92,7 @@ class NewsViewModel(
     private val uploadNewsAssetUseCase: UploadNewsAssetUseCase,
     private val archiveNewsUseCase: ArchiveNewsUseCase,
     private val analyticsTracker: AnalyticsTracker,
+    private val draftLocalDataSource: NewsEditorDraftLocalDataSource,
 ) : MviViewModel<NewsState, NewsIntent>(
     initialState = NewsState(),
     dispatcherProvider = dispatcherProvider,
@@ -57,6 +104,7 @@ class NewsViewModel(
     private var isEditingLocalDraft = false
 
     init {
+        restoreDraftIfPresent()
         scope.launch {
             observeNewsUseCase().collectLatest { articles ->
                 remoteNews = articles.map { it.toUi() }
@@ -67,6 +115,33 @@ class NewsViewModel(
         }
         scope.launch { refreshNewsUseCase() }
         analyticsTracker.trackScreen("news")
+    }
+
+    private fun restoreDraftIfPresent() {
+        val snapshot = runCatching { draftLocalDataSource.readDraft() }.getOrNull() ?: return
+        val restoredId = snapshot.newsId.ifBlank { "local-${randomUuid()}" }
+        val layers = snapshot.layersJson.decodeLayersFromJson()
+        updateState {
+            it.copy(
+                selectedId = restoredId,
+                editorTitle = snapshot.title,
+                editorText = snapshot.textContent,
+                editorSpecialty = snapshot.specialty,
+                editorType = snapshot.type,
+                editorBackgroundType = snapshot.backgroundType,
+                editorBackgroundPath = snapshot.backgroundPath,
+                editorImagePath = snapshot.imagePath,
+                editorStatus = snapshot.status,
+                editorLayers = layers,
+                editorCanvasWidth = snapshot.canvasWidth,
+                editorCanvasHeight = snapshot.canvasHeight,
+            )
+        }
+        if (restoredId.startsWith("local-")) {
+            val item = currentState().toNewsItem().copy(isLocalDraft = true)
+            localDrafts[restoredId] = item
+            isEditingLocalDraft = true
+        }
     }
 
     override suspend fun handleIntent(intent: NewsIntent) {
@@ -165,13 +240,14 @@ class NewsViewModel(
                 publish()
             }
             is NewsIntent.UpdateText -> updateAndValidate { it.copy(editorText = intent.value) }
-            is NewsIntent.UpdateTitle -> updateAndValidate {
-                it.copy(
-                    editorTitle = intent.value,
-                    editorLayers = it.editorLayers.map { layer ->
-                        if (layer.kind.toLayerKind() == NewsLayerKind.TITLE) layer.copy(content = intent.value.ifBlank { layer.content }) else layer
-                    },
-                )
+            is NewsIntent.UpdateTitle -> updateAndValidate { state ->
+                val hasTitleLayer = state.editorLayers.any { it.kind.toLayerKind() == NewsLayerKind.TITLE }
+                val updatedLayers = when {
+                    hasTitleLayer -> state.editorLayers.map { if (it.kind.toLayerKind() == NewsLayerKind.TITLE) it.copy(content = intent.value.ifBlank { it.content }) else it }
+                    intent.value.isNotBlank() -> state.editorLayers.withSingleTitleLayer(intent.value, state.editorCanvasWidth, state.editorCanvasHeight)
+                    else -> state.editorLayers
+                }
+                state.copy(editorTitle = intent.value, editorLayers = updatedLayers)
             }
             is NewsIntent.UpdateType -> updateAndValidate { it.copy(editorType = intent.value) }
             is NewsIntent.UpdateTypeFilter -> {
@@ -188,8 +264,8 @@ class NewsViewModel(
             editorTitle = "",
             editorBackgroundType = "SKY",
             editorBackgroundPath = "",
-            editorSpecialty = "TCAE",
-            editorType = "Convocatoria",
+            editorSpecialty = "1",
+            editorType = "1",
             editorText = "",
             editorImagePath = "",
             editorStatus = "draft",
@@ -282,22 +358,36 @@ class NewsViewModel(
     }
 
     private suspend fun saveDraft() {
+        ensureTitleLayerInState()
         val draft = currentState().toDesignDraft()
         val report = validateNewsDraftUseCase(draft)
         updateState { it.copy(validationReport = report) }
         if (!report.canSave) {
-            updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("El borrador no tiene contenido suficiente."))) }
+            updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("Añade al menos un título para guardar."))) }
             return
         }
-        val localId = currentState().selectedId ?: "local-${randomUuid()}"
-        val localState = currentState().copy(
-            selectedId = localId,
-            editorStatus = "draft",
-            actionState = UiAsync.Success(Unit),
-        )
-        updateState { localState }
-        rememberCurrentDraft(localState)
-        analyticsTracker.trackAction("news_save_local_draft", mapOf("news_id" to localId, "layers" to localState.editorLayers.size.toString()))
+        updateState { it.copy(actionState = UiAsync.Loading) }
+        val previousId = currentState().selectedId
+        val article = currentState().toNewsItem().copy(
+            id = previousId.orEmpty().takeUnless { it.startsWith("local-") }.orEmpty(),
+            status = "draft",
+            isLocalDraft = false,
+        ).toDomain()
+        when (val result = upsertNewsUseCase(article)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                previousId?.takeIf { it.startsWith("local-") }?.let { localDrafts.remove(it) }
+                analyticsTracker.trackAction("news_save_draft", mapOf("news_id" to result.value.id, "layers" to result.value.layers.size.toString()))
+                rememberSavedArticle(result.value.toUi())
+                updateState {
+                    it.copy(
+                        selectedId = result.value.id,
+                        editorStatus = result.value.status,
+                        actionState = UiAsync.Success(Unit),
+                    )
+                }
+            }
+        }
     }
 
     private suspend fun publishCurrent() {
@@ -334,6 +424,7 @@ class NewsViewModel(
         actionName: String,
         persist: suspend (NewsArticle, NewsDesignDraft) -> AppResult<NewsArticle>,
     ) {
+        ensureTitleLayerInState()
         updateState { it.copy(actionState = UiAsync.Loading) }
         val prepared = prepareAssetsForRemotePublish() ?: return
         val draft = prepared.toDesignDraft()
@@ -509,6 +600,17 @@ class NewsViewModel(
         updateState { it.copy(validationReport = report) }
     }
 
+    private fun ensureTitleLayerInState() {
+        val s = currentState()
+        val titleLayer = s.editorLayers.firstOrNull { it.kind.toLayerKind() == NewsLayerKind.TITLE }
+        when {
+            s.editorTitle.isNotBlank() && titleLayer == null ->
+                updateState { st -> st.copy(editorLayers = st.editorLayers.withSingleTitleLayer(st.editorTitle, st.editorCanvasWidth, st.editorCanvasHeight)) }
+            s.editorTitle.isBlank() && titleLayer?.content?.isNotBlank() == true ->
+                updateState { it.copy(editorTitle = titleLayer.content) }
+        }
+    }
+
     private fun rememberCurrentDraft(state: NewsState = currentState()) {
         val localId = state.selectedId?.ifBlank { null } ?: "local-${randomUuid()}"
         val item = state.copy(selectedId = localId).toNewsItem().copy(isLocalDraft = true)
@@ -521,6 +623,24 @@ class NewsViewModel(
         isEditingLocalDraft = true
         rebuildNewsFromLocalAndRemote()
         publish()
+        runCatching {
+            draftLocalDataSource.saveDraft(
+                NewsEditorDraftSnapshot(
+                    newsId = localId,
+                    title = state.editorTitle,
+                    textContent = state.editorText,
+                    specialty = state.editorSpecialty,
+                    type = state.editorType,
+                    backgroundType = state.editorBackgroundType,
+                    backgroundPath = state.editorBackgroundPath,
+                    imagePath = state.editorImagePath,
+                    status = state.editorStatus,
+                    layersJson = state.editorLayers.encodeToJsonString(),
+                    canvasWidth = state.editorCanvasWidth,
+                    canvasHeight = state.editorCanvasHeight,
+                )
+            )
+        }
     }
 
     private fun rememberSavedArticle(item: NewsItem) {
@@ -528,6 +648,7 @@ class NewsViewModel(
         localDrafts.remove(item.id)
         remoteNews = listOf(item.copy(isLocalDraft = false)) + remoteNews.filterNot { it.id == item.id }
         isEditingLocalDraft = false
+        runCatching { draftLocalDataSource.clearDraft() }
         rebuildNewsFromLocalAndRemote()
         publish()
     }

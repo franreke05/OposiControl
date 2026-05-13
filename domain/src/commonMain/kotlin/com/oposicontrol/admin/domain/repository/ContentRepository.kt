@@ -56,9 +56,11 @@ interface ContentRepository {
         localPathOrUrl: String,
         title: String,
     ): AppResult<QuestionResource>
+    suspend fun deleteResource(questionId: String, resourceId: String): AppResult<Unit>
 
     suspend fun uploadExamCover(
         examId: String,
         localPathOrUri: String,
     ): AppResult<Exam>
+    suspend fun clearExamCover(examId: String): AppResult<Exam>
 }

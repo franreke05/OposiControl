@@ -33,8 +33,7 @@ class KtorTagSearchRepositoryImpl(
             parameter("q", query)
         }
         if (!response.status.isSuccess()) {
-            println("[tag-search-client] ${response.failureDetail("/tags")}")
-            return@safeCall emptyList<Tag>()
+            error(response.failureDetail("/tags"))
         }
         response.body<List<TagDto>>().map { it.toDomain() }
     }
@@ -48,8 +47,7 @@ class KtorTagSearchRepositoryImpl(
             query.section?.takeIf { it.isNotBlank() }?.let { parameter("section", it) }
         }
         if (!response.status.isSuccess()) {
-            println("[tag-search-client] ${response.failureDetail("/search")}")
-            return@safeCall emptyList<TaggedSearchResult>()
+            error(response.failureDetail("/search"))
         }
         response.body<List<TaggedSearchResultDto>>().map { it.toDomain() }
     }
