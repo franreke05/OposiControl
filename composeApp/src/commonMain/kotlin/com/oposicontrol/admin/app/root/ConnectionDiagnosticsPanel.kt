@@ -42,7 +42,7 @@ fun ConnectionDiagnosticsPanel(
         status = "Comprobando"
         checks = listOf(
             ConnectionDiagnosticCheck("URL backend", true, appConfig.baseUrl),
-            ConnectionDiagnosticCheck("HTTP Android", true, "cleartext permitido en debug"),
+            ConnectionDiagnosticCheck("HTTP local", true, "debug/dev permite 10.0.2.2, localhost y 127.0.0.1"),
             ConnectionDiagnosticCheck("Red", true, "telefono y PC en misma WiFi real"),
         )
         when (val result = diagnosticsRepository.runChecks()) {

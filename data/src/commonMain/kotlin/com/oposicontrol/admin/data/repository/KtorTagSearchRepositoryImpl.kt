@@ -27,35 +27,17 @@ class KtorTagSearchRepositoryImpl(
     private val adapter: NetworkResultAdapter,
 ) : TagSearchRepository {
     override suspend fun findTags(query: String) = adapter.safeCall {
-        val response = client.get("${backendUrl()}/tags") {
-            expectSuccess = false
-            backendHeaders()
-            parameter("q", query)
-        }
-        if (!response.status.isSuccess()) {
-            error(response.failureDetail("/tags"))
-        }
-        response.body<List<TagDto>>().map { it.toDomain() }
+        // Legacy /tags disabled until the endpoint is migrated to /v1.
+        emptyList<Tag>()
     }
 
     override suspend fun search(query: TagSearchQuery) = adapter.safeCall {
-        val response = client.get("${backendUrl()}/search") {
-            expectSuccess = false
-            backendHeaders()
-            parameter("q", query.text)
-            if (query.tagSlugs.isNotEmpty()) parameter("tags", query.tagSlugs.joinToString(","))
-            query.section?.takeIf { it.isNotBlank() }?.let { parameter("section", it) }
-        }
-        if (!response.status.isSuccess()) {
-            error(response.failureDetail("/search"))
-        }
-        response.body<List<TaggedSearchResultDto>>().map { it.toDomain() }
+        // Legacy /search disabled until the endpoint is migrated to /v1.
+        emptyList<TaggedSearchResult>()
     }
 
     override suspend fun reindex() = adapter.safeCall {
-        client.post("${backendUrl()}/search/reindex") {
-            backendHeaders()
-        }.bodyAsText()
+        // Legacy /search/reindex disabled until search is migrated to /v1.
         Unit
     }
 

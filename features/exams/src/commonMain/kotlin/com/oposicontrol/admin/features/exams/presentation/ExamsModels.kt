@@ -57,6 +57,20 @@ data class RafagaUi(
     val hasSelection: Boolean,
 )
 
+data class ContentExamUi(
+    val id: String,
+    val code: String,
+    val title: String,
+    val specialty: String,
+    val typeExam: String,
+    val typeAccess: String,
+    val year: Int?,
+    val questionCount: Int,
+    val durationMinutes: Int?,
+    val isOfficial: Boolean,
+    val selected: Boolean,
+)
+
 data class RafagaQuestionUi(
     val id: String,
     val statement: String,

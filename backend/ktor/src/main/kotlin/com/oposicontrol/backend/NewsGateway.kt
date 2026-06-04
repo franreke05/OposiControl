@@ -38,14 +38,14 @@ data class NewsAssetUploadDto(
 @Serializable
 data class NoticiaDto(
     val id: String = "",
-    val titulo: String,
+    val titulo: String = "",
     val especialidad: String = "",
     val tipo: String = "",
     val fondo: String = "A",
     val fondoPath: String? = null,
     val estado: String = "draft",
     val publicarDesde: String = "",
-    val texto: String,
+    val texto: String = "",
     val imagenPath: String? = null,
     val capas: List<NoticiaLayerDto> = emptyList(),
 )
@@ -53,19 +53,19 @@ data class NoticiaDto(
 @Serializable
 data class NoticiaLayerDto(
     val id: String = "",
-    val nombre: String,
-    val tipo: String,
-    val contenido: String,
-    val x: Int,
-    val y: Int,
-    val width: Int,
-    val height: Int,
-    val opacity: Int,
+    val nombre: String = "",
+    val tipo: String = "",
+    val contenido: String = "",
+    val x: Int = 0,
+    val y: Int = 0,
+    val width: Int = 100,
+    val height: Int = 40,
+    val opacity: Int = 100,
     val fontFamily: String = "sans",
     val textColor: String = "",
-    val visible: Boolean,
+    val visible: Boolean = true,
     val locked: Boolean = false,
-    val orden: Int,
+    val orden: Int = 0,
     val rotationDegrees: Int = 0,
 )
 

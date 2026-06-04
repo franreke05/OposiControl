@@ -66,6 +66,8 @@ fun Application.module() {
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir busqueda desde Ktor.")
     val adminGateway = SupabaseAdminGateway.fromEnvironment(json)
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir admin desde Ktor.")
+    val v1Gateway = SupabaseV1Gateway.fromEnvironment(json)
+        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir API V1 desde Ktor.")
     install(ContentNegotiation) {
         json(json)
     }
@@ -118,6 +120,7 @@ fun Application.module() {
                 ),
             )
         }
+        v1Routes(v1Gateway)
         authenticate("gateway-auth") {
             adminRoutes(adminGateway)
             post("/admin/backend/restart") {

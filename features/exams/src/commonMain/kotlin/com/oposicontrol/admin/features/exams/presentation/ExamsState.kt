@@ -20,6 +20,7 @@ data class ExamsState(
     val questionResourceFilter: String = "all",
     val specialtySearchQuery: String = "",
     val selectedContentSpecialtyId: String? = null,
+    val contentPendingMigrationMessage: String = "",
     val specialtyEditorName: String = "",
     val specialtyEditorDescription: String = "",
     val specialtyEditorSortOrder: String = "0",

@@ -74,6 +74,8 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamStatus
+import com.oposicontrol.admin.domain.model.isInmersivo
+import com.oposicontrol.admin.domain.model.isRafaga
 import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
@@ -1224,40 +1226,304 @@ private fun SolucionarioList(
     onCreate: () -> Unit,
     onCreateBurst: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-        ResponsiveActionRow(
-            actions = listOf(
-                MobileActionSpec(
-                    icon = MobileIcon.Plus,
-                    label = "Nuevo",
-                    minWidth = 122,
-                    onClick = onCreate,
-                ),
-                MobileActionSpec(
-                    icon = MobileIcon.News,
-                    label = "Rafaga",
-                    minWidth = 126,
-                    onClick = onCreateBurst,
-                ),
-            ),
+    Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.normal)) {
+        ContentSpecialtyFilter(
+            state = state,
+            onIntent = onIntent,
         )
         when (val exams = state.exams) {
             is UiAsync.Success -> {
-                val solucionarios = exams.value
-                    .map { it.toSolucionarioUi(selected = it.id == state.selectedExamId) }
-                SolucionarioCarousel(
-                    title = "Solucionarios",
-                    items = solucionarios,
-                    emptyText = "Sin solucionarios. Crea el primero para empezar.",
+                val rafagas = exams.value
+                    .filter { it.isRafaga }
+                    .map { it.toContentExamUi(selected = it.id == state.selectedExamId) }
+                val inmersivos = exams.value
+                    .filter { it.isInmersivo }
+                    .map { it.toContentExamUi(selected = it.id == state.selectedExamId) }
+                ContentExamSection(
+                    title = "Rafagas",
+                    items = rafagas,
+                    emptyText = "No hay examenes rafaga activos para esta especialidad.",
                     onClick = { onIntent(ExamsIntent.SelectExam(it)) },
                 )
-                RafagaCarousel(state = state, onIntent = onIntent)
+                ContentExamSection(
+                    title = "Solucionarios / Inmersivos",
+                    items = inmersivos,
+                    emptyText = "No hay examenes inmersivos activos para esta especialidad.",
+                    onClick = { onIntent(ExamsIntent.SelectExam(it)) },
+                    pendingLabel = "endpoint premium pendiente",
+                )
+                ContentQuestionsPreview(state = state, onIntent = onIntent)
             }
 
-            UiAsync.Empty -> EmptyStateCard("Sin solucionarios", "Crea el primer solucionario para empezar.")
-            is UiAsync.Error -> EmptyStateCard("No se pudo cargar", exams.error.message)
-            UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando solucionarios.")
+            UiAsync.Empty -> EmptyStateCard("Sin examenes", "No hay examenes activos para esta especialidad.")
+            is UiAsync.Error -> EmptyStateCard("No se pudo cargar contenido", exams.error.message)
+            UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando contenido /v1.")
             UiAsync.Idle -> EmptyStateCard("Listo", "Sin carga activa.")
+        }
+    }
+}
+
+@Composable
+private fun ContentSpecialtyFilter(
+    state: ExamsState,
+    onIntent: (ExamsIntent) -> Unit,
+) {
+    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(UiSpacing.panel),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "Especialidades",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            when (val specialties = state.specialties) {
+                is UiAsync.Success -> LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    items(items = specialties.value, key = { it.id }) { specialty ->
+                        TypePill(
+                            label = specialty.name.ifBlank { specialty.description.ifBlank { "Especialidad" } },
+                            selected = specialty.id == state.selectedContentSpecialtyId,
+                            modifier = Modifier.width(148.dp),
+                            onClick = { onIntent(ExamsIntent.SelectContentSpecialty(specialty.id)) },
+                        )
+                    }
+                }
+
+                UiAsync.Empty -> DropZone("No hay especialidades activas.", DropTargetState.Idle)
+                is UiAsync.Error -> EmptyStateCard("No se pudieron cargar especialidades", specialties.error.message)
+                UiAsync.Loading -> Text("Cargando especialidades...")
+                UiAsync.Idle -> Text("Especialidades pendientes de cargar.")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContentExamSection(
+    title: String,
+    items: List<ContentExamUi>,
+    emptyText: String,
+    onClick: (String) -> Unit,
+    pendingLabel: String? = null,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (items.isEmpty()) {
+            DropZone(text = emptyText, state = DropTargetState.Idle)
+            return
+        }
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(214.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            items(items = items, key = { it.id }) { item ->
+                ContentExamCard(
+                    exam = item,
+                    pendingLabel = pendingLabel,
+                    onClick = { onClick(item.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContentExamCard(
+    exam: ContentExamUi,
+    pendingLabel: String?,
+    onClick: () -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .width(276.dp)
+            .height(206.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        tint = if (exam.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
+        strokeColor = if (exam.selected) GlassTheme.tokens.accent.copy(alpha = 0.62f) else GlassTheme.tokens.glassStroke,
+        shadowElevation = if (exam.selected) 14.dp else 8.dp,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(modifier = Modifier.width(156.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = exam.title.ifBlank { "Examen sin titulo" },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = exam.specialty.ifBlank { exam.code.ifBlank { "Sin especialidad" } },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Column(
+                    modifier = Modifier.width(96.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalAlignment = Alignment.End,
+                ) {
+                    StatusChip(exam.typeAccess.toAccessLabel(), modifier = Modifier.width(92.dp))
+                    StatusChip(exam.typeExam.toExamTypeLabel(), modifier = Modifier.width(92.dp))
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ContentInfoPill(
+                    label = "Anio",
+                    value = exam.year?.toString() ?: "-",
+                    modifier = Modifier.width(118.dp),
+                )
+                ContentInfoPill(
+                    label = "Preguntas",
+                    value = exam.questionCount.toString(),
+                    modifier = Modifier.width(118.dp),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ContentInfoPill(
+                    label = "Min",
+                    value = exam.durationMinutes?.toString() ?: "-",
+                    modifier = Modifier.width(118.dp),
+                )
+                ContentInfoPill(
+                    label = "Oficial",
+                    value = if (exam.isOfficial) "Si" else "No",
+                    modifier = Modifier.width(118.dp),
+                )
+            }
+            if (pendingLabel != null) {
+                Text(
+                    text = pendingLabel,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContentQuestionsPreview(
+    state: ExamsState,
+    onIntent: (ExamsIntent) -> Unit,
+) {
+    GlassSurface(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(UiSpacing.panel),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(
+                text = "Preguntas del examen seleccionado",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (state.contentPendingMigrationMessage.isNotBlank()) {
+                DropZone(state.contentPendingMigrationMessage, DropTargetState.Ready)
+                return@Column
+            }
+            when (val questions = state.questions) {
+                is UiAsync.Success -> questions.value
+                    .sortedBy { it.sortOrder }
+                    .forEach { question ->
+                        ContentQuestionCard(
+                            question = question,
+                            selected = question.id == state.selectedQuestionId,
+                            onClick = { onIntent(ExamsIntent.SelectQuestion(question.id)) },
+                        )
+                    }
+
+                UiAsync.Empty -> DropZone("Sin preguntas para este examen.", DropTargetState.Idle)
+                is UiAsync.Error -> EmptyStateCard("No se pudieron cargar preguntas", questions.error.message)
+                UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando preguntas.")
+                UiAsync.Idle -> DropZone("Selecciona una rafaga para ver sus preguntas.", DropTargetState.Idle)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContentQuestionCard(
+    question: ExamQuestion,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(18.dp),
+        tint = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else GlassTheme.tokens.glassFill,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(modifier = Modifier.width(226.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = question.statement.ifBlank { "Pregunta sin titulo" },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = question.title.ifBlank { "Pregunta ${question.sortOrder}" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                StatusChip("#${question.sortOrder}", modifier = Modifier.width(72.dp))
+            }
+            question.options.sortedBy { it.sortOrder }.forEach { option ->
+                Text(
+                    text = "${option.label.ifBlank { "-" }}. ${option.content}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -3080,6 +3346,38 @@ private fun Exam.toSolucionarioUi(selected: Boolean): SolucionarioUi {
         isBurst = false,
         hasSelection = selected,
     )
+}
+
+private fun Exam.toContentExamUi(selected: Boolean): ContentExamUi {
+    return ContentExamUi(
+        id = id,
+        code = code,
+        title = title,
+        specialty = specialtyName,
+        typeExam = typeExam,
+        typeAccess = typeAccess,
+        year = year,
+        questionCount = questionCount,
+        durationMinutes = durationMinutes,
+        isOfficial = isOfficial,
+        selected = selected,
+    )
+}
+
+private fun String.toAccessLabel(): String {
+    return when (lowercase()) {
+        "gratuito" -> "Gratis"
+        "premium" -> "Premium"
+        else -> ifBlank { "Acceso" }
+    }
+}
+
+private fun String.toExamTypeLabel(): String {
+    return when (lowercase()) {
+        "rafaga" -> "Rafaga"
+        "inmersivo" -> "Inmersivo"
+        else -> ifBlank { "Examen" }
+    }
 }
 
 private fun Rafaga.toRafagaUi(selected: Boolean): RafagaUi {

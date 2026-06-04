@@ -15,16 +15,23 @@ data class Specialty(
 
 data class Exam(
     val id: String,
+    val code: String = "",
     val specialtyId: String,
     val specialtyName: String,
+    val communityId: String? = null,
     val title: String,
     val description: String,
+    val typeExam: String = "inmersivo",
+    val typeAccess: String = "premium",
     val priceTickets: Int,
     val status: ExamStatus,
     val publishFrom: Instant?,
     val publishedAt: Instant?,
     val sortOrder: Int,
     val questionCount: Int,
+    val durationMinutes: Int? = null,
+    val year: Int? = null,
+    val isOfficial: Boolean = false,
     val coverUrl: String? = null,
     val coverStoragePath: String? = null,
     val coverMimeType: String? = null,
@@ -32,6 +39,11 @@ data class Exam(
     val updatedAt: Instant,
     val deletedAt: Instant? = null,
 )
+
+val Exam.isRafaga: Boolean get() = typeExam == "rafaga"
+val Exam.isInmersivo: Boolean get() = typeExam == "inmersivo"
+val Exam.isPremium: Boolean get() = typeAccess == "premium"
+val Exam.isGratuito: Boolean get() = typeAccess == "gratuito"
 
 data class Rafaga(
     val id: String,

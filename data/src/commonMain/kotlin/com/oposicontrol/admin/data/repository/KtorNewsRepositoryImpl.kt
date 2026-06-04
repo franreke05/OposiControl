@@ -45,16 +45,8 @@ class KtorNewsRepositoryImpl(
     override fun observeNews(): Flow<List<NewsArticle>> = news.asStateFlow()
 
     override suspend fun refreshNews() = adapter.safeCall {
-        val response = client.get(newsUrl()) {
-            expectSuccess = false
-            backendHeaders()
-        }
-        if (!response.status.isSuccess()) {
-            error("backend ${response.status.value} /content/noticias: ${response.bodyAsText().take(200)}")
-        }
-        response.body<List<NoticiaDto>>()
-            .map { it.toDomain() }
-            .also { news.value = it }
+        // Legacy /content/noticias disabled until news is migrated to /v1/noticias.
+        emptyList<NewsArticle>().also { news.value = it }
     }
 
     override suspend fun upsertNews(article: NewsArticle) = adapter.safeCall {

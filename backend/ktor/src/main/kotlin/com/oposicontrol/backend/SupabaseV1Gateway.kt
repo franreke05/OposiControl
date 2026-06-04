@@ -1,0 +1,316 @@
+package com.oposicontrol.backend
+
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import java.net.URI
+import java.net.URLEncoder
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.nio.charset.StandardCharsets
+
+class SupabaseV1Gateway private constructor(
+    private val supabaseUrl: String,
+    private val serviceRoleKey: String,
+    private val json: Json,
+    private val client: HttpClient = HttpClient.newHttpClient(),
+) {
+    fun listEspecialidades(): List<V1EspecialidadDto> {
+        return request(
+            method = "GET",
+            path = "/rest/v1/especialidades?select=*&activa=eq.true&order=nombre.asc,id.asc",
+            body = null,
+        )
+            .decodeList<JsonObject>()
+            .filter { row -> row["activa"]?.jsonPrimitive?.booleanOrNull ?: true }
+            .mapNotNull { row -> row.toV1EspecialidadDto() }
+    }
+
+    fun listExamenes(filters: V1ExamenesFilter): List<V1ExamenDto> {
+        val path = buildString {
+            append("/rest/v1/examenes?select=*")
+            append("&activo=eq.true")
+            filters.especialidadId?.let { append("&especialidad_id=eq.${it.toPostgrestValue()}") }
+            filters.comunidadId?.let { append("&comunidad_id=eq.${it.toPostgrestValue()}") }
+            filters.tipoExamen?.let { append("&tipo_examen=eq.${it.toPostgrestValue()}") }
+            filters.tipoAcceso?.let { append("&tipo_acceso=eq.${it.toPostgrestValue()}") }
+            append("&order=anio.desc.nullslast,titulo.asc")
+        }
+        return request(method = "GET", path = path, body = null)
+            .decodeList<JsonObject>()
+            .filter { row -> row["activo"]?.jsonPrimitive?.booleanOrNull ?: true }
+            .mapNotNull { row -> row.toV1ExamenDto() }
+    }
+
+    fun getExamen(examenId: String): V1ExamenDto? {
+        return request(
+            method = "GET",
+            path = "/rest/v1/examenes?select=*&id=eq.${examenId.toPostgrestValue()}&activo=eq.true&limit=1",
+            body = null,
+        )
+            .decodeList<JsonObject>()
+            .firstOrNull { row -> row["activo"]?.jsonPrimitive?.booleanOrNull ?: true }
+            ?.toV1ExamenDto()
+    }
+
+    fun getPreguntasExamenRafaga(examenId: String): V1PreguntasExamenResult {
+        val examen = request(
+            method = "GET",
+            path = "/rest/v1/examenes?select=*&id=eq.${examenId.toPostgrestValue()}&limit=1",
+            body = null,
+        )
+            .decodeList<JsonObject>()
+            .firstOrNull()
+            ?: return V1PreguntasExamenResult.NotFound
+        if (examen.primitiveBoolean("activo") != true) return V1PreguntasExamenResult.NotFound
+        if (examen.primitiveText("tipo_examen") != "rafaga" || examen.primitiveText("tipo_acceso") != "gratuito") {
+            return V1PreguntasExamenResult.Forbidden
+        }
+
+        val asociaciones = request(
+            method = "GET",
+            path = "/rest/v1/preguntas_examen?select=*&examen_id=eq.${examenId.toPostgrestValue()}",
+            body = null,
+        )
+            .decodeList<JsonObject>()
+            .mapIndexedNotNull { index, row ->
+                val preguntaId = row.primitiveText("pregunta_id") ?: return@mapIndexedNotNull null
+                V1PreguntaAsociadaRow(
+                    preguntaId = preguntaId,
+                    posicion = row.primitiveInt("posicion") ?: row.primitiveInt("orden") ?: index + 1,
+                )
+            }
+            .sortedBy { it.posicion }
+
+        if (asociaciones.isEmpty()) {
+            return V1PreguntasExamenResult.Success(V1PreguntasExamenDto(examenId = examenId, preguntas = emptyList()))
+        }
+
+        val preguntaIds = asociaciones.map { it.preguntaId }.distinct()
+        val preguntaIdsFilter = preguntaIds.joinToString(",") { it.toPostgrestValue() }
+        val preguntasById = request(
+            method = "GET",
+            path = "/rest/v1/preguntas?select=*&id=in.($preguntaIdsFilter)&activa=eq.true",
+            body = null,
+        )
+            .decodeList<JsonObject>()
+            .filter { row -> row.primitiveBoolean("activa") ?: true }
+            .filter { row -> row.primitiveText("tipo_pregunta").orEmpty().ifBlank { "rafaga" } == "rafaga" }
+            .associateBy { row -> row.primitiveText("id").orEmpty() }
+
+        val opcionesByPreguntaId = request(
+            method = "GET",
+            path = "/rest/v1/opciones_pregunta?select=*&pregunta_id=in.($preguntaIdsFilter)",
+            body = null,
+        )
+            .decodeList<JsonObject>()
+            .mapNotNull { row -> row.toV1OpcionPreguntaDto() }
+            .groupBy { it.preguntaId }
+
+        val preguntas = asociaciones.mapNotNull { asociacion ->
+            val pregunta = preguntasById[asociacion.preguntaId] ?: return@mapNotNull null
+            pregunta.toV1PreguntaExamenDto(
+                posicion = asociacion.posicion,
+                opciones = opcionesByPreguntaId[asociacion.preguntaId]
+                    .orEmpty()
+                    .sortedWith(compareBy<V1OpcionPreguntaInternalDto> { it.posicion }.thenBy { it.letra })
+                    .map { it.toPublicDto() },
+            )
+        }
+
+        return V1PreguntasExamenResult.Success(
+            V1PreguntasExamenDto(
+                examenId = examenId,
+                preguntas = preguntas,
+            ),
+        )
+    }
+
+    private fun request(method: String, path: String, body: String?): String {
+        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+            .header("Content-Type", "application/json")
+        val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
+        val response = try {
+            client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
+        } catch (error: Exception) {
+            throw IllegalStateException("Supabase network error on $method ${path.substringBefore('?')}: ${error::class.simpleName}: ${error.message}", error)
+        }
+        if (response.statusCode() !in 200..299) {
+            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.statusCode()}: ${response.body().take(300)}")
+        }
+        return response.body()
+    }
+
+    private inline fun <reified T> String.decodeList(): List<T> = json.decodeFromString(this)
+
+    companion object {
+        fun fromEnvironment(json: Json): SupabaseV1Gateway? {
+            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+            return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseV1Gateway(url, serviceRoleKey, json)
+        }
+    }
+}
+
+data class V1ExamenesFilter(
+    val especialidadId: String? = null,
+    val comunidadId: String? = null,
+    val tipoExamen: String? = null,
+    val tipoAcceso: String? = null,
+)
+
+@Serializable
+data class V1EspecialidadDto(
+    val id: String,
+    val nombre: String,
+    val slug: String,
+)
+
+@Serializable
+data class V1ExamenDto(
+    val id: String,
+    val codigoExamen: String,
+    val especialidadId: String,
+    val comunidadId: String? = null,
+    val titulo: String,
+    val descripcion: String,
+    val tipoExamen: String,
+    val tipoAcceso: String,
+    val totalPreguntas: Int,
+    val duracionMinutos: Int? = null,
+    val anio: Int? = null,
+    val esOficial: Boolean,
+    val publicadoEn: String? = null,
+)
+
+sealed interface V1PreguntasExamenResult {
+    data class Success(val data: V1PreguntasExamenDto) : V1PreguntasExamenResult
+    data object NotFound : V1PreguntasExamenResult
+    data object Forbidden : V1PreguntasExamenResult
+}
+
+@Serializable
+data class V1PreguntasExamenDto(
+    val examenId: String,
+    val preguntas: List<V1PreguntaExamenDto>,
+)
+
+@Serializable
+data class V1PreguntaExamenDto(
+    val id: String,
+    val codigoPregunta: String,
+    val titulo: String,
+    val tipoPregunta: String,
+    val posicion: Int,
+    val opciones: List<V1OpcionPreguntaDto>,
+)
+
+@Serializable
+data class V1OpcionPreguntaDto(
+    val id: String,
+    val letra: String,
+    val texto: String,
+)
+
+private data class V1PreguntaAsociadaRow(
+    val preguntaId: String,
+    val posicion: Int,
+)
+
+private data class V1OpcionPreguntaInternalDto(
+    val preguntaId: String,
+    val id: String,
+    val letra: String,
+    val texto: String,
+    val posicion: Int,
+) {
+    fun toPublicDto(): V1OpcionPreguntaDto {
+        return V1OpcionPreguntaDto(
+            id = id,
+            letra = letra,
+            texto = texto,
+        )
+    }
+}
+
+private fun JsonObject.toV1EspecialidadDto(): V1EspecialidadDto? {
+    val id = primitiveText("id") ?: return null
+    val nombre = primitiveText("nombre")?.takeIf { it.isNotBlank() } ?: return null
+    val slug = primitiveText("slug").orEmpty()
+    return V1EspecialidadDto(
+        id = id,
+        nombre = nombre,
+        slug = slug,
+    )
+}
+
+private fun JsonObject.toV1ExamenDto(): V1ExamenDto? {
+    val id = primitiveText("id") ?: return null
+    val titulo = primitiveText("titulo")?.takeIf { it.isNotBlank() } ?: return null
+    return V1ExamenDto(
+        id = id,
+        codigoExamen = primitiveText("codigo_examen").orEmpty(),
+        especialidadId = primitiveText("especialidad_id").orEmpty(),
+        comunidadId = primitiveText("comunidad_id"),
+        titulo = titulo,
+        descripcion = primitiveText("descripcion").orEmpty(),
+        tipoExamen = primitiveText("tipo_examen").orEmpty(),
+        tipoAcceso = primitiveText("tipo_acceso").orEmpty(),
+        totalPreguntas = primitiveInt("total_preguntas") ?: 0,
+        duracionMinutos = primitiveInt("duracion_minutos"),
+        anio = primitiveInt("anio"),
+        esOficial = primitiveBoolean("es_oficial") ?: false,
+        publicadoEn = primitiveText("publicado_en"),
+    )
+}
+
+private fun JsonObject.toV1PreguntaExamenDto(
+    posicion: Int,
+    opciones: List<V1OpcionPreguntaDto>,
+): V1PreguntaExamenDto? {
+    val id = primitiveText("id") ?: return null
+    return V1PreguntaExamenDto(
+        id = id,
+        codigoPregunta = primitiveText("codigo_pregunta").orEmpty(),
+        titulo = primitiveText("titulo").orEmpty(),
+        tipoPregunta = primitiveText("tipo_pregunta").orEmpty().ifBlank { "rafaga" },
+        posicion = posicion,
+        opciones = opciones,
+    )
+}
+
+private fun JsonObject.toV1OpcionPreguntaDto(): V1OpcionPreguntaInternalDto? {
+    val preguntaId = primitiveText("pregunta_id") ?: return null
+    val id = primitiveText("id") ?: return null
+    return V1OpcionPreguntaInternalDto(
+        preguntaId = preguntaId,
+        id = id,
+        letra = primitiveText("letra").orEmpty(),
+        texto = primitiveText("texto_opcion") ?: primitiveText("texto") ?: primitiveText("contenido").orEmpty(),
+        posicion = primitiveInt("posicion") ?: primitiveInt("orden") ?: 0,
+    )
+}
+
+private fun JsonObject.primitiveText(key: String): String? {
+    return this[key]?.jsonPrimitive?.contentOrNull
+}
+
+private fun JsonObject.primitiveInt(key: String): Int? {
+    return this[key]?.jsonPrimitive?.intOrNull
+}
+
+private fun JsonObject.primitiveBoolean(key: String): Boolean? {
+    return this[key]?.jsonPrimitive?.booleanOrNull
+}
+
+private fun String.toPostgrestValue(): String {
+    return URLEncoder.encode(this, StandardCharsets.UTF_8.toString())
+}

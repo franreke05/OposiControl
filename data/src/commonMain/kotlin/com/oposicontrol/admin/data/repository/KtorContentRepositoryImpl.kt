@@ -4,6 +4,7 @@ import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.data.storage.LocalBinaryAsset
 import com.oposicontrol.admin.data.storage.PlatformFileReader
 import com.oposicontrol.admin.domain.model.Exam
@@ -64,56 +65,53 @@ class KtorContentRepositoryImpl(
     override fun observeRafagas(): Flow<List<Rafaga>> = rafagasFlow.asStateFlow()
 
     override suspend fun refreshSpecialties() = adapter.safeCall {
-        val response = client.get("${contentUrl()}/especialidades") {
+        val endpoint = BackendRoutes.V1_ESPECIALIDADES
+        val url = BackendRoutes.url(appConfig.baseUrl, endpoint)
+        val response = client.get(url) {
             expectSuccess = false
-            backendHeaders()
         }
-        if (!response.status.isSuccess()) {
-            error("backend ${response.status.value} /content/especialidades: ${response.bodyAsText().take(200)}")
-        }
-        response.body<List<EspecialidadDto>>()
+        response.requireBackendSuccess(url)
+        response.body<V1DataResponse<V1EspecialidadDto>>()
+            .data
             .map { it.toDomain() }
             .also { specialtiesFlow.value = it }
     }
 
     override suspend fun refreshExams() = adapter.safeCall {
         val specialtiesById = specialtiesFlow.value.associateBy { it.id }
-        val response = client.get("${contentUrl()}/solucionarios") {
+        val endpoint = BackendRoutes.V1_EXAMENES
+        val url = BackendRoutes.url(appConfig.baseUrl, endpoint)
+        val response = client.get(url) {
             expectSuccess = false
-            backendHeaders()
         }
-        if (!response.status.isSuccess()) {
-            error("backend ${response.status.value} /content/solucionarios: ${response.bodyAsText().take(200)}")
-        }
-        response.body<List<SolucionarioDto>>()
-            .map { it.toDomain(specialtiesById[it.especialidadId]?.name ?: it.descripcion) }
+        response.requireBackendSuccess(url)
+        response.body<V1DataResponse<V1ExamenDto>>()
+            .data
+            .map { it.toDomain(specialtiesById[it.especialidadId]?.name.orEmpty()) }
             .also { examsFlow.value = it }
     }
 
     override suspend fun refreshRafagas() = adapter.safeCall {
-        val specialtiesById = specialtiesFlow.value.associateBy { it.id }
-        val response = client.get("${contentUrl()}/rafaga") {
-            expectSuccess = false
-            backendHeaders()
-        }
-        if (!response.status.isSuccess()) {
-            error("backend ${response.status.value} /content/rafaga: ${response.bodyAsText().take(200)}")
-        }
-        response.body<List<RafagaDto>>()
-            .map { it.toDomain(specialtiesById[it.especialidadId]?.name.orEmpty()) }
-            .also { rafagasFlow.value = it }
+        // Legacy endpoint disabled until rafagas are migrated to /v1.
+        emptyList<Rafaga>().also { rafagasFlow.value = it }
     }
 
     override suspend fun getExamQuestions(examId: String) = adapter.safeCall {
-        client.get("${contentUrl()}/solucionarios/$examId/preguntas") { backendHeaders() }
-            .body<List<PreguntaDto>>()
-            .map { it.toDomain() }
+        val endpoint = BackendRoutes.v1ExamenPreguntas(examId)
+        val url = BackendRoutes.url(appConfig.baseUrl, endpoint)
+        val response = client.get(url) {
+            expectSuccess = false
+        }
+        response.requireBackendSuccess(url)
+        response.body<V1SingleDataResponse<V1PreguntasExamenDto>>()
+            .data
+            .preguntas
+            .map { it.toDomain(examId) }
     }
 
     override suspend fun getRafagaQuestions(rafagaId: String) = adapter.safeCall {
-        client.get("${contentUrl()}/rafaga/$rafagaId/preguntas") { backendHeaders() }
-            .body<List<RafagaPreguntaDto>>()
-            .map { it.toDomain() }
+        // Legacy endpoint disabled until rafaga questions are migrated to /v1.
+        emptyList<RafagaQuestion>()
     }
 
     override suspend fun getExamResourceAudit(examId: String): AppResult<ExamResourceAudit> {
@@ -123,6 +121,7 @@ class KtorContentRepositoryImpl(
         }
     }
 
+    // Legacy write endpoints: left unchanged until equivalent /v1 admin routes exist.
     override suspend fun upsertSpecialty(specialty: Specialty) = adapter.safeCall {
         val saved: EspecialidadDto = client.requestWithBody(
             url = "${contentUrl()}/especialidades",
@@ -383,6 +382,7 @@ class KtorContentRepositoryImpl(
     }
 
     private suspend fun HttpResponse.requireBackendSuccess(endpoint: String) {
+        println("backend ${status.value} $endpoint")
         if (!status.isSuccess()) {
             error("backend ${status.value} $endpoint: ${bodyAsText().take(200)}")
         }
@@ -512,6 +512,123 @@ private data class RecursoPreguntaDto(
 @Serializable
 private data class OrderDto(val ids: List<String>)
 
+@Serializable
+private data class V1DataResponse<T>(
+    val data: List<T> = emptyList(),
+)
+
+@Serializable
+private data class V1SingleDataResponse<T>(
+    val data: T,
+)
+
+@Serializable
+private data class V1EspecialidadDto(
+    val id: String = "",
+    val nombre: String = "",
+    val slug: String = "",
+)
+
+@Serializable
+private data class V1ExamenDto(
+    val id: String = "",
+    val codigoExamen: String = "",
+    val especialidadId: String = "",
+    val comunidadId: String? = null,
+    val titulo: String = "",
+    val descripcion: String = "",
+    val tipoExamen: String = "",
+    val tipoAcceso: String = "",
+    val totalPreguntas: Int = 0,
+    val duracionMinutos: Int? = null,
+    val anio: Int? = null,
+    val esOficial: Boolean = false,
+    val publicadoEn: String? = null,
+)
+
+@Serializable
+private data class V1PreguntasExamenDto(
+    val examenId: String = "",
+    val preguntas: List<V1PreguntaExamenDto> = emptyList(),
+)
+
+@Serializable
+private data class V1PreguntaExamenDto(
+    val id: String = "",
+    val codigoPregunta: String = "",
+    val titulo: String = "",
+    val tipoPregunta: String = "",
+    val posicion: Int = 0,
+    val opciones: List<V1OpcionPreguntaDto> = emptyList(),
+)
+
+@Serializable
+private data class V1OpcionPreguntaDto(
+    val id: String = "",
+    val letra: String = "",
+    val texto: String = "",
+)
+
+private fun V1EspecialidadDto.toDomain() = Specialty(
+    id = id,
+    name = nombre,
+    description = slug,
+    isActive = true,
+    sortOrder = 0,
+    linkedExams = 0,
+    createdAt = nowInstant(),
+    updatedAt = nowInstant(),
+)
+
+private fun V1ExamenDto.toDomain(specialtyName: String) = Exam(
+    id = id,
+    code = codigoExamen,
+    specialtyId = especialidadId,
+    communityId = comunidadId,
+    specialtyName = specialtyName,
+    title = titulo,
+    description = descripcion,
+    typeExam = tipoExamen,
+    typeAccess = tipoAcceso,
+    priceTickets = if (tipoAcceso == "premium") 1 else 0,
+    status = ExamStatus.PUBLISHED,
+    publishFrom = null,
+    publishedAt = publicadoEn.toInstantOrNull(),
+    sortOrder = anio ?: 0,
+    questionCount = totalPreguntas,
+    durationMinutes = duracionMinutos,
+    year = anio,
+    isOfficial = esOficial,
+    coverUrl = null,
+    coverStoragePath = null,
+    coverMimeType = null,
+    createdAt = nowInstant(),
+    updatedAt = nowInstant(),
+    deletedAt = null,
+)
+
+private fun V1PreguntaExamenDto.toDomain(examId: String) = ExamQuestion(
+    id = id,
+    examId = examId,
+    title = codigoPregunta.ifBlank { "Pregunta $posicion" },
+    statement = titulo,
+    sortOrder = posicion,
+    options = opciones.mapIndexed { index, option -> option.toDomain(questionId = id, index = index) }
+        .sortedBy { it.sortOrder },
+    resources = emptyList(),
+    createdAt = nowInstant(),
+    updatedAt = nowInstant(),
+)
+
+private fun V1OpcionPreguntaDto.toDomain(questionId: String, index: Int) = QuestionOption(
+    id = id,
+    questionId = questionId,
+    label = letra,
+    content = texto,
+    isCorrect = false,
+    sortOrder = index,
+)
+
 private fun EspecialidadDto.toDomain() = Specialty(
     id = id,
     name = nombre,
@@ -533,16 +650,23 @@ private fun Specialty.toDto() = EspecialidadDto(
 
 private fun SolucionarioDto.toDomain(specialtyName: String) = Exam(
     id = id,
+    code = "",
     specialtyId = especialidadId,
     specialtyName = specialtyName.ifBlank { descripcion },
+    communityId = null,
     title = titulo,
     description = descripcion,
+    typeExam = "inmersivo",
+    typeAccess = if (precioTickets > 0) "premium" else "gratuito",
     priceTickets = precioTickets,
     status = estado.toExamStatus(),
     publishFrom = publicarDesde.toInstantOrNull(),
     publishedAt = publishedAt.toInstantOrNull(),
     sortOrder = orden,
     questionCount = 0,
+    durationMinutes = null,
+    year = null,
+    isOfficial = false,
     coverUrl = portadaUrl,
     coverStoragePath = portadaStoragePath,
     coverMimeType = portadaMimeType,

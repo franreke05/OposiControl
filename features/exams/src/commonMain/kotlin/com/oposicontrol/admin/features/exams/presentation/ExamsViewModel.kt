@@ -9,6 +9,7 @@ import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamStatus
+import com.oposicontrol.admin.domain.model.isRafaga
 import com.oposicontrol.admin.domain.model.QuestionMoveDirection
 import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionResource
@@ -265,6 +266,7 @@ class ExamsViewModel(
                 specialtyActionState = UiAsync.Idle,
             )
         }
+        publishExams()
     }
 
     private fun selectContentSpecialty(id: String) {
@@ -338,10 +340,12 @@ class ExamsViewModel(
     private fun publishExams() {
         val query = currentState().searchQuery.trim().lowercase()
         val statusFilter = currentState().statusFilter.trim().lowercase()
+        val selectedSpecialtyId = currentState().selectedContentSpecialtyId
         val filtered = allExams.filter { exam ->
             (query.isBlank() ||
                 exam.title.lowercase().contains(query) ||
                 exam.specialtyName.lowercase().contains(query)) &&
+                (selectedSpecialtyId == null || exam.specialtyId == selectedSpecialtyId) &&
                 (statusFilter == "all" || exam.status.name.lowercase() == statusFilter)
         }
         updateState { it.copy(exams = if (filtered.isEmpty()) UiAsync.Empty else UiAsync.Success(filtered)) }
@@ -375,10 +379,21 @@ class ExamsViewModel(
                 editorResources = emptyList(),
                 resourceUploadStates = emptyMap(),
                 resourceAudit = UiAsync.Idle,
+                contentPendingMigrationMessage = "",
                 actionState = UiAsync.Idle,
             )
         }
-        loadQuestions(exam.id)
+        if (exam.isRafaga) {
+            loadQuestions(exam.id)
+        } else {
+            currentQuestions = emptyList()
+            updateState {
+                it.copy(
+                    questions = UiAsync.Idle,
+                    contentPendingMigrationMessage = "Contenido premium/inmersivo pendiente de migrar.",
+                )
+            }
+        }
     }
 
     private suspend fun selectRafaga(id: String) {
@@ -411,6 +426,7 @@ class ExamsViewModel(
                 editorResources = emptyList(),
                 uploadState = UiAsync.Idle,
                 resourceUploadStates = emptyMap(),
+                contentPendingMigrationMessage = "",
                 actionState = UiAsync.Idle,
             )
         }
@@ -418,7 +434,7 @@ class ExamsViewModel(
     }
 
     private suspend fun loadQuestions(examId: String) {
-        updateState { it.copy(questions = UiAsync.Loading) }
+        updateState { it.copy(questions = UiAsync.Loading, contentPendingMigrationMessage = "") }
         when (val result = getExamQuestionsUseCase(examId)) {
             is AppResult.Failure -> updateState { it.copy(questions = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
@@ -490,6 +506,7 @@ class ExamsViewModel(
                 resourceUploadStates = emptyMap(),
                 importState = UiAsync.Idle,
                 importSummary = "",
+                contentPendingMigrationMessage = "",
                 actionState = UiAsync.Idle,
             )
         }
@@ -528,6 +545,7 @@ class ExamsViewModel(
                 resourceUploadStates = emptyMap(),
                 importState = UiAsync.Idle,
                 importSummary = "",
+                contentPendingMigrationMessage = "",
                 actionState = UiAsync.Idle,
             )
         }

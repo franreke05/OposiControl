@@ -3,13 +3,13 @@ package com.oposicontrol.admin.data.repository
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.domain.model.ConnectionDiagnosticCheck
 import com.oposicontrol.admin.domain.model.ConnectionDiagnosticReport
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
-import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -27,39 +27,38 @@ class KtorConnectionDiagnosticsRepositoryImpl(
         val baseUrl = appConfig.baseUrl.trimEnd('/')
         checks += ConnectionDiagnosticCheck(
             name = "URL",
-            ok = !baseUrl.contains("localhost") && !baseUrl.contains("127.0.0.1"),
-            detail = baseUrl,
+            ok = true,
+            detail = "$baseUrl${if (baseUrl.isLocalDevelopmentUrl()) " (desarrollo local)" else ""}",
         )
         val sessionToken = sessionLocalDataSource.currentSession()?.accessToken?.ifBlank { null }
         checks += ConnectionDiagnosticCheck(
-            name = "Auth token",
-            ok = sessionToken != null || appConfig.backendToken.isNotBlank(),
+            name = "Auth token legacy/admin",
+            ok = true,
             detail = when {
                 sessionToken != null -> "sesion"
                 appConfig.backendToken.isNotBlank() -> "backend configurado"
-                else -> "sin token configurado"
+                else -> "pendiente: no requerido para /v1 contenido"
             },
         )
-        checks += runCheck("GET /health") {
-            client.get("$baseUrl/health").diagnosticDetail()
+        checks += runCheck("GET ${BackendRoutes.HEALTH}") {
+            client.get(BackendRoutes.url(baseUrl, BackendRoutes.HEALTH)).diagnosticDetail()
         }
-        checks += runCheck("GET /tags auth") {
-            client.get("$baseUrl/tags") {
-                backendHeaders()
-                parameter("q", "")
-            }.diagnosticDetail()
+        checks += runCheck("GET ${BackendRoutes.V1_ESPECIALIDADES}") {
+            client.get(BackendRoutes.url(baseUrl, BackendRoutes.V1_ESPECIALIDADES)).diagnosticDetail()
         }
-        checks += runCheck("GET /search auth") {
-            client.get("$baseUrl/search") {
-                backendHeaders()
-                parameter("q", "tcae")
-            }.diagnosticDetail()
+        checks += runCheck("GET ${BackendRoutes.V1_EXAMENES}") {
+            client.get(BackendRoutes.url(baseUrl, BackendRoutes.V1_EXAMENES)).diagnosticDetail()
         }
-        checks += runCheck("GET /content/especialidades") {
-            client.get("$baseUrl/content/especialidades") {
-                backendHeaders()
-            }.diagnosticDetail()
-        }
+        checks += ConnectionDiagnosticCheck(
+            name = "GET /tags auth",
+            ok = true,
+            detail = "pendiente: endpoint no migrado a /v1",
+        )
+        checks += ConnectionDiagnosticCheck(
+            name = "GET /search auth",
+            ok = true,
+            detail = "pendiente: endpoint no migrado a /v1",
+        )
         ConnectionDiagnosticReport(checks)
     }
 
@@ -141,10 +140,24 @@ class KtorConnectionDiagnosticsRepositoryImpl(
             lower.contains("connection refused") || lower.contains("failed to connect") && lower.contains("refused") ->
                 "Connection refused: IP alcanzable, pero puerto 8080 cerrado o Ktor no arrancado. $raw"
             lower.contains("connect timeout") || lower.contains("timeout") ->
-                "Timeout de red: el movil no recibe respuesta de $baseUrl. Revisa firewall Windows, red Publica/Privada, IP del PC o aislamiento WiFi. $raw"
+                baseUrl.backendUnavailableDetail(raw)
             lower.contains("unable to resolve host") || lower.contains("unknownhost") ->
-                "Host/IP incorrecto o sin DNS: revisa BASE_URL. $raw"
+                baseUrl.backendUnavailableDetail(raw)
             else -> raw
         }
+    }
+
+    private fun String.backendUnavailableDetail(raw: String): String {
+        return if (contains("ngrok", ignoreCase = true)) {
+            "Backend no disponible en $this. Activa ngrok o cambia BASE_URL a IP local/10.0.2.2. $raw"
+        } else {
+            "Backend no disponible en $this. Revisa Ktor, firewall, red, IP local o 10.0.2.2. $raw"
+        }
+    }
+
+    private fun String.isLocalDevelopmentUrl(): Boolean {
+        return contains("localhost", ignoreCase = true) ||
+            contains("127.0.0.1") ||
+            contains("10.0.2.2")
     }
 }
