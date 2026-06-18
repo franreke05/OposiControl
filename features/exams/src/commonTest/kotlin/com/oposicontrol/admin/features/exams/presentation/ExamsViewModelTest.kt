@@ -18,8 +18,10 @@ import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.ContentRepository
+import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
@@ -82,7 +84,9 @@ class ExamsViewModelTest {
             deleteRafagaQuestionUseCase = DeleteRafagaQuestionUseCase(repository),
             moveRafagaQuestionUseCase = MoveRafagaQuestionUseCase(repository),
             uploadExamCoverUseCase = UploadExamCoverUseCase(repository),
+            clearExamCoverUseCase = ClearExamCoverUseCase(repository),
             uploadQuestionResourceUseCase = UploadQuestionResourceUseCase(repository),
+            deleteQuestionResourceUseCase = DeleteQuestionResourceUseCase(repository),
             analyticsTracker = NoOpAnalyticsTracker,
         )
         advanceUntilIdle()
@@ -122,6 +126,7 @@ private class ExamsTestRepository : ContentRepository {
                 specialtyName = "TCAE",
                 title = "TCAE Marzo",
                 description = "",
+                typeExam = "rafaga",
                 priceTickets = 0,
                 status = ExamStatus.DRAFT,
                 publishFrom = null,
@@ -195,6 +200,15 @@ private class ExamsTestRepository : ContentRepository {
         exams.value = exams.value.map { if (it.id == examId) saved else it }
         return AppResult.Success(saved)
     }
+    override suspend fun clearExamCover(examId: String): AppResult<Exam> {
+        val saved = exams.value.first { it.id == examId }.copy(
+            coverUrl = null,
+            coverStoragePath = null,
+            coverMimeType = null,
+        )
+        exams.value = exams.value.map { if (it.id == examId) saved else it }
+        return AppResult.Success(saved)
+    }
     override suspend fun upsertQuestion(question: ExamQuestion): AppResult<ExamQuestion> {
         val bucket = questions.getOrPut(question.examId) { mutableListOf() }
         bucket.removeAll { it.id == question.id }
@@ -245,6 +259,7 @@ private class ExamsTestRepository : ContentRepository {
             ),
         )
     }
+    override suspend fun deleteResource(questionId: String, resourceId: String): AppResult<Unit> = AppResult.Success(Unit)
 
     private fun question(id: String, examId: String, order: Int): ExamQuestion {
         return ExamQuestion(

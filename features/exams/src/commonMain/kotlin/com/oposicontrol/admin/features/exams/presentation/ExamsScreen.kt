@@ -13,6 +13,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
@@ -20,8 +23,10 @@ import com.oposicontrol.admin.core.ui.components.AdminTable
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
+import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
 import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.GlassTextField
@@ -41,6 +46,7 @@ fun ExamsContent(
     state: ExamsState,
     onIntent: (ExamsIntent) -> Unit,
 ) {
+    var confirmDeleteExam by remember { mutableStateOf(false) }
     CrudSplitLayout(
         modifier = Modifier.fillMaxSize(),
         listPane = {
@@ -125,19 +131,27 @@ fun ExamsContent(
                     ResponsiveGlassActions(
                         actions = listOf(
                             FormAction("Guardar examen", 176, true) { onIntent(ExamsIntent.SaveExam) },
-                            FormAction("Eliminar examen", 176, state.selectedExamId != null) { onIntent(ExamsIntent.DeleteSelectedExam) },
+                            FormAction("Eliminar examen", 176, state.selectedExamId != null) { confirmDeleteExam = true },
                         ),
                     )
-                    when (val actionState = state.actionState) {
-                        is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
-                        UiAsync.Loading -> Text("Guardando...")
-                        is UiAsync.Success -> Text("Examen sincronizado.")
-                        else -> Unit
-                    }
+                    FormFeedback(state.actionState, successText = "Examen sincronizado.")
                 }
             }
         },
     )
+
+    if (confirmDeleteExam) {
+        ConfirmDialog(
+            title = "Eliminar examen",
+            message = "Se eliminará el examen seleccionado y su contenido asociado. ¿Continuar?",
+            confirmLabel = "Eliminar",
+            onConfirm = {
+                confirmDeleteExam = false
+                onIntent(ExamsIntent.DeleteSelectedExam)
+            },
+            onDismiss = { confirmDeleteExam = false },
+        )
+    }
 }
 
 private data class FormAction(
@@ -213,6 +227,7 @@ fun QuestionsResourcesScreen(
     viewModel: ExamsViewModel,
 ) {
     val state by viewModel.state.collectAsState()
+    var confirmDeleteQuestion by remember { mutableStateOf(false) }
     CrudSplitLayout(
         modifier = Modifier.fillMaxSize(),
         listPane = {
@@ -444,7 +459,8 @@ fun QuestionsResourcesScreen(
                     if (state.selectedQuestionId != null) {
                         GlassActionButton(
                             text = "Eliminar pregunta",
-                            onClick = { viewModel.dispatch(ExamsIntent.DeleteSelectedQuestion) },
+                            tint = MaterialTheme.colorScheme.error,
+                            onClick = { confirmDeleteQuestion = true },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -454,16 +470,24 @@ fun QuestionsResourcesScreen(
                         is UiAsync.Success -> Text("Recurso listo: ${uploadState.value}")
                         else -> Unit
                     }
-                    when (val actionState = state.actionState) {
-                        is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
-                        UiAsync.Loading -> Text("Guardando...")
-                        is UiAsync.Success -> Text("Pregunta sincronizada.")
-                        else -> Unit
-                    }
+                    FormFeedback(state.actionState, successText = "Pregunta sincronizada.")
                 }
             }
         },
     )
+
+    if (confirmDeleteQuestion) {
+        ConfirmDialog(
+            title = "Eliminar pregunta",
+            message = "Se eliminará la pregunta seleccionada y sus recursos. ¿Continuar?",
+            confirmLabel = "Eliminar",
+            onConfirm = {
+                confirmDeleteQuestion = false
+                viewModel.dispatch(ExamsIntent.DeleteSelectedQuestion)
+            },
+            onDismiss = { confirmDeleteQuestion = false },
+        )
+    }
 }
 
 @Composable

@@ -30,6 +30,16 @@ enum class AdminSection(
         description = "Catalogo base que organiza el contenido y los examenes.",
         primaryActionLabel = "Nueva especialidad",
     ),
+    COMMUNITIES(
+        label = "Comunidades",
+        description = "Catalogo de comunidades autonomas para acotar examenes por territorio.",
+        primaryActionLabel = "Nueva comunidad",
+    ),
+    TAGS(
+        label = "Etiquetas",
+        description = "Taxonomia que alimenta la busqueda global y la clasificacion de contenido.",
+        primaryActionLabel = "Nueva etiqueta",
+    ),
     NEWS_TYPES(
         label = "Tipos de noticia",
         description = "Catalogo de tipos editoriales y estados para comunicacion interna.",

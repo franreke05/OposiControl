@@ -9,6 +9,11 @@ data class DashboardMetrics(
     val totalQuestions: Int,
     val lastUpdatedAt: Instant,
     val draftExams: Int = 0,
+    val totalAttempts: Int = 0,
+    val activeUsers30d: Int = 0,
+    val avgScore: Double = 0.0,
+    val globalErrorRate: Double = 0.0,
+    val attemptsPerDay: List<DayCount> = emptyList(),
     val questionsWithoutResources: Int = 0,
     val linkedResources: Int = 0,
     val pendingResources: Int = 0,
@@ -24,6 +29,11 @@ data class DashboardMetrics(
     val latestImportLabel: String = "Sin registro de importaciones",
     val alerts: List<DashboardAlert> = emptyList(),
     val recentEvents: List<DashboardActivityEvent> = emptyList(),
+)
+
+data class DayCount(
+    val date: String,
+    val count: Int,
 )
 
 data class DashboardAlert(

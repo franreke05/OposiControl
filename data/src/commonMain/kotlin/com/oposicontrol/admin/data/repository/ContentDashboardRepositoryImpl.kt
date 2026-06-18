@@ -2,6 +2,7 @@ package com.oposicontrol.admin.data.repository
 
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.common.result.getOrNull
+import com.oposicontrol.admin.data.remote.api.DashboardApi
 import com.oposicontrol.admin.domain.model.CommerceStatus
 import com.oposicontrol.admin.domain.model.DashboardActivityEvent
 import com.oposicontrol.admin.domain.model.DashboardAlert
@@ -20,6 +21,7 @@ class ContentDashboardRepositoryImpl(
     private val contentRepository: ContentRepository,
     private val commerceRepository: CommerceRepository,
     private val newsRepository: NewsRepository,
+    private val dashboardApi: DashboardApi,
 ) : DashboardRepository {
     override suspend fun getMetrics(): AppResult<DashboardMetrics> {
         return when (val specialties = contentRepository.refreshSpecialties()) {
@@ -32,6 +34,7 @@ class ContentDashboardRepositoryImpl(
                     }
                     val commerceSnapshot = loadCommerceSnapshot()
                     val news = newsRepository.refreshNews().getOrNull().orEmpty()
+                    val performanceMetrics = runCatching { dashboardApi.getMetrics() }.getOrNull()
                     val questionsWithoutResources = audits.sumOf { it.summary.questionsWithoutResources }
                     val unlinkedResources = audits.sumOf { it.summary.unlinkedResources }
                     val pendingResources = audits.sumOf { it.summary.pendingResources }
@@ -49,6 +52,11 @@ class ContentDashboardRepositoryImpl(
                         totalQuestions = exams.value.sumOf { it.questionCount },
                             lastUpdatedAt = now,
                             draftExams = exams.value.count { it.status == ExamStatus.DRAFT },
+                            totalAttempts = performanceMetrics?.totalAttempts ?: 0,
+                            activeUsers30d = performanceMetrics?.activeUsers30d ?: 0,
+                            avgScore = performanceMetrics?.avgScore ?: 0.0,
+                            globalErrorRate = performanceMetrics?.globalErrorRate ?: 0.0,
+                            attemptsPerDay = performanceMetrics?.attemptsPerDay.orEmpty(),
                             questionsWithoutResources = questionsWithoutResources,
                             linkedResources = audits.sumOf { it.summary.linkedResources },
                             pendingResources = pendingResources,

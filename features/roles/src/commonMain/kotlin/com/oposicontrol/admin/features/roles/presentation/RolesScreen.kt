@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -21,8 +20,11 @@ import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
+import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.FilterBar
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.GlassChipGroup
+import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 @Composable
 fun RolesScreen(
@@ -30,6 +32,7 @@ fun RolesScreen(
 ) {
     val state by viewModel.state.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
+    val selectedRole = (state.roles as? UiAsync.Success)?.value?.firstOrNull { it.id == state.selectedRoleId }
 
     CrudSplitLayout(
         modifier = Modifier.fillMaxSize(),
@@ -54,7 +57,7 @@ fun RolesScreen(
                                 key = role.id,
                                 cells = listOf(role.name, role.permissions.size.toString()),
                                 selected = role.id == state.selectedRoleId,
-                                supporting = role.permissions.joinToString { it.key },
+                                supporting = role.permissions.joinToString { it.label }.ifBlank { "Sin permisos" },
                             )
                         },
                         onRowClick = { viewModel.dispatch(RolesIntent.SelectRole(it)) },
@@ -64,33 +67,36 @@ fun RolesScreen(
         },
         detailPane = {
             FormSection(
-                title = if (state.selectedRoleId == null) "Nuevo rol" else "Editor de rol",
-                description = "Permisos provisionales en CSV hasta conectar el modelo real.",
+                title = selectedRole?.name ?: "Detalle de rol",
+                description = "Catálogo de roles gestionado en el backend (solo lectura desde el panel).",
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = state.editorName,
-                        onValueChange = { viewModel.dispatch(RolesIntent.UpdateName(it)) },
-                        label = { Text("Nombre del rol") },
-                        modifier = Modifier.fillMaxWidth(),
+                if (selectedRole == null) {
+                    EmptyStateCard(
+                        title = "Selecciona un rol",
+                        message = "Elige un rol de la lista para ver sus permisos asignados.",
                     )
-                    OutlinedTextField(
-                        value = state.editorPermissions,
-                        onValueChange = { viewModel.dispatch(RolesIntent.UpdatePermissions(it)) },
-                        label = { Text("Permisos CSV") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    androidx.compose.material3.Button(
-                        onClick = { viewModel.dispatch(RolesIntent.Save) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Guardar rol")
-                    }
-                    when (val actionState = state.actionState) {
-                        is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
-                        UiAsync.Loading -> Text("Persistiendo rol...")
-                        is UiAsync.Success -> Text("Rol actualizado.")
-                        else -> Unit
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "Permisos",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = GlassTheme.tokens.textSecondary,
+                        )
+                        if (selectedRole.permissions.isEmpty()) {
+                            Text(
+                                text = "Este rol no tiene permisos granulares definidos.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = GlassTheme.tokens.textSecondary,
+                            )
+                        } else {
+                            GlassChipGroup(
+                                options = selectedRole.permissions.map { it.key to it.label },
+                                selected = selectedRole.permissions.map { it.key }.toSet(),
+                                onToggle = {},
+                                enabled = false,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             }

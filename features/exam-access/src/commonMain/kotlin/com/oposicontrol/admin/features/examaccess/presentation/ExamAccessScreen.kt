@@ -4,25 +4,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AdminTable
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
+import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.GlassActionButton
+import com.oposicontrol.admin.core.ui.components.GlassTextField
+import com.oposicontrol.admin.core.ui.components.GlassToggleRow
 import com.oposicontrol.admin.core.ui.components.StatusChip
+import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 @Composable
 fun ExamAccessScreen(
@@ -61,49 +62,54 @@ fun ExamAccessScreen(
         detailPane = {
             FormSection(
                 title = if (state.selectedId == null) "Conceder acceso" else "Detalle de acceso",
-                description = "Operacion para revisar y conceder accesos reales por usuario y examen.",
+                description = "Revisa y concede accesos reales por usuario y examen.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     StatusChip(if (state.editorIsActive) "active" else "inactive")
-                    OutlinedTextField(
+                    FieldLabel("Usuario")
+                    GlassTextField(
                         value = state.editorUserName,
                         onValueChange = { viewModel.dispatch(ExamAccessIntent.UpdateUserName(it)) },
-                        label = { Text("Usuario") },
+                        placeholder = "ID o nombre del usuario",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
+                    FieldLabel("Examen")
+                    GlassTextField(
                         value = state.editorExamTitle,
                         onValueChange = { viewModel.dispatch(ExamAccessIntent.UpdateExamTitle(it)) },
-                        label = { Text("Examen") },
+                        placeholder = "Título del examen",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
+                    FieldLabel("Tipo de acceso")
+                    GlassTextField(
                         value = state.editorAccessType,
                         onValueChange = { viewModel.dispatch(ExamAccessIntent.UpdateAccessType(it)) },
-                        label = { Text("Tipo de acceso") },
+                        placeholder = "compra, regalo, prueba…",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Acceso activo")
-                        Switch(
-                            checked = state.editorIsActive,
-                            onCheckedChange = { viewModel.dispatch(ExamAccessIntent.ToggleActive(it)) },
-                        )
-                    }
-                    Button(
+                    GlassToggleRow(
+                        title = "Acceso activo",
+                        description = "Si está desactivado, el usuario no podrá abrir el examen.",
+                        checked = state.editorIsActive,
+                        onCheckedChange = { viewModel.dispatch(ExamAccessIntent.ToggleActive(it)) },
+                    )
+                    GlassActionButton(
+                        text = "Guardar acceso",
                         onClick = { viewModel.dispatch(ExamAccessIntent.Save) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Guardar acceso")
-                    }
-                    when (val actionState = state.actionState) {
-                        is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
-                        UiAsync.Loading -> Text("Guardando...")
-                        is UiAsync.Success -> Text("Acceso preparado para integracion segura.")
-                        else -> Unit
-                    }
+                    )
+                    FormFeedback(state.actionState, successText = "Acceso guardado.")
                 }
             }
         },
+    )
+}
+
+@Composable
+private fun FieldLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = GlassTheme.tokens.textSecondary,
     )
 }

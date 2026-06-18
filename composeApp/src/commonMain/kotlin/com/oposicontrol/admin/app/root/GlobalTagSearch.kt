@@ -236,6 +236,8 @@ private fun AdminSection.searchSectionKey(): String {
         AdminSection.USERS -> "usuarios"
         AdminSection.ROLES -> "roles"
         AdminSection.SPECIALTIES -> "especialidades"
+        AdminSection.COMMUNITIES -> "comunidades"
+        AdminSection.TAGS -> "etiquetas"
         AdminSection.NEWS_TYPES -> "tipos_noticia"
         AdminSection.NEWS -> "noticias"
         AdminSection.EXAMS -> "examenes"
@@ -255,6 +257,8 @@ private fun String.toAdminSection(entityType: String): AdminSection? {
         "usuarios" -> AdminSection.USERS
         "roles" -> AdminSection.ROLES
         "especialidades" -> AdminSection.SPECIALTIES
+        "comunidades" -> AdminSection.COMMUNITIES
+        "etiquetas" -> AdminSection.TAGS
         "tipos_noticia" -> AdminSection.NEWS_TYPES
         "noticias" -> AdminSection.NEWS
         "examenes" -> AdminSection.EXAMS

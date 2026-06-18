@@ -12,6 +12,11 @@ fun DesktopModerationRoot(
         appConfig = appConfig,
         sections = listOf(
             AdminSection.DASHBOARD,
+            AdminSection.SPECIALTIES,
+            AdminSection.TAGS,
+            AdminSection.EXAMS,
+            AdminSection.QUESTIONS_RESOURCES,
+            AdminSection.NEWS,
             AdminSection.USERS,
             AdminSection.ROLES,
             AdminSection.EXAM_ACCESS,

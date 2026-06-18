@@ -20,6 +20,8 @@ dependencies {
     implementation(libs.ktor.server.statusPages)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.kotlinx.serialization.json)
+    // Verificacion de JWT de Supabase (ES256). La clave EC se construye desde el JWKS publico.
+    implementation("com.auth0:java-jwt:4.4.0")
 }
 
 tasks.named<JavaExec>("run") {

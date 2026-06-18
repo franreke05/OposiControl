@@ -56,7 +56,7 @@ class SettingsLocalDataSource(
             email = "admin@oposicontrol.local",
             receiveReleaseNotes = true,
             defaultEnvironment = appConfig.environment,
-            preferFakeData = appConfig.featureFlags.useFakeData,
+            preferFakeData = false,
             enableVerboseLogs = appConfig.featureFlags.enableLogs,
         )
     }

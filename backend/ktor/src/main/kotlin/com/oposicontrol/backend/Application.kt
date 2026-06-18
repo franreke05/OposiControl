@@ -68,10 +68,23 @@ fun Application.module() {
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir admin desde Ktor.")
     val v1Gateway = SupabaseV1Gateway.fromEnvironment(json)
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir API V1 desde Ktor.")
+    val adminV1Gateway = AdminV1Gateway.fromEnvironment(json)
+        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir admin API V1 desde Ktor.")
+    val appV1Gateway = AppV1Gateway.fromEnvironment(json)
+        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir app API V1 desde Ktor.")
+    val supabaseUrl = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
+    val jwtVerifier = SupabaseJwtVerifier(supabaseUrl, json)
+    val allowDevUser = System.getenv("OPOSICONTROL_ALLOW_DEV_USER")?.toBooleanStrictOrNull() ?: false
     install(ContentNegotiation) {
         json(json)
     }
     install(StatusPages) {
+        exception<AppUnauthorized> { call, cause ->
+            call.respond(
+                HttpStatusCode.Unauthorized,
+                ErrorDto(error = "unauthorized", message = cause.message ?: "No autorizado."),
+            )
+        }
         exception<IllegalArgumentException> { call, cause ->
             call.respond(
                 HttpStatusCode.BadRequest,
@@ -121,8 +134,10 @@ fun Application.module() {
             )
         }
         v1Routes(v1Gateway)
+        appV1Routes(appV1Gateway, jwtVerifier, allowDevUser)
         authenticate("gateway-auth") {
             adminRoutes(adminGateway)
+            adminV1Routes(adminV1Gateway)
             post("/admin/backend/restart") {
                 val restart = BackendRestartRequest.fromEnvironment()
                 if (restart == null) {
@@ -170,6 +185,24 @@ fun Application.module() {
                         val id = call.requiredPath("especialidadId")
                         gateway.deleteEspecialidad(id)
                         tagSearchGateway.remove("especialidad", id)
+                        call.respond(HttpStatusCode.NoContent)
+                    }
+                }
+                route("/etiquetas") {
+                    get { call.respond(gateway.listEtiquetas()) }
+                    post { call.respond(HttpStatusCode.Created, gateway.saveEtiqueta(call.receive())) }
+                    put { call.respond(gateway.saveEtiqueta(call.receive())) }
+                    delete("/{etiquetaId}") {
+                        gateway.deleteEtiqueta(call.requiredPath("etiquetaId"))
+                        call.respond(HttpStatusCode.NoContent)
+                    }
+                }
+                route("/comunidades") {
+                    get { call.respond(gateway.listComunidades()) }
+                    post { call.respond(HttpStatusCode.Created, gateway.saveComunidad(call.receive())) }
+                    put { call.respond(gateway.saveComunidad(call.receive())) }
+                    delete("/{comunidadId}") {
+                        gateway.deleteComunidad(call.requiredPath("comunidadId"))
                         call.respond(HttpStatusCode.NoContent)
                     }
                 }
@@ -667,6 +700,26 @@ data class EspecialidadDto(
     val updatedAt: String = "",
 )
 
+@Serializable
+data class EtiquetaDto(
+    val id: String = "",
+    val nombre: String,
+    val slug: String = "",
+    val origen: String = "manual",
+)
+
+@Serializable
+data class ComunidadDto(
+    val id: String = "",
+    val nombre: String,
+    val codigo: String = "",
+    val slug: String = "",
+    val activa: Boolean = true,
+    val orden: Int = 0,
+    val createdAt: String = "",
+    val updatedAt: String = "",
+)
+
 private class SupabaseContentGateway private constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
@@ -700,6 +753,48 @@ private class SupabaseContentGateway private constructor(
 
     fun deleteEspecialidad(especialidadId: String) {
         request("DELETE", "/rest/v1/especialidad?id=eq.${especialidadId.toIntId()}", null)
+    }
+
+    fun listEtiquetas(): List<EtiquetaDto> {
+        return request("GET", "/rest/v1/etiquetas?select=*&order=nombre.asc", null)
+            .decodeList<EtiquetaRow>()
+            .map { it.toDto() }
+    }
+
+    fun saveEtiqueta(input: EtiquetaDto): EtiquetaDto {
+        require(input.nombre.isNotBlank()) { "La etiqueta necesita nombre." }
+        val saved = request(
+            "POST",
+            "/rest/v1/etiquetas?on_conflict=id",
+            json.encodeToString(listOf(input.toRow())),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<EtiquetaRow>().first()
+        return saved.toDto()
+    }
+
+    fun deleteEtiqueta(etiquetaId: String) {
+        request("DELETE", "/rest/v1/etiquetas?id=eq.$etiquetaId", null)
+    }
+
+    fun listComunidades(): List<ComunidadDto> {
+        return request("GET", "/rest/v1/comunidades_autonomas?select=*&order=posicion.asc,nombre.asc", null)
+            .decodeList<ComunidadRow>()
+            .map { it.toDto() }
+    }
+
+    fun saveComunidad(input: ComunidadDto): ComunidadDto {
+        require(input.nombre.isNotBlank()) { "La comunidad necesita nombre." }
+        val saved = request(
+            "POST",
+            "/rest/v1/comunidades_autonomas?on_conflict=id",
+            json.encodeToString(listOf(input.toRow())),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<ComunidadRow>().first()
+        return saved.toDto()
+    }
+
+    fun deleteComunidad(comunidadId: String) {
+        request("DELETE", "/rest/v1/comunidades_autonomas?id=eq.$comunidadId", null)
     }
 
     fun listSolucionarios(): List<SolucionarioDto> {
@@ -1328,6 +1423,56 @@ private fun EspecialidadDto.toRow() = EspecialidadRow(
     nombre = nombre,
     slug = slug.ifBlank { nombre.toSlug() },
     activa = activa,
+)
+
+// Tabla real `etiquetas`: id uuid, nombre, slug, descripcion, color_hex, activa, creado_en, actualizado_en.
+@Serializable
+private data class EtiquetaRow(
+    val id: String? = null,
+    val nombre: String,
+    val slug: String = "",
+)
+
+private fun EtiquetaRow.toDto() = EtiquetaDto(
+    id = id.orEmpty(),
+    nombre = nombre,
+    slug = slug,
+    origen = "manual",
+)
+
+private fun EtiquetaDto.toRow() = EtiquetaRow(
+    id = id.ifBlank { java.util.UUID.randomUUID().toString() },
+    nombre = nombre,
+    slug = slug.ifBlank { nombre.toSlug() },
+)
+
+// Tabla real `comunidades_autonomas`: id uuid, codigo, nombre, slug, activa, posicion, creado_en, actualizado_en.
+@Serializable
+private data class ComunidadRow(
+    val id: String? = null,
+    val codigo: String = "",
+    val nombre: String,
+    val slug: String = "",
+    val activa: Boolean = true,
+    val posicion: Int = 0,
+)
+
+private fun ComunidadRow.toDto() = ComunidadDto(
+    id = id.orEmpty(),
+    nombre = nombre,
+    codigo = codigo,
+    slug = slug,
+    activa = activa,
+    orden = posicion,
+)
+
+private fun ComunidadDto.toRow() = ComunidadRow(
+    id = id.ifBlank { java.util.UUID.randomUUID().toString() },
+    codigo = codigo,
+    nombre = nombre,
+    slug = slug.ifBlank { nombre.toSlug() },
+    activa = activa,
+    posicion = orden,
 )
 
 private fun ExamenRow.toDto(specialtyName: String, questionCount: Int) = SolucionarioDto(

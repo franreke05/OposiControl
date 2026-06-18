@@ -4,24 +4,25 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AdminTable
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
+import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.GlassActionButton
+import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.StatusChip
+import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 @Composable
 fun ModerationScreen(
@@ -35,14 +36,14 @@ fun ModerationScreen(
                 FilterBar(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(ModerationIntent.UpdateSearch(it)) },
-                    placeholder = "Buscar usuario o accion",
+                    placeholder = "Buscar usuario o acción",
                 )
-                AsyncStatePane(state.actions, emptyMessage = "No hay acciones de moderacion.") { actions ->
+                AsyncStatePane(state.actions, emptyMessage = "No hay acciones de moderación.") { actions ->
                     AdminTable(
                         columns = listOf(
-                            AdminTableColumn("Accion", 0.9f),
+                            AdminTableColumn("Acción", 0.9f),
                             AdminTableColumn("Usuario", 1.1f),
-                            AdminTableColumn("Executor", 1.1f),
+                            AdminTableColumn("Ejecutor", 1.1f),
                             AdminTableColumn("Fecha", 0.9f),
                         ),
                         rows = actions.map { action ->
@@ -60,49 +61,59 @@ fun ModerationScreen(
         },
         detailPane = {
             FormSection(
-                title = if (state.selectedId == null) "Nueva accion" else "Detalle de moderacion",
-                description = "Base para warnings, mutes, cierres de chat y notas internas.",
+                title = if (state.selectedId == null) "Nueva acción" else "Detalle de moderación",
+                description = "Warnings, mutes, cierres de chat y notas internas.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatusChip(state.editorActionType)
-                    OutlinedTextField(
+                    if (state.editorActionType.isNotBlank()) {
+                        StatusChip(state.editorActionType)
+                    }
+                    FieldLabel("Tipo de acción")
+                    GlassTextField(
                         value = state.editorActionType,
                         onValueChange = { viewModel.dispatch(ModerationIntent.UpdateActionType(it)) },
-                        label = { Text("Tipo de accion") },
+                        placeholder = "warning, mute, ban…",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
+                    FieldLabel("Usuario objetivo")
+                    GlassTextField(
                         value = state.editorTargetUser,
                         onValueChange = { viewModel.dispatch(ModerationIntent.UpdateTargetUser(it)) },
-                        label = { Text("Usuario objetivo") },
+                        placeholder = "ID o nombre del usuario",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
+                    FieldLabel("Ejecutado por")
+                    GlassTextField(
                         value = state.editorExecutor,
                         onValueChange = { viewModel.dispatch(ModerationIntent.UpdateExecutor(it)) },
-                        label = { Text("Ejecutado por") },
+                        placeholder = "Responsable de la acción",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
+                    FieldLabel("Razón")
+                    GlassTextField(
                         value = state.editorReason,
                         onValueChange = { viewModel.dispatch(ModerationIntent.UpdateReason(it)) },
-                        label = { Text("Razon") },
+                        placeholder = "Motivo de la medida",
+                        singleLine = false,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Button(
+                    GlassActionButton(
+                        text = "Registrar acción",
                         onClick = { viewModel.dispatch(ModerationIntent.Save) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Registrar accion")
-                    }
-                    when (val actionState = state.actionState) {
-                        is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
-                        UiAsync.Loading -> Text("Guardando...")
-                        is UiAsync.Success -> Text("Accion preparada para persistencia posterior.")
-                        else -> Unit
-                    }
+                    )
+                    FormFeedback(state.actionState, successText = "Acción registrada.")
                 }
             }
         },
+    )
+}
+
+@Composable
+private fun FieldLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = GlassTheme.tokens.textSecondary,
     )
 }

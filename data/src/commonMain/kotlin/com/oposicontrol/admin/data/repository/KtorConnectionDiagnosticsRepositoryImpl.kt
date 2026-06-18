@@ -49,6 +49,26 @@ class KtorConnectionDiagnosticsRepositoryImpl(
         checks += runCheck("GET ${BackendRoutes.V1_EXAMENES}") {
             client.get(BackendRoutes.url(baseUrl, BackendRoutes.V1_EXAMENES)).diagnosticDetail()
         }
+        checks += runCheck("GET ${BackendRoutes.ADMIN_V1_ESPECIALIDADES}") {
+            client.get(BackendRoutes.url(baseUrl, BackendRoutes.ADMIN_V1_ESPECIALIDADES)) {
+                backendHeaders()
+            }.diagnosticDetail()
+        }
+        checks += runCheck("GET ${BackendRoutes.ADMIN_V1_EXAMENES}") {
+            client.get(BackendRoutes.url(baseUrl, BackendRoutes.ADMIN_V1_EXAMENES)) {
+                backendHeaders()
+            }.diagnosticDetail()
+        }
+        checks += runCheck("GET ${BackendRoutes.ADMIN_V1_FEEDBACK_PREGUNTAS}") {
+            client.get(BackendRoutes.url(baseUrl, BackendRoutes.ADMIN_V1_FEEDBACK_PREGUNTAS)) {
+                backendHeaders()
+            }.diagnosticDetail()
+        }
+        checks += runCheck("GET ${BackendRoutes.ADMIN_V1_AUDITORIA}") {
+            client.get(BackendRoutes.url(baseUrl, BackendRoutes.ADMIN_V1_AUDITORIA)) {
+                backendHeaders()
+            }.diagnosticDetail()
+        }
         checks += ConnectionDiagnosticCheck(
             name = "GET /tags auth",
             ok = true,

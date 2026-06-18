@@ -19,12 +19,9 @@ object AppConfigResolver {
                 ?.ifBlank { DEFAULT_SUPABASE_BUCKET_EXAM_RESOURCES }
                 ?: DEFAULT_SUPABASE_BUCKET_EXAM_RESOURCES,
             featureFlags = FeatureFlags(
-                useFakeData = source.read(KEY_USE_FAKE_DATA)?.toBooleanStrictOrNull() ?: false,
                 enableLogs = source.read(KEY_ENABLE_LOGS)?.toBooleanStrictOrNull() ?: environment != Environment.PROD,
                 enableAnalytics = source.read(KEY_ENABLE_ANALYTICS)?.toBooleanStrictOrNull() ?: environment != Environment.DEV,
                 enableVerboseNetworkLogs = source.read(KEY_ENABLE_VERBOSE_NETWORK_LOGS)?.toBooleanStrictOrNull() ?: environment == Environment.DEV,
-                fakeLatencyMs = source.read(KEY_FAKE_LATENCY_MS)?.toLongOrNull() ?: 120L,
-                fakeErrorRate = source.read(KEY_FAKE_ERROR_RATE)?.toDoubleOrNull() ?: 0.0,
             ),
             appName = source.read(KEY_APP_NAME) ?: "OposiControl Admin",
             appVersion = source.read(KEY_APP_VERSION) ?: "1.0.0",
@@ -51,12 +48,9 @@ object AppConfigResolver {
     const val KEY_SUPABASE_URL = "SUPABASE_URL"
     const val KEY_SUPABASE_ANON_KEY = "SUPABASE_ANON_KEY"
     const val KEY_SUPABASE_BUCKET_EXAM_RESOURCES = "SUPABASE_BUCKET_EXAM_RESOURCES"
-    const val KEY_USE_FAKE_DATA = "USE_FAKE_DATA"
     const val KEY_ENABLE_LOGS = "ENABLE_LOGS"
     const val KEY_ENABLE_ANALYTICS = "ENABLE_ANALYTICS"
     const val KEY_ENABLE_VERBOSE_NETWORK_LOGS = "ENABLE_VERBOSE_NETWORK_LOGS"
-    const val KEY_FAKE_LATENCY_MS = "FAKE_LATENCY_MS"
-    const val KEY_FAKE_ERROR_RATE = "FAKE_ERROR_RATE"
     const val KEY_APP_NAME = "APP_NAME"
     const val KEY_APP_VERSION = "APP_VERSION"
 

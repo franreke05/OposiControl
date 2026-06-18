@@ -42,7 +42,9 @@ import com.oposicontrol.admin.domain.model.DashboardActivityEvent
 import com.oposicontrol.admin.domain.model.DashboardAlert
 import com.oposicontrol.admin.domain.model.DashboardAlertSeverity
 import com.oposicontrol.admin.domain.model.DashboardMetrics
+import com.oposicontrol.admin.domain.model.DayCount
 import kotlinx.datetime.Instant
+import kotlin.math.roundToInt
 
 enum class DashboardQuickAction {
     REVIEW_PENDING,
@@ -110,6 +112,7 @@ fun DashboardContent(
                         )
                         DashboardKpiGrid(metrics = metrics, compact = compact, tablet = tablet)
                         DashboardAlertsSection(metrics.alerts, compact = compact, onQuickAction = onQuickAction)
+                        DashboardPerformanceSection(metrics = metrics, compact = compact)
                         DashboardQuickActions(compact = compact, onQuickAction = onQuickAction)
                         DashboardPanelGroup(
                             title = "Estado de contenido",
@@ -369,6 +372,177 @@ private fun DashboardAlertsSection(
             visibleAlerts.take(5).forEach { alert ->
                 DashboardAlertRow(alert = alert, onClick = { onQuickAction(actionForAlert(alert)) })
             }
+        }
+    }
+}
+
+@Composable
+private fun DashboardPerformanceSection(metrics: DashboardMetrics, compact: Boolean) {
+    DashboardSectionSurface(modifier = Modifier.heightIn(min = if (compact) 466.dp else 452.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            DashboardSectionTitle("Rendimiento de usuarios")
+            AttemptsBarChart(
+                attemptsPerDay = metrics.attemptsPerDay,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (compact) 154.dp else 164.dp),
+            )
+            DashboardPerformanceMetricGrid(metrics = metrics, compact = compact)
+        }
+    }
+}
+
+@Composable
+fun AttemptsBarChart(attemptsPerDay: List<DayCount>, modifier: Modifier = Modifier) {
+    val days = attemptsPerDay.takeLast(30)
+    val maxCount = days.maxOfOrNull { it.count }?.coerceAtLeast(1) ?: 1
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        if (days.isEmpty()) {
+            Text(
+                text = "Sin intentos completados",
+                modifier = Modifier.align(Alignment.Center),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, letterSpacing = 0.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                days.forEach { day ->
+                    DashboardAttemptBar(day = day, maxCount = maxCount)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardAttemptBar(day: DayCount, maxCount: Int) {
+    val barHeight = if (day.count == 0) 4.dp else ((day.count * 84) / maxCount).coerceAtLeast(8).dp
+    val barColor = if (day.count == 0) {
+        MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+    } else {
+        GlassTheme.tokens.accent
+    }
+    Column(
+        modifier = Modifier
+            .width(28.dp)
+            .height(130.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Bottom,
+    ) {
+        Text(
+            text = day.count.toString(),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, letterSpacing = 0.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Box(
+            modifier = Modifier
+                .width(12.dp)
+                .height(92.dp),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(12.dp)
+                    .height(barHeight)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(barColor),
+            )
+        }
+        Text(
+            text = shortDateLabel(day.date),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, letterSpacing = 0.sp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun DashboardPerformanceMetricGrid(metrics: DashboardMetrics, compact: Boolean) {
+    val cardWidth = if (compact) 138.dp else 248.dp
+    val cardHeight = if (compact) 86.dp else 92.dp
+    val items = listOf(
+        KpiItem("Usuarios activos (30d)", metrics.activeUsers30d.toString(), "Ultimos 30 dias"),
+        KpiItem("Intentos totales", metrics.totalAttempts.toString(), "Completados"),
+        KpiItem("Puntuacion media", "${metrics.avgScore.roundToInt()}%", "Acierto global"),
+        KpiItem("Tasa de error", "${metrics.globalErrorRate.roundToInt()}%", "Respuestas falladas"),
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        items.chunked(2).forEach { rowItems ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                rowItems.forEachIndexed { index, item ->
+                    DashboardPerformanceMetricCard(
+                        item = item,
+                        accentColor = when (item.title) {
+                            "Tasa de error" -> MaterialTheme.colorScheme.error
+                            "Puntuacion media" -> GlassTheme.tokens.success
+                            else -> MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier.width(cardWidth).height(cardHeight),
+                    )
+                    if (rowItems.size == 1 && index == 0) {
+                        Box(modifier = Modifier.width(cardWidth).height(cardHeight))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DashboardPerformanceMetricCard(item: KpiItem, accentColor: Color, modifier: Modifier) {
+    GlassSurface(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        tint = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        shadowElevation = 4.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, letterSpacing = 0.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.value,
+                style = MaterialTheme.typography.headlineSmall.copy(fontSize = 24.sp, letterSpacing = 0.sp),
+                color = accentColor,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.supporting,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, letterSpacing = 0.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -764,6 +938,14 @@ private fun compactInstant(value: Instant): String {
         .replace("T", " ")
 }
 
+private fun shortDateLabel(date: String): String {
+    return if (date.length >= 10) {
+        "${date.substring(8, 10)}/${date.substring(5, 7)}"
+    } else {
+        date.takeLast(4)
+    }
+}
+
 private data class KpiItem(
     val title: String,
     val value: String,
@@ -795,6 +977,19 @@ private fun DashboardPreview() {
                         totalQuestions = 320,
                         lastUpdatedAt = Instant.parse("2026-04-14T09:00:00Z"),
                         draftExams = 4,
+                        totalAttempts = 186,
+                        activeUsers30d = 42,
+                        avgScore = 74.6,
+                        globalErrorRate = 25.4,
+                        attemptsPerDay = listOf(
+                            DayCount("2026-04-08", 4),
+                            DayCount("2026-04-09", 7),
+                            DayCount("2026-04-10", 3),
+                            DayCount("2026-04-11", 10),
+                            DayCount("2026-04-12", 8),
+                            DayCount("2026-04-13", 14),
+                            DayCount("2026-04-14", 11),
+                        ),
                         questionsWithoutResources = 18,
                         linkedResources = 106,
                         pendingResources = 3,

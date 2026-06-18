@@ -4,10 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -17,14 +14,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AdminTable
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
+import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.GlassActionButton
+import com.oposicontrol.admin.core.ui.components.GlassChipGroup
+import com.oposicontrol.admin.core.ui.components.GlassTextField
+import com.oposicontrol.admin.core.ui.components.GlassToggleRow
+import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 @Composable
 fun UsersScreen(
@@ -32,6 +35,10 @@ fun UsersScreen(
 ) {
     val state by viewModel.state.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val roleName = remember(state.availableRoles) {
+        state.availableRoles.associate { it.id to it.name }
+    }
 
     CrudSplitLayout(
         modifier = Modifier.fillMaxSize(),
@@ -52,14 +59,17 @@ fun UsersScreen(
                         columns = listOf(
                             AdminTableColumn("Nombre", 1.2f),
                             AdminTableColumn("Email", 1.3f),
-                            AdminTableColumn("Activo", 0.7f),
+                            AdminTableColumn("Estado", 0.7f),
                         ),
                         rows = filtered.map { user ->
                             AdminTableRow(
                                 key = user.id,
-                                cells = listOf(user.fullName, user.email, if (user.isActive) "active" else "inactive"),
+                                cells = listOf(user.fullName, user.email, if (user.isActive) "activo" else "inactivo"),
                                 selected = user.id == state.selectedUserId,
-                                supporting = user.roleIds.joinToString(),
+                                supporting = user.roleIds
+                                    .map { roleName[it] ?: it }
+                                    .joinToString()
+                                    .ifBlank { "Sin roles" },
                             )
                         },
                         onRowClick = { viewModel.dispatch(UsersIntent.SelectUser(it)) },
@@ -70,52 +80,95 @@ fun UsersScreen(
         detailPane = {
             FormSection(
                 title = if (state.selectedUserId == null) "Nuevo usuario" else "Editor de usuario",
-                description = "Base administrativa con usuarios reales, roles asignados y estado de acceso.",
+                description = "Usuarios reales, roles asignados y estado de acceso.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    OutlinedTextField(
+                    FieldLabel("Nombre completo")
+                    GlassTextField(
                         value = state.editorName,
                         onValueChange = { viewModel.dispatch(UsersIntent.UpdateName(it)) },
-                        label = { Text("Nombre completo") },
+                        placeholder = "Ej. Ana García",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
+
+                    FieldLabel("Email")
+                    GlassTextField(
                         value = state.editorEmail,
                         onValueChange = { viewModel.dispatch(UsersIntent.UpdateEmail(it)) },
-                        label = { Text("Email") },
+                        placeholder = "persona@dominio.com",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    OutlinedTextField(
-                        value = state.editorRoleIds,
-                        onValueChange = { viewModel.dispatch(UsersIntent.UpdateRoleIds(it)) },
-                        label = { Text("Roles CSV") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Usuario activo")
-                        Switch(
-                            checked = state.editorIsActive,
-                            onCheckedChange = { viewModel.dispatch(UsersIntent.ToggleActive(it)) },
+                    if (!state.isEmailValid) {
+                        Text(
+                            text = "Formato de email no válido",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
                         )
                     }
-                    Button(onClick = { viewModel.dispatch(UsersIntent.Save) }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Guardar")
+
+                    FieldLabel("Roles")
+                    if (state.availableRoles.isEmpty()) {
+                        Text(
+                            text = "Cargando catálogo de roles…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = GlassTheme.tokens.textSecondary,
+                        )
+                    } else {
+                        GlassChipGroup(
+                            options = state.availableRoles.map { it.id to it.name },
+                            selected = state.editorRoleIds,
+                            onToggle = { viewModel.dispatch(UsersIntent.ToggleRole(it)) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
-                    Button(
-                        onClick = { viewModel.dispatch(UsersIntent.DeleteSelected) },
-                        enabled = state.selectedUserId != null,
+
+                    GlassToggleRow(
+                        title = "Usuario activo",
+                        description = "Solo los usuarios activos pueden acceder al sistema.",
+                        checked = state.editorIsActive,
+                        onCheckedChange = { viewModel.dispatch(UsersIntent.ToggleActive(it)) },
+                    )
+
+                    GlassActionButton(
+                        text = "Guardar",
+                        enabled = state.canSave,
+                        onClick = { viewModel.dispatch(UsersIntent.Save) },
                         modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Eliminar")
+                    )
+                    if (state.selectedUserId != null) {
+                        GlassActionButton(
+                            text = "Eliminar usuario",
+                            tint = MaterialTheme.colorScheme.error,
+                            onClick = { confirmDelete = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
-                    when (val actionState = state.actionState) {
-                        is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
-                        UiAsync.Loading -> Text("Guardando usuario...")
-                        is UiAsync.Success -> Text("Usuario actualizado.")
-                        else -> Unit
-                    }
+
+                    FormFeedback(state.actionState, successText = "Usuario actualizado.")
                 }
             }
         },
+    )
+
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Eliminar usuario",
+            message = "Esta acción quitará el usuario seleccionado. ¿Continuar?",
+            confirmLabel = "Eliminar",
+            onConfirm = {
+                confirmDelete = false
+                viewModel.dispatch(UsersIntent.DeleteSelected)
+            },
+            onDismiss = { confirmDelete = false },
+        )
+    }
+}
+
+@Composable
+private fun FieldLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = GlassTheme.tokens.textSecondary,
     )
 }

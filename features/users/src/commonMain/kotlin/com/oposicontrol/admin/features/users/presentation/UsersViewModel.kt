@@ -6,6 +6,7 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.User
+import com.oposicontrol.admin.domain.usecase.roles.ObserveRolesUseCase
 import com.oposicontrol.admin.domain.usecase.users.DeleteUserUseCase
 import com.oposicontrol.admin.domain.usecase.users.ObserveUsersUseCase
 import com.oposicontrol.admin.domain.usecase.users.UpsertUserUseCase
@@ -16,6 +17,7 @@ import kotlin.time.Clock
 class UsersViewModel(
     dispatcherProvider: DispatcherProvider,
     observeUsersUseCase: ObserveUsersUseCase,
+    observeRolesUseCase: ObserveRolesUseCase,
     private val upsertUserUseCase: UpsertUserUseCase,
     private val deleteUserUseCase: DeleteUserUseCase,
     private val analyticsTracker: AnalyticsTracker,
@@ -33,6 +35,11 @@ class UsersViewModel(
                 }
             }
         }
+        scope.launch {
+            observeRolesUseCase().collectLatest { roles ->
+                updateState { it.copy(availableRoles = roles) }
+            }
+        }
     }
 
     override suspend fun handleIntent(intent: UsersIntent) {
@@ -42,7 +49,7 @@ class UsersViewModel(
                     selectedUserId = null,
                     editorName = "",
                     editorEmail = "",
-                    editorRoleIds = "",
+                    editorRoleIds = emptySet(),
                     editorIsActive = true,
                     actionState = UiAsync.Idle,
                 )
@@ -54,7 +61,10 @@ class UsersViewModel(
             is UsersIntent.ToggleActive -> updateState { it.copy(editorIsActive = intent.value) }
             is UsersIntent.UpdateEmail -> updateState { it.copy(editorEmail = intent.value) }
             is UsersIntent.UpdateName -> updateState { it.copy(editorName = intent.value) }
-            is UsersIntent.UpdateRoleIds -> updateState { it.copy(editorRoleIds = intent.value) }
+            is UsersIntent.ToggleRole -> updateState {
+                val next = if (intent.roleId in it.editorRoleIds) it.editorRoleIds - intent.roleId else it.editorRoleIds + intent.roleId
+                it.copy(editorRoleIds = next)
+            }
         }
     }
 
@@ -65,7 +75,7 @@ class UsersViewModel(
                 selectedUserId = user.id,
                 editorName = user.fullName,
                 editorEmail = user.email,
-                editorRoleIds = user.roleIds.joinToString(","),
+                editorRoleIds = user.roleIds.toSet(),
                 editorIsActive = user.isActive,
                 actionState = UiAsync.Idle,
             )
@@ -80,7 +90,7 @@ class UsersViewModel(
             id = existingUser?.id.orEmpty(),
             fullName = currentState().editorName,
             email = currentState().editorEmail,
-            roleIds = currentState().editorRoleIds.split(",").map(String::trim).filter(String::isNotBlank),
+            roleIds = currentState().editorRoleIds.toList(),
             isActive = currentState().editorIsActive,
             createdAt = existingUser?.createdAt ?: Clock.System.now(),
         )
@@ -105,7 +115,7 @@ class UsersViewModel(
                     selectedUserId = null,
                     editorName = "",
                     editorEmail = "",
-                    editorRoleIds = "",
+                    editorRoleIds = emptySet(),
                     editorIsActive = true,
                     actionState = UiAsync.Success(Unit),
                 )

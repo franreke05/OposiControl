@@ -29,10 +29,12 @@ import com.oposicontrol.admin.data.repository.AuditRepositoryImpl
 import com.oposicontrol.admin.data.repository.AuthRepositoryImpl
 import com.oposicontrol.admin.data.repository.ContentDashboardRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorAdminOperationsRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorAdminV1ContentRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorCommunitiesRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorConnectionDiagnosticsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorNewsRepositoryImpl
-import com.oposicontrol.admin.data.repository.KtorContentRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorTagSearchRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorTagsRepositoryImpl
 import com.oposicontrol.admin.data.repository.RolesRepositoryImpl
 import com.oposicontrol.admin.data.repository.SettingsRepositoryImpl
 import com.oposicontrol.admin.data.repository.SupabaseCommerceRepositoryImpl
@@ -42,6 +44,7 @@ import com.oposicontrol.admin.domain.repository.AdminOperationsRepository
 import com.oposicontrol.admin.domain.repository.AuditRepository
 import com.oposicontrol.admin.domain.repository.AuthRepository
 import com.oposicontrol.admin.domain.repository.CommerceRepository
+import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.repository.DashboardRepository
@@ -49,6 +52,7 @@ import com.oposicontrol.admin.domain.repository.NewsRepository
 import com.oposicontrol.admin.domain.repository.RolesRepository
 import com.oposicontrol.admin.domain.repository.SettingsRepository
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
+import com.oposicontrol.admin.domain.repository.TagsRepository
 import com.oposicontrol.admin.domain.repository.UsersRepository
 import org.koin.dsl.module
 
@@ -78,11 +82,10 @@ val dataModule = module {
 
     single<ContentRepository> {
         val appConfig: AppConfig = get()
-        KtorContentRepositoryImpl(
+        KtorAdminV1ContentRepositoryImpl(
             client = get(),
             appConfig = appConfig,
             sessionLocalDataSource = get(),
-            fileReader = get(),
             adapter = get(),
         )
     }
@@ -117,6 +120,24 @@ val dataModule = module {
         )
     }
 
+    single<TagsRepository> {
+        KtorTagsRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
+    single<CommunitiesRepository> {
+        KtorCommunitiesRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
     single<ConnectionDiagnosticsRepository> {
         KtorConnectionDiagnosticsRepositoryImpl(
             client = get(),
@@ -137,7 +158,7 @@ val dataModule = module {
 
     single<AuditRepository> { AuditRepositoryImpl(get()) }
     single<AuthRepository> { AuthRepositoryImpl(get(), get()) }
-    single<DashboardRepository> { ContentDashboardRepositoryImpl(get(), get(), get()) }
+    single<DashboardRepository> { ContentDashboardRepositoryImpl(get(), get(), get(), get()) }
     single<UsersRepository> { UsersRepositoryImpl(get(), get()) }
     single<RolesRepository> { RolesRepositoryImpl(get(), get()) }
     single<SettingsRepository> { SettingsRepositoryImpl(get(), get()) }

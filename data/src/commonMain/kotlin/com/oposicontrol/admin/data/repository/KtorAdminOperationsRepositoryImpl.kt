@@ -19,9 +19,12 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.serialization.Serializable
 
 class KtorAdminOperationsRepositoryImpl(
@@ -32,7 +35,7 @@ class KtorAdminOperationsRepositoryImpl(
 ) : AdminOperationsRepository {
     override suspend fun getNewsTypes(): AppResult<List<NewsType>> = adapter.safeCall {
         client.get("${adminUrl()}/news-types") { backendHeaders() }
-            .body<List<NewsTypeDto>>()
+            .checkedBody<List<NewsTypeDto>>("/admin/news-types")
             .map { it.toDomain() }
     }
 
@@ -41,12 +44,12 @@ class KtorAdminOperationsRepositoryImpl(
             backendHeaders()
             contentType(ContentType.Application.Json)
             setBody(newsType.toDto())
-        }.body<NewsTypeDto>().toDomain()
+        }.checkedBody<NewsTypeDto>("/admin/news-types").toDomain()
     }
 
     override suspend fun getExamAccesses(): AppResult<List<ExamAccess>> = adapter.safeCall {
         client.get("${adminUrl()}/exam-access") { backendHeaders() }
-            .body<List<ExamAccessDto>>()
+            .checkedBody<List<ExamAccessDto>>("/admin/exam-access")
             .map { it.toDomain() }
     }
 
@@ -55,18 +58,18 @@ class KtorAdminOperationsRepositoryImpl(
             backendHeaders()
             contentType(ContentType.Application.Json)
             setBody(access.toDto())
-        }.body<ExamAccessDto>().toDomain()
+        }.checkedBody<ExamAccessDto>("/admin/exam-access").toDomain()
     }
 
     override suspend fun getTicketWallets(): AppResult<List<TicketWallet>> = adapter.safeCall {
         client.get("${adminUrl()}/ticket-wallets") { backendHeaders() }
-            .body<List<TicketWalletDto>>()
+            .checkedBody<List<TicketWalletDto>>("/admin/ticket-wallets")
             .map { it.toDomain() }
     }
 
     override suspend fun getTicketTransactions(userId: String): AppResult<List<TicketTransaction>> = adapter.safeCall {
         client.get("${adminUrl()}/ticket-wallets/$userId/transactions") { backendHeaders() }
-            .body<List<TicketTransactionDto>>()
+            .checkedBody<List<TicketTransactionDto>>("/admin/ticket-wallets/$userId/transactions")
             .map { it.toDomain() }
     }
 
@@ -79,18 +82,18 @@ class KtorAdminOperationsRepositoryImpl(
             backendHeaders()
             contentType(ContentType.Application.Json)
             setBody(TicketAdjustmentDto(amount = amount, reason = reason))
-        }.body<TicketTransactionDto>().toDomain()
+        }.checkedBody<TicketTransactionDto>("/admin/ticket-wallets/$userId/transactions").toDomain()
     }
 
     override suspend fun getSupportConversations(): AppResult<List<SupportConversationSummary>> = adapter.safeCall {
         client.get("${adminUrl()}/support/conversations") { backendHeaders() }
-            .body<List<SupportConversationDto>>()
+            .checkedBody<List<SupportConversationDto>>("/admin/support/conversations")
             .map { it.toDomain() }
     }
 
     override suspend fun getSupportMessages(conversationId: String): AppResult<List<SupportMessage>> = adapter.safeCall {
         client.get("${adminUrl()}/support/conversations/$conversationId/messages") { backendHeaders() }
-            .body<List<SupportMessageDto>>()
+            .checkedBody<List<SupportMessageDto>>("/admin/support/conversations/$conversationId/messages")
             .map { it.toDomain() }
     }
 
@@ -104,12 +107,12 @@ class KtorAdminOperationsRepositoryImpl(
             backendHeaders()
             contentType(ContentType.Application.Json)
             setBody(SupportReplyDto(assignee = assignee, text = text, internal = internal))
-        }.body<SupportMessageDto>().toDomain()
+        }.checkedBody<SupportMessageDto>("/admin/support/conversations/$conversationId/messages").toDomain()
     }
 
     override suspend fun getModerationActions(): AppResult<List<ModerationAction>> = adapter.safeCall {
         client.get("${adminUrl()}/moderation/actions") { backendHeaders() }
-            .body<List<ModerationActionDto>>()
+            .checkedBody<List<ModerationActionDto>>("/admin/moderation/actions")
             .map { it.toDomain() }
     }
 
@@ -118,7 +121,7 @@ class KtorAdminOperationsRepositoryImpl(
             backendHeaders()
             contentType(ContentType.Application.Json)
             setBody(action.toDto())
-        }.body<ModerationActionDto>().toDomain()
+        }.checkedBody<ModerationActionDto>("/admin/moderation/actions").toDomain()
     }
 
     private fun adminUrl(): String = "${appConfig.baseUrl.trimEnd('/')}/admin"
@@ -128,6 +131,13 @@ class KtorAdminOperationsRepositoryImpl(
             ?: appConfig.backendToken.takeIf { it.isNotBlank() }
             ?: return
         header(HttpHeaders.Authorization, "Bearer $token")
+    }
+
+    private suspend inline fun <reified T> HttpResponse.checkedBody(endpoint: String): T {
+        if (!status.isSuccess()) {
+            error("backend ${status.value} $endpoint: ${bodyAsText().take(240)}")
+        }
+        return body()
     }
 }
 

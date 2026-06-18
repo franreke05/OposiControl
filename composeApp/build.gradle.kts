@@ -53,6 +53,7 @@ kotlin {
             implementation(projects.domain)
             implementation(projects.features.audit)
             implementation(projects.features.auth)
+            implementation(projects.features.communities)
             implementation(projects.features.dashboard)
             implementation(projects.features.examAccess)
             implementation(projects.features.exams)
@@ -64,6 +65,7 @@ kotlin {
             implementation(projects.features.specialties)
             implementation(projects.features.store)
             implementation(projects.features.support)
+            implementation(projects.features.tags)
             implementation(projects.features.tickets)
             implementation(projects.features.users)
             implementation(libs.compose.components.resources)
@@ -120,7 +122,6 @@ android {
             buildConfigField("String", "SUPABASE_URL", "\"\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
-            buildConfigField("boolean", "USE_FAKE_DATA", "false")
             buildConfigField("boolean", "ENABLE_LOGS", "true")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "false")
         }
@@ -134,7 +135,6 @@ android {
             buildConfigField("String", "SUPABASE_URL", "\"\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
-            buildConfigField("boolean", "USE_FAKE_DATA", "false")
             buildConfigField("boolean", "ENABLE_LOGS", "true")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "true")
         }
@@ -146,7 +146,6 @@ android {
             buildConfigField("String", "SUPABASE_URL", "\"\"")
             buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
-            buildConfigField("boolean", "USE_FAKE_DATA", "false")
             buildConfigField("boolean", "ENABLE_LOGS", "false")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "true")
         }
@@ -182,6 +181,12 @@ compose.desktop {
     application {
         mainClass = "com.oposicontrol.admin.app.MainKt"
 
+        jvmArgs(
+            "-Doposi.BACKEND_TOKEN=$backendTokenForBuild",
+            "-Doposi.BASE_URL=http://localhost:8080",
+            "-Doposi.APP_ENV=dev",
+        )
+
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "OposiControlAdmin"
@@ -193,5 +198,8 @@ compose.desktop {
 tasks.matching { it.name == "jvmRun" }.configureEach {
     if (this is JavaExec) {
         mainClass.set("com.oposicontrol.admin.app.MainKt")
+        systemProperty("oposi.BACKEND_TOKEN", backendTokenForBuild)
+        systemProperty("oposi.BASE_URL", "http://localhost:8080")
+        systemProperty("oposi.APP_ENV", "dev")
     }
 }

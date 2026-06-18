@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
+import com.oposicontrol.admin.core.ui.components.GlassChipGroup
 import com.oposicontrol.admin.core.ui.components.GlassSearchBar
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.GlassTextField
@@ -54,6 +55,8 @@ import com.oposicontrol.admin.features.tickets.presentation.TicketsIntent
 import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
 import com.oposicontrol.admin.features.users.presentation.UsersIntent
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 private enum class AdminSection(val label: String, val icon: MobileIcon, val description: String) {
     Usuarios("Usuarios", MobileIcon.Users, "Gestiona cuentas y roles"),
@@ -308,12 +311,14 @@ private fun UsersEditorCard(
                 placeholder = "Email",
                 modifier = Modifier.fillMaxWidth(),
             )
-            GlassTextField(
-                value = state.editorRoleIds,
-                onValueChange = { onIntent(UsersIntent.UpdateRoleIds(it)) },
-                placeholder = "Roles (separados por coma)",
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (state.availableRoles.isNotEmpty()) {
+                GlassChipGroup(
+                    options = state.availableRoles.map { it.id to it.name },
+                    selected = state.editorRoleIds,
+                    onToggle = { onIntent(UsersIntent.ToggleRole(it)) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -529,7 +534,7 @@ private fun AdminTicketsSection(
                         }
                         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = "%.1f tickets".format(wallet.balance),
+                                text = "${formatOneDecimal(wallet.balance)} tickets",
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = GlassTheme.tokens.accent,
@@ -626,7 +631,7 @@ private fun TicketsHistorySection(
                             val amountColor = if (movement.amount >= 0) GlassTheme.tokens.accent
                             else MaterialTheme.colorScheme.error
                             Text(
-                                text = "%+.1f".format(movement.amount),
+                                text = formatOneDecimal(movement.amount, includePlus = true),
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = amountColor,
@@ -980,4 +985,14 @@ private fun AdminActionRow(
         }
         Spacer(Modifier.height(4.dp))
     }
+}
+
+private fun formatOneDecimal(value: Double, includePlus: Boolean = false): String {
+    val scaled = (abs(value) * 10).roundToInt()
+    val sign = when {
+        value < 0 -> "-"
+        includePlus -> "+"
+        else -> ""
+    }
+    return "$sign${scaled / 10}.${scaled % 10}"
 }

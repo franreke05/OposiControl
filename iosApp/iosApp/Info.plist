@@ -4,5 +4,26 @@
 <dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
+	<key>APP_ENV</key>
+	<string>$(APP_ENV)</string>
+	<key>BASE_URL</key>
+	<string>$(BASE_URL)</string>
+	<key>ENABLE_ANALYTICS</key>
+	<string>$(ENABLE_ANALYTICS)</string>
+	<key>ENABLE_LOGS</key>
+	<string>$(ENABLE_LOGS)</string>
+	<key>ENABLE_VERBOSE_NETWORK_LOGS</key>
+	<string>$(ENABLE_VERBOSE_NETWORK_LOGS)</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>OposiControl necesita conectar con el backend local de desarrollo.</string>
+	<key>SUPABASE_BUCKET_EXAM_RESOURCES</key>
+	<string>$(SUPABASE_BUCKET_EXAM_RESOURCES)</string>
+	<key>USE_FAKE_DATA</key>
+	<string>$(USE_FAKE_DATA)</string>
 </dict>
 </plist>

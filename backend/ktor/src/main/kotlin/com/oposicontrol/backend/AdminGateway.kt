@@ -84,9 +84,9 @@ class SupabaseAdminGateway private constructor(
     private val json: Json,
     private val client: HttpClient = HttpClient.newHttpClient(),
 ) {
-    fun listUsers(): List<AdminUserDto> {
+    fun listUsers(): List<AdminUserDto> = emptyListOnMissingLegacySchema("listUsers") {
         val rolesByUser = roleAssignments()
-        return usuarios().map { user ->
+        usuarios().map { user ->
             user.toDto(rolesByUser[user.id].orEmpty())
         }
     }
@@ -127,8 +127,8 @@ class SupabaseAdminGateway private constructor(
         )
     }
 
-    fun listRoles(): List<AdminRoleDto> {
-        return request("GET", "/rest/v1/app_role?select=id,name,description&order=name.asc", null)
+    fun listRoles(): List<AdminRoleDto> = emptyListOnMissingLegacySchema("listRoles") {
+        request("GET", "/rest/v1/app_role?select=id,name,description&order=name.asc", null)
             .decodeList<RoleRow>()
             .map { it.toDto() }
     }
@@ -154,9 +154,9 @@ class SupabaseAdminGateway private constructor(
         )
     }
 
-    fun listAudit(): List<AdminAuditEventDto> {
+    fun listAudit(): List<AdminAuditEventDto> = emptyListOnMissingLegacySchema("listAudit") {
         val usersById = usuarios().associateBy { it.id }
-        return request("GET", "/rest/v1/audit_log?select=*&order=id.desc&limit=200", null)
+        request("GET", "/rest/v1/audit_log?select=*&order=id.desc&limit=200", null)
             .decodeList<AuditRow>()
             .map { row ->
                 AdminAuditEventDto(
@@ -181,8 +181,8 @@ class SupabaseAdminGateway private constructor(
         )
     }
 
-    fun listNewsTypes(): List<AdminNewsTypeDto> {
-        return request("GET", "/rest/v1/tipo_noticia?select=id,nombre,slug,activo&order=nombre.asc", null)
+    fun listNewsTypes(): List<AdminNewsTypeDto> = emptyListOnMissingLegacySchema("listNewsTypes") {
+        request("GET", "/rest/v1/tipo_noticia?select=id,nombre,slug,activo&order=nombre.asc", null)
             .decodeList<NewsTypeRow>()
             .map { it.toDto() }
     }
@@ -197,10 +197,10 @@ class SupabaseAdminGateway private constructor(
         ).decodeList<NewsTypeRow>().first().toDto()
     }
 
-    fun listExamAccess(): List<AdminExamAccessDto> {
+    fun listExamAccess(): List<AdminExamAccessDto> = emptyListOnMissingLegacySchema("listExamAccess") {
         val usersById = usuarios().associateBy { it.id }
         val examsById = examenes().associateBy { it.id }
-        return request("GET", "/rest/v1/acceso_examen_usuario?select=*&order=id.desc", null)
+        request("GET", "/rest/v1/acceso_examen_usuario?select=*&order=id.desc", null)
             .decodeList<ExamAccessRow>()
             .map { row ->
                 AdminExamAccessDto(
@@ -236,10 +236,10 @@ class SupabaseAdminGateway private constructor(
         return input.copy(id = saved.id?.toString().orEmpty())
     }
 
-    fun listTicketWallets(): List<AdminTicketWalletDto> {
+    fun listTicketWallets(): List<AdminTicketWalletDto> = emptyListOnMissingLegacySchema("listTicketWallets") {
         val usersById = usuarios().associateBy { it.id }
         val specialtiesById = especialidades().associateBy { it.id }
-        return request("GET", "/rest/v1/cartera_tickets?select=*&order=usuario_id.desc", null)
+        request("GET", "/rest/v1/cartera_tickets?select=*&order=usuario_id.desc", null)
             .decodeList<TicketWalletRow>()
             .map { row ->
                 val user = usersById[row.usuarioId]
@@ -253,8 +253,8 @@ class SupabaseAdminGateway private constructor(
             }
     }
 
-    fun listTicketTransactions(userId: String): List<AdminTicketTransactionDto> {
-        return request(
+    fun listTicketTransactions(userId: String): List<AdminTicketTransactionDto> = emptyListOnMissingLegacySchema("listTicketTransactions") {
+        request(
             "GET",
             "/rest/v1/transaccion_ticket?select=*&usuario_id=eq.${userId.toIntId()}&order=id.desc&limit=100",
             null,
@@ -309,10 +309,10 @@ class SupabaseAdminGateway private constructor(
             }
     }
 
-    fun listSupportConversations(): List<AdminSupportConversationDto> {
+    fun listSupportConversations(): List<AdminSupportConversationDto> = emptyListOnMissingLegacySchema("listSupportConversations") {
         val usersById = usuarios().associateBy { it.id }
         val messages = supportMessages().groupBy { it.conversationId }
-        return request("GET", "/rest/v1/support_conversation?select=*&order=id.desc", null)
+        request("GET", "/rest/v1/support_conversation?select=*&order=id.desc", null)
             .decodeList<SupportConversationRow>()
             .map { row ->
                 val latest = messages[row.id].orEmpty().maxByOrNull { it.id ?: 0 }
@@ -327,9 +327,9 @@ class SupabaseAdminGateway private constructor(
             }
     }
 
-    fun listSupportMessages(conversationId: String): List<AdminSupportMessageDto> {
+    fun listSupportMessages(conversationId: String): List<AdminSupportMessageDto> = emptyListOnMissingLegacySchema("listSupportMessages") {
         val usersById = usuarios().associateBy { it.id }
-        return request(
+        request(
             "GET",
             "/rest/v1/support_message?select=*&conversation_id=eq.${conversationId.toIntId()}&order=id.asc",
             null,
@@ -383,9 +383,9 @@ class SupabaseAdminGateway private constructor(
         )
     }
 
-    fun listModerationActions(): List<AdminModerationActionDto> {
+    fun listModerationActions(): List<AdminModerationActionDto> = emptyListOnMissingLegacySchema("listModerationActions") {
         val usersById = usuarios().associateBy { it.id }
-        return request("GET", "/rest/v1/moderation_action?select=*&order=id.desc&limit=200", null)
+        request("GET", "/rest/v1/moderation_action?select=*&order=id.desc&limit=200", null)
             .decodeList<ModerationActionRow>()
             .map { row ->
                 AdminModerationActionDto(
@@ -423,7 +423,7 @@ class SupabaseAdminGateway private constructor(
         return input.copy(id = saved.id?.toString().orEmpty(), createdAt = "")
     }
 
-    fun dashboardMetrics(): AdminDashboardMetricsDto {
+    fun dashboardMetrics(): AdminDashboardMetricsDto = fallbackOnMissingLegacySchema("dashboardMetrics", ::emptyDashboardMetrics) {
         val specialties = especialidades()
         val exams = examenes()
         val questions = request("GET", "/rest/v1/pregunta?select=id,examen_id&limit=10000", null)
@@ -531,6 +531,48 @@ class SupabaseAdminGateway private constructor(
     }
 
     private inline fun <reified T> String.decodeList(): List<T> = json.decodeFromString(this)
+
+    private inline fun <T> emptyListOnMissingLegacySchema(operation: String, block: () -> List<T>): List<T> =
+        fallbackOnMissingLegacySchema(operation, { emptyList() }, block)
+
+    private inline fun <T> fallbackOnMissingLegacySchema(operation: String, fallback: () -> T, block: () -> T): T {
+        return try {
+            block()
+        } catch (error: IllegalStateException) {
+            if (!error.isMissingLegacySchema()) throw error
+            System.err.println("[ktor] legacy admin fallback ($operation): ${error.message?.take(180)}")
+            fallback()
+        }
+    }
+
+    private fun Throwable.isMissingLegacySchema(): Boolean {
+        val text = message.orEmpty()
+        return text.contains("PGRST205") ||
+            text.contains("Could not find the table") ||
+            text.contains("schema cache")
+    }
+
+    private fun emptyDashboardMetrics(): AdminDashboardMetricsDto = AdminDashboardMetricsDto(
+        totalSpecialties = 0,
+        totalExams = 0,
+        publishedExams = 0,
+        totalQuestions = 0,
+        lastUpdatedAt = Instant.now().toString(),
+        draftExams = 0,
+        questionsWithoutResources = 0,
+        linkedResources = 0,
+        pendingResources = 0,
+        unlinkedResources = 0,
+        publishedNews = 0,
+        draftNews = 0,
+        activeStoreItems = 0,
+        activeOffers = 0,
+        scheduledOffers = 0,
+        activeBurstCampaigns = 0,
+        activeLimitedResources = 0,
+        nextCommerceExpiryLabel = "Pendiente de migracion",
+        latestImportLabel = "Legacy pendiente de migracion: ${Instant.now()}",
+    )
 
     companion object {
         private val VALID_MODERATION_ACTION_TYPES = setOf(

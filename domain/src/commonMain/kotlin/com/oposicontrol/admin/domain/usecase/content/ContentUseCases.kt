@@ -93,9 +93,6 @@ class UpsertExamUseCase(
         if (exam.title.isBlank()) {
             return AppResult.Failure(AppError.Validation("El examen necesita titulo."))
         }
-        if (exam.status == ExamStatus.PUBLISHED && exam.coverUrl.isNullOrBlank()) {
-            return AppResult.Failure(AppError.Validation("Anade una portada antes de publicar el examen."))
-        }
         return repository.upsertExam(exam)
     }
 }

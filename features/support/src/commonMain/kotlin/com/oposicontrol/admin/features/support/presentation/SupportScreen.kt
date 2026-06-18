@@ -7,12 +7,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -27,9 +25,14 @@ import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
+import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.GlassActionButton
+import com.oposicontrol.admin.core.ui.components.GlassTextField
+import com.oposicontrol.admin.core.ui.components.GlassToggleRow
 import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.core.ui.theme.AdminTheme
+import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 @Composable
 fun SupportScreen(
@@ -53,11 +56,11 @@ fun SupportContent(
                     onSearchChange = { onIntent(SupportIntent.UpdateSearch(it)) },
                     placeholder = "Buscar conversaciones",
                     filters = {
-                        OutlinedTextField(
+                        GlassTextField(
                             value = state.statusFilter,
                             onValueChange = { onIntent(SupportIntent.UpdateStatusFilter(it)) },
-                            label = { Text("Estado") },
-                            singleLine = true,
+                            placeholder = "Estado",
+                            modifier = Modifier.width(160.dp),
                         )
                     },
                 )
@@ -86,7 +89,7 @@ fun SupportContent(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 FormSection(
                     title = "Detalle del hilo",
-                    description = "Misma pantalla para lectura del chat, asignacion y respuesta.",
+                    description = "Lectura del chat, asignación y respuesta.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         StatusChip(
@@ -95,10 +98,11 @@ fun SupportContent(
                                 ?.firstOrNull { it.id == state.selectedConversationId }
                                 ?.status ?: "open",
                         )
-                        OutlinedTextField(
+                        FieldLabel("Asignado a")
+                        GlassTextField(
                             value = state.assignee,
                             onValueChange = { onIntent(SupportIntent.UpdateAssignee(it)) },
-                            label = { Text("Asignado a") },
+                            placeholder = "Responsable del hilo",
                             modifier = Modifier.fillMaxWidth(),
                         )
                         AsyncStatePane(state.messages, emptyMessage = "No hay mensajes en este hilo.") { messages ->
@@ -109,9 +113,9 @@ fun SupportContent(
                                             .fillMaxWidth()
                                             .background(
                                                 color = if (message.internal) {
-                                                    MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f)
+                                                    GlassTheme.tokens.warning.copy(alpha = 0.12f)
                                                 } else {
-                                                    MaterialTheme.colorScheme.surfaceVariant
+                                                    GlassTheme.tokens.glassFill
                                                 },
                                                 shape = MaterialTheme.shapes.medium,
                                             )
@@ -124,7 +128,7 @@ fun SupportContent(
                                             if (message.attachmentLabel != null) {
                                                 Text(message.attachmentLabel, style = MaterialTheme.typography.bodySmall)
                                             }
-                                            Text(message.timestamp, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(message.timestamp, style = MaterialTheme.typography.bodySmall, color = GlassTheme.tokens.textSecondary)
                                         }
                                     }
                                 }
@@ -134,38 +138,43 @@ fun SupportContent(
                 }
                 FormSection(
                     title = "Responder",
-                    description = "Base para respuesta admin/moderador y futuras notas internas privadas.",
+                    description = "Respuesta al usuario o nota interna privada.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedTextField(
+                        FieldLabel("Mensaje")
+                        GlassTextField(
                             value = state.replyText,
                             onValueChange = { onIntent(SupportIntent.UpdateReplyText(it)) },
-                            label = { Text("Mensaje") },
+                            placeholder = "Escribe tu respuesta…",
+                            singleLine = false,
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Enviar como nota interna")
-                            Switch(
-                                checked = state.sendAsInternalNote,
-                                onCheckedChange = { onIntent(SupportIntent.ToggleInternalNote(it)) },
-                            )
-                        }
-                        Button(
+                        GlassToggleRow(
+                            title = "Enviar como nota interna",
+                            description = "Visible solo para el equipo, no para el usuario.",
+                            checked = state.sendAsInternalNote,
+                            onCheckedChange = { onIntent(SupportIntent.ToggleInternalNote(it)) },
+                        )
+                        GlassActionButton(
+                            text = "Enviar respuesta",
+                            enabled = state.replyText.isNotBlank(),
                             onClick = { onIntent(SupportIntent.SendReply) },
                             modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("Enviar respuesta")
-                        }
-                        when (val actionState = state.actionState) {
-                            is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
-                            UiAsync.Loading -> Text("Enviando...")
-                            is UiAsync.Success -> Text("Mensaje enviado.")
-                            else -> Unit
-                        }
+                        )
+                        FormFeedback(state.actionState, loadingText = "Enviando...", successText = "Mensaje enviado.")
                     }
                 }
             }
         },
+    )
+}
+
+@Composable
+private fun FieldLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = GlassTheme.tokens.textSecondary,
     )
 }
 

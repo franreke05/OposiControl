@@ -336,15 +336,17 @@ fun MobileContentContent(
     }
 }
 
-enum class MobileContentView(val label: String, val title: String, val icon: MobileIcon) {
+enum class MobileContentView(val label: String, val title: String, val icon: MobileIcon, val mobileVisible: Boolean = true) {
     Solucionarios("Contenido", "Contenido", MobileIcon.Stack),
     Editor("Editor", "Solucionario", MobileIcon.Edit),
     Preguntas("Preguntas", "Preguntas", MobileIcon.Question),
     Recursos("Recursos", "Recursos", MobileIcon.Media),
     Especialidades("Especialidades", "Especialidades", MobileIcon.Specialty),
     Etiquetas("Etiquetas", "Etiquetas", MobileIcon.Search),
-    Noticias("Noticias", "Noticias", MobileIcon.News),
+    Noticias("Noticias", "Noticias", MobileIcon.News, mobileVisible = false), // ponytail: desktop-only
     Admin("Admin", "Admin", MobileIcon.Admin),
+    ;
+    companion object { val mobileTabs = entries.filter { it.mobileVisible } }
 }
 
 private fun Modifier.mobileContentSwipe(
@@ -368,13 +370,13 @@ private fun Modifier.mobileContentSwipe(
 }
 
 private fun MobileContentView.previousView(): MobileContentView? {
-    val index = MobileContentView.entries.indexOf(this)
-    return MobileContentView.entries.getOrNull(index - 1)
+    val index = MobileContentView.mobileTabs.indexOf(this)
+    return MobileContentView.mobileTabs.getOrNull(index - 1)
 }
 
 private fun MobileContentView.nextView(): MobileContentView? {
-    val index = MobileContentView.entries.indexOf(this)
-    return MobileContentView.entries.getOrNull(index + 1)
+    val index = MobileContentView.mobileTabs.indexOf(this)
+    return MobileContentView.mobileTabs.getOrNull(index + 1)
 }
 
 enum class MobileIcon {
@@ -508,7 +510,7 @@ private fun MobileBottomTabBar(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                items(MobileContentView.entries, key = { it.name }) { view ->
+                items(MobileContentView.mobileTabs, key = { it.name }) { view ->
                     MobileTabItem(
                         view = view,
                         selected = view == activeView,

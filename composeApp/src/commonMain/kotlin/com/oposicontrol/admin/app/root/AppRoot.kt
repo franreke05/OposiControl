@@ -43,6 +43,12 @@ import com.oposicontrol.admin.features.settings.presentation.SettingsViewModel
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesIntent
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesScreen
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesViewModel
+import com.oposicontrol.admin.features.communities.presentation.CommunitiesIntent
+import com.oposicontrol.admin.features.communities.presentation.CommunitiesScreen
+import com.oposicontrol.admin.features.communities.presentation.CommunitiesViewModel
+import com.oposicontrol.admin.features.tags.presentation.TagsIntent
+import com.oposicontrol.admin.features.tags.presentation.TagsScreen
+import com.oposicontrol.admin.features.tags.presentation.TagsViewModel
 import com.oposicontrol.admin.features.store.presentation.StoreIntent
 import com.oposicontrol.admin.features.store.presentation.StoreScreen
 import com.oposicontrol.admin.features.store.presentation.StoreViewModel
@@ -187,6 +193,22 @@ private fun adminSectionRoute(
             AdminSectionRoute(
                 onPrimaryAction = { viewModel.dispatch(SpecialtiesIntent.CreateNew) },
                 content = { SpecialtiesScreen(viewModel) },
+            )
+        }
+
+        AdminSection.COMMUNITIES -> {
+            val viewModel: CommunitiesViewModel = koinInject()
+            AdminSectionRoute(
+                onPrimaryAction = { viewModel.dispatch(CommunitiesIntent.CreateNew) },
+                content = { CommunitiesScreen(viewModel) },
+            )
+        }
+
+        AdminSection.TAGS -> {
+            val viewModel: TagsViewModel = koinInject()
+            AdminSectionRoute(
+                onPrimaryAction = { viewModel.dispatch(TagsIntent.CreateNew) },
+                content = { TagsScreen(viewModel) },
             )
         }
 

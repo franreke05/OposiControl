@@ -1,0 +1,388 @@
+package com.oposicontrol.backend
+
+import com.auth0.jwt.JWT
+import com.auth0.jwt.algorithms.Algorithm
+import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.call
+import io.ktor.server.request.receive
+import io.ktor.server.response.respond
+import io.ktor.server.routing.Route
+import io.ktor.server.routing.get
+import io.ktor.server.routing.post
+import io.ktor.server.routing.route
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.add
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import java.math.BigInteger
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.security.AlgorithmParameters
+import java.security.KeyFactory
+import java.security.interfaces.ECPublicKey
+import java.security.spec.ECGenParameterSpec
+import java.security.spec.ECParameterSpec
+import java.security.spec.ECPoint
+import java.security.spec.ECPublicKeySpec
+import java.time.Instant
+import java.time.LocalDate
+import java.util.Base64
+
+class AppUnauthorized(message: String) : RuntimeException(message)
+
+fun Route.appV1Routes(gateway: AppV1Gateway, verifier: SupabaseJwtVerifier, allowDevUser: Boolean) {
+    route("/api/v1/app") {
+        get("/home") {
+            call.respond(gateway.home(call.usuarioId(verifier, allowDevUser)))
+        }
+        get("/examenes") {
+            call.usuarioId(verifier, allowDevUser) // requiere sesion
+            call.respond(AppExamenesResponse(gateway.listExamenes()))
+        }
+        get("/examenes/{id}") {
+            call.usuarioId(verifier, allowDevUser)
+            val detalle = gateway.examenDetalle(call.requiredPath("id"))
+                ?: return@get call.respond(io.ktor.http.HttpStatusCode.NotFound, ErrorDto("not_found", "Examen no encontrado."))
+            call.respond(detalle)
+        }
+        post("/examenes/{id}/iniciar") {
+            val uid = call.usuarioId(verifier, allowDevUser)
+            call.respond(io.ktor.http.HttpStatusCode.Created, AppIntentoResponse(gateway.iniciar(uid, call.requiredPath("id"))))
+        }
+        post("/intentos/{id}/responder") {
+            val uid = call.usuarioId(verifier, allowDevUser)
+            call.respond(gateway.responder(uid, call.requiredPath("id"), call.receive()))
+        }
+        post("/intentos/{id}/finalizar") {
+            val uid = call.usuarioId(verifier, allowDevUser)
+            call.respond(AppIntentoResponse(gateway.finalizar(uid, call.requiredPath("id"))))
+        }
+        get("/estadisticas") {
+            call.respond(AppEstadisticasResponse(gateway.estadisticas(call.usuarioId(verifier, allowDevUser))))
+        }
+        get("/reto-diario") {
+            call.usuarioId(verifier, allowDevUser)
+            call.respond(AppRetoResponse(gateway.retoDiario()))
+        }
+        post("/feedback/pregunta") {
+            val uid = call.usuarioId(verifier, allowDevUser)
+            call.respond(io.ktor.http.HttpStatusCode.Created, OkResponse(id = gateway.crearFeedback(uid, call.receive())))
+        }
+        post("/eventos") {
+            val uid = call.usuarioId(verifier, allowDevUser)
+            call.respond(io.ktor.http.HttpStatusCode.Created, OkResponse(id = gateway.registrarEvento(uid, call.receive())))
+        }
+    }
+}
+
+/** Resuelve el usuario: JWT de Supabase (produccion) o cabecera X-Usuario-Id (solo dev). */
+private fun ApplicationCall.usuarioId(verifier: SupabaseJwtVerifier, allowDevUser: Boolean): String {
+    val bearer = request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
+    if (!bearer.isNullOrBlank() && bearer.count { it == '.' } == 2) {
+        return try {
+            verifier.subFrom(bearer)
+        } catch (error: Exception) {
+            throw AppUnauthorized("JWT invalido: ${error.message?.take(120)}")
+        }
+    }
+    if (allowDevUser) {
+        request.headers["X-Usuario-Id"]?.takeIf { it.isNotBlank() }?.let { return it }
+    }
+    throw AppUnauthorized("Falta identidad: envia un JWT de Supabase (Authorization: Bearer) o, en dev, X-Usuario-Id.")
+}
+
+// ---------- Verificador JWT (ES256 contra el JWKS publico de Supabase) ----------
+
+class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
+    private val issuer = "$supabaseUrl/auth/v1"
+    private val jwksUrl = "$issuer/.well-known/jwks.json"
+    private val client = HttpClient.newHttpClient()
+
+    @Volatile private var keys: Map<String, ECPublicKey> = emptyMap()
+    @Volatile private var fetchedAt = 0L
+
+    fun subFrom(token: String): String {
+        val decoded = JWT.decode(token)
+        val kid = decoded.keyId ?: error("token sin kid")
+        val key = keys[kid] ?: run { refresh(); keys[kid] } ?: error("kid no encontrado en JWKS")
+        val verified = JWT.require(Algorithm.ECDSA256(key, null)).withIssuer(issuer).build().verify(token)
+        return verified.subject ?: error("token sin sub")
+    }
+
+    @Synchronized
+    private fun refresh() {
+        if (keys.isNotEmpty() && System.currentTimeMillis() - fetchedAt < 60_000) return
+        val body = client.send(
+            HttpRequest.newBuilder(URI.create(jwksUrl)).GET().build(),
+            HttpResponse.BodyHandlers.ofString(),
+        ).body()
+        keys = json.parseToJsonElement(body).jsonObject["keys"]!!.jsonArray
+            .mapNotNull { el ->
+                val k = el.jsonObject
+                if (k["kty"]?.jsonPrimitive?.contentOrNull != "EC") return@mapNotNull null
+                val kid = k["kid"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                kid to ecPublicKey(
+                    k["x"]!!.jsonPrimitive.content,
+                    k["y"]!!.jsonPrimitive.content,
+                )
+            }
+            .toMap()
+        fetchedAt = System.currentTimeMillis()
+    }
+
+    private fun ecPublicKey(xB64Url: String, yB64Url: String): ECPublicKey {
+        val x = BigInteger(1, Base64.getUrlDecoder().decode(xB64Url))
+        val y = BigInteger(1, Base64.getUrlDecoder().decode(yB64Url))
+        val params = AlgorithmParameters.getInstance("EC").apply { init(ECGenParameterSpec("secp256r1")) }
+        val spec = params.getParameterSpec(ECParameterSpec::class.java)
+        return KeyFactory.getInstance("EC")
+            .generatePublic(ECPublicKeySpec(ECPoint(x, y), spec)) as ECPublicKey
+    }
+}
+
+// ---------- DTOs ----------
+
+@Serializable data class AppPerfilDto(val usuarioId: String, val nombreMostrar: String? = null, val username: String? = null, val esInvitado: Boolean = false, val onboardingCompletado: Boolean = false)
+@Serializable data class AppExamenDto(val id: String, val titulo: String, val descripcion: String = "", val tipoExamen: String = "", val tipoAcceso: String = "", val totalPreguntas: Int = 0, val anio: Int? = null)
+@Serializable data class AppOpcionDto(val id: String, val letra: String, val texto: String)
+@Serializable data class AppPreguntaDto(val id: String, val titulo: String, val posicion: Int, val opciones: List<AppOpcionDto>)
+@Serializable data class AppRetoDto(val id: String, val fecha: String, val titulo: String, val descripcion: String = "", val objetivoPreguntas: Int = 0, val recompensaPuntos: Int = 0)
+@Serializable data class AppEstadisticasDto(val usuarioId: String, val examenesFinalizados: Int = 0, val preguntasRespondidas: Int = 0, val respuestasCorrectas: Int = 0, val porcentajeAcierto: Double = 0.0, val puntosTotales: Int = 0, val nivel: Int = 1)
+@Serializable data class AppIntentoDto(val id: String, val examenId: String, val estado: String, val totalPreguntas: Int = 0, val totalRespondidas: Int = 0, val totalCorrectas: Int = 0, val porcentajeAcierto: Double = 0.0)
+
+@Serializable data class AppHomeResponse(val perfil: AppPerfilDto? = null, val retoDiario: AppRetoDto? = null, val examenes: List<AppExamenDto> = emptyList())
+@Serializable data class AppExamenesResponse(val data: List<AppExamenDto>)
+@Serializable data class AppExamenDetalleResponse(val examen: AppExamenDto, val preguntas: List<AppPreguntaDto>)
+@Serializable data class AppIntentoResponse(val data: AppIntentoDto)
+@Serializable data class AppEstadisticasResponse(val data: AppEstadisticasDto? = null)
+@Serializable data class AppRetoResponse(val data: AppRetoDto? = null)
+@Serializable data class OkResponse(val ok: Boolean = true, val id: String? = null)
+
+@Serializable data class ResponderRequest(val preguntaId: String, val opcionSeleccionadaId: String)
+@Serializable data class ResponderResponse(val esCorrecta: Boolean, val opcionCorrectaId: String? = null)
+@Serializable data class AppFeedbackRequest(val preguntaId: String, val tipoFeedback: String = "otro", val descripcion: String = "", val intentoId: String? = null)
+@Serializable data class AppEventoRequest(val nombreEvento: String, val pantalla: String? = null, val entidadTipo: String? = null, val entidadId: String? = null, val propiedades: JsonObject = JsonObject(emptyMap()))
+
+// ---------- Gateway Supabase (service role; SIEMPRE filtra por usuarioId) ----------
+
+class AppV1Gateway private constructor(
+    private val supabaseUrl: String,
+    private val serviceRoleKey: String,
+    private val json: Json,
+    private val client: HttpClient = HttpClient.newHttpClient(),
+) {
+    fun home(usuarioId: String): AppHomeResponse = AppHomeResponse(
+        perfil = perfil(usuarioId),
+        retoDiario = retoDiario(),
+        examenes = listExamenes().take(5),
+    )
+
+    fun listExamenes(): List<AppExamenDto> =
+        get("/rest/v1/examenes?select=*&activo=eq.true&publicado_en=not.is.null&order=anio.desc.nullslast,titulo.asc")
+            .map { it.toExamenDto() }
+
+    fun examenDetalle(examenId: String): AppExamenDetalleResponse? {
+        val examen = get("/rest/v1/examenes?select=*&id=eq.$examenId&activo=eq.true&limit=1").firstOrNull() ?: return null
+        val asociaciones = get("/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId&order=posicion.asc")
+        val preguntaIds = asociaciones.mapNotNull { it.str("pregunta_id") }
+        if (preguntaIds.isEmpty()) return AppExamenDetalleResponse(examen.toExamenDto(), emptyList())
+        val inList = preguntaIds.joinToString(",")
+        val preguntasById = get("/rest/v1/preguntas?select=*&id=in.($inList)&activa=eq.true").associateBy { it.str("id") }
+        val opcionesByPregunta = get("/rest/v1/opciones_pregunta?select=*&pregunta_id=in.($inList)&order=posicion.asc")
+            .groupBy { it.str("pregunta_id") }
+        val preguntas = asociaciones.mapNotNull { a ->
+            val pid = a.str("pregunta_id"); val p = preguntasById[pid] ?: return@mapNotNull null
+            AppPreguntaDto(
+                id = pid!!,
+                titulo = p.str("titulo").orEmpty(),
+                posicion = a.int("posicion") ?: 0,
+                opciones = opcionesByPregunta[pid].orEmpty().map {
+                    AppOpcionDto(it.str("id")!!, it.str("letra").orEmpty(), it.str("texto_opcion").orEmpty())
+                },
+            )
+        }
+        return AppExamenDetalleResponse(examen.toExamenDto(), preguntas)
+    }
+
+    fun iniciar(usuarioId: String, examenId: String): AppIntentoDto {
+        val examen = get("/rest/v1/examenes?select=total_preguntas&id=eq.$examenId&limit=1").firstOrNull()
+            ?: error("Examen no encontrado.")
+        val body = buildJsonObject {
+            put("usuario_id", usuarioId)
+            put("examen_id", examenId)
+            put("estado", "en_progreso")
+            put("iniciado_en", Instant.now().toString())
+            put("total_preguntas", examen.int("total_preguntas") ?: 0)
+        }
+        return post("/rest/v1/intentos_examen", body).first().toIntentoDto()
+    }
+
+    fun responder(usuarioId: String, intentoId: String, req: ResponderRequest): ResponderResponse {
+        val intento = get("/rest/v1/intentos_examen?select=*&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1").firstOrNull()
+            ?: throw AppUnauthorized("El intento no pertenece al usuario.")
+        val correctaId = get("/rest/v1/soluciones_pregunta?select=opcion_correcta_id&pregunta_id=eq.${req.preguntaId}&limit=1")
+            .firstOrNull()?.str("opcion_correcta_id")
+        val esCorrecta = correctaId != null && correctaId == req.opcionSeleccionadaId
+        val body = buildJsonObject {
+            put("intento_id", intentoId)
+            put("pregunta_id", req.preguntaId)
+            put("opcion_seleccionada_id", req.opcionSeleccionadaId)
+            put("es_correcta", esCorrecta)
+            put("usuario_id", usuarioId)
+            put("examen_id", intento.str("examen_id"))
+            if (correctaId != null) put("opcion_correcta_id", correctaId)
+            put("respondida_en", Instant.now().toString())
+        }
+        post("/rest/v1/respuestas_intento", body)
+        return ResponderResponse(esCorrecta, correctaId)
+    }
+
+    fun finalizar(usuarioId: String, intentoId: String): AppIntentoDto {
+        get("/rest/v1/intentos_examen?select=id&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1").firstOrNull()
+            ?: throw AppUnauthorized("El intento no pertenece al usuario.")
+        val respuestas = get("/rest/v1/respuestas_intento?select=es_correcta&intento_id=eq.$intentoId")
+        val total = respuestas.size
+        val correctas = respuestas.count { it.bool("es_correcta") == true }
+        val porcentaje = if (total > 0) correctas * 100.0 / total else 0.0
+        val body = buildJsonObject {
+            put("estado", "finalizado")
+            put("finalizado_en", Instant.now().toString())
+            put("total_respondidas", total)
+            put("total_correctas", correctas)
+            put("total_falladas", total - correctas)
+            put("porcentaje_acierto", porcentaje)
+            put("puntuacion", correctas)
+        }
+        return patch("/rest/v1/intentos_examen?id=eq.$intentoId", body).first().toIntentoDto()
+    }
+
+    fun estadisticas(usuarioId: String): AppEstadisticasDto? =
+        get("/rest/v1/estadisticas_usuario?select=*&usuario_id=eq.$usuarioId&limit=1").firstOrNull()?.let {
+            AppEstadisticasDto(
+                usuarioId = usuarioId,
+                examenesFinalizados = it.int("examenes_finalizados") ?: 0,
+                preguntasRespondidas = it.int("preguntas_respondidas") ?: 0,
+                respuestasCorrectas = it.int("respuestas_correctas") ?: 0,
+                porcentajeAcierto = it.dbl("porcentaje_acierto") ?: 0.0,
+                puntosTotales = it.int("puntos_totales") ?: 0,
+                nivel = it.int("nivel") ?: 1,
+            )
+        }
+
+    fun retoDiario(): AppRetoDto? =
+        get("/rest/v1/retos_diarios?select=*&activo=eq.true&fecha=lte.${LocalDate.now()}&order=fecha.desc&limit=1")
+            .firstOrNull()?.let {
+                AppRetoDto(
+                    id = it.str("id")!!,
+                    fecha = it.str("fecha").orEmpty(),
+                    titulo = it.str("titulo").orEmpty(),
+                    descripcion = it.str("descripcion").orEmpty(),
+                    objetivoPreguntas = it.int("objetivo_preguntas") ?: 0,
+                    recompensaPuntos = it.int("recompensa_puntos") ?: 0,
+                )
+            }
+
+    fun crearFeedback(usuarioId: String, req: AppFeedbackRequest): String {
+        val body = buildJsonObject {
+            put("usuario_id", usuarioId)
+            put("pregunta_id", req.preguntaId)
+            if (req.intentoId != null) put("intento_id", req.intentoId)
+            put("tipo_feedback", req.tipoFeedback.ifBlank { "otro" })
+            if (req.descripcion.isNotBlank()) put("descripcion", req.descripcion)
+            put("estado", "pendiente")
+        }
+        return post("/rest/v1/feedback_pregunta", body).first().str("id").orEmpty()
+    }
+
+    fun registrarEvento(usuarioId: String, req: AppEventoRequest): String {
+        val body = buildJsonObject {
+            put("usuario_id", usuarioId)
+            put("nombre_evento", req.nombreEvento)
+            if (req.pantalla != null) put("pantalla", req.pantalla)
+            if (req.entidadTipo != null) put("entidad_tipo", req.entidadTipo)
+            if (req.entidadId != null) put("entidad_id", req.entidadId)
+            put("propiedades", req.propiedades)
+        }
+        return post("/rest/v1/eventos_app", body).first().str("id").orEmpty()
+    }
+
+    private fun perfil(usuarioId: String): AppPerfilDto? =
+        get("/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$usuarioId&limit=1").firstOrNull()?.let {
+            AppPerfilDto(
+                usuarioId = usuarioId,
+                nombreMostrar = it.str("nombre_mostrar"),
+                username = it.str("username"),
+                esInvitado = it.bool("es_invitado") ?: false,
+                onboardingCompletado = it.bool("onboarding_completado") ?: false,
+            )
+        }
+
+    private fun JsonObject.toExamenDto() = AppExamenDto(
+        id = str("id")!!,
+        titulo = str("titulo").orEmpty(),
+        descripcion = str("descripcion").orEmpty(),
+        tipoExamen = str("tipo_examen").orEmpty(),
+        tipoAcceso = str("tipo_acceso").orEmpty(),
+        totalPreguntas = int("total_preguntas") ?: 0,
+        anio = int("anio"),
+    )
+
+    private fun JsonObject.toIntentoDto() = AppIntentoDto(
+        id = str("id")!!,
+        examenId = str("examen_id").orEmpty(),
+        estado = str("estado").orEmpty(),
+        totalPreguntas = int("total_preguntas") ?: 0,
+        totalRespondidas = int("total_respondidas") ?: 0,
+        totalCorrectas = int("total_correctas") ?: 0,
+        porcentajeAcierto = dbl("porcentaje_acierto") ?: 0.0,
+    )
+
+    // --- helpers REST ---
+    private fun get(path: String): List<JsonObject> = request("GET", path, null)
+    private fun post(path: String, body: JsonObject): List<JsonObject> =
+        request("POST", path, json.encodeToString(buildJsonArray { add(body) }), prefer = "return=representation")
+    private fun patch(path: String, body: JsonObject): List<JsonObject> =
+        request("PATCH", path, json.encodeToString(body), prefer = "return=representation")
+
+    private fun request(method: String, path: String, body: String?, prefer: String? = null): List<JsonObject> {
+        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+            .header("Content-Type", "application/json")
+        if (prefer != null) builder.header("Prefer", prefer)
+        val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
+        val response = client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
+        if (response.statusCode() !in 200..299) {
+            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.statusCode()}: ${response.body().take(300)}")
+        }
+        val text = response.body()
+        if (text.isBlank()) return emptyList()
+        val element = json.parseToJsonElement(text)
+        return if (element is kotlinx.serialization.json.JsonArray) element.map { it.jsonObject } else listOf(element.jsonObject)
+    }
+
+    companion object {
+        fun fromEnvironment(json: Json): AppV1Gateway? {
+            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            val key = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+            return if (url.isBlank() || key.isBlank()) null else AppV1Gateway(url, key, json)
+        }
+    }
+}
+
+private fun JsonObject.str(key: String): String? = this[key]?.jsonPrimitive?.contentOrNull
+private fun JsonObject.int(key: String): Int? = this[key]?.jsonPrimitive?.intOrNull
+private fun JsonObject.bool(key: String): Boolean? = this[key]?.jsonPrimitive?.booleanOrNull
+private fun JsonObject.dbl(key: String): Double? = this[key]?.jsonPrimitive?.doubleOrNull

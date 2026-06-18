@@ -6,13 +6,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
@@ -20,16 +21,25 @@ import com.oposicontrol.admin.core.ui.components.AdminTable
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
+import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.GlassActionButton
+import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.StatusChip
+import com.oposicontrol.admin.core.ui.components.SummaryCard
+import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 @Composable
 fun TicketsScreen(
     viewModel: TicketsViewModel,
 ) {
     val state by viewModel.state.collectAsState()
+    var confirmAdjust by remember { mutableStateOf(false) }
+    val selectedWallet = (state.wallets as? UiAsync.Success)?.value?.firstOrNull { it.userId == state.selectedUserId }
+
     CrudSplitLayout(
         modifier = Modifier.fillMaxSize(),
         listPane = {
@@ -61,42 +71,46 @@ fun TicketsScreen(
         },
         detailPane = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (selectedWallet != null) {
+                    SummaryCard(
+                        title = selectedWallet.userName,
+                        value = "${selectedWallet.balance} tickets",
+                        supporting = "${selectedWallet.specialty} · ${selectedWallet.status}",
+                    )
+                }
+
                 FormSection(
                     title = "Ajuste de saldo",
-                    description = "Vista operativa para abonar o corregir tickets sobre carteras reales.",
+                    description = "Abona o corrige tickets sobre carteras reales.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        StatusChip("active")
-                        OutlinedTextField(
+                        FieldLabel("Importe (+/-)")
+                        GlassTextField(
                             value = state.adjustmentAmount,
                             onValueChange = { viewModel.dispatch(TicketsIntent.UpdateAdjustmentAmount(it)) },
-                            label = { Text("Importe (+/-)") },
+                            placeholder = "Ej. +50 o -10",
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        OutlinedTextField(
+                        FieldLabel("Razón")
+                        GlassTextField(
                             value = state.adjustmentReason,
                             onValueChange = { viewModel.dispatch(TicketsIntent.UpdateAdjustmentReason(it)) },
-                            label = { Text("Razon") },
+                            placeholder = "Motivo del ajuste",
                             modifier = Modifier.fillMaxWidth(),
                         )
-                        Button(
-                            onClick = { viewModel.dispatch(TicketsIntent.ApplyAdjustment) },
+                        GlassActionButton(
+                            text = "Aplicar ajuste",
+                            enabled = selectedWallet != null && state.adjustmentAmount.isNotBlank(),
+                            onClick = { confirmAdjust = true },
                             modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("Aplicar ajuste")
-                        }
-                        when (val actionState = state.actionState) {
-                            is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
-                            UiAsync.Loading -> Text("Ajustando...")
-                            is UiAsync.Success -> Text("Saldo actualizado.")
-                            else -> Unit
-                        }
+                        )
+                        FormFeedback(state.actionState, loadingText = "Ajustando...", successText = "Saldo actualizado.")
                     }
                 }
 
                 FormSection(
                     title = "Historial de transacciones",
-                    description = "Lectura operativa del saldo del usuario seleccionado.",
+                    description = "Movimientos del usuario seleccionado.",
                 ) {
                     AsyncStatePane(state.transactions, emptyMessage = "Esta cartera no tiene movimientos.") { items ->
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -105,7 +119,7 @@ fun TicketsScreen(
                                     StatusChip(movement.type)
                                     Text(movement.reason, style = MaterialTheme.typography.titleSmall)
                                     Text("${movement.amount} tickets", style = MaterialTheme.typography.bodyMedium)
-                                    Text(movement.occurredAt, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(movement.occurredAt, style = MaterialTheme.typography.bodySmall, color = GlassTheme.tokens.textSecondary)
                                 }
                             }
                         }
@@ -113,5 +127,28 @@ fun TicketsScreen(
                 }
             }
         },
+    )
+
+    if (confirmAdjust) {
+        ConfirmDialog(
+            title = "Confirmar ajuste",
+            message = "Se aplicará ${state.adjustmentAmount} tickets a ${selectedWallet?.userName ?: "la cartera"}. ¿Continuar?",
+            confirmLabel = "Aplicar",
+            destructive = false,
+            onConfirm = {
+                confirmAdjust = false
+                viewModel.dispatch(TicketsIntent.ApplyAdjustment)
+            },
+            onDismiss = { confirmAdjust = false },
+        )
+    }
+}
+
+@Composable
+private fun FieldLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = GlassTheme.tokens.textSecondary,
     )
 }

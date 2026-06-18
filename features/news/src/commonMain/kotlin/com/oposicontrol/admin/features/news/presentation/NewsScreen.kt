@@ -23,11 +23,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
@@ -45,8 +47,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
+import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.GlassTextField
@@ -188,12 +192,11 @@ private fun NewsSmallFilterField(
     onValueChange: (String) -> Unit,
     width: Int,
 ) {
-    OutlinedTextField(
+    GlassTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text(label) },
-        modifier = Modifier.width(width.dp).height(56.dp),
-        singleLine = true,
+        placeholder = label,
+        modifier = Modifier.width(width.dp),
     )
 }
 
@@ -360,6 +363,7 @@ private fun NewsPrimaryActions(
     state: NewsState,
     onIntent: (NewsIntent) -> Unit,
 ) {
+    var confirmDelete by remember { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             NewsCompactButton("Nueva", 86) { onIntent(NewsIntent.CreateNew) }
@@ -369,8 +373,21 @@ private fun NewsPrimaryActions(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             NewsCompactButton("Programar", 108) { onIntent(NewsIntent.Schedule) }
             NewsCompactButton("Archivar", 98, enabled = state.selectedId != null) { onIntent(NewsIntent.Archive) }
-            NewsCompactButton("Borrar", 82, enabled = state.selectedId != null) { onIntent(NewsIntent.DeleteSelected) }
+            NewsCompactButton("Borrar", 82, enabled = state.selectedId != null) { confirmDelete = true }
         }
+    }
+
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Eliminar noticia",
+            message = "Se eliminará la noticia seleccionada. ¿Continuar?",
+            confirmLabel = "Eliminar",
+            onConfirm = {
+                confirmDelete = false
+                onIntent(NewsIntent.DeleteSelected)
+            },
+            onDismiss = { confirmDelete = false },
+        )
     }
 }
 
@@ -905,24 +922,15 @@ private fun NewsCompactButton(
 
 @Composable
 private fun NewsActionState(state: NewsState) {
-    when (val actionState = state.actionState) {
-        is UiAsync.Error -> Text(
-            text = actionState.error.message,
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.sp),
-        )
-        UiAsync.Loading -> Text(
-            text = "Guardando noticia...",
-            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.sp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        is UiAsync.Success -> Text(
-            text = if (state.selectedId?.startsWith("local-") == true) "Borrador guardado localmente." else "Noticia sincronizada.",
-            color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.sp),
-        )
-        else -> Unit
-    }
+    FormFeedback(
+        state = state.actionState,
+        loadingText = "Guardando noticia...",
+        successText = if (state.selectedId?.startsWith("local-") == true) {
+            "Borrador guardado localmente."
+        } else {
+            "Noticia sincronizada."
+        },
+    )
 }
 
 @Composable

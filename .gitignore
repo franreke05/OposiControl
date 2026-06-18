@@ -27,6 +27,9 @@ node_modules/
 .env
 .env.*
 !.env.example
+iosApp/Configuration/Local.xcconfig
+iosApp/iosApp/LocalSecrets.plist
+iosApp/iosApp/LocalSecrets.env
 
 # Gradle worker and cache files
 gradle-worker-classpath*
