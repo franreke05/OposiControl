@@ -7,6 +7,7 @@ sealed interface UsersIntent {
     data class UpdateEmail(val value: String) : UsersIntent
     data class ToggleRole(val roleId: String) : UsersIntent
     data class ToggleActive(val value: Boolean) : UsersIntent
+    data class GrantTickets(val amount: Int) : UsersIntent
     data object Save : UsersIntent
     data object DeleteSelected : UsersIntent
 }

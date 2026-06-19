@@ -10,6 +10,6 @@ val usersFeatureModule = module {
     factory { ObserveUsersUseCase(get()) }
     factory { UpsertUserUseCase(get()) }
     factory { DeleteUserUseCase(get()) }
-    // ObserveRolesUseCase resolved from rolesFeatureModule (catálogo de roles para chips)
-    single { UsersViewModel(get(), get(), get(), get(), get(), get()) }
+    // ObserveRolesUseCase (rolesFeatureModule) + ModerationRepository (dataModule, para dar tickets)
+    single { UsersViewModel(get(), get(), get(), get(), get(), get(), get()) }
 }

@@ -7,6 +7,11 @@ import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.data.remote.api.adminAuthHeaders
+import com.oposicontrol.admin.data.storage.PlatformFileReader
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamResourceAudit
@@ -46,6 +51,7 @@ class KtorAdminV1ContentRepositoryImpl(
     private val appConfig: AppConfig,
     private val sessionLocalDataSource: SessionLocalDataSource,
     private val adapter: NetworkResultAdapter,
+    private val fileReader: PlatformFileReader,
 ) : ContentRepository {
     private val specialtiesFlow = MutableStateFlow<List<Specialty>>(emptyList())
     private val examsFlow = MutableStateFlow<List<Exam>>(emptyList())
@@ -347,10 +353,47 @@ class KtorAdminV1ContentRepositoryImpl(
     }
 
     override suspend fun uploadExamCover(examId: String, localPathOrUri: String): AppResult<Exam> =
-        AppResult.Failure(AppError.Validation("Portadas de examen pendientes de endpoint V1."))
+        adapter.safeCall {
+            val path = localPathOrUri.removePrefix("file://")
+            val asset = when (val r = fileReader.read(path)) {
+                is AppResult.Failure -> throw IllegalStateException(r.error.message)
+                is AppResult.Success -> r.value
+            }
+            require(asset.bytes.size <= ADMIN_V1_COVER_MAX_BYTES) { "La portada supera el limite de 10 MB." }
+            require(asset.mimeType?.startsWith("image/") == true) { "La portada debe ser una imagen." }
+            val endpoint = BackendRoutes.adminV1ExamenPortada(examId)
+            val response = client.post(adminUrl(endpoint)) {
+                adminHeaders()
+                expectSuccess = false
+                setBody(MultiPartFormDataContent(formData {
+                    append("file", asset.bytes, Headers.build {
+                        append(HttpHeaders.ContentDisposition, "form-data; name=\"file\"; filename=\"${asset.fileName.sanitizeMultipartFilename()}\"")
+                        append(HttpHeaders.ContentType, asset.mimeType)
+                    })
+                }))
+            }
+            response.requireBackendSuccess(endpoint)
+            val dto = response.body<AdminExamenResponse>().data
+            val specialty = specialtiesFlow.value.firstOrNull { it.id == dto.especialidadId }
+            dto.toExam(specialty?.name.orEmpty()).also { exam ->
+                examsFlow.value = examsFlow.value.map { if (it.id == exam.id) exam else it }
+            }
+        }
 
     override suspend fun clearExamCover(examId: String): AppResult<Exam> =
-        AppResult.Failure(AppError.Validation("Portadas de examen pendientes de endpoint V1."))
+        adapter.safeCall {
+            val endpoint = "${BackendRoutes.adminV1ExamenPortada(examId)}"
+            val response = client.delete(adminUrl(endpoint)) {
+                adminHeaders()
+                expectSuccess = false
+            }
+            response.requireBackendSuccess(endpoint)
+            val dto = response.body<AdminExamenResponse>().data
+            val specialty = specialtiesFlow.value.firstOrNull { it.id == dto.especialidadId }
+            dto.toExam(specialty?.name.orEmpty()).also { exam ->
+                examsFlow.value = examsFlow.value.map { if (it.id == exam.id) exam else it }
+            }
+        }
 
     private suspend fun getEspecialidades(): List<AdminEspecialidadDto> {
         val endpoint = BackendRoutes.ADMIN_V1_ESPECIALIDADES
@@ -561,6 +604,9 @@ private data class AdminExamenDto(
     val precioTickets: Int = 0,
     val totalPreguntas: Int = 1,
     val duracionMinutos: Int? = null,
+    val portadaUrl: String? = null,
+    val portadaStoragePath: String? = null,
+    val portadaMimeType: String? = null,
 )
 
 @Serializable
@@ -680,9 +726,9 @@ private fun AdminExamenDto.toExam(specialtyName: String) = Exam(
     durationMinutes = duracionMinutos,
     year = anio,
     isOfficial = esOficial,
-    coverUrl = null,
-    coverStoragePath = null,
-    coverMimeType = null,
+    coverUrl = portadaUrl,
+    coverStoragePath = portadaStoragePath,
+    coverMimeType = portadaMimeType,
     createdAt = nowInstant(),
     updatedAt = nowInstant(),
     deletedAt = if (activo) null else nowInstant(),
@@ -895,3 +941,7 @@ private fun String?.toInstantOrNull(): Instant? = this?.let { value ->
 }
 
 private fun nowInstant(): Instant = Instant.parse(Clock.System.now().toString())
+
+private fun String.sanitizeMultipartFilename(): String = replace("\"", "").ifBlank { "portada.jpg" }
+
+private const val ADMIN_V1_COVER_MAX_BYTES = 10 * 1024 * 1024

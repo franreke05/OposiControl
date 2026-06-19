@@ -25,6 +25,7 @@ import kotlinx.serialization.Serializable
     val roleIds: List<String> = emptyList(),
     val isActive: Boolean = true,
     val createdAt: String = "",
+    val ticketsBalance: Int = 0,
 )
 @Serializable private data class AdminUsersV1Response(val data: List<AdminUserV1Dto>)
 @Serializable private data class AdminUserV1Response(val data: AdminUserV1Dto)
@@ -36,6 +37,7 @@ private fun AdminUserV1Dto.toDto() = UserDto(
     roleIds = roleIds,
     isActive = isActive,
     createdAt = createdAt,
+    ticketsBalance = ticketsBalance,
 )
 
 class UsersApi(

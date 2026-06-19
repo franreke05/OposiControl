@@ -3,6 +3,7 @@ package com.oposicontrol.backend
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
@@ -10,6 +11,9 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
+import io.ktor.http.content.PartData
+import io.ktor.http.content.forEachPart
+import io.ktor.http.content.streamProvider
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -19,9 +23,11 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.net.URI
+import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -88,6 +94,27 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             }
             delete("/{id}") {
                 call.respond(AdminExamenResponse(gateway.archiveExamen(call.requiredPath("id"))))
+            }
+            post("/{id}/portada") {
+                val id = call.requiredPath("id")
+                val multipart = call.receiveMultipart()
+                var fileBytes: ByteArray? = null
+                var fileName = "portada.jpg"
+                var mimeType = "image/jpeg"
+                multipart.forEachPart { part ->
+                    if (part is PartData.FileItem && part.name == "file") {
+                        fileBytes = part.streamProvider().readBytes()
+                        fileName = part.originalFileName ?: fileName
+                        mimeType = part.contentType?.toString() ?: mimeType
+                    }
+                    part.dispose()
+                }
+                val bytes = fileBytes
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("no_file", "No se recibió archivo."))
+                call.respond(AdminExamenResponse(gateway.uploadExamenPortada(id, bytes, fileName, mimeType)))
+            }
+            delete("/{id}/portada") {
+                call.respond(AdminExamenResponse(gateway.clearExamenPortada(call.requiredPath("id"))))
             }
         }
         route("/preguntas") {
@@ -180,6 +207,18 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 gateway.syncRoles(call.requiredPath("id"), body.roleIds)
                 call.respond(OkDto())
             }
+            post("/{id}/tickets") {
+                val body = call.receive<GrantTicketsBody>()
+                val saldo = gateway.grantTickets(call.requiredPath("id"), body.cantidad, body.motivo)
+                call.respond(GrantTicketsResponse(saldo))
+            }
+        }
+        route("/reportes") {
+            get { call.respond(AdminReportesResponse(gateway.listReportes())) }
+            post("/{id}/resolver") {
+                gateway.resolverReporte(call.requiredPath("id"), call.receive())
+                call.respond(OkDto())
+            }
         }
         route("/roles") {
             get {
@@ -266,6 +305,9 @@ data class AdminExamenDto(
     val precioTickets: Int = 0,
     val totalPreguntas: Int = 0,
     val duracionMinutos: Int? = null,
+    val portadaUrl: String? = null,
+    val portadaStoragePath: String? = null,
+    val portadaMimeType: String? = null,
 )
 
 @Serializable
@@ -285,6 +327,9 @@ private data class AdminExamenRow(
     @SerialName("precio_tickets") val precioTickets: Int? = null,
     @SerialName("total_preguntas") val totalPreguntas: Int = 0,
     @SerialName("duracion_minutos") val duracionMinutos: Int? = null,
+    @SerialName("portada_url") val portadaUrl: String? = null,
+    @SerialName("portada_storage_path") val portadaStoragePath: String? = null,
+    @SerialName("portada_mime_type") val portadaMimeType: String? = null,
 )
 
 private fun AdminExamenRow.toDto() = AdminExamenDto(
@@ -303,6 +348,9 @@ private fun AdminExamenRow.toDto() = AdminExamenDto(
     precioTickets = precioTickets ?: 0,
     totalPreguntas = if (totalPreguntas > 0) totalPreguntas else 1,
     duracionMinutos = duracionMinutos,
+    portadaUrl = portadaUrl,
+    portadaStoragePath = portadaStoragePath,
+    portadaMimeType = portadaMimeType,
 )
 
 private fun AdminExamenDto.toRow(forcedId: String? = null) = AdminExamenRow(
@@ -643,7 +691,26 @@ data class AdminV1UserDto(
     val roleIds: List<String> = emptyList(),
     val isActive: Boolean = true,
     val createdAt: String = "",
+    val ticketsBalance: Int = 0,
 )
+
+// Moderación del foro (OposiRed) + tickets manuales
+@Serializable
+data class AdminReporteDto(
+    val id: String,
+    val tipoEntidad: String = "",
+    val entidadId: String = "",
+    val motivo: String = "",
+    val descripcion: String = "",
+    val estado: String = "",
+    val creadoEn: String = "",
+    val reportadoPor: String = "",
+    val reporterNombre: String = "",
+)
+@Serializable data class AdminReportesResponse(val data: List<AdminReporteDto>)
+@Serializable data class ResolverReporteBody(val accion: String = "descartar", val notas: String? = null, val ticketsReporter: Int = 0)
+@Serializable data class GrantTicketsBody(val cantidad: Int, val motivo: String = "Ajuste manual")
+@Serializable data class GrantTicketsResponse(val saldo: Int)
 
 @Serializable
 data class AdminV1RoleDto(
@@ -707,6 +774,58 @@ data class AdminDashboardDto(
 
 @Serializable
 data class DayCountDto(val date: String, val count: Int)
+
+// Rows privados moderación + tickets
+@Serializable
+private data class ReporteRow(
+    val id: String,
+    @SerialName("tipo_entidad") val tipoEntidad: String = "",
+    @SerialName("entidad_id") val entidadId: String? = null,
+    val motivo: String? = null,
+    val descripcion: String? = null,
+    val estado: String? = null,
+    @SerialName("reportado_por") val reportadoPor: String? = null,
+    @SerialName("creado_en") val creadoEn: String? = null,
+)
+
+@Serializable
+private data class AccionModeracionInsert(
+    @SerialName("reporte_id") val reporteId: String,
+    @SerialName("tipo_accion") val tipoAccion: String,
+    val notas: String? = null,
+)
+
+@Serializable
+private data class ReportePatch(
+    val estado: String,
+    @SerialName("revisado_en") val revisadoEn: String,
+    @SerialName("tickets_otorgados") val ticketsOtorgados: Int,
+    @SerialName("recompensa_entregada") val recompensaEntregada: Boolean,
+)
+
+@Serializable
+private data class CarteraRow(
+    @SerialName("usuario_id") val usuarioId: String = "",
+    @SerialName("saldo_tickets") val saldoTickets: Int = 0,
+)
+
+@Serializable
+private data class TransaccionInsert(
+    @SerialName("usuario_id") val usuarioId: String,
+    val tipo: String,
+    val cantidad: Int,
+    @SerialName("saldo_anterior") val saldoAnterior: Int,
+    @SerialName("saldo_resultante") val saldoResultante: Int,
+    val descripcion: String? = null,
+    @SerialName("referencia_tipo") val referenciaTipo: String? = null,
+)
+
+@Serializable
+private data class CarteraUpsert(
+    @SerialName("usuario_id") val usuarioId: String,
+    @SerialName("saldo_tickets") val saldoTickets: Int,
+    @SerialName("actualizado_en") val actualizadoEn: String,
+)
 
 // Rows privados para etiquetas y comunidades
 @Serializable
@@ -773,6 +892,8 @@ class AdminV1Gateway private constructor(
     private val json: Json,
     private val client: HttpClient = HttpClient.newHttpClient(),
 ) {
+    private var storageBucketChecked = false
+
     // Para ESCRIBIR en Supabase: encodeDefaults=true (envia tipo_examen="rafaga" aunque
     // sea el default) + explicitNulls=false (omite nulls para que apliquen defaults de BD).
     private val sbJson = Json {
@@ -790,6 +911,7 @@ class AdminV1Gateway private constructor(
         require(input.nombre.isNotBlank()) { "La especialidad necesita nombre." }
         val row = input.copy(
             id = input.id.ifBlank { UUID.randomUUID().toString() },
+            codigo = input.codigo.ifBlank { "ESP-" + shortId() },
             slug = input.slug.ifBlank { input.nombre.toSlug() },
         )
         return request(
@@ -838,10 +960,13 @@ class AdminV1Gateway private constructor(
     fun createExamen(input: AdminExamenDto): AdminExamenDto {
         require(input.titulo.isNotBlank()) { "El examen necesita titulo." }
         require(input.especialidadId.isNotBlank()) { "El examen necesita especialidad." }
+        val row = input.toRow().let {
+            if (it.codigoExamen.isBlank()) it.copy(codigoExamen = "EX-" + shortId()) else it
+        }
         val saved = request(
             "POST",
             "/rest/v1/examenes",
-            sbJson.encodeToString(listOf(input.toRow())),
+            sbJson.encodeToString(listOf(row)),
             prefer = "return=representation",
         ).decodeList<AdminExamenRow>().first().toDto()
         registrarAuditoria("examen_creado", "examenes", saved.id)
@@ -1374,6 +1499,8 @@ class AdminV1Gateway private constructor(
         val rolAsignaciones = request("GET", "/rest/v1/roles_usuario?select=*", null)
             .decodeList<RolUsuarioRow>()
         val rolesByUser = rolAsignaciones.groupBy({ it.usuarioId }, { it.rolId })
+        val balanceByUser = request("GET", "/rest/v1/carteras_usuario?select=usuario_id,saldo_tickets", null)
+            .decodeList<CarteraRow>().associate { it.usuarioId to it.saldoTickets }
         return perfiles.map { p ->
             AdminV1UserDto(
                 id = p.usuarioId,
@@ -1382,6 +1509,7 @@ class AdminV1Gateway private constructor(
                 roleIds = rolesByUser[p.usuarioId].orEmpty(),
                 isActive = !p.esInvitado,
                 createdAt = p.creadoEn.orEmpty(),
+                ticketsBalance = balanceByUser[p.usuarioId] ?: 0,
             )
         }
     }
@@ -1417,6 +1545,89 @@ class AdminV1Gateway private constructor(
             val rows = roleIds.joinToString(",") { """{"usuario_id":"$usuarioId","rol_id":"$it"}""" }
             request("POST", "/rest/v1/roles_usuario", "[$rows]", prefer = "return=minimal")
         }
+    }
+
+    // MODERACIÓN FORO (reportes_contenido + acciones_moderacion)
+    fun listReportes(): List<AdminReporteDto> {
+        val reportes = request(
+            "GET",
+            "/rest/v1/reportes_contenido?select=*&estado=eq.pendiente&order=creado_en.asc&limit=200",
+            null,
+        ).decodeList<ReporteRow>()
+        val reporterIds = reportes.mapNotNull { it.reportadoPor }.filter { it.isNotBlank() }.distinct()
+        val names = if (reporterIds.isEmpty()) {
+            emptyMap()
+        } else {
+            request(
+                "GET",
+                "/rest/v1/perfiles_usuario?select=usuario_id,nombre_mostrar&usuario_id=in.(${reporterIds.joinToString(",")})",
+                null,
+            ).decodeList<PerfilUsuarioRow>().associate { it.usuarioId to it.nombreMostrar.orEmpty() }
+        }
+        return reportes.map { r ->
+            AdminReporteDto(
+                id = r.id,
+                tipoEntidad = r.tipoEntidad,
+                entidadId = r.entidadId.orEmpty(),
+                motivo = r.motivo.orEmpty(),
+                descripcion = r.descripcion.orEmpty(),
+                estado = r.estado.orEmpty(),
+                creadoEn = r.creadoEn.orEmpty(),
+                reportadoPor = r.reportadoPor.orEmpty(),
+                reporterNombre = names[r.reportadoPor].orEmpty(),
+            )
+        }
+    }
+
+    fun resolverReporte(id: String, req: ResolverReporteBody) {
+        require(req.accion.isNotBlank()) { "La acción es obligatoria." }
+        val reporte = request("GET", "/rest/v1/reportes_contenido?select=*&id=eq.$id&limit=1", null)
+            .decodeList<ReporteRow>().firstOrNull() ?: error("Reporte no encontrado.")
+        val estado = if (req.accion == "descartar") "descartado" else "resuelto"
+        val accion = AccionModeracionInsert(reporteId = id, tipoAccion = req.accion, notas = req.notas)
+        request("POST", "/rest/v1/acciones_moderacion", sbJson.encodeToString(listOf(accion)), prefer = "return=minimal")
+        val reward = req.ticketsReporter > 0
+        val patch = ReportePatch(
+            estado = estado,
+            revisadoEn = Instant.now().toString(),
+            ticketsOtorgados = req.ticketsReporter,
+            recompensaEntregada = reward,
+        )
+        request("PATCH", "/rest/v1/reportes_contenido?id=eq.$id", sbJson.encodeToString(patch), prefer = "return=minimal")
+        if (reward && !reporte.reportadoPor.isNullOrBlank()) {
+            grantTickets(reporte.reportadoPor, req.ticketsReporter, "Recompensa por reporte", tipo = "reporte_validado")
+        }
+        registrarAuditoria("reporte_$estado", "reportes_contenido", id)
+    }
+
+    // TICKETS MANUALES (carteras_usuario + transacciones_cartera)
+    // tipo debe ser un valor permitido por el CHECK: "ajuste" (manual) / "reporte_validado" (recompensa)
+    fun grantTickets(usuarioId: String, cantidad: Int, motivo: String, tipo: String = "ajuste"): Int {
+        require(cantidad != 0) { "La cantidad de tickets no puede ser 0." }
+        val saldoAnterior = request(
+            "GET", "/rest/v1/carteras_usuario?select=saldo_tickets&usuario_id=eq.$usuarioId&limit=1", null,
+        ).decodeList<CarteraRow>().firstOrNull()?.saldoTickets ?: 0
+        val saldoResultante = saldoAnterior + cantidad
+        require(saldoResultante >= 0) { "El saldo resultante no puede ser negativo (actual: $saldoAnterior)." }
+        val tx = TransaccionInsert(
+            usuarioId = usuarioId,
+            tipo = tipo,
+            cantidad = cantidad,
+            saldoAnterior = saldoAnterior,
+            saldoResultante = saldoResultante,
+            descripcion = motivo,
+            referenciaTipo = "admin",
+        )
+        request("POST", "/rest/v1/transacciones_cartera", sbJson.encodeToString(listOf(tx)), prefer = "return=minimal")
+        val cartera = CarteraUpsert(usuarioId = usuarioId, saldoTickets = saldoResultante, actualizadoEn = Instant.now().toString())
+        request(
+            "POST",
+            "/rest/v1/carteras_usuario?on_conflict=usuario_id",
+            sbJson.encodeToString(listOf(cartera)),
+            prefer = "resolution=merge-duplicates,return=minimal",
+        )
+        registrarAuditoria("tickets_grant", "carteras_usuario", usuarioId)
+        return saldoResultante
     }
 
     // ETIQUETAS
@@ -1566,7 +1777,67 @@ class AdminV1Gateway private constructor(
         }
     }
 
+    fun uploadExamenPortada(examId: String, bytes: ByteArray, fileName: String, mimeType: String): AdminExamenDto {
+        require(mimeType.startsWith("image/")) { "La portada debe ser una imagen." }
+        val bucket = (System.getenv("SUPABASE_BUCKET_EXAM_RESOURCES") ?: "exam-resources").toStorageBucketId()
+        ensureStorageBucketExists(bucket)
+        val sanitized = fileName.sanitizeStorageSegment()
+        val objectPath = "exam-covers/$examId/$sanitized"
+        val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
+        requestBinary("POST", "$supabaseUrl/storage/v1/object/$bucket/$encodedPath", bytes, mimeType, upsert = true)
+        val publicUrl = "$supabaseUrl/storage/v1/object/public/$bucket/$encodedPath"
+        return request(
+            "PATCH", "/rest/v1/examenes?id=eq.$examId",
+            """{"portada_url":"$publicUrl","portada_storage_path":"$objectPath","portada_mime_type":"$mimeType"}""",
+            prefer = "return=representation",
+        ).decodeList<AdminExamenRow>().first().toDto()
+    }
+
+    fun clearExamenPortada(examId: String): AdminExamenDto {
+        return request(
+            "PATCH", "/rest/v1/examenes?id=eq.$examId",
+            """{"portada_url":null,"portada_storage_path":null,"portada_mime_type":null}""",
+            prefer = "return=representation",
+        ).decodeList<AdminExamenRow>().first().toDto()
+    }
+
+    private fun ensureStorageBucketExists(bucket: String) {
+        if (storageBucketChecked) return
+        val body = """{"id":"$bucket","name":"$bucket","public":true}"""
+        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/bucket"))
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+            .header("Content-Type", "application/json")
+        val response = try {
+            client.send(builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
+        } catch (e: Exception) {
+            throw IllegalStateException("Supabase Storage bucket check error: ${e::class.simpleName}: ${e.message}", e)
+        }
+        if (response.statusCode() in 200..299 || response.statusCode() == 409) {
+            storageBucketChecked = true
+            return
+        }
+        throw IllegalStateException("Supabase Storage bucket check -> ${response.statusCode()}: ${response.body().take(300)}")
+    }
+
     private fun shortId(): String = UUID.randomUUID().toString().take(8)
+
+    private fun requestBinary(method: String, url: String, bytes: ByteArray, contentType: String, upsert: Boolean = false): String {
+        val builder = HttpRequest.newBuilder(URI.create(url))
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+            .header("Content-Type", contentType)
+        if (upsert) builder.header("x-upsert", "true")
+        val response = try {
+            client.send(builder.method(method, HttpRequest.BodyPublishers.ofByteArray(bytes)).build(), HttpResponse.BodyHandlers.ofString())
+        } catch (e: Exception) {
+            throw IllegalStateException("Supabase storage error: ${e.message}", e)
+        }
+        if (response.statusCode() !in 200..299) {
+            throw IllegalStateException("Supabase storage $method -> ${response.statusCode()}: ${response.body().take(200)}")
+        }
+        return response.body()
+    }
 
     private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
@@ -1593,6 +1864,23 @@ class AdminV1Gateway private constructor(
 
     private fun String.toSlug(): String =
         lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "item" }
+
+    private fun String.sanitizeStorageSegment(): String {
+        return trim()
+            .replace(Regex("[^A-Za-z0-9._-]+"), "-")
+            .trim('-', '.', '_')
+            .ifBlank { "portada.jpg" }
+    }
+
+    private fun String.toStorageBucketId(): String {
+        return trim()
+            .replace(Regex("[^A-Za-z0-9._-]+"), "-")
+            .trim('-', '.', '_')
+            .ifBlank { "exam-resources" }
+    }
+
+    private fun String.urlEncode(): String =
+        URLEncoder.encode(this, StandardCharsets.UTF_8).replace("+", "%20")
 
     companion object {
         fun fromEnvironment(json: Json): AdminV1Gateway? {

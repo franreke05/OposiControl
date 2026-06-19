@@ -10,4 +10,5 @@ data class UserDto(
     val roleIds: List<String>,
     val isActive: Boolean,
     val createdAt: String,
+    val ticketsBalance: Int = 0,
 )

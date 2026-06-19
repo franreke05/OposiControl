@@ -174,6 +174,10 @@ class ExamsViewModel(
             is ExamsIntent.ToggleSpecialtyActive -> updateState { it.copy(specialtyEditorIsActive = intent.value) }
             is ExamsIntent.UpdateDescription -> updateState { it.copy(editorDescription = intent.value) }
             is ExamsIntent.UpdateExamStatus -> updateState { it.copy(editorStatus = intent.value) }
+            is ExamsIntent.UpdateTypeAccess -> updateState { it.copy(editorTypeAccess = intent.value) }
+            is ExamsIntent.UpdateYear -> updateState { it.copy(editorYear = intent.value.filter { c -> c.isDigit() }.take(4)) }
+            is ExamsIntent.ToggleIsOfficial -> updateState { it.copy(editorIsOfficial = intent.value) }
+            is ExamsIntent.UpdateDurationMinutes -> updateState { it.copy(editorDurationMinutes = intent.value.filter { c -> c.isDigit() }.take(4)) }
             is ExamsIntent.UpdatePriceTickets -> updateState { it.copy(editorPriceTickets = intent.value.filter { char -> char.isDigit() }.take(9)) }
             is ExamsIntent.UpdateOptionContent -> updateOption(intent.optionId, intent.value)
             is ExamsIntent.UpdatePublishFrom -> updateState { it.copy(editorPublishFrom = intent.value) }
@@ -364,6 +368,10 @@ class ExamsViewModel(
                 editorSpecialtyId = exam.specialtyId,
                 editorStatus = exam.status.name.lowercase(),
                 editorPublishFrom = exam.publishFrom?.toString().orEmpty(),
+                editorTypeAccess = exam.typeAccess,
+                editorYear = exam.year?.toString().orEmpty(),
+                editorIsOfficial = exam.isOfficial,
+                editorDurationMinutes = exam.durationMinutes?.toString().orEmpty(),
                 editorCoverUrl = exam.coverUrl.orEmpty(),
                 editorCoverStoragePath = exam.coverStoragePath.orEmpty(),
                 editorCoverMimeType = exam.coverMimeType.orEmpty(),
@@ -409,6 +417,10 @@ class ExamsViewModel(
                 editorSpecialtyId = rafaga.specialtyId,
                 editorStatus = rafaga.status.name.lowercase(),
                 editorPublishFrom = rafaga.publishFrom?.toString().orEmpty(),
+                editorTypeAccess = if (rafaga.priceTickets > 0) "premium" else "gratuito",
+                editorYear = "",
+                editorIsOfficial = false,
+                editorDurationMinutes = "",
                 editorCoverUrl = "",
                 editorCoverStoragePath = "",
                 editorCoverMimeType = "",
@@ -486,6 +498,10 @@ class ExamsViewModel(
                 editorSpecialtyId = allSpecialties.firstOrNull()?.id.orEmpty(),
                 editorStatus = "draft",
                 editorPublishFrom = "",
+                editorTypeAccess = "gratuito",
+                editorYear = "",
+                editorIsOfficial = false,
+                editorDurationMinutes = "",
                 editorCoverUrl = "",
                 editorCoverStoragePath = "",
                 editorCoverMimeType = "",
@@ -525,6 +541,10 @@ class ExamsViewModel(
                 editorSpecialtyId = allSpecialties.firstOrNull()?.id.orEmpty(),
                 editorStatus = "draft",
                 editorPublishFrom = "",
+                editorTypeAccess = "gratuito",
+                editorYear = "",
+                editorIsOfficial = false,
+                editorDurationMinutes = "",
                 editorCoverUrl = "",
                 editorCoverStoragePath = "",
                 editorCoverMimeType = "",
@@ -567,6 +587,18 @@ class ExamsViewModel(
                 it.copy(actionState = UiAsync.Error(AppError.Validation("El precio en tickets no puede ser negativo.")))
             }
         }
+        val year = currentState().editorYear.takeIf { it.isNotBlank() }?.toIntOrNull()
+            ?: currentState().editorYear.takeIf { it.isNotBlank() }?.let {
+                return updateState {
+                    it.copy(actionState = UiAsync.Error(AppError.Validation("El anio debe ser numerico.")))
+                }
+            }
+        val durationMinutes = currentState().editorDurationMinutes.takeIf { it.isNotBlank() }?.toIntOrNull()
+            ?: currentState().editorDurationMinutes.takeIf { it.isNotBlank() }?.let {
+                return updateState {
+                    it.copy(actionState = UiAsync.Error(AppError.Validation("La duracion debe ser numerica.")))
+                }
+            }
         val publishFrom = currentState().editorPublishFrom.takeIf { it.isNotBlank() }?.let {
             runCatching { kotlinx.datetime.Instant.parse(it) }.getOrNull()
                 ?: return updateState {
@@ -581,6 +613,7 @@ class ExamsViewModel(
             specialtyName = specialty.name,
             title = currentState().editorTitle.trim(),
             description = currentState().editorDescription.trim(),
+            typeAccess = currentState().editorTypeAccess.ifBlank { "gratuito" },
             priceTickets = priceTickets,
             status = status,
             publishFrom = when (status) {
@@ -595,6 +628,9 @@ class ExamsViewModel(
             },
             sortOrder = existing?.sortOrder ?: allExams.size,
             questionCount = currentQuestions.size,
+            durationMinutes = durationMinutes,
+            year = year,
+            isOfficial = currentState().editorIsOfficial,
             coverUrl = currentState().editorCoverUrl.ifBlank { existing?.coverUrl },
             coverStoragePath = currentState().editorCoverStoragePath.ifBlank { existing?.coverStoragePath },
             coverMimeType = currentState().editorCoverMimeType.ifBlank { existing?.coverMimeType },
@@ -606,8 +642,16 @@ class ExamsViewModel(
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("exam_save", mapOf("exam_id" to result.value.id))
+                // capturar antes de que selectExam limpie el estado del editor
+                val pendingUri = currentState().editorCoverLocalUri
+                val pendingName = currentState().editorCoverFileName
+                val pendingMime = currentState().editorCoverMimeType
                 updateState { it.copy(selectedExamId = result.value.id, actionState = UiAsync.Success(Unit)) }
                 selectExam(result.value.id)
+                if (pendingUri.isNotBlank()) {
+                    updateState { it.copy(editorCoverLocalUri = pendingUri, editorCoverFileName = pendingName, editorCoverMimeType = pendingMime) }
+                    uploadExamCover()
+                }
             }
         }
     }

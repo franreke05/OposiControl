@@ -32,6 +32,7 @@ import com.oposicontrol.admin.data.repository.KtorAdminOperationsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorAdminV1ContentRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorCommunitiesRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorConnectionDiagnosticsRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorModerationRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorNewsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorTagSearchRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorTagsRepositoryImpl
@@ -48,6 +49,7 @@ import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.repository.DashboardRepository
+import com.oposicontrol.admin.domain.repository.ModerationRepository
 import com.oposicontrol.admin.domain.repository.NewsRepository
 import com.oposicontrol.admin.domain.repository.RolesRepository
 import com.oposicontrol.admin.domain.repository.SettingsRepository
@@ -87,6 +89,7 @@ val dataModule = module {
             appConfig = appConfig,
             sessionLocalDataSource = get(),
             adapter = get(),
+            fileReader = get(),
         )
     }
 
@@ -149,6 +152,15 @@ val dataModule = module {
 
     single<AdminOperationsRepository> {
         KtorAdminOperationsRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
+    single<ModerationRepository> {
+        KtorModerationRepositoryImpl(
             client = get(),
             appConfig = get(),
             sessionLocalDataSource = get(),

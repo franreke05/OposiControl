@@ -15,6 +15,7 @@ import com.oposicontrol.admin.features.news.presentation.NewsIntent
 import com.oposicontrol.admin.features.news.presentation.NewsViewModel
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessViewModel
+import com.oposicontrol.admin.features.moderation.presentation.ForumModerationViewModel
 import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
 import com.oposicontrol.admin.features.support.presentation.SupportViewModel
 import com.oposicontrol.admin.features.settings.presentation.SettingsViewModel
@@ -32,6 +33,7 @@ fun MobileContentRoot(
     val newsViewModel: NewsViewModel = koinInject()
     val usersViewModel: UsersViewModel = koinInject()
     val accessViewModel: ExamAccessViewModel = koinInject()
+    val moderationViewModel: ForumModerationViewModel = koinInject()
     val ticketsViewModel: TicketsViewModel = koinInject()
     val supportViewModel: SupportViewModel = koinInject()
     val settingsViewModel: SettingsViewModel = koinInject()
@@ -70,6 +72,7 @@ fun MobileContentRoot(
         adminContent = {
             MobileAdminPanel(
                 usersViewModel = usersViewModel,
+                moderationViewModel = moderationViewModel,
                 accessViewModel = accessViewModel,
                 ticketsViewModel = ticketsViewModel,
                 supportViewModel = supportViewModel,

@@ -30,7 +30,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.domain.model.ForumReport
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
+import com.oposicontrol.admin.core.ui.components.GlassChip
 import com.oposicontrol.admin.core.ui.components.GlassChipGroup
 import com.oposicontrol.admin.core.ui.components.GlassSearchBar
 import com.oposicontrol.admin.core.ui.components.GlassSurface
@@ -41,6 +43,9 @@ import com.oposicontrol.admin.core.ui.layout.UiSpacing
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessIntent
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessViewModel
+import com.oposicontrol.admin.features.moderation.presentation.ForumModerationIntent
+import com.oposicontrol.admin.features.moderation.presentation.ForumModerationState
+import com.oposicontrol.admin.features.moderation.presentation.ForumModerationViewModel
 import com.oposicontrol.admin.features.exams.presentation.IconBadge
 import com.oposicontrol.admin.features.exams.presentation.LineIcon
 import com.oposicontrol.admin.features.exams.presentation.MobileActionPill
@@ -59,22 +64,25 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private enum class AdminSection(val label: String, val icon: MobileIcon, val description: String) {
-    Usuarios("Usuarios", MobileIcon.Users, "Gestiona cuentas y roles"),
-    Accesos("Accesos", MobileIcon.Key, "Control de accesos a examenes"),
+    Moderacion("Moderacion", MobileIcon.Eye, "Reportes del foro OposiRed"),
+    Usuarios("Usuarios", MobileIcon.Users, "Usuarios y dar opositickets"),
     Tickets("Tickets", MobileIcon.Wallet, "Carteras y ajustes de saldo"),
     Soporte("Soporte", MobileIcon.Chat, "Conversaciones de soporte"),
+    Accesos("Accesos", MobileIcon.Key, "Control de accesos a examenes"),
     Ajustes("Ajustes", MobileIcon.Gear, "Configuracion del sistema"),
 }
 
 @Composable
 fun MobileAdminPanel(
     usersViewModel: UsersViewModel,
+    moderationViewModel: ForumModerationViewModel,
     accessViewModel: ExamAccessViewModel,
     ticketsViewModel: TicketsViewModel,
     supportViewModel: SupportViewModel,
     settingsViewModel: SettingsViewModel,
 ) {
     val usersState by usersViewModel.state.collectAsState()
+    val moderationState by moderationViewModel.state.collectAsState()
     val accessState by accessViewModel.state.collectAsState()
     val ticketsState by ticketsViewModel.state.collectAsState()
     val supportState by supportViewModel.state.collectAsState()
@@ -95,6 +103,10 @@ fun MobileAdminPanel(
             ) {
                 AdminBackHeader(section = section, onBack = { activeSection = null })
                 when (section) {
+                    AdminSection.Moderacion -> AdminModerationSection(
+                        state = moderationState,
+                        onIntent = moderationViewModel::dispatch,
+                    )
                     AdminSection.Usuarios -> AdminUsersSection(
                         usersState = usersState,
                         onIntent = usersViewModel::dispatch,
@@ -194,6 +206,101 @@ private fun AdminBackHeader(section: AdminSection, onBack: () -> Unit) {
     }
 }
 
+// ─── MODERACIÓN FORO ─────────────────────────────────────────────────────────
+
+@Composable
+private fun AdminModerationSection(
+    state: ForumModerationState,
+    onIntent: (ForumModerationIntent) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ResponsiveActionRow(
+            actions = listOf(
+                MobileActionSpec(MobileIcon.Refresh, "Actualizar", onClick = { onIntent(ForumModerationIntent.Refresh) }),
+            ),
+            maxItemsInEachRow = 1,
+        )
+        when (val reports = state.reports) {
+            is UiAsync.Loading -> LoadingStateCard()
+            is UiAsync.Empty -> EmptyStateCard(
+                title = "Sin reportes pendientes",
+                message = "La cola de moderación del foro está limpia.",
+            )
+            is UiAsync.Error -> EmptyStateCard(title = "Error al cargar", message = reports.error.message)
+            is UiAsync.Success -> reports.value.forEach { report ->
+                ReportCard(
+                    report = report,
+                    busy = state.actionState is UiAsync.Loading,
+                    onResolve = { action, tickets ->
+                        onIntent(ForumModerationIntent.Resolve(report.id, action, null, tickets))
+                    },
+                )
+            }
+            is UiAsync.Idle -> Unit
+        }
+    }
+}
+
+private val MODERATION_ACTIONS = listOf("descartar" to "Descartar", "ocultar" to "Ocultar", "avisar" to "Avisar", "banear" to "Banear")
+private val REWARD_PRESETS = listOf(0, 5, 10)
+
+@Composable
+private fun ReportCard(
+    report: ForumReport,
+    busy: Boolean,
+    onResolve: (action: String, ticketsReporter: Int) -> Unit,
+) {
+    var action by rememberSaveable(report.id) { mutableStateOf("descartar") }
+    var reward by rememberSaveable(report.id) { mutableStateOf(0) }
+    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                StatusChip(status = report.reason.ifBlank { "reporte" })
+                Text(
+                    text = report.entityType,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (report.description.isNotBlank()) {
+                Text(report.description, style = MaterialTheme.typography.bodyMedium)
+            }
+            Text(
+                text = "Reportado por ${report.reporterName.ifBlank { report.reporterId.take(8) }}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text("Acción", style = MaterialTheme.typography.labelMedium, color = GlassTheme.tokens.textSecondary)
+            GlassChipGroup(
+                options = MODERATION_ACTIONS,
+                selected = setOf(action),
+                onToggle = { action = it },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text("Recompensa al reporter", style = MaterialTheme.typography.labelMedium, color = GlassTheme.tokens.textSecondary)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                REWARD_PRESETS.forEach { preset ->
+                    GlassChip(
+                        label = if (preset == 0) "Sin tickets" else "+$preset",
+                        selected = reward == preset,
+                        onClick = { reward = preset },
+                    )
+                }
+            }
+            MobileActionPill(
+                icon = MobileIcon.Check,
+                label = if (busy) "Resolviendo..." else "Resolver",
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !busy,
+                onClick = { onResolve(action, reward) },
+            )
+        }
+    }
+}
+
 // ─── USUARIOS ──────────────────────────────────────────────────────────────────
 
 @Composable
@@ -268,7 +375,15 @@ private fun AdminUsersSection(
                                 }
                             }
                             Spacer(Modifier.width(8.dp))
-                            StatusChip(status = if (user.isActive) "active" else "inactive")
+                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "${user.ticketsBalance} 🎟",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = GlassTheme.tokens.accent,
+                                )
+                                StatusChip(status = if (user.isActive) "active" else "inactive")
+                            }
                         }
                     }
                 }
@@ -330,6 +445,19 @@ private fun UsersEditorCard(
                     onCheckedChange = { onIntent(UsersIntent.ToggleActive(it)) },
                     colors = SwitchDefaults.colors(checkedThumbColor = GlassTheme.tokens.accent),
                 )
+            }
+            if (state.selectedUserId != null) {
+                Text("Dar opositickets", style = MaterialTheme.typography.labelMedium, color = GlassTheme.tokens.textSecondary)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(5, 10, 25).forEach { amount ->
+                        GlassChip(
+                            label = "+$amount",
+                            selected = false,
+                            enabled = state.actionState !is UiAsync.Loading,
+                            onClick = { onIntent(UsersIntent.GrantTickets(amount)) },
+                        )
+                    }
+                }
             }
             AdminActionRow(
                 actionState = state.actionState,

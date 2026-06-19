@@ -87,6 +87,7 @@ fun GlassChipGroup(
     onToggle: (String) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    singleSelect: Boolean = false,
 ) {
     FlowRow(
         modifier = modifier,
@@ -94,10 +95,11 @@ fun GlassChipGroup(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         options.forEach { (id, label) ->
+            val isSelected = id in selected
             GlassChip(
                 label = label,
-                selected = id in selected,
-                enabled = enabled,
+                selected = isSelected,
+                enabled = enabled && !(singleSelect && isSelected),
                 onClick = { onToggle(id) },
             )
         }

@@ -49,6 +49,10 @@ sealed interface ExamsIntent {
     data class UpdateSpecialtyId(val value: String) : ExamsIntent
     data class UpdateExamStatus(val value: String) : ExamsIntent
     data class UpdatePublishFrom(val value: String) : ExamsIntent
+    data class UpdateTypeAccess(val value: String) : ExamsIntent
+    data class UpdateYear(val value: String) : ExamsIntent
+    data class ToggleIsOfficial(val value: Boolean) : ExamsIntent
+    data class UpdateDurationMinutes(val value: String) : ExamsIntent
     data class SelectExamCoverFile(val uri: String, val suggestedName: String, val mimeType: String?) : ExamsIntent
     data object UploadExamCover : ExamsIntent
     data object ClearExamCover : ExamsIntent

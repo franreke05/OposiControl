@@ -9,4 +9,5 @@ data class User(
     val roleIds: List<String>,
     val isActive: Boolean,
     val createdAt: Instant,
+    val ticketsBalance: Int = 0,
 )

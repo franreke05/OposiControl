@@ -70,6 +70,7 @@ import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.core.ui.layout.UiSpacing
 import com.oposicontrol.admin.core.ui.theme.AdminTheme
+import com.oposicontrol.admin.core.ui.components.GlassChipGroup
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
@@ -889,6 +890,27 @@ private fun ExamStatusSelector(
 }
 
 @Composable
+private fun ExamAccessSelector(
+    selected: String,
+    onSelected: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = "Acceso",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        GlassChipGroup(
+            options = listOf("gratuito" to "Gratis", "premium" to "Premium"),
+            selected = setOf(selected.ifBlank { "gratuito" }),
+            onToggle = onSelected,
+            singleSelect = true,
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun SolucionarioEditor(
     state: ExamsState,
     onIntent: (ExamsIntent) -> Unit,
@@ -912,6 +934,12 @@ private fun SolucionarioEditor(
                 placeholder = "Nombre del solucionario",
             )
             GlassTextField(
+                value = state.editorDescription,
+                onValueChange = { onIntent(ExamsIntent.UpdateDescription(it)) },
+                placeholder = "Descripcion",
+                singleLine = false,
+            )
+            GlassTextField(
                 value = state.editorPriceTickets,
                 onValueChange = { value -> onIntent(ExamsIntent.UpdatePriceTickets(value.filter { it.isDigit() }.take(9))) },
                 placeholder = "Tickets",
@@ -921,16 +949,57 @@ private fun SolucionarioEditor(
                 selectedId = state.editorSpecialtyId,
                 onSelected = { onIntent(ExamsIntent.UpdateSpecialtyId(it)) },
             )
+            MobileSectionLabel("Acceso y metadata")
+            ExamAccessSelector(
+                selected = state.editorTypeAccess,
+                onSelected = { onIntent(ExamsIntent.UpdateTypeAccess(it)) },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
+                GlassTextField(
+                    value = state.editorYear,
+                    onValueChange = { onIntent(ExamsIntent.UpdateYear(it)) },
+                    placeholder = "Anio",
+                    modifier = Modifier.width(132.dp),
+                )
+                GlassTextField(
+                    value = state.editorDurationMinutes,
+                    onValueChange = { onIntent(ExamsIntent.UpdateDurationMinutes(it)) },
+                    placeholder = "Minutos",
+                    modifier = Modifier.width(156.dp),
+                )
+            }
+            MobileActionPill(
+                icon = if (state.editorIsOfficial) MobileIcon.Check else MobileIcon.Remove,
+                label = if (state.editorIsOfficial) "Oficial" else "No oficial",
+                modifier = Modifier.width(154.dp),
+                onClick = { onIntent(ExamsIntent.ToggleIsOfficial(!state.editorIsOfficial)) },
+            )
             MobileSectionLabel("Estado")
             ExamStatusSelector(
                 selected = state.editorStatus,
                 onSelected = { onIntent(ExamsIntent.UpdateExamStatus(it)) },
             )
+            GlassTextField(
+                value = state.editorPublishFrom,
+                onValueChange = { onIntent(ExamsIntent.UpdatePublishFrom(it)) },
+                placeholder = "Publicar desde ISO",
+            )
             MobileSectionLabel("Portada")
             ExamCoverEditor(state = state, onIntent = onIntent)
-            Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact),
+                verticalArrangement = Arrangement.spacedBy(UiSpacing.compact),
+                maxItemsInEachRow = 2,
+            ) {
                 StatusChip(status = state.editorStatus.ifBlank { "draft" }.toReadableStatus())
-                StatusChip(status = if (state.editorCoverUrl.isNotBlank()) "con portada" else "sin portada")
+                StatusChip(status = state.editorTypeAccess.toAccessLabel())
+                StatusChip(status = if (state.editorIsOfficial) "oficial" else "no oficial")
+                StatusChip(status = when {
+                    state.editorCoverUrl.isNotBlank() -> "con portada"
+                    state.editorCoverLocalUri.isNotBlank() -> "portada al guardar"
+                    else -> "sin portada"
+                })
             }
             MobileSectionLabel("Acciones")
             ResponsiveActionRow(
@@ -959,6 +1028,7 @@ private fun SolucionarioEditor(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RafagaEditor(
     state: ExamsState,
@@ -997,9 +1067,20 @@ private fun RafagaEditor(
                 selected = state.editorStatus,
                 onSelected = { onIntent(ExamsIntent.UpdateExamStatus(it)) },
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
+            GlassTextField(
+                value = state.editorPublishFrom,
+                onValueChange = { onIntent(ExamsIntent.UpdatePublishFrom(it)) },
+                placeholder = "Publicar desde ISO",
+            )
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact),
+                verticalArrangement = Arrangement.spacedBy(UiSpacing.compact),
+                maxItemsInEachRow = 2,
+            ) {
                 StatusChip(status = state.editorStatus.ifBlank { "draft" }.toReadableStatus())
                 StatusChip(status = "${state.editorPriceTickets.ifBlank { "0" }} tickets")
+                StatusChip(status = if ((state.editorPriceTickets.toIntOrNull() ?: 0) > 0) "Premium" else "Gratis")
             }
             MobileSectionLabel("Acciones")
             ResponsiveActionRow(
@@ -1121,22 +1202,16 @@ private fun ExamCoverEditor(
                 actions = listOf(
                     MobileActionSpec(
                         icon = MobileIcon.Import,
-                        label = "Elegir imagen",
-                        minWidth = 150,
+                        label = if (hasLocalCover || hasRemoteCover) "Cambiar imagen" else "Elegir imagen",
+                        minWidth = 160,
+                        enabled = !isUploading,
                         onClick = { coverPicker.open() },
-                    ),
-                    MobileActionSpec(
-                        icon = MobileIcon.Up,
-                        label = "Guardar imagen",
-                        minWidth = 162,
-                        enabled = state.selectedExamId != null && hasLocalCover && !isUploading,
-                        onClick = { onIntent(ExamsIntent.UploadExamCover) },
                     ),
                     MobileActionSpec(
                         icon = MobileIcon.Remove,
                         label = "Quitar",
                         minWidth = 114,
-                        enabled = hasRemoteCover || hasLocalCover,
+                        enabled = (hasRemoteCover || hasLocalCover) && !isUploading,
                         onClick = { onIntent(ExamsIntent.RequestClearExamCover) },
                     ),
                 ),
@@ -1152,7 +1227,7 @@ private fun CoverUploadStatus(uploadState: UiAsync<String>) {
         is UiAsync.Success -> uploadState.value
         UiAsync.Loading -> "Subiendo portada..."
         UiAsync.Empty -> "Sin portada"
-        UiAsync.Idle -> "Elige una imagen si quieres mostrar portada"
+        UiAsync.Idle -> "Elige una imagen — se subirá al guardar"
     }
     val color = if (uploadState is UiAsync.Error) {
         MaterialTheme.colorScheme.error
@@ -1188,36 +1263,15 @@ private fun MobileSpecialtyPicker(
     onSelected: (String) -> Unit,
 ) {
     when (specialtiesState) {
-        is UiAsync.Success -> {
-            val selected = specialtiesState.value.firstOrNull { it.id == selectedId }
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "Especialidad",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                GlassTextField(
-                    value = selected?.name.orEmpty(),
-                    onValueChange = { typedValue ->
-                        specialtiesState.value.firstOrNull { it.name.equals(typedValue, ignoreCase = true) }?.let {
-                            onSelected(it.id)
-                        }
-                    },
-                    placeholder = "Busca o escribe la especialidad",
-                )
-                Text(
-                    text = specialtiesState.value.joinToString(prefix = "Disponibles: ") { it.name },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-
+        is UiAsync.Success -> GlassChipGroup(
+            options = specialtiesState.value.map { it.id to it.name },
+            selected = if (selectedId.isBlank()) emptySet() else setOf(selectedId),
+            onToggle = { id -> if (id != selectedId) onSelected(id) },
+            singleSelect = true,
+        )
         is UiAsync.Error -> Text(specialtiesState.error.message, color = MaterialTheme.colorScheme.error)
-        UiAsync.Loading -> Text("Cargando especialidades...")
-        else -> Text("Sin especialidades")
+        UiAsync.Loading -> Text("Cargando especialidades...", style = MaterialTheme.typography.bodySmall)
+        else -> Unit
     }
 }
 
@@ -1229,16 +1283,31 @@ private fun SolucionarioList(
     onCreateBurst: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(UiSpacing.normal)) {
-        ContentSpecialtyFilter(
-            state = state,
-            onIntent = onIntent,
+        ContentSpecialtyFilter(state = state, onIntent = onIntent)
+        ResponsiveActionRow(
+            actions = listOf(
+                MobileActionSpec(
+                    icon = MobileIcon.Plus,
+                    label = "Nuevo solucionario",
+                    minWidth = 180,
+                    onClick = onCreate,
+                ),
+                MobileActionSpec(
+                    icon = MobileIcon.Plus,
+                    label = "Nueva ráfaga",
+                    minWidth = 156,
+                    onClick = onCreateBurst,
+                ),
+            ),
         )
         when (val exams = state.exams) {
             is UiAsync.Success -> {
-                val rafagas = exams.value
+                val filtered = if (state.selectedContentSpecialtyId.isNullOrBlank()) exams.value
+                    else exams.value.filter { it.specialtyId == state.selectedContentSpecialtyId }
+                val rafagas = filtered
                     .filter { it.isRafaga }
                     .map { it.toContentExamUi(selected = it.id == state.selectedExamId) }
-                val inmersivos = exams.value
+                val inmersivos = filtered
                     .filter { it.isInmersivo }
                     .map { it.toContentExamUi(selected = it.id == state.selectedExamId) }
                 ContentExamSection(
@@ -2194,7 +2263,20 @@ private fun QuestionEditor(
             placeholder = "Enunciado de la pregunta",
             singleLine = false,
         )
-        state.editorOptions.sortedBy { it.sortOrder }.forEach { option ->
+        val sortedOptions = state.editorOptions.sortedBy { it.sortOrder }
+        // Selector único de respuesta correcta (mecánico: un tap)
+        Text(
+            text = "Respuesta correcta",
+            style = MaterialTheme.typography.labelMedium,
+            color = GlassTheme.tokens.textSecondary,
+        )
+        GlassChipGroup(
+            options = sortedOptions.map { it.id to it.label },
+            selected = sortedOptions.filter { it.isCorrect }.map { it.id }.toSet(),
+            onToggle = { onIntent(ExamsIntent.SelectCorrectOption(it)) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        sortedOptions.forEach { option ->
             GlassSurface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -2205,19 +2287,7 @@ private fun QuestionEditor(
                         .padding(10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                        StatusChip(if (option.isCorrect) "correcta" else "opcion ${option.label}")
-                    }
-                    ResponsiveActionRow(
-                        actions = listOf(
-                            MobileActionSpec(
-                                icon = MobileIcon.Save,
-                                label = if (option.isCorrect) "Correcta ${option.label}" else "Marcar ${option.label}",
-                                minWidth = 142,
-                                onClick = { onIntent(ExamsIntent.SelectCorrectOption(option.id)) },
-                            ),
-                        ),
-                    )
+                    StatusChip(if (option.isCorrect) "correcta" else "opcion ${option.label}")
                     GlassTextField(
                         value = option.content,
                         onValueChange = { onIntent(ExamsIntent.UpdateOptionContent(option.id, it)) },

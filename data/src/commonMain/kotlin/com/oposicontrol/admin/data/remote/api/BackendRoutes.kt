@@ -15,8 +15,11 @@ object BackendRoutes {
     const val ADMIN_V1_ETIQUETAS = "/api/v1/admin/etiquetas"
     const val ADMIN_V1_COMUNIDADES = "/api/v1/admin/comunidades-autonomas"
     const val ADMIN_V1_DASHBOARD = "/api/v1/admin/dashboard"
+    const val ADMIN_V1_REPORTES = "/api/v1/admin/reportes"
 
     fun adminV1Usuario(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId"
+    fun adminV1UsuarioTickets(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId/tickets"
+    fun adminV1ReporteResolver(reporteId: String) = "$ADMIN_V1_REPORTES/$reporteId/resolver"
 
     // App V1 (bearer JWT Supabase del usuario)
     const val APP_V1_HOME = "/api/v1/app/home"
@@ -48,4 +51,6 @@ object BackendRoutes {
     fun adminV1ExamenPublicar(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/publicar"
 
     fun adminV1ExamenDespublicar(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/despublicar"
+
+    fun adminV1ExamenPortada(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/portada"
 }

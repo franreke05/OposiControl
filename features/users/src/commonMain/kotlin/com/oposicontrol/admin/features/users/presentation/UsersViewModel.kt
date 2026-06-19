@@ -6,6 +6,7 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.User
+import com.oposicontrol.admin.domain.repository.ModerationRepository
 import com.oposicontrol.admin.domain.usecase.roles.ObserveRolesUseCase
 import com.oposicontrol.admin.domain.usecase.users.DeleteUserUseCase
 import com.oposicontrol.admin.domain.usecase.users.ObserveUsersUseCase
@@ -20,6 +21,7 @@ class UsersViewModel(
     observeRolesUseCase: ObserveRolesUseCase,
     private val upsertUserUseCase: UpsertUserUseCase,
     private val deleteUserUseCase: DeleteUserUseCase,
+    private val moderationRepository: ModerationRepository,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<UsersState, UsersIntent>(
     initialState = UsersState(),
@@ -57,6 +59,7 @@ class UsersViewModel(
 
             UsersIntent.DeleteSelected -> deleteSelected()
             UsersIntent.Save -> save()
+            is UsersIntent.GrantTickets -> grantTickets(intent.amount)
             is UsersIntent.SelectUser -> selectUser(intent.userId)
             is UsersIntent.ToggleActive -> updateState { it.copy(editorIsActive = intent.value) }
             is UsersIntent.UpdateEmail -> updateState { it.copy(editorEmail = intent.value) }
@@ -79,6 +82,26 @@ class UsersViewModel(
                 editorIsActive = user.isActive,
                 actionState = UiAsync.Idle,
             )
+        }
+    }
+
+    private suspend fun grantTickets(amount: Int) {
+        val userId = currentState().selectedUserId ?: return
+        updateState { it.copy(actionState = UiAsync.Loading) }
+        when (val result = moderationRepository.grantTickets(userId, amount, "Ajuste manual")) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("tickets_grant", mapOf("user_id" to userId, "amount" to amount.toString()))
+                updateState { st ->
+                    val updated = (st.users as? UiAsync.Success)?.value?.map { u ->
+                        if (u.id == userId) u.copy(ticketsBalance = result.value) else u
+                    }
+                    st.copy(
+                        users = if (updated != null) UiAsync.Success(updated) else st.users,
+                        actionState = UiAsync.Success(Unit),
+                    )
+                }
+            }
         }
     }
 
