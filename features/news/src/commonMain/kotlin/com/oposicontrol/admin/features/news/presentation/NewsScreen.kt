@@ -124,6 +124,7 @@ private fun NewsListPane(
             selectedId = state.selectedId,
             emptyMessage = "No hay noticias publicadas para este filtro.",
             isPublishedSection = true,
+            isDirty = state.isDirty,
             onIntent = onIntent,
         )
         NewsSectionList(
@@ -132,6 +133,7 @@ private fun NewsListPane(
             selectedId = state.selectedId,
             emptyMessage = "No hay borradores ni noticias locales.",
             isPublishedSection = false,
+            isDirty = state.isDirty,
             onIntent = onIntent,
         )
     }
@@ -144,6 +146,7 @@ private fun NewsSectionList(
     selectedId: String?,
     emptyMessage: String,
     isPublishedSection: Boolean,
+    isDirty: Boolean = false,
     onIntent: (NewsIntent) -> Unit,
 ) {
     GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
@@ -170,6 +173,7 @@ private fun NewsSectionList(
                             item = item,
                             selected = item.id == selectedId,
                             isPublishedSection = isPublishedSection,
+                            isDirty = isDirty && item.id != selectedId,
                             onClick = { onIntent(NewsIntent.Select(item.id)) },
                             onSaveLocal = { onIntent(NewsIntent.SaveDraftFor(item.id)) },
                             onPublish = { onIntent(NewsIntent.PublishFor(item.id)) },
@@ -202,6 +206,7 @@ private fun NewsListCard(
     item: NewsItem,
     selected: Boolean,
     isPublishedSection: Boolean,
+    isDirty: Boolean = false,
     onClick: () -> Unit,
     onSaveLocal: () -> Unit,
     onPublish: () -> Unit,
@@ -275,8 +280,8 @@ private fun NewsListCard(
                     if (isPublishedSection) {
                         NewsCompactButton("Archivar", 88, onClick = onArchive)
                     } else {
-                        NewsCompactButton("Guardar", 86, onClick = onSaveLocal)
-                        NewsCompactButton("Publicar", 90, onClick = onPublish)
+                        NewsCompactButton("Guardar", 86, enabled = !isDirty, onClick = onSaveLocal)
+                        NewsCompactButton("Publicar", 90, enabled = !isDirty, onClick = onPublish)
                     }
                 }
             }
@@ -340,6 +345,14 @@ private fun NewsVisualEditor(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             NewsCanvasPreview(state = state, onIntent = onIntent)
+            val outOfBounds = state.editorLayers.filter { it.visible && (it.x > state.editorCanvasWidth || it.y > state.editorCanvasHeight) }
+            if (outOfBounds.isNotEmpty()) {
+                Text(
+                    text = "${outOfBounds.size} capa(s) fuera del área visible",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Row(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
