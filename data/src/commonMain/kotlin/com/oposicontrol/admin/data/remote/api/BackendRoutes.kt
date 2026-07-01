@@ -20,6 +20,7 @@ object BackendRoutes {
     fun adminV1Usuario(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId"
     fun adminV1UsuarioTickets(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId/tickets"
     fun adminV1ReporteResolver(reporteId: String) = "$ADMIN_V1_REPORTES/$reporteId/resolver"
+    fun adminV1ModerationActions() = "/api/v1/admin/moderacion/actions"
 
     // App V1 (bearer JWT Supabase del usuario)
     const val APP_V1_HOME = "/api/v1/app/home"

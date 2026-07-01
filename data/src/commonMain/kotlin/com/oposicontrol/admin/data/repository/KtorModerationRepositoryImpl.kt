@@ -52,6 +52,15 @@ class KtorModerationRepositoryImpl(
         r.body<GrantTicketsResponse>().saldo
     }
 
+    override suspend fun warnUser(userId: String, message: String) = adapter.safeCall {
+        val path = BackendRoutes.adminV1ModerationActions()
+        client.post(url(path)) {
+            backendHeaders(); contentType(ContentType.Application.Json)
+            setBody(WarnUserBody(actionType = "advertencia", targetUser = userId, reason = message))
+        }.requireSuccess(path)
+        Unit
+    }
+
     private fun url(path: String) = BackendRoutes.url(appConfig.baseUrl, path)
 
     private suspend fun HttpResponse.requireSuccess(endpoint: String) {
@@ -80,6 +89,7 @@ class KtorModerationRepositoryImpl(
 @Serializable private data class ResolverReporteBody(val accion: String, val notas: String? = null, val ticketsReporter: Int = 0)
 @Serializable private data class GrantTicketsBody(val cantidad: Int, val motivo: String)
 @Serializable private data class GrantTicketsResponse(val saldo: Int = 0)
+@Serializable private data class WarnUserBody(val actionType: String, val targetUser: String, val reason: String)
 
 private fun ReporteV1Dto.toDomain() = ForumReport(
     id = id,

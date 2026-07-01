@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.audit.presentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -17,20 +18,13 @@ import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.FilterBar
 import com.oposicontrol.admin.core.ui.components.FormSection
-
+import com.oposicontrol.admin.core.ui.components.GlassActionButton
 
 @Composable
 fun AuditScreen(
     viewModel: AuditViewModel,
 ) {
     val state by viewModel.state.collectAsState()
-    AuditContent(state = state)
-}
-
-@Composable
-fun AuditContent(
-    state: AuditState,
-) {
     var searchQuery by remember { mutableStateOf("") }
 
     Column(
@@ -41,6 +35,13 @@ fun AuditContent(
             searchValue = searchQuery,
             onSearchChange = { searchQuery = it },
             placeholder = "Filtrar por actor, accion o recurso",
+            filters = {
+                GlassActionButton(
+                    text = "Actualizar",
+                    modifier = Modifier.width(120.dp),
+                    onClick = { viewModel.dispatch(AuditIntent.Refresh) },
+                )
+            },
         )
         FormSection(
             title = "Auditoria",
@@ -72,5 +73,3 @@ fun AuditContent(
         }
     }
 }
-
-
