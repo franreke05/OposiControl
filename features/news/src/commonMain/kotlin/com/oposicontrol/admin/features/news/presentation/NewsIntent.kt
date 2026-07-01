@@ -3,7 +3,6 @@ package com.oposicontrol.admin.features.news.presentation
 sealed interface NewsIntent {
     data object Refresh : NewsIntent
     data object CreateNew : NewsIntent
-    data object Save : NewsIntent
     data object SaveDraft : NewsIntent
     data class SaveDraftFor(val id: String) : NewsIntent
     data object Publish : NewsIntent
