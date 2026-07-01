@@ -2,6 +2,8 @@ package com.oposicontrol.admin.features.moderation.presentation
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -75,11 +77,9 @@ fun ModerationScreen(
                         StatusChip(state.editorActionType)
                     }
                     FieldLabel("Tipo de acción")
-                    GlassTextField(
-                        value = state.editorActionType,
-                        onValueChange = { viewModel.dispatch(ModerationIntent.UpdateActionType(it)) },
-                        placeholder = "warning, mute, ban…",
-                        modifier = Modifier.fillMaxWidth(),
+                    ActionTypeSelector(
+                        selected = state.editorActionType,
+                        onSelected = { viewModel.dispatch(ModerationIntent.UpdateActionType(it)) },
                     )
                     FieldLabel("Usuario objetivo")
                     GlassTextField(
@@ -89,11 +89,10 @@ fun ModerationScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     FieldLabel("Ejecutado por")
-                    GlassTextField(
-                        value = state.editorExecutor,
-                        onValueChange = { viewModel.dispatch(ModerationIntent.UpdateExecutor(it)) },
-                        placeholder = "Responsable de la acción",
-                        modifier = Modifier.fillMaxWidth(),
+                    Text(
+                        text = state.editorExecutor.ifBlank { "Cargando..." },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
                     FieldLabel("Razón")
                     GlassTextField(
@@ -113,6 +112,27 @@ fun ModerationScreen(
             }
         },
     )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ActionTypeSelector(selected: String, onSelected: (String) -> Unit) {
+    val actionTypes = listOf("ocultar", "restaurar", "eliminar", "advertir", "bloquear_usuario", "descartar")
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        actionTypes.forEach { type ->
+            GlassActionButton(
+                text = type,
+                modifier = Modifier.width(148.dp),
+                tint = if (selected == type) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                textColor = if (selected == type) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                onClick = { onSelected(type) },
+            )
+        }
+    }
 }
 
 @Composable

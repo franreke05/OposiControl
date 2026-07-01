@@ -5,6 +5,6 @@ import com.oposicontrol.admin.features.moderation.presentation.ModerationViewMod
 import org.koin.dsl.module
 
 val moderationFeatureModule = module {
-    factory { ModerationViewModel(get(), get(), get()) }
+    factory { ModerationViewModel(get(), get(), get(), get()) }
     single { ForumModerationViewModel(get(), get(), get()) }
 }
