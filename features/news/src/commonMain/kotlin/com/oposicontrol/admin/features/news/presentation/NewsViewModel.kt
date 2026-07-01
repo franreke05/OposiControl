@@ -100,7 +100,6 @@ class NewsViewModel(
     private var allNews: List<NewsItem> = emptyList()
     private var remoteNews: List<NewsItem> = emptyList()
     private val localDrafts = linkedMapOf<String, NewsItem>()
-    private var localNewDraft: NewsItem? = null
     private var isEditingLocalDraft = false
 
     init {
@@ -148,7 +147,6 @@ class NewsViewModel(
         when (intent) {
             NewsIntent.Refresh -> refreshNewsUseCase()
             NewsIntent.CreateNew -> createNew()
-            NewsIntent.Save -> saveDraft()
             NewsIntent.SaveDraft -> saveDraft()
             is NewsIntent.SaveDraftFor -> {
                 select(intent.id)
@@ -271,46 +269,26 @@ class NewsViewModel(
 
     private fun createNew() {
         val localId = "local-${randomUuid()}"
-        val next = currentState().copy(
-            selectedId = localId,
-            editorTitle = "",
-            editorBackgroundType = "SKY",
-            editorBackgroundPath = "",
-            editorSpecialty = "1",
-            editorType = "1",
-            editorText = "",
-            editorImagePath = "",
-            editorStatus = "draft",
-            editorPublishFrom = "",
-            editorCanvasWidth = NewsCanvasDefaultWidth,
-            editorCanvasHeight = NewsCanvasDefaultHeight,
-            editorBackgroundAssetStatus = "linked",
-            editorImageAssetStatus = "linked",
-            editorLayers = defaultLayers("Titulo de noticia", "Especialidad - Tipo", ""),
-            selectedTarget = NewsEditorSelection.ARTICLE,
-            selectedLayerId = null,
-            actionState = UiAsync.Idle,
-        )
-        updateState {
-            it.copy(
-                selectedId = next.selectedId,
-                editorTitle = next.editorTitle,
-                editorBackgroundType = next.editorBackgroundType,
-                editorBackgroundPath = next.editorBackgroundPath,
-                editorSpecialty = next.editorSpecialty,
-                editorType = next.editorType,
-                editorText = next.editorText,
-                editorImagePath = next.editorImagePath,
-                editorStatus = next.editorStatus,
-                editorPublishFrom = next.editorPublishFrom,
-                editorCanvasWidth = next.editorCanvasWidth,
-                editorCanvasHeight = next.editorCanvasHeight,
-                editorBackgroundAssetStatus = next.editorBackgroundAssetStatus,
-                editorImageAssetStatus = next.editorImageAssetStatus,
-                editorLayers = next.editorLayers,
-                selectedTarget = next.selectedTarget,
-                selectedLayerId = next.selectedLayerId,
-                actionState = next.actionState,
+        updateState { state ->
+            state.copy(
+                selectedId = localId,
+                editorTitle = "",
+                editorBackgroundType = "SKY",
+                editorBackgroundPath = "",
+                editorSpecialty = "1",
+                editorType = "1",
+                editorText = "",
+                editorImagePath = "",
+                editorStatus = "draft",
+                editorPublishFrom = "",
+                editorCanvasWidth = NewsCanvasDefaultWidth,
+                editorCanvasHeight = NewsCanvasDefaultHeight,
+                editorBackgroundAssetStatus = "linked",
+                editorImageAssetStatus = "linked",
+                editorLayers = defaultLayers("Titulo de noticia", "Especialidad - Tipo", ""),
+                selectedTarget = NewsEditorSelection.ARTICLE,
+                selectedLayerId = null,
+                actionState = UiAsync.Idle,
             )
         }
         rememberCurrentDraft()
@@ -462,7 +440,6 @@ class NewsViewModel(
         val id = currentState().selectedId ?: return
         if (id.startsWith("local-")) {
             localDrafts.remove(id)
-            if (localNewDraft?.id == id) localNewDraft = null
             rebuildNewsFromLocalAndRemote()
             createNew()
             updateState { it.copy(actionState = UiAsync.Success(Unit)) }
@@ -627,11 +604,7 @@ class NewsViewModel(
         val localId = state.selectedId?.ifBlank { null } ?: "local-${randomUuid()}"
         val item = state.copy(selectedId = localId).toNewsItem().copy(isLocalDraft = true)
         if (state.selectedId.isNullOrBlank()) updateState { it.copy(selectedId = localId) }
-        if (item.id.isBlank()) {
-            localNewDraft = item
-        } else {
-            localDrafts[item.id] = item
-        }
+        localDrafts[item.id] = item
         isEditingLocalDraft = true
         rebuildNewsFromLocalAndRemote()
         publish()
@@ -656,7 +629,6 @@ class NewsViewModel(
     }
 
     private fun rememberSavedArticle(item: NewsItem) {
-        localNewDraft = null
         localDrafts.remove(item.id)
         remoteNews = listOf(item.copy(isLocalDraft = false)) + remoteNews.filterNot { it.id == item.id }
         isEditingLocalDraft = false
@@ -668,7 +640,7 @@ class NewsViewModel(
     private fun rebuildNewsFromLocalAndRemote() {
         val patched = remoteNews.map { remote -> localDrafts[remote.id] ?: remote.copy(isLocalDraft = false) }
         val localOnly = localDrafts.values.filter { draft -> patched.none { it.id == draft.id } }
-        allNews = localOnly.map { it.copy(isLocalDraft = true) } + patched + listOfNotNull(localNewDraft?.copy(isLocalDraft = true))
+        allNews = localOnly.map { it.copy(isLocalDraft = true) } + patched
     }
 
     private suspend fun prepareAssetsForRemotePublish(): NewsState? {
