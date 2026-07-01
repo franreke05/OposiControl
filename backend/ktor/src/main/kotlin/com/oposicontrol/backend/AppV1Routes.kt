@@ -183,18 +183,27 @@ class AppV1Gateway private constructor(
     private val json: Json,
     private val client: HttpClient = HttpClient.newHttpClient(),
 ) {
-    fun home(usuarioId: String): AppHomeResponse = AppHomeResponse(
-        perfil = perfil(usuarioId),
-        retoDiario = retoDiario(),
-        examenes = listExamenes().take(5),
-    )
+    fun hasAdminRole(usuarioId: String): Boolean {
+        usuarioId.validatedUuid("usuarioId")
+        return get("/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId&limit=1").isNotEmpty()
+    }
+
+    fun home(usuarioId: String): AppHomeResponse {
+        usuarioId.validatedUuid("usuarioId")
+        return AppHomeResponse(
+            perfil = perfil(usuarioId),
+            retoDiario = retoDiario(),
+            examenes = listExamenes().take(5),
+        )
+    }
 
     fun listExamenes(): List<AppExamenDto> =
         get("/rest/v1/examenes?select=*&activo=eq.true&publicado_en=not.is.null&order=anio.desc.nullslast,titulo.asc")
             .map { it.toExamenDto() }
 
     fun examenDetalle(examenId: String): AppExamenDetalleResponse? {
-        val examen = get("/rest/v1/examenes?select=*&id=eq.$examenId&activo=eq.true&limit=1").firstOrNull() ?: return null
+        examenId.validatedUuid("examenId")
+        val examen = get("/rest/v1/examenes?select=*&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1").firstOrNull() ?: return null
         val asociaciones = get("/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId&order=posicion.asc")
         val preguntaIds = asociaciones.mapNotNull { it.str("pregunta_id") }
         if (preguntaIds.isEmpty()) return AppExamenDetalleResponse(examen.toExamenDto(), emptyList())
@@ -217,7 +226,9 @@ class AppV1Gateway private constructor(
     }
 
     fun iniciar(usuarioId: String, examenId: String): AppIntentoDto {
-        val examen = get("/rest/v1/examenes?select=total_preguntas&id=eq.$examenId&limit=1").firstOrNull()
+        usuarioId.validatedUuid("usuarioId")
+        examenId.validatedUuid("examenId")
+        val examen = get("/rest/v1/examenes?select=total_preguntas&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1").firstOrNull()
             ?: error("Examen no encontrado.")
         val body = buildJsonObject {
             put("usuario_id", usuarioId)
@@ -230,19 +241,35 @@ class AppV1Gateway private constructor(
     }
 
     fun responder(usuarioId: String, intentoId: String, req: ResponderRequest): ResponderResponse {
+        usuarioId.validatedUuid("usuarioId")
+        intentoId.validatedUuid("intentoId")
+        req.preguntaId.validatedUuid("preguntaId")
+        req.opcionSeleccionadaId.validatedUuid("opcionSeleccionadaId")
         val intento = get("/rest/v1/intentos_examen?select=*&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1").firstOrNull()
             ?: throw AppUnauthorized("El intento no pertenece al usuario.")
+        require(intento.str("estado") == "en_progreso") { "El intento ya no admite respuestas." }
+        val examenId = intento.str("examen_id") ?: error("El intento no tiene examen asociado.")
+        require(
+            get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
+        ) { "La pregunta no pertenece al examen del intento." }
+        require(
+            get("/rest/v1/respuestas_intento?select=id&intento_id=eq.$intentoId&pregunta_id=eq.${req.preguntaId}&limit=1").isEmpty(),
+        ) { "La pregunta ya fue respondida en este intento." }
+        require(
+            get("/rest/v1/opciones_pregunta?select=id&id=eq.${req.opcionSeleccionadaId}&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
+        ) { "La opcion no pertenece a la pregunta." }
         val correctaId = get("/rest/v1/soluciones_pregunta?select=opcion_correcta_id&pregunta_id=eq.${req.preguntaId}&limit=1")
             .firstOrNull()?.str("opcion_correcta_id")
-        val esCorrecta = correctaId != null && correctaId == req.opcionSeleccionadaId
+        require(!correctaId.isNullOrBlank()) { "La pregunta no tiene una solucion valida." }
+        val esCorrecta = correctaId == req.opcionSeleccionadaId
         val body = buildJsonObject {
             put("intento_id", intentoId)
             put("pregunta_id", req.preguntaId)
             put("opcion_seleccionada_id", req.opcionSeleccionadaId)
             put("es_correcta", esCorrecta)
             put("usuario_id", usuarioId)
-            put("examen_id", intento.str("examen_id"))
-            if (correctaId != null) put("opcion_correcta_id", correctaId)
+            put("examen_id", examenId)
+            put("opcion_correcta_id", correctaId)
             put("respondida_en", Instant.now().toString())
         }
         post("/rest/v1/respuestas_intento", body)
@@ -250,8 +277,11 @@ class AppV1Gateway private constructor(
     }
 
     fun finalizar(usuarioId: String, intentoId: String): AppIntentoDto {
-        get("/rest/v1/intentos_examen?select=id&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1").firstOrNull()
+        usuarioId.validatedUuid("usuarioId")
+        intentoId.validatedUuid("intentoId")
+        val intento = get("/rest/v1/intentos_examen?select=id,estado&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1").firstOrNull()
             ?: throw AppUnauthorized("El intento no pertenece al usuario.")
+        require(intento.str("estado") == "en_progreso") { "El intento ya esta finalizado." }
         val respuestas = get("/rest/v1/respuestas_intento?select=es_correcta&intento_id=eq.$intentoId")
         val total = respuestas.size
         val correctas = respuestas.count { it.bool("es_correcta") == true }
@@ -265,11 +295,13 @@ class AppV1Gateway private constructor(
             put("porcentaje_acierto", porcentaje)
             put("puntuacion", correctas)
         }
-        return patch("/rest/v1/intentos_examen?id=eq.$intentoId", body).first().toIntentoDto()
+        return patch("/rest/v1/intentos_examen?id=eq.$intentoId&usuario_id=eq.$usuarioId&estado=eq.en_progreso", body)
+            .firstOrNull()?.toIntentoDto() ?: error("El intento cambio mientras se finalizaba.")
     }
 
-    fun estadisticas(usuarioId: String): AppEstadisticasDto? =
-        get("/rest/v1/estadisticas_usuario?select=*&usuario_id=eq.$usuarioId&limit=1").firstOrNull()?.let {
+    fun estadisticas(usuarioId: String): AppEstadisticasDto? {
+        usuarioId.validatedUuid("usuarioId")
+        return get("/rest/v1/estadisticas_usuario?select=*&usuario_id=eq.$usuarioId&limit=1").firstOrNull()?.let {
             AppEstadisticasDto(
                 usuarioId = usuarioId,
                 examenesFinalizados = it.int("examenes_finalizados") ?: 0,
@@ -280,6 +312,7 @@ class AppV1Gateway private constructor(
                 nivel = it.int("nivel") ?: 1,
             )
         }
+    }
 
     fun retoDiario(): AppRetoDto? =
         get("/rest/v1/retos_diarios?select=*&activo=eq.true&fecha=lte.${LocalDate.now()}&order=fecha.desc&limit=1")
@@ -295,6 +328,17 @@ class AppV1Gateway private constructor(
             }
 
     fun crearFeedback(usuarioId: String, req: AppFeedbackRequest): String {
+        usuarioId.validatedUuid("usuarioId")
+        req.preguntaId.validatedUuid("preguntaId")
+        req.intentoId?.let { intentoId ->
+            intentoId.validatedUuid("intentoId")
+            val examenId = get("/rest/v1/intentos_examen?select=examen_id&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1")
+                .firstOrNull()?.str("examen_id")
+                ?: throw AppUnauthorized("El intento no pertenece al usuario.")
+            require(
+                get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
+            ) { "La pregunta no pertenece al examen del intento." }
+        }
         val body = buildJsonObject {
             put("usuario_id", usuarioId)
             put("pregunta_id", req.preguntaId)
@@ -307,6 +351,7 @@ class AppV1Gateway private constructor(
     }
 
     fun registrarEvento(usuarioId: String, req: AppEventoRequest): String {
+        usuarioId.validatedUuid("usuarioId")
         val body = buildJsonObject {
             put("usuario_id", usuarioId)
             put("nombre_evento", req.nombreEvento)
