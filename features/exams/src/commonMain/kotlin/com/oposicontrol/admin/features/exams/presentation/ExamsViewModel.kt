@@ -485,54 +485,16 @@ class ExamsViewModel(
         }
     }
 
-    private fun resetExamEditor() {
-        currentQuestions = emptyList()
-        updateState {
-            it.copy(
-                selectedExamId = null,
-                selectedRafagaId = null,
-                editorMode = ExamEditorMode.Solucionario,
-                editorTitle = "",
-                editorDescription = "",
-                editorPriceTickets = "0",
-                editorSpecialtyId = allSpecialties.firstOrNull()?.id.orEmpty(),
-                editorStatus = "draft",
-                editorPublishFrom = "",
-                editorTypeAccess = "gratuito",
-                editorYear = "",
-                editorIsOfficial = false,
-                editorDurationMinutes = "",
-                editorCoverUrl = "",
-                editorCoverStoragePath = "",
-                editorCoverMimeType = "",
-                editorCoverLocalUri = "",
-                editorCoverFileName = "",
-                coverUploadState = UiAsync.Idle,
-                questions = UiAsync.Empty,
-                rafagaQuestions = UiAsync.Empty,
-                resourceAudit = UiAsync.Idle,
-                selectedQuestionId = null,
-                selectedRafagaQuestionId = null,
-                editorQuestionId = null,
-                editorQuestionTitle = "",
-                editorQuestionStatement = "",
-                editorOptions = emptyList(),
-                editorResources = emptyList(),
-                uploadState = UiAsync.Idle,
-                resourceUploadStates = emptyMap(),
-                importState = UiAsync.Idle,
-                importSummary = "",
-                contentPendingMigrationMessage = "",
-                actionState = UiAsync.Idle,
-            )
-        }
-    }
+    private fun resetExamEditor() = resetEditor(ExamEditorMode.Solucionario)
 
-    private fun resetRafagaEditor() {
-        currentRafagaQuestions = emptyList()
+    private fun resetRafagaEditor() = resetEditor(ExamEditorMode.Rafaga)
+
+    private fun resetEditor(mode: ExamEditorMode) {
+        if (mode == ExamEditorMode.Solucionario) currentQuestions = emptyList()
+        else currentRafagaQuestions = emptyList()
         updateState {
             it.copy(
-                editorMode = ExamEditorMode.Rafaga,
+                editorMode = mode,
                 selectedExamId = null,
                 selectedRafagaId = null,
                 editorTitle = "",

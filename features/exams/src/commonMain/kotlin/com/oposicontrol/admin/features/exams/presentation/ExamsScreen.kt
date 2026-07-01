@@ -140,6 +140,13 @@ fun ExamsContent(
                         ),
                     )
                     FormFeedback(state.actionState, successText = "Examen sincronizado.")
+                    if (state.selectedExamId != null) {
+                        Text(
+                            text = "Siguiente: ve a la pestana Preguntas/Recursos para anadir preguntas a este examen.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         },

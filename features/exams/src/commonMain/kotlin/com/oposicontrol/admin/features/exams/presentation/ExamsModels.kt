@@ -24,19 +24,6 @@ data class QuestionResourceDraft(
     val sortOrder: Int = 0,
 )
 
-data class SolucionarioUi(
-    val id: String,
-    val title: String,
-    val specialty: String,
-    val status: String,
-    val priceTickets: Int,
-    val questionCount: Int,
-    val coverUrl: String,
-    val coverStoragePath: String,
-    val isBurst: Boolean,
-    val hasSelection: Boolean,
-)
-
 data class QuestionUi(
     val id: String,
     val title: String,
@@ -45,16 +32,6 @@ data class QuestionUi(
     val resourceCount: Int,
     val hasResources: Boolean,
     val selected: Boolean,
-)
-
-data class RafagaUi(
-    val id: String,
-    val title: String,
-    val specialty: String,
-    val status: String,
-    val priceTickets: Int,
-    val questionCount: Int,
-    val hasSelection: Boolean,
 )
 
 data class ContentExamUi(
