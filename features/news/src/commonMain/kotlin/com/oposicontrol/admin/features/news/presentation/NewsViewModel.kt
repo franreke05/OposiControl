@@ -391,7 +391,7 @@ class NewsViewModel(
             updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("Añade una fecha de publicación antes de programar."))) }
             return
         }
-        runCatching { kotlinx.datetime.Instant.parse(pf) }.getOrElse {
+        if (!pf.matches(Regex("""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"""))) {
             updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("Fecha inválida. Usa formato ISO: 2026-05-11T09:00:00Z"))) }
             return
         }
