@@ -43,8 +43,8 @@ fun UsersScreen(
     viewModel: UsersViewModel,
 ) {
     val state by viewModel.state.collectAsState()
-    var searchQuery by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmToggleBlock by remember { mutableStateOf(false) }
     val roleName = remember(state.availableRoles) {
         state.availableRoles.associate { it.id to it.name }
     }
@@ -54,8 +54,8 @@ fun UsersScreen(
         listPane = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 FilterBar(
-                    searchValue = searchQuery,
-                    onSearchChange = { searchQuery = it },
+                    searchValue = state.searchQuery,
+                    onSearchChange = { viewModel.dispatch(UsersIntent.UpdateSearch(it)) },
                     placeholder = "Buscar por nombre o email",
                 )
                 GlassActionButton(
@@ -65,9 +65,9 @@ fun UsersScreen(
                 )
                 AsyncStatePane(state.users, emptyMessage = "No hay usuarios disponibles.") { users ->
                     val filtered = users.filter {
-                        searchQuery.isBlank() ||
-                            it.fullName.contains(searchQuery, ignoreCase = true) ||
-                            it.email.contains(searchQuery, ignoreCase = true)
+                        state.searchQuery.isBlank() ||
+                            it.fullName.contains(state.searchQuery, ignoreCase = true) ||
+                            it.email.contains(state.searchQuery, ignoreCase = true)
                     }
                     AdminTable(
                         columns = listOf(
@@ -159,9 +159,7 @@ fun UsersScreen(
                             GlassActionButton(
                                 text = if (state.editorIsActive) "Bloquear" else "Desbloquear",
                                 tint = if (state.editorIsActive) MaterialTheme.colorScheme.error else GlassTheme.tokens.accent,
-                                onClick = {
-                                    state.selectedUserId?.let { viewModel.dispatch(UsersIntent.QuickToggleBlock(it)) }
-                                },
+                                onClick = { confirmToggleBlock = true },
                                 modifier = Modifier.weight(1f),
                             )
                             GlassActionButton(
@@ -193,13 +191,29 @@ fun UsersScreen(
     if (confirmDelete) {
         ConfirmDialog(
             title = "Eliminar usuario",
-            message = "Esta acción quitará el usuario seleccionado. ¿Continuar?",
+            message = "Se eliminará a ${state.editorName} (${state.editorEmail}). Esta acción no se puede deshacer. ¿Continuar?",
             confirmLabel = "Eliminar",
             onConfirm = {
                 confirmDelete = false
                 viewModel.dispatch(UsersIntent.DeleteSelected)
             },
             onDismiss = { confirmDelete = false },
+        )
+    }
+
+    if (confirmToggleBlock) {
+        ConfirmDialog(
+            title = if (state.editorIsActive) "Bloquear usuario" else "Desbloquear usuario",
+            message = if (state.editorIsActive)
+                "Se bloqueará a ${state.editorName}. No podrá acceder a la app. ¿Continuar?"
+            else
+                "Se desbloqueará a ${state.editorName}. ¿Continuar?",
+            confirmLabel = if (state.editorIsActive) "Bloquear" else "Desbloquear",
+            onConfirm = {
+                confirmToggleBlock = false
+                state.selectedUserId?.let { viewModel.dispatch(UsersIntent.QuickToggleBlock(it)) }
+            },
+            onDismiss = { confirmToggleBlock = false },
         )
     }
 
@@ -258,6 +272,13 @@ private fun TicketsDialog(
                     placeholder = "Ej. 10 o -5",
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (amount != null && amount < -100) {
+                    Text(
+                        text = "⚠ Quitar más de 100 tickets — confirma que es correcto.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),

@@ -82,6 +82,7 @@ class UsersViewModel(
             UsersIntent.ConfirmWarning -> sendWarning()
             // Quick-action: block/unblock from list row
             is UsersIntent.QuickToggleBlock -> quickToggleBlock(intent.userId)
+            is UsersIntent.UpdateSearch -> updateState { it.copy(searchQuery = intent.value) }
         }
     }
 

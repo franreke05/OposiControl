@@ -8,6 +8,7 @@ data class UsersState(
     val users: UiAsync<List<User>> = UiAsync.Loading,
     val availableRoles: List<Role> = emptyList(),
     val selectedUserId: String? = null,
+    val searchQuery: String = "",
     val editorName: String = "",
     val editorEmail: String = "",
     val editorRoleIds: Set<String> = emptySet(),
