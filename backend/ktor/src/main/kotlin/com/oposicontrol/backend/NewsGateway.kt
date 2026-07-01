@@ -266,7 +266,7 @@ private data class CatalogIdRow(
 )
 
 @Serializable
-private data class SupabaseNoticiaRow(
+internal data class SupabaseNoticiaRow(
     val id: Int? = null,
     val titulo: String,
     @SerialName("tipo_fondo")
@@ -278,7 +278,13 @@ private data class SupabaseNoticiaRow(
     val tipoNoticiaId: Int = 1,
     @SerialName("imagen_path")
     val imagenPath: String? = null,
+    @SerialName("background_path")
+    val backgroundPath: String? = null,
     val estado: String = "draft",
+    @SerialName("publicar_desde")
+    val publicarDesde: String? = null,
+    @SerialName("published_at")
+    val publishedAt: String? = null,
 )
 
 @Serializable
@@ -287,7 +293,7 @@ private data class StoredNewsText(
     val capas: List<NoticiaLayerDto> = emptyList(),
 )
 
-private fun SupabaseNoticiaRow.toDto(json: Json): NoticiaDto {
+internal fun SupabaseNoticiaRow.toDto(json: Json): NoticiaDto {
     val stored = texto.decodeStoredNewsText(json)
     return NoticiaDto(
         id = id?.toString().orEmpty(),
@@ -295,16 +301,17 @@ private fun SupabaseNoticiaRow.toDto(json: Json): NoticiaDto {
         especialidad = especialidadId.toString(),
         tipo = tipoNoticiaId.toString(),
         fondo = fondo.toClientBackground(),
-        fondoPath = imagenPath,
+        // ponytail: legacy rows stored the background in imagen_path; remove after data migration.
+        fondoPath = backgroundPath ?: imagenPath,
         estado = estado,
-        publicarDesde = "",
+        publicarDesde = publicarDesde.orEmpty(),
         texto = stored.body,
         imagenPath = imagenPath,
         capas = stored.capas,
     )
 }
 
-private fun NoticiaDto.toSupabaseRow(
+internal fun NoticiaDto.toSupabaseRow(
     json: Json,
     resolveEspecialidadId: (String) -> Int,
     resolveTipoNoticiaId: (String) -> Int,
@@ -316,8 +323,10 @@ private fun NoticiaDto.toSupabaseRow(
         especialidadId = resolveEspecialidadId(especialidad),
         texto = texto.encodeStoredNewsText(capas, json),
         tipoNoticiaId = resolveTipoNoticiaId(tipo),
-        imagenPath = imagenPath ?: fondoPath,
+        imagenPath = imagenPath,
+        backgroundPath = fondoPath,
         estado = estado.ifBlank { "draft" },
+        publicarDesde = publicarDesde.takeIf { it.isNotBlank() },
     )
 }
 

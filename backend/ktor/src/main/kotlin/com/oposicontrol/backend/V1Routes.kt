@@ -76,7 +76,7 @@ private fun io.ktor.server.application.ApplicationCall.toV1ExamenesFilter(): V1E
     )
 }
 
-private fun String.validatedUuid(parameterName: String): String {
+internal fun String.validatedUuid(parameterName: String): String {
     return try {
         UUID.fromString(this).toString()
     } catch (_: IllegalArgumentException) {

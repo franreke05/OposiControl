@@ -74,7 +74,11 @@ fun Application.module() {
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir app API V1 desde Ktor.")
     val supabaseUrl = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
     val jwtVerifier = SupabaseJwtVerifier(supabaseUrl, json)
-    val allowDevUser = System.getenv("OPOSICONTROL_ALLOW_DEV_USER")?.toBooleanStrictOrNull() ?: false
+    val appEnv = System.getenv("APP_ENV").orEmpty()
+    val allowDevUser = allowsDevBypass(
+        appEnv,
+        System.getenv("OPOSICONTROL_ALLOW_DEV_USER")?.toBooleanStrictOrNull() ?: false,
+    )
     install(ContentNegotiation) {
         json(json)
     }
@@ -112,14 +116,18 @@ fun Application.module() {
         bearer("gateway-auth") {
             authenticate { credentials ->
                 val expected = System.getenv("OPOSICONTROL_BACKEND_TOKEN").orEmpty()
-                val allowDevToken = System.getenv("OPOSICONTROL_ALLOW_DEV_TOKEN")
-                    ?.toBooleanStrictOrNull()
-                    ?: false
-                if (expected.isNotBlank() && (credentials.token == expected || (allowDevToken && credentials.token == "dev-local"))) {
-                    UserIdPrincipal("oposicontrol-admin")
-                } else {
-                    null
-                }
+                val allowDevToken = allowsDevBypass(
+                    appEnv,
+                    System.getenv("OPOSICONTROL_ALLOW_DEV_TOKEN")?.toBooleanStrictOrNull() ?: false,
+                )
+                val staticTokenAccepted = expected.isNotBlank() &&
+                    (credentials.token == expected || (allowDevToken && credentials.token == "dev-local"))
+                if (staticTokenAccepted) return@authenticate UserIdPrincipal("oposicontrol-admin")
+
+                runCatching {
+                    jwtVerifier.subFrom(credentials.token).takeIf(appV1Gateway::hasAdminRole)
+                }.getOrNull()
+                    ?.let(::UserIdPrincipal)
             }
         }
     }
@@ -407,6 +415,10 @@ fun Application.module() {
             }
         }
     }
+}
+
+internal fun allowsDevBypass(appEnv: String, enabled: Boolean): Boolean {
+    return enabled && appEnv.lowercase() in setOf("dev", "development", "test")
 }
 
 fun io.ktor.server.application.ApplicationCall.requiredPath(name: String): String {
@@ -1148,7 +1160,15 @@ private class SupabaseContentGateway private constructor(
             null,
         ).decodeList<RecursoPreguntaRow>().map { it.toDto() }
         require(order.ids.toSet() == current.map { it.id }.toSet()) { "El orden debe contener los mismos recursos." }
-        return order.ids.mapNotNull { id -> current.firstOrNull { it.id == id } }
+        val byId = current.associateBy { it.id }
+        val reordered = order.ids.mapIndexed { index, id -> byId.getValue(id).copy(orden = index) }
+        request(
+            "POST",
+            "/rest/v1/recurso_pregunta?on_conflict=id",
+            json.encodeToString(reordered.map { it.toRow(preguntaId) }),
+            prefer = "resolution=merge-duplicates,return=minimal",
+        )
+        return reordered
     }
 
     private fun replaceResources(questionId: Int, resources: List<RecursoPreguntaDto>) {
@@ -1320,6 +1340,8 @@ private data class ExamenRow(
     @kotlinx.serialization.SerialName("precio_tickets") val precioTickets: Int = 0,
     @kotlinx.serialization.SerialName("especialidad_id") val especialidadId: Int,
     val estado: String = "draft",
+    @kotlinx.serialization.SerialName("publicar_desde") val publicarDesde: String? = null,
+    @kotlinx.serialization.SerialName("published_at") val publishedAt: String? = null,
     @kotlinx.serialization.SerialName("portada_url") val portadaUrl: String? = null,
     @kotlinx.serialization.SerialName("portada_storage_path") val portadaStoragePath: String? = null,
     @kotlinx.serialization.SerialName("portada_mime_type") val portadaMimeType: String? = null,
@@ -1482,8 +1504,8 @@ private fun ExamenRow.toDto(specialtyName: String, questionCount: Int) = Solucio
     descripcion = specialtyName,
     precioTickets = precioTickets,
     estado = estado,
-    publicarDesde = null,
-    publishedAt = null,
+    publicarDesde = publicarDesde,
+    publishedAt = publishedAt,
     orden = id ?: 0,
     portadaUrl = portadaUrl,
     portadaStoragePath = portadaStoragePath,
@@ -1499,6 +1521,8 @@ private fun SolucionarioDto.toRow() = ExamenRow(
     precioTickets = precioTickets,
     especialidadId = especialidadId.toIntOrNull() ?: 1,
     estado = estado,
+    publicarDesde = publicarDesde,
+    publishedAt = publishedAt,
     portadaUrl = portadaUrl,
     portadaStoragePath = portadaStoragePath,
     portadaMimeType = portadaMimeType,

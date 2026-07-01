@@ -120,7 +120,6 @@ class SupabaseTagSearchGateway private constructor(
     }
 
     fun reindexAll(): ReindexResultDto {
-        clearIndex()
         val inputs = buildList {
             addAll(listEspecialidades().map { it.toIndexInput() })
             addAll(listTiposNoticia().map { it.toIndexInput() })
@@ -138,8 +137,14 @@ class SupabaseTagSearchGateway private constructor(
             addAll(listAuditEntries().map { it.toIndexInput() })
             addAll(listExamAccess().map { it.toIndexInput() })
         }.filter { it.entityId.isNotBlank() && it.title.isNotBlank() }
-        inputs.forEach(::index)
-        return ReindexResultDto(indexed = inputs.size, tags = listTags("").size)
+        val entries = inputs.map { it.toRpcEntry() }
+        return json.decodeFromString(
+            request(
+                method = "POST",
+                path = "/rest/v1/rpc/admin_replace_search_index",
+                body = json.encodeToString(SearchIndexReplaceRpc(entries)),
+            ),
+        )
     }
 
     fun indexEspecialidad(input: EspecialidadDto) {
@@ -178,68 +183,12 @@ class SupabaseTagSearchGateway private constructor(
 
     private fun index(input: SearchIndexInput) {
         if (input.entityId.isBlank() || input.title.isBlank()) return
-        val searchableText = listOf(input.title, input.summary, input.tags.joinToString(" "))
-            .joinToString(" ")
-            .take(6000)
         request(
             method = "POST",
-            path = "/rest/v1/search_index?on_conflict=entity_type,entity_id",
-            body = json.encodeToString(
-                listOf(
-                    SearchIndexUpsertRow(
-                        entityType = input.entityType,
-                        entityId = input.entityId,
-                        section = input.section,
-                        title = input.title.take(220),
-                        summary = input.summary.take(500),
-                        searchableText = searchableText,
-                    ),
-                ),
-            ),
-            prefer = "resolution=merge-duplicates,return=minimal",
+            path = "/rest/v1/rpc/admin_upsert_search_entry",
+            body = json.encodeToString(SearchIndexUpsertRpc(input.toRpcEntry())),
+            prefer = "return=minimal",
         )
-        request(
-            "DELETE",
-            "/rest/v1/entity_tag?entity_type=eq.${input.entityType}&entity_id=eq.${input.entityId}",
-            null,
-        )
-        input.tags.asSequence()
-            .map { it.toSlug() }
-            .filter { it.isNotBlank() && it.length >= 2 }
-            .distinct()
-            .take(16)
-            .forEach { slug ->
-                val tag = upsertTag(slug)
-                request(
-                    method = "POST",
-                    path = "/rest/v1/entity_tag?on_conflict=tag_id,entity_type,entity_id",
-                    body = json.encodeToString(
-                        listOf(
-                            EntityTagUpsertRow(
-                                tagId = tag.id ?: return@forEach,
-                                entityType = input.entityType,
-                                entityId = input.entityId,
-                                score = 1.0,
-                            ),
-                        ),
-                    ),
-                    prefer = "resolution=merge-duplicates,return=minimal",
-                )
-            }
-    }
-
-    private fun upsertTag(slug: String): TagRow {
-        return request(
-            method = "POST",
-            path = "/rest/v1/tag?on_conflict=slug",
-            body = json.encodeToString(listOf(TagUpsertRow(nombre = slug.toDisplayName(), slug = slug, origen = "auto"))),
-            prefer = "resolution=merge-duplicates,return=representation",
-        ).decodeList<TagRow>().first()
-    }
-
-    private fun clearIndex() {
-        request("DELETE", "/rest/v1/entity_tag?id=gte.0", null)
-        request("DELETE", "/rest/v1/search_index?id=gte.0", null)
     }
 
     private fun listEspecialidades(): List<EspecialidadSearchRow> =
@@ -337,6 +286,42 @@ private data class SearchIndexInput(
 )
 
 @Serializable
+private data class SearchIndexReplaceRpc(
+    @SerialName("p_entries") val entries: List<SearchIndexRpcEntry>,
+)
+
+@Serializable
+private data class SearchIndexUpsertRpc(
+    @SerialName("p_entry") val entry: SearchIndexRpcEntry,
+)
+
+@Serializable
+private data class SearchIndexRpcEntry(
+    val entityType: String,
+    val entityId: String,
+    val section: String,
+    val title: String,
+    val summary: String,
+    val tagText: String,
+    val tags: List<String>,
+)
+
+private fun SearchIndexInput.toRpcEntry() = SearchIndexRpcEntry(
+    entityType = entityType,
+    entityId = entityId,
+    section = section,
+    title = title,
+    summary = summary,
+    tagText = tags.joinToString(" "),
+    tags = tags.asSequence()
+        .map { it.toSlug() }
+        .filter { it.isNotBlank() && it.length >= 2 }
+        .distinct()
+        .take(16)
+        .toList(),
+)
+
+@Serializable
 private data class TagRow(
     val id: Int? = null,
     val nombre: String,
@@ -345,23 +330,8 @@ private data class TagRow(
 )
 
 @Serializable
-private data class TagUpsertRow(
-    val nombre: String,
-    val slug: String,
-    val origen: String,
-)
-
-@Serializable
 private data class EntityTagRow(
     val id: Int? = null,
-    @SerialName("tag_id") val tagId: Int,
-    @SerialName("entity_type") val entityType: String,
-    @SerialName("entity_id") val entityId: String,
-    val score: Double = 1.0,
-)
-
-@Serializable
-private data class EntityTagUpsertRow(
     @SerialName("tag_id") val tagId: Int,
     @SerialName("entity_type") val entityType: String,
     @SerialName("entity_id") val entityId: String,
@@ -377,16 +347,6 @@ private data class SearchIndexRow(
     val title: String,
     val summary: String = "",
     @SerialName("searchable_text") val searchableText: String = "",
-)
-
-@Serializable
-private data class SearchIndexUpsertRow(
-    @SerialName("entity_type") val entityType: String,
-    @SerialName("entity_id") val entityId: String,
-    val section: String,
-    val title: String,
-    val summary: String,
-    @SerialName("searchable_text") val searchableText: String,
 )
 
 @Serializable
@@ -724,12 +684,6 @@ private fun String.toSlug(): String {
     val normalized = Normalizer.normalize(trim().lowercase(), Normalizer.Form.NFD)
         .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
     return normalized.replace(Regex("[^a-z0-9]+"), "-").trim('-')
-}
-
-private fun String.toDisplayName(): String {
-    return split("-").filter { it.isNotBlank() }.joinToString(" ") { part ->
-        part.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
-    }.ifBlank { this }
 }
 
 private fun String?.safeLogPreview(maxLength: Int = 300): String {

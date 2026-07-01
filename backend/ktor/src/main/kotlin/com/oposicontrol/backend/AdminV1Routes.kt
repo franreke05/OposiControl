@@ -103,7 +103,11 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 var mimeType = "image/jpeg"
                 multipart.forEachPart { part ->
                     if (part is PartData.FileItem && part.name == "file") {
-                        fileBytes = part.streamProvider().readBytes()
+                        val stream = part.streamProvider()
+                        val maxBytes = 10 * 1024 * 1024
+                        val limited = stream.readNBytes(maxBytes + 1)
+                        require(limited.size <= maxBytes) { "El archivo supera el limite de 10 MB." }
+                        fileBytes = limited
                         fileName = part.originalFileName ?: fileName
                         mimeType = part.contentType?.toString() ?: mimeType
                     }
@@ -225,6 +229,39 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 call.respond(AdminRolesV1Response(gateway.listRoles()))
             }
         }
+        route("/tickets") {
+            get { call.respond(gateway.listTicketWallets()) }
+            get("/{usuarioId}/transacciones") {
+                call.respond(gateway.listTicketTransactions(call.requiredPath("usuarioId")))
+            }
+            post("/{usuarioId}/transacciones") {
+                call.respond(HttpStatusCode.Created, gateway.appendTicketAdjustment(call.requiredPath("usuarioId"), call.receive()))
+            }
+        }
+        route("/soporte") {
+            get { call.respond(gateway.listSupportConversations()) }
+            route("/conversaciones") {
+                get { call.respond(gateway.listSupportConversations()) }
+                get("/{id}/mensajes") {
+                    call.respond(gateway.listSupportMessages(call.requiredPath("id")))
+                }
+                post("/{id}/mensajes") {
+                    call.respond(HttpStatusCode.Created, gateway.sendSupportMessage(call.requiredPath("id"), call.receive()))
+                }
+            }
+        }
+        route("/accesos") {
+            get { call.respond(gateway.listExamAccesses()) }
+            post { call.respond(HttpStatusCode.Created, gateway.upsertExamAccess(call.receive())) }
+        }
+        route("/moderacion") {
+            get { call.respond(AdminReportesResponse(gateway.listReportes())) }
+            get("/reportes") { call.respond(AdminReportesResponse(gateway.listReportes())) }
+            get("/actions") { call.respond(gateway.listModerationActions()) }
+            get("/acciones") { call.respond(gateway.listModerationActions()) }
+        }
+        get("/settings") { call.respond(gateway.settings()) }
+        get("/ajustes") { call.respond(gateway.settings()) }
         route("/etiquetas") {
             get { call.respond(AdminEtiquetasResponse(gateway.listEtiquetas())) }
             post {
@@ -810,21 +847,57 @@ private data class CarteraRow(
 )
 
 @Serializable
-private data class TransaccionInsert(
+private data class CarteraInsertRow(
+    @SerialName("usuario_id") val usuarioId: String,
+    @SerialName("saldo_tickets") val saldoTickets: Int,
+    @SerialName("actualizado_en") val actualizadoEn: String,
+)
+
+@Serializable
+private data class CarteraPatchRow(
+    @SerialName("saldo_tickets") val saldoTickets: Int,
+    @SerialName("actualizado_en") val actualizadoEn: String,
+)
+
+@Serializable
+private data class TransaccionCarteraInsertRow(
     @SerialName("usuario_id") val usuarioId: String,
     val tipo: String,
     val cantidad: Int,
     @SerialName("saldo_anterior") val saldoAnterior: Int,
     @SerialName("saldo_resultante") val saldoResultante: Int,
-    val descripcion: String? = null,
-    @SerialName("referencia_tipo") val referenciaTipo: String? = null,
+    val descripcion: String,
+    @SerialName("referencia_tipo") val referenciaTipo: String = "admin",
 )
 
 @Serializable
-private data class CarteraUpsert(
-    @SerialName("usuario_id") val usuarioId: String,
-    @SerialName("saldo_tickets") val saldoTickets: Int,
-    @SerialName("actualizado_en") val actualizadoEn: String,
+private data class AdminSyncRolesRpc(
+    @SerialName("p_usuario_id") val usuarioId: String,
+    @SerialName("p_role_ids") val roleIds: List<String>,
+)
+
+@Serializable
+private data class AdminGrantTicketsRpc(
+    @SerialName("p_usuario_id") val usuarioId: String,
+    @SerialName("p_cantidad") val cantidad: Int,
+    @SerialName("p_motivo") val motivo: String,
+    @SerialName("p_tipo") val tipo: String,
+)
+
+@Serializable
+private data class AdminCreateQuestionRpc(
+    @SerialName("p_question") val question: AdminPreguntaRow,
+    @SerialName("p_options") val options: List<AdminOpcionRow>,
+    @SerialName("p_solution") val solution: AdminSolucionRow,
+    @SerialName("p_exam_id") val examId: String? = null,
+    @SerialName("p_position") val position: Int? = null,
+)
+
+@Serializable
+private data class AdminReplaceQuestionOptionsRpc(
+    @SerialName("p_question_id") val questionId: String,
+    @SerialName("p_options") val options: List<AdminOpcionRow>,
+    @SerialName("p_solution") val solution: AdminSolucionRow,
 )
 
 // Rows privados para etiquetas y comunidades
@@ -865,6 +938,7 @@ private data class PerfilUsuarioRow(
     @SerialName("usuario_id") val usuarioId: String,
     @SerialName("nombre_mostrar") val nombreMostrar: String? = null,
     val username: String? = null,
+    @SerialName("especialidad_principal_id") val especialidadPrincipalId: String? = null,
     @SerialName("es_invitado") val esInvitado: Boolean = false,
     @SerialName("creado_en") val creadoEn: String? = null,
 )
@@ -884,6 +958,96 @@ private data class RolUsuarioRow(
     @SerialName("rol_id") val rolId: String,
 )
 
+@Serializable
+private data class EspecialidadNombreRow(val id: String, val nombre: String)
+
+@Serializable
+private data class ExamenTituloRow(val id: String, val titulo: String)
+
+@Serializable
+private data class TransaccionCarteraRow(
+    val id: String,
+    @SerialName("usuario_id") val usuarioId: String,
+    val tipo: String,
+    val cantidad: Int,
+    val descripcion: String? = null,
+    @SerialName("creado_en") val creadoEn: String? = null,
+)
+
+@Serializable
+private data class SoporteConversacionRow(
+    val id: String,
+    @SerialName("usuario_id") val usuarioId: String,
+    val asunto: String,
+    val estado: String = "abierta",
+    val prioridad: String = "normal",
+    @SerialName("creado_en") val creadoEn: String? = null,
+    @SerialName("actualizado_en") val actualizadoEn: String? = null,
+)
+
+@Serializable
+private data class SoporteMensajeRow(
+    val id: String,
+    @SerialName("conversacion_id") val conversacionId: String,
+    @SerialName("remitente_id") val remitenteId: String,
+    val cuerpo: String,
+    @SerialName("es_staff") val esStaff: Boolean = false,
+    @SerialName("creado_en") val creadoEn: String? = null,
+)
+
+@Serializable
+private data class SoporteMensajeInsertRow(
+    @SerialName("conversacion_id") val conversacionId: String,
+    @SerialName("remitente_id") val remitenteId: String,
+    val cuerpo: String,
+    @SerialName("es_staff") val esStaff: Boolean,
+)
+
+@Serializable
+private data class ContenidoDesbloqueadoRow(
+    val id: String,
+    @SerialName("usuario_id") val usuarioId: String,
+    @SerialName("examen_id") val examenId: String? = null,
+    @SerialName("pregunta_id") val preguntaId: String? = null,
+    val motivo: String? = null,
+    @SerialName("valido_hasta") val validoHasta: String? = null,
+    @SerialName("creado_en") val creadoEn: String? = null,
+)
+
+@Serializable
+private data class ContenidoDesbloqueadoInsertRow(
+    val id: String,
+    @SerialName("usuario_id") val usuarioId: String,
+    @SerialName("examen_id") val examenId: String,
+    val motivo: String,
+    @SerialName("valido_hasta") val validoHasta: String? = null,
+)
+
+@Serializable
+private data class AccionModeracionRow(
+    val id: String,
+    @SerialName("reporte_id") val reporteId: String,
+    @SerialName("moderador_id") val moderadorId: String? = null,
+    @SerialName("tipo_accion") val tipoAccion: String,
+    val notas: String? = null,
+    @SerialName("creado_en") val creadoEn: String? = null,
+)
+
+private fun PerfilUsuarioRow?.displayName(fallback: String): String {
+    return this?.nombreMostrar.orEmpty()
+        .ifBlank { this?.username.orEmpty() }
+        .ifBlank { fallback }
+}
+
+private fun TransaccionCarteraRow.toDto() = AdminTicketTransactionDto(
+    id = id,
+    userId = usuarioId,
+    type = tipo,
+    amount = cantidad.toDouble(),
+    reason = descripcion.orEmpty(),
+    occurredAt = creadoEn.orEmpty(),
+)
+
 // ---------- Gateway Supabase (esquema real) ----------
 
 class AdminV1Gateway private constructor(
@@ -892,7 +1056,7 @@ class AdminV1Gateway private constructor(
     private val json: Json,
     private val client: HttpClient = HttpClient.newHttpClient(),
 ) {
-    private var storageBucketChecked = false
+    @Volatile private var storageBucketChecked = false
 
     // Para ESCRIBIR en Supabase: encodeDefaults=true (envia tipo_examen="rafaga" aunque
     // sea el default) + explicitNulls=false (omite nulls para que apliquen defaults de BD).
@@ -1069,25 +1233,6 @@ class AdminV1Gateway private constructor(
         require(input.opciones.count { it.esCorrecta } == 1) { "Marca exactamente una opcion correcta." }
 
         val preguntaId = input.id.ifBlank { UUID.randomUUID().toString() }
-        request(
-            "POST", "/rest/v1/preguntas",
-            sbJson.encodeToString(
-                listOf(
-                    AdminPreguntaRow(
-                        id = preguntaId,
-                        codigoPregunta = input.codigoPregunta.ifBlank { "P-" + shortId() },
-                        especialidadId = input.especialidadId,
-                        tipoPregunta = input.tipoPregunta,
-                        titulo = input.titulo,
-                        fuenteTexto = input.fuenteTexto,
-                        dificultad = input.dificultad,
-                        activa = input.activa,
-                    ),
-                ),
-            ),
-            prefer = "return=minimal",
-        )
-
         val opcionRows = input.opciones.mapIndexed { i, o ->
             AdminOpcionRow(
                 id = UUID.randomUUID().toString(),
@@ -1097,33 +1242,34 @@ class AdminV1Gateway private constructor(
                 posicion = if (o.posicion > 0) o.posicion else i + 1,
             )
         }
-        request("POST", "/rest/v1/opciones_pregunta", sbJson.encodeToString(opcionRows), prefer = "return=minimal")
-
         val correctaId = opcionRows[input.opciones.indexOfFirst { it.esCorrecta }].id!!
         request(
-            "POST", "/rest/v1/soluciones_pregunta",
+            "POST", "/rest/v1/rpc/admin_create_question",
             sbJson.encodeToString(
-                listOf(
-                    AdminSolucionRow(
+                AdminCreateQuestionRpc(
+                    question = AdminPreguntaRow(
+                        id = preguntaId,
+                        codigoPregunta = input.codigoPregunta.ifBlank { "P-" + shortId() },
+                        especialidadId = input.especialidadId,
+                        tipoPregunta = input.tipoPregunta,
+                        titulo = input.titulo,
+                        fuenteTexto = input.fuenteTexto,
+                        dificultad = input.dificultad,
+                        activa = input.activa,
+                    ),
+                    options = opcionRows,
+                    solution = AdminSolucionRow(
                         id = UUID.randomUUID().toString(),
                         preguntaId = preguntaId,
                         opcionCorrectaId = correctaId,
                         razonamiento = input.razonamiento,
                     ),
+                    examId = input.examenId?.takeIf { it.isNotBlank() },
+                    position = input.posicion,
                 ),
             ),
             prefer = "return=minimal",
         )
-
-        if (!input.examenId.isNullOrBlank()) {
-            request(
-                "POST", "/rest/v1/preguntas_examen",
-                sbJson.encodeToString(
-                    listOf(AdminPreguntaExamenRow(examenId = input.examenId, preguntaId = preguntaId, posicion = input.posicion ?: 1)),
-                ),
-                prefer = "return=minimal",
-            )
-        }
         registrarAuditoria("pregunta_creada", "preguntas", preguntaId)
         return getPregunta(preguntaId) ?: error("No se pudo leer la pregunta creada.")
     }
@@ -1275,8 +1421,6 @@ class AdminV1Gateway private constructor(
 
     private fun replaceOpcionesAndSolucion(preguntaId: String, opciones: List<AdminOpcionDto>, razonamiento: String) {
         require(opciones.count { it.esCorrecta } == 1) { "Marca exactamente una opcion correcta." }
-        request("DELETE", "/rest/v1/soluciones_pregunta?pregunta_id=eq.$preguntaId", null, prefer = "return=minimal")
-        request("DELETE", "/rest/v1/opciones_pregunta?pregunta_id=eq.$preguntaId", null, prefer = "return=minimal")
         val opcionRows = opciones.mapIndexed { i, o ->
             AdminOpcionRow(
                 id = UUID.randomUUID().toString(),
@@ -1286,14 +1430,15 @@ class AdminV1Gateway private constructor(
                 posicion = if (o.posicion > 0) o.posicion else i + 1,
             )
         }
-        request("POST", "/rest/v1/opciones_pregunta", sbJson.encodeToString(opcionRows), prefer = "return=minimal")
         val correctaIndex = opciones.indexOfFirst { it.esCorrecta }.coerceAtLeast(0)
         request(
             "POST",
-            "/rest/v1/soluciones_pregunta",
+            "/rest/v1/rpc/admin_replace_question_options",
             sbJson.encodeToString(
-                listOf(
-                    AdminSolucionRow(
+                AdminReplaceQuestionOptionsRpc(
+                    questionId = preguntaId,
+                    options = opcionRows,
+                    solution = AdminSolucionRow(
                         id = UUID.randomUUID().toString(),
                         preguntaId = preguntaId,
                         opcionCorrectaId = opcionRows[correctaIndex].id!!,
@@ -1536,15 +1681,18 @@ class AdminV1Gateway private constructor(
             """{"nombre_mostrar":${kotlinx.serialization.json.Json.encodeToString(input.fullName)}}""",
             prefer = "return=minimal",
         )
+        registrarAuditoria("usuario_actualizado", "perfiles_usuario", usuarioId)
         return getUsuario(usuarioId) ?: input.copy(id = usuarioId)
     }
 
     fun syncRoles(usuarioId: String, roleIds: List<String>) {
-        request("DELETE", "/rest/v1/roles_usuario?usuario_id=eq.$usuarioId", null)
-        if (roleIds.isNotEmpty()) {
-            val rows = roleIds.joinToString(",") { """{"usuario_id":"$usuarioId","rol_id":"$it"}""" }
-            request("POST", "/rest/v1/roles_usuario", "[$rows]", prefer = "return=minimal")
-        }
+        request(
+            "POST",
+            "/rest/v1/rpc/admin_sync_roles",
+            sbJson.encodeToString(AdminSyncRolesRpc(usuarioId = usuarioId, roleIds = roleIds.distinct())),
+            prefer = "return=minimal",
+        )
+        registrarAuditoria("roles_sincronizados", "roles_usuario", usuarioId)
     }
 
     // MODERACIÓN FORO (reportes_contenido + acciones_moderacion)
@@ -1604,30 +1752,242 @@ class AdminV1Gateway private constructor(
     // tipo debe ser un valor permitido por el CHECK: "ajuste" (manual) / "reporte_validado" (recompensa)
     fun grantTickets(usuarioId: String, cantidad: Int, motivo: String, tipo: String = "ajuste"): Int {
         require(cantidad != 0) { "La cantidad de tickets no puede ser 0." }
-        val saldoAnterior = request(
-            "GET", "/rest/v1/carteras_usuario?select=saldo_tickets&usuario_id=eq.$usuarioId&limit=1", null,
-        ).decodeList<CarteraRow>().firstOrNull()?.saldoTickets ?: 0
-        val saldoResultante = saldoAnterior + cantidad
-        require(saldoResultante >= 0) { "El saldo resultante no puede ser negativo (actual: $saldoAnterior)." }
-        val tx = TransaccionInsert(
-            usuarioId = usuarioId,
-            tipo = tipo,
-            cantidad = cantidad,
-            saldoAnterior = saldoAnterior,
-            saldoResultante = saldoResultante,
-            descripcion = motivo,
-            referenciaTipo = "admin",
-        )
-        request("POST", "/rest/v1/transacciones_cartera", sbJson.encodeToString(listOf(tx)), prefer = "return=minimal")
-        val cartera = CarteraUpsert(usuarioId = usuarioId, saldoTickets = saldoResultante, actualizadoEn = Instant.now().toString())
-        request(
-            "POST",
-            "/rest/v1/carteras_usuario?on_conflict=usuario_id",
-            sbJson.encodeToString(listOf(cartera)),
-            prefer = "resolution=merge-duplicates,return=minimal",
-        )
+        val saldoResultante = runCatching {
+            request(
+                "POST",
+                "/rest/v1/rpc/admin_grant_tickets",
+                sbJson.encodeToString(AdminGrantTicketsRpc(usuarioId, cantidad, motivo, tipo)),
+            ).trim().toInt()
+        }.getOrElse { error ->
+            val message = error.message.orEmpty()
+            if (!message.contains("admin_grant_tickets") && !message.contains("PGRST202")) throw error
+            grantTicketsRestFallback(usuarioId, cantidad, motivo, tipo)
+        }
         registrarAuditoria("tickets_grant", "carteras_usuario", usuarioId)
         return saldoResultante
+    }
+
+    private fun grantTicketsRestFallback(usuarioId: String, cantidad: Int, motivo: String, tipo: String): Int {
+        // ponytail: fallback no atomico; borrar cuando docs/supabase/20260624_admin_atomic_operations.sql este aplicado.
+        val now = Instant.now().toString()
+        val cartera = request(
+            "GET",
+            "/rest/v1/carteras_usuario?select=usuario_id,saldo_tickets&usuario_id=eq.$usuarioId&limit=1",
+            null,
+        ).decodeList<CarteraRow>().firstOrNull()
+        val saldoAnterior = cartera?.saldoTickets ?: 0
+        val saldoResultante = saldoAnterior + cantidad
+        require(saldoResultante >= 0) { "El saldo resultante no puede ser negativo (actual: $saldoAnterior)." }
+
+        if (cartera == null) {
+            request(
+                "POST",
+                "/rest/v1/carteras_usuario",
+                sbJson.encodeToString(listOf(CarteraInsertRow(usuarioId, 0, now))),
+                prefer = "return=minimal",
+            )
+        }
+        request(
+            "PATCH",
+            "/rest/v1/carteras_usuario?usuario_id=eq.$usuarioId",
+            sbJson.encodeToString(CarteraPatchRow(saldoResultante, now)),
+            prefer = "return=minimal",
+        )
+        request(
+            "POST",
+            "/rest/v1/transacciones_cartera",
+            sbJson.encodeToString(listOf(TransaccionCarteraInsertRow(usuarioId, tipo, cantidad, saldoAnterior, saldoResultante, motivo))),
+            prefer = "return=minimal",
+        )
+        return saldoResultante
+    }
+
+    fun listTicketWallets(): List<AdminTicketWalletDto> {
+        val usersById = perfilesUsuario().associateBy { it.usuarioId }
+        val specialtiesById = request("GET", "/rest/v1/especialidades?select=id,nombre", null)
+            .decodeList<EspecialidadNombreRow>()
+            .associateBy { it.id }
+        return request("GET", "/rest/v1/carteras_usuario?select=*&order=actualizado_en.desc", null)
+            .decodeList<CarteraRow>()
+            .map { row ->
+                val user = usersById[row.usuarioId]
+                AdminTicketWalletDto(
+                    userId = row.usuarioId,
+                    userName = user.displayName(row.usuarioId),
+                    specialty = user?.especialidadPrincipalId?.let { specialtiesById[it]?.nombre }.orEmpty(),
+                    balance = row.saldoTickets.toDouble(),
+                    status = "active",
+                )
+            }
+    }
+
+    fun listTicketTransactions(usuarioId: String): List<AdminTicketTransactionDto> =
+        request(
+            "GET",
+            "/rest/v1/transacciones_cartera?select=*&usuario_id=eq.$usuarioId&order=creado_en.desc&limit=100",
+            null,
+        ).decodeList<TransaccionCarteraRow>().map { it.toDto() }
+
+    fun appendTicketAdjustment(usuarioId: String, input: AdminTicketAdjustmentDto): AdminTicketTransactionDto {
+        val amount = input.amount.toInt()
+        require(input.amount == amount.toDouble()) { "Los opositiquets deben ser un numero entero." }
+        val saldo = grantTickets(usuarioId, amount, input.reason)
+        return listTicketTransactions(usuarioId).firstOrNull()
+            ?: AdminTicketTransactionDto(
+                id = "",
+                userId = usuarioId,
+                type = "ajuste",
+                amount = amount.toDouble(),
+                reason = input.reason,
+                occurredAt = Instant.now().toString(),
+            ).also { check(saldo >= 0) }
+    }
+
+    fun listSupportConversations(): List<AdminSupportConversationDto> {
+        val usersById = perfilesUsuario().associateBy { it.usuarioId }
+        val latestByConversation = request(
+            "GET",
+            "/rest/v1/mensajes_soporte?select=*&order=creado_en.desc&limit=1000",
+            null,
+        ).decodeList<SoporteMensajeRow>().groupBy { it.conversacionId }
+        return request("GET", "/rest/v1/conversaciones_soporte?select=*&order=actualizado_en.desc", null)
+            .decodeList<SoporteConversacionRow>()
+            .map { row ->
+                val latest = latestByConversation[row.id].orEmpty().maxByOrNull { it.creadoEn.orEmpty() }
+                AdminSupportConversationDto(
+                    id = row.id,
+                    userName = usersById[row.usuarioId].displayName(row.usuarioId),
+                    subject = row.asunto,
+                    status = row.estado,
+                    assignedTo = "",
+                    lastMessage = latest?.cuerpo.orEmpty(),
+                )
+            }
+    }
+
+    fun listSupportMessages(conversationId: String): List<AdminSupportMessageDto> {
+        val usersById = perfilesUsuario().associateBy { it.usuarioId }
+        return request(
+            "GET",
+            "/rest/v1/mensajes_soporte?select=*&conversacion_id=eq.$conversationId&order=creado_en.asc",
+            null,
+        ).decodeList<SoporteMensajeRow>().map { row ->
+            AdminSupportMessageDto(
+                id = row.id,
+                conversationId = row.conversacionId,
+                authorName = usersById[row.remitenteId].displayName(row.remitenteId),
+                text = row.cuerpo,
+                timestamp = row.creadoEn.orEmpty(),
+                internal = row.esStaff,
+            )
+        }
+    }
+
+    fun sendSupportMessage(conversationId: String, input: AdminSupportReplyDto): AdminSupportMessageDto {
+        require(input.text.isNotBlank()) { "El mensaje no puede estar vacio." }
+        val sender = input.assignee.takeIf { it.isNotBlank() }?.let(::findPerfil)
+            ?: perfilesUsuario().firstOrNull()
+            ?: throw IllegalArgumentException("No hay usuarios reales para enviar el mensaje.")
+        val saved = request(
+            "POST",
+            "/rest/v1/mensajes_soporte",
+            sbJson.encodeToString(
+                listOf(
+                    SoporteMensajeInsertRow(
+                        conversacionId = conversationId,
+                        remitenteId = sender.usuarioId,
+                        cuerpo = input.text,
+                        esStaff = true,
+                    ),
+                ),
+            ),
+            prefer = "return=representation",
+        ).decodeList<SoporteMensajeRow>().first()
+        return AdminSupportMessageDto(
+            id = saved.id,
+            conversationId = saved.conversacionId,
+            authorName = sender.displayName(sender.usuarioId),
+            text = saved.cuerpo,
+            timestamp = saved.creadoEn.orEmpty(),
+            internal = saved.esStaff,
+        )
+    }
+
+    fun listExamAccesses(): List<AdminExamAccessDto> {
+        val usersById = perfilesUsuario().associateBy { it.usuarioId }
+        val examsById = request("GET", "/rest/v1/examenes?select=id,titulo", null)
+            .decodeList<ExamenTituloRow>()
+            .associateBy { it.id }
+        return request(
+            "GET",
+            "/rest/v1/contenido_desbloqueado_usuario?select=*&examen_id=not.is.null&order=creado_en.desc",
+            null,
+        ).decodeList<ContenidoDesbloqueadoRow>().map { row ->
+            AdminExamAccessDto(
+                id = row.id,
+                userName = usersById[row.usuarioId].displayName(row.usuarioId),
+                examTitle = row.examenId?.let { examsById[it]?.titulo }.orEmpty().ifBlank { "Examen ${row.examenId}" },
+                accessType = row.motivo.orEmpty().ifBlank { "manual" },
+                isActive = row.validoHasta?.let { expiresAt -> runCatching { Instant.parse(expiresAt).isAfter(Instant.now()) }.getOrDefault(true) } ?: true,
+            )
+        }
+    }
+
+    fun upsertExamAccess(input: AdminExamAccessDto): AdminExamAccessDto {
+        val user = findPerfil(input.userName)
+        val exam = findExamen(input.examTitle)
+        val row = ContenidoDesbloqueadoInsertRow(
+            id = input.id.ifBlank { UUID.randomUUID().toString() },
+            usuarioId = user.usuarioId,
+            examenId = exam.id,
+            motivo = input.accessType.ifBlank { "manual" },
+            validoHasta = null,
+        )
+        return request(
+            "POST",
+            "/rest/v1/contenido_desbloqueado_usuario?on_conflict=id",
+            sbJson.encodeToString(listOf(row)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<ContenidoDesbloqueadoRow>().first().let {
+            AdminExamAccessDto(
+                id = it.id,
+                userName = user.displayName(user.usuarioId),
+                examTitle = exam.titulo,
+                accessType = it.motivo.orEmpty().ifBlank { "manual" },
+                isActive = true,
+            )
+        }
+    }
+
+    fun listModerationActions(): List<AdminModerationActionDto> {
+        val usersById = perfilesUsuario().associateBy { it.usuarioId }
+        val reportsById = request("GET", "/rest/v1/reportes_contenido?select=*", null)
+            .decodeList<ReporteRow>()
+            .associateBy { it.id }
+        return request("GET", "/rest/v1/acciones_moderacion?select=*&order=creado_en.desc&limit=200", null)
+            .decodeList<AccionModeracionRow>()
+            .map { row ->
+                val report = reportsById[row.reporteId]
+                AdminModerationActionDto(
+                    id = row.id,
+                    actionType = row.tipoAccion,
+                    targetUser = report?.reportadoPor?.let { usersById[it] }.displayName(report?.reportadoPor.orEmpty()),
+                    executor = row.moderadorId?.let { usersById[it] }.displayName(row.moderadorId.orEmpty()),
+                    reason = row.notas.orEmpty(),
+                    createdAt = row.creadoEn.orEmpty(),
+                )
+            }
+    }
+
+    fun settings(): AdminSettingsDto {
+        return AdminSettingsDto(
+            displayName = System.getenv("OPOSICONTROL_ADMIN_DISPLAY_NAME").orEmpty().ifBlank { "Administrador" },
+            email = System.getenv("OPOSICONTROL_ADMIN_EMAIL").orEmpty(),
+            receiveReleaseNotes = false,
+            defaultEnvironment = System.getenv("APP_ENV").orEmpty().ifBlank { "dev" },
+            preferFakeData = false,
+            enableVerboseLogs = System.getenv("ENABLE_VERBOSE_NETWORK_LOGS")?.toBooleanStrictOrNull() ?: false,
+        )
     }
 
     // ETIQUETAS
@@ -1775,6 +2135,27 @@ class AdminV1Gateway private constructor(
         } catch (error: Exception) {
             System.err.println("[ktor] auditoria fallida ($accion): ${error.message?.take(160)}")
         }
+    }
+
+    private fun perfilesUsuario(): List<PerfilUsuarioRow> =
+        request("GET", "/rest/v1/perfiles_usuario?select=*&order=creado_en.desc&limit=1000", null)
+            .decodeList()
+
+    private fun findPerfil(query: String): PerfilUsuarioRow {
+        val normalized = query.trim().lowercase()
+        return perfilesUsuario().firstOrNull {
+            it.usuarioId == query ||
+                it.username.orEmpty().lowercase() == normalized ||
+                it.nombreMostrar.orEmpty().lowercase() == normalized
+        } ?: throw IllegalArgumentException("No se encontro usuario real para '$query'.")
+    }
+
+    private fun findExamen(query: String): ExamenTituloRow {
+        val normalized = query.trim().lowercase()
+        return request("GET", "/rest/v1/examenes?select=id,titulo", null)
+            .decodeList<ExamenTituloRow>()
+            .firstOrNull { it.id == query || it.titulo.lowercase() == normalized }
+            ?: throw IllegalArgumentException("No se encontro examen real para '$query'.")
     }
 
     fun uploadExamenPortada(examId: String, bytes: ByteArray, fileName: String, mimeType: String): AdminExamenDto {
