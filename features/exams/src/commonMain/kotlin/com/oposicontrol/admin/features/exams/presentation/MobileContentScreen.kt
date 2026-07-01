@@ -79,7 +79,6 @@ import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.isInmersivo
 import com.oposicontrol.admin.domain.model.isRafaga
 import com.oposicontrol.admin.domain.model.QuestionResourceType
-import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.model.Tag
@@ -1611,174 +1610,6 @@ private fun ContentQuestionCard(
 }
 
 @Composable
-private fun RafagaCarousel(
-    state: ExamsState,
-    onIntent: (ExamsIntent) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "Rafagas",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
-        when (val rafagas = state.rafagas) {
-            is UiAsync.Success -> LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(220.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.Top,
-            ) {
-                items(items = rafagas.value.map { it.toRafagaUi(it.id == state.selectedRafagaId) }, key = { it.id }) { item ->
-                    RafagaCard(
-                        rafaga = item,
-                        onClick = { onIntent(ExamsIntent.SelectRafaga(item.id)) },
-                    )
-                }
-            }
-
-            UiAsync.Empty -> DropZone("Sin rafagas. Crea una desde el boton Rafaga.", DropTargetState.Idle)
-            is UiAsync.Error -> EmptyStateCard("No se pudieron cargar rafagas", rafagas.error.message)
-            UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando rafagas.")
-            UiAsync.Idle -> EmptyStateCard("Rafagas", "Sin carga activa.")
-        }
-    }
-}
-
-@Composable
-private fun SolucionarioCarousel(
-    title: String,
-    items: List<SolucionarioUi>,
-    emptyText: String,
-    onClick: (String) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
-        if (items.isEmpty()) {
-            DropZone(text = emptyText, state = DropTargetState.Idle)
-            return
-        }
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.Top,
-        ) {
-            items(items = items, key = { it.id }) { item ->
-                SolucionarioCard(
-                    solucionario = item,
-                    modifier = Modifier.width(276.dp),
-                    onClick = { onClick(item.id) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SolucionarioCard(
-    solucionario: SolucionarioUi,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val coverPath = solucionario.coverUrl.ifBlank { solucionario.coverStoragePath }
-    GlassSurface(
-        modifier = modifier
-            .height(208.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
-        tint = if (solucionario.hasSelection) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-        } else {
-            GlassTheme.tokens.glassFill
-        },
-        strokeColor = if (solucionario.hasSelection) {
-            GlassTheme.tokens.accent.copy(alpha = 0.62f)
-        } else {
-            GlassTheme.tokens.glassStroke
-        },
-        shadowElevation = if (solucionario.hasSelection) 14.dp else 8.dp,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(UiSpacing.compact),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(76.dp)
-                    .background(GlassTheme.tokens.glassFillStrong, RoundedCornerShape(16.dp))
-                    .clip(RoundedCornerShape(16.dp)),
-                contentAlignment = Alignment.BottomStart,
-            ) {
-                if (coverPath.isNotBlank()) {
-                    NewsBackgroundImage(
-                        backgroundPath = coverPath,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-                Text(
-                    text = if (coverPath.isBlank()) "Sin portada" else if (solucionario.isBurst) "Rafaga" else "Portada guardada",
-                    modifier = Modifier.padding(10.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (coverPath.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top,
-            ) {
-                Column(
-                    modifier = Modifier.width(154.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    Text(
-                        text = solucionario.title.ifBlank { "Solucionario sin nombre" },
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = solucionario.specialty.ifBlank { "Sin especialidad asignada" },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                StatusChip(solucionario.status.toReadableStatus(), modifier = Modifier.width(118.dp))
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ContentInfoPill(
-                    label = "Precio",
-                    value = solucionario.priceTickets.toTicketLabel(),
-                    modifier = Modifier.width(118.dp),
-                )
-                ContentInfoPill(
-                    label = "Preguntas",
-                    value = solucionario.questionCount.toString(),
-                    modifier = Modifier.width(118.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun ContentInfoPill(
     label: String,
     value: String,
@@ -1807,92 +1638,6 @@ private fun ContentInfoPill(
 
 private fun Int.toTicketLabel(): String {
     return if (this <= 0) "Gratis" else "$this tickets"
-}
-
-@Composable
-private fun RafagaCard(
-    rafaga: RafagaUi,
-    onClick: () -> Unit,
-) {
-    GlassSurface(
-        modifier = Modifier
-            .width(276.dp)
-            .height(208.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
-        tint = if (rafaga.hasSelection) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-        } else {
-            GlassTheme.tokens.glassFill
-        },
-        strokeColor = if (rafaga.hasSelection) {
-            GlassTheme.tokens.accent.copy(alpha = 0.62f)
-        } else {
-            GlassTheme.tokens.glassStroke
-        },
-        shadowElevation = if (rafaga.hasSelection) 14.dp else 8.dp,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(UiSpacing.compact),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(76.dp)
-                    .background(GlassTheme.tokens.glassFillStrong, RoundedCornerShape(16.dp)),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                Text(
-                    text = "rafaga",
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top,
-            ) {
-                Column(modifier = Modifier.width(156.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = rafaga.title.ifBlank { "Rafaga sin nombre" },
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = rafaga.specialty.ifBlank { "Sin especialidad" },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                StatusChip(rafaga.status.toReadableStatus(), modifier = Modifier.width(118.dp))
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ContentInfoPill(
-                    label = "Precio",
-                    value = rafaga.priceTickets.toTicketLabel(),
-                    modifier = Modifier.width(118.dp),
-                )
-                ContentInfoPill(
-                    label = "Preguntas",
-                    value = rafaga.questionCount.toString(),
-                    modifier = Modifier.width(118.dp),
-                )
-            }
-        }
-    }
 }
 
 @Composable
@@ -2160,63 +1905,6 @@ private fun QuestionSelectorCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
-private fun QuestionCard(
-    question: QuestionUi,
-    onSelect: () -> Unit,
-    onMoveUp: () -> Unit,
-    onMoveDown: () -> Unit,
-) {
-    GlassSurface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .defaultMinSize(minHeight = UiSpacing.questionMinHeight)
-            .clickable(onClick = onSelect),
-        shape = RoundedCornerShape(18.dp),
-        tint = if (question.selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(UiSpacing.normal),
-            verticalArrangement = Arrangement.spacedBy(UiSpacing.compact),
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                StatusChip(if (question.hasResources) "${question.resourceCount} recursos" else "sin recursos")
-                StatusChip("ok ${question.correctOptionLabel}")
-            }
-            Text(
-                text = question.title.ifBlank { "Pregunta sin titulo" },
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = question.statement.ifBlank { "Sin enunciado" },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            DropZone(
-                text = if (question.hasResources) {
-                    "Recursos enlazados"
-                } else {
-                    "Enlaza recursos"
-                },
-                state = if (question.hasResources) DropTargetState.Linked else DropTargetState.Ready,
-            )
-            ResponsiveActionRow(
-                actions = listOf(
-                    MobileActionSpec(icon = MobileIcon.Up, label = "Subir", minWidth = 124, onClick = onMoveUp),
-                    MobileActionSpec(icon = MobileIcon.Down, label = "Bajar", minWidth = 124, onClick = onMoveDown),
-                ),
             )
         }
     }
@@ -3407,21 +3095,6 @@ private fun NewsActiveToggle(
     }
 }
 
-private fun Exam.toSolucionarioUi(selected: Boolean): SolucionarioUi {
-    return SolucionarioUi(
-        id = id,
-        title = title,
-        specialty = specialtyName,
-        status = status.name.lowercase(),
-        priceTickets = priceTickets,
-        questionCount = questionCount,
-        coverUrl = coverUrl.orEmpty(),
-        coverStoragePath = coverStoragePath.orEmpty(),
-        isBurst = false,
-        hasSelection = selected,
-    )
-}
-
 private fun Exam.toContentExamUi(selected: Boolean): ContentExamUi {
     return ContentExamUi(
         id = id,
@@ -3452,18 +3125,6 @@ private fun String.toExamTypeLabel(): String {
         "inmersivo" -> "Inmersivo"
         else -> ifBlank { "Examen" }
     }
-}
-
-private fun Rafaga.toRafagaUi(selected: Boolean): RafagaUi {
-    return RafagaUi(
-        id = id,
-        title = title,
-        specialty = specialtyName,
-        status = status.name.lowercase(),
-        priceTickets = priceTickets,
-        questionCount = questionCount,
-        hasSelection = selected,
-    )
 }
 
 private fun ExamQuestion.toQuestionUi(selected: Boolean): QuestionUi {
