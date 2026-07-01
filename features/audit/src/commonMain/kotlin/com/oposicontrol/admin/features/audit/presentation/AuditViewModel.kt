@@ -22,6 +22,7 @@ class AuditViewModel(
     override suspend fun handleIntent(intent: AuditIntent) {
         when (intent) {
             AuditIntent.Refresh -> refresh()
+            is AuditIntent.UpdateSearch -> updateState { it.copy(searchQuery = intent.value) }
         }
     }
 
@@ -30,8 +31,14 @@ class AuditViewModel(
         updateState { it.copy(events = UiAsync.Loading) }
         when (val result = auditRepository.fetchEvents()) {
             is AppResult.Failure -> updateState { it.copy(events = UiAsync.Error(result.error)) }
-            is AppResult.Success -> updateState {
-                it.copy(events = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value))
+            is AppResult.Success -> {
+                val ts = kotlinx.datetime.Clock.System.now().toString().substringBefore(".").replace("T", " ").takeLast(16)
+                updateState {
+                    it.copy(
+                        events = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value),
+                        lastRefreshedAt = ts,
+                    )
+                }
             }
         }
     }

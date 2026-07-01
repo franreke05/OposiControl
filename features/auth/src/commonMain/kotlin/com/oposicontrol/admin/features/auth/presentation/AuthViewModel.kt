@@ -51,10 +51,20 @@ class AuthViewModel(
                 updateState { it.copy(submitState = UiAsync.Idle, isRestoring = false) }
             }
 
-            AuthIntent.RestoreSession -> restoreSession()
+            AuthIntent.RestoreSession -> if (!currentState().isSubmitting) restoreSession()
             AuthIntent.Submit -> submit()
-            is AuthIntent.UpdateEmail -> updateState { it.copy(email = intent.value) }
-            is AuthIntent.UpdatePassword -> updateState { it.copy(password = intent.value) }
+            is AuthIntent.UpdateEmail -> updateState {
+                it.copy(
+                    email = intent.value,
+                    submitState = if (it.submitState is UiAsync.Error) UiAsync.Idle else it.submitState,
+                )
+            }
+            is AuthIntent.UpdatePassword -> updateState {
+                it.copy(
+                    password = intent.value,
+                    submitState = if (it.submitState is UiAsync.Error) UiAsync.Idle else it.submitState,
+                )
+            }
         }
     }
 
@@ -85,7 +95,8 @@ class AuthViewModel(
     }
 
     private suspend fun submit() {
-        updateState { it.copy(submitState = UiAsync.Loading, isRestoring = false) }
+        if (currentState().isSubmitting) return
+        updateState { it.copy(isSubmitting = true, submitState = UiAsync.Loading, isRestoring = false) }
         analyticsTracker.trackAction("auth_submit")
         when (
             val result = loginUseCase(
@@ -95,9 +106,10 @@ class AuthViewModel(
                 ),
             )
         ) {
-            is AppResult.Failure -> updateState { it.copy(submitState = UiAsync.Error(result.error)) }
+            is AppResult.Failure -> updateState { it.copy(isSubmitting = false, submitState = UiAsync.Error(result.error)) }
             is AppResult.Success -> updateState {
                 it.copy(
+                    isSubmitting = false,
                     currentSession = result.value,
                     isAuthenticated = true,
                     submitState = UiAsync.Success(result.value),

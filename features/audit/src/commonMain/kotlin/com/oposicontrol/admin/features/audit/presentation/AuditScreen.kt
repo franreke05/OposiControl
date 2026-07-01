@@ -4,12 +4,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.components.AdminTable
@@ -25,15 +24,14 @@ fun AuditScreen(
     viewModel: AuditViewModel,
 ) {
     val state by viewModel.state.collectAsState()
-    var searchQuery by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         FilterBar(
-            searchValue = searchQuery,
-            onSearchChange = { searchQuery = it },
+            searchValue = state.searchQuery,
+            onSearchChange = { viewModel.dispatch(AuditIntent.UpdateSearch(it)) },
             placeholder = "Filtrar por actor, accion o recurso",
             filters = {
                 GlassActionButton(
@@ -43,16 +41,23 @@ fun AuditScreen(
                 )
             },
         )
+        if (state.lastRefreshedAt.isNotBlank()) {
+            Text(
+                text = "Última carga: ${state.lastRefreshedAt}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         FormSection(
             title = "Auditoria",
             description = "Linea temporal administrativa para operaciones criticas.",
         ) {
             AsyncStatePane(state.events, emptyMessage = "No hay eventos de auditoria.") { events ->
                 val filtered = events.filter {
-                    searchQuery.isBlank() ||
-                        it.actorName.contains(searchQuery, ignoreCase = true) ||
-                        it.action.contains(searchQuery, ignoreCase = true) ||
-                        it.target.contains(searchQuery, ignoreCase = true)
+                    state.searchQuery.isBlank() ||
+                        it.actorName.contains(state.searchQuery, ignoreCase = true) ||
+                        it.action.contains(state.searchQuery, ignoreCase = true) ||
+                        it.target.contains(state.searchQuery, ignoreCase = true)
                 }
                 AdminTable(
                     columns = listOf(
@@ -64,7 +69,12 @@ fun AuditScreen(
                     rows = filtered.map { event ->
                         AdminTableRow(
                             key = event.id,
-                            cells = listOf(event.actorName, event.action, event.target, event.occurredAt.toString()),
+                            cells = listOf(
+                                event.actorName,
+                                event.action,
+                                event.target,
+                                event.occurredAt.toString().substringBefore(".").removeSuffix("Z").replace("T", " ").takeLast(16),
+                            ),
                             supporting = event.metadata.entries.joinToString { "${it.key}=${it.value}" },
                         )
                     },

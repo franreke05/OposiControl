@@ -5,4 +5,6 @@ import com.oposicontrol.admin.domain.model.AuditEvent
 
 data class AuditState(
     val events: UiAsync<List<AuditEvent>> = UiAsync.Loading,
+    val searchQuery: String = "",
+    val lastRefreshedAt: String = "",
 )

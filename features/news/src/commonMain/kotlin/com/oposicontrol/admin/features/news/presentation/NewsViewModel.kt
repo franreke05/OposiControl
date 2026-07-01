@@ -374,6 +374,7 @@ class NewsViewModel(
                         selectedId = result.value.id,
                         editorStatus = result.value.status,
                         actionState = UiAsync.Success(Unit),
+                        isDirty = false,
                     )
                 }
             }
@@ -385,6 +386,15 @@ class NewsViewModel(
     }
 
     private suspend fun scheduleCurrent() {
+        val pf = currentState().editorPublishFrom.trim()
+        if (pf.isBlank()) {
+            updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("Añade una fecha de publicación antes de programar."))) }
+            return
+        }
+        runCatching { kotlinx.datetime.Instant.parse(pf) }.getOrElse {
+            updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("Fecha inválida. Usa formato ISO: 2026-05-11T09:00:00Z"))) }
+            return
+        }
         persistWithEditorialAction("news_schedule") { article, draft -> scheduleNewsUseCase(article, draft) }
     }
 
@@ -431,7 +441,7 @@ class NewsViewModel(
                 analyticsTracker.trackAction(actionName, mapOf("news_id" to result.value.id, "layers" to result.value.layers.size.toString()))
                 previousId?.takeIf { it.startsWith("local-") }?.let { localDrafts.remove(it) }
                 rememberSavedArticle(currentState().toNewsItem().copy(id = result.value.id, status = result.value.status))
-                updateState { it.copy(selectedId = result.value.id, editorStatus = result.value.status, actionState = UiAsync.Success(Unit)) }
+                updateState { it.copy(selectedId = result.value.id, editorStatus = result.value.status, actionState = UiAsync.Success(Unit), isDirty = false) }
             }
         }
     }
@@ -580,7 +590,7 @@ class NewsViewModel(
     private fun updateAndValidate(transform: (NewsState) -> NewsState) {
         val next = transform(currentState()).withClampedLayers()
         val report = validateNewsDraftUseCase(next.toDesignDraft())
-        updateState { next.copy(validationReport = report) }
+        updateState { next.copy(validationReport = report, isDirty = true) }
         rememberCurrentDraft(next.copy(validationReport = report))
     }
 

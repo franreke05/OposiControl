@@ -350,7 +350,7 @@ class ExamsViewModel(
                 exam.title.lowercase().contains(query) ||
                 exam.specialtyName.lowercase().contains(query)) &&
                 (selectedSpecialtyId == null || exam.specialtyId == selectedSpecialtyId) &&
-                (statusFilter == "all" || exam.status.name.lowercase() == statusFilter)
+                (statusFilter.isBlank() || statusFilter.equals("all", ignoreCase = true) || exam.status.name.lowercase() == statusFilter.trim().lowercase())
         }
         updateState { it.copy(exams = if (filtered.isEmpty()) UiAsync.Empty else UiAsync.Success(filtered)) }
     }
@@ -579,9 +579,7 @@ class ExamsViewModel(
             priceTickets = priceTickets,
             status = status,
             publishFrom = when (status) {
-                ExamStatus.PUBLISHED -> existing?.publishFrom
-                    ?: publishFrom
-                    ?: now
+                ExamStatus.PUBLISHED -> publishFrom ?: existing?.publishFrom ?: now
                 else -> publishFrom ?: existing?.publishFrom
             },
             publishedAt = when (status) {
@@ -712,7 +710,7 @@ class ExamsViewModel(
                 editorQuestionTitle = "",
                 editorQuestionStatement = "",
                 editorOptions = blankOptionDrafts(questionId),
-                editorResources = listOf(blankResourceDraft()),
+                editorResources = emptyList(),
                 uploadState = UiAsync.Idle,
                 resourceUploadStates = emptyMap(),
                 importState = UiAsync.Idle,
@@ -810,6 +808,9 @@ class ExamsViewModel(
             ?: return updateState {
                 it.copy(actionState = UiAsync.Error(AppError.Validation("Crea o selecciona una pregunta.")))
             }
+        if (currentState().editorOptions.none { it.isCorrect }) {
+            return updateState { it.copy(actionState = UiAsync.Error(AppError.Validation("Marca una opción como correcta antes de guardar."))) }
+        }
         val existing = currentQuestions.firstOrNull { it.id == questionId }
         val now = Clock.System.now()
         updateState { it.copy(actionState = UiAsync.Loading) }

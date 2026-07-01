@@ -20,4 +20,5 @@ sealed interface UsersIntent {
     data class UpdateWarningInput(val value: String) : UsersIntent
     data object ConfirmWarning : UsersIntent
     data class QuickToggleBlock(val userId: String) : UsersIntent
+    data class UpdateSearch(val value: String) : UsersIntent
 }

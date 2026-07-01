@@ -8,11 +8,15 @@ import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.ModerationAction
 import com.oposicontrol.admin.domain.repository.AdminOperationsRepository
+import com.oposicontrol.admin.domain.repository.AuthRepository
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.launch
 
 class ModerationViewModel(
     dispatcherProvider: DispatcherProvider,
     private val repository: AdminOperationsRepository,
     private val analyticsTracker: AnalyticsTracker,
+    private val authRepository: AuthRepository,
 ) : MviViewModel<ModerationState, ModerationIntent>(
     initialState = ModerationState(),
     dispatcherProvider = dispatcherProvider,
@@ -21,6 +25,10 @@ class ModerationViewModel(
 
     init {
         analyticsTracker.trackScreen("moderation")
+        scope.launch {
+            val displayName = authRepository.observeSession().firstOrNull()?.displayName.orEmpty()
+            if (displayName.isNotBlank()) updateState { it.copy(editorExecutor = displayName) }
+        }
         dispatch(ModerationIntent.Refresh)
     }
 
@@ -31,7 +39,6 @@ class ModerationViewModel(
                     selectedId = null,
                     editorActionType = "warning",
                     editorTargetUser = "",
-                    editorExecutor = "Admin principal",
                     editorReason = "",
                     actionState = UiAsync.Idle,
                 )

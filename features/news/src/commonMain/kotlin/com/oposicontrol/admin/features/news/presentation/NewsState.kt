@@ -31,4 +31,5 @@ data class NewsState(
     val canvasFullscreen: Boolean = false,
     val validationReport: NewsValidationReport? = null,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
+    val isDirty: Boolean = false,
 )
