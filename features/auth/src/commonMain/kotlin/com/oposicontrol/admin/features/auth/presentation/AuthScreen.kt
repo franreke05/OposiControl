@@ -95,20 +95,21 @@ fun AuthScreen(
                     placeholder = "tu@email.com",
                 )
                 Text(
-                    text = "Contrasena",
+                    text = "Contraseña",
                     style = MaterialTheme.typography.labelMedium,
                 )
                 GlassTextField(
                     value = state.password,
                     onValueChange = { viewModel.dispatch(AuthIntent.UpdatePassword(it)) },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = "Introduce tu contrasena",
+                    placeholder = "Introduce tu contraseña",
                     visualTransformation = PasswordVisualTransformation(),
                 )
                 GlassActionButton(
                     text = "Entrar",
                     onClick = { viewModel.dispatch(AuthIntent.Submit) },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = state.submitState !is UiAsync.Loading,
                 )
                 when (val submitState = state.submitState) {
                     is UiAsync.Error -> Text(

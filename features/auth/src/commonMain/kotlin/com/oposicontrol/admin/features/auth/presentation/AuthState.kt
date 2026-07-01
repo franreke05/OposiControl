@@ -10,4 +10,5 @@ data class AuthState(
     val currentSession: Session? = null,
     val isAuthenticated: Boolean = false,
     val isRestoring: Boolean = true,
+    val isSubmitting: Boolean = false,
 )
