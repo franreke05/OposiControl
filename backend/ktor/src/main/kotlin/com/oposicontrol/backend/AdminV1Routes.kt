@@ -102,16 +102,23 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 var fileName = "portada.jpg"
                 var mimeType = "image/jpeg"
                 multipart.forEachPart { part ->
-                    if (part is PartData.FileItem && part.name == "file") {
-                        val stream = part.streamProvider()
-                        val maxBytes = 10 * 1024 * 1024
-                        val limited = stream.readNBytes(maxBytes + 1)
-                        require(limited.size <= maxBytes) { "El archivo supera el limite de 10 MB." }
-                        fileBytes = limited
-                        fileName = part.originalFileName ?: fileName
-                        mimeType = part.contentType?.toString() ?: mimeType
+                    try {
+                        if (part is PartData.FileItem && part.name == "file") {
+                            val stream = part.streamProvider()
+                            val maxBytes = 10 * 1024 * 1024
+                            val limited = stream.readNBytes(maxBytes + 1)
+                            require(limited.size <= maxBytes) { "El archivo supera el limite de 10 MB." }
+                            val partMime = part.contentType?.toString().orEmpty()
+                            require(partMime.isBlank() || partMime.startsWith("image/")) {
+                                "Tipo de archivo no permitido: $partMime. La portada debe ser una imagen."
+                            }
+                            fileBytes = limited
+                            fileName = part.originalFileName ?: fileName
+                            mimeType = partMime.ifBlank { mimeType }
+                        }
+                    } finally {
+                        part.dispose()
                     }
-                    part.dispose()
                 }
                 val bytes = fileBytes
                     ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("no_file", "No se recibió archivo."))
@@ -259,6 +266,12 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             get("/reportes") { call.respond(AdminReportesResponse(gateway.listReportes())) }
             get("/actions") { call.respond(gateway.listModerationActions()) }
             get("/acciones") { call.respond(gateway.listModerationActions()) }
+            post("/actions") {
+                val req = call.receive<WarnUserRequest>()
+                req.targetUserId.validatedUuid("targetUserId")
+                gateway.warnUser(req.targetUserId, req.actionType, req.reason)
+                call.respond(HttpStatusCode.Created, OkDto())
+            }
         }
         get("/settings") { call.respond(gateway.settings()) }
         get("/ajustes") { call.respond(gateway.settings()) }
@@ -765,6 +778,11 @@ data class AdminV1PermissionDto(val key: String, val label: String)
 @Serializable data class AdminUserResponse(val data: AdminV1UserDto)
 @Serializable data class AdminRolesV1Response(val data: List<AdminV1RoleDto>)
 @Serializable data class OkDto(val ok: Boolean = true)
+@Serializable data class WarnUserRequest(
+    @SerialName("targetUserId") val targetUserId: String,
+    @SerialName("actionType") val actionType: String = "advertencia",
+    val reason: String = "",
+)
 
 // Etiquetas — esquema real: id, nombre, slug, descripcion, color_hex, activa
 @Serializable
@@ -1094,7 +1112,8 @@ class AdminV1Gateway private constructor(
             "/rest/v1/especialidades?id=eq.$id",
             sbJson.encodeToString(row),
             prefer = "return=representation",
-        ).decodeList<AdminEspecialidadDto>().first()
+        ).decodeList<AdminEspecialidadDto>().firstOrNull()
+            ?: error("Especialidad no encontrada para actualizar: $id")
     }
 
     fun archiveEspecialidad(id: String): AdminEspecialidadDto {
@@ -1144,7 +1163,8 @@ class AdminV1Gateway private constructor(
             "/rest/v1/examenes?id=eq.$id",
             sbJson.encodeToString(input.toRow(forcedId = id)),
             prefer = "return=representation",
-        ).decodeList<AdminExamenRow>().first().toDto()
+        ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
+            ?: error("Examen no encontrado para actualizar: $id")
     }
 
     fun publicarExamen(id: String): AdminExamenDto {
@@ -1316,14 +1336,16 @@ class AdminV1Gateway private constructor(
     }
 
     fun archivePregunta(id: String): AdminPreguntaDto {
-        request(
+        val saved = request(
             "PATCH",
             "/rest/v1/preguntas?id=eq.$id",
             """{"activa":false}""",
-            prefer = "return=minimal",
-        )
+            prefer = "return=representation",
+        ).decodeList<AdminPreguntaRow>().firstOrNull()
+            ?: error("Pregunta no encontrada para archivar: $id")
         registrarAuditoria("pregunta_archivada", "preguntas", id)
-        return getPregunta(id) ?: error("No se pudo leer la pregunta archivada.")
+        // Return full DTO with opciones/solucion/recursos for consistency with other handlers.
+        return getPregunta(id) ?: saved.toDtoSinDetalle()
     }
 
     fun reordenarPreguntasExamen(examenId: String, input: AdminPreguntaOrdenRequest): List<AdminPreguntaDto> {
@@ -1549,7 +1571,8 @@ class AdminV1Gateway private constructor(
             "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.$id",
             sbJson.encodeToString(patch),
             prefer = "return=representation",
-        ).decodeList<StagingRow>().first().toDto()
+        ).decodeList<StagingRow>().firstOrNull()?.toDto()
+            ?: error("Item de staging no encontrado: $id")
     }
 
     fun importarLote(loteId: String): AdminLoteDto {
@@ -2013,7 +2036,8 @@ class AdminV1Gateway private constructor(
         require(input.nombre.isNotBlank()) { "La etiqueta necesita nombre." }
         val row = V1EtiquetaRow(id = id, nombre = input.nombre.trim(), slug = input.slug.ifBlank { input.nombre.toSlug() }, descripcion = input.descripcion, colorHex = input.colorHex, activa = input.activa)
         return request("PATCH", "/rest/v1/etiquetas?id=eq.$id", sbJson.encodeToString(row), prefer = "return=representation")
-            .decodeList<V1EtiquetaRow>().first().let { AdminEtiquetaDto(it.id.orEmpty(), it.nombre, it.slug, it.descripcion, it.colorHex, it.activa) }
+            .decodeList<V1EtiquetaRow>().firstOrNull()?.let { AdminEtiquetaDto(it.id.orEmpty(), it.nombre, it.slug, it.descripcion, it.colorHex, it.activa) }
+            ?: error("Etiqueta no encontrada para actualizar: $id")
     }
 
     fun deleteEtiqueta(id: String) {
@@ -2037,7 +2061,8 @@ class AdminV1Gateway private constructor(
         require(input.nombre.isNotBlank()) { "La comunidad necesita nombre." }
         val row = V1ComunidadRow(id = id, nombre = input.nombre.trim(), codigo = input.codigo.trim(), slug = input.slug.ifBlank { input.nombre.toSlug() }, activa = input.activa, posicion = input.posicion)
         return request("PATCH", "/rest/v1/comunidades_autonomas?id=eq.$id", sbJson.encodeToString(row), prefer = "return=representation")
-            .decodeList<V1ComunidadRow>().first().let { AdminComunidadDto(it.id.orEmpty(), it.nombre, it.codigo, it.slug, it.activa, it.posicion) }
+            .decodeList<V1ComunidadRow>().firstOrNull()?.let { AdminComunidadDto(it.id.orEmpty(), it.nombre, it.codigo, it.slug, it.activa, it.posicion) }
+            ?: error("Comunidad no encontrada para actualizar: $id")
     }
 
     fun deleteComunidad(id: String) {
@@ -2121,6 +2146,11 @@ class AdminV1Gateway private constructor(
             .decodeList<AuditoriaRow>()
             .map { it.toDto() }
 
+    fun warnUser(userId: String, actionType: String, reason: String) {
+        userId.validatedUuid("userId")
+        registrarAuditoria("${actionType}_usuario", "perfiles_usuario", userId)
+    }
+
     // Registro de acciones sensibles. No debe tumbar la operacion principal si falla.
     // TODO(fase4): rellenar usuario_id desde el JWT de Supabase.
     fun registrarAuditoria(accion: String, tabla: String?, registroId: String?) {
@@ -2160,6 +2190,10 @@ class AdminV1Gateway private constructor(
 
     fun uploadExamenPortada(examId: String, bytes: ByteArray, fileName: String, mimeType: String): AdminExamenDto {
         require(mimeType.startsWith("image/")) { "La portada debe ser una imagen." }
+        // Validate exam exists BEFORE touching Storage to avoid orphaned objects.
+        val existing = request("GET", "/rest/v1/examenes?select=id,portada_storage_path&id=eq.$examId&limit=1", null)
+            .decodeList<AdminExamenRow>().firstOrNull()
+            ?: error("Examen no encontrado: $examId")
         val bucket = (System.getenv("SUPABASE_BUCKET_EXAM_RESOURCES") ?: "exam-resources").toStorageBucketId()
         ensureStorageBucketExists(bucket)
         val sanitized = fileName.sanitizeStorageSegment()
@@ -2167,11 +2201,38 @@ class AdminV1Gateway private constructor(
         val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
         requestBinary("POST", "$supabaseUrl/storage/v1/object/$bucket/$encodedPath", bytes, mimeType, upsert = true)
         val publicUrl = "$supabaseUrl/storage/v1/object/public/$bucket/$encodedPath"
-        return request(
-            "PATCH", "/rest/v1/examenes?id=eq.$examId",
-            """{"portada_url":"$publicUrl","portada_storage_path":"$objectPath","portada_mime_type":"$mimeType"}""",
-            prefer = "return=representation",
-        ).decodeList<AdminExamenRow>().first().toDto()
+        val saved = try {
+            request(
+                "PATCH", "/rest/v1/examenes?id=eq.$examId",
+                """{"portada_url":"$publicUrl","portada_storage_path":"$objectPath","portada_mime_type":"$mimeType"}""",
+                prefer = "return=representation",
+            ).decodeList<AdminExamenRow>().firstOrNull()
+                ?: error("Examen desaparecio durante la actualizacion de portada: $examId")
+        } catch (e: Exception) {
+            // DB write failed after Storage upload — delete the orphaned object best-effort.
+            runCatching {
+                val req = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/object/$bucket/$encodedPath"))
+                    .header("apikey", serviceRoleKey)
+                    .header("Authorization", "Bearer $serviceRoleKey")
+                    .DELETE().build()
+                client.send(req, HttpResponse.BodyHandlers.ofString())
+            }.onFailure { System.err.println("[ktor] portada orphan cleanup failed: ${it.message?.take(160)}") }
+            throw e
+        }
+        // Delete previous cover if it was a different storage object.
+        existing.portadaStoragePath
+            ?.takeIf { it.isNotBlank() && it != objectPath }
+            ?.let { prev ->
+                val prevEncoded = prev.split('/').joinToString("/") { it.urlEncode() }
+                runCatching {
+                    val req = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/object/$bucket/$prevEncoded"))
+                        .header("apikey", serviceRoleKey)
+                        .header("Authorization", "Bearer $serviceRoleKey")
+                        .DELETE().build()
+                    client.send(req, HttpResponse.BodyHandlers.ofString())
+                }.onFailure { System.err.println("[ktor] portada anterior cleanup failed: ${it.message?.take(160)}") }
+            }
+        return saved.toDto()
     }
 
     fun clearExamenPortada(examId: String): AdminExamenDto {
@@ -2179,7 +2240,8 @@ class AdminV1Gateway private constructor(
             "PATCH", "/rest/v1/examenes?id=eq.$examId",
             """{"portada_url":null,"portada_storage_path":null,"portada_mime_type":null}""",
             prefer = "return=representation",
-        ).decodeList<AdminExamenRow>().first().toDto()
+        ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
+            ?: error("Examen no encontrado para borrar portada: $examId")
     }
 
     private fun ensureStorageBucketExists(bucket: String) {
