@@ -22,6 +22,8 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     // Verificacion de JWT de Supabase (ES256). La clave EC se construye desde el JWKS publico.
     implementation("com.auth0:java-jwt:4.4.0")
+    // Extraccion de texto de PDFs para importacion de rafagas.
+    implementation("org.apache.pdfbox:pdfbox:3.0.2")
     testImplementation(kotlin("test"))
 }
 

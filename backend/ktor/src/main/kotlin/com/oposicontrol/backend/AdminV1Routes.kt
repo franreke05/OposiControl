@@ -186,6 +186,68 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 call.respond(AdminLoteResponse(gateway.importarLote(call.requiredPath("loteId"))))
             }
         }
+        route("/rafagas") {
+            post("/import") {
+                val especialidadId = call.request.queryParameters["especialidadId"]
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad_request", "especialidadId es obligatorio"))
+                especialidadId.validatedUuid("especialidadId")
+                val examenId = call.request.queryParameters["examenId"]
+                    ?.takeIf { it.isNotBlank() }
+                    ?.also { it.validatedUuid("examenId") }
+
+                var pdfBytes: ByteArray? = null
+                call.receiveMultipart().forEachPart { part ->
+                    try {
+                        if (part is PartData.FileItem && part.name == "file") {
+                            val limited = part.streamProvider().readNBytes(20 * 1024 * 1024 + 1)
+                            require(limited.size <= 20 * 1024 * 1024) { "El PDF supera el límite de 20 MB." }
+                            pdfBytes = limited
+                        }
+                    } finally {
+                        part.dispose()
+                    }
+                }
+
+                val bytes = pdfBytes
+                    ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad_request", "Campo 'file' con el PDF es obligatorio"))
+
+                val rawText = extractTextFromPdf(bytes)
+                val (preguntas, errores) = parseRafagaText(rawText)
+
+                if (errores.isNotEmpty()) {
+                    return@post call.respond(
+                        HttpStatusCode.UnprocessableEntity,
+                        RafagaImportErrorResponse(errores.map { RafagaParseErrorDto(it.numero, it.campo, it.detalle) }),
+                    )
+                }
+
+                var importadas = 0
+                preguntas.forEachIndexed { index, q ->
+                    val dto = AdminPreguntaDto(
+                        especialidadId = especialidadId,
+                        titulo = q.titulo,
+                        fuenteTexto = q.fuente,
+                        razonamiento = q.razonamiento,
+                        opciones = q.opciones.map { (letra, texto) ->
+                            AdminOpcionDto(letra = letra, texto = texto, esCorrecta = letra == q.respuesta)
+                        },
+                        examenId = examenId,
+                        posicion = if (examenId != null) index + 1 else null,
+                    )
+                    val created = gateway.createPregunta(dto)
+                    if (q.etiquetas.isNotEmpty()) {
+                        // ponytail: etiquetas stored as text resource; reindex via TagSearchGateway associates to entity_tag.
+                        gateway.addRecurso(
+                            created.id,
+                            AdminRecursoDto(tipoRecurso = "etiquetas", contenidoTexto = q.etiquetas.joinToString(","), posicion = 999),
+                        )
+                    }
+                    importadas++
+                }
+
+                call.respond(HttpStatusCode.Created, RafagaImportResponse(importadas))
+            }
+        }
         route("/feedback/preguntas") {
             get {
                 call.respond(AdminFeedbacksResponse(gateway.listFeedback(call.request.queryParameters["estado"])))
@@ -778,6 +840,9 @@ data class AdminV1PermissionDto(val key: String, val label: String)
 @Serializable data class AdminUserResponse(val data: AdminV1UserDto)
 @Serializable data class AdminRolesV1Response(val data: List<AdminV1RoleDto>)
 @Serializable data class OkDto(val ok: Boolean = true)
+@Serializable data class RafagaImportResponse(val importadas: Int)
+@Serializable data class RafagaParseErrorDto(val pregunta: Int, val campo: String, val detalle: String)
+@Serializable data class RafagaImportErrorResponse(val errores: List<RafagaParseErrorDto>)
 @Serializable data class WarnUserRequest(
     @SerialName("targetUserId") val targetUserId: String,
     @SerialName("actionType") val actionType: String = "advertencia",
