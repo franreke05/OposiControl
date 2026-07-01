@@ -13,9 +13,13 @@ class RealAuditDataSource(
     private val adapter: NetworkResultAdapter,
 ) : AuditDataSource {
     override fun observeEvents(): Flow<List<AuditEvent>> = flow {
-        when (val result = adapter.safeCall { api.getEvents().map { it.toDomain() } }) {
+        when (val result = fetchAll()) {
             is AppResult.Failure -> emit(emptyList())
             is AppResult.Success -> emit(result.value)
         }
     }
+
+    override suspend fun fetchEvents(): AppResult<List<AuditEvent>> = fetchAll()
+
+    private suspend fun fetchAll() = adapter.safeCall { api.getEvents().map { it.toDomain() } }
 }

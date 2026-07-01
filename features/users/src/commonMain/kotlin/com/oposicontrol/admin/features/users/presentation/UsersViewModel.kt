@@ -66,6 +66,22 @@ class UsersViewModel(
                 val next = if (intent.roleId in it.editorRoleIds) it.editorRoleIds - intent.roleId else it.editorRoleIds + intent.roleId
                 it.copy(editorRoleIds = next)
             }
+            // Quick-action: tickets dialog
+            UsersIntent.OpenTicketsDialog -> updateState { it.copy(ticketsDialogOpen = true, ticketsInput = "", actionState = UiAsync.Idle) }
+            UsersIntent.DismissTicketsDialog -> updateState { it.copy(ticketsDialogOpen = false, ticketsInput = "") }
+            is UsersIntent.UpdateTicketsInput -> updateState { it.copy(ticketsInput = intent.value) }
+            UsersIntent.ConfirmTickets -> {
+                val amount = currentState().ticketsInput.toIntOrNull() ?: return
+                updateState { it.copy(ticketsDialogOpen = false, ticketsInput = "") }
+                grantTickets(amount)
+            }
+            // Quick-action: warning dialog
+            UsersIntent.OpenWarningDialog -> updateState { it.copy(warningDialogOpen = true, warningInput = "", actionState = UiAsync.Idle) }
+            UsersIntent.DismissWarningDialog -> updateState { it.copy(warningDialogOpen = false, warningInput = "") }
+            is UsersIntent.UpdateWarningInput -> updateState { it.copy(warningInput = intent.value) }
+            UsersIntent.ConfirmWarning -> sendWarning()
+            // Quick-action: block/unblock from list row
+            is UsersIntent.QuickToggleBlock -> quickToggleBlock(intent.userId)
         }
     }
 
@@ -98,6 +114,39 @@ class UsersViewModel(
                         users = if (updated != null) UiAsync.Success(updated) else st.users,
                         actionState = UiAsync.Success(Unit),
                     )
+                }
+            }
+        }
+    }
+
+    private suspend fun sendWarning() {
+        val userId = currentState().selectedUserId ?: return
+        val message = currentState().warningInput.trim().ifBlank { return }
+        updateState { it.copy(warningDialogOpen = false, warningInput = "", actionState = UiAsync.Loading) }
+        when (val result = moderationRepository.warnUser(userId, message)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("user_warned", mapOf("user_id" to userId))
+                updateState { it.copy(actionState = UiAsync.Success(Unit)) }
+            }
+        }
+    }
+
+    private suspend fun quickToggleBlock(userId: String) {
+        val user = (currentState().users as? UiAsync.Success)?.value?.firstOrNull { it.id == userId } ?: return
+        updateState { it.copy(actionState = UiAsync.Loading) }
+        val toggled = user.copy(isActive = !user.isActive)
+        when (val result = upsertUserUseCase(toggled)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction(
+                    if (toggled.isActive) "user_unblocked" else "user_blocked",
+                    mapOf("user_id" to userId),
+                )
+                updateState { it.copy(actionState = UiAsync.Success(Unit)) }
+                // If this user is currently selected, sync the editor
+                if (currentState().selectedUserId == userId) {
+                    updateState { it.copy(editorIsActive = toggled.isActive) }
                 }
             }
         }

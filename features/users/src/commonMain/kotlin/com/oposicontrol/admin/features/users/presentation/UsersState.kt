@@ -13,6 +13,11 @@ data class UsersState(
     val editorRoleIds: Set<String> = emptySet(),
     val editorIsActive: Boolean = true,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
+    // Quick-action dialogs
+    val ticketsDialogOpen: Boolean = false,
+    val ticketsInput: String = "",
+    val warningDialogOpen: Boolean = false,
+    val warningInput: String = "",
 ) {
     val isEmailValid: Boolean get() = editorEmail.isBlank() || EMAIL_REGEX.matches(editorEmail.trim())
     val canSave: Boolean get() = editorName.isNotBlank() && editorEmail.isNotBlank() && isEmailValid
