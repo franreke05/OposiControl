@@ -211,10 +211,6 @@ object QuestionImportParser {
         )
     }
 
-    private fun parseAiken(text: String): List<ImportedQuestionDraft> {
-        return parseAikenDetailed(text).questions
-    }
-
     private fun parseAikenDetailed(text: String): ParsedImport {
         val questions = mutableListOf<ImportedQuestionDraft>()
         val issues = mutableListOf<ImportParseIssue>()

@@ -26,7 +26,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.StatusChip
@@ -72,6 +76,7 @@ internal fun MobileLayeredNewsEditor(
     isFullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
 ) {
+    var confirmDelete by remember { mutableStateOf(false) }
     val imagePicker = rememberContentFilePickerLauncher(mimeType = "image/*") { picked ->
         onIntent(NewsIntent.AddLayerWithImage(picked.uri))
     }
@@ -88,6 +93,7 @@ internal fun MobileLayeredNewsEditor(
             onPickImage = { imagePicker.open() },
             onPickBackground = { backgroundPicker.open() },
             onClose = onToggleFullscreen,
+            onRequestDelete = { confirmDelete = true },
         )
     } else {
         LockScreenOrientation(ScreenOrientation.UNSET)
@@ -98,6 +104,20 @@ internal fun MobileLayeredNewsEditor(
             onPickImage = { imagePicker.open() },
             onPickBackground = { backgroundPicker.open() },
             onOpenFullscreen = onToggleFullscreen,
+            onRequestDelete = { confirmDelete = true },
+        )
+    }
+
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Eliminar noticia",
+            message = "Se eliminara la noticia seleccionada. Esta accion no se puede deshacer.",
+            confirmLabel = "Eliminar",
+            onConfirm = {
+                confirmDelete = false
+                onIntent(NewsIntent.DeleteSelected)
+            },
+            onDismiss = { confirmDelete = false },
         )
     }
 }
@@ -109,6 +129,7 @@ private fun MobileLayeredNewsEditorPreview(
     onPickImage: () -> Unit,
     onPickBackground: () -> Unit,
     onOpenFullscreen: () -> Unit,
+    onRequestDelete: () -> Unit,
 ) {
     val selectedLayer = state.selectedLayer()
     GlassSurface(
@@ -142,7 +163,7 @@ private fun MobileLayeredNewsEditorPreview(
                 onSave = { onIntent(NewsIntent.SaveDraft) },
                 onPublish = { onIntent(NewsIntent.Publish) },
                 onSchedule = { onIntent(NewsIntent.Schedule) },
-                onDelete = { onIntent(NewsIntent.DeleteSelected) },
+                onDelete = onRequestDelete,
                 canDelete = state.selectedId != null,
                 hasTitleLayer = state.editorLayers.any { it.kind.isTitleKind() },
             )
@@ -166,6 +187,7 @@ private fun MobileLayeredNewsEditorFullscreen(
     onPickImage: () -> Unit,
     onPickBackground: () -> Unit,
     onClose: () -> Unit,
+    onRequestDelete: () -> Unit,
 ) {
     Box(
         modifier = Modifier
@@ -192,6 +214,7 @@ private fun MobileLayeredNewsEditorFullscreen(
                 onPickImage = onPickImage,
                 onPickBackground = onPickBackground,
                 onClose = onClose,
+                onRequestDelete = onRequestDelete,
             )
         }
     }
@@ -204,6 +227,7 @@ private fun NewsFullscreenPanel(
     onPickImage: () -> Unit,
     onPickBackground: () -> Unit,
     onClose: () -> Unit,
+    onRequestDelete: () -> Unit,
 ) {
     val selectedLayer = state.selectedLayer()
     GlassSurface(
@@ -239,7 +263,7 @@ private fun NewsFullscreenPanel(
                     onSave = { onIntent(NewsIntent.SaveDraft) },
                     onPublish = { onIntent(NewsIntent.Publish) },
                     onSchedule = { onIntent(NewsIntent.Schedule) },
-                    onDelete = { onIntent(NewsIntent.DeleteSelected) },
+                    onDelete = onRequestDelete,
                     canDelete = state.selectedId != null,
                     hasTitleLayer = state.editorLayers.any { it.kind.isTitleKind() },
                 )
@@ -257,6 +281,7 @@ private fun NewsFullscreenPanel(
             item { NewsActionState(state) }
         }
     }
+
 }
 
 @Composable

@@ -74,7 +74,7 @@ fun SettingsScreen(
                         onClick = { viewModel.dispatch(SettingsIntent.Save) },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    FormFeedback(state.actionState, successText = "Configuración sincronizada.")
+                    FormFeedback(state.actionState, successText = "Configuración guardada en este dispositivo.")
                 }
             }
         },

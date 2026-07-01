@@ -7,17 +7,13 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.AdminSettings
-import com.oposicontrol.admin.domain.usecase.settings.ObserveSettingsUseCase
-import com.oposicontrol.admin.domain.usecase.settings.RefreshSettingsUseCase
-import com.oposicontrol.admin.domain.usecase.settings.UpdateSettingsUseCase
+import com.oposicontrol.admin.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class SettingsViewModel(
     dispatcherProvider: DispatcherProvider,
-    observeSettingsUseCase: ObserveSettingsUseCase,
-    private val refreshSettingsUseCase: RefreshSettingsUseCase,
-    private val updateSettingsUseCase: UpdateSettingsUseCase,
+    private val settingsRepository: SettingsRepository,
     private val appConfig: AppConfig,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<SettingsState, SettingsIntent>(
@@ -26,7 +22,7 @@ class SettingsViewModel(
 ) {
     init {
         scope.launch {
-            observeSettingsUseCase().collectLatest(::applySettings)
+            settingsRepository.observeSettings().collectLatest(::applySettings)
         }
         dispatch(SettingsIntent.Refresh)
     }
@@ -35,7 +31,6 @@ class SettingsViewModel(
         when (intent) {
             SettingsIntent.Refresh -> refresh()
             SettingsIntent.Save -> save()
-            is SettingsIntent.TogglePreferFakeData -> updateState { it.copy(preferFakeData = false) }
             is SettingsIntent.ToggleReleaseNotes -> updateState { it.copy(receiveReleaseNotes = intent.value) }
             is SettingsIntent.ToggleVerboseLogs -> updateState { it.copy(enableVerboseLogs = intent.value) }
             is SettingsIntent.UpdateDisplayName -> updateState { it.copy(displayName = intent.value) }
@@ -46,11 +41,11 @@ class SettingsViewModel(
     private suspend fun refresh() {
         analyticsTracker.trackScreen("settings")
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = refreshSettingsUseCase()) {
+        when (val result = settingsRepository.refreshSettings()) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 applySettings(result.value)
-                updateState { it.copy(actionState = UiAsync.Success(Unit)) }
+                updateState { it.copy(actionState = UiAsync.Idle) }
             }
         }
     }
@@ -62,10 +57,9 @@ class SettingsViewModel(
             email = currentState().email,
             receiveReleaseNotes = currentState().receiveReleaseNotes,
             defaultEnvironment = appConfig.environment,
-            preferFakeData = false,
             enableVerboseLogs = currentState().enableVerboseLogs,
         )
-        when (val result = updateSettingsUseCase(settings)) {
+        when (val result = settingsRepository.updateSettings(settings)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 applySettings(result.value)
@@ -81,7 +75,6 @@ class SettingsViewModel(
                 displayName = settings.displayName,
                 email = settings.email,
                 receiveReleaseNotes = settings.receiveReleaseNotes,
-                preferFakeData = false,
                 enableVerboseLogs = settings.enableVerboseLogs,
                 environmentLabel = appConfig.environment.name,
             )

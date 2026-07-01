@@ -6,19 +6,15 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.AuthCredentials
+import com.oposicontrol.admin.domain.repository.AuthRepository
 import com.oposicontrol.admin.domain.usecase.auth.LoginUseCase
-import com.oposicontrol.admin.domain.usecase.auth.LogoutUseCase
-import com.oposicontrol.admin.domain.usecase.auth.ObserveSessionUseCase
-import com.oposicontrol.admin.domain.usecase.auth.RefreshSessionUseCase
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class AuthViewModel(
     dispatcherProvider: DispatcherProvider,
     private val loginUseCase: LoginUseCase,
-    private val logoutUseCase: LogoutUseCase,
-    observeSessionUseCase: ObserveSessionUseCase,
-    private val refreshSessionUseCase: RefreshSessionUseCase,
+    private val authRepository: AuthRepository,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<AuthState, AuthIntent>(
     initialState = AuthState(),
@@ -28,7 +24,7 @@ class AuthViewModel(
 
     init {
         scope.launch {
-            observeSessionUseCase().collectLatest { session ->
+            authRepository.observeSession().collectLatest { session ->
                 updateState {
                     it.copy(
                         currentSession = session,
@@ -51,7 +47,7 @@ class AuthViewModel(
     override suspend fun handleIntent(intent: AuthIntent) {
         when (intent) {
             AuthIntent.Logout -> {
-                logoutUseCase()
+                authRepository.logout()
                 updateState { it.copy(submitState = UiAsync.Idle, isRestoring = false) }
             }
 
@@ -64,9 +60,9 @@ class AuthViewModel(
 
     private suspend fun restoreSession() {
         updateState { it.copy(isRestoring = true) }
-        when (val result = refreshSessionUseCase()) {
+        when (val result = authRepository.refreshSession()) {
             is AppResult.Failure -> {
-                logoutUseCase()
+                authRepository.logout()
                 updateState {
                     it.copy(
                         currentSession = null,

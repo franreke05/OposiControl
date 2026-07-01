@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -11,6 +12,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
@@ -18,6 +22,7 @@ import com.oposicontrol.admin.core.ui.components.AdminTable
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
 import com.oposicontrol.admin.core.ui.components.FormSection
@@ -30,6 +35,8 @@ fun CommunitiesScreen(
     viewModel: CommunitiesViewModel,
 ) {
     val state by viewModel.state.collectAsState()
+    var confirmDelete by remember { mutableStateOf(false) }
+    val actionInProgress = state.actionState is UiAsync.Loading
     CrudSplitLayout(
         modifier = Modifier.fillMaxSize(),
         listPane = {
@@ -38,6 +45,11 @@ fun CommunitiesScreen(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(CommunitiesIntent.UpdateSearch(it)) },
                     placeholder = "Buscar por nombre o codigo",
+                )
+                GlassActionButton(
+                    text = "Nueva comunidad",
+                    modifier = Modifier.width(152.dp),
+                    onClick = { viewModel.dispatch(CommunitiesIntent.CreateNew) },
                 )
                 AsyncStatePane(state.items, emptyMessage = "No hay comunidades. Aplica la migracion comunidad_autonoma.") { items ->
                     AdminTable(
@@ -131,13 +143,16 @@ fun CommunitiesScreen(
                     }
                     GlassActionButton(
                         text = "Guardar comunidad",
+                        enabled = !actionInProgress,
                         onClick = { viewModel.dispatch(CommunitiesIntent.Save) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (state.selectedId != null) {
                         GlassActionButton(
                             text = "Eliminar comunidad",
-                            onClick = { viewModel.dispatch(CommunitiesIntent.DeleteSelected) },
+                            enabled = !actionInProgress,
+                            tint = MaterialTheme.colorScheme.error,
+                            onClick = { confirmDelete = true },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -151,4 +166,17 @@ fun CommunitiesScreen(
             }
         },
     )
+
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Eliminar comunidad",
+            message = "Se eliminará la comunidad seleccionada. ¿Continuar?",
+            confirmLabel = "Eliminar",
+            onConfirm = {
+                confirmDelete = false
+                viewModel.dispatch(CommunitiesIntent.DeleteSelected)
+            },
+            onDismiss = { confirmDelete = false },
+        )
+    }
 }

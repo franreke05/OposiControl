@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.tags.presentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -41,6 +42,11 @@ fun TagsScreen(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(TagsIntent.UpdateSearch(it)) },
                     placeholder = "Buscar por nombre o slug",
+                )
+                GlassActionButton(
+                    text = "Nueva etiqueta",
+                    modifier = Modifier.width(144.dp),
+                    onClick = { viewModel.dispatch(TagsIntent.CreateNew) },
                 )
                 AsyncStatePane(state.items, emptyMessage = "No hay etiquetas para este filtro.") { items ->
                     AdminTable(

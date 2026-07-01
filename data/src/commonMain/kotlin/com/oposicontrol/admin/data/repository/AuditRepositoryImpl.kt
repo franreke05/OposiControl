@@ -9,6 +9,4 @@ class AuditRepositoryImpl(
     private val remote: AuditDataSource,
 ) : AuditRepository {
     override fun observeEvents(): Flow<List<AuditEvent>> = remote.observeEvents()
-
-    override suspend fun appendEvent(event: AuditEvent) = remote.appendEvent(event)
 }

@@ -29,7 +29,7 @@ class SettingsLocalDataSource(
             email = settings.email,
             receive_release_notes = settings.receiveReleaseNotes.toLong(),
             default_environment = settings.defaultEnvironment.name,
-            prefer_fake_data = settings.preferFakeData.toLong(),
+            prefer_fake_data = 0L,
             enable_verbose_logs = settings.enableVerboseLogs.toLong(),
         )
         state.value = settings
@@ -37,13 +37,12 @@ class SettingsLocalDataSource(
 
     private fun readSettings(): AdminSettings? {
         return database.appSettingsQueries.selectSettings(
-            mapper = { _, displayName, email, receiveReleaseNotes, defaultEnvironment, preferFakeData, enableVerboseLogs ->
+            mapper = { _, displayName, email, receiveReleaseNotes, defaultEnvironment, _, enableVerboseLogs ->
                 AdminSettings(
                     displayName = displayName,
                     email = email,
                     receiveReleaseNotes = receiveReleaseNotes == 1L,
                     defaultEnvironment = com.oposicontrol.admin.core.common.config.Environment.from(defaultEnvironment),
-                    preferFakeData = preferFakeData == 1L,
                     enableVerboseLogs = enableVerboseLogs == 1L,
                 )
             },
@@ -56,7 +55,6 @@ class SettingsLocalDataSource(
             email = "admin@oposicontrol.local",
             receiveReleaseNotes = true,
             defaultEnvironment = appConfig.environment,
-            preferFakeData = false,
             enableVerboseLogs = appConfig.featureFlags.enableLogs,
         )
     }

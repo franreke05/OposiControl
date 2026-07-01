@@ -45,8 +45,9 @@ class KtorNewsRepositoryImpl(
     override fun observeNews(): Flow<List<NewsArticle>> = news.asStateFlow()
 
     override suspend fun refreshNews() = adapter.safeCall {
-        // Legacy /content/noticias disabled until news is migrated to /v1/noticias.
-        emptyList<NewsArticle>().also { news.value = it }
+        client.get(newsUrl()) {
+            backendHeaders()
+        }.body<List<NoticiaDto>>().map(NoticiaDto::toDomain).also { news.value = it }
     }
 
     override suspend fun upsertNews(article: NewsArticle) = adapter.safeCall {

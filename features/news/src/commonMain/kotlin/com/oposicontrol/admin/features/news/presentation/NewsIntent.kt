@@ -5,9 +5,12 @@ sealed interface NewsIntent {
     data object CreateNew : NewsIntent
     data object Save : NewsIntent
     data object SaveDraft : NewsIntent
+    data class SaveDraftFor(val id: String) : NewsIntent
     data object Publish : NewsIntent
+    data class PublishFor(val id: String) : NewsIntent
     data object Schedule : NewsIntent
     data object Archive : NewsIntent
+    data class ArchiveFor(val id: String) : NewsIntent
     data object ValidateDraft : NewsIntent
     data object DeleteSelected : NewsIntent
     data object SelectBackground : NewsIntent

@@ -39,7 +39,7 @@ actual fun rememberTextFilePickerLauncher(
             if (content != null) onPicked(PickedTextFile(name = name, content = content))
         }
     }
-    return ContentFilePickerLauncher { launcher.launch("*/*") }
+    return ContentFilePickerLauncher { launcher.launch("text/*") }
 }
 
 private fun android.content.Context.displayName(uri: Uri): String {

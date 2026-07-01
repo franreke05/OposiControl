@@ -16,7 +16,6 @@ actual fun platformRuntimeConfigSource(): RuntimeConfigSource {
             AppConfigResolver.KEY_SUPABASE_BUCKET_EXAM_RESOURCES to BuildConfig.SUPABASE_BUCKET_EXAM_RESOURCES,
             AppConfigResolver.KEY_ENABLE_LOGS to BuildConfig.ENABLE_LOGS.toString(),
             AppConfigResolver.KEY_ENABLE_ANALYTICS to BuildConfig.ENABLE_ANALYTICS.toString(),
-            AppConfigResolver.KEY_ENABLE_VERBOSE_NETWORK_LOGS to BuildConfig.ENABLE_VERBOSE_NETWORK_LOGS.toString(),
             AppConfigResolver.KEY_APP_NAME to "OposiControl Admin",
             AppConfigResolver.KEY_APP_VERSION to "1.0.0",
         ),

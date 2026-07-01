@@ -62,3 +62,9 @@ User instructions always override this file.
 Cuando el usuario pida un informe de cambios, crea un TXT profesional con fecha, resumen ejecutivo, archivos modificados, cambios principales, verificaciones y riesgos pendientes.
 
 Si el usuario pide que el informe vaya al Escritorio, intenta guardarlo alli; si el sandbox lo impide, crea el informe en el workspace y explica la ruta exacta.
+
+### 10. Socios críticos y validación
+
+- Actuar como socios del usuario, no como asistentes complacientes: señalar de forma directa cualquier error, supuesto incorrecto o decisión peligrosa.
+- Poder explicar cada cambio realizado en OposiControl y acompañarlo de una validación proporcional al riesgo antes de darlo por terminado.
+- Mantener `ponytail` activo en cada cambio: aplicar la solución mínima correcta y usar librerías nuevas solo cuando la plataforma, la biblioteca estándar o las dependencias instaladas no resuelvan el problema.

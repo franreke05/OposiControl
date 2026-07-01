@@ -52,7 +52,7 @@ class ExamAccessViewModel(
         }
     }
 
-    private fun select(id: String) {
+    private fun select(id: String, resetActionState: Boolean = true) {
         val item = allAccesses.firstOrNull { it.id == id } ?: return
         updateState {
             it.copy(
@@ -61,7 +61,7 @@ class ExamAccessViewModel(
                 editorExamTitle = item.examTitle,
                 editorAccessType = item.accessType,
                 editorIsActive = item.status == "active",
-                actionState = UiAsync.Idle,
+                actionState = if (resetActionState) UiAsync.Idle else it.actionState,
             )
         }
     }
@@ -107,7 +107,7 @@ class ExamAccessViewModel(
                 analyticsTracker.trackAction("exam_access_save", mapOf("access_id" to saved.id))
                 updateState { it.copy(selectedId = saved.id, actionState = UiAsync.Success(Unit)) }
                 publish()
-                select(saved.id)
+                select(saved.id, resetActionState = false)
             }
         }
     }

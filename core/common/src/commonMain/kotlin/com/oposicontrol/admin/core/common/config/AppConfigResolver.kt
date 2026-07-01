@@ -21,7 +21,6 @@ object AppConfigResolver {
             featureFlags = FeatureFlags(
                 enableLogs = source.read(KEY_ENABLE_LOGS)?.toBooleanStrictOrNull() ?: environment != Environment.PROD,
                 enableAnalytics = source.read(KEY_ENABLE_ANALYTICS)?.toBooleanStrictOrNull() ?: environment != Environment.DEV,
-                enableVerboseNetworkLogs = source.read(KEY_ENABLE_VERBOSE_NETWORK_LOGS)?.toBooleanStrictOrNull() ?: environment == Environment.DEV,
             ),
             appName = source.read(KEY_APP_NAME) ?: "OposiControl Admin",
             appVersion = source.read(KEY_APP_VERSION) ?: "1.0.0",
@@ -50,7 +49,6 @@ object AppConfigResolver {
     const val KEY_SUPABASE_BUCKET_EXAM_RESOURCES = "SUPABASE_BUCKET_EXAM_RESOURCES"
     const val KEY_ENABLE_LOGS = "ENABLE_LOGS"
     const val KEY_ENABLE_ANALYTICS = "ENABLE_ANALYTICS"
-    const val KEY_ENABLE_VERBOSE_NETWORK_LOGS = "ENABLE_VERBOSE_NETWORK_LOGS"
     const val KEY_APP_NAME = "APP_NAME"
     const val KEY_APP_VERSION = "APP_VERSION"
 

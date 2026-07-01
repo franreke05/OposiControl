@@ -7,9 +7,6 @@ import com.oposicontrol.admin.domain.model.AuthCredentials
 import com.oposicontrol.admin.domain.model.Session
 import com.oposicontrol.admin.domain.repository.AuthRepository
 import com.oposicontrol.admin.domain.usecase.auth.LoginUseCase
-import com.oposicontrol.admin.domain.usecase.auth.LogoutUseCase
-import com.oposicontrol.admin.domain.usecase.auth.ObserveSessionUseCase
-import com.oposicontrol.admin.domain.usecase.auth.RefreshSessionUseCase
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -26,9 +23,7 @@ class AuthViewModelTest {
         val viewModel = AuthViewModel(
             dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
             loginUseCase = LoginUseCase(repository),
-            logoutUseCase = LogoutUseCase(repository),
-            observeSessionUseCase = ObserveSessionUseCase(repository),
-            refreshSessionUseCase = RefreshSessionUseCase(repository),
+            authRepository = repository,
             analyticsTracker = NoOpAnalyticsTracker,
         )
 

@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
+import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.StatusChip
@@ -280,6 +281,16 @@ fun MobileContentContent(
                     onRestartBackend = onRestartBackend,
                 )
                 connectionDiagnostics()
+                if (activeView != MobileContentView.Admin) {
+                    FormFeedback(
+                        state = if (activeView == MobileContentView.Noticias) {
+                            newsState.actionState
+                        } else {
+                            state.actionState
+                        },
+                        successText = "Cambios guardados.",
+                    )
+                }
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3244,18 +3255,9 @@ private fun MobileNewsSection(
                     selected = item.id == selectedId,
                     published = published,
                     onClick = { onIntent(NewsIntent.Select(item.id)) },
-                    onSaveLocal = {
-                        onIntent(NewsIntent.Select(item.id))
-                        onIntent(NewsIntent.SaveDraft)
-                    },
-                    onPublish = {
-                        onIntent(NewsIntent.Select(item.id))
-                        onIntent(NewsIntent.Publish)
-                    },
-                    onArchive = {
-                        onIntent(NewsIntent.Select(item.id))
-                        onIntent(NewsIntent.Archive)
-                    },
+                    onSaveLocal = { onIntent(NewsIntent.SaveDraftFor(item.id)) },
+                    onPublish = { onIntent(NewsIntent.PublishFor(item.id)) },
+                    onArchive = { onIntent(NewsIntent.ArchiveFor(item.id)) },
                 )
             }
 

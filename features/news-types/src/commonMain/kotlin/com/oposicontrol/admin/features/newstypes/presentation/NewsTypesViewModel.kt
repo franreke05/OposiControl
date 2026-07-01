@@ -44,7 +44,7 @@ class NewsTypesViewModel(
         }
     }
 
-    private fun select(id: String) {
+    private fun select(id: String, resetActionState: Boolean = true) {
         val item = allItems.firstOrNull { it.id == id } ?: return
         updateState {
             it.copy(
@@ -52,7 +52,7 @@ class NewsTypesViewModel(
                 editorName = item.name,
                 editorSlug = item.slug,
                 editorIsActive = item.status == "active",
-                actionState = UiAsync.Idle,
+                actionState = if (resetActionState) UiAsync.Idle else it.actionState,
             )
         }
     }
@@ -99,7 +99,7 @@ class NewsTypesViewModel(
                 analyticsTracker.trackAction("news_type_save", mapOf("type_id" to saved.id))
                 updateState { it.copy(selectedId = saved.id, actionState = UiAsync.Success(Unit)) }
                 publish()
-                select(saved.id)
+                select(saved.id, resetActionState = false)
             }
         }
     }

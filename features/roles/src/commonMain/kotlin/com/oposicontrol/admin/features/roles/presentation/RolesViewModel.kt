@@ -7,14 +7,14 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.Permission
 import com.oposicontrol.admin.domain.model.Role
-import com.oposicontrol.admin.domain.usecase.roles.ObserveRolesUseCase
+import com.oposicontrol.admin.domain.repository.RolesRepository
 import com.oposicontrol.admin.domain.usecase.roles.UpsertRoleUseCase
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class RolesViewModel(
     dispatcherProvider: DispatcherProvider,
-    observeRolesUseCase: ObserveRolesUseCase,
+    rolesRepository: RolesRepository,
     private val upsertRoleUseCase: UpsertRoleUseCase,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<RolesState, RolesIntent>(
@@ -23,7 +23,7 @@ class RolesViewModel(
 ) {
     init {
         scope.launch {
-            observeRolesUseCase().collectLatest { roles ->
+            rolesRepository.observeRoles().collectLatest { roles ->
                 updateState {
                     it.copy(roles = if (roles.isEmpty()) UiAsync.Empty else UiAsync.Success(roles))
                 }

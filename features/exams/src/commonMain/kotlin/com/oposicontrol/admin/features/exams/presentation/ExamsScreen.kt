@@ -51,6 +51,11 @@ fun ExamsContent(
         modifier = Modifier.fillMaxSize(),
         listPane = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                GlassActionButton(
+                    text = "Nuevo examen",
+                    modifier = Modifier.width(144.dp),
+                    onClick = { onIntent(ExamsIntent.CreateNew) },
+                )
                 FilterBar(
                     searchValue = state.searchQuery,
                     onSearchChange = { onIntent(ExamsIntent.UpdateSearch(it)) },

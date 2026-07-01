@@ -6,10 +6,6 @@ import com.oposicontrol.admin.data.remote.dto.AuditEventDto
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
 import kotlinx.serialization.Serializable
 
 class AuditApi(
@@ -23,13 +19,6 @@ class AuditApi(
         }.body<AdminAuditoriasResponse>().data.map { it.toAuditEventDto() }
     }
 
-    suspend fun appendEvent(event: AuditEventDto) {
-        client.post("${appConfig.baseUrl}/admin/audit") {
-            adminAuthHeaders(appConfig, sessionLocalDataSource)
-            contentType(ContentType.Application.Json)
-            setBody(event)
-        }
-    }
 }
 
 @Serializable

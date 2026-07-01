@@ -52,6 +52,7 @@ import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
 import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.StatusChip
@@ -87,6 +88,11 @@ private fun NewsListPane(
     onIntent: (NewsIntent) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        GlassActionButton(
+            text = "Nueva noticia",
+            modifier = Modifier.width(152.dp),
+            onClick = { onIntent(NewsIntent.CreateNew) },
+        )
         FilterBar(
             searchValue = state.searchQuery,
             onSearchChange = { onIntent(NewsIntent.UpdateSearch(it)) },
@@ -165,18 +171,9 @@ private fun NewsSectionList(
                             selected = item.id == selectedId,
                             isPublishedSection = isPublishedSection,
                             onClick = { onIntent(NewsIntent.Select(item.id)) },
-                            onSaveLocal = {
-                                onIntent(NewsIntent.Select(item.id))
-                                onIntent(NewsIntent.SaveDraft)
-                            },
-                            onPublish = {
-                                onIntent(NewsIntent.Select(item.id))
-                                onIntent(NewsIntent.Publish)
-                            },
-                            onArchive = {
-                                onIntent(NewsIntent.Select(item.id))
-                                onIntent(NewsIntent.Archive)
-                            },
+                            onSaveLocal = { onIntent(NewsIntent.SaveDraftFor(item.id)) },
+                            onPublish = { onIntent(NewsIntent.PublishFor(item.id)) },
+                            onArchive = { onIntent(NewsIntent.ArchiveFor(item.id)) },
                         )
                     }
                 }

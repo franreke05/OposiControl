@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.moderation.presentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,6 +38,11 @@ fun ModerationScreen(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(ModerationIntent.UpdateSearch(it)) },
                     placeholder = "Buscar usuario o acción",
+                )
+                GlassActionButton(
+                    text = "Nueva acción",
+                    modifier = Modifier.width(136.dp),
+                    onClick = { viewModel.dispatch(ModerationIntent.CreateNew) },
                 )
                 AsyncStatePane(state.actions, emptyMessage = "No hay acciones de moderación.") { actions ->
                     AdminTable(

@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -21,6 +22,7 @@ import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.StatusChip
 
 @Composable
@@ -36,6 +38,11 @@ fun StoreScreen(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(StoreIntent.UpdateSearch(it)) },
                     placeholder = "Buscar articulo o tipo",
+                )
+                GlassActionButton(
+                    text = "Nuevo artículo",
+                    modifier = Modifier.width(144.dp),
+                    onClick = { viewModel.dispatch(StoreIntent.CreateNew) },
                 )
                 AsyncStatePane(state.items, emptyMessage = "No hay articulos disponibles.") { items ->
                     AdminTable(

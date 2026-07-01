@@ -48,28 +48,28 @@ class KtorAdminOperationsRepositoryImpl(
     }
 
     override suspend fun getExamAccesses(): AppResult<List<ExamAccess>> = adapter.safeCall {
-        client.get("${adminUrl()}/exam-access") { backendHeaders() }
-            .checkedBody<List<ExamAccessDto>>("/admin/exam-access")
+        client.get("${adminV1Url()}/accesos") { backendHeaders() }
+            .checkedBody<List<ExamAccessDto>>("/api/v1/admin/accesos")
             .map { it.toDomain() }
     }
 
     override suspend fun upsertExamAccess(access: ExamAccess): AppResult<ExamAccess> = adapter.safeCall {
-        client.post("${adminUrl()}/exam-access") {
+        client.post("${adminV1Url()}/accesos") {
             backendHeaders()
             contentType(ContentType.Application.Json)
             setBody(access.toDto())
-        }.checkedBody<ExamAccessDto>("/admin/exam-access").toDomain()
+        }.checkedBody<ExamAccessDto>("/api/v1/admin/accesos").toDomain()
     }
 
     override suspend fun getTicketWallets(): AppResult<List<TicketWallet>> = adapter.safeCall {
-        client.get("${adminUrl()}/ticket-wallets") { backendHeaders() }
-            .checkedBody<List<TicketWalletDto>>("/admin/ticket-wallets")
+        client.get("${adminV1Url()}/tickets") { backendHeaders() }
+            .checkedBody<List<TicketWalletDto>>("/api/v1/admin/tickets")
             .map { it.toDomain() }
     }
 
     override suspend fun getTicketTransactions(userId: String): AppResult<List<TicketTransaction>> = adapter.safeCall {
-        client.get("${adminUrl()}/ticket-wallets/$userId/transactions") { backendHeaders() }
-            .checkedBody<List<TicketTransactionDto>>("/admin/ticket-wallets/$userId/transactions")
+        client.get("${adminV1Url()}/tickets/$userId/transacciones") { backendHeaders() }
+            .checkedBody<List<TicketTransactionDto>>("/api/v1/admin/tickets/$userId/transacciones")
             .map { it.toDomain() }
     }
 
@@ -78,22 +78,22 @@ class KtorAdminOperationsRepositoryImpl(
         amount: Double,
         reason: String,
     ): AppResult<TicketTransaction> = adapter.safeCall {
-        client.post("${adminUrl()}/ticket-wallets/$userId/transactions") {
+        client.post("${adminV1Url()}/tickets/$userId/transacciones") {
             backendHeaders()
             contentType(ContentType.Application.Json)
             setBody(TicketAdjustmentDto(amount = amount, reason = reason))
-        }.checkedBody<TicketTransactionDto>("/admin/ticket-wallets/$userId/transactions").toDomain()
+        }.checkedBody<TicketTransactionDto>("/api/v1/admin/tickets/$userId/transacciones").toDomain()
     }
 
     override suspend fun getSupportConversations(): AppResult<List<SupportConversationSummary>> = adapter.safeCall {
-        client.get("${adminUrl()}/support/conversations") { backendHeaders() }
-            .checkedBody<List<SupportConversationDto>>("/admin/support/conversations")
+        client.get("${adminV1Url()}/soporte/conversaciones") { backendHeaders() }
+            .checkedBody<List<SupportConversationDto>>("/api/v1/admin/soporte/conversaciones")
             .map { it.toDomain() }
     }
 
     override suspend fun getSupportMessages(conversationId: String): AppResult<List<SupportMessage>> = adapter.safeCall {
-        client.get("${adminUrl()}/support/conversations/$conversationId/messages") { backendHeaders() }
-            .checkedBody<List<SupportMessageDto>>("/admin/support/conversations/$conversationId/messages")
+        client.get("${adminV1Url()}/soporte/conversaciones/$conversationId/mensajes") { backendHeaders() }
+            .checkedBody<List<SupportMessageDto>>("/api/v1/admin/soporte/conversaciones/$conversationId/mensajes")
             .map { it.toDomain() }
     }
 
@@ -103,16 +103,16 @@ class KtorAdminOperationsRepositoryImpl(
         text: String,
         internal: Boolean,
     ): AppResult<SupportMessage> = adapter.safeCall {
-        client.post("${adminUrl()}/support/conversations/$conversationId/messages") {
+        client.post("${adminV1Url()}/soporte/conversaciones/$conversationId/mensajes") {
             backendHeaders()
             contentType(ContentType.Application.Json)
             setBody(SupportReplyDto(assignee = assignee, text = text, internal = internal))
-        }.checkedBody<SupportMessageDto>("/admin/support/conversations/$conversationId/messages").toDomain()
+        }.checkedBody<SupportMessageDto>("/api/v1/admin/soporte/conversaciones/$conversationId/mensajes").toDomain()
     }
 
     override suspend fun getModerationActions(): AppResult<List<ModerationAction>> = adapter.safeCall {
-        client.get("${adminUrl()}/moderation/actions") { backendHeaders() }
-            .checkedBody<List<ModerationActionDto>>("/admin/moderation/actions")
+        client.get("${adminV1Url()}/moderacion/actions") { backendHeaders() }
+            .checkedBody<List<ModerationActionDto>>("/api/v1/admin/moderacion/actions")
             .map { it.toDomain() }
     }
 
@@ -125,6 +125,8 @@ class KtorAdminOperationsRepositoryImpl(
     }
 
     private fun adminUrl(): String = "${appConfig.baseUrl.trimEnd('/')}/admin"
+
+    private fun adminV1Url(): String = "${appConfig.baseUrl.trimEnd('/')}/api/v1/admin"
 
     private fun HttpRequestBuilder.backendHeaders() {
         val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }

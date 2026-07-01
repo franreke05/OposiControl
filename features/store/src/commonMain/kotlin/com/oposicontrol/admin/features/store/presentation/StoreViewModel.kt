@@ -130,7 +130,7 @@ class StoreViewModel(
         }
     }
 
-    private fun select(id: String) {
+    private fun select(id: String, resetActionState: Boolean = true) {
         val item = allItems.firstOrNull { it.id == id } ?: return
         updateState {
             it.copy(
@@ -140,7 +140,7 @@ class StoreViewModel(
                 editorType = item.type.name.lowercase(),
                 editorPriceTickets = item.priceTickets.toString(),
                 editorStatus = item.status.name.lowercase(),
-                actionState = UiAsync.Idle,
+                actionState = if (resetActionState) UiAsync.Idle else it.actionState,
             )
         }
     }
@@ -185,7 +185,7 @@ class StoreViewModel(
             is AppResult.Success -> {
                 analyticsTracker.trackAction("store_item_save", mapOf("item_id" to result.value.id))
                 updateState { it.copy(selectedId = result.value.id, actionState = UiAsync.Success(Unit)) }
-                select(result.value.id)
+                select(result.value.id, resetActionState = false)
             }
         }
     }

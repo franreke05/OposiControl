@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.users.presentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -48,6 +49,11 @@ fun UsersScreen(
                     searchValue = searchQuery,
                     onSearchChange = { searchQuery = it },
                     placeholder = "Buscar por nombre o email",
+                )
+                GlassActionButton(
+                    text = "Nuevo usuario",
+                    modifier = Modifier.width(144.dp),
+                    onClick = { viewModel.dispatch(UsersIntent.CreateNew) },
                 )
                 AsyncStatePane(state.users, emptyMessage = "No hay usuarios disponibles.") { users ->
                     val filtered = users.filter {

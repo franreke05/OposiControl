@@ -1,8 +1,12 @@
+@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package com.oposicontrol.admin.features.exams.presentation
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.usePinned
 import platform.Foundation.NSDate
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSTemporaryDirectory
@@ -14,6 +18,9 @@ import platform.PhotosUI.PHPickerResult
 import platform.PhotosUI.PHPickerViewController
 import platform.PhotosUI.PHPickerViewControllerDelegateProtocol
 import platform.UIKit.UIApplication
+import platform.UIKit.UIDocumentPickerDelegateProtocol
+import platform.UIKit.UIDocumentPickerMode
+import platform.UIKit.UIDocumentPickerViewController
 import platform.UIKit.UIViewController
 import platform.UIKit.UIWindowScene
 import platform.darwin.NSObject
@@ -24,9 +31,19 @@ actual fun rememberContentFilePickerLauncher(
     onPicked: (PickedFileReference) -> Unit,
 ): ContentFilePickerLauncher {
     val delegate = remember { ImagePickerDelegate(onPicked) }
-    return remember(delegate) {
+    val documentDelegate = remember { DocumentPickerDelegate(onPicked = onPicked) }
+    return remember(delegate, documentDelegate, mimeType) {
         ContentFilePickerLauncher {
             val root = topViewController() ?: return@ContentFilePickerLauncher
+            if (!mimeType.startsWith("image/")) {
+                val picker = UIDocumentPickerViewController(
+                    documentTypes = listOf(mimeType.toTypeIdentifier()),
+                    inMode = UIDocumentPickerMode.UIDocumentPickerModeImport,
+                )
+                picker.delegate = documentDelegate
+                root.presentViewController(picker, animated = true, completion = null)
+                return@ContentFilePickerLauncher
+            }
             val config = PHPickerConfiguration()
             config.filter = PHPickerFilter.imagesFilter
             config.selectionLimit = 1
@@ -40,7 +57,20 @@ actual fun rememberContentFilePickerLauncher(
 @Composable
 actual fun rememberTextFilePickerLauncher(
     onPicked: (PickedTextFile) -> Unit,
-): ContentFilePickerLauncher = ContentFilePickerLauncher {}
+): ContentFilePickerLauncher {
+    val delegate = remember { DocumentPickerDelegate(onPickedText = onPicked) }
+    return remember(delegate) {
+        ContentFilePickerLauncher {
+            val root = topViewController() ?: return@ContentFilePickerLauncher
+            val picker = UIDocumentPickerViewController(
+                documentTypes = listOf("public.plain-text"),
+                inMode = UIDocumentPickerMode.UIDocumentPickerModeImport,
+            )
+            picker.delegate = delegate
+            root.presentViewController(picker, animated = true, completion = null)
+        }
+    }
+}
 
 private class ImagePickerDelegate(
     private val onPicked: (PickedFileReference) -> Unit,
@@ -70,6 +100,64 @@ private class ImagePickerDelegate(
             onPicked(PickedFileReference(uri = finalPath, name = origName, mimeType = mimeType))
         }
     }
+}
+
+private class DocumentPickerDelegate(
+    private val onPicked: ((PickedFileReference) -> Unit)? = null,
+    private val onPickedText: ((PickedTextFile) -> Unit)? = null,
+) : NSObject(), UIDocumentPickerDelegateProtocol {
+
+    override fun documentPicker(
+        controller: UIDocumentPickerViewController,
+        didPickDocumentsAtURLs: List<*>,
+    ) {
+        val url = didPickDocumentsAtURLs.filterIsInstance<NSURL>().firstOrNull() ?: return
+        val name = url.lastPathComponent ?: "archivo"
+        val path = url.path ?: return
+        onPicked?.invoke(
+            PickedFileReference(
+                uri = path,
+                name = name,
+                mimeType = name.toMimeType(),
+            ),
+        )
+        onPickedText?.let { callback ->
+            val content = NSFileManager.defaultManager.contentsAtPath(path)?.toByteArray()?.decodeToString() ?: return
+            callback(PickedTextFile(name = name, content = content))
+        }
+    }
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun platform.Foundation.NSData.toByteArray(): ByteArray {
+    val result = ByteArray(length.toInt())
+    if (result.isEmpty()) return result
+    result.usePinned { pinned ->
+        platform.posix.memcpy(pinned.addressOf(0), bytes, length)
+    }
+    return result
+}
+
+private fun String.toTypeIdentifier(): String = when {
+    startsWith("text/") -> "public.plain-text"
+    startsWith("audio/") -> "public.audio"
+    startsWith("video/") -> "public.movie"
+    equals("application/pdf", ignoreCase = true) -> "com.adobe.pdf"
+    else -> "public.data"
+}
+
+private fun String.toMimeType(): String? = when (substringAfterLast('.', "").lowercase()) {
+    "txt", "aiken", "md", "csv" -> "text/plain"
+    "jpg", "jpeg" -> "image/jpeg"
+    "png" -> "image/png"
+    "webp" -> "image/webp"
+    "heic", "heif" -> "image/heic"
+    "mp3" -> "audio/mpeg"
+    "m4a" -> "audio/mp4"
+    "mp4" -> "video/mp4"
+    "mov" -> "video/quicktime"
+    "pdf" -> "application/pdf"
+    else -> null
 }
 
 private fun topViewController(): UIViewController? {

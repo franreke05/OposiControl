@@ -8,7 +8,6 @@ data class SettingsState(
     val displayName: String = "",
     val email: String = "",
     val receiveReleaseNotes: Boolean = false,
-    val preferFakeData: Boolean = false,
     val enableVerboseLogs: Boolean = false,
     val environmentLabel: String = "",
     val actionState: UiAsync<Unit> = UiAsync.Idle,

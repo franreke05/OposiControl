@@ -7,9 +7,8 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.User
 import com.oposicontrol.admin.domain.repository.ModerationRepository
-import com.oposicontrol.admin.domain.usecase.roles.ObserveRolesUseCase
-import com.oposicontrol.admin.domain.usecase.users.DeleteUserUseCase
-import com.oposicontrol.admin.domain.usecase.users.ObserveUsersUseCase
+import com.oposicontrol.admin.domain.repository.RolesRepository
+import com.oposicontrol.admin.domain.repository.UsersRepository
 import com.oposicontrol.admin.domain.usecase.users.UpsertUserUseCase
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -17,10 +16,9 @@ import kotlin.time.Clock
 
 class UsersViewModel(
     dispatcherProvider: DispatcherProvider,
-    observeUsersUseCase: ObserveUsersUseCase,
-    observeRolesUseCase: ObserveRolesUseCase,
+    private val usersRepository: UsersRepository,
+    rolesRepository: RolesRepository,
     private val upsertUserUseCase: UpsertUserUseCase,
-    private val deleteUserUseCase: DeleteUserUseCase,
     private val moderationRepository: ModerationRepository,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<UsersState, UsersIntent>(
@@ -29,7 +27,7 @@ class UsersViewModel(
 ) {
     init {
         scope.launch {
-            observeUsersUseCase().collectLatest { users ->
+            usersRepository.observeUsers().collectLatest { users ->
                 updateState {
                     it.copy(
                         users = if (users.isEmpty()) UiAsync.Empty else UiAsync.Success(users),
@@ -38,7 +36,7 @@ class UsersViewModel(
             }
         }
         scope.launch {
-            observeRolesUseCase().collectLatest { roles ->
+            rolesRepository.observeRoles().collectLatest { roles ->
                 updateState { it.copy(availableRoles = roles) }
             }
         }
@@ -131,7 +129,7 @@ class UsersViewModel(
     private suspend fun deleteSelected() {
         val selectedUserId = currentState().selectedUserId ?: return
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = deleteUserUseCase(selectedUserId)) {
+        when (val result = usersRepository.deleteUser(selectedUserId)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> updateState {
                 it.copy(

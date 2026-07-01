@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.newstypes.presentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -22,6 +23,7 @@ import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.StatusChip
 
 @Composable
@@ -37,6 +39,11 @@ fun NewsTypesScreen(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(NewsTypesIntent.UpdateSearch(it)) },
                     placeholder = "Buscar categoria editorial",
+                )
+                GlassActionButton(
+                    text = "Nuevo tipo",
+                    modifier = Modifier.width(128.dp),
+                    onClick = { viewModel.dispatch(NewsTypesIntent.CreateNew) },
                 )
                 AsyncStatePane(state.items, emptyMessage = "No hay tipos de noticia.") { items ->
                     AdminTable(

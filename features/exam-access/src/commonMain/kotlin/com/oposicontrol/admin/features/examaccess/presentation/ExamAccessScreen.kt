@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.examaccess.presentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,6 +39,11 @@ fun ExamAccessScreen(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(ExamAccessIntent.UpdateSearch(it)) },
                     placeholder = "Buscar por usuario o examen",
+                )
+                GlassActionButton(
+                    text = "Nuevo acceso",
+                    modifier = Modifier.width(136.dp),
+                    onClick = { viewModel.dispatch(ExamAccessIntent.CreateNew) },
                 )
                 AsyncStatePane(state.accesses, emptyMessage = "No hay accesos registrados.") { accesses ->
                     AdminTable(

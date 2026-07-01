@@ -79,7 +79,7 @@ class CommunitiesViewModel(
         }
     }
 
-    private fun select(id: String) {
+    private fun select(id: String, resetActionState: Boolean = true) {
         val item = allItems.firstOrNull { it.id == id } ?: return
         updateState {
             it.copy(
@@ -89,7 +89,7 @@ class CommunitiesViewModel(
                 editorSlug = item.slug,
                 editorSortOrder = item.sortOrder.toString(),
                 editorIsActive = item.isActive,
-                actionState = UiAsync.Idle,
+                actionState = if (resetActionState) UiAsync.Idle else it.actionState,
             )
         }
     }
@@ -129,7 +129,7 @@ class CommunitiesViewModel(
             is AppResult.Success -> {
                 analyticsTracker.trackAction("community_save", mapOf("community_id" to result.value.id))
                 updateState { it.copy(selectedId = result.value.id, actionState = UiAsync.Success(Unit)) }
-                select(result.value.id)
+                select(result.value.id, resetActionState = false)
             }
         }
     }

@@ -7,6 +7,5 @@ data class AdminSettings(
     val email: String,
     val receiveReleaseNotes: Boolean,
     val defaultEnvironment: Environment,
-    val preferFakeData: Boolean,
     val enableVerboseLogs: Boolean,
 )

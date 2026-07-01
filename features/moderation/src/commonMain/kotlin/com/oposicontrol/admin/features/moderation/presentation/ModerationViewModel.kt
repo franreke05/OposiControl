@@ -52,7 +52,7 @@ class ModerationViewModel(
         }
     }
 
-    private fun select(id: String) {
+    private fun select(id: String, resetActionState: Boolean = true) {
         val item = allActions.firstOrNull { it.id == id } ?: return
         updateState {
             it.copy(
@@ -61,7 +61,7 @@ class ModerationViewModel(
                 editorTargetUser = item.targetUser,
                 editorExecutor = item.executor,
                 editorReason = item.reason,
-                actionState = UiAsync.Idle,
+                actionState = if (resetActionState) UiAsync.Idle else it.actionState,
             )
         }
     }
@@ -108,7 +108,7 @@ class ModerationViewModel(
                 analyticsTracker.trackAction("moderation_action_save", mapOf("action_id" to saved.id))
                 updateState { it.copy(selectedId = saved.id, actionState = UiAsync.Success(Unit)) }
                 publish()
-                select(saved.id)
+                select(saved.id, resetActionState = false)
             }
         }
     }

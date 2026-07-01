@@ -150,9 +150,21 @@ class NewsViewModel(
             NewsIntent.CreateNew -> createNew()
             NewsIntent.Save -> saveDraft()
             NewsIntent.SaveDraft -> saveDraft()
+            is NewsIntent.SaveDraftFor -> {
+                select(intent.id)
+                saveDraft()
+            }
             NewsIntent.Publish -> publishCurrent()
+            is NewsIntent.PublishFor -> {
+                select(intent.id)
+                publishCurrent()
+            }
             NewsIntent.Schedule -> scheduleCurrent()
             NewsIntent.Archive -> archiveCurrent()
+            is NewsIntent.ArchiveFor -> {
+                select(intent.id)
+                archiveCurrent()
+            }
             NewsIntent.ValidateDraft -> validateCurrentDraft()
             NewsIntent.DeleteSelected -> deleteSelected()
             NewsIntent.SelectBackground -> updateAndValidate { it.copy(selectedTarget = NewsEditorSelection.BACKGROUND, selectedLayerId = null) }

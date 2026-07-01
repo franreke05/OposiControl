@@ -6,6 +6,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,11 +28,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.domain.model.ForumReport
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.GlassChip
 import com.oposicontrol.admin.core.ui.components.GlassChipGroup
@@ -71,6 +75,14 @@ private enum class AdminSection(val label: String, val icon: MobileIcon, val des
     Accesos("Accesos", MobileIcon.Key, "Control de accesos a examenes"),
     Ajustes("Ajustes", MobileIcon.Gear, "Configuracion del sistema"),
 }
+
+private val AdminUserCardShape = RoundedCornerShape(12.dp)
+private val AdminUserPanelShape = RoundedCornerShape(14.dp)
+private val AdminUserControlShape = RoundedCornerShape(8.dp)
+private val AdminUserActionShape = RoundedCornerShape(10.dp)
+private val AdminHubCardShape = RoundedCornerShape(12.dp)
+private const val AdminListPreviewLimit = 30
+private const val AdminDetailPreviewLimit = 20
 
 @Composable
 fun MobileAdminPanel(
@@ -137,7 +149,7 @@ fun MobileAdminPanel(
 private fun AdminHub(onSection: (AdminSection) -> Unit) {
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         AdminSection.entries.forEach { section ->
             AdminEntryCard(section = section, onClick = { onSection(section) })
@@ -150,14 +162,16 @@ private fun AdminEntryCard(section: AdminSection, onClick: () -> Unit) {
     GlassSurface(
         modifier = Modifier
             .fillMaxWidth()
+            .height(72.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(20.dp),
+        shape = AdminHubCardShape,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                .height(72.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconBadge(icon = section.icon, selected = false)
@@ -171,39 +185,89 @@ private fun AdminEntryCard(section: AdminSection, onClick: () -> Unit) {
                     text = section.description,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            LineIcon(icon = MobileIcon.Back, modifier = Modifier.size(18.dp))
         }
     }
 }
 
 @Composable
 private fun AdminBackHeader(section: AdminSection, onBack: () -> Unit) {
-    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            MobileActionPill(
-                icon = MobileIcon.Back,
-                label = "Volver",
-                modifier = Modifier.width(104.dp),
-                onClick = onBack,
-            )
+            AdminSectionBackButton(onClick = onBack)
             IconBadge(icon = section.icon, selected = true)
-            Text(
-                text = section.label,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = section.label,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = section.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun AdminSectionBackButton(onClick: () -> Unit) {
+    GlassSurface(
+        modifier = Modifier
+            .width(48.dp)
+            .height(48.dp)
+            .clickable(onClick = onClick),
+        shape = AdminUserActionShape,
+        tint = GlassTheme.tokens.accent,
+        strokeColor = GlassTheme.tokens.accent.copy(alpha = 0.44f),
+        shadowElevation = 8.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LineIcon(icon = MobileIcon.Back, modifier = Modifier.size(18.dp), color = Color.White)
+        }
+    }
+}
+
+@Composable
+private fun AdminListMeta(total: Int, visible: Int, label: String) {
+    val text = if (total > visible) {
+        "Mostrando $visible de $total $label"
+    } else {
+        "$total $label"
+    }
+    Text(
+        text = text,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(28.dp)
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        style = MaterialTheme.typography.labelSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = GlassTheme.tokens.textSecondary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
 }
 
 // ─── MODERACIÓN FORO ─────────────────────────────────────────────────────────
@@ -227,14 +291,18 @@ private fun AdminModerationSection(
                 message = "La cola de moderación del foro está limpia.",
             )
             is UiAsync.Error -> EmptyStateCard(title = "Error al cargar", message = reports.error.message)
-            is UiAsync.Success -> reports.value.forEach { report ->
-                ReportCard(
-                    report = report,
-                    busy = state.actionState is UiAsync.Loading,
-                    onResolve = { action, tickets ->
-                        onIntent(ForumModerationIntent.Resolve(report.id, action, null, tickets))
-                    },
-                )
+            is UiAsync.Success -> {
+                val visibleReports = reports.value.take(AdminListPreviewLimit)
+                AdminListMeta(total = reports.value.size, visible = visibleReports.size, label = "reportes")
+                visibleReports.forEach { report ->
+                    ReportCard(
+                        report = report,
+                        busy = state.actionState is UiAsync.Loading,
+                        onResolve = { action, tickets ->
+                            onIntent(ForumModerationIntent.Resolve(report.id, action, null, tickets))
+                        },
+                    )
+                }
             }
             is UiAsync.Idle -> Unit
         }
@@ -252,7 +320,7 @@ private fun ReportCard(
 ) {
     var action by rememberSaveable(report.id) { mutableStateOf("descartar") }
     var reward by rememberSaveable(report.id) { mutableStateOf(0) }
-    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -308,6 +376,11 @@ private fun AdminUsersSection(
     usersState: com.oposicontrol.admin.features.users.presentation.UsersState,
     onIntent: (UsersIntent) -> Unit,
 ) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val showEditor = usersState.selectedUserId != null ||
+        usersState.editorName.isNotBlank() ||
+        usersState.editorEmail.isNotBlank()
+
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         when (val users = usersState.users) {
             is UiAsync.Loading -> LoadingStateCard()
@@ -327,25 +400,49 @@ private fun AdminUsersSection(
                 message = users.error.message,
             )
             is UiAsync.Success -> {
-                ResponsiveActionRow(
-                    actions = listOf(
-                        MobileActionSpec(MobileIcon.Plus, "Nuevo", onClick = { onIntent(UsersIntent.CreateNew) }),
-                    ),
-                    maxItemsInEachRow = 1,
+                val normalizedQuery = query.trim()
+                val filteredUsers = if (normalizedQuery.length >= 2) {
+                    users.value.filter { user ->
+                        user.fullName.contains(normalizedQuery, ignoreCase = true) ||
+                            user.email.contains(normalizedQuery, ignoreCase = true) ||
+                            user.roleIds.any { it.contains(normalizedQuery, ignoreCase = true) }
+                    }
+                } else {
+                    users.value
+                }
+                val visibleUsers = filteredUsers.take(AdminListPreviewLimit)
+                AdminUsersListToolbar(
+                    total = users.value.size,
+                    visible = visibleUsers.size,
+                    filtered = filteredUsers.size,
+                    query = query,
+                    onQueryChange = { query = it },
+                    onCreate = { onIntent(UsersIntent.CreateNew) },
                 )
-                users.value.forEach { user ->
+                if (showEditor) {
+                    UsersEditorCard(state = usersState, onIntent = onIntent)
+                }
+                if (visibleUsers.isEmpty()) {
+                    EmptyStateCard(
+                        title = "Sin resultados",
+                        message = "Prueba con otro nombre o email.",
+                    )
+                }
+                visibleUsers.forEach { user ->
                     val selected = usersState.selectedUserId == user.id
                     GlassSurface(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(88.dp)
                             .clickable { onIntent(UsersIntent.SelectUser(user.id)) },
-                        shape = RoundedCornerShape(18.dp),
-                        tint = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.10f) else GlassTheme.tokens.glassFill,
+                        shape = AdminUserCardShape,
+                        tint = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.08f) else GlassTheme.tokens.glassFill,
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                                .height(88.dp)
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -375,12 +472,18 @@ private fun AdminUsersSection(
                                 }
                             }
                             Spacer(Modifier.width(8.dp))
-                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Column(
+                                modifier = Modifier.width(84.dp),
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
                                 Text(
-                                    text = "${user.ticketsBalance} 🎟",
+                                    text = "${user.ticketsBalance} tks",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = GlassTheme.tokens.accent,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 StatusChip(status = if (user.isActive) "active" else "inactive")
                             }
@@ -391,8 +494,58 @@ private fun AdminUsersSection(
             is UiAsync.Idle -> Unit
         }
 
-        if (usersState.selectedUserId != null || usersState.editorName.isNotBlank() || usersState.editorEmail.isNotBlank()) {
+        if (showEditor && usersState.users !is UiAsync.Success) {
             UsersEditorCard(state = usersState, onIntent = onIntent)
+        }
+    }
+}
+
+@Composable
+private fun AdminUsersListToolbar(
+    total: Int,
+    visible: Int,
+    filtered: Int,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onCreate: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        GlassSearchBar(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = if (query.trim().length >= 2) "$filtered encontrados" else "$total usuarios",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = GlassTheme.tokens.textPrimary,
+                )
+                Text(
+                    text = if (filtered > visible) "Mostrando $visible. Afina la búsqueda." else "Mostrando $visible",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = GlassTheme.tokens.textSecondary,
+                )
+            }
+            AdminUserActionButton(
+                icon = MobileIcon.Plus,
+                label = "Nuevo",
+                modifier = Modifier.width(112.dp),
+                enabled = true,
+                tint = GlassTheme.tokens.accent,
+                strokeColor = GlassTheme.tokens.accent.copy(alpha = 0.44f),
+                contentColor = Color.White,
+                onClick = onCreate,
+            )
         }
     }
 }
@@ -402,12 +555,15 @@ private fun UsersEditorCard(
     state: com.oposicontrol.admin.features.users.presentation.UsersState,
     onIntent: (UsersIntent) -> Unit,
 ) {
-    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var manualTickets by rememberSaveable { mutableStateOf("") }
+
+    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(UiSpacing.panel),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
                 text = if (state.selectedUserId != null) "Editar usuario" else "Nuevo usuario",
@@ -427,44 +583,295 @@ private fun UsersEditorCard(
                 modifier = Modifier.fillMaxWidth(),
             )
             if (state.availableRoles.isNotEmpty()) {
-                GlassChipGroup(
+                AdminUserRoleSelector(
                     options = state.availableRoles.map { it.id to it.name },
                     selected = state.editorRoleIds,
                     onToggle = { onIntent(UsersIntent.ToggleRole(it)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Activo", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = state.editorIsActive,
-                    onCheckedChange = { onIntent(UsersIntent.ToggleActive(it)) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = GlassTheme.tokens.accent),
-                )
-            }
+            AdminUserToggleRow(
+                checked = state.editorIsActive,
+                onCheckedChange = { onIntent(UsersIntent.ToggleActive(it)) },
+            )
             if (state.selectedUserId != null) {
                 Text("Dar opositickets", style = MaterialTheme.typography.labelMedium, color = GlassTheme.tokens.textSecondary)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     listOf(5, 10, 25).forEach { amount ->
-                        GlassChip(
-                            label = "+$amount",
-                            selected = false,
+                        AdminTicketPresetButton(
+                            amount = amount,
                             enabled = state.actionState !is UiAsync.Loading,
                             onClick = { onIntent(UsersIntent.GrantTickets(amount)) },
                         )
                     }
                 }
+                val manualAmount = manualTickets.toIntOrNull()?.takeIf { it > 0 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GlassTextField(
+                        value = manualTickets,
+                        onValueChange = { value -> manualTickets = value.filter(Char::isDigit).take(5) },
+                        placeholder = "Cantidad",
+                        modifier = Modifier.width(172.dp),
+                    )
+                    AdminUserActionButton(
+                        icon = MobileIcon.Check,
+                        label = "Enviar",
+                        modifier = Modifier.width(104.dp),
+                        enabled = manualAmount != null && state.actionState !is UiAsync.Loading,
+                        tint = GlassTheme.tokens.accent,
+                        strokeColor = GlassTheme.tokens.accent.copy(alpha = 0.44f),
+                        contentColor = Color.White,
+                        onClick = {
+                            val amount = manualAmount ?: return@AdminUserActionButton
+                            onIntent(UsersIntent.GrantTickets(amount))
+                            manualTickets = ""
+                        },
+                    )
+                }
             }
-            AdminActionRow(
+            AdminUsersActionRow(
                 actionState = state.actionState,
                 onSave = { onIntent(UsersIntent.Save) },
                 onDelete = if (state.selectedUserId != null) {
-                    { onIntent(UsersIntent.DeleteSelected) }
+                    { confirmDelete = true }
                 } else null,
+            )
+        }
+    }
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Eliminar usuario",
+            message = "Esta acción quitará el usuario seleccionado. ¿Continuar?",
+            confirmLabel = "Eliminar",
+            onConfirm = {
+                confirmDelete = false
+                onIntent(UsersIntent.DeleteSelected)
+            },
+            onDismiss = { confirmDelete = false },
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AdminUserRoleSelector(
+    options: List<Pair<String, String>>,
+    selected: Set<String>,
+    onToggle: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        options.forEach { (id, label) ->
+            AdminUserRoleChip(
+                label = label,
+                selected = id in selected,
+                onClick = { onToggle(id) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun AdminUserRoleChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = GlassTheme.tokens
+    val tint = if (selected) tokens.accent.copy(alpha = 0.14f) else tokens.glassFillStrong.copy(alpha = 0.60f)
+    val stroke = if (selected) tokens.accent.copy(alpha = 0.44f) else tokens.glassStroke
+    val foreground = if (selected) tokens.accent else tokens.textSecondary
+
+    GlassSurface(
+        modifier = Modifier
+            .height(36.dp)
+            .clickable(onClick = onClick),
+        shape = AdminUserControlShape,
+        tint = tint,
+        strokeColor = stroke,
+        shadowElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .height(36.dp)
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                color = foreground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AdminUserToggleRow(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    GlassSurface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = AdminUserActionShape,
+        tint = GlassTheme.tokens.glassFillStrong.copy(alpha = 0.55f),
+        shadowElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Activo", style = MaterialTheme.typography.labelLarge)
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                colors = SwitchDefaults.colors(checkedThumbColor = GlassTheme.tokens.accent),
+            )
+        }
+    }
+}
+
+@Composable
+private fun AdminTicketPresetButton(
+    amount: Int,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val tokens = GlassTheme.tokens
+    val foreground = if (enabled) tokens.accent else tokens.textSecondary
+    GlassSurface(
+        modifier = Modifier
+            .width(if (amount == 5) 58.dp else 64.dp)
+            .height(44.dp)
+            .clickable(enabled = enabled, onClick = onClick),
+        shape = AdminUserControlShape,
+        tint = tokens.glassFillStrong.copy(alpha = if (enabled) 0.70f else 0.45f),
+        strokeColor = tokens.accent.copy(alpha = if (enabled) 0.28f else 0.12f),
+        shadowElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .padding(horizontal = 10.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "+$amount",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = foreground,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AdminUsersActionRow(
+    actionState: UiAsync<Unit>,
+    onSave: () -> Unit,
+    onDelete: (() -> Unit)?,
+) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        when (actionState) {
+            is UiAsync.Error -> Text(
+                text = actionState.error.message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+            is UiAsync.Success -> Text(
+                text = "Guardado correctamente",
+                style = MaterialTheme.typography.bodySmall,
+                color = GlassTheme.tokens.accent,
+            )
+            else -> Unit
+        }
+
+        val saving = actionState is UiAsync.Loading
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AdminUserActionButton(
+                icon = MobileIcon.Save,
+                label = if (saving) "Guardando..." else "Guardar",
+                modifier = Modifier.weight(1f),
+                enabled = !saving,
+                tint = GlassTheme.tokens.accent,
+                strokeColor = GlassTheme.tokens.accent.copy(alpha = 0.44f),
+                contentColor = Color.White,
+                onClick = onSave,
+            )
+            if (onDelete != null) {
+                AdminUserActionButton(
+                    icon = MobileIcon.Remove,
+                    label = "Eliminar",
+                    modifier = Modifier.width(108.dp),
+                    enabled = !saving,
+                    tint = MaterialTheme.colorScheme.error.copy(alpha = 0.10f),
+                    strokeColor = MaterialTheme.colorScheme.error.copy(alpha = 0.35f),
+                    contentColor = MaterialTheme.colorScheme.error,
+                    onClick = onDelete,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdminUserActionButton(
+    icon: MobileIcon,
+    label: String,
+    modifier: Modifier,
+    enabled: Boolean,
+    tint: Color,
+    strokeColor: Color,
+    contentColor: Color,
+    onClick: () -> Unit,
+) {
+    val disabledTint = GlassTheme.tokens.glassFillStrong.copy(alpha = 0.55f)
+    val disabledContent = GlassTheme.tokens.textSecondary
+    GlassSurface(
+        modifier = modifier
+            .height(48.dp)
+            .clickable(enabled = enabled, onClick = onClick),
+        shape = AdminUserActionShape,
+        tint = if (enabled) tint else disabledTint,
+        strokeColor = if (enabled) strokeColor else GlassTheme.tokens.glassStroke,
+        shadowElevation = if (enabled) 8.dp else 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LineIcon(icon = icon, modifier = Modifier.size(16.dp), color = if (enabled) contentColor else disabledContent)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = if (enabled) contentColor else disabledContent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -486,7 +893,7 @@ private fun AdminAccessSection(
             GlassSearchBar(
                 value = accessState.searchQuery,
                 onValueChange = { onIntent(ExamAccessIntent.UpdateSearch(it)) },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.width(204.dp),
             )
             MobileActionPill(
                 icon = MobileIcon.Plus,
@@ -496,60 +903,68 @@ private fun AdminAccessSection(
             )
         }
 
+        if (accessState.selectedId != null || accessState.editorUserName.isNotBlank()) {
+            AccessEditorCard(state = accessState, onIntent = onIntent)
+        }
+
         when (val accesses = accessState.accesses) {
             is UiAsync.Loading -> LoadingStateCard()
             is UiAsync.Empty -> EmptyStateCard(title = "Sin accesos", message = "No hay accesos registrados.")
             is UiAsync.Error -> EmptyStateCard(title = "Error al cargar", message = accesses.error.message)
-            is UiAsync.Success -> accesses.value.forEach { item ->
-                val selected = accessState.selectedId == item.id
-                GlassSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onIntent(ExamAccessIntent.Select(item.id)) },
-                    shape = RoundedCornerShape(18.dp),
-                    tint = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.10f) else GlassTheme.tokens.glassFill,
-                ) {
-                    Column(
+            is UiAsync.Success -> {
+                val visibleAccesses = accesses.value.take(AdminListPreviewLimit)
+                AdminListMeta(total = accesses.value.size, visible = visibleAccesses.size, label = "accesos")
+                visibleAccesses.forEach { item ->
+                    val selected = accessState.selectedId == item.id
+                    GlassSurface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                            .height(78.dp)
+                            .clickable { onIntent(ExamAccessIntent.Select(item.id)) },
+                        shape = AdminUserCardShape,
+                        tint = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.10f) else GlassTheme.tokens.glassFill,
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(78.dp)
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp),
                         ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = item.userName,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.width(200.dp),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                StatusChip(status = item.status)
+                            }
                             Text(
-                                text = item.userName,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f),
+                                text = item.examTitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            StatusChip(status = item.status)
+                            Text(
+                                text = item.accessType,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
-                        Text(
-                            text = item.examTitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = item.accessType,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                 }
             }
             is UiAsync.Idle -> Unit
-        }
-
-        if (accessState.selectedId != null || accessState.editorUserName.isNotBlank()) {
-            AccessEditorCard(state = accessState, onIntent = onIntent)
         }
     }
 }
@@ -559,7 +974,7 @@ private fun AccessEditorCard(
     state: com.oposicontrol.admin.features.examaccess.presentation.ExamAccessState,
     onIntent: (ExamAccessIntent) -> Unit,
 ) {
-    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -624,60 +1039,72 @@ private fun AdminTicketsSection(
             modifier = Modifier.fillMaxWidth(),
         )
 
+        if (ticketsState.selectedUserId != null) {
+            TicketsAdjustmentCard(state = ticketsState, onIntent = onIntent)
+            TicketsHistorySection(state = ticketsState)
+        }
+
         when (val wallets = ticketsState.wallets) {
             is UiAsync.Loading -> LoadingStateCard()
             is UiAsync.Empty -> EmptyStateCard(title = "Sin carteras", message = "No hay carteras disponibles.")
             is UiAsync.Error -> EmptyStateCard(title = "Error al cargar", message = wallets.error.message)
-            is UiAsync.Success -> wallets.value.forEach { wallet ->
-                val selected = ticketsState.selectedUserId == wallet.userId
-                GlassSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onIntent(TicketsIntent.SelectWallet(wallet.userId)) },
-                    shape = RoundedCornerShape(18.dp),
-                    tint = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.10f) else GlassTheme.tokens.glassFill,
-                ) {
-                    Row(
+            is UiAsync.Success -> {
+                val visibleWallets = wallets.value.take(AdminListPreviewLimit)
+                AdminListMeta(total = wallets.value.size, visible = visibleWallets.size, label = "carteras")
+                visibleWallets.forEach { wallet ->
+                    val selected = ticketsState.selectedUserId == wallet.userId
+                    GlassSurface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                            .height(78.dp)
+                            .clickable { onIntent(TicketsIntent.SelectWallet(wallet.userId)) },
+                        shape = AdminUserCardShape,
+                        tint = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.10f) else GlassTheme.tokens.glassFill,
                     ) {
-                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(
-                                text = wallet.userName,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = wallet.specialty,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = "${formatOneDecimal(wallet.balance)} tickets",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = GlassTheme.tokens.accent,
-                            )
-                            StatusChip(status = wallet.status)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(78.dp)
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.width(188.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = wallet.userName,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = wallet.specialty,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Column(
+                                modifier = Modifier.width(96.dp),
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = "${formatOneDecimal(wallet.balance)} tks",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = GlassTheme.tokens.accent,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                StatusChip(status = wallet.status)
+                            }
                         }
                     }
                 }
             }
             is UiAsync.Idle -> Unit
-        }
-
-        if (ticketsState.selectedUserId != null) {
-            TicketsAdjustmentCard(state = ticketsState, onIntent = onIntent)
-            TicketsHistorySection(state = ticketsState)
         }
     }
 }
@@ -687,7 +1114,7 @@ private fun TicketsAdjustmentCard(
     state: com.oposicontrol.admin.features.tickets.presentation.TicketsState,
     onIntent: (TicketsIntent) -> Unit,
 ) {
-    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -727,15 +1154,17 @@ private fun TicketsHistorySection(
         is UiAsync.Empty -> EmptyStateCard(title = "Sin movimientos", message = "Esta cartera no tiene movimientos.")
         is UiAsync.Error -> EmptyStateCard(title = "Error", message = transactions.error.message)
         is UiAsync.Success -> {
+            val visibleMovements = transactions.value.take(AdminDetailPreviewLimit)
             Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    text = "Historial",
+                    text = "Historial reciente",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 4.dp),
                 )
-                transactions.value.forEach { movement ->
-                    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+                AdminListMeta(total = transactions.value.size, visible = visibleMovements.size, label = "movimientos")
+                visibleMovements.forEach { movement ->
+                    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserCardShape) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -781,90 +1210,101 @@ private fun AdminSupportSection(
     onIntent: (SupportIntent) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
+        GlassSearchBar(
+            value = supportState.searchQuery,
+            onValueChange = { onIntent(SupportIntent.UpdateSearch(it)) },
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            GlassSearchBar(
-                value = supportState.searchQuery,
-                onValueChange = { onIntent(SupportIntent.UpdateSearch(it)) },
-                modifier = Modifier.weight(1f),
-            )
-        }
+        )
         SupportStatusFilter(
             current = supportState.statusFilter,
             onSelected = { onIntent(SupportIntent.UpdateStatusFilter(it)) },
         )
 
+        if (supportState.selectedConversationId != null) {
+            SupportReplyCard(state = supportState, onIntent = onIntent)
+            SupportMessagesSection(state = supportState)
+        }
+
         when (val conversations = supportState.conversations) {
             is UiAsync.Loading -> LoadingStateCard()
             is UiAsync.Empty -> EmptyStateCard(title = "Sin conversaciones", message = "No hay conversaciones activas.")
             is UiAsync.Error -> EmptyStateCard(title = "Error al cargar", message = conversations.error.message)
-            is UiAsync.Success -> conversations.value.forEach { conv ->
-                val selected = supportState.selectedConversationId == conv.id
-                GlassSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onIntent(SupportIntent.SelectConversation(conv.id)) },
-                    shape = RoundedCornerShape(18.dp),
-                    tint = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.10f) else GlassTheme.tokens.glassFill,
-                ) {
-                    Column(
+            is UiAsync.Success -> {
+                val visibleConversations = conversations.value.take(AdminListPreviewLimit)
+                AdminListMeta(total = conversations.value.size, visible = visibleConversations.size, label = "conversaciones")
+                visibleConversations.forEach { conv ->
+                    val selected = supportState.selectedConversationId == conv.id
+                    GlassSurface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                            .height(88.dp)
+                            .clickable { onIntent(SupportIntent.SelectConversation(conv.id)) },
+                        shape = AdminUserCardShape,
+                        tint = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.10f) else GlassTheme.tokens.glassFill,
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(88.dp)
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                text = conv.userName,
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            StatusChip(status = conv.status)
-                        }
-                        Text(
-                            text = conv.subject,
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        if (conv.lastMessage.isNotBlank()) {
-                            Text(
-                                text = conv.lastMessage,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            Column(modifier = Modifier.width(204.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(
+                                    text = conv.userName,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = conv.subject,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (conv.lastMessage.isNotBlank()) {
+                                    Text(
+                                        text = conv.lastMessage,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            Column(
+                                modifier = Modifier.width(84.dp),
+                                horizontalAlignment = Alignment.End,
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                StatusChip(status = conv.status)
+                                Text(
+                                    text = conv.assignedTo.ifBlank { "Sin asignar" },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
                     }
                 }
             }
             is UiAsync.Idle -> Unit
         }
-
-        if (supportState.selectedConversationId != null) {
-            SupportMessagesSection(state = supportState)
-            SupportReplyCard(state = supportState, onIntent = onIntent)
-        }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SupportStatusFilter(current: String, onSelected: (String) -> Unit) {
     val options = listOf("all" to "Todos", "open" to "Abiertos", "resolved" to "Resueltos", "closed" to "Cerrados")
-    Row(
+    FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         options.forEach { (value, label) ->
             val selected = current == value
@@ -874,12 +1314,15 @@ private fun SupportStatusFilter(current: String, onSelected: (String) -> Unit) {
             Text(
                 text = label,
                 modifier = Modifier
-                    .background(bg, RoundedCornerShape(12.dp))
+                    .height(36.dp)
+                    .background(bg, AdminUserControlShape)
                     .clickable { onSelected(value) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                 color = fg,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -894,17 +1337,19 @@ private fun SupportMessagesSection(
         is UiAsync.Empty -> EmptyStateCard(title = "Sin mensajes", message = "No hay mensajes en esta conversacion.")
         is UiAsync.Error -> EmptyStateCard(title = "Error", message = messages.error.message)
         is UiAsync.Success -> {
+            val visibleMessages = messages.value.take(AdminDetailPreviewLimit)
             Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    text = "Mensajes",
+                    text = "Mensajes recientes",
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 4.dp),
                 )
-                messages.value.forEach { msg ->
+                AdminListMeta(total = messages.value.size, visible = visibleMessages.size, label = "mensajes")
+                visibleMessages.forEach { msg ->
                     val noteBg = if (msg.internal) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
                     else GlassTheme.tokens.glassFill
-                    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), tint = noteBg) {
+                    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserCardShape, tint = noteBg) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -936,7 +1381,7 @@ private fun SupportReplyCard(
     state: com.oposicontrol.admin.features.support.presentation.SupportState,
     onIntent: (SupportIntent) -> Unit,
 ) {
-    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -988,7 +1433,7 @@ private fun AdminSettingsSection(
     onIntent: (SettingsIntent) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+        GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1013,7 +1458,7 @@ private fun AdminSettingsSection(
             else -> Unit
         }
 
-        GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+        GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

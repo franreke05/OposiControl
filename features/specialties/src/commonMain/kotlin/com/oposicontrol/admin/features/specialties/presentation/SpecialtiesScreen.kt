@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.specialties.presentation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -42,6 +43,11 @@ fun SpecialtiesScreen(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(SpecialtiesIntent.UpdateSearch(it)) },
                     placeholder = "Buscar por nombre o descripcion",
+                )
+                GlassActionButton(
+                    text = "Nueva especialidad",
+                    modifier = Modifier.width(168.dp),
+                    onClick = { viewModel.dispatch(SpecialtiesIntent.CreateNew) },
                 )
                 AsyncStatePane(state.items, emptyMessage = "No hay especialidades para este filtro.") { items ->
                     AdminTable(
