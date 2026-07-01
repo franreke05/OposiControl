@@ -21,8 +21,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,6 +66,12 @@ fun DashboardScreen(
     onQuickAction: (DashboardQuickAction) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(5 * 60 * 1000L)
+            viewModel.dispatch(DashboardIntent.Refresh)
+        }
+    }
     DashboardContent(
         state = state,
         environmentLabel = environmentLabel,
@@ -860,6 +868,9 @@ private fun alertColor(severity: DashboardAlertSeverity): Color {
 
 private fun actionForAlert(alert: DashboardAlert): DashboardQuickAction {
     return when (alert.id) {
+        "questions_without_resources" -> DashboardQuickAction.AUDIT_RESOURCES
+        "unlinked_resources" -> DashboardQuickAction.AUDIT_RESOURCES
+        "pending_tickets" -> DashboardQuickAction.REVIEW_TICKETS
         "draft_news" -> DashboardQuickAction.CREATE_NEWS
         "scheduled_offers", "inactive_bursts" -> DashboardQuickAction.ACTIVATE_OFFER
         "empty" -> DashboardQuickAction.REVIEW_PENDING
