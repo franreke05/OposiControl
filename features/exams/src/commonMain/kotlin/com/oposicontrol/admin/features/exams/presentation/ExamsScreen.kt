@@ -283,7 +283,7 @@ fun QuestionsResourcesScreen(
                                 "with_resource" -> question.resources.isNotEmpty()
                                 "without_resource" -> question.resources.isEmpty()
                                 "pending" -> question.resources.any { resource ->
-                                    resource.textBody.isNullOrBlank() && resource.publicUrl.isNullOrBlank()
+                                    resource.textBody.isNullOrBlank() && resource.publicUrl.isNullOrBlank() && resource.storagePath.isNullOrBlank()
                                 }
                                 else -> true
                             }
@@ -296,7 +296,7 @@ fun QuestionsResourcesScreen(
                             ),
                             rows = filteredQuestions.map { question ->
                                 val pending = question.resources.any { resource ->
-                                    resource.textBody.isNullOrBlank() && resource.publicUrl.isNullOrBlank()
+                                    resource.textBody.isNullOrBlank() && resource.publicUrl.isNullOrBlank() && resource.storagePath.isNullOrBlank()
                                 }
                                 AdminTableRow(
                                     key = question.id,
@@ -458,12 +458,12 @@ fun QuestionsResourcesScreen(
                             modifier = Modifier.weight(1f),
                         )
                         GlassActionButton(
-                            text = "Subir",
+                            text = "↑ Arriba",
                             onClick = { state.selectedQuestionId?.let { viewModel.dispatch(ExamsIntent.MoveQuestionUp(it)) } },
                             modifier = Modifier.weight(1f),
                         )
                         GlassActionButton(
-                            text = "Bajar",
+                            text = "↓ Abajo",
                             onClick = { state.selectedQuestionId?.let { viewModel.dispatch(ExamsIntent.MoveQuestionDown(it)) } },
                             modifier = Modifier.weight(1f),
                         )
