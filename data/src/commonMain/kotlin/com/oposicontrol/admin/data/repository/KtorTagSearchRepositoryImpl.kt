@@ -44,9 +44,7 @@ class KtorTagSearchRepositoryImpl(
     private fun backendUrl(): String = appConfig.baseUrl.trimEnd('/')
 
     private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() }
-            ?: return
+        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() } ?: return
         header(HttpHeaders.Authorization, "Bearer $token")
     }
 }

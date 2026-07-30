@@ -34,6 +34,7 @@ data class ExamRowDto(
     val coverStoragePath: String? = null,
     @SerialName("portada_mime_type")
     val coverMimeType: String? = null,
+    val version: Int = 1,
 )
 
 @Serializable
@@ -125,6 +126,7 @@ fun ExamRowDto.toDomain(
         coverMimeType = coverMimeType,
         createdAt = Instant.fromEpochMilliseconds(0),
         updatedAt = Instant.fromEpochMilliseconds(0),
+        version = version,
         deletedAt = null,
     )
 }
@@ -139,6 +141,7 @@ fun Exam.toRowDto(): ExamRowDto {
         coverUrl = coverUrl,
         coverStoragePath = coverStoragePath,
         coverMimeType = coverMimeType,
+        version = version,
     )
 }
 

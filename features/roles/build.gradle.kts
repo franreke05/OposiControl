@@ -17,5 +17,10 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.koin.core)
         }
+        commonTest.dependencies {
+            implementation(projects.core.testing)
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
+        }
     }
 }

@@ -20,7 +20,7 @@ fun FormSection(
 ) {
     GlassSurface(modifier = modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.padding(22.dp),
+            modifier = Modifier.padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

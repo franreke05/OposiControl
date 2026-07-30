@@ -2,6 +2,7 @@ package com.oposicontrol.backend
 
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -11,6 +12,7 @@ import java.util.UUID
 
 fun Route.v1Routes(gateway: SupabaseV1Gateway) {
     route("/v1") {
+        enforcePermission("content.read")
         get("/especialidades") {
             call.respond(V1EspecialidadesResponse(data = gateway.listEspecialidades()))
         }

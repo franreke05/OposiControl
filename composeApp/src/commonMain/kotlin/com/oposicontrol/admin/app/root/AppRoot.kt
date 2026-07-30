@@ -9,6 +9,7 @@ import com.oposicontrol.admin.app.navigation.AdminSection
 import com.oposicontrol.admin.app.navigation.AppDestination
 import com.oposicontrol.admin.app.navigation.AppNavigator
 import com.oposicontrol.admin.core.common.config.AppConfig
+import com.oposicontrol.admin.core.common.config.Environment
 import com.oposicontrol.admin.features.audit.presentation.AuditIntent
 import com.oposicontrol.admin.features.audit.presentation.AuditScreen
 import com.oposicontrol.admin.features.audit.presentation.AuditViewModel
@@ -63,8 +64,6 @@ import com.oposicontrol.admin.features.users.presentation.UsersViewModel
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
 import org.koin.compose.koinInject
 
-private const val TEMPORARILY_DISABLE_LOGIN = true
-
 @Composable
 fun AppRoot(
     appConfig: AppConfig,
@@ -76,6 +75,7 @@ fun AppRoot(
 
     val authState by authViewModel.state.collectAsState()
     val destination by navigator.destination.collectAsState()
+    val developmentOpenAccess = appConfig.environment == Environment.DEV
     val environmentLabel = buildString {
         append("Entorno ")
         append(appConfig.environment.name.lowercase())
@@ -83,8 +83,8 @@ fun AppRoot(
         if (appConfig.supabaseUrl.isBlank()) append(" | Supabase sin configurar")
     }
 
-    LaunchedEffect(authState.isAuthenticated, authState.isRestoring) {
-        if (TEMPORARILY_DISABLE_LOGIN) {
+    LaunchedEffect(developmentOpenAccess, authState.isAuthenticated, authState.isRestoring) {
+        if (developmentOpenAccess) {
             if (destination is AppDestination.Auth) {
                 navigator.openSection(AdminSection.DASHBOARD)
             }
@@ -99,12 +99,12 @@ fun AppRoot(
     }
 
     when {
-        !TEMPORARILY_DISABLE_LOGIN && authState.isRestoring -> AuthScreen(
+        !developmentOpenAccess && authState.isRestoring -> AuthScreen(
             viewModel = authViewModel,
             onAuthenticated = { navigator.openSection(AdminSection.DASHBOARD) },
         )
 
-        !TEMPORARILY_DISABLE_LOGIN && !authState.isAuthenticated -> AuthScreen(
+        !developmentOpenAccess && !authState.isAuthenticated -> AuthScreen(
             viewModel = authViewModel,
             onAuthenticated = { navigator.openSection(AdminSection.DASHBOARD) },
         )

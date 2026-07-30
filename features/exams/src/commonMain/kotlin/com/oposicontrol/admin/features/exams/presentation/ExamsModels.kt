@@ -51,6 +51,9 @@ data class ContentExamUi(
 data class RafagaQuestionUi(
     val id: String,
     val statement: String,
+    val correctOptionLabel: String,
+    val resourceCount: Int,
+    val hasResources: Boolean,
     val selected: Boolean,
 )
 

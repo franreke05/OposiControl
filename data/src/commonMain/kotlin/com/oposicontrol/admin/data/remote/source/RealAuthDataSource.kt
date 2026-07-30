@@ -14,19 +14,19 @@ class RealAuthDataSource(
     private val adapter: NetworkResultAdapter,
 ) : AuthDataSource {
     override suspend fun login(credentials: AuthCredentials): AppResult<Session> {
-        return adapter.safeCall {
+        return adapter.safeCall(operation = "auth.login") {
             api.login(credentials.toDto()).toDomain()
         }
     }
 
     override suspend fun refreshSession(refreshToken: String): AppResult<Session> {
-        return adapter.safeCall {
+        return adapter.safeCall(operation = "auth.refresh") {
             api.refresh(RefreshSessionRequestDto(refreshToken)).toDomain()
         }
     }
 
     override suspend fun logout(accessToken: String?): AppResult<Unit> {
-        return adapter.safeCall {
+        return adapter.safeCall(operation = "auth.logout") {
             api.logout(accessToken)
         }
     }

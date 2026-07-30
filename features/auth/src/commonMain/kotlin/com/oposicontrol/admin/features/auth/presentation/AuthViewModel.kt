@@ -2,21 +2,25 @@ package com.oposicontrol.admin.features.auth.presentation
 
 import com.oposicontrol.admin.core.common.analytics.AnalyticsTracker
 import com.oposicontrol.admin.core.common.coroutine.DispatcherProvider
-import com.oposicontrol.admin.core.common.presentation.MviViewModel
+import com.oposicontrol.admin.core.common.presentation.MviEffectViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.AuthCredentials
-import com.oposicontrol.admin.domain.repository.AuthRepository
 import com.oposicontrol.admin.domain.usecase.auth.LoginUseCase
+import com.oposicontrol.admin.domain.usecase.auth.LogoutUseCase
+import com.oposicontrol.admin.domain.usecase.auth.ObserveSessionUseCase
+import com.oposicontrol.admin.domain.usecase.auth.RefreshSessionUseCase
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class AuthViewModel(
     dispatcherProvider: DispatcherProvider,
     private val loginUseCase: LoginUseCase,
-    private val authRepository: AuthRepository,
+    private val logoutUseCase: LogoutUseCase,
+    observeSessionUseCase: ObserveSessionUseCase,
+    private val refreshSessionUseCase: RefreshSessionUseCase,
     private val analyticsTracker: AnalyticsTracker,
-) : MviViewModel<AuthState, AuthIntent>(
+) : MviEffectViewModel<AuthState, AuthIntent, AuthEffect>(
     initialState = AuthState(),
     dispatcherProvider = dispatcherProvider,
 ) {
@@ -24,7 +28,7 @@ class AuthViewModel(
 
     init {
         scope.launch {
-            authRepository.observeSession().collectLatest { session ->
+            observeSessionUseCase().collectLatest { session ->
                 updateState {
                     it.copy(
                         currentSession = session,
@@ -46,33 +50,43 @@ class AuthViewModel(
 
     override suspend fun handleIntent(intent: AuthIntent) {
         when (intent) {
-            AuthIntent.Logout -> {
-                authRepository.logout()
-                updateState { it.copy(submitState = UiAsync.Idle, isRestoring = false) }
-            }
-
-            AuthIntent.RestoreSession -> if (!currentState().isSubmitting) restoreSession()
+            AuthIntent.Logout -> logout()
+            AuthIntent.RestoreSession -> restoreSession()
             AuthIntent.Submit -> submit()
             is AuthIntent.UpdateEmail -> updateState {
-                it.copy(
-                    email = intent.value,
-                    submitState = if (it.submitState is UiAsync.Error) UiAsync.Idle else it.submitState,
-                )
+                it.copy(email = intent.value, submitState = UiAsync.Idle)
             }
+
             is AuthIntent.UpdatePassword -> updateState {
+                it.copy(password = intent.value, submitState = UiAsync.Idle)
+            }
+        }
+    }
+
+    private suspend fun logout() {
+        when (val result = logoutUseCase()) {
+            is AppResult.Failure -> updateState {
+                it.copy(submitState = UiAsync.Error(result.error), isRestoring = false)
+            }
+
+            is AppResult.Success -> updateState {
                 it.copy(
-                    password = intent.value,
-                    submitState = if (it.submitState is UiAsync.Error) UiAsync.Idle else it.submitState,
+                    password = "",
+                    submitState = UiAsync.Idle,
+                    currentSession = null,
+                    isAuthenticated = false,
+                    isRestoring = false,
                 )
             }
         }
     }
 
     private suspend fun restoreSession() {
+        if (currentState().isRestoring && currentState().submitState is UiAsync.Loading) return
         updateState { it.copy(isRestoring = true) }
-        when (val result = authRepository.refreshSession()) {
+        when (val result = refreshSessionUseCase()) {
             is AppResult.Failure -> {
-                authRepository.logout()
+                logoutUseCase()
                 updateState {
                     it.copy(
                         currentSession = null,
@@ -83,37 +97,41 @@ class AuthViewModel(
                 }
             }
 
-            is AppResult.Success -> updateState {
-                it.copy(
-                    currentSession = result.value,
-                    isAuthenticated = true,
-                    isRestoring = false,
-                    submitState = UiAsync.Success(result.value),
-                )
+            is AppResult.Success -> {
+                updateState {
+                    it.copy(
+                        currentSession = result.value,
+                        isAuthenticated = true,
+                        isRestoring = false,
+                        submitState = UiAsync.Success(result.value),
+                    )
+                }
+                emitEffect(AuthEffect.Authenticated)
             }
         }
     }
 
     private suspend fun submit() {
-        if (currentState().isSubmitting) return
-        updateState { it.copy(isSubmitting = true, submitState = UiAsync.Loading, isRestoring = false) }
+        val state = currentState()
+        if (state.isAuthenticated || state.submitState is UiAsync.Loading) return
+        val credentials = AuthCredentials(
+            email = state.email.trim(),
+            password = state.password,
+        )
+        updateState { it.copy(submitState = UiAsync.Loading, isRestoring = false) }
         analyticsTracker.trackAction("auth_submit")
-        when (
-            val result = loginUseCase(
-                AuthCredentials(
-                    email = currentState().email,
-                    password = currentState().password,
-                ),
-            )
-        ) {
-            is AppResult.Failure -> updateState { it.copy(isSubmitting = false, submitState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> updateState {
-                it.copy(
-                    isSubmitting = false,
-                    currentSession = result.value,
-                    isAuthenticated = true,
-                    submitState = UiAsync.Success(result.value),
-                )
+        when (val result = loginUseCase(credentials)) {
+            is AppResult.Failure -> updateState { it.copy(submitState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                updateState {
+                    it.copy(
+                        password = "",
+                        currentSession = result.value,
+                        isAuthenticated = true,
+                        submitState = UiAsync.Success(result.value),
+                    )
+                }
+                emitEffect(AuthEffect.Authenticated)
             }
         }
     }

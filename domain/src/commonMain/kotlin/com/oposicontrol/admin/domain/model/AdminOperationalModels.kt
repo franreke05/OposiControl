@@ -13,13 +13,17 @@ data class ExamAccess(
     val examTitle: String,
     val accessType: String,
     val isActive: Boolean,
+    val userId: String = "",
+    val examId: String = "",
+    val version: Long = 1,
+    val updatedAt: String = "",
 )
 
 data class TicketWallet(
     val userId: String,
     val userName: String,
     val specialty: String,
-    val balance: Double,
+    val balance: Long,
     val status: String,
 )
 
@@ -27,7 +31,7 @@ data class TicketTransaction(
     val id: String,
     val userId: String,
     val type: String,
-    val amount: Double,
+    val amount: Long,
     val reason: String,
     val occurredAt: String,
 )
@@ -58,4 +62,6 @@ data class ModerationAction(
     val executor: String,
     val reason: String,
     val createdAt: String,
+    val targetUserId: String = "",
+    val conversationId: String? = null,
 )

@@ -7,13 +7,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.oposicontrol.admin.core.ui.layout.UiSpacing
 
 @Composable
 fun ScreenHeader(
@@ -29,8 +33,8 @@ fun ScreenHeader(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 22.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                    .padding(horizontal = UiSpacing.blockLarge, vertical = UiSpacing.block),
+                verticalArrangement = Arrangement.spacedBy(UiSpacing.normal),
             ) {
                 ScreenHeaderText(
                     title = title,
@@ -49,7 +53,7 @@ fun ScreenHeader(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 22.dp),
+                    .padding(horizontal = UiSpacing.blockLarge, vertical = UiSpacing.block),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -57,7 +61,7 @@ fun ScreenHeader(
                     title = title,
                     description = description,
                     environmentLabel = environmentLabel,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.widthIn(max = 720.dp),
                 )
                 if (primaryActionLabel != null && onPrimaryAction != null) {
                     GlassActionButton(
@@ -80,12 +84,13 @@ private fun ScreenHeaderText(
 ) {
     Column(
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(UiSpacing.compact),
     ) {
         Text(
             text = title,
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.semantics { heading() },
         )
         Text(
             text = description,
@@ -99,7 +104,7 @@ private fun ScreenHeaderText(
                     color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f),
                     shape = MaterialTheme.shapes.large,
                 )
-                .padding(horizontal = 14.dp, vertical = 7.dp),
+                .padding(horizontal = UiSpacing.normal, vertical = UiSpacing.xs),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.secondary,
         )

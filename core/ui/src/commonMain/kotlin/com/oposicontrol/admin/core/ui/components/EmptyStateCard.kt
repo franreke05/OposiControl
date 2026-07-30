@@ -21,6 +21,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -41,7 +43,7 @@ fun EmptyStateCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .animateContentSize(animationSpec = tween(durationMillis = 220))
-                .padding(horizontal = 28.dp, vertical = 30.dp),
+                .padding(horizontal = 24.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -59,6 +61,7 @@ fun EmptyStateCard(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { heading() },
             )
             Text(
                 text = message,
@@ -80,14 +83,20 @@ fun LoadingStateCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 22.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = 24.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             repeat(rows.coerceIn(1, 5)) { index ->
                 SkeletonLine(
                     modifier = Modifier
-                        .fillMaxWidth(if (index == 0) 0.72f else 1f)
-                        .height(if (index == 0) 18.dp else 14.dp),
+                        .then(
+                            if (index == 0) {
+                                Modifier.width(220.dp)
+                            } else {
+                                Modifier.fillMaxWidth()
+                            },
+                        )
+                        .height(if (index == 0) 20.dp else 12.dp),
                 )
             }
         }

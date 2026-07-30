@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,13 +23,24 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.oposicontrol.admin.core.ui.layout.AppLayout
+import com.oposicontrol.admin.core.ui.layout.AppWindowClass
+import com.oposicontrol.admin.core.ui.layout.UiSizes
+import com.oposicontrol.admin.core.ui.layout.UiSpacing
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 data class SidebarNavItem(
     val id: String,
     val label: String,
+    val shortLabel: String = label.take(2).uppercase(),
 )
 
 @Composable
@@ -38,25 +51,63 @@ fun SidebarNav(
     compact: Boolean,
 ) {
     val scrollState = rememberScrollState()
+    val compactRail = compact && AppLayout.metrics.windowClass == AppWindowClass.DesktopCompact
     GlassSurface(
-        modifier = if (compact) {
+        modifier = if (compact && !compactRail) {
             Modifier.fillMaxWidth()
+        } else if (compactRail) {
+            Modifier
+                .width(UiSizes.navigationRailWidth)
+                .fillMaxHeight()
         } else {
             Modifier
-                .width(280.dp)
+                .width(UiSizes.navigationDrawerWidth)
                 .fillMaxHeight()
         },
         tint = GlassTheme.tokens.glassFillStrong,
         strokeColor = GlassTheme.tokens.glassStroke,
     ) {
-        if (compact) {
+        if (compactRail) {
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .verticalScroll(scrollState)
+                    .padding(horizontal = UiSpacing.compact, vertical = UiSpacing.blockLarge),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(UiSpacing.xs),
+            ) {
+                Text(
+                    text = "OC",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = GlassTheme.tokens.textPrimary,
+                    modifier = Modifier
+                        .height(UiSizes.touchTarget)
+                        .padding(vertical = UiSpacing.normal)
+                        .semantics { contentDescription = "OposiControl Admin" },
+                )
+                HorizontalDivider(modifier = Modifier.width(UiSizes.touchTarget))
+                items.forEach { item ->
+                    SidebarNavRailItem(
+                        item = item,
+                        selected = item.id == currentSectionId,
+                        onClick = { onSectionSelected(item.id) },
+                    )
+                }
+            }
+        } else if (compact) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .horizontalScroll(scrollState)
-                        .padding(start = 20.dp, top = 34.dp, end = 20.dp, bottom = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(
+                            start = UiSpacing.screenMobile,
+                            top = UiSpacing.normal,
+                            end = UiSpacing.screenMobile,
+                            bottom = UiSpacing.compact,
+                        ),
+                    horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact),
                 ) {
                     items.forEach { item ->
                         SidebarNavPill(
@@ -71,7 +122,7 @@ fun SidebarNav(
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .padding(horizontal = 20.dp, vertical = 22.dp),
+                    .padding(horizontal = UiSpacing.screenMobile, vertical = UiSpacing.blockLarge),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -88,7 +139,9 @@ fun SidebarNav(
                 }
                 HorizontalDivider()
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items.forEach { item ->
@@ -99,7 +152,6 @@ fun SidebarNav(
                         )
                     }
                 }
-                HorizontalDivider()
             }
         }
     }
@@ -122,7 +174,7 @@ private fun SidebarNavRow(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .defaultMinSize(minHeight = 46.dp)
+            .defaultMinSize(minHeight = UiSizes.touchTarget)
             .background(
                 color = if (selected) {
                     MaterialTheme.colorScheme.primaryContainer
@@ -131,7 +183,12 @@ private fun SidebarNavRow(
                 },
                 shape = MaterialTheme.shapes.medium,
             )
-            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                this.selected = selected
+                stateDescription = if (selected) "Sección actual" else "Sección disponible"
+            }
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 13.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -152,13 +209,18 @@ private fun SidebarNavPill(
 ) {
     Box(
         modifier = Modifier
-            .height(38.dp)
+            .height(UiSizes.touchTarget)
             .background(
                 color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                 shape = MaterialTheme.shapes.extraLarge,
             )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                this.selected = selected
+                stateDescription = if (selected) "Sección actual" else "Sección disponible"
+            }
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -166,6 +228,46 @@ private fun SidebarNavPill(
             style = MaterialTheme.typography.bodySmall,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+@Composable
+private fun SidebarNavRailItem(
+    item: SidebarNavItem,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(UiSizes.touchTarget)
+            .background(
+                color = if (selected) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.48f)
+                },
+                shape = MaterialTheme.shapes.medium,
+            )
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                contentDescription = item.label
+                this.selected = selected
+                stateDescription = if (selected) "Sección actual" else "Sección disponible"
+            }
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = item.shortLabel,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = if (selected) {
+                MaterialTheme.colorScheme.onPrimaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+            maxLines = 1,
         )
     }
 }

@@ -24,6 +24,15 @@ sealed interface AppError {
         override val message: String,
     ) : AppError
 
+    data class Conflict(
+        override val message: String,
+    ) : AppError
+
+    data class RateLimited(
+        override val message: String,
+        val retryAfterSeconds: Long? = null,
+    ) : AppError
+
     data class Unknown(
         override val message: String,
         val cause: Throwable? = null,

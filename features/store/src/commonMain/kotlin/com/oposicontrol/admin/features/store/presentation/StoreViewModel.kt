@@ -2,6 +2,15 @@ package com.oposicontrol.admin.features.store.presentation
 
 import com.oposicontrol.admin.core.common.analytics.AnalyticsTracker
 import com.oposicontrol.admin.core.common.coroutine.DispatcherProvider
+import com.oposicontrol.admin.core.common.logging.LogEvent
+import com.oposicontrol.admin.core.common.logging.LogLayer
+import com.oposicontrol.admin.core.common.logging.LogLevel
+import com.oposicontrol.admin.core.common.logging.Logger
+import com.oposicontrol.admin.core.common.logging.LogTag
+import com.oposicontrol.admin.core.common.logging.NoOpLogger
+import com.oposicontrol.admin.core.common.logging.OperationContext
+import com.oposicontrol.admin.core.common.logging.SafeLogField
+import com.oposicontrol.admin.core.common.logging.withOperationContext
 import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
@@ -22,10 +31,12 @@ import com.oposicontrol.admin.domain.usecase.commerce.UpsertBurstCampaignUseCase
 import com.oposicontrol.admin.domain.usecase.commerce.UpsertLimitedResourceUseCase
 import com.oposicontrol.admin.domain.usecase.commerce.UpsertStoreItemUseCase
 import com.oposicontrol.admin.domain.usecase.commerce.UpsertStoreOfferUseCase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
 import kotlin.time.Clock
+import kotlin.time.TimeSource
 
 class StoreViewModel(
     dispatcherProvider: DispatcherProvider,
@@ -39,6 +50,7 @@ class StoreViewModel(
     private val upsertLimitedResourceUseCase: UpsertLimitedResourceUseCase,
     private val upsertBurstCampaignUseCase: UpsertBurstCampaignUseCase,
     private val analyticsTracker: AnalyticsTracker,
+    private val logger: Logger = NoOpLogger,
 ) : MviViewModel<StoreState, StoreIntent>(
     initialState = StoreState(),
     dispatcherProvider = dispatcherProvider,
@@ -74,7 +86,11 @@ class StoreViewModel(
                 publish()
             }
         }
-        scope.launch { refreshCommerceUseCase() }
+        scope.launch {
+            traceOperation(operation = "commerce.refresh") {
+                refreshCommerceUseCase()
+            }
+        }
         analyticsTracker.trackScreen("store")
     }
 
@@ -180,7 +196,11 @@ class StoreViewModel(
             updatedAt = now,
         )
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = upsertStoreItemUseCase(item)) {
+        when (
+            val result = traceOperation(operation = "commerce.item.save") {
+                upsertStoreItemUseCase(item)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("store_item_save", mapOf("item_id" to result.value.id))
@@ -202,7 +222,12 @@ class StoreViewModel(
             endsAt = currentState().offerEndsAt.toInstantOrNull(),
             status = CommerceStatus.SCHEDULED,
         )
-        saveChild(upsertStoreOfferUseCase(offer), "store_offer_save")
+        saveChild(
+            operation = "commerce.offer.save",
+            analyticsAction = "store_offer_save",
+        ) {
+            upsertStoreOfferUseCase(offer)
+        }
     }
 
     private suspend fun saveLimitedResource() {
@@ -217,7 +242,12 @@ class StoreViewModel(
             accessDurationHours = currentState().limitedAccessHours.toIntOrNull() ?: 72,
             status = CommerceStatus.SCHEDULED,
         )
-        saveChild(upsertLimitedResourceUseCase(window), "limited_resource_save")
+        saveChild(
+            operation = "commerce.limited_resource.save",
+            analyticsAction = "limited_resource_save",
+        ) {
+            upsertLimitedResourceUseCase(window)
+        }
     }
 
     private suspend fun saveBurst() {
@@ -239,18 +269,28 @@ class StoreViewModel(
             linkedStoreItemId = null,
             status = CommerceStatus.SCHEDULED,
         )
-        saveChild(upsertBurstCampaignUseCase(campaign), "burst_campaign_save")
+        saveChild(
+            operation = "commerce.burst.save",
+            analyticsAction = "burst_campaign_save",
+        ) {
+            upsertBurstCampaignUseCase(campaign)
+        }
     }
 
     private fun missingItem() {
         updateState { it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona o guarda un articulo antes."))) }
     }
 
-    private fun <T> saveChild(result: AppResult<T>, action: String) {
+    private suspend fun <T> saveChild(
+        operation: String,
+        analyticsAction: String,
+        block: suspend () -> AppResult<T>,
+    ) {
+        val result = traceOperation(operation = operation, block = block)
         when (result) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
-                analyticsTracker.trackAction(action)
+                analyticsTracker.trackAction(analyticsAction)
                 updateState { it.copy(actionState = UiAsync.Success(Unit)) }
             }
         }
@@ -317,4 +357,100 @@ class StoreViewModel(
     private fun String.toInstantOrNull(): Instant? = takeIf { it.isNotBlank() }?.let {
         runCatching { Instant.parse(it) }.getOrNull()
     }
+
+    private suspend fun <T> traceOperation(
+        operation: String,
+        successCount: (T) -> Int? = { null },
+        block: suspend () -> AppResult<T>,
+    ): AppResult<T> {
+        val context = OperationContext()
+        val startedAt = TimeSource.Monotonic.markNow()
+        logger.log(vmEvent(LogLevel.INFO, "$operation.start", operation, context))
+        return try {
+            val result = withOperationContext(context) { block() }
+            when (result) {
+                is AppResult.Failure -> logger.log(
+                    vmEvent(
+                        level = LogLevel.ERROR,
+                        event = "$operation.failure",
+                        operation = operation,
+                        context = context,
+                        durationMs = startedAt.elapsedNow().inWholeMilliseconds,
+                        fields = mapOf(
+                            SafeLogField.RESULT to "failure",
+                            SafeLogField.ERROR_TYPE to result.error.safeType(),
+                            SafeLogField.RETRYABLE to result.error.isRetryable().toString(),
+                        ),
+                    ),
+                )
+
+                is AppResult.Success -> {
+                    val fields = mutableMapOf(SafeLogField.RESULT to "success")
+                    successCount(result.value)?.let { fields[SafeLogField.COUNT] = it.toString() }
+                    logger.log(
+                        vmEvent(
+                            level = LogLevel.INFO,
+                            event = "$operation.success",
+                            operation = operation,
+                            context = context,
+                            durationMs = startedAt.elapsedNow().inWholeMilliseconds,
+                            fields = fields,
+                        ),
+                    )
+                }
+            }
+            result
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            logger.log(
+                vmEvent(
+                    level = LogLevel.ERROR,
+                    event = "$operation.failure",
+                    operation = operation,
+                    context = context,
+                    durationMs = startedAt.elapsedNow().inWholeMilliseconds,
+                    fields = mapOf(
+                        SafeLogField.RESULT to "failure",
+                        SafeLogField.ERROR_TYPE to (throwable::class.simpleName ?: "Throwable"),
+                        SafeLogField.RETRYABLE to "false",
+                    ),
+                ),
+            )
+            throw throwable
+        }
+    }
+
+    private fun vmEvent(
+        level: LogLevel,
+        event: String,
+        operation: String,
+        context: OperationContext,
+        durationMs: Long? = null,
+        fields: Map<SafeLogField, String> = emptyMap(),
+    ) = LogEvent(
+        level = level,
+        tag = LogTag.VIEW_MODEL,
+        event = event,
+        screen = "store",
+        layer = LogLayer.VIEW_MODEL,
+        operation = operation,
+        correlationId = context.correlationId,
+        durationMs = durationMs,
+        fields = fields,
+    )
+
+    private fun AppError.safeType(): String = when (this) {
+        is AppError.Network -> "network"
+        is AppError.Authentication -> "authentication"
+        is AppError.Authorization -> "authorization"
+        is AppError.Validation -> "validation"
+        is AppError.NotFound -> "not_found"
+        is AppError.Conflict -> "conflict"
+        is AppError.RateLimited -> "rate_limited"
+        is AppError.Unknown -> "unknown"
+    }
+
+    private fun AppError.isRetryable(): Boolean =
+        this is AppError.Network || this is AppError.RateLimited
 }

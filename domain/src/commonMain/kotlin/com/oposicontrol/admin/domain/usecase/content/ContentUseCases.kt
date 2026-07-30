@@ -6,6 +6,8 @@ import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.QuestionMoveDirection
+import com.oposicontrol.admin.domain.model.QuestionOption
+import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
@@ -133,28 +135,12 @@ class UpsertQuestionUseCase(
         if (question.title.isBlank()) {
             return AppResult.Failure(AppError.Validation("La pregunta necesita titulo."))
         }
-        if (question.statement.isBlank()) {
-            return AppResult.Failure(AppError.Validation("La pregunta necesita enunciado."))
-        }
-        if (question.options.size != 4) {
-            return AppResult.Failure(AppError.Validation("Cada pregunta debe tener exactamente 4 opciones."))
-        }
-        if (question.options.any { it.content.isBlank() }) {
-            return AppResult.Failure(AppError.Validation("Las 4 opciones deben tener contenido."))
-        }
-        if (question.options.count { it.isCorrect } != 1) {
-            return AppResult.Failure(AppError.Validation("Debes marcar una unica opcion correcta."))
-        }
-        val invalidResource = question.resources.firstOrNull { resource ->
-            when (resource.type) {
-                QuestionResourceType.TEXT -> resource.textBody.isNullOrBlank()
-                else -> resource.publicUrl.isNullOrBlank()
-            }
-        }
-        if (invalidResource != null) {
-            return AppResult.Failure(
-                AppError.Validation("Todos los recursos deben estar completos antes de guardar la pregunta."),
-            )
+        validateNormalizedQuestion(
+            statement = question.statement,
+            options = question.options,
+            resources = question.resources,
+        )?.let { message ->
+            return AppResult.Failure(AppError.Validation(message))
         }
         return repository.upsertQuestion(question)
     }
@@ -215,8 +201,12 @@ class UpsertRafagaQuestionUseCase(
         if (question.rafagaId.isBlank()) {
             return AppResult.Failure(AppError.Validation("Selecciona una rafaga antes de guardar preguntas."))
         }
-        if (question.statement.isBlank()) {
-            return AppResult.Failure(AppError.Validation("La pregunta de rafaga necesita enunciado."))
+        validateNormalizedQuestion(
+            statement = question.statement,
+            options = question.options,
+            resources = question.resources,
+        )?.let { message ->
+            return AppResult.Failure(AppError.Validation(message))
         }
         return repository.upsertRafagaQuestion(question)
     }
@@ -296,4 +286,37 @@ class ClearExamCoverUseCase(
         }
         return repository.clearExamCover(examId)
     }
+}
+
+private fun validateNormalizedQuestion(
+    statement: String,
+    options: List<QuestionOption>,
+    resources: List<QuestionResource>,
+): String? {
+    if (statement.isBlank()) {
+        return "La pregunta necesita enunciado."
+    }
+    if (options.size != 4) {
+        return "Cada pregunta debe tener exactamente 4 opciones."
+    }
+    if (options.any { it.content.isBlank() }) {
+        return "Las 4 opciones deben tener contenido."
+    }
+    val labels = options.map { it.label.trim().uppercase() }
+    if (labels.toSet() != setOf("A", "B", "C", "D")) {
+        return "Las opciones deben usar etiquetas unicas A, B, C y D."
+    }
+    if (options.count { it.isCorrect } != 1) {
+        return "Debes marcar una unica opcion correcta."
+    }
+    val hasIncompleteResource = resources.any { resource ->
+        when (resource.type) {
+            QuestionResourceType.TEXT -> resource.textBody.isNullOrBlank()
+            else -> resource.publicUrl.isNullOrBlank() && resource.storagePath.isNullOrBlank()
+        }
+    }
+    if (hasIncompleteResource) {
+        return "Todos los recursos deben estar completos antes de guardar la pregunta."
+    }
+    return null
 }

@@ -1,8 +1,12 @@
 package com.oposicontrol.backend
 
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.HttpMethod
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
 import io.ktor.server.request.receive
+import io.ktor.server.request.httpMethod
+import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
@@ -25,6 +29,9 @@ import java.time.Instant
 
 fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
     route("/admin") {
+        enforcePermission { securedCall ->
+            securedCall.legacyAdminPermission()
+        }
         get("/users") { call.respond(gateway.listUsers()) }
         get("/users/{userId}") { call.respond(gateway.getUser(call.requiredPath("userId"))) }
         post("/users") { call.respond(HttpStatusCode.Created, gateway.saveUser(call.receive())) }
@@ -59,7 +66,11 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
             call.respond(gateway.listTicketTransactions(call.requiredPath("userId")))
         }
         post("/ticket-wallets/{userId}/transactions") {
-            call.respond(HttpStatusCode.Created, gateway.appendTicketAdjustment(call.requiredPath("userId"), call.receive()))
+            throw ApiProblem(
+                status = HttpStatusCode.Gone,
+                code = "legacy_write_disabled",
+                message = "Usa POST /api/admin/v1/wallets/{userId}/adjustments.",
+            )
         }
         get("/support/conversations") { call.respond(gateway.listSupportConversations()) }
         get("/support/conversations/{conversationId}/messages") {
@@ -74,7 +85,25 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
         }
     }
     get("/dashboard/metrics") {
+        call.requirePermission("dashboard.read")
         call.respond(gateway.dashboardMetrics())
+    }
+}
+
+private fun io.ktor.server.application.ApplicationCall.legacyAdminPermission(): String {
+    val path = request.path()
+    val write = request.httpMethod !in setOf(HttpMethod.Get, HttpMethod.Head)
+    return when {
+        path.startsWith("/admin/roles") -> if (write) "roles.write" else "roles.read"
+        path.startsWith("/admin/settings") -> if (write) "settings.write" else "settings.read"
+        path.startsWith("/admin/audit") -> if (write) "maintenance" else "audit.read"
+        path.startsWith("/admin/news-types") -> if (write) "content.write" else "content.read"
+        path.startsWith("/admin/exam-access") -> if (write) "exam_access.write" else "exam_access.read"
+        path.startsWith("/admin/ticket-wallets") -> if (write) "tickets.adjust" else "tickets.read"
+        path.startsWith("/admin/support") -> if (write) "support.reply" else "support.read"
+        path.startsWith("/admin/moderation") -> if (write) "moderation.write" else "moderation.read"
+        path.startsWith("/admin/backend") || path.startsWith("/admin/dev") -> "maintenance"
+        else -> if (write) "users.write" else "users.read"
     }
 }
 
@@ -585,7 +614,7 @@ class SupabaseAdminGateway private constructor(
 
         fun fromEnvironment(json: Json): SupabaseAdminGateway? {
             val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+            val serviceRoleKey = System.getenv("SUPABASE_SECRET_KEY").orEmpty()
             return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseAdminGateway(url, serviceRoleKey, json)
         }
     }

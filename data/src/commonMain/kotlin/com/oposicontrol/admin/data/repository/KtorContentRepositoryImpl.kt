@@ -1,10 +1,12 @@
 package com.oposicontrol.admin.data.repository
 
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.core.common.logging.OperationContext
+import com.oposicontrol.admin.core.common.logging.currentOperationContextOrNull
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
+import com.oposicontrol.admin.core.network.BackendHttpException
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
-import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.data.storage.LocalBinaryAsset
 import com.oposicontrol.admin.data.storage.PlatformFileReader
 import com.oposicontrol.admin.domain.model.Exam
@@ -38,6 +40,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.flow.Flow
@@ -64,55 +67,120 @@ class KtorContentRepositoryImpl(
 
     override fun observeRafagas(): Flow<List<Rafaga>> = rafagasFlow.asStateFlow()
 
-    override suspend fun refreshSpecialties() = adapter.safeCall {
-        val endpoint = BackendRoutes.V1_ESPECIALIDADES
-        val url = BackendRoutes.url(appConfig.baseUrl, endpoint)
+    override suspend fun refreshSpecialties() = adapter.safeCall(operation = "content.specialties.refresh") {
+        val url = "${contentUrl()}/especialidades"
         val response = client.get(url) {
             expectSuccess = false
+            backendHeaders()
         }
-        response.requireBackendSuccess(url)
-        response.body<V1DataResponse<V1EspecialidadDto>>()
-            .data
-            .map { it.toDomain() }
+        val specialties = if (response.status == HttpStatusCode.NotFound) {
+            val legacyUrl = backendUrl("/v1/especialidades")
+            val legacyResponse = client.get(legacyUrl) {
+                expectSuccess = false
+                backendHeaders()
+            }
+            legacyResponse.requireBackendSuccess(legacyUrl)
+            legacyResponse.body<V1DataResponse<V1EspecialidadDto>>().data.map { it.toDomain() }
+        } else {
+            response.requireBackendSuccess(url)
+            response.body<List<EspecialidadDto>>().map { it.toDomain() }
+        }
+        specialties
             .also { specialtiesFlow.value = it }
     }
 
-    override suspend fun refreshExams() = adapter.safeCall {
+    override suspend fun refreshExams() = adapter.safeCall(operation = "content.exams.refresh") {
         val specialtiesById = specialtiesFlow.value.associateBy { it.id }
-        val endpoint = BackendRoutes.V1_EXAMENES
-        val url = BackendRoutes.url(appConfig.baseUrl, endpoint)
+        val url = "${contentUrl()}/solucionarios"
         val response = client.get(url) {
             expectSuccess = false
+            backendHeaders()
         }
-        response.requireBackendSuccess(url)
-        response.body<V1DataResponse<V1ExamenDto>>()
-            .data
-            .map { it.toDomain(specialtiesById[it.especialidadId]?.name.orEmpty()) }
+        val exams = if (response.status == HttpStatusCode.NotFound) {
+            val legacyUrl = backendUrl("/v1/examenes")
+            val legacyResponse = client.get(legacyUrl) {
+                expectSuccess = false
+                backendHeaders()
+                parameter("tipoExamen", "inmersivo")
+            }
+            legacyResponse.requireBackendSuccess(legacyUrl)
+            legacyResponse.body<V1DataResponse<V1ExamenDto>>().data.map {
+                it.toDomain(specialtiesById[it.especialidadId]?.name.orEmpty())
+            }
+        } else {
+            response.requireBackendSuccess(url)
+            response.body<List<SolucionarioDto>>()
+                .map { it.toDomain(specialtiesById[it.especialidadId]?.name.orEmpty()) }
+        }
+        exams
             .also { examsFlow.value = it }
     }
 
-    override suspend fun refreshRafagas() = adapter.safeCall {
-        // Legacy endpoint disabled until rafagas are migrated to /v1.
-        emptyList<Rafaga>().also { rafagasFlow.value = it }
-    }
-
-    override suspend fun getExamQuestions(examId: String) = adapter.safeCall {
-        val endpoint = BackendRoutes.v1ExamenPreguntas(examId)
-        val url = BackendRoutes.url(appConfig.baseUrl, endpoint)
+    override suspend fun refreshRafagas() = adapter.safeCall(operation = "content.bursts.refresh") {
+        val url = "${contentUrl()}/rafaga"
         val response = client.get(url) {
             expectSuccess = false
+            backendHeaders()
         }
-        response.requireBackendSuccess(url)
-        response.body<V1SingleDataResponse<V1PreguntasExamenDto>>()
-            .data
-            .preguntas
-            .map { it.toDomain(examId) }
+        val bursts = if (response.status == HttpStatusCode.NotFound) {
+            val legacyUrl = backendUrl("/v1/examenes")
+            val legacyResponse = client.get(legacyUrl) {
+                expectSuccess = false
+                backendHeaders()
+                parameter("tipoExamen", "rafaga")
+            }
+            legacyResponse.requireBackendSuccess(legacyUrl)
+            legacyResponse.body<V1DataResponse<V1ExamenDto>>().data.map { row ->
+                row.toRafagaDomain(
+                    specialtiesFlow.value.firstOrNull { it.id == row.especialidadId }?.name.orEmpty(),
+                )
+            }
+        } else {
+            response.requireBackendSuccess(url)
+            response.body<List<RafagaDto>>().map { row ->
+                row.toDomain(
+                    specialtiesFlow.value.firstOrNull { it.id == row.especialidadId }?.name.orEmpty(),
+                )
+            }
+        }
+        bursts
+            .also { rafagasFlow.value = it }
     }
 
-    override suspend fun getRafagaQuestions(rafagaId: String) = adapter.safeCall {
-        // Legacy endpoint disabled until rafaga questions are migrated to /v1.
-        emptyList<RafagaQuestion>()
-    }
+    override suspend fun getExamQuestions(examId: String) =
+        adapter.safeCall(operation = "content.exam-questions.load") {
+            val url = "${contentUrl()}/solucionarios/$examId/preguntas"
+            val response = client.get(url) {
+                expectSuccess = false
+                backendHeaders()
+            }
+            response.requireBackendSuccess(url)
+            response.body<List<PreguntaDto>>().map { it.toDomain() }
+        }
+
+    override suspend fun getRafagaQuestions(rafagaId: String) =
+        adapter.safeCall(operation = "content.burst-questions.load") {
+            val url = "${contentUrl()}/rafaga/$rafagaId/preguntas"
+            val response = client.get(url) {
+                expectSuccess = false
+                backendHeaders()
+            }
+            if (response.status == HttpStatusCode.NotFound) {
+                val legacyUrl = backendUrl("/v1/examenes/$rafagaId/preguntas")
+                val legacyResponse = client.get(legacyUrl) {
+                    expectSuccess = false
+                    backendHeaders()
+                }
+                legacyResponse.requireBackendSuccess(legacyUrl)
+                legacyResponse.body<V1SingleDataResponse<V1PreguntasExamenDto>>()
+                    .data
+                    .preguntas
+                    .map { it.toRafagaDomain(rafagaId) }
+            } else {
+                response.requireBackendSuccess(url)
+                response.body<List<RafagaPreguntaDto>>().map { it.toDomain() }
+            }
+        }
 
     override suspend fun getExamResourceAudit(examId: String): AppResult<ExamResourceAudit> {
         return when (val result = getExamQuestions(examId)) {
@@ -132,7 +200,11 @@ class KtorContentRepositoryImpl(
     }
 
     override suspend fun deleteSpecialty(specialtyId: String) = adapter.safeCall {
-        client.delete("${contentUrl()}/especialidades/$specialtyId") { backendHeaders() }
+        val idempotencyKey = currentIdempotencyKey()
+        client.delete("${contentUrl()}/especialidades/$specialtyId") {
+            backendHeaders()
+            header("Idempotency-Key", idempotencyKey)
+        }
             .requireBackendSuccess("/content/especialidades/$specialtyId")
         refreshSpecialties()
         Unit
@@ -151,7 +223,11 @@ class KtorContentRepositoryImpl(
     }
 
     override suspend fun deleteExam(examId: String) = adapter.safeCall {
-        client.delete("${contentUrl()}/solucionarios/$examId") { backendHeaders() }
+        val idempotencyKey = currentIdempotencyKey()
+        client.delete("${contentUrl()}/solucionarios/$examId") {
+            backendHeaders()
+            header("Idempotency-Key", idempotencyKey)
+        }
             .requireBackendSuccess("/content/solucionarios/$examId")
         refreshExams()
         refreshSpecialties()
@@ -171,7 +247,11 @@ class KtorContentRepositoryImpl(
     }
 
     override suspend fun deleteRafaga(rafagaId: String) = adapter.safeCall {
-        client.delete("${contentUrl()}/rafaga/$rafagaId") { backendHeaders() }
+        val idempotencyKey = currentIdempotencyKey()
+        client.delete("${contentUrl()}/rafaga/$rafagaId") {
+            backendHeaders()
+            header("Idempotency-Key", idempotencyKey)
+        }
             .requireBackendSuccess("/content/rafaga/$rafagaId")
         refreshRafagas()
         refreshSpecialties()
@@ -187,19 +267,30 @@ class KtorContentRepositoryImpl(
         saved.toDomain().also { refreshExams() }
     }
 
-    override suspend fun importQuestions(examId: String, questions: List<ExamQuestion>): AppResult<List<ExamQuestion>> {
-        val saved = mutableListOf<ExamQuestion>()
-        for (question in questions) {
-            when (val result = upsertQuestion(question.copy(examId = examId))) {
-                is AppResult.Failure -> return result
-                is AppResult.Success -> saved += result.value
+    override suspend fun importQuestions(examId: String, questions: List<ExamQuestion>) =
+        adapter.safeCall(operation = "content.exam-questions.import") {
+            require(questions.isNotEmpty()) { "La importacion no contiene preguntas." }
+            require(questions.size <= 50) { "La importacion admite un maximo de 50 preguntas." }
+            val url = "${contentUrl()}/solucionarios/$examId/preguntas/import"
+            val idempotencyKey = currentIdempotencyKey()
+            val response = client.post(url) {
+                expectSuccess = false
+                backendHeaders()
+                header("Idempotency-Key", idempotencyKey)
+                contentType(ContentType.Application.Json)
+                setBody(questions.map { it.copy(examId = examId).toDto() })
             }
+            response.requireBackendSuccess(url)
+            response.body<List<PreguntaDto>>().map { it.toDomain() }
+                .also { refreshExams() }
         }
-        return AppResult.Success(saved)
-    }
 
     override suspend fun deleteQuestion(examId: String, questionId: String) = adapter.safeCall {
-        client.delete("${contentUrl()}/solucionarios/$examId/preguntas/$questionId") { backendHeaders() }
+        val idempotencyKey = currentIdempotencyKey()
+        client.delete("${contentUrl()}/solucionarios/$examId/preguntas/$questionId") {
+            backendHeaders()
+            header("Idempotency-Key", idempotencyKey)
+        }
             .requireBackendSuccess("/content/solucionarios/$examId/preguntas/$questionId")
         refreshExams()
         Unit
@@ -225,8 +316,10 @@ class KtorContentRepositoryImpl(
             it[index] = it[target]
             it[target] = item
         }.map { it.id }
+        val idempotencyKey = currentIdempotencyKey()
         client.put("${contentUrl()}/solucionarios/$examId/preguntas/order") {
             backendHeaders()
+            header("Idempotency-Key", idempotencyKey)
             contentType(ContentType.Application.Json)
             setBody(OrderDto(ids))
         }.body<List<PreguntaDto>>().map { it.toDomain() }
@@ -242,7 +335,11 @@ class KtorContentRepositoryImpl(
     }
 
     override suspend fun deleteRafagaQuestion(rafagaId: String, questionId: String) = adapter.safeCall {
-        client.delete("${contentUrl()}/rafaga/$rafagaId/preguntas/$questionId") { backendHeaders() }
+        val idempotencyKey = currentIdempotencyKey()
+        client.delete("${contentUrl()}/rafaga/$rafagaId/preguntas/$questionId") {
+            backendHeaders()
+            header("Idempotency-Key", idempotencyKey)
+        }
             .requireBackendSuccess("/content/rafaga/$rafagaId/preguntas/$questionId")
         refreshRafagas()
         Unit
@@ -268,8 +365,10 @@ class KtorContentRepositoryImpl(
             it[index] = it[target]
             it[target] = item
         }.map { it.id }
+        val idempotencyKey = currentIdempotencyKey()
         client.put("${contentUrl()}/rafaga/$rafagaId/preguntas/order") {
             backendHeaders()
+            header("Idempotency-Key", idempotencyKey)
             contentType(ContentType.Application.Json)
             setBody(OrderDto(ids))
         }.body<List<RafagaPreguntaDto>>().map { it.toDomain() }
@@ -314,7 +413,11 @@ class KtorContentRepositoryImpl(
     }
 
     override suspend fun deleteResource(questionId: String, resourceId: String) = adapter.safeCall {
-        client.delete("${contentUrl()}/preguntas/$questionId/recursos/$resourceId") { backendHeaders() }
+        val idempotencyKey = currentIdempotencyKey()
+        client.delete("${contentUrl()}/preguntas/$questionId/recursos/$resourceId") {
+            backendHeaders()
+            header("Idempotency-Key", idempotencyKey)
+        }
             .requireBackendSuccess("/content/preguntas/$questionId/recursos/$resourceId")
         Unit
     }
@@ -344,9 +447,11 @@ class KtorContentRepositoryImpl(
     }
 
     override suspend fun clearExamCover(examId: String) = adapter.safeCall {
+        val idempotencyKey = currentIdempotencyKey()
         val response = client.delete("${contentUrl()}/solucionarios/$examId/portada") {
             expectSuccess = false
             backendHeaders()
+            header("Idempotency-Key", idempotencyKey)
         }
         response.requireBackendSuccess("/content/solucionarios/$examId/portada")
         response.body<SolucionarioDto>().toDomain(
@@ -362,10 +467,12 @@ class KtorContentRepositoryImpl(
         create: Boolean,
         body: B,
     ): T {
+        val idempotencyKey = currentIdempotencyKey()
         val response = if (create) {
             post(url) {
                 expectSuccess = false
                 backendHeaders()
+                header("Idempotency-Key", idempotencyKey)
                 contentType(ContentType.Application.Json)
                 setBody(body)
             }
@@ -373,6 +480,7 @@ class KtorContentRepositoryImpl(
             put(url) {
                 expectSuccess = false
                 backendHeaders()
+                header("Idempotency-Key", idempotencyKey)
                 contentType(ContentType.Application.Json)
                 setBody(body)
             }
@@ -382,18 +490,20 @@ class KtorContentRepositoryImpl(
     }
 
     private suspend fun HttpResponse.requireBackendSuccess(endpoint: String) {
-        println("backend ${status.value} $endpoint")
         if (!status.isSuccess()) {
-            error("backend ${status.value} $endpoint: ${bodyAsText().take(200)}")
+            throw BackendHttpException(status.value)
         }
     }
 
     private fun contentUrl(): String = "${appConfig.baseUrl.trimEnd('/')}/content"
 
+    private fun backendUrl(path: String): String = appConfig.baseUrl.trimEnd('/') + path
+
+    private suspend fun currentIdempotencyKey(): String =
+        currentOperationContextOrNull()?.correlationId ?: OperationContext().correlationId
+
     private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() }
-            ?: return
+        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() } ?: return
         header(HttpHeaders.Authorization, "Bearer $token")
     }
 
@@ -434,14 +544,21 @@ private data class EspecialidadDto(
 @Serializable
 private data class SolucionarioDto(
     val id: String = "",
+    val codigo: String = "",
     val titulo: String,
     val especialidadId: String,
     val descripcion: String = "",
+    val tipoExamen: String = "inmersivo",
+    val tipoAcceso: String = "premium",
     val precioTickets: Int = 0,
     val estado: String = "draft",
     val publicarDesde: String? = null,
     val publishedAt: String? = null,
     val orden: Int = 0,
+    val duracionMinutos: Int? = null,
+    val anio: Int? = null,
+    val esOficial: Boolean = false,
+    val version: Int = 1,
     val portadaUrl: String? = null,
     val portadaStoragePath: String? = null,
     val portadaMimeType: String? = null,
@@ -477,18 +594,20 @@ private data class PreguntaDto(
 )
 
 @Serializable
-private data class RafagaPreguntaDto(
+internal data class RafagaPreguntaDto(
     val id: String = "",
     val rafagaId: String = "",
     val enunciado: String,
     val orden: Int = 0,
+    val opciones: List<OpcionDto> = emptyList(),
+    val recursos: List<RecursoPreguntaDto> = emptyList(),
     val createdAt: String = "",
     val updatedAt: String = "",
     val deletedAt: String? = null,
 )
 
 @Serializable
-private data class OpcionDto(
+internal data class OpcionDto(
     val id: String = "",
     val label: String,
     val contenido: String,
@@ -497,7 +616,7 @@ private data class OpcionDto(
 )
 
 @Serializable
-private data class RecursoPreguntaDto(
+internal data class RecursoPreguntaDto(
     val id: String = "",
     val preguntaId: String = "",
     val tipoRecurso: String,
@@ -607,6 +726,21 @@ private fun V1ExamenDto.toDomain(specialtyName: String) = Exam(
     deletedAt = null,
 )
 
+private fun V1ExamenDto.toRafagaDomain(specialtyName: String) = Rafaga(
+    id = id,
+    specialtyId = especialidadId,
+    specialtyName = specialtyName,
+    title = titulo,
+    priceTickets = if (tipoAcceso == "premium") 1 else 0,
+    status = ExamStatus.PUBLISHED,
+    publishFrom = null,
+    publishedAt = publicadoEn.toInstantOrNull(),
+    questionCount = totalPreguntas,
+    createdAt = nowInstant(),
+    updatedAt = nowInstant(),
+    deletedAt = null,
+)
+
 private fun V1PreguntaExamenDto.toDomain(examId: String) = ExamQuestion(
     id = id,
     examId = examId,
@@ -618,6 +752,19 @@ private fun V1PreguntaExamenDto.toDomain(examId: String) = ExamQuestion(
     resources = emptyList(),
     createdAt = nowInstant(),
     updatedAt = nowInstant(),
+)
+
+private fun V1PreguntaExamenDto.toRafagaDomain(rafagaId: String) = RafagaQuestion(
+    id = id,
+    rafagaId = rafagaId,
+    statement = titulo,
+    sortOrder = posicion,
+    options = opciones.mapIndexed { index, option -> option.toDomain(questionId = id, index = index) }
+        .sortedBy { it.sortOrder },
+    resources = emptyList(),
+    createdAt = nowInstant(),
+    updatedAt = nowInstant(),
+    deletedAt = null,
 )
 
 private fun V1OpcionPreguntaDto.toDomain(questionId: String, index: Int) = QuestionOption(
@@ -650,28 +797,29 @@ private fun Specialty.toDto() = EspecialidadDto(
 
 private fun SolucionarioDto.toDomain(specialtyName: String) = Exam(
     id = id,
-    code = "",
+    code = codigo,
     specialtyId = especialidadId,
     specialtyName = specialtyName.ifBlank { descripcion },
     communityId = null,
     title = titulo,
     description = descripcion,
-    typeExam = "inmersivo",
-    typeAccess = if (precioTickets > 0) "premium" else "gratuito",
+    typeExam = tipoExamen,
+    typeAccess = tipoAcceso,
     priceTickets = precioTickets,
     status = estado.toExamStatus(),
     publishFrom = publicarDesde.toInstantOrNull(),
     publishedAt = publishedAt.toInstantOrNull(),
     sortOrder = orden,
     questionCount = 0,
-    durationMinutes = null,
-    year = null,
-    isOfficial = false,
+    durationMinutes = duracionMinutos,
+    year = anio,
+    isOfficial = esOficial,
     coverUrl = portadaUrl,
     coverStoragePath = portadaStoragePath,
     coverMimeType = portadaMimeType,
     createdAt = createdAt.toInstantOrNow(),
     updatedAt = updatedAt.toInstantOrNow(),
+    version = version,
     deletedAt = deletedAt.toInstantOrNull(),
 )
 
@@ -692,19 +840,26 @@ private fun RafagaDto.toDomain(specialtyName: String) = Rafaga(
 
 private fun Exam.toDto() = SolucionarioDto(
     id = id,
+    codigo = code,
     titulo = title,
     especialidadId = specialtyId,
     descripcion = description,
+    tipoExamen = typeExam,
+    tipoAcceso = typeAccess,
     precioTickets = priceTickets,
     estado = status.name.lowercase(),
     publicarDesde = publishFrom?.toString(),
     publishedAt = publishedAt?.toString(),
     orden = sortOrder,
+    duracionMinutos = durationMinutes,
+    anio = year,
+    esOficial = isOfficial,
     portadaUrl = coverUrl,
     portadaStoragePath = coverStoragePath,
     portadaMimeType = coverMimeType,
     createdAt = createdAt.toString(),
     updatedAt = updatedAt.toString(),
+    version = version,
     deletedAt = deletedAt?.toString(),
 )
 
@@ -728,16 +883,18 @@ private fun PreguntaDto.toDomain() = ExamQuestion(
     statement = enunciado,
     sortOrder = orden,
     options = opciones.map { it.toDomain(id) }.sortedBy { it.sortOrder },
-    resources = recursos.map { it.toDomain() }.sortedBy { it.sortOrder },
+    resources = recursos.map { it.toDomain(id) }.sortedBy { it.sortOrder },
     createdAt = nowInstant(),
     updatedAt = nowInstant(),
 )
 
-private fun RafagaPreguntaDto.toDomain() = RafagaQuestion(
+internal fun RafagaPreguntaDto.toDomain() = RafagaQuestion(
     id = id,
     rafagaId = rafagaId,
     statement = enunciado,
     sortOrder = orden,
+    options = opciones.map { it.toDomain(id) }.sortedBy { it.sortOrder },
+    resources = recursos.map { it.toDomain(id) }.sortedBy { it.sortOrder },
     createdAt = createdAt.toInstantOrNow(),
     updatedAt = updatedAt.toInstantOrNow(),
     deletedAt = deletedAt.toInstantOrNull(),
@@ -753,11 +910,13 @@ private fun ExamQuestion.toDto() = PreguntaDto(
     recursos = resources.map { it.toDto() },
 )
 
-private fun RafagaQuestion.toDto() = RafagaPreguntaDto(
+internal fun RafagaQuestion.toDto() = RafagaPreguntaDto(
     id = id,
     rafagaId = rafagaId,
     enunciado = statement,
     orden = sortOrder,
+    opciones = options.map { it.toDto() },
+    recursos = resources.map { it.toDto() },
     createdAt = createdAt.toString(),
     updatedAt = updatedAt.toString(),
     deletedAt = deletedAt?.toString(),
@@ -780,9 +939,9 @@ private fun QuestionOption.toDto() = OpcionDto(
     orden = sortOrder,
 )
 
-private fun RecursoPreguntaDto.toDomain() = QuestionResource(
+private fun RecursoPreguntaDto.toDomain(questionIdFallback: String = "") = QuestionResource(
     id = id,
-    questionId = preguntaId,
+    questionId = preguntaId.ifBlank { questionIdFallback },
     type = tipoRecurso.toResourceType(),
     title = titulo.ifBlank { url.substringAfterLast('/') },
     textBody = if (tipoRecurso.toResourceType() == QuestionResourceType.TEXT) url else null,

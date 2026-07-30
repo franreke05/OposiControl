@@ -12,8 +12,8 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSuccess
 
 class KtorConnectionDiagnosticsRepositoryImpl(
@@ -30,55 +30,38 @@ class KtorConnectionDiagnosticsRepositoryImpl(
             ok = true,
             detail = "$baseUrl${if (baseUrl.isLocalDevelopmentUrl()) " (desarrollo local)" else ""}",
         )
-        val sessionToken = sessionLocalDataSource.currentSession()?.accessToken?.ifBlank { null }
+        checks += runCheck("GET ${BackendRoutes.HEALTH_LIVE}") {
+            client.get(BackendRoutes.url(baseUrl, BackendRoutes.HEALTH_LIVE)).diagnosticDetail()
+        }
+        val sessionToken = sessionLocalDataSource.currentSession()?.accessToken?.takeIf(String::isNotBlank)
         checks += ConnectionDiagnosticCheck(
-            name = "Auth token legacy/admin",
-            ok = true,
-            detail = when {
-                sessionToken != null -> "sesion"
-                appConfig.backendToken.isNotBlank() -> "backend configurado"
-                else -> "pendiente: no requerido para /v1 contenido"
-            },
+            name = "JWT Supabase",
+            ok = sessionToken != null,
+            detail = if (sessionToken != null) "sesion disponible" else "inicia sesion para comprobar rutas administrativas",
         )
-        checks += runCheck("GET ${BackendRoutes.HEALTH}") {
-            client.get(BackendRoutes.url(baseUrl, BackendRoutes.HEALTH)).diagnosticDetail()
+        if (sessionToken != null) {
+            checks += runCheck("GET ${BackendRoutes.AUTH_ME}") {
+                client.get(BackendRoutes.url(baseUrl, BackendRoutes.AUTH_ME)) {
+                    bearerToken(sessionToken)
+                }.diagnosticDetail()
+            }
+            checks += runCheck("GET ${BackendRoutes.SPECIALTIES}") {
+                authenticatedDiagnostic(
+                    baseUrl = baseUrl,
+                    canonicalPath = BackendRoutes.SPECIALTIES,
+                    legacyPath = "/v1/especialidades",
+                    token = sessionToken,
+                )
+            }
+            checks += runCheck("GET ${BackendRoutes.EXAMS}") {
+                authenticatedDiagnostic(
+                    baseUrl = baseUrl,
+                    canonicalPath = BackendRoutes.EXAMS,
+                    legacyPath = "/v1/examenes",
+                    token = sessionToken,
+                )
+            }
         }
-        checks += runCheck("GET ${BackendRoutes.V1_ESPECIALIDADES}") {
-            client.get(BackendRoutes.url(baseUrl, BackendRoutes.V1_ESPECIALIDADES)).diagnosticDetail()
-        }
-        checks += runCheck("GET ${BackendRoutes.V1_EXAMENES}") {
-            client.get(BackendRoutes.url(baseUrl, BackendRoutes.V1_EXAMENES)).diagnosticDetail()
-        }
-        checks += runCheck("GET ${BackendRoutes.ADMIN_V1_ESPECIALIDADES}") {
-            client.get(BackendRoutes.url(baseUrl, BackendRoutes.ADMIN_V1_ESPECIALIDADES)) {
-                backendHeaders()
-            }.diagnosticDetail()
-        }
-        checks += runCheck("GET ${BackendRoutes.ADMIN_V1_EXAMENES}") {
-            client.get(BackendRoutes.url(baseUrl, BackendRoutes.ADMIN_V1_EXAMENES)) {
-                backendHeaders()
-            }.diagnosticDetail()
-        }
-        checks += runCheck("GET ${BackendRoutes.ADMIN_V1_FEEDBACK_PREGUNTAS}") {
-            client.get(BackendRoutes.url(baseUrl, BackendRoutes.ADMIN_V1_FEEDBACK_PREGUNTAS)) {
-                backendHeaders()
-            }.diagnosticDetail()
-        }
-        checks += runCheck("GET ${BackendRoutes.ADMIN_V1_AUDITORIA}") {
-            client.get(BackendRoutes.url(baseUrl, BackendRoutes.ADMIN_V1_AUDITORIA)) {
-                backendHeaders()
-            }.diagnosticDetail()
-        }
-        checks += ConnectionDiagnosticCheck(
-            name = "GET /tags auth",
-            ok = true,
-            detail = "pendiente: endpoint no migrado a /v1",
-        )
-        checks += ConnectionDiagnosticCheck(
-            name = "GET /search auth",
-            ok = true,
-            detail = "pendiente: endpoint no migrado a /v1",
-        )
         ConnectionDiagnosticReport(checks)
     }
 
@@ -88,7 +71,7 @@ class KtorConnectionDiagnosticsRepositoryImpl(
             backendHeaders()
         }
         if (!response.status.isSuccess()) {
-            error(response.status.toDiagnosticDetail(response.bodyAsText().toBodyPreview()))
+            error(response.status.toDiagnosticDetail())
         }
     }
 
@@ -98,7 +81,7 @@ class KtorConnectionDiagnosticsRepositoryImpl(
             backendHeaders()
         }
         if (!response.status.isSuccess()) {
-            error(response.status.toDiagnosticDetail(response.bodyAsText().toBodyPreview()))
+            error(response.status.toDiagnosticDetail())
         }
     }
 
@@ -118,37 +101,45 @@ class KtorConnectionDiagnosticsRepositoryImpl(
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() }
-            ?: return
+        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() } ?: return
+        bearerToken(token)
+    }
+
+    private fun io.ktor.client.request.HttpRequestBuilder.bearerToken(token: String) {
         header(HttpHeaders.Authorization, "Bearer $token")
     }
 
+    private suspend fun authenticatedDiagnostic(
+        baseUrl: String,
+        canonicalPath: String,
+        legacyPath: String,
+        token: String,
+    ): String {
+        val canonical = client.get(BackendRoutes.url(baseUrl, canonicalPath)) {
+            bearerToken(token)
+        }
+        if (canonical.status != HttpStatusCode.NotFound) return canonical.diagnosticDetail()
+        val legacy = client.get(BackendRoutes.url(baseUrl, legacyPath)) {
+            bearerToken(token)
+        }
+        return "${legacy.diagnosticDetail()} (adaptador de lectura heredado)"
+    }
+
     private suspend fun HttpResponse.diagnosticDetail(): String {
-        val text = bodyAsText()
-        val preview = text.toBodyPreview()
         if (!status.isSuccess()) {
-            error(status.toDiagnosticDetail(preview))
+            error(status.toDiagnosticDetail())
         }
-        return "${status.value} ${status.description}: $preview"
+        return "${status.value} ${status.description}"
     }
 
-    private fun io.ktor.http.HttpStatusCode.toDiagnosticDetail(bodyPreview: String): String {
+    private fun io.ktor.http.HttpStatusCode.toDiagnosticDetail(): String {
         return when (value) {
-            401 -> "401 Unauthorized: token rechazado o no enviado. Body: $bodyPreview"
-            403 -> "403 Forbidden: token valido sin permisos suficientes. Body: $bodyPreview"
-            404 -> "404 Not Found: endpoint no registrado en Ktor. Body: $bodyPreview"
-            in 500..599 -> "$value ${description}: backend/Supabase fallo. Body: $bodyPreview"
-            else -> "$value ${description}: $bodyPreview"
+            401 -> "401 Unauthorized: inicia sesion de nuevo."
+            403 -> "403 Forbidden: la sesion no tiene permisos suficientes."
+            404 -> "404 Not Found: endpoint no registrado en Ktor."
+            in 500..599 -> "$value ${description}: fallo interno de backend o Supabase."
+            else -> "$value $description"
         }
-    }
-
-    private fun String.toBodyPreview(): String {
-        return replace('\n', ' ')
-            .replace('\r', ' ')
-            .replace(Regex("\\s+"), " ")
-            .take(520)
-            .ifBlank { "sin cuerpo" }
     }
 
     private fun Throwable.toDiagnosticDetail(baseUrl: String): String {

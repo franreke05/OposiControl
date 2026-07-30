@@ -24,7 +24,8 @@ fun String.toBuildConfigString(): String {
     return "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
-val backendTokenForBuild = localEnvValue("OPOSICONTROL_BACKEND_TOKEN")
+val supabasePublishableKeyForBuild = localEnvValue("SUPABASE_PUBLISHABLE_KEY")
+val supabaseUrlForBuild = localEnvValue("SUPABASE_URL")
 
 kotlin {
     androidTarget {
@@ -118,9 +119,8 @@ android {
                 "String", "BASE_URL",
                 localEnvValue("BASE_URL").ifBlank { "http://10.0.2.2:8080" }.toBuildConfigString(),
             )
-            buildConfigField("String", "BACKEND_TOKEN", backendTokenForBuild.toBuildConfigString())
-            buildConfigField("String", "SUPABASE_URL", "\"\"")
-            buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
+            buildConfigField("String", "SUPABASE_URL", supabaseUrlForBuild.toBuildConfigString())
+            buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", supabasePublishableKeyForBuild.toBuildConfigString())
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
             buildConfigField("boolean", "ENABLE_LOGS", "true")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "false")
@@ -131,9 +131,8 @@ android {
             versionNameSuffix = "-staging"
             buildConfigField("String", "APP_ENV", "\"staging\"")
             buildConfigField("String", "BASE_URL", "\"https://staging.api.oposicontrol.local\"")
-            buildConfigField("String", "BACKEND_TOKEN", "\"\"")
-            buildConfigField("String", "SUPABASE_URL", "\"\"")
-            buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
+            buildConfigField("String", "SUPABASE_URL", supabaseUrlForBuild.toBuildConfigString())
+            buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", supabasePublishableKeyForBuild.toBuildConfigString())
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
             buildConfigField("boolean", "ENABLE_LOGS", "true")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "true")
@@ -142,9 +141,8 @@ android {
             dimension = "environment"
             buildConfigField("String", "APP_ENV", "\"prod\"")
             buildConfigField("String", "BASE_URL", "\"https://api.oposicontrol.local\"")
-            buildConfigField("String", "BACKEND_TOKEN", "\"\"")
-            buildConfigField("String", "SUPABASE_URL", "\"\"")
-            buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
+            buildConfigField("String", "SUPABASE_URL", supabaseUrlForBuild.toBuildConfigString())
+            buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", supabasePublishableKeyForBuild.toBuildConfigString())
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
             buildConfigField("boolean", "ENABLE_LOGS", "false")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "true")

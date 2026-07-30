@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.data.repository
 
+import com.oposicontrol.admin.core.api.AdminApiDevelopment
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.common.result.onSuccess
@@ -9,26 +10,56 @@ import com.oposicontrol.admin.domain.model.AuthCredentials
 import com.oposicontrol.admin.domain.model.Session
 import com.oposicontrol.admin.domain.repository.AuthRepository
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class AuthRepositoryImpl(
     private val remote: AuthDataSource,
     private val local: SessionLocalDataSource,
 ) : AuthRepository {
+    private val sessionMutex = Mutex()
+
     override fun observeSession(): Flow<Session?> = local.observeSession()
 
     override suspend fun login(credentials: AuthCredentials): AppResult<Session> {
-        return remote.login(credentials).onSuccess(local::save)
+        return sessionMutex.withLock {
+            remote.login(credentials).onSuccess(local::save)
+        }
     }
 
     override suspend fun refreshSession(): AppResult<Session> {
-        val currentSession = local.currentSession()
+        val requestedSession = local.currentSession()
             ?: return AppResult.Failure(AppError.Authentication("No hay sesion activa para refrescar."))
-        return remote.refreshSession(currentSession.refreshToken).onSuccess(local::save)
+        if (requestedSession.accessToken == AdminApiDevelopment.OPEN_ACCESS_TOKEN) {
+            return AppResult.Success(requestedSession)
+        }
+        return sessionMutex.withLock {
+            val latestSession = local.currentSession()
+                ?: return@withLock AppResult.Failure(
+                    AppError.Authentication("No hay sesion activa para refrescar."),
+                )
+            if (latestSession.refreshToken != requestedSession.refreshToken) {
+                return@withLock AppResult.Success(latestSession)
+            }
+            remote.refreshSession(latestSession.refreshToken)
+                .onSuccess(local::save)
+                .also { result ->
+                    if (result is AppResult.Failure && result.error is AppError.Authentication) {
+                        local.clear()
+                    }
+                }
+        }
     }
 
     override suspend fun logout(): AppResult<Unit> {
-        val result = remote.logout(local.currentSession()?.accessToken)
-        local.clear()
-        return result
+        return sessionMutex.withLock {
+            if (local.currentSession()?.accessToken == AdminApiDevelopment.OPEN_ACCESS_TOKEN) {
+                local.clear()
+                return@withLock AppResult.Success(Unit)
+            }
+            val result = remote.logout(local.currentSession()?.accessToken)
+            local.clear()
+            result
+        }
     }
 }

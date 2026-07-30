@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.exams.presentation
 import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.core.testing.InMemoryLogger
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamResourceAudit
@@ -20,6 +21,7 @@ import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
+import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
@@ -53,12 +55,14 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExamsViewModelTest {
     @Test
-    fun `selecting exam loads related questions`() = runTest {
+    fun `selecting rafaga exam loads related questions`() = runTest {
         val repository = ExamsTestRepository()
+        val logger = InMemoryLogger()
         val viewModel = ExamsViewModel(
             dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
             observeSpecialtiesUseCase = ObserveSpecialtiesUseCase(repository),
@@ -88,6 +92,7 @@ class ExamsViewModelTest {
             uploadQuestionResourceUseCase = UploadQuestionResourceUseCase(repository),
             deleteQuestionResourceUseCase = DeleteQuestionResourceUseCase(repository),
             analyticsTracker = NoOpAnalyticsTracker,
+            logger = logger,
         )
         advanceUntilIdle()
 
@@ -99,8 +104,17 @@ class ExamsViewModelTest {
         assertEquals("exam-tcae-marzo", state.selectedExamId)
         assertEquals(2, questions.size)
         assertEquals("question-tcae-1", questions.first().id)
+        val start = logger.entries.single { "event=exams.refresh.start " in it.message }
+        val success = logger.entries.single { "event=exams.refresh.success " in it.message }
+        assertEquals(examsCorrelationId(start.message), examsCorrelationId(success.message))
+        assertEquals("OC-VM", start.tag)
+        assertFalse(logger.entries.any { "exam-tcae-marzo" in it.message })
+        viewModel.clear()
     }
 }
+
+private fun examsCorrelationId(message: String): String =
+    Regex("correlationId=([^ ]+)").find(message)?.groupValues?.get(1).orEmpty()
 
 private class ExamsTestRepository : ContentRepository {
     private val now = Instant.parse("2026-04-15T09:00:00Z")
@@ -260,6 +274,29 @@ private class ExamsTestRepository : ContentRepository {
         )
     }
     override suspend fun deleteResource(questionId: String, resourceId: String): AppResult<Unit> = AppResult.Success(Unit)
+
+    override suspend fun deleteResource(questionId: String, resourceId: String): AppResult<Unit> {
+        questions.values.forEach { bucket ->
+            val questionIndex = bucket.indexOfFirst { it.id == questionId }
+            if (questionIndex >= 0) {
+                val question = bucket[questionIndex]
+                bucket[questionIndex] = question.copy(
+                    resources = question.resources.filterNot { it.id == resourceId },
+                )
+            }
+        }
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun clearExamCover(examId: String): AppResult<Exam> {
+        val saved = exams.value.first { it.id == examId }.copy(
+            coverUrl = null,
+            coverStoragePath = null,
+            coverMimeType = null,
+        )
+        exams.value = exams.value.map { if (it.id == examId) saved else it }
+        return AppResult.Success(saved)
+    }
 
     private fun question(id: String, examId: String, order: Int): ExamQuestion {
         return ExamQuestion(
