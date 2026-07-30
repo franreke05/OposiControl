@@ -21,7 +21,7 @@ fun SummaryCard(
 ) {
     GlassSurface(modifier = modifier.fillMaxWidth().heightIn(min = 142.dp)) {
         Column(
-            modifier = Modifier.padding(22.dp),
+            modifier = Modifier.padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(

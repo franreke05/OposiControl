@@ -10,9 +10,8 @@ actual fun platformRuntimeConfigSource(): RuntimeConfigSource {
         mapOf(
             AppConfigResolver.KEY_APP_ENV to BuildConfig.APP_ENV,
             AppConfigResolver.KEY_BASE_URL to BuildConfig.BASE_URL,
-            AppConfigResolver.KEY_BACKEND_TOKEN to BuildConfig.BACKEND_TOKEN,
             AppConfigResolver.KEY_SUPABASE_URL to BuildConfig.SUPABASE_URL,
-            AppConfigResolver.KEY_SUPABASE_ANON_KEY to BuildConfig.SUPABASE_ANON_KEY,
+            AppConfigResolver.KEY_SUPABASE_PUBLISHABLE_KEY to BuildConfig.SUPABASE_PUBLISHABLE_KEY,
             AppConfigResolver.KEY_SUPABASE_BUCKET_EXAM_RESOURCES to BuildConfig.SUPABASE_BUCKET_EXAM_RESOURCES,
             AppConfigResolver.KEY_USE_FAKE_DATA to BuildConfig.USE_FAKE_DATA.toString(),
             AppConfigResolver.KEY_ENABLE_LOGS to BuildConfig.ENABLE_LOGS.toString(),

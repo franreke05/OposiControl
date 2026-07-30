@@ -23,6 +23,8 @@ class UsersViewModel(
     initialState = UsersState(),
     dispatcherProvider = dispatcherProvider,
 ) {
+    private var lastSuccessfulSave: UsersSaveKey? = null
+
     init {
         scope.launch {
             observeUsersUseCase().collectLatest { users ->
@@ -37,29 +39,33 @@ class UsersViewModel(
 
     override suspend fun handleIntent(intent: UsersIntent) {
         when (intent) {
-            UsersIntent.CreateNew -> updateState {
-                it.copy(
-                    selectedUserId = null,
-                    editorName = "",
-                    editorEmail = "",
-                    editorRoleIds = "",
-                    editorIsActive = true,
-                    actionState = UiAsync.Idle,
-                )
+            UsersIntent.CreateNew -> {
+                lastSuccessfulSave = null
+                updateState {
+                    it.copy(
+                        selectedUserId = null,
+                        editorName = "",
+                        editorEmail = "",
+                        editorRoleIds = "",
+                        editorIsActive = true,
+                        actionState = UiAsync.Idle,
+                    )
+                }
             }
 
             UsersIntent.DeleteSelected -> deleteSelected()
             UsersIntent.Save -> save()
             is UsersIntent.SelectUser -> selectUser(intent.userId)
-            is UsersIntent.ToggleActive -> updateState { it.copy(editorIsActive = intent.value) }
-            is UsersIntent.UpdateEmail -> updateState { it.copy(editorEmail = intent.value) }
-            is UsersIntent.UpdateName -> updateState { it.copy(editorName = intent.value) }
-            is UsersIntent.UpdateRoleIds -> updateState { it.copy(editorRoleIds = intent.value) }
+            is UsersIntent.ToggleActive -> updateEditor { it.copy(editorIsActive = intent.value) }
+            is UsersIntent.UpdateEmail -> updateEditor { it.copy(editorEmail = intent.value) }
+            is UsersIntent.UpdateName -> updateEditor { it.copy(editorName = intent.value) }
+            is UsersIntent.UpdateRoleIds -> updateEditor { it.copy(editorRoleIds = intent.value) }
         }
     }
 
     private fun selectUser(userId: String) {
         val user = (currentState().users as? UiAsync.Success)?.value?.firstOrNull { it.id == userId } ?: return
+        lastSuccessfulSave = null
         updateState {
             it.copy(
                 selectedUserId = user.id,
@@ -73,43 +79,90 @@ class UsersViewModel(
     }
 
     private suspend fun save() {
+        val state = currentState()
+        if (state.actionState == UiAsync.Loading) return
+        val roleIds = state.editorRoleIds
+            .split(",")
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinct()
+        val saveKey = UsersSaveKey(
+            selectedUserId = state.selectedUserId,
+            fullName = state.editorName.trim(),
+            email = state.editorEmail.trim(),
+            roleIds = roleIds,
+            isActive = state.editorIsActive,
+        )
+        if (saveKey == lastSuccessfulSave) return
+
         analyticsTracker.trackScreen("users")
         updateState { it.copy(actionState = UiAsync.Loading) }
-        val existingUser = (currentState().users as? UiAsync.Success)?.value?.firstOrNull { it.id == currentState().selectedUserId }
+        val existingUser = (state.users as? UiAsync.Success)?.value?.firstOrNull { it.id == state.selectedUserId }
         val user = User(
             id = existingUser?.id.orEmpty(),
-            fullName = currentState().editorName,
-            email = currentState().editorEmail,
-            roleIds = currentState().editorRoleIds.split(",").map(String::trim).filter(String::isNotBlank),
-            isActive = currentState().editorIsActive,
+            fullName = saveKey.fullName,
+            email = saveKey.email,
+            roleIds = saveKey.roleIds,
+            isActive = saveKey.isActive,
             createdAt = existingUser?.createdAt ?: Clock.System.now(),
         )
         when (val result = upsertUserUseCase(user)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> updateState {
-                it.copy(
-                    selectedUserId = result.value.id,
-                    actionState = UiAsync.Success(Unit),
+            is AppResult.Success -> {
+                val saved = result.value
+                lastSuccessfulSave = UsersSaveKey(
+                    selectedUserId = saved.id,
+                    fullName = saved.fullName,
+                    email = saved.email,
+                    roleIds = saved.roleIds,
+                    isActive = saved.isActive,
                 )
+                updateState {
+                    it.copy(
+                        selectedUserId = saved.id,
+                        editorName = saved.fullName,
+                        editorEmail = saved.email,
+                        editorRoleIds = saved.roleIds.joinToString(","),
+                        editorIsActive = saved.isActive,
+                        actionState = UiAsync.Success(Unit),
+                    )
+                }
             }
         }
     }
 
     private suspend fun deleteSelected() {
+        if (currentState().actionState == UiAsync.Loading) return
         val selectedUserId = currentState().selectedUserId ?: return
         updateState { it.copy(actionState = UiAsync.Loading) }
         when (val result = deleteUserUseCase(selectedUserId)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> updateState {
-                it.copy(
-                    selectedUserId = null,
-                    editorName = "",
-                    editorEmail = "",
-                    editorRoleIds = "",
-                    editorIsActive = true,
-                    actionState = UiAsync.Success(Unit),
-                )
+            is AppResult.Success -> {
+                lastSuccessfulSave = null
+                updateState {
+                    it.copy(
+                        selectedUserId = null,
+                        editorName = "",
+                        editorEmail = "",
+                        editorRoleIds = "",
+                        editorIsActive = true,
+                        actionState = UiAsync.Success(Unit),
+                    )
+                }
             }
         }
     }
+
+    private fun updateEditor(transform: (UsersState) -> UsersState) {
+        lastSuccessfulSave = null
+        updateState { transform(it).copy(actionState = UiAsync.Idle) }
+    }
 }
+
+private data class UsersSaveKey(
+    val selectedUserId: String?,
+    val fullName: String,
+    val email: String,
+    val roleIds: List<String>,
+    val isActive: Boolean,
+)

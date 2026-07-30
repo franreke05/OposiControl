@@ -37,6 +37,7 @@ data class Exam(
     val coverMimeType: String? = null,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val version: Int = 1,
     val deletedAt: Instant? = null,
 )
 
@@ -83,6 +84,8 @@ data class RafagaQuestion(
     val rafagaId: String,
     val statement: String,
     val sortOrder: Int,
+    val options: List<QuestionOption> = emptyList(),
+    val resources: List<QuestionResource> = emptyList(),
     val createdAt: Instant,
     val updatedAt: Instant,
     val deletedAt: Instant? = null,

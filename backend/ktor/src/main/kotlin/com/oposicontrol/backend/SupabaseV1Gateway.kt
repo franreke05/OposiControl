@@ -154,7 +154,7 @@ class SupabaseV1Gateway private constructor(
     companion object {
         fun fromEnvironment(json: Json): SupabaseV1Gateway? {
             val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+            val serviceRoleKey = System.getenv("SUPABASE_SECRET_KEY").orEmpty()
             return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseV1Gateway(url, serviceRoleKey, json)
         }
     }

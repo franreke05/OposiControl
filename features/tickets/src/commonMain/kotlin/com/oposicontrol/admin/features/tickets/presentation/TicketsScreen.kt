@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -24,19 +25,37 @@ import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
 import com.oposicontrol.admin.core.ui.components.FormSection
 import com.oposicontrol.admin.core.ui.components.StatusChip
+import kotlinx.coroutines.flow.collect
 
 @Composable
 fun TicketsScreen(
     viewModel: TicketsViewModel,
+    onEffect: (TicketsEffect) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
+
+    LaunchedEffect(viewModel, onEffect) {
+        viewModel.effects.collect(onEffect)
+    }
+
+    TicketsContent(
+        state = state,
+        onIntent = viewModel::dispatch,
+    )
+}
+
+@Composable
+fun TicketsContent(
+    state: TicketsState,
+    onIntent: (TicketsIntent) -> Unit,
+) {
     CrudSplitLayout(
         modifier = Modifier.fillMaxSize(),
         listPane = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 FilterBar(
                     searchValue = state.searchQuery,
-                    onSearchChange = { viewModel.dispatch(TicketsIntent.UpdateSearch(it)) },
+                    onSearchChange = { onIntent(TicketsIntent.UpdateSearch(it)) },
                     placeholder = "Buscar usuario o especialidad",
                 )
                 AsyncStatePane(state.wallets, emptyMessage = "No hay carteras.") { wallets ->
@@ -49,12 +68,12 @@ fun TicketsScreen(
                         ),
                         rows = wallets.map { wallet ->
                             AdminTableRow(
-                                key = wallet.userId,
+                                key = wallet.userId.value,
                                 cells = listOf(wallet.userName, wallet.specialty, wallet.balance.toString(), wallet.status),
                                 selected = wallet.userId == state.selectedUserId,
                             )
                         },
-                        onRowClick = { viewModel.dispatch(TicketsIntent.SelectWallet(it)) },
+                        onRowClick = { onIntent(TicketsIntent.SelectWallet(WalletUserId(it))) },
                     )
                 }
             }
@@ -69,18 +88,18 @@ fun TicketsScreen(
                         StatusChip("active")
                         OutlinedTextField(
                             value = state.adjustmentAmount,
-                            onValueChange = { viewModel.dispatch(TicketsIntent.UpdateAdjustmentAmount(it)) },
+                            onValueChange = { onIntent(TicketsIntent.UpdateAdjustmentAmount(it)) },
                             label = { Text("Importe (+/-)") },
                             modifier = Modifier.fillMaxWidth(),
                         )
                         OutlinedTextField(
                             value = state.adjustmentReason,
-                            onValueChange = { viewModel.dispatch(TicketsIntent.UpdateAdjustmentReason(it)) },
+                            onValueChange = { onIntent(TicketsIntent.UpdateAdjustmentReason(it)) },
                             label = { Text("Razon") },
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Button(
-                            onClick = { viewModel.dispatch(TicketsIntent.ApplyAdjustment) },
+                            onClick = { onIntent(TicketsIntent.ApplyAdjustment) },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text("Aplicar ajuste")
@@ -100,7 +119,7 @@ fun TicketsScreen(
                 ) {
                     AsyncStatePane(state.transactions, emptyMessage = "Esta cartera no tiene movimientos.") { items ->
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items(items, key = { it.id }) { movement ->
+                            items(items, key = { it.id.value }) { movement ->
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     StatusChip(movement.type)
                                     Text(movement.reason, style = MaterialTheme.typography.titleSmall)

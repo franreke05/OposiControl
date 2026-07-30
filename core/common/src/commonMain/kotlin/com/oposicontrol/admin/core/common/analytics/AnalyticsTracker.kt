@@ -1,6 +1,11 @@
 package com.oposicontrol.admin.core.common.analytics
 
 import com.oposicontrol.admin.core.common.logging.Logger
+import com.oposicontrol.admin.core.common.logging.LogEvent
+import com.oposicontrol.admin.core.common.logging.LogLayer
+import com.oposicontrol.admin.core.common.logging.LogLevel
+import com.oposicontrol.admin.core.common.logging.LogTag
+import com.oposicontrol.admin.core.common.logging.SafeLogField
 
 interface AnalyticsTracker {
     fun trackScreen(screenName: String)
@@ -11,12 +16,28 @@ class ConsoleAnalyticsTracker(
     private val logger: Logger,
 ) : AnalyticsTracker {
     override fun trackScreen(screenName: String) {
-        logger.info("analytics.screen name=$screenName")
+        logger.log(
+            LogEvent(
+                level = LogLevel.INFO,
+                tag = LogTag.UI,
+                event = "analytics.screen",
+                screen = screenName,
+                layer = LogLayer.UI,
+            ),
+        )
     }
 
     override fun trackAction(actionName: String, metadata: Map<String, String>) {
-        val payload = metadata.entries.joinToString { "${it.key}=${it.value}" }
-        logger.info("analytics.action name=$actionName payload={$payload}")
+        logger.log(
+            LogEvent(
+                level = LogLevel.INFO,
+                tag = LogTag.UI,
+                event = "analytics.action",
+                layer = LogLayer.UI,
+                operation = actionName,
+                fields = mapOf(SafeLogField.COUNT to metadata.size.toString()),
+            ),
+        )
     }
 }
 

@@ -10,12 +10,17 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -31,17 +36,32 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.oposicontrol.admin.core.ui.layout.UiElevation
+import com.oposicontrol.admin.core.ui.layout.UiRadii
+import com.oposicontrol.admin.core.ui.layout.UiSizes
+import com.oposicontrol.admin.core.ui.layout.UiSpacing
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+
+enum class GlassButtonVariant {
+    Primary,
+    Secondary,
+    Destructive,
+}
 
 @Composable
 fun GlassSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(24.dp),
+    shape: Shape = RoundedCornerShape(UiRadii.extraLarge),
     tint: Color = GlassTheme.tokens.glassFill,
     strokeColor: Color = GlassTheme.tokens.glassStroke,
-    shadowElevation: Dp = 12.dp,
+    shadowElevation: Dp = UiElevation.high,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val animatedTint by animateColorAsState(
@@ -92,20 +112,70 @@ fun GlassActionButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     tint: Color = if (enabled) GlassTheme.tokens.accent else GlassTheme.tokens.glassFillStrong,
-    textColor: Color = if (enabled) Color.White else GlassTheme.tokens.textSecondary,
+    textColor: Color = if (enabled) GlassTheme.tokens.textPrimary else GlassTheme.tokens.textSecondary,
+    loading: Boolean = false,
     onClick: () -> Unit,
+) {
+    GlassButton(
+        text = text,
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        loading = loading,
+        tint = tint,
+        textColor = textColor,
+    )
+}
+
+@Composable
+fun GlassButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    variant: GlassButtonVariant = GlassButtonVariant.Primary,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+) {
+    val tokens = GlassTheme.tokens
+    val (tint, textColor) = when {
+        !enabled -> tokens.glassFillStrong to tokens.textSecondary
+        variant == GlassButtonVariant.Primary -> tokens.accent to tokens.textPrimary
+        variant == GlassButtonVariant.Secondary -> tokens.glassFillStrong to tokens.textPrimary
+        else -> tokens.error to Color.White
+    }
+    GlassButton(
+        text = text,
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        loading = loading,
+        tint = tint,
+        textColor = textColor,
+    )
+}
+
+@Composable
+private fun GlassButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier,
+    enabled: Boolean,
+    loading: Boolean,
+    tint: Color,
+    textColor: Color,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val animatedScale by animateFloatAsState(
-        targetValue = if (pressed && enabled) 0.98f else 1f,
+        targetValue = if (pressed && enabled && !loading) 0.98f else 1f,
         animationSpec = tween(durationMillis = 120),
     )
     val animatedElevation by animateDpAsState(
-        targetValue = if (pressed && enabled) 6.dp else 12.dp,
+        targetValue = if (pressed && enabled && !loading) 6.dp else UiElevation.high,
         animationSpec = tween(durationMillis = 120),
     )
-    val radius = 16.dp
+    val radius = UiRadii.medium
+    val canClick = enabled && !loading
     GlassSurface(
         modifier = modifier
             .graphicsLayer {
@@ -114,13 +184,20 @@ fun GlassActionButton(
             }
             .defaultMinSize(
                 minWidth = 88.dp,
-                minHeight = 50.dp,
+                minHeight = UiSizes.buttonHeight,
             )
+            .heightIn(min = UiSizes.buttonHeight)
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                if (!canClick) disabled()
+                if (loading) stateDescription = "Cargando"
+            }
             .clip(RoundedCornerShape(radius))
             .clickable(
-                enabled = enabled,
+                enabled = canClick,
                 interactionSource = interactionSource,
-                indication = null,
+                indication = LocalIndication.current,
+                role = Role.Button,
                 onClick = onClick,
             ),
         shape = RoundedCornerShape(radius),
@@ -132,16 +209,28 @@ fun GlassActionButton(
             modifier = Modifier
                 .wrapContentSize()
                 .padding(
-                    horizontal = 18.dp,
-                    vertical = 12.dp,
+                    horizontal = UiSpacing.block,
+                    vertical = UiSpacing.compact,
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.titleMedium,
-                color = textColor,
-            )
+            Row(
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(UiSpacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = textColor,
+                        strokeWidth = 2.dp,
+                    )
+                }
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = textColor,
+                )
+            }
         }
     }
 }

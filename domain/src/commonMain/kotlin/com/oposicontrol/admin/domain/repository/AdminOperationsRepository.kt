@@ -18,7 +18,7 @@ interface AdminOperationsRepository {
 
     suspend fun getTicketWallets(): AppResult<List<TicketWallet>>
     suspend fun getTicketTransactions(userId: String): AppResult<List<TicketTransaction>>
-    suspend fun appendTicketAdjustment(userId: String, amount: Double, reason: String): AppResult<TicketTransaction>
+    suspend fun appendTicketAdjustment(userId: String, amount: Long, reason: String): AppResult<TicketTransaction>
 
     suspend fun getSupportConversations(): AppResult<List<SupportConversationSummary>>
     suspend fun getSupportMessages(conversationId: String): AppResult<List<SupportMessage>>

@@ -21,7 +21,7 @@ class AuthApi(
 ) {
     suspend fun login(request: LoginRequestDto): SessionDto {
         return client.post("${requiredSupabaseUrl()}/auth/v1/token?grant_type=password") {
-            header("apikey", requiredAnonKey())
+            header("apikey", requiredPublishableKey())
             contentType(ContentType.Application.Json)
             setBody(request)
         }.body<SupabaseAuthResponseDto>().toSessionDto()
@@ -29,7 +29,7 @@ class AuthApi(
 
     suspend fun refresh(request: RefreshSessionRequestDto): SessionDto {
         return client.post("${requiredSupabaseUrl()}/auth/v1/token?grant_type=refresh_token") {
-            header("apikey", requiredAnonKey())
+            header("apikey", requiredPublishableKey())
             contentType(ContentType.Application.Json)
             setBody(mapOf("refresh_token" to request.refreshToken))
         }.body<SupabaseAuthResponseDto>().toSessionDto()
@@ -37,7 +37,7 @@ class AuthApi(
 
     suspend fun logout(token: String?) {
         client.post("${requiredSupabaseUrl()}/auth/v1/logout") {
-            header("apikey", requiredAnonKey())
+            header("apikey", requiredPublishableKey())
             header(HttpHeaders.Authorization, "Bearer ${token.orEmpty()}")
             contentType(ContentType.Application.Json)
             setBody(emptyMap<String, String>())
@@ -50,9 +50,9 @@ class AuthApi(
         }
     }
 
-    private fun requiredAnonKey(): String {
-        return appConfig.supabaseAnonKey.ifBlank {
-            throw IllegalStateException("SUPABASE_ANON_KEY no esta configurado.")
+    private fun requiredPublishableKey(): String {
+        return appConfig.supabasePublishableKey.ifBlank {
+            throw IllegalStateException("SUPABASE_PUBLISHABLE_KEY no esta configurado.")
         }
     }
 }

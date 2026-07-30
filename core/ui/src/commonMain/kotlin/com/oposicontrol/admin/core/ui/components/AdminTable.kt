@@ -22,6 +22,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -48,7 +53,8 @@ fun AdminTable(
     GlassSurface(modifier = modifier.fillMaxWidth()) {
         val scrollState = rememberScrollState()
         val columnWidths = columns.map { ((it.weight * 172f).dp).coerceAtLeast(118.dp) }
-        val tableWidth = columnWidths.fold(0.dp) { total, width -> total + width } + ((columns.size - 1).coerceAtLeast(0) * 14).dp
+        val tableWidth = columnWidths.fold(0.dp) { total, width -> total + width } +
+            ((columns.size - 1).coerceAtLeast(0) * 16).dp
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -57,17 +63,19 @@ fun AdminTable(
             Row(
                 modifier = Modifier
                     .width(tableWidth)
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 columns.forEachIndexed { index, column ->
                     Text(
                         text = column.label,
-                        modifier = Modifier.width(columnWidths[index]),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .width(columnWidths[index])
+                            .semantics { heading() },
                     )
                 }
             }
@@ -85,22 +93,30 @@ fun AdminTable(
                     Column(
                         modifier = Modifier
                             .width(tableWidth)
-                            .heightIn(min = 58.dp)
+                            .heightIn(min = 60.dp)
                             .animateContentSize(animationSpec = tween(durationMillis = 180))
                             .background(color = rowBackground)
                             .then(
                                 if (onRowClick != null) {
-                                    Modifier.clickable { onRowClick(row.key) }
+                                    Modifier
+                                        .semantics {
+                                            role = Role.Button
+                                            selected = row.selected
+                                        }
+                                        .clickable(
+                                            role = Role.Button,
+                                            onClick = { onRowClick(row.key) },
+                                        )
                                 } else {
                                     Modifier
                                 },
                             )
-                            .padding(horizontal = 18.dp, vertical = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
                         ) {
                             row.cells.forEachIndexed { index, cell ->
                                 Text(

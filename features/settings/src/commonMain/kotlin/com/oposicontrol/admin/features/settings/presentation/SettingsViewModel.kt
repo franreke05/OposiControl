@@ -24,6 +24,8 @@ class SettingsViewModel(
     initialState = SettingsState(environmentLabel = appConfig.environment.name),
     dispatcherProvider = dispatcherProvider,
 ) {
+    private var lastPersistedSettings: AdminSettings? = null
+
     init {
         scope.launch {
             observeSettingsUseCase().collectLatest(::applySettings)
@@ -35,11 +37,11 @@ class SettingsViewModel(
         when (intent) {
             SettingsIntent.Refresh -> refresh()
             SettingsIntent.Save -> save()
-            is SettingsIntent.TogglePreferFakeData -> updateState { it.copy(preferFakeData = false) }
-            is SettingsIntent.ToggleReleaseNotes -> updateState { it.copy(receiveReleaseNotes = intent.value) }
-            is SettingsIntent.ToggleVerboseLogs -> updateState { it.copy(enableVerboseLogs = intent.value) }
-            is SettingsIntent.UpdateDisplayName -> updateState { it.copy(displayName = intent.value) }
-            is SettingsIntent.UpdateEmail -> updateState { it.copy(email = intent.value) }
+            is SettingsIntent.TogglePreferFakeData -> updateEditor { it.copy(preferFakeData = intent.value) }
+            is SettingsIntent.ToggleReleaseNotes -> updateEditor { it.copy(receiveReleaseNotes = intent.value) }
+            is SettingsIntent.ToggleVerboseLogs -> updateEditor { it.copy(enableVerboseLogs = intent.value) }
+            is SettingsIntent.UpdateDisplayName -> updateEditor { it.copy(displayName = intent.value) }
+            is SettingsIntent.UpdateEmail -> updateEditor { it.copy(email = intent.value) }
         }
     }
 
@@ -56,15 +58,19 @@ class SettingsViewModel(
     }
 
     private suspend fun save() {
-        updateState { it.copy(actionState = UiAsync.Loading) }
+        val state = currentState()
+        if (state.actionState == UiAsync.Loading) return
         val settings = AdminSettings(
-            displayName = currentState().displayName,
-            email = currentState().email,
-            receiveReleaseNotes = currentState().receiveReleaseNotes,
+            displayName = state.displayName.trim(),
+            email = state.email.trim(),
+            receiveReleaseNotes = state.receiveReleaseNotes,
             defaultEnvironment = appConfig.environment,
-            preferFakeData = false,
-            enableVerboseLogs = currentState().enableVerboseLogs,
+            preferFakeData = state.preferFakeData,
+            enableVerboseLogs = state.enableVerboseLogs,
         )
+        if (settings == lastPersistedSettings) return
+
+        updateState { it.copy(actionState = UiAsync.Loading) }
         when (val result = updateSettingsUseCase(settings)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
@@ -75,16 +81,21 @@ class SettingsViewModel(
     }
 
     private fun applySettings(settings: AdminSettings) {
+        lastPersistedSettings = settings
         updateState {
             it.copy(
                 settings = UiAsync.Success(settings),
                 displayName = settings.displayName,
                 email = settings.email,
                 receiveReleaseNotes = settings.receiveReleaseNotes,
-                preferFakeData = false,
+                preferFakeData = settings.preferFakeData,
                 enableVerboseLogs = settings.enableVerboseLogs,
                 environmentLabel = appConfig.environment.name,
             )
         }
+    }
+
+    private fun updateEditor(transform: (SettingsState) -> SettingsState) {
+        updateState { transform(it).copy(actionState = UiAsync.Idle) }
     }
 }

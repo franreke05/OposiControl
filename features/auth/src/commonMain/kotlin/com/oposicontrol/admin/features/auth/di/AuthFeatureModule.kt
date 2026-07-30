@@ -12,5 +12,5 @@ val authFeatureModule = module {
     factory { LogoutUseCase(get()) }
     factory { ObserveSessionUseCase(get()) }
     factory { RefreshSessionUseCase(get()) }
-    factory { AuthViewModel(get(), get(), get(), get(), get(), get()) }
+    single { AuthViewModel(get(), get(), get(), get(), get(), get()) }
 }

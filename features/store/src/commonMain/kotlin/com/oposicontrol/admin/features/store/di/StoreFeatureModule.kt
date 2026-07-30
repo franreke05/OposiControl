@@ -35,6 +35,7 @@ val storeFeatureModule = module {
             upsertLimitedResourceUseCase = get(),
             upsertBurstCampaignUseCase = get(),
             analyticsTracker = get(),
+            logger = get(),
         )
     }
 }

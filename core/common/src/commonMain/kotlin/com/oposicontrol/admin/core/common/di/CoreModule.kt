@@ -4,9 +4,11 @@ import com.oposicontrol.admin.core.common.analytics.AnalyticsTracker
 import com.oposicontrol.admin.core.common.analytics.ConsoleAnalyticsTracker
 import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
 import com.oposicontrol.admin.core.common.config.AppConfig
+import com.oposicontrol.admin.core.common.config.Environment
 import com.oposicontrol.admin.core.common.coroutine.DefaultDispatcherProvider
 import com.oposicontrol.admin.core.common.coroutine.DispatcherProvider
 import com.oposicontrol.admin.core.common.logging.ConsoleLogger
+import com.oposicontrol.admin.core.common.logging.LogLevel
 import com.oposicontrol.admin.core.common.logging.Logger
 import com.oposicontrol.admin.core.common.logging.NoOpLogger
 import com.oposicontrol.admin.core.common.platform.AppPlatformContext
@@ -21,7 +23,14 @@ fun coreModule(
     single<DispatcherProvider> { DefaultDispatcherProvider }
     single<Logger> {
         if (appConfig.featureFlags.enableLogs) {
-            ConsoleLogger()
+            ConsoleLogger(
+                minimumLevel = when (appConfig.environment) {
+                    Environment.DEV -> LogLevel.DEBUG
+                    Environment.STAGING -> LogLevel.INFO
+                    Environment.PROD -> LogLevel.WARN
+                },
+                includeStackTraces = appConfig.environment == Environment.DEV,
+            )
         } else {
             NoOpLogger
         }

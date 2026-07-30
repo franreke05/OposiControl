@@ -4,5 +4,12 @@ import com.oposicontrol.admin.features.support.presentation.SupportViewModel
 import org.koin.dsl.module
 
 val supportFeatureModule = module {
-    single { SupportViewModel(get(), get(), get()) }
+    factory {
+        SupportViewModel(
+            dispatcherProvider = get(),
+            repository = get(),
+            analyticsTracker = get(),
+            logger = get(),
+        )
+    }
 }

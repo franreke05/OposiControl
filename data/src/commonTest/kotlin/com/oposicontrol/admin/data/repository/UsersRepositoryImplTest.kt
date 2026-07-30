@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlin.time.Clock
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class UsersRepositoryImplTest {
@@ -37,23 +39,25 @@ class UsersRepositoryImplTest {
                 id = "usr-900",
                 fullName = "Nuevo Admin",
                 email = "nuevo@oposicontrol.local",
-                roleIds = listOf("support"),
-                isActive = true,
+                roleIds = listOf("support", "auditor"),
+                isActive = false,
                 createdAt = Clock.System.now(),
             ),
         )
 
         val users = repository.observeUsers().first()
-        assertTrue(users.any { it.email == "nuevo@oposicontrol.local" })
+        val saved = users.first { it.email == "nuevo@oposicontrol.local" }
+        assertTrue(users.any { it.id == "usr-900" })
+        assertEquals(listOf("support", "auditor"), saved.roleIds)
+        assertFalse(saved.isActive)
     }
 
     private fun testConfig(): AppConfig {
         return AppConfig(
             environment = Environment.DEV,
             baseUrl = "https://dev.api.oposicontrol.local",
-            backendToken = "",
             supabaseUrl = "",
-            supabaseAnonKey = "",
+            supabasePublishableKey = "",
             supabaseBucketExamResources = "exam-resources",
             featureFlags = FeatureFlags(
                 useFakeData = true,

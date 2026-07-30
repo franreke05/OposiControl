@@ -321,7 +321,7 @@ class SupabaseTagSearchGateway private constructor(
     companion object {
         fun fromEnvironment(json: Json): SupabaseTagSearchGateway? {
             val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+            val serviceRoleKey = System.getenv("SUPABASE_SECRET_KEY").orEmpty()
             return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseTagSearchGateway(url, serviceRoleKey, json)
         }
     }

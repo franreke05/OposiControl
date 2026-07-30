@@ -17,9 +17,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.oposicontrol.admin.core.ui.layout.UiSizes
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 @Composable
@@ -30,13 +33,13 @@ fun StatusChip(
     val normalized = status.trim().lowercase()
     val (background, foreground) = when (normalized) {
         "active", "activo", "published", "publicado", "open", "resolved", "success", "correcta", "visible", "guardable", "publicable" -> {
-            GlassTheme.tokens.accent.copy(alpha = 0.16f) to GlassTheme.tokens.accent
+            GlassTheme.tokens.accent.copy(alpha = 0.22f) to GlassTheme.tokens.textPrimary
         }
         "draft", "borrador", "scheduled", "programado", "pending", "pendiente", "idle", "editable", "programable" -> {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) to MaterialTheme.colorScheme.primary
+            MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
         }
         "inactive", "inactivo", "archived", "archivado", "closed", "error", "ban", "muted", "bloqueada", "incompleta", "oculta" -> {
-            MaterialTheme.colorScheme.error.copy(alpha = 0.12f) to MaterialTheme.colorScheme.error
+            MaterialTheme.colorScheme.errorContainer to MaterialTheme.colorScheme.onErrorContainer
         }
         else -> MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant
     }
@@ -50,10 +53,13 @@ fun StatusChip(
     )
     Row(
         modifier = modifier
-            .defaultMinSize(minHeight = 30.dp)
+            .defaultMinSize(minHeight = UiSizes.chipMinHeight)
             .animateContentSize(animationSpec = tween(durationMillis = 180))
             .background(color = animatedBackground, shape = MaterialTheme.shapes.extraLarge)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .semantics(mergeDescendants = true) {
+                contentDescription = "Estado: $status"
+            }
+            .padding(horizontal = 12.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

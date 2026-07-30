@@ -45,3 +45,4 @@ cache.properties
 backend-run*.log
 backend-restart*.log
 ngrok*.log
+.logs/dev/

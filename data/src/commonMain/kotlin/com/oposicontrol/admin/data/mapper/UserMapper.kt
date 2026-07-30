@@ -2,7 +2,6 @@ package com.oposicontrol.admin.data.mapper
 
 import com.oposicontrol.admin.data.remote.dto.UserDto
 import com.oposicontrol.admin.domain.model.User
-import kotlinx.datetime.Instant
 
 fun UserDto.toDomain(): User {
     return User(
@@ -11,7 +10,7 @@ fun UserDto.toDomain(): User {
         email = email,
         roleIds = roleIds,
         isActive = isActive,
-        createdAt = Instant.parse(createdAt),
+        createdAt = createdAt.toInstantOrNow(),
     )
 }
 

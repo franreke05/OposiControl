@@ -1,12 +1,16 @@
 package com.oposicontrol.admin.data.di
 
 import com.oposicontrol.admin.core.common.config.AppConfig
+import com.oposicontrol.admin.core.common.config.Environment
 import com.oposicontrol.admin.core.database.DatabaseFactory
 import com.oposicontrol.admin.core.network.ApiClientFactory
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.NewsEditorDraftLocalDataSource
+import com.oposicontrol.admin.data.local.SecureSessionStore
+import com.oposicontrol.admin.data.local.SessionStore
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.data.local.SettingsLocalDataSource
+import com.oposicontrol.admin.data.local.developmentOpenAccessSession
 import com.oposicontrol.admin.data.remote.api.AuditApi
 import com.oposicontrol.admin.data.remote.api.AuthApi
 import com.oposicontrol.admin.data.remote.api.DashboardApi
@@ -29,13 +33,13 @@ import com.oposicontrol.admin.data.repository.AuditRepositoryImpl
 import com.oposicontrol.admin.data.repository.AuthRepositoryImpl
 import com.oposicontrol.admin.data.repository.ContentDashboardRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorAdminOperationsRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorCommerceRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorConnectionDiagnosticsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorNewsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorContentRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorTagSearchRepositoryImpl
 import com.oposicontrol.admin.data.repository.RolesRepositoryImpl
 import com.oposicontrol.admin.data.repository.SettingsRepositoryImpl
-import com.oposicontrol.admin.data.repository.SupabaseCommerceRepositoryImpl
 import com.oposicontrol.admin.data.repository.UsersRepositoryImpl
 import com.oposicontrol.admin.data.storage.PlatformFileReader
 import com.oposicontrol.admin.domain.repository.AdminOperationsRepository
@@ -54,7 +58,18 @@ import org.koin.dsl.module
 
 val dataModule = module {
     single { DatabaseFactory(get()).create() }
-    single { SessionLocalDataSource(get()) }
+    single<SessionStore> { SecureSessionStore(get()) }
+    single {
+        val appConfig: AppConfig = get()
+        SessionLocalDataSource(
+            secureStore = get(),
+            fallbackSession = if (appConfig.environment == Environment.DEV) {
+                developmentOpenAccessSession()
+            } else {
+                null
+            },
+        )
+    }
     single { SettingsLocalDataSource(get(), get()) }
     single { NewsEditorDraftLocalDataSource(get()) }
     single { PlatformFileReader(get()) }
@@ -89,7 +104,7 @@ val dataModule = module {
 
     single<CommerceRepository> {
         val appConfig: AppConfig = get()
-        SupabaseCommerceRepositoryImpl(
+        KtorCommerceRepositoryImpl(
             client = get(),
             appConfig = appConfig,
             sessionLocalDataSource = get(),

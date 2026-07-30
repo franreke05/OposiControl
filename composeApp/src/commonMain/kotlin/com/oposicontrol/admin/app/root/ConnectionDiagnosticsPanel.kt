@@ -38,7 +38,7 @@ fun ConnectionDiagnosticsPanel(
     var status by remember { mutableStateOf("Comprobando") }
     var checks by remember { mutableStateOf<List<ConnectionDiagnosticCheck>>(emptyList()) }
 
-    LaunchedEffect(appConfig.baseUrl, appConfig.backendToken, refreshSignal) {
+    LaunchedEffect(appConfig.baseUrl, refreshSignal) {
         status = "Comprobando"
         checks = listOf(
             ConnectionDiagnosticCheck("URL backend", true, appConfig.baseUrl),

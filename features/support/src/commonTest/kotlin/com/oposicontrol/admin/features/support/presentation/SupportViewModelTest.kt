@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.support.presentation
 import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.core.testing.InMemoryLogger
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.ExamAccess
 import com.oposicontrol.admin.domain.model.ModerationAction
@@ -18,16 +19,19 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SupportViewModelTest {
     @Test
     fun `sending reply appends message to selected conversation`() = runTest {
+        val logger = InMemoryLogger()
         val viewModel = SupportViewModel(
             dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
             repository = FakeAdminOperationsRepository(),
             analyticsTracker = NoOpAnalyticsTracker,
+            logger = logger,
         )
 
         viewModel.dispatch(SupportIntent.SelectConversation("conv-1"))
@@ -40,6 +44,14 @@ class SupportViewModelTest {
         assertEquals("conv-1", state.selectedConversationId)
         assertTrue(messages.any { it.text == "Mensaje de prueba" })
         assertEquals("", state.replyText)
+
+        val start = logger.entries.single { "event=support.reply.send.start " in it.message }
+        val success = logger.entries.single { "event=support.reply.send.success " in it.message }
+        assertEquals("OC-VM", start.tag)
+        assertEquals(correlationId(start.message), correlationId(success.message))
+        val rendered = logger.entries.joinToString("\n") { it.message }
+        assertFalse("Mensaje de prueba" in rendered)
+        assertFalse("conv-1" in rendered)
     }
 
     private class FakeAdminOperationsRepository : AdminOperationsRepository {
@@ -95,10 +107,13 @@ class SupportViewModelTest {
         override suspend fun upsertExamAccess(access: ExamAccess): AppResult<ExamAccess> = AppResult.Success(access)
         override suspend fun getTicketWallets(): AppResult<List<TicketWallet>> = AppResult.Success(emptyList())
         override suspend fun getTicketTransactions(userId: String): AppResult<List<TicketTransaction>> = AppResult.Success(emptyList())
-        override suspend fun appendTicketAdjustment(userId: String, amount: Double, reason: String): AppResult<TicketTransaction> =
+        override suspend fun appendTicketAdjustment(userId: String, amount: Long, reason: String): AppResult<TicketTransaction> =
             AppResult.Success(TicketTransaction("tx-1", userId, "adjustment", amount, reason, "2026-05-05T09:00:00Z"))
 
         override suspend fun getModerationActions(): AppResult<List<ModerationAction>> = AppResult.Success(emptyList())
         override suspend fun appendModerationAction(action: ModerationAction): AppResult<ModerationAction> = AppResult.Success(action)
     }
 }
+
+private fun correlationId(message: String): String =
+    Regex("correlationId=([^ ]+)").find(message)?.groupValues?.get(1).orEmpty()

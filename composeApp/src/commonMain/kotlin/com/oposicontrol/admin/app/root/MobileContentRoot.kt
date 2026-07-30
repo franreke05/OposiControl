@@ -1,6 +1,7 @@
 package com.oposicontrol.admin.app.root
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -8,6 +9,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.oposicontrol.admin.core.common.config.AppConfig
+import com.oposicontrol.admin.core.common.config.Environment
+import com.oposicontrol.admin.features.auth.presentation.AuthScreen
+import com.oposicontrol.admin.features.auth.presentation.AuthViewModel
 import com.oposicontrol.admin.features.exams.presentation.ExamsIntent
 import com.oposicontrol.admin.features.exams.presentation.ExamsViewModel
 import com.oposicontrol.admin.features.exams.presentation.MobileContentScreen
@@ -26,6 +30,29 @@ import org.koin.compose.koinInject
 
 @Composable
 fun MobileContentRoot(
+    appConfig: AppConfig,
+) {
+    if (appConfig.environment == Environment.DEV) {
+        AuthenticatedMobileContentRoot(appConfig)
+        return
+    }
+
+    val authViewModel: AuthViewModel = koinInject()
+    val authState by authViewModel.state.collectAsState()
+
+    if (authState.isRestoring || !authState.isAuthenticated) {
+        AuthScreen(
+            viewModel = authViewModel,
+            onAuthenticated = {},
+        )
+        return
+    }
+
+    AuthenticatedMobileContentRoot(appConfig)
+}
+
+@Composable
+private fun AuthenticatedMobileContentRoot(
     appConfig: AppConfig,
 ) {
     val examsViewModel: ExamsViewModel = koinInject()
@@ -51,8 +78,6 @@ fun MobileContentRoot(
             if (backendRestarting) return@MobileContentScreen
             scope.launch {
                 backendRestarting = true
-                diagnosticsRepository.requestConnectionRestart()
-                delay(8_000)
                 diagnosticsRefreshSignal += 1
                 examsViewModel.dispatch(ExamsIntent.RefreshAll)
                 newsViewModel.dispatch(NewsIntent.Refresh)

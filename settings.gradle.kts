@@ -35,6 +35,7 @@ plugins {
 includeBuild("build-logic")
 
 include(":composeApp")
+include(":core:api")
 include(":core:common")
 include(":core:network")
 include(":core:database")

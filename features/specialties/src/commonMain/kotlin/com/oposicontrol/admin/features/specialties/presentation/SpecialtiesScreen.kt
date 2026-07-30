@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -24,19 +25,37 @@ import com.oposicontrol.admin.core.ui.components.FormSection
 import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.StatusChip
+import kotlinx.coroutines.flow.collect
 
 @Composable
 fun SpecialtiesScreen(
     viewModel: SpecialtiesViewModel,
+    onEffect: (SpecialtiesEffect) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
+
+    LaunchedEffect(viewModel, onEffect) {
+        viewModel.effects.collect(onEffect)
+    }
+
+    SpecialtiesContent(
+        state = state,
+        onIntent = viewModel::dispatch,
+    )
+}
+
+@Composable
+fun SpecialtiesContent(
+    state: SpecialtiesState,
+    onIntent: (SpecialtiesIntent) -> Unit,
+) {
     CrudSplitLayout(
         modifier = Modifier.fillMaxSize(),
         listPane = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 FilterBar(
                     searchValue = state.searchQuery,
-                    onSearchChange = { viewModel.dispatch(SpecialtiesIntent.UpdateSearch(it)) },
+                    onSearchChange = { onIntent(SpecialtiesIntent.UpdateSearch(it)) },
                     placeholder = "Buscar por nombre o descripcion",
                 )
                 AsyncStatePane(state.items, emptyMessage = "No hay especialidades para este filtro.") { items ->
@@ -56,11 +75,11 @@ fun SpecialtiesScreen(
                                     item.sortOrder.toString(),
                                     item.linkedExams.toString(),
                                 ),
-                                selected = item.id == state.selectedId,
+                                selected = item.id == state.selectedId?.value,
                                 supporting = item.description.ifBlank { "Sin descripcion" },
                             )
                         },
-                        onRowClick = { viewModel.dispatch(SpecialtiesIntent.Select(it)) },
+                        onRowClick = { onIntent(SpecialtiesIntent.Select(SpecialtyId(it))) },
                     )
                 }
             }
@@ -78,7 +97,7 @@ fun SpecialtiesScreen(
                     )
                     GlassTextField(
                         value = state.editorName,
-                        onValueChange = { viewModel.dispatch(SpecialtiesIntent.UpdateName(it)) },
+                        onValueChange = { onIntent(SpecialtiesIntent.UpdateName(it)) },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = "Ej. Auxiliar Administrativo",
                     )
@@ -88,7 +107,7 @@ fun SpecialtiesScreen(
                     )
                     GlassTextField(
                         value = state.editorDescription,
-                        onValueChange = { viewModel.dispatch(SpecialtiesIntent.UpdateDescription(it)) },
+                        onValueChange = { onIntent(SpecialtiesIntent.UpdateDescription(it)) },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = "Resumen operativo de la especialidad",
                         singleLine = false,
@@ -99,7 +118,7 @@ fun SpecialtiesScreen(
                     )
                     GlassTextField(
                         value = state.editorSortOrder,
-                        onValueChange = { viewModel.dispatch(SpecialtiesIntent.UpdateSortOrder(it)) },
+                        onValueChange = { onIntent(SpecialtiesIntent.UpdateSortOrder(it)) },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = "0",
                     )
@@ -117,18 +136,18 @@ fun SpecialtiesScreen(
                         }
                         Switch(
                             checked = state.editorIsActive,
-                            onCheckedChange = { viewModel.dispatch(SpecialtiesIntent.ToggleActive(it)) },
+                            onCheckedChange = { onIntent(SpecialtiesIntent.ToggleActive(it)) },
                         )
                     }
                     GlassActionButton(
                         text = "Guardar especialidad",
-                        onClick = { viewModel.dispatch(SpecialtiesIntent.Save) },
+                        onClick = { onIntent(SpecialtiesIntent.Save) },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (state.selectedId != null) {
                         GlassActionButton(
                             text = "Eliminar especialidad",
-                            onClick = { viewModel.dispatch(SpecialtiesIntent.DeleteSelected) },
+                            onClick = { onIntent(SpecialtiesIntent.DeleteSelected) },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }

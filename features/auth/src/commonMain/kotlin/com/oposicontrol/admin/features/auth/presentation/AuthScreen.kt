@@ -25,6 +25,7 @@ import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import oposicontrol.core.ui.generated.resources.Res
 import oposicontrol.core.ui.generated.resources.ic_logo
+import kotlinx.coroutines.flow.collect
 import org.jetbrains.compose.resources.painterResource
 
 @Composable
@@ -34,12 +35,25 @@ fun AuthScreen(
 ) {
     val state by viewModel.state.collectAsState()
 
-    LaunchedEffect(state.isAuthenticated) {
-        if (state.isAuthenticated) {
-            onAuthenticated()
+    LaunchedEffect(viewModel, onAuthenticated) {
+        viewModel.effects.collect { effect ->
+            when (effect) {
+                AuthEffect.Authenticated -> onAuthenticated()
+            }
         }
     }
 
+    AuthContent(
+        state = state,
+        onIntent = viewModel::dispatch,
+    )
+}
+
+@Composable
+fun AuthContent(
+    state: AuthState,
+    onIntent: (AuthIntent) -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -90,7 +104,7 @@ fun AuthScreen(
                 )
                 GlassTextField(
                     value = state.email,
-                    onValueChange = { viewModel.dispatch(AuthIntent.UpdateEmail(it)) },
+                    onValueChange = { onIntent(AuthIntent.UpdateEmail(it)) },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = "tu@email.com",
                 )
@@ -100,14 +114,14 @@ fun AuthScreen(
                 )
                 GlassTextField(
                     value = state.password,
-                    onValueChange = { viewModel.dispatch(AuthIntent.UpdatePassword(it)) },
+                    onValueChange = { onIntent(AuthIntent.UpdatePassword(it)) },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = "Introduce tu contrasena",
                     visualTransformation = PasswordVisualTransformation(),
                 )
                 GlassActionButton(
                     text = "Entrar",
-                    onClick = { viewModel.dispatch(AuthIntent.Submit) },
+                    onClick = { onIntent(AuthIntent.Submit) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 when (val submitState = state.submitState) {

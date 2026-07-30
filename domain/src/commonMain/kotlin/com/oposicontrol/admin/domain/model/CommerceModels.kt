@@ -12,6 +12,7 @@ data class StoreItem(
     val sortOrder: Int,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val version: Long = 1,
 )
 
 data class StoreOffer(
@@ -23,6 +24,7 @@ data class StoreOffer(
     val startsAt: Instant?,
     val endsAt: Instant?,
     val status: CommerceStatus,
+    val version: Long = 1,
 )
 
 data class LimitedResourceWindow(
@@ -34,6 +36,7 @@ data class LimitedResourceWindow(
     val endsAt: Instant?,
     val accessDurationHours: Int,
     val status: CommerceStatus,
+    val version: Long = 1,
 )
 
 data class BurstCampaign(
@@ -48,6 +51,7 @@ data class BurstCampaign(
     val linkedExamId: String?,
     val linkedStoreItemId: String?,
     val status: CommerceStatus,
+    val version: Long = 1,
 )
 
 enum class StoreItemType {

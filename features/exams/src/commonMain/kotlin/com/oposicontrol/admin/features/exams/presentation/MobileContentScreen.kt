@@ -3409,6 +3409,9 @@ private fun RafagaQuestion.toRafagaQuestionUi(selected: Boolean): RafagaQuestion
         id = id,
         statement = statement,
         selected = selected,
+        correctOptionLabel = "",
+        resourceCount = 0,
+        hasResources = selected
     )
 }
 

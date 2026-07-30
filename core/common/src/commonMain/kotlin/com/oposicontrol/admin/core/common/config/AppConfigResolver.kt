@@ -12,9 +12,10 @@ object AppConfigResolver {
         return AppConfig(
             environment = environment,
             baseUrl = baseUrl,
-            backendToken = source.read(KEY_BACKEND_TOKEN).orEmpty(),
             supabaseUrl = supabaseUrl,
-            supabaseAnonKey = source.read(KEY_SUPABASE_ANON_KEY).orEmpty(),
+            supabasePublishableKey = source.read(KEY_SUPABASE_PUBLISHABLE_KEY)
+                ?.takeIf { it.isNotBlank() }
+                ?: source.read(LEGACY_KEY_SUPABASE_ANON_KEY).orEmpty(),
             supabaseBucketExamResources = source.read(KEY_SUPABASE_BUCKET_EXAM_RESOURCES)
                 ?.ifBlank { DEFAULT_SUPABASE_BUCKET_EXAM_RESOURCES }
                 ?: DEFAULT_SUPABASE_BUCKET_EXAM_RESOURCES,
@@ -47,9 +48,8 @@ object AppConfigResolver {
 
     const val KEY_APP_ENV = "APP_ENV"
     const val KEY_BASE_URL = "BASE_URL"
-    const val KEY_BACKEND_TOKEN = "BACKEND_TOKEN"
     const val KEY_SUPABASE_URL = "SUPABASE_URL"
-    const val KEY_SUPABASE_ANON_KEY = "SUPABASE_ANON_KEY"
+    const val KEY_SUPABASE_PUBLISHABLE_KEY = "SUPABASE_PUBLISHABLE_KEY"
     const val KEY_SUPABASE_BUCKET_EXAM_RESOURCES = "SUPABASE_BUCKET_EXAM_RESOURCES"
     const val KEY_USE_FAKE_DATA = "USE_FAKE_DATA"
     const val KEY_ENABLE_LOGS = "ENABLE_LOGS"
@@ -60,5 +60,6 @@ object AppConfigResolver {
     const val KEY_APP_NAME = "APP_NAME"
     const val KEY_APP_VERSION = "APP_VERSION"
 
+    private const val LEGACY_KEY_SUPABASE_ANON_KEY = "SUPABASE_ANON_KEY"
     private const val DEFAULT_SUPABASE_BUCKET_EXAM_RESOURCES = "exam-resources"
 }

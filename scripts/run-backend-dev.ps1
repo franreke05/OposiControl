@@ -21,6 +21,18 @@ if (Test-Path $envFile) {
     }
 }
 
+# Compatibility for existing local files while deployments migrate to the
+# split publishable/secret key names. The value remains process-local.
+if (
+    [string]::IsNullOrWhiteSpace($env:SUPABASE_SECRET_KEY) -and
+    -not [string]::IsNullOrWhiteSpace($env:SUPABASE_SERVICE_ROLE_KEY)
+) {
+    $env:SUPABASE_SECRET_KEY = $env:SUPABASE_SERVICE_ROLE_KEY
+}
+if ([string]::IsNullOrWhiteSpace($env:APP_ENV)) {
+    $env:APP_ENV = "dev"
+}
+
 $localGradleHome = Join-Path $projectRoot ".gradle-test"
 New-Item -ItemType Directory -Force -Path $localGradleHome | Out-Null
 [Environment]::SetEnvironmentVariable("GRADLE_USER_HOME", $localGradleHome, "Process")

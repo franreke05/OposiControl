@@ -4,5 +4,12 @@ import com.oposicontrol.admin.features.moderation.presentation.ModerationViewMod
 import org.koin.dsl.module
 
 val moderationFeatureModule = module {
-    factory { ModerationViewModel(get(), get(), get()) }
+    factory {
+        ModerationViewModel(
+            dispatcherProvider = get(),
+            repository = get(),
+            analyticsTracker = get(),
+            logger = get(),
+        )
+    }
 }

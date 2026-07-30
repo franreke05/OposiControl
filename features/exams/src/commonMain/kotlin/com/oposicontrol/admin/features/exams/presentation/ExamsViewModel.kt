@@ -2,6 +2,15 @@ package com.oposicontrol.admin.features.exams.presentation
 
 import com.oposicontrol.admin.core.common.analytics.AnalyticsTracker
 import com.oposicontrol.admin.core.common.coroutine.DispatcherProvider
+import com.oposicontrol.admin.core.common.logging.LogEvent
+import com.oposicontrol.admin.core.common.logging.LogLayer
+import com.oposicontrol.admin.core.common.logging.LogLevel
+import com.oposicontrol.admin.core.common.logging.Logger
+import com.oposicontrol.admin.core.common.logging.LogTag
+import com.oposicontrol.admin.core.common.logging.NoOpLogger
+import com.oposicontrol.admin.core.common.logging.OperationContext
+import com.oposicontrol.admin.core.common.logging.SafeLogField
+import com.oposicontrol.admin.core.common.logging.withOperationContext
 import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
@@ -43,9 +52,11 @@ import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadQuestionResourceUseCase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
+import kotlin.time.TimeSource
 
 class ExamsViewModel(
     dispatcherProvider: DispatcherProvider,
@@ -76,6 +87,7 @@ class ExamsViewModel(
     private val uploadQuestionResourceUseCase: UploadQuestionResourceUseCase,
     private val deleteQuestionResourceUseCase: DeleteQuestionResourceUseCase,
     private val analyticsTracker: AnalyticsTracker,
+    private val logger: Logger = NoOpLogger,
 ) : MviViewModel<ExamsState, ExamsIntent>(
     initialState = ExamsState(),
     dispatcherProvider = dispatcherProvider,
@@ -240,19 +252,32 @@ class ExamsViewModel(
     }
 
     private suspend fun refreshAll() {
-        when (val specialties = refreshSpecialtiesUseCase()) {
-            is AppResult.Failure -> updateState { it.copy(specialties = UiAsync.Error(specialties.error)) }
-            is AppResult.Success -> Unit
+        traceOperation(operation = "exams.refresh") {
+            var firstFailure: AppResult.Failure? = null
+            when (val specialties = refreshSpecialtiesUseCase()) {
+                is AppResult.Failure -> {
+                    firstFailure = specialties
+                    updateState { it.copy(specialties = UiAsync.Error(specialties.error)) }
+                }
+                is AppResult.Success -> Unit
+            }
+            when (val exams = refreshExamsUseCase()) {
+                is AppResult.Failure -> {
+                    firstFailure = firstFailure ?: exams
+                    updateState { it.copy(exams = UiAsync.Error(exams.error)) }
+                }
+                is AppResult.Success -> publishExams()
+            }
+            when (val rafagas = refreshRafagasUseCase()) {
+                is AppResult.Failure -> {
+                    firstFailure = firstFailure ?: rafagas
+                    updateState { it.copy(rafagas = UiAsync.Error(rafagas.error)) }
+                }
+                is AppResult.Success -> Unit
+            }
+            analyticsTracker.trackScreen("exams")
+            firstFailure ?: AppResult.Success(Unit)
         }
-        when (val exams = refreshExamsUseCase()) {
-            is AppResult.Failure -> updateState { it.copy(exams = UiAsync.Error(exams.error)) }
-            is AppResult.Success -> publishExams()
-        }
-        when (val rafagas = refreshRafagasUseCase()) {
-            is AppResult.Failure -> updateState { it.copy(rafagas = UiAsync.Error(rafagas.error)) }
-            is AppResult.Success -> Unit
-        }
-        analyticsTracker.trackScreen("exams")
     }
 
     private fun createSpecialty() {
@@ -301,7 +326,11 @@ class ExamsViewModel(
             updatedAt = now,
         )
         updateState { it.copy(specialtyActionState = UiAsync.Loading) }
-        when (val result = upsertSpecialtyUseCase(specialty)) {
+        when (
+            val result = traceOperation(operation = "exams.specialty.save") {
+                upsertSpecialtyUseCase(specialty)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(specialtyActionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("specialty_save", mapOf("specialty_id" to result.value.id))
@@ -326,7 +355,11 @@ class ExamsViewModel(
                 it.copy(specialtyActionState = UiAsync.Error(AppError.Validation("Selecciona una especialidad para borrarla.")))
             }
         updateState { it.copy(specialtyActionState = UiAsync.Loading) }
-        when (val result = deleteSpecialtyUseCase(selectedId)) {
+        when (
+            val result = traceOperation(operation = "exams.specialty.delete") {
+                deleteSpecialtyUseCase(selectedId)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(specialtyActionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("specialty_delete", mapOf("specialty_id" to selectedId))
@@ -602,7 +635,11 @@ class ExamsViewModel(
             updatedAt = now,
             deletedAt = existing?.deletedAt,
         )
-        when (val result = upsertExamUseCase(exam)) {
+        when (
+            val result = traceOperation(operation = "exam.save") {
+                upsertExamUseCase(exam)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("exam_save", mapOf("exam_id" to result.value.id))
@@ -618,7 +655,11 @@ class ExamsViewModel(
                 it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona un examen para borrarlo.")))
             }
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = deleteExamUseCase(selectedExamId)) {
+        when (
+            val result = traceOperation(operation = "exam.delete") {
+                deleteExamUseCase(selectedExamId)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("exam_delete", mapOf("exam_id" to selectedExamId))
@@ -667,7 +708,11 @@ class ExamsViewModel(
             updatedAt = now,
             deletedAt = existing?.deletedAt,
         )
-        when (val result = upsertRafagaUseCase(rafaga)) {
+        when (
+            val result = traceOperation(operation = "exam.rafaga.save") {
+                upsertRafagaUseCase(rafaga)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("rafaga_save", mapOf("rafaga_id" to result.value.id))
@@ -683,7 +728,11 @@ class ExamsViewModel(
                 it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona una rafaga para borrarla.")))
             }
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = deleteRafagaUseCase(selectedRafagaId)) {
+        when (
+            val result = traceOperation(operation = "exam.rafaga.delete") {
+                deleteRafagaUseCase(selectedRafagaId)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("rafaga_delete", mapOf("rafaga_id" to selectedRafagaId))
@@ -841,7 +890,11 @@ class ExamsViewModel(
             createdAt = existing?.createdAt ?: now,
             updatedAt = now,
         )
-        when (val result = upsertQuestionUseCase(question)) {
+        when (
+            val result = traceOperation(operation = "exam.question.save") {
+                upsertQuestionUseCase(question)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("question_save", mapOf("exam_id" to examId, "question_id" to result.value.id))
@@ -862,7 +915,11 @@ class ExamsViewModel(
                 it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona una pregunta guardada para borrarla.")))
             }
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = deleteQuestionUseCase(examId, questionId)) {
+        when (
+            val result = traceOperation(operation = "exam.question.delete") {
+                deleteQuestionUseCase(examId, questionId)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("question_delete", mapOf("question_id" to questionId))
@@ -894,7 +951,11 @@ class ExamsViewModel(
             updatedAt = now,
             deletedAt = existing?.deletedAt,
         )
-        when (val result = upsertRafagaQuestionUseCase(question)) {
+        when (
+            val result = traceOperation(operation = "exam.rafaga_question.save") {
+                upsertRafagaQuestionUseCase(question)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("rafaga_question_save", mapOf("rafaga_id" to rafagaId, "question_id" to result.value.id))
@@ -915,7 +976,11 @@ class ExamsViewModel(
                 it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona una pregunta guardada para borrarla.")))
             }
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = deleteRafagaQuestionUseCase(rafagaId, questionId)) {
+        when (
+            val result = traceOperation(operation = "exam.rafaga_question.delete") {
+                deleteRafagaQuestionUseCase(rafagaId, questionId)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("rafaga_question_delete", mapOf("question_id" to questionId))
@@ -928,7 +993,14 @@ class ExamsViewModel(
 
     private suspend fun moveQuestion(questionId: String, direction: QuestionMoveDirection) {
         val examId = currentState().selectedExamId ?: return
-        when (val result = moveQuestionUseCase(examId, questionId, direction)) {
+        when (
+            val result = traceOperation(
+                operation = "exam.question.move",
+                successCount = { it.size },
+            ) {
+                moveQuestionUseCase(examId, questionId, direction)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 currentQuestions = result.value
@@ -944,7 +1016,14 @@ class ExamsViewModel(
 
     private suspend fun moveRafagaQuestion(questionId: String, direction: QuestionMoveDirection) {
         val rafagaId = currentState().selectedRafagaId ?: return
-        when (val result = moveRafagaQuestionUseCase(rafagaId, questionId, direction)) {
+        when (
+            val result = traceOperation(
+                operation = "exam.rafaga_question.move",
+                successCount = { it.size },
+            ) {
+                moveRafagaQuestionUseCase(rafagaId, questionId, direction)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 currentRafagaQuestions = result.value
@@ -1019,7 +1098,11 @@ class ExamsViewModel(
                 resourceUploadStates = it.resourceUploadStates + (resourceId to UiAsync.Loading),
             )
         }
-        when (val result = deleteQuestionResourceUseCase(questionId, resourceId)) {
+        when (
+            val result = traceOperation(operation = "exam.resource.delete") {
+                deleteQuestionResourceUseCase(questionId, resourceId)
+            }
+        ) {
             is AppResult.Failure -> updateState {
                 it.copy(
                     uploadState = UiAsync.Error(result.error),
@@ -1101,7 +1184,14 @@ class ExamsViewModel(
             return
         }
         updateState { it.copy(coverUploadState = UiAsync.Loading) }
-        when (val result = uploadExamCoverUseCase(examId, localUri)) {
+        when (
+            val result = traceOperation(
+                operation = "exam.cover.upload",
+                contextFields = mapOf(SafeLogField.MIME_GROUP to "image"),
+            ) {
+                uploadExamCoverUseCase(examId, localUri)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(coverUploadState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("exam_cover_upload", mapOf("exam_id" to examId))
@@ -1135,7 +1225,11 @@ class ExamsViewModel(
             return
         }
         updateState { it.copy(coverUploadState = UiAsync.Loading) }
-        when (val result = clearExamCoverUseCase(examId)) {
+        when (
+            val result = traceOperation(operation = "exam.cover.clear") {
+                clearExamCoverUseCase(examId)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(coverUploadState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("exam_cover_clear", mapOf("exam_id" to examId))
@@ -1207,7 +1301,14 @@ class ExamsViewModel(
                 updatedAt = now,
             )
         }
-        when (val result = importQuestionsUseCase(examId, questions)) {
+        when (
+            val result = traceOperation(
+                operation = "exam.questions.import",
+                successCount = { it.size },
+            ) {
+                importQuestionsUseCase(examId, questions)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(importState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 loadQuestions(examId)
@@ -1241,13 +1342,20 @@ class ExamsViewModel(
             )
         }
         when (
-            val result = uploadQuestionResourceUseCase(
-                questionId = questionId,
-                resourceId = resource.id,
-                type = resourceType,
-                localPathOrUrl = resource.inputValue.trim(),
-                title = resource.title.trim(),
-            )
+            val result = traceOperation(
+                operation = "exam.resource.upload",
+                contextFields = mapOf(
+                    SafeLogField.MIME_GROUP to resourceType.safeMimeGroup(),
+                ),
+            ) {
+                uploadQuestionResourceUseCase(
+                    questionId = questionId,
+                    resourceId = resource.id,
+                    type = resourceType,
+                    localPathOrUrl = resource.inputValue.trim(),
+                    title = resource.title.trim(),
+                )
+            }
         ) {
             is AppResult.Failure -> updateState {
                 it.copy(
@@ -1300,5 +1408,119 @@ class ExamsViewModel(
             startsWith("video/") -> "video"
             else -> "document"
         }
+    }
+
+    private suspend fun <T> traceOperation(
+        operation: String,
+        successCount: (T) -> Int? = { null },
+        contextFields: Map<SafeLogField, String> = emptyMap(),
+        block: suspend () -> AppResult<T>,
+    ): AppResult<T> {
+        val context = OperationContext()
+        val startedAt = TimeSource.Monotonic.markNow()
+        logger.log(
+            vmEvent(
+                level = LogLevel.INFO,
+                event = "$operation.start",
+                operation = operation,
+                context = context,
+                fields = contextFields,
+            ),
+        )
+        return try {
+            val result = withOperationContext(context) { block() }
+            when (result) {
+                is AppResult.Failure -> logger.log(
+                    vmEvent(
+                        level = LogLevel.ERROR,
+                        event = "$operation.failure",
+                        operation = operation,
+                        context = context,
+                        durationMs = startedAt.elapsedNow().inWholeMilliseconds,
+                        fields = contextFields + mapOf(
+                            SafeLogField.RESULT to "failure",
+                            SafeLogField.ERROR_TYPE to result.error.safeType(),
+                            SafeLogField.RETRYABLE to result.error.isRetryable().toString(),
+                        ),
+                    ),
+                )
+
+                is AppResult.Success -> {
+                    val fields = contextFields.toMutableMap()
+                    fields[SafeLogField.RESULT] = "success"
+                    successCount(result.value)?.let { fields[SafeLogField.COUNT] = it.toString() }
+                    logger.log(
+                        vmEvent(
+                            level = LogLevel.INFO,
+                            event = "$operation.success",
+                            operation = operation,
+                            context = context,
+                            durationMs = startedAt.elapsedNow().inWholeMilliseconds,
+                            fields = fields,
+                        ),
+                    )
+                }
+            }
+            result
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            logger.log(
+                vmEvent(
+                    level = LogLevel.ERROR,
+                    event = "$operation.failure",
+                    operation = operation,
+                    context = context,
+                    durationMs = startedAt.elapsedNow().inWholeMilliseconds,
+                    fields = contextFields + mapOf(
+                        SafeLogField.RESULT to "failure",
+                        SafeLogField.ERROR_TYPE to (throwable::class.simpleName ?: "Throwable"),
+                        SafeLogField.RETRYABLE to "false",
+                    ),
+                ),
+            )
+            throw throwable
+        }
+    }
+
+    private fun vmEvent(
+        level: LogLevel,
+        event: String,
+        operation: String,
+        context: OperationContext,
+        durationMs: Long? = null,
+        fields: Map<SafeLogField, String> = emptyMap(),
+    ) = LogEvent(
+        level = level,
+        tag = LogTag.VIEW_MODEL,
+        event = event,
+        screen = "exams",
+        layer = LogLayer.VIEW_MODEL,
+        operation = operation,
+        correlationId = context.correlationId,
+        durationMs = durationMs,
+        fields = fields,
+    )
+
+    private fun AppError.safeType(): String = when (this) {
+        is AppError.Network -> "network"
+        is AppError.Authentication -> "authentication"
+        is AppError.Authorization -> "authorization"
+        is AppError.Validation -> "validation"
+        is AppError.NotFound -> "not_found"
+        is AppError.Conflict -> "conflict"
+        is AppError.RateLimited -> "rate_limited"
+        is AppError.Unknown -> "unknown"
+    }
+
+    private fun AppError.isRetryable(): Boolean =
+        this is AppError.Network || this is AppError.RateLimited
+
+    private fun QuestionResourceType.safeMimeGroup(): String = when (this) {
+        QuestionResourceType.IMAGE -> "image"
+        QuestionResourceType.AUDIO -> "audio"
+        QuestionResourceType.VIDEO -> "video"
+        QuestionResourceType.TEXT -> "text"
+        QuestionResourceType.DOCUMENT -> "document"
     }
 }

@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.auth.presentation
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.domain.model.Session
 
+/** Immutable authentication state rendered by [AuthContent]. */
 data class AuthState(
     val email: String = "",
     val password: String = "",

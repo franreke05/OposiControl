@@ -56,7 +56,7 @@ val examsFeatureModule = module {
     factory { ClearExamCoverUseCase(get()) }
     factory { UploadQuestionResourceUseCase(get()) }
     factory { DeleteQuestionResourceUseCase(get()) }
-    single {
+    factory {
         ExamsViewModel(
             dispatcherProvider = get(),
             observeSpecialtiesUseCase = get(),
@@ -86,6 +86,7 @@ val examsFeatureModule = module {
             uploadQuestionResourceUseCase = get(),
             deleteQuestionResourceUseCase = get(),
             analyticsTracker = get(),
+            logger = get(),
         )
     }
 }

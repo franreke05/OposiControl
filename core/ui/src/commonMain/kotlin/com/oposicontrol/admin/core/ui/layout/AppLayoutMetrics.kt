@@ -2,43 +2,65 @@ package com.oposicontrol.admin.core.ui.layout
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.max
 
-private const val BaseWidth = 390f
-private const val BaseHeight = 844f
+enum class AppWindowClass {
+    Mobile,
+    Tablet,
+    DesktopCompact,
+    DesktopWide,
+}
 
 @Immutable
 data class AppLayoutMetrics(
-    val widthScale: Float,
-    val heightScale: Float,
-    val contentScale: Float,
+    val windowClass: AppWindowClass,
+    val screenPadding: Dp,
+    val navigationWidth: Dp,
+    val contentMaxWidth: Dp,
 ) {
-    fun width(base: Dp, min: Dp = 0.dp): Dp = (base.value * widthScale).dp.coerceAtLeast(min)
+    val isMobile: Boolean
+        get() = windowClass == AppWindowClass.Mobile
 
-    fun height(base: Dp, min: Dp = 0.dp): Dp = (base.value * heightScale).dp.coerceAtLeast(min)
+    val isCompact: Boolean
+        get() = windowClass == AppWindowClass.Mobile || windowClass == AppWindowClass.Tablet
 
-    fun size(base: Dp, min: Dp = 0.dp): Dp = (base.value * contentScale).dp.coerceAtLeast(min)
+    // Compatibility helpers intentionally keep exact design dimensions.
+    fun width(base: Dp, min: Dp = 0.dp): Dp = base.coerceAtLeast(min)
 
-    fun text(base: TextUnit, min: TextUnit = 0.sp): TextUnit {
-        val scaledValue = base.value * contentScale
-        return max(scaledValue, min.value).sp
-    }
+    fun height(base: Dp, min: Dp = 0.dp): Dp = base.coerceAtLeast(min)
+
+    fun size(base: Dp, min: Dp = 0.dp): Dp = base.coerceAtLeast(min)
+
+    fun text(base: TextUnit, min: TextUnit = 0.sp): TextUnit = if (base < min) min else base
 }
 
-private var currentAppLayoutMetrics = AppLayoutMetrics(
-    widthScale = 1f,
-    heightScale = 1f,
-    contentScale = 1f,
+private val DefaultAppLayoutMetrics = AppLayoutMetrics(
+    windowClass = AppWindowClass.Mobile,
+    screenPadding = 20.dp,
+    navigationWidth = 72.dp,
+    contentMaxWidth = 560.dp,
 )
+
+private val LocalAppLayoutMetrics = staticCompositionLocalOf { DefaultAppLayoutMetrics }
 
 object AppLayout {
     val metrics: AppLayoutMetrics
-        @Composable get() = currentAppLayoutMetrics
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalAppLayoutMetrics.current
+}
+
+fun appWindowClassForWidth(width: Dp): AppWindowClass = when {
+    width < 600.dp -> AppWindowClass.Mobile
+    width < 840.dp -> AppWindowClass.Tablet
+    width < 1_200.dp -> AppWindowClass.DesktopCompact
+    else -> AppWindowClass.DesktopWide
 }
 
 @Composable
@@ -47,13 +69,35 @@ fun rememberAppLayoutMetrics(
     maxHeight: Dp,
 ): AppLayoutMetrics {
     return remember(maxWidth, maxHeight) {
-        val widthScale = maxWidth.value / BaseWidth
-        val heightScale = maxHeight.value / BaseHeight
-        AppLayoutMetrics(
-            widthScale = widthScale,
-            heightScale = heightScale,
-            contentScale = minOf(widthScale, heightScale),
-        )
+        when (val windowClass = appWindowClassForWidth(maxWidth)) {
+            AppWindowClass.Mobile -> AppLayoutMetrics(
+                windowClass = windowClass,
+                screenPadding = 20.dp,
+                navigationWidth = 72.dp,
+                contentMaxWidth = 560.dp,
+            )
+
+            AppWindowClass.Tablet -> AppLayoutMetrics(
+                windowClass = windowClass,
+                screenPadding = 24.dp,
+                navigationWidth = 72.dp,
+                contentMaxWidth = 560.dp,
+            )
+
+            AppWindowClass.DesktopCompact -> AppLayoutMetrics(
+                windowClass = windowClass,
+                screenPadding = 32.dp,
+                navigationWidth = 72.dp,
+                contentMaxWidth = 1_120.dp,
+            )
+
+            AppWindowClass.DesktopWide -> AppLayoutMetrics(
+                windowClass = windowClass,
+                screenPadding = 32.dp,
+                navigationWidth = 280.dp,
+                contentMaxWidth = 1_440.dp,
+            )
+        }
     }
 }
 
@@ -62,6 +106,8 @@ fun ProvideAppLayoutMetrics(
     metrics: AppLayoutMetrics,
     content: @Composable () -> Unit,
 ) {
-    currentAppLayoutMetrics = metrics
-    content()
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalAppLayoutMetrics provides metrics,
+        content = content,
+    )
 }

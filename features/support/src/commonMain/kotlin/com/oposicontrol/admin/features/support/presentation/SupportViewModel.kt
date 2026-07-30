@@ -2,6 +2,15 @@ package com.oposicontrol.admin.features.support.presentation
 
 import com.oposicontrol.admin.core.common.analytics.AnalyticsTracker
 import com.oposicontrol.admin.core.common.coroutine.DispatcherProvider
+import com.oposicontrol.admin.core.common.logging.LogEvent
+import com.oposicontrol.admin.core.common.logging.LogLayer
+import com.oposicontrol.admin.core.common.logging.LogLevel
+import com.oposicontrol.admin.core.common.logging.Logger
+import com.oposicontrol.admin.core.common.logging.LogTag
+import com.oposicontrol.admin.core.common.logging.NoOpLogger
+import com.oposicontrol.admin.core.common.logging.OperationContext
+import com.oposicontrol.admin.core.common.logging.SafeLogField
+import com.oposicontrol.admin.core.common.logging.withOperationContext
 import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
@@ -9,11 +18,14 @@ import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.SupportConversationSummary
 import com.oposicontrol.admin.domain.model.SupportMessage
 import com.oposicontrol.admin.domain.repository.AdminOperationsRepository
+import kotlinx.coroutines.CancellationException
+import kotlin.time.TimeSource
 
 class SupportViewModel(
     dispatcherProvider: DispatcherProvider,
     private val repository: AdminOperationsRepository,
     private val analyticsTracker: AnalyticsTracker,
+    private val logger: Logger = NoOpLogger,
 ) : MviViewModel<SupportState, SupportIntent>(
     initialState = SupportState(),
     dispatcherProvider = dispatcherProvider,
@@ -57,7 +69,14 @@ class SupportViewModel(
 
     private suspend fun refresh() {
         updateState { it.copy(conversations = UiAsync.Loading) }
-        when (val result = repository.getSupportConversations()) {
+        when (
+            val result = traceOperation(
+                operation = "support.refresh",
+                successCount = { it.size },
+            ) {
+                repository.getSupportConversations()
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(conversations = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 allConversations = result.value.map { it.toConversation() }
@@ -79,7 +98,14 @@ class SupportViewModel(
                 actionState = UiAsync.Idle,
             )
         }
-        when (val result = repository.getSupportMessages(id)) {
+        when (
+            val result = traceOperation(
+                operation = "support.messages.load",
+                successCount = { it.size },
+            ) {
+                repository.getSupportMessages(id)
+            }
+        ) {
             is AppResult.Failure -> updateState { it.copy(messages = UiAsync.Error(result.error)) }
             is AppResult.Success -> updateState {
                 it.copy(messages = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value.map { message -> message.toItem() }))
@@ -99,12 +125,14 @@ class SupportViewModel(
         }
         updateState { it.copy(actionState = UiAsync.Loading) }
         when (
-            val result = repository.sendSupportMessage(
-                conversationId = conversationId,
-                assignee = currentState().assignee,
-                text = currentState().replyText,
-                internal = currentState().sendAsInternalNote,
-            )
+            val result = traceOperation(operation = "support.reply.send") {
+                repository.sendSupportMessage(
+                    conversationId = conversationId,
+                    assignee = currentState().assignee,
+                    text = currentState().replyText,
+                    internal = currentState().sendAsInternalNote,
+                )
+            }
         ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
@@ -136,4 +164,100 @@ class SupportViewModel(
         internal = internal,
         attachmentLabel = attachmentLabel,
     )
+
+    private suspend fun <T> traceOperation(
+        operation: String,
+        successCount: (T) -> Int? = { null },
+        block: suspend () -> AppResult<T>,
+    ): AppResult<T> {
+        val context = OperationContext()
+        val startedAt = TimeSource.Monotonic.markNow()
+        logger.log(vmEvent(LogLevel.INFO, "$operation.start", operation, context))
+        return try {
+            val result = withOperationContext(context) { block() }
+            when (result) {
+                is AppResult.Failure -> logger.log(
+                    vmEvent(
+                        level = LogLevel.ERROR,
+                        event = "$operation.failure",
+                        operation = operation,
+                        context = context,
+                        durationMs = startedAt.elapsedNow().inWholeMilliseconds,
+                        fields = mapOf(
+                            SafeLogField.RESULT to "failure",
+                            SafeLogField.ERROR_TYPE to result.error.safeType(),
+                            SafeLogField.RETRYABLE to result.error.isRetryable().toString(),
+                        ),
+                    ),
+                )
+
+                is AppResult.Success -> {
+                    val fields = mutableMapOf(SafeLogField.RESULT to "success")
+                    successCount(result.value)?.let { fields[SafeLogField.COUNT] = it.toString() }
+                    logger.log(
+                        vmEvent(
+                            level = LogLevel.INFO,
+                            event = "$operation.success",
+                            operation = operation,
+                            context = context,
+                            durationMs = startedAt.elapsedNow().inWholeMilliseconds,
+                            fields = fields,
+                        ),
+                    )
+                }
+            }
+            result
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (throwable: Throwable) {
+            logger.log(
+                vmEvent(
+                    level = LogLevel.ERROR,
+                    event = "$operation.failure",
+                    operation = operation,
+                    context = context,
+                    durationMs = startedAt.elapsedNow().inWholeMilliseconds,
+                    fields = mapOf(
+                        SafeLogField.RESULT to "failure",
+                        SafeLogField.ERROR_TYPE to (throwable::class.simpleName ?: "Throwable"),
+                        SafeLogField.RETRYABLE to "false",
+                    ),
+                ),
+            )
+            throw throwable
+        }
+    }
+
+    private fun vmEvent(
+        level: LogLevel,
+        event: String,
+        operation: String,
+        context: OperationContext,
+        durationMs: Long? = null,
+        fields: Map<SafeLogField, String> = emptyMap(),
+    ) = LogEvent(
+        level = level,
+        tag = LogTag.VIEW_MODEL,
+        event = event,
+        screen = "support",
+        layer = LogLayer.VIEW_MODEL,
+        operation = operation,
+        correlationId = context.correlationId,
+        durationMs = durationMs,
+        fields = fields,
+    )
+
+    private fun AppError.safeType(): String = when (this) {
+        is AppError.Network -> "network"
+        is AppError.Authentication -> "authentication"
+        is AppError.Authorization -> "authorization"
+        is AppError.Validation -> "validation"
+        is AppError.NotFound -> "not_found"
+        is AppError.Conflict -> "conflict"
+        is AppError.RateLimited -> "rate_limited"
+        is AppError.Unknown -> "unknown"
+    }
+
+    private fun AppError.isRetryable(): Boolean =
+        this is AppError.Network || this is AppError.RateLimited
 }

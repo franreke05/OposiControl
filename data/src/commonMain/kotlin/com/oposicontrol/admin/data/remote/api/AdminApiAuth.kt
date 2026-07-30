@@ -7,11 +7,10 @@ import io.ktor.client.request.header
 import io.ktor.http.HttpHeaders
 
 internal fun HttpRequestBuilder.adminAuthHeaders(
+    @Suppress("UNUSED_PARAMETER")
     appConfig: AppConfig,
     sessionLocalDataSource: SessionLocalDataSource,
 ) {
-    val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-        ?: appConfig.backendToken.takeIf { it.isNotBlank() }
-        ?: return
+    val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() } ?: return
     header(HttpHeaders.Authorization, "Bearer $token")
 }

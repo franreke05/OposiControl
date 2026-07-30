@@ -2,6 +2,10 @@ package com.oposicontrol.admin.data.fake
 
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.common.logging.Logger
+import com.oposicontrol.admin.core.common.logging.LogEvent
+import com.oposicontrol.admin.core.common.logging.LogLayer
+import com.oposicontrol.admin.core.common.logging.LogLevel
+import com.oposicontrol.admin.core.common.logging.LogTag
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import kotlin.random.Random
@@ -17,7 +21,15 @@ class FakeBehaviorPolicy(
     ): AppResult<T> {
         delay(appConfig.featureFlags.fakeLatencyMs)
         if (Random.nextDouble() < appConfig.featureFlags.fakeErrorRate) {
-            logger.warn("fake.failure operation=$operation")
+            logger.log(
+                LogEvent(
+                    level = LogLevel.WARN,
+                    tag = LogTag.REPOSITORY,
+                    event = "fake.failure",
+                    layer = LogLayer.REPOSITORY,
+                    operation = operation,
+                ),
+            )
             return AppResult.Failure(AppError.Network("Fallo fake simulado en $operation"))
         }
         return AppResult.Success(block())
