@@ -42,7 +42,7 @@ import java.util.Base64
 
 class AppUnauthorized(message: String) : RuntimeException(message)
 
-fun Route.appV1Routes(gateway: AppV1Gateway, verifier: SupabaseJwtVerifier, allowDevUser: Boolean) {
+fun Route.appV1Routes(gateway: AppV1Gateway, verifier: AppV1JwtVerifier, allowDevUser: Boolean) {
     route("/api/v1/app") {
         get("/home") {
             call.respond(gateway.home(call.usuarioId(verifier, allowDevUser)))
@@ -88,7 +88,7 @@ fun Route.appV1Routes(gateway: AppV1Gateway, verifier: SupabaseJwtVerifier, allo
 }
 
 /** Resuelve el usuario: JWT de Supabase (produccion) o cabecera X-Usuario-Id (solo dev). */
-private fun ApplicationCall.usuarioId(verifier: SupabaseJwtVerifier, allowDevUser: Boolean): String {
+private fun ApplicationCall.usuarioId(verifier: AppV1JwtVerifier, allowDevUser: Boolean): String {
     val bearer = request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
     if (!bearer.isNullOrBlank() && bearer.count { it == '.' } == 2) {
         return try {
@@ -105,7 +105,7 @@ private fun ApplicationCall.usuarioId(verifier: SupabaseJwtVerifier, allowDevUse
 
 // ---------- Verificador JWT (ES256 contra el JWKS publico de Supabase) ----------
 
-class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
+class AppV1JwtVerifier(supabaseUrl: String, private val json: Json) {
     private val issuer = "$supabaseUrl/auth/v1"
     private val jwksUrl = "$issuer/.well-known/jwks.json"
     private val client = HttpClient.newHttpClient()

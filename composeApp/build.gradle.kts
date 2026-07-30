@@ -180,7 +180,6 @@ compose.desktop {
         mainClass = "com.oposicontrol.admin.app.MainKt"
 
         jvmArgs(
-            "-Doposi.BACKEND_TOKEN=$backendTokenForBuild",
             "-Doposi.BASE_URL=http://localhost:8080",
             "-Doposi.APP_ENV=dev",
         )
@@ -196,7 +195,6 @@ compose.desktop {
 tasks.matching { it.name == "jvmRun" }.configureEach {
     if (this is JavaExec) {
         mainClass.set("com.oposicontrol.admin.app.MainKt")
-        systemProperty("oposi.BACKEND_TOKEN", backendTokenForBuild)
         systemProperty("oposi.BASE_URL", "http://localhost:8080")
         systemProperty("oposi.APP_ENV", "dev")
     }

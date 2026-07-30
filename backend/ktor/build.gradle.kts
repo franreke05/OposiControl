@@ -29,6 +29,8 @@ dependencies {
     implementation(libs.ktor.server.statusPages)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.kotlinx.serialization.json)
+    implementation("com.auth0:java-jwt:4.4.0")
+    implementation("org.apache.pdfbox:pdfbox:3.0.2")
     runtimeOnly(libs.logback.classic)
     testImplementation(libs.kotlin.test)
     testImplementation(libs.ktor.client.mock)

@@ -22,6 +22,7 @@ object AppConfigResolver {
             featureFlags = FeatureFlags(
                 enableLogs = source.read(KEY_ENABLE_LOGS)?.toBooleanStrictOrNull() ?: environment != Environment.PROD,
                 enableAnalytics = source.read(KEY_ENABLE_ANALYTICS)?.toBooleanStrictOrNull() ?: environment != Environment.DEV,
+                enableVerboseNetworkLogs = environment == Environment.DEV,
             ),
             appName = source.read(KEY_APP_NAME) ?: "OposiControl Admin",
             appVersion = source.read(KEY_APP_VERSION) ?: "1.0.0",
