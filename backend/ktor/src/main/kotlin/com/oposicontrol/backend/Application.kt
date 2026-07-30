@@ -5,15 +5,18 @@ import io.ktor.http.content.PartData
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.auth.Authentication
 import io.ktor.server.auth.UserIdPrincipal
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.bearer
+import io.ktor.server.auth.principal
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
@@ -34,6 +37,7 @@ import kotlinx.io.readByteArray
 import java.io.File
 import java.net.URI
 import java.net.URLEncoder
+import java.net.InetAddress
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
@@ -57,6 +61,13 @@ fun Application.module() {
         ignoreUnknownKeys = true
         explicitNulls = false
         prettyPrint = false
+    }
+    val serverProfile = System.getenv("SERVER_PROFILE").orEmpty().ifBlank { "combined" }
+    val consumerOnly = serverProfile.equals("consumer", ignoreCase = true)
+    val authRuntime = OposiBotsAuthRuntime.fromEnvironment(json, required = consumerOnly)
+    if (consumerOnly) {
+        configureConsumerAuthOnly(authRuntime ?: error("Auth consumer no configurado."))
+        return
     }
     val gateway = SupabaseContentGateway.fromEnvironment(json)
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir contenido desde Ktor.")
@@ -143,7 +154,16 @@ fun Application.module() {
         }
         v1Routes(v1Gateway)
         appV1Routes(appV1Gateway, jwtVerifier, allowDevUser)
+        authRuntime?.let(::oposiBotsAuthRoutes)
         authenticate("gateway-auth") {
+            intercept(ApplicationCallPipeline.Plugins) {
+                if (
+                    call.principal<UserIdPrincipal>()?.name == "oposicontrol-admin" &&
+                    !isLocalDevelopmentPeer(appEnv, call.request.origin.remoteHost)
+                ) {
+                    throw AppUnauthorized("El acceso administrativo local no se expone fuera de la red de desarrollo.")
+                }
+            }
             adminRoutes(adminGateway)
             adminV1Routes(adminV1Gateway)
             post("/admin/backend/restart") {
@@ -417,8 +437,33 @@ fun Application.module() {
     }
 }
 
+internal fun Application.configureConsumerAuthOnly(runtime: OposiBotsAuthRuntime) {
+    install(ContentNegotiation) {
+        json(runtime.json)
+    }
+    routing {
+        get("/health/live") {
+            call.respond(mapOf("status" to "ok"))
+        }
+        oposiBotsAuthRoutes(runtime)
+    }
+}
+
 internal fun allowsDevBypass(appEnv: String, enabled: Boolean): Boolean {
     return enabled && appEnv.lowercase() in setOf("dev", "development", "test")
+}
+
+internal fun isLocalDevelopmentPeer(appEnv: String, remoteHost: String): Boolean {
+    if (appEnv.lowercase() !in setOf("dev", "development", "test")) return false
+    val normalized = remoteHost.substringBefore('%').trim('[', ']')
+    return runCatching {
+        InetAddress.getByName(normalized).let { address ->
+            address.isLoopbackAddress ||
+                address.isSiteLocalAddress ||
+                normalized.startsWith("fc", ignoreCase = true) ||
+                normalized.startsWith("fd", ignoreCase = true)
+        }
+    }.getOrDefault(false)
 }
 
 fun io.ktor.server.application.ApplicationCall.requiredPath(name: String): String {

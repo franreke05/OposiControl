@@ -13,6 +13,8 @@ application {
 }
 
 dependencies {
+    implementation("io.ktor:ktor-client-core:${libs.versions.ktor.get()}")
+    implementation("io.ktor:ktor-client-java:${libs.versions.ktor.get()}")
     implementation(libs.ktor.server.auth)
     implementation(libs.ktor.server.contentNegotiation)
     implementation(libs.ktor.server.core)
@@ -20,11 +22,15 @@ dependencies {
     implementation(libs.ktor.server.statusPages)
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.kotlinx.serialization.json)
+    implementation("io.lettuce:lettuce-core:6.5.5.RELEASE")
     // Verificacion de JWT de Supabase (ES256). La clave EC se construye desde el JWKS publico.
     implementation("com.auth0:java-jwt:4.4.0")
     // Extraccion de texto de PDFs para importacion de rafagas.
     implementation("org.apache.pdfbox:pdfbox:3.0.2")
     testImplementation(kotlin("test"))
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
+    testImplementation("io.ktor:ktor-server-test-host:${libs.versions.ktor.get()}")
 }
 
 tasks.named<JavaExec>("run") {
