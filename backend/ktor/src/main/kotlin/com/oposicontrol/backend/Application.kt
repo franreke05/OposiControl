@@ -81,6 +81,8 @@ fun Application.module() {
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir API V1 desde Ktor.")
     val adminV1Gateway = AdminV1Gateway.fromEnvironment(json)
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir admin API V1 desde Ktor.")
+    val oposiBotsUserAdminGateway = SupabaseOposiBotsUserAdminGateway.fromEnvironment(json)
+        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir la administracion de usuarios de OposiBots.")
     val appV1Gateway = AppV1Gateway.fromEnvironment(json)
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir app API V1 desde Ktor.")
     val supabaseUrl = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
@@ -98,6 +100,12 @@ fun Application.module() {
             call.respond(
                 HttpStatusCode.Unauthorized,
                 ErrorDto(error = "unauthorized", message = cause.message ?: "No autorizado."),
+            )
+        }
+        exception<OposiBotsUserAdminNotFoundException> { call, cause ->
+            call.respond(
+                HttpStatusCode.NotFound,
+                ErrorDto(error = "not_found", message = cause.message ?: "Usuario no encontrado."),
             )
         }
         exception<IllegalArgumentException> { call, cause ->
@@ -166,6 +174,7 @@ fun Application.module() {
             }
             adminRoutes(adminGateway)
             adminV1Routes(adminV1Gateway)
+            oposiBotsUserAdminRoutes(oposiBotsUserAdminGateway)
             post("/admin/backend/restart") {
                 val restart = BackendRestartRequest.fromEnvironment()
                 if (restart == null) {
