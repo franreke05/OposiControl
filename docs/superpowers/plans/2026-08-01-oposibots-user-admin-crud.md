@@ -995,7 +995,7 @@ Expected: BUILD SUCCESSFUL.
 Run: `./gradlew :backend:ktor:test`
 Expected: BUILD SUCCESSFUL, all tests pass (existing tests + the 12 new tests from Tasks 2-3).
 
-- [ ] **Step 5: Manual smoke test against the Supabase branch from Task 1**
+- [x] **Step 5: Manual smoke test against the Supabase branch from Task 1** — Run directly against production (`ndiooyyqtaeysnedywer`), no branch, per user direction. All 5 operations passed (create 201, list 200, get 200, update 200, delete 204); hard-delete of both `public.usuario` row and `auth.users` identity confirmed via `execute_sql`. Diagnostic detour: first attempt 404'd everywhere due to a stale Gradle daemon holding `SERVER_PROFILE=consumer` from an earlier run — fixed with `./gradlew --stop` + `--no-configuration-cache`.
 
 This step requires Task 1's migration to actually be applied (branch is enough, main project not required yet). Start the backend locally pointed at the branch's connection details (`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` env vars set to the branch project, `SERVER_PROFILE` unset so it defaults to `combined`, `OPOSICONTROL_BACKEND_TOKEN` set to any local value):
 
@@ -1047,8 +1047,10 @@ git commit -m "feat(backend): wire OposiBotsUserAdminGateway and routes into App
 
 ## Verification (end-to-end, after all 4 tasks)
 
-1. `./gradlew :backend:ktor:test` — all tests green, including the 12 new ones across Tasks 2-3.
-2. `./gradlew :backend:ktor:compileKotlin` — clean compile.
-3. Task 4 Step 5's manual smoke test against the Supabase branch, full create → list → get → update → delete cycle, confirmed in the database directly.
-4. Confirm `SERVER_PROFILE=consumer` still excludes these routes: run `SERVER_PROFILE=consumer ./gradlew :backend:ktor:run` and `curl http://localhost:8080/api/v1/admin/oposibots/usuarios` → expect connection refused on that route context or 404 (the whole `authenticate` block and everything after it is skipped), confirming OposiBot's own consumer deployment never exposes admin user management.
-5. Before merging: get the user's explicit go-ahead to apply the migration to the **main** Supabase project (`ndiooyyqtaeysnedywer`), not just the branch — this plan intentionally stops short of doing that automatically (Task 1, Step 4).
+1. [x] `./gradlew :backend:ktor:test` — all tests green, including the 12 new ones across Tasks 2-3. (Task 4)
+2. [x] `./gradlew :backend:ktor:compileKotlin` — clean compile. (Task 4)
+3. [x] Task 4 Step 5's manual smoke test — run against production directly, full create → list → get → update → delete cycle, confirmed in the database directly.
+4. [x] Confirm `SERVER_PROFILE=consumer` excludes these routes — proven incidentally by the Step 5 diagnostic: a stale daemon stuck in `SERVER_PROFILE=consumer` served `/health/live` only (via `configureConsumerAuthOnly`) and 404'd on `/health` and every admin route, matching exactly what this item predicted.
+5. [x] Apply to the main Supabase project — done directly, per explicit user direction to skip the branch workflow entirely (pre-launch, no production data yet).
+
+**Plan complete.**
