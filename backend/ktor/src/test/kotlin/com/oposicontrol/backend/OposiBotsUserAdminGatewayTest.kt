@@ -11,7 +11,9 @@ import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class OposiBotsUserAdminGatewayTest {
@@ -148,5 +150,62 @@ class OposiBotsUserAdminGatewayTest {
         val gateway = SupabaseOposiBotsUserAdminGateway("https://example.supabase.co", "service-role-key", Json { ignoreUnknownKeys = true }, client)
 
         assertEquals(false, gateway.deleteUser(999))
+    }
+
+    @Test
+    fun listUsersEncodesSearchTermWithSpacesAndAccentedCharacters() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val client = HttpClient(MockEngine { request ->
+            requests += request
+            respond(
+                content = ByteReadChannel("[]"),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        })
+        val gateway = SupabaseOposiBotsUserAdminGateway("https://example.supabase.co", "service-role-key", Json { ignoreUnknownKeys = true }, client)
+
+        gateway.listUsers(limit = 50, offset = 0, search = "José García")
+
+        assertEquals(1, requests.size)
+        val queryString = requests.single().url.encodedQuery
+        // Should contain encoded search term, not raw spaces or accents
+        // The URL should be well-formed with encoded characters
+        assertFalse(queryString.contains(" "), "Should not contain raw spaces in query string")
+        // Verify that some encoding happened by checking for %XX patterns
+        assertTrue(queryString.contains("%"), "Should contain URL-encoded characters")
+        // The original accented characters should not appear as-is
+        assertFalse(queryString.contains("ó"), "Should not contain raw accented ó")
+        assertFalse(queryString.contains("á"), "Should not contain raw accented á")
+    }
+
+    @Test
+    fun updateUserThrowsOnBlankNombre() = runTest {
+        val client = HttpClient(MockEngine { respond(content = ByteReadChannel("[]"), status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "application/json")) })
+        val gateway = SupabaseOposiBotsUserAdminGateway("https://example.supabase.co", "service-role-key", Json { ignoreUnknownKeys = true }, client)
+
+        assertFailsWith<IllegalArgumentException> {
+            gateway.updateUser(42, OposiBotsUserAdminUpdateRequest(nombre = "   "))
+        }
+    }
+
+    @Test
+    fun updateUserThrowsOnBlankApellidos() = runTest {
+        val client = HttpClient(MockEngine { respond(content = ByteReadChannel("[]"), status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "application/json")) })
+        val gateway = SupabaseOposiBotsUserAdminGateway("https://example.supabase.co", "service-role-key", Json { ignoreUnknownKeys = true }, client)
+
+        assertFailsWith<IllegalArgumentException> {
+            gateway.updateUser(42, OposiBotsUserAdminUpdateRequest(apellidos = "   "))
+        }
+    }
+
+    @Test
+    fun updateUserThrowsOnBlankEspecialidadRegistro() = runTest {
+        val client = HttpClient(MockEngine { respond(content = ByteReadChannel("[]"), status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "application/json")) })
+        val gateway = SupabaseOposiBotsUserAdminGateway("https://example.supabase.co", "service-role-key", Json { ignoreUnknownKeys = true }, client)
+
+        assertFailsWith<IllegalArgumentException> {
+            gateway.updateUser(42, OposiBotsUserAdminUpdateRequest(especialidadRegistro = "   "))
+        }
     }
 }

@@ -20,6 +20,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import java.security.SecureRandom
 import java.time.Instant
 
 interface OposiBotsUserAdminGateway {
@@ -102,9 +105,17 @@ private fun requireValidUsername(username: String) {
     }
 }
 
+private fun String.encodeForPostgrestSearch(): String {
+    // Escape PostgREST filter metacharacters to prevent query injection/breakage
+    val escaped = this.replace(Regex("[,()%*]"), "")
+    // URL-encode to handle spaces, accents, and other special characters
+    return URLEncoder.encode(escaped, StandardCharsets.UTF_8)
+}
+
 private fun generateRandomPassword(): String {
     val allowed = ('A'..'Z') + ('a'..'z') + ('0'..'9') + listOf('!', '#', '%', '&', '*', '-', '_')
-    return (1..24).map { allowed.random() }.joinToString("")
+    val random = SecureRandom()
+    return (1..24).map { allowed[random.nextInt(allowed.size)] }.joinToString("")
 }
 
 class SupabaseOposiBotsUserAdminGateway(
@@ -118,7 +129,8 @@ class SupabaseOposiBotsUserAdminGateway(
         val clampedLimit = limit.coerceIn(1, 200)
         val clampedOffset = offset.coerceAtLeast(0)
         val searchClause = search?.trim()?.takeIf(String::isNotBlank)?.let {
-            "&or=(email.ilike.*$it*,username.ilike.*$it*,nombre.ilike.*$it*,apellidos.ilike.*$it*)"
+            val encoded = it.encodeForPostgrestSearch()
+            "&or=(email.ilike.*$encoded*,username.ilike.*$encoded*,nombre.ilike.*$encoded*,apellidos.ilike.*$encoded*)"
         }.orEmpty()
         val path = "/rest/v1/usuario?select=$UsuarioSelectColumns&order=created_at.desc&limit=$clampedLimit&offset=$clampedOffset$searchClause"
         return request(HttpMethod.Get, path, null).decodeList<OposiBotsUsuarioRow>().map { it.toDto() }
@@ -170,6 +182,9 @@ class SupabaseOposiBotsUserAdminGateway(
 
     override suspend fun updateUser(id: Int, request: OposiBotsUserAdminUpdateRequest): OposiBotsUserAdminDto? {
         request.username?.let(::requireValidUsername)
+        request.nombre?.let { require(it.isNotBlank()) { "El nombre no puede estar vacío." } }
+        request.apellidos?.let { require(it.isNotBlank()) { "Los apellidos no pueden estar vacíos." } }
+        request.especialidadRegistro?.let { require(it.isNotBlank()) { "La especialidad no puede estar vacía." } }
         var fieldsPresent = 0
         val fieldObject = buildJsonObject {
             request.nombre?.let {
