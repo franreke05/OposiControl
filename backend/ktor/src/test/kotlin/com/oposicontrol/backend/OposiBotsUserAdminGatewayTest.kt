@@ -170,13 +170,35 @@ class OposiBotsUserAdminGatewayTest {
         assertEquals(1, requests.size)
         val queryString = requests.single().url.encodedQuery
         // Should contain encoded search term, not raw spaces or accents
-        // The URL should be well-formed with encoded characters
         assertFalse(queryString.contains(" "), "Should not contain raw spaces in query string")
-        // Verify that some encoding happened by checking for %XX patterns
         assertTrue(queryString.contains("%"), "Should contain URL-encoded characters")
-        // The original accented characters should not appear as-is
-        assertFalse(queryString.contains("ó"), "Should not contain raw accented ó")
-        assertFalse(queryString.contains("á"), "Should not contain raw accented á")
+        // The actual accented characters in the input should not appear raw
+        assertFalse(queryString.contains("é"), "Should not contain raw accented é from José")
+        assertFalse(queryString.contains("í"), "Should not contain raw accented í from García")
+    }
+
+    @Test
+    fun listUsersStripsPostgRESTMetacharactersFromSearch() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val client = HttpClient(MockEngine { request ->
+            requests += request
+            respond(
+                content = ByteReadChannel("[]"),
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        })
+        val gateway = SupabaseOposiBotsUserAdminGateway("https://example.supabase.co", "service-role-key", Json { ignoreUnknownKeys = true }, client)
+
+        gateway.listUsers(limit = 50, offset = 0, search = "a,b)(test*100%)")
+
+        assertEquals(1, requests.size)
+        val fullUrl = requests.single().url.toString()
+        // Metacharacters should be stripped before encoding
+        // After stripping "a,b)(test*100%)" becomes "abtest100"
+        assertTrue(fullUrl.contains("abtest100"), "Should contain stripped term after metacharacters removed")
+        // The URL should not contain unencoded PostgREST filter metacharacters that would break the or=() clause
+        assertFalse(fullUrl.contains("a%2Cb%29"), "Should not contain encoded metacharacters as part of the search value")
     }
 
     @Test
@@ -207,5 +229,64 @@ class OposiBotsUserAdminGatewayTest {
         assertFailsWith<IllegalArgumentException> {
             gateway.updateUser(42, OposiBotsUserAdminUpdateRequest(especialidadRegistro = "   "))
         }
+    }
+
+    @Test
+    fun createUserCompensatesOrphanedAuthIdentityWhenUsuarioInsertFails() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val client = HttpClient(MockEngine { request ->
+            requests += request
+            when {
+                request.url.encodedPath.endsWith("/auth/v1/admin/users") && requests.size == 1 ->
+                    respond(content = ByteReadChannel("""{"id":"33333333-3333-3333-3333-333333333333"}"""), status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "application/json"))
+                request.url.encodedPath.endsWith("/rest/v1/usuario") && request.method == io.ktor.http.HttpMethod.Post ->
+                    respond(content = ByteReadChannel("""{"code":"23505","message":"duplicate key"}"""), status = HttpStatusCode.Conflict, headers = headersOf(HttpHeaders.ContentType, "application/json"))
+                else -> respond(content = ByteReadChannel(""), status = HttpStatusCode.NoContent, headers = headersOf())
+            }
+        })
+        val gateway = SupabaseOposiBotsUserAdminGateway("https://example.supabase.co", "service-role-key", Json { ignoreUnknownKeys = true }, client)
+
+        assertFailsWith<IllegalArgumentException> {
+            gateway.createUser(
+                OposiBotsUserAdminCreateRequest(
+                    email = "dup@example.com",
+                    password = null,
+                    nombre = "Test",
+                    apellidos = "User",
+                    username = null,
+                    especialidadRegistro = "Sanidad",
+                ),
+            )
+        }
+        // Should have 3 requests: POST auth, POST usuario (fails), DELETE auth (compensation)
+        assertEquals(3, requests.size)
+        assertTrue(requests[0].url.encodedPath.endsWith("/auth/v1/admin/users"))
+        assertTrue(requests[1].url.encodedPath.endsWith("/rest/v1/usuario"))
+        assertTrue(requests[2].url.encodedPath.endsWith("/auth/v1/admin/users/33333333-3333-3333-3333-333333333333"))
+    }
+
+    @Test
+    fun deleteUserTreats404FromAuthDeleteAsSuccess() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val client = HttpClient(MockEngine { request ->
+            requests += request
+            when {
+                request.url.parameters["id"] == "eq.42" && request.url.encodedPath.endsWith("/rest/v1/usuario") ->
+                    respond(
+                        content = ByteReadChannel("""[{"id":42,"auth_user_id":"44444444-4444-4444-4444-444444444444","email":"test@example.com","nombre":"Test","apellidos":"User","username":"test","especialidad_registro":"Sanidad","perfil_completo":true,"perfil_completado_at":"2026-08-01T00:00:00Z","created_at":"2026-08-01T00:00:00Z","updated_at":"2026-08-01T00:00:00Z"}]"""),
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                request.url.encodedPath.endsWith("/auth/v1/admin/users/44444444-4444-4444-4444-444444444444") ->
+                    respond(content = ByteReadChannel("""{"message":"Not found"}"""), status = HttpStatusCode.NotFound, headers = headersOf(HttpHeaders.ContentType, "application/json"))
+                else -> respond(content = ByteReadChannel(""), status = HttpStatusCode.NoContent, headers = headersOf())
+            }
+        })
+        val gateway = SupabaseOposiBotsUserAdminGateway("https://example.supabase.co", "service-role-key", Json { ignoreUnknownKeys = true }, client)
+
+        val result = gateway.deleteUser(42)
+
+        assertEquals(true, result)
+        assertEquals(2, requests.size)
     }
 }

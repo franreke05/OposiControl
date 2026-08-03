@@ -176,8 +176,24 @@ class SupabaseOposiBotsUserAdminGateway(
                 )
             },
         )
-        return request(HttpMethod.Post, "/rest/v1/usuario", usuarioBody, prefer = "return=representation")
-            .decodeList<OposiBotsUsuarioRow>().first().toDto()
+        return try {
+            request(HttpMethod.Post, "/rest/v1/usuario", usuarioBody, prefer = "return=representation")
+                .decodeList<OposiBotsUsuarioRow>().firstOrNull()?.toDto()
+                ?: throw IllegalStateException("El perfil de usuario no fue creado (respuesta vacía de Supabase).")
+        } catch (error: Exception) {
+            // Compensate: delete the orphaned Auth identity
+            try {
+                request(HttpMethod.Delete, "/auth/v1/admin/users/$authUserId", null)
+            } catch (compensationError: Exception) {
+                throw IllegalStateException(
+                    "El perfil de usuario NO pudo crearse pero la identidad de Supabase Auth $authUserId " +
+                        "tampoco pudo eliminarse (${compensationError.message}). Reintentar manualmente " +
+                        "borrando ese auth_user_id.",
+                    compensationError,
+                )
+            }
+            throw error
+        }
     }
 
     override suspend fun updateUser(id: Int, request: OposiBotsUserAdminUpdateRequest): OposiBotsUserAdminDto? {
@@ -229,7 +245,11 @@ class SupabaseOposiBotsUserAdminGateway(
         existing.authUserId?.let { authUserId ->
             try {
                 request(HttpMethod.Delete, "/auth/v1/admin/users/$authUserId", null)
-            } catch (error: IllegalStateException) {
+            } catch (error: Exception) {
+                // 404 from Auth DELETE means the identity was already removed (idempotent success)
+                if (error is IllegalStateException && error.message?.contains("404") == true) {
+                    return@let // Treat 404 as success
+                }
                 throw IllegalStateException(
                     "El perfil de usuario $id fue eliminado pero la identidad de Supabase Auth " +
                         "$authUserId NO pudo eliminarse (${error.message}). Reintentar manualmente " +
@@ -260,7 +280,13 @@ class SupabaseOposiBotsUserAdminGateway(
             throw IllegalStateException("Supabase network error on $method ${path.substringBefore('?')}: ${error::class.simpleName}: ${error.message}", error)
         }
         if (response.status.value !in 200..299) {
-            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.status.value}: ${response.bodyAsText().take(300)}")
+            val statusCode = response.status.value
+            val responseBody = response.bodyAsText()
+            // Special-case 409 Conflict responses as IllegalArgumentException (maps to 400)
+            if (statusCode == 409) {
+                throw IllegalArgumentException("Ya existe un usuario con esos datos (posible duplicado de email o username).")
+            }
+            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> $statusCode: ${responseBody.take(300)}")
         }
         return response.bodyAsText()
     }
