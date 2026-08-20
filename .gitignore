@@ -21,7 +21,15 @@ node_modules/
 *.db
 
 .ai
-.claude/
+.logs/
+.mcp.json
+.claude/*
+!.claude/
+!.claude/HASHIRA_LAWS.md
+!.claude/HASHIRA_ROUTING.md
+!.claude/agents/
+!.claude/agents/*.md
+.claude/settings.local.json
 
 # Local environment secrets
 .env

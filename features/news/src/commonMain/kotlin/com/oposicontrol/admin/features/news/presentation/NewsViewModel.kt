@@ -356,29 +356,10 @@ class NewsViewModel(
             updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("Añade al menos un título para guardar."))) }
             return
         }
-        updateState { it.copy(actionState = UiAsync.Loading) }
-        val previousId = currentState().selectedId
-        val article = currentState().toNewsItem().copy(
-            id = previousId.orEmpty().takeUnless { it.startsWith("local-") }.orEmpty(),
-            status = "draft",
-            isLocalDraft = false,
-        ).toDomain()
-        when (val result = upsertNewsUseCase(article)) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> {
-                previousId?.takeIf { it.startsWith("local-") }?.let { localDrafts.remove(it) }
-                analyticsTracker.trackAction("news_save_draft", mapOf("news_id" to result.value.id, "layers" to result.value.layers.size.toString()))
-                rememberSavedArticle(result.value.toUi())
-                updateState {
-                    it.copy(
-                        selectedId = result.value.id,
-                        editorStatus = result.value.status,
-                        actionState = UiAsync.Success(Unit),
-                        isDirty = false,
-                    )
-                }
-            }
-        }
+        rememberCurrentDraft()
+        val draftId = currentState().selectedId.orEmpty()
+        analyticsTracker.trackAction("news_save_draft", mapOf("news_id" to draftId, "layers" to currentState().editorLayers.size.toString()))
+        updateState { it.copy(actionState = UiAsync.Success(Unit), isDirty = false) }
     }
 
     private suspend fun publishCurrent() {

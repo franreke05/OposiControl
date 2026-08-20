@@ -5,6 +5,7 @@ import com.oposicontrol.admin.core.database.DatabaseFactory
 import com.oposicontrol.admin.core.network.ApiClientFactory
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.NewsEditorDraftLocalDataSource
+import com.oposicontrol.admin.data.local.SqlDelightNewsEditorDraftLocalDataSource
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.data.local.SettingsLocalDataSource
 import com.oposicontrol.admin.data.remote.api.AuditApi
@@ -58,7 +59,7 @@ val dataModule = module {
     single { DatabaseFactory(get()).create() }
     single { SessionLocalDataSource(get()) }
     single { SettingsLocalDataSource(get(), get()) }
-    single { NewsEditorDraftLocalDataSource(get()) }
+    single<NewsEditorDraftLocalDataSource> { SqlDelightNewsEditorDraftLocalDataSource(get()) }
     single { PlatformFileReader(get()) }
 
     single { ApiClientFactory(get(), get()).create() }

@@ -30,6 +30,9 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.Base64
+import org.slf4j.LoggerFactory
+
+private val GatewayLogger = LoggerFactory.getLogger("OC-KTOR-AUTH-GATEWAY")
 
 internal data class OposiBotsAuthContext(
     val requestId: String,
@@ -439,7 +442,12 @@ internal class SupabaseOposiBotsAuthGateway(
             AuthResponse(response.status, response.bodyAsText(), json)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (unexpected: Exception) {
+            // Logueado (S1D1/DAY_02, 2026-08-13): antes se descartaba en
+            // silencio -- cualquier fallo de red/TLS/DNS hacia Supabase se
+            // veia identico a un 5xx real de Supabase, sin forma de saber
+            // cual de los dos pasaba.
+            GatewayLogger.warn("supabaseRequest path={} failed", path, unexpected)
             throw OposiBotsAuthProblem.unavailable()
         }
     }
@@ -468,7 +476,12 @@ internal class SupabaseOposiBotsAuthGateway(
         conflictAllowed: Boolean = false,
     ): OposiBotsAuthProblem {
         val error = response.error()
-        val fingerprint = "${error.code} ${error.message}".lowercase()
+        val fingerprint = "${error.normalizedCode} ${error.msg}".lowercase()
+        // Logueado (S1D1/DAY_02, 2026-08-13): la respuesta real de Supabase
+        // Auth (status + error_code/msg) antes se descartaba por completo --
+        // el cliente solo veia AuthenticationRequired/TemporarilyUnavailable
+        // genericos sin ninguna pista de la causa real.
+        GatewayLogger.warn("mapCredentialError status={} error_code={} msg={}", response.status.value, error.error_code, error.msg)
         return when {
             response.status == HttpStatusCode.TooManyRequests -> OposiBotsAuthProblem.unavailable(60)
             response.status.value >= 500 -> OposiBotsAuthProblem.unavailable()
@@ -524,11 +537,20 @@ private data class ProfileRow(
 
 @Serializable
 private data class SupabaseError(
-    val code: String? = null,
+    // Bug real corregido (S1D1/DAY_02, 2026-08-13): la respuesta de error de
+    // Supabase Auth es `{"code":400,"error_code":"...","msg":"..."}` --
+    // `code` es NUMERICO (duplica el status HTTP) y el mensaje viene en
+    // `msg`, no en `message`. Con los tipos viejos (`code: String?`, sin
+    // `msg`), kotlinx.serialization tiraba una excepcion de tipo al decodificar
+    // (numero contra String), `runCatching` la atrapaba y devolvia
+    // `SupabaseError()` vacio -- TODOS los errores de Supabase se perdian en
+    // silencio, sin importar cual fuera. Verificado con curl directo contra
+    // `/auth/v1/signup`.
+    val code: Int? = null,
     val error_code: String? = null,
-    val message: String? = null,
+    val msg: String? = null,
 ) {
-    val normalizedCode: String get() = (code ?: error_code).orEmpty()
+    val normalizedCode: String get() = error_code.orEmpty()
 }
 
 @Serializable

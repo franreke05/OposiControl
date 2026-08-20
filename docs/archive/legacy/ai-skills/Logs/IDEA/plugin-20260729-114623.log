@@ -1,0 +1,24 @@
+2026-07-29T09:46:23.890Z [ctureModificationListener$Companion.initForProject] INFO ProjectStructureModificationListener is init for project OposiControl
+2026-07-29T09:46:23.892Z [s.AiToolwindowsInitializer.reinitializeToolWindows] INFO AI state ENABLED
+2026-07-29T09:46:23.911Z [itializeManager$initializeAnalyzer$1.invokeSuspend] INFO initializing infrastructure
+2026-07-29T09:46:23.914Z [iintellij.transport.base.HeavyBackendService.start] INFO start the new heavy plugins backend instance
+2026-07-29T09:46:23.914Z [urity.aiintellij.utils.logging.AiLoggerAdapter.log] INFO start backend initialization
+2026-07-29T09:46:23.914Z [urity.aiintellij.utils.logging.AiLoggerAdapter.log] INFO isLightMode: false
+2026-07-29T09:46:23.915Z [urity.aiintellij.utils.logging.AiLoggerAdapter.log] INFO backend port is 51231
+2026-07-29T09:46:23.917Z [urity.aiintellij.utils.logging.AiLoggerAdapter.log] INFO starting new backend process
+2026-07-29T09:46:23.918Z [urity.aiintellij.utils.logging.AiLoggerAdapter.log] INFO backend args: [C:\Users\franr\AppData\Local\Application Inspector Analyzer\AI.PluginsBackend.exe, --port, 51231, --log-level, Error, --logs-dir, C:\Users\franr\AndroidStudioProjects\OposiControl\.ai\Logs\Infrastructure\2026-07-29-11-46-23, --light-mode, false]
+2026-07-29T09:46:23.933Z [urity.aiintellij.utils.logging.AiLoggerAdapter.log] INFO backend process with PID 103920 started
+2026-07-29T09:46:23.972Z [y.aiintellij.ui.panels.AIToolWindowLogPanel.<init>] INFO initializing a logs panel
+2026-07-29T09:46:24.030Z [y.aiintellij.ui.panels.AIToolWindowLogPanel.<init>] INFO initializing a logs panel
+2026-07-29T09:46:28.536Z [intellij.services.AiInitializeManager.initializeAI] INFO IntelliJ listens web server on port: 63342
+2026-07-29T09:47:07.771Z [uctureInitializer.initializeInfrastructureInstance] INFO Infrastructure initialized
+2026-07-29T09:47:24.759Z [y.aiintellij.utils.logging.AiProjectLogger.cleanUp] INFO Clean up logs files was started
+2026-07-29T09:47:24.825Z [y.aiintellij.utils.logging.AiProjectLogger.cleanUp] INFO Clean up logs files was finished
+2026-07-29T09:47:24.827Z [istantNotificationService.subscribeOnNotifications] INFO subscribing on the assistant notifications
+2026-07-29T09:47:25.230Z [ices.aie.AieInitializer$initialize$2.invokeSuspend] INFO AIE integration isn't initialized, skipping listeners initialization
+2026-07-29T09:47:26.298Z [stantNotificationService.onTipsAvailabilityUpdated] INFO tips availability updated availability {
+}
+
+2026-07-29T09:47:26.334Z [AssistantNotificationService.onQuickFixTipsUpdated] INFO assistant quickfixes were updated quick_fix_tips {
+}
+

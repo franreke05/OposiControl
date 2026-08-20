@@ -2,10 +2,16 @@ package com.oposicontrol.admin.data.local
 
 import com.oposicontrol.admin.core.database.AdminDatabase
 
-class NewsEditorDraftLocalDataSource(
+interface NewsEditorDraftLocalDataSource {
+    fun readDraft(): NewsEditorDraftSnapshot?
+    fun saveDraft(snapshot: NewsEditorDraftSnapshot)
+    fun clearDraft()
+}
+
+class SqlDelightNewsEditorDraftLocalDataSource(
     private val database: AdminDatabase,
-) {
-    fun readDraft(): NewsEditorDraftSnapshot? {
+) : NewsEditorDraftLocalDataSource {
+    override fun readDraft(): NewsEditorDraftSnapshot? {
         return database.newsEditorDraftQueries.selectDraft(
             mapper = { _, newsId, title, textContent, specialty, type, backgroundType, backgroundPath, imagePath, status, layersJson, canvasWidth, canvasHeight ->
                 NewsEditorDraftSnapshot(
@@ -26,7 +32,7 @@ class NewsEditorDraftLocalDataSource(
         ).executeAsOneOrNull()
     }
 
-    fun saveDraft(snapshot: NewsEditorDraftSnapshot) {
+    override fun saveDraft(snapshot: NewsEditorDraftSnapshot) {
         database.newsEditorDraftQueries.upsertDraft(
             news_id = snapshot.newsId,
             title = snapshot.title,
@@ -43,7 +49,7 @@ class NewsEditorDraftLocalDataSource(
         )
     }
 
-    fun clearDraft() {
+    override fun clearDraft() {
         database.newsEditorDraftQueries.clearDraft()
     }
 }

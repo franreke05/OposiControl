@@ -1,0 +1,158 @@
+# Endpoint Catalog
+
+Catálogo activo reconstruido desde código Ktor y `AUDIT_OPOSICONTROL/11_ENDPOINT_CATALOG.md`.
+
+Reglas de verdad:
+
+- `SOURCE_VERIFIED`: la ruta/familia aparece en código fuente activo.
+- `DOCUMENTED_ONLY`: solo aparece en documentación histórica.
+- `LIVE_NOT_VERIFIED`: no se verificó disponibilidad, DB, RLS, storage ni consumidor externo en runtime.
+- Los campos no demostrados se mantienen como `UNKNOWN`.
+- `OposiBot consumer` es `NOT_VERIFIED` en todo el catálogo.
+
+Para evitar repetir afirmaciones, cada tabla declara los metadatos comunes aplicables a todas sus filas: DTOs, errores, consumidores y evidencia. No se inventan nombres de DTO ni respuestas live.
+
+## Common contract fields
+
+- Request DTO: `UNKNOWN` salvo que el nombre aparezca explícitamente en el route/source.
+- Response DTO: `UNKNOWN` salvo que el nombre aparezca explícitamente en el route/source.
+- Errors: status/JSON exacto `NOT_VERIFIED` en runtime; tests de endpoint existen en backend según auditoría, pero no se asigna cobertura por fila sin prueba específica.
+- DB/RPC/Storage dependency: Supabase/gateway esperado; estado live `LIVE_NOT_VERIFIED`.
+- Admin UI consumer: `PARTIAL / SOURCE_NOT_MAPPED` salvo evidencia de repositorio explícita.
+- OposiBot consumer: `NOT_VERIFIED`.
+
+## `/content/*` — legacy admin/content
+
+Common: Domain `content`; Authorization `ADMIN_REQUIRED`; Route implementation `Application.kt`; Service `UNKNOWN`; Gateway `SupabaseContentGateway`; Request/Response DTO `UNKNOWN`; Errors `UNKNOWN`; Tests `SOURCE_DOCUMENTED / endpoint tests reported`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `PARTIAL`; OposiBot `NOT_VERIFIED`; Evidence `Application.kt`, `11_ENDPOINT_CATALOG.md`.
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `CONTENT-001` | GET/POST/PUT/DELETE | `/content/especialidades[/{id}]` | `LEGACY` |
+| `CONTENT-002` | GET/POST/PUT/DELETE | `/content/etiquetas[/{id}]` | `LEGACY` |
+| `CONTENT-003` | GET/POST/PUT/DELETE | `/content/comunidades[/{id}]` | `LEGACY` |
+| `CONTENT-004` | GET/POST/PUT/DELETE | `/content/solucionarios[/{id}]` | `LEGACY` |
+| `CONTENT-005` | POST/DELETE | `/content/solucionarios/{id}/portada` | `LEGACY` |
+| `CONTENT-006` | GET/POST/PUT/DELETE | `/content/solucionarios/{id}/preguntas[/{preguntaId}]` | `LEGACY` |
+| `CONTENT-007` | PUT | `/content/solucionarios/{id}/preguntas/order` | `LEGACY` |
+| `CONTENT-008` | GET/POST/PUT/DELETE | `/content/rafaga[/{id}]` | `LEGACY` |
+| `CONTENT-009` | GET/POST/PUT/DELETE | `/content/rafaga/{id}/preguntas[/{preguntaId}]` | `LEGACY` |
+| `CONTENT-010` | PUT | `/content/rafaga/{id}/preguntas/order` | `LEGACY` |
+| `CONTENT-011` | POST/DELETE | `/content/preguntas/{preguntaId}/recursos/{resourceId}/upload` | `LEGACY` |
+| `CONTENT-012` | POST/DELETE | `/content/preguntas/{preguntaId}/recursos[/{resourceId}]` | `LEGACY` |
+| `CONTENT-013` | PUT | `/content/preguntas/{preguntaId}/recursos/order` | `LEGACY` |
+| `CONTENT-014` | GET/POST/PUT/DELETE | `/content/noticias[/{noticiaId}]` | `LEGACY` |
+| `CONTENT-015` | POST | `/content/noticias/assets` | `LEGACY` |
+| `CONTENT-016` | GET | `/content/tags` | `LEGACY` |
+| `CONTENT-017` | GET | `/content/search` | `LEGACY` |
+| `CONTENT-018` | POST | `/content/search/reindex` | `LEGACY` |
+
+Known storage limits preserved from evidence: portada/assets `10 MB`; resource upload `50 MB`. Exact enforcement and live bucket state are `LIVE_NOT_VERIFIED`.
+
+## `/v1/*` — public read API
+
+Common: Domain `public app read`; Authorization `PUBLIC`; Route implementation `V1Routes.kt`; Service `UNKNOWN`; Gateway `SupabaseV1Gateway`; Request/Response DTO `UNKNOWN`; Errors `UNKNOWN`; Tests `SOURCE_DOCUMENTED / endpoint tests reported`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `V1Routes.kt`, `11_ENDPOINT_CATALOG.md`.
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `V1-001` | GET | `/v1/especialidades` | `SOURCE_VERIFIED` |
+| `V1-002` | GET | `/v1/examenes` | `SOURCE_VERIFIED` |
+| `V1-003` | GET | `/v1/examenes/{examenId}` | `SOURCE_VERIFIED` |
+| `V1-004` | GET | `/v1/examenes/{examenId}/preguntas` | `SOURCE_VERIFIED` |
+
+## `/api/v1/admin/*` — admin V1
+
+Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `AdminV1Routes.kt`; Service `UNKNOWN`; Gateway `AdminV1Gateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `backend tests / source documented`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `PARTIAL`; OposiBot `NOT_VERIFIED`; Evidence `AdminV1Routes.kt`, `BackendRoutes.kt`, `11_ENDPOINT_CATALOG.md`.
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `ADMIN-001` | GET/POST/PATCH/DELETE | `/api/v1/admin/especialidades[/{id}]` | `SOURCE_VERIFIED` |
+| `ADMIN-002` | GET/POST/PATCH/DELETE | `/api/v1/admin/examenes[/{id}]` | `SOURCE_VERIFIED` |
+| `ADMIN-003` | GET | `/api/v1/admin/examenes/{id}/preguntas` | `SOURCE_VERIFIED` |
+| `ADMIN-004` | PATCH | `/api/v1/admin/examenes/{id}/preguntas/orden` | `SOURCE_VERIFIED` |
+| `ADMIN-005` | POST | `/api/v1/admin/examenes/{id}/publicar` | `SOURCE_VERIFIED` |
+| `ADMIN-006` | POST | `/api/v1/admin/examenes/{id}/despublicar` | `SOURCE_VERIFIED` |
+| `ADMIN-007` | POST/DELETE | `/api/v1/admin/examenes/{id}/portada` | `SOURCE_VERIFIED` |
+| `ADMIN-008` | GET/POST/PATCH/DELETE | `/api/v1/admin/preguntas[/{id}]` | `SOURCE_VERIFIED` |
+| `ADMIN-009` | GET/POST | `/api/v1/admin/preguntas/{id}/recursos` | `SOURCE_VERIFIED` |
+| `ADMIN-010` | PATCH/DELETE | `/api/v1/admin/preguntas/{id}/recursos/{recursoId}` | `SOURCE_VERIFIED` |
+| `ADMIN-011` | GET/POST | `/api/v1/admin/importaciones/preguntas[/{loteId}]` | `SOURCE_VERIFIED` |
+| `ADMIN-012` | PATCH | `/api/v1/admin/importaciones/staging/{id}` | `SOURCE_VERIFIED` |
+| `ADMIN-013` | POST | `/api/v1/admin/importaciones/{loteId}/importar` | `SOURCE_VERIFIED` |
+| `ADMIN-014` | POST | `/api/v1/admin/rafagas/import` | `SOURCE_VERIFIED` |
+| `ADMIN-015` | GET | `/api/v1/admin/feedback/preguntas` | `SOURCE_VERIFIED` |
+| `ADMIN-016` | POST | `/api/v1/admin/feedback/preguntas/{id}/resolver` | `SOURCE_VERIFIED` |
+| `ADMIN-017` | GET | `/api/v1/admin/auditoria` | `SOURCE_VERIFIED` |
+| `ADMIN-018` | GET/PATCH | `/api/v1/admin/usuarios[/{id}]` | `SOURCE_VERIFIED` |
+| `ADMIN-019` | POST | `/api/v1/admin/usuarios/{id}/roles` | `SOURCE_VERIFIED` |
+| `ADMIN-020` | POST | `/api/v1/admin/usuarios/{id}/tickets` | `SOURCE_VERIFIED` |
+| `ADMIN-021` | GET/POST | `/api/v1/admin/reportes[/{id}/resolver]` | `SOURCE_VERIFIED` |
+| `ADMIN-022` | GET | `/api/v1/admin/roles` | `SOURCE_VERIFIED` |
+| `ADMIN-023` | GET | `/api/v1/admin/tickets` | `SOURCE_VERIFIED` |
+| `ADMIN-024` | GET/POST | `/api/v1/admin/tickets/{usuarioId}/transacciones` | `SOURCE_VERIFIED` |
+| `ADMIN-025` | GET | `/api/v1/admin/soporte` | `SOURCE_VERIFIED` |
+| `ADMIN-026` | GET/POST | `/api/v1/admin/soporte/conversaciones/{id}/mensajes` | `SOURCE_VERIFIED` |
+| `ADMIN-027` | GET/POST | `/api/v1/admin/accesos` | `SOURCE_VERIFIED` |
+| `ADMIN-028` | GET | `/api/v1/admin/moderacion`, `/reportes`, `/actions`, `/acciones` | `SOURCE_VERIFIED` |
+| `ADMIN-029` | POST | `/api/v1/admin/moderacion/actions` | `SOURCE_VERIFIED` |
+| `ADMIN-030` | GET | `/api/v1/admin/settings`, `/ajustes` | `SOURCE_VERIFIED` |
+| `ADMIN-031` | GET/POST/PATCH/DELETE | `/api/v1/admin/etiquetas[/{id}]` | `SOURCE_VERIFIED` |
+| `ADMIN-032` | GET/POST/PATCH/DELETE | `/api/v1/admin/comunidades-autonomas[/{id}]` | `SOURCE_VERIFIED` |
+| `ADMIN-033` | GET | `/api/v1/admin/dashboard` | `SOURCE_VERIFIED` |
+
+## `/api/v1/app/*` — authenticated app API
+
+Common: Domain `app`; Authorization `JWT_REQUIRED`, with documented dev fallback controlled by `OPOSICONTROL_ALLOW_DEV_USER`; Route implementation `AppV1Routes.kt`; Service `UNKNOWN`; Gateway `AppV1Gateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `SOURCE_DOCUMENTED`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `AppV1Routes.kt`, `11_ENDPOINT_CATALOG.md`.
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `APP-001` | GET | `/api/v1/app/home` | `SOURCE_VERIFIED` |
+| `APP-002` | GET | `/api/v1/app/examenes` | `SOURCE_VERIFIED` |
+| `APP-003` | GET | `/api/v1/app/examenes/{id}` | `SOURCE_VERIFIED` |
+| `APP-004` | POST | `/api/v1/app/examenes/{id}/iniciar` | `SOURCE_VERIFIED` |
+| `APP-005` | POST | `/api/v1/app/intentos/{id}/responder` | `SOURCE_VERIFIED` |
+| `APP-006` | POST | `/api/v1/app/intentos/{id}/finalizar` | `SOURCE_VERIFIED` |
+| `APP-007` | GET | `/api/v1/app/estadisticas` | `SOURCE_VERIFIED` |
+| `APP-008` | GET | `/api/v1/app/reto-diario` | `SOURCE_VERIFIED` |
+| `APP-009` | POST | `/api/v1/app/feedback/pregunta` | `SOURCE_VERIFIED` |
+| `APP-010` | POST | `/api/v1/app/eventos` | `SOURCE_VERIFIED` |
+
+## `/v1/auth/*` — OposiBots authentication
+
+Common: Domain `OposiBots auth`; Authorization varies by handler: public/rate-limited for registration and credential exchange; bearer for protected operations; exact matrix `UNKNOWN` without runtime route test; Route implementation `OposiBotsAuthRoutes.kt`; Service `UNKNOWN`; Gateway `OposiBotsAuthGateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `backend auth tests / source documented`; DB/RPC/Storage `Supabase Auth expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `OposiBotsAuthRoutes.kt`, `11_ENDPOINT_CATALOG.md`.
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `AUTH-001` | POST | `/v1/auth/register` | `SOURCE_VERIFIED` |
+| `AUTH-002` | POST | `/v1/auth/email/resend` | `SOURCE_VERIFIED` |
+| `AUTH-003` | POST | `/v1/auth/email/exchange` | `SOURCE_VERIFIED` |
+| `AUTH-004` | POST | `/v1/auth/login` | `SOURCE_VERIFIED` |
+| `AUTH-005` | POST | `/v1/auth/refresh` | `SOURCE_VERIFIED` |
+| `AUTH-006` | POST | `/v1/auth/recover` | `SOURCE_VERIFIED` |
+| `AUTH-007` | POST | `/v1/auth/reset-password` | `SOURCE_VERIFIED` |
+| `AUTH-008` | POST | `/v1/auth/oauth/google` | `SOURCE_VERIFIED` |
+| `AUTH-009` | POST | `/v1/auth/oauth/apple` | `SOURCE_VERIFIED` |
+| `AUTH-010` | POST | `/v1/auth/logout` | `SOURCE_VERIFIED` |
+| `AUTH-011` | GET | `/v1/auth/me` | `SOURCE_VERIFIED` |
+| `AUTH-012` | POST | `/v1/auth/register/profile` | `SOURCE_VERIFIED` |
+
+## OposiBots users admin
+
+Common: Domain `OposiBots user administration`; Authorization `ADMIN_REQUIRED`; Route implementation `OposiBotsUserAdminRoutes.kt`; Service `UNKNOWN`; Gateway `OposiBotsUserAdminGateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `OposiBotsUserAdminRoutesTest.kt`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `OposiBotsUserAdminRoutes.kt`, `OposiBotsUserAdminRoutesTest.kt`, `11_ENDPOINT_CATALOG.md`.
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `BOT-ADMIN-001` | GET/POST | `/api/v1/admin/oposibots/usuarios` | `SOURCE_VERIFIED` |
+| `BOT-ADMIN-002` | GET/PATCH/DELETE | `/api/v1/admin/oposibots/usuarios/{id}` | `SOURCE_VERIFIED` |
+
+## Knowledge-loss check
+
+| Family | Result |
+|---|---|
+| `/content/*` | `PRESERVED` |
+| `/v1/*` | `PRESERVED` |
+| `/api/v1/admin/*` | `PRESERVED` |
+| `/api/v1/app/*` | `PRESERVED` |
+| `/v1/auth/*` | `PRESERVED` |
+| OposiBots admin users | `PRESERVED` |
+
+Preserved means every family and route grouping from the forensic source is represented here. It does not mean runtime/live compatibility is verified.

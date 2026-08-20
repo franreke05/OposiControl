@@ -4,6 +4,8 @@ import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
+import com.oposicontrol.admin.data.local.NewsEditorDraftLocalDataSource
+import com.oposicontrol.admin.data.local.NewsEditorDraftSnapshot
 import com.oposicontrol.admin.domain.model.NewsArticle
 import com.oposicontrol.admin.domain.model.NewsAssetUpload
 import com.oposicontrol.admin.domain.repository.NewsRepository
@@ -425,7 +427,22 @@ class NewsViewModelTest {
             uploadNewsAssetUseCase = UploadNewsAssetUseCase(repository),
             archiveNewsUseCase = ArchiveNewsUseCase(repository),
             analyticsTracker = NoOpAnalyticsTracker,
+            draftLocalDataSource = InMemoryNewsEditorDraftLocalDataSource(),
         )
+    }
+}
+
+private class InMemoryNewsEditorDraftLocalDataSource : NewsEditorDraftLocalDataSource {
+    private var snapshot: NewsEditorDraftSnapshot? = null
+
+    override fun readDraft(): NewsEditorDraftSnapshot? = snapshot
+
+    override fun saveDraft(snapshot: NewsEditorDraftSnapshot) {
+        this.snapshot = snapshot
+    }
+
+    override fun clearDraft() {
+        snapshot = null
     }
 }
 

@@ -27,6 +27,10 @@ dependencies {
     implementation("com.auth0:java-jwt:4.4.0")
     // Extraccion de texto de PDFs para importacion de rafagas.
     implementation("org.apache.pdfbox:pdfbox:3.0.2")
+    // S1D1/DAY_02 (2026-08-13): sin binding SLF4J los logs (incluidos los
+    // errores swallowed en OposiBotsAuthRoutes.authEndpoint) no se veian en
+    // ningun lado -- ver auditoria 2026-08-08, riesgo #6 "sin observabilidad".
+    runtimeOnly("ch.qos.logback:logback-classic:1.5.16")
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")

@@ -151,8 +151,13 @@ private suspend fun ApplicationCall.authEndpoint(
         problem.retryAfterSeconds?.let { response.headers.append(HttpHeaders.RetryAfter, it.toString()) }
         logAuthResult(operation, requestId, problem.status.value)
         respond(problem.status, problem.response())
-    } catch (_: Exception) {
+    } catch (unexpected: Exception) {
         val problem = OposiBotsAuthProblem.unavailable()
+        // Logueado (S1D1/DAY_02, 2026-08-13): antes esta causa se descartaba
+        // en silencio (`catch (_: Exception)`) -- sin esto, cualquier fallo
+        // real (Supabase, red, bug) se veia igual que un rate-limit, sin
+        // forma de diagnosticarlo. No se expone al cliente, solo al log.
+        AuthLogger.warn("auth operation={} requestId={} unexpected={}", operation.name, requestId, unexpected.toString())
         logAuthResult(operation, requestId, problem.status.value)
         respond(problem.status, problem.response())
     }
