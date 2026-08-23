@@ -1,6 +1,6 @@
 # OposiControl
 
-OposiControl es la aplicación administrativa y operativa de OposiControl. Es un proyecto Kotlin Multiplatform con objetivos Android, iOS y Desktop/JVM. Su backend actual está en Ktor y la integración de datos/autenticación se documenta como código esperado; el estado live de Supabase no está verificado en esta reorganización.
+OposiControl es la aplicación administrativa y operativa de OposiControl. Es un proyecto Kotlin Multiplatform con objetivos Android, iOS y Desktop/JVM. Su backend actual está en Ktor. Product Metrics V1 y wallet están verificados en el alcance ejecutado de MAIN; la cobertura legacy, Storage y proveedores externos permanece `NOT_VERIFIED`.
 
 ## Entrada operativa
 
@@ -19,10 +19,9 @@ La gobernanza Hashira vive en [.claude/HASHIRA_LAWS.md](./.claude/HASHIRA_LAWS.m
 - `SECOND_BRAIN_MIGRATION: COMPLETED` para la primera estructura documental.
 - `HASHIRA: ACTIVE`.
 - `MIGRATION_REMEDIATION: COMPLETED` para la documentación PASS 01.
-- `TECHNICAL_REMEDIATION: PENDING`.
-- `BASELINE: NOT_ESTABLISHED`.
-- `REMEDIATION: PENDING`.
-- La carpeta histórica `AUDIT_OPOSICONTROL/` se conserva sin borrar; su manifiesto está en [docs/archive/audits/2026-08-19/README.md](./docs/archive/audits/2026-08-19/README.md).
+- `DATABASE: VERIFIED` para Product Metrics/wallet.
+- `BACKEND: BACKEND_PASS` con JWT E2E válido bloqueado por fixture externo.
+- Las auditorías, actas cerradas y skills históricos se eliminaron del working tree; Git conserva su historial versionado.
 - El cliente actualmente confirmado en código es `ARTURO`. `Claudia`/`CaravanTruck` no se consideran parte del producto sin evidencia específica.
 
 ## Construcción y pruebas
@@ -35,7 +34,7 @@ En Windows:
 .\gradlew.bat test --no-daemon --console=plain
 ```
 
-El resultado de la última validación está registrado en [docs/engineering/TESTING.md](./docs/engineering/TESTING.md). El build global conserva un fallo conocido en `features/audit/.../AuditViewModel.kt` (`System` no resuelto); esta reorganización no lo corrige.
+El resultado de la validación está registrado en [docs/engineering/TESTING.md](./docs/engineering/TESTING.md). Las pruebas ejecutadas no sustituyen la verificación de runtime visual, despliegue o consumidores externos.
 
 ## Límites de esta fase
 

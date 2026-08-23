@@ -42,6 +42,8 @@ import java.util.Base64
 
 class AppUnauthorized(message: String) : RuntimeException(message)
 
+class AppForbidden(message: String) : RuntimeException(message)
+
 fun Route.appV1Routes(gateway: AppV1Gateway, verifier: SupabaseJwtVerifier, allowDevUser: Boolean) {
     route("/api/v1/app") {
         get("/home") {
@@ -71,6 +73,16 @@ fun Route.appV1Routes(gateway: AppV1Gateway, verifier: SupabaseJwtVerifier, allo
         }
         get("/estadisticas") {
             call.respond(AppEstadisticasResponse(gateway.estadisticas(call.usuarioId(verifier, allowDevUser))))
+        }
+        get("/commercial/catalog") {
+            call.usuarioId(verifier, allowDevUser)
+            call.respond(gateway.commercialCatalog())
+        }
+        get("/commercial/purchases") {
+            call.respond(gateway.commercialPurchases(call.usuarioId(verifier, allowDevUser)))
+        }
+        get("/commercial/subscriptions") {
+            call.respond(gateway.commercialSubscriptions(call.usuarioId(verifier, allowDevUser)))
         }
         get("/reto-diario") {
             call.usuarioId(verifier, allowDevUser)
@@ -170,10 +182,98 @@ class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
 @Serializable data class AppRetoResponse(val data: AppRetoDto? = null)
 @Serializable data class OkResponse(val ok: Boolean = true, val id: String? = null)
 
+@Serializable
+data class CommercialCatalogResponse(
+    val products: List<CommercialProductDto> = emptyList(),
+    val plans: List<CommercialPlanDto> = emptyList(),
+)
+
+@Serializable
+data class CommercialProductDto(
+    val id: String,
+    val code: String,
+    val productType: String,
+    val name: String,
+    val description: String? = null,
+    val planId: String? = null,
+    val tariffs: List<CommercialTariffDto> = emptyList(),
+)
+
+@Serializable
+data class CommercialTariffDto(
+    val id: String,
+    val billingPeriod: String,
+    val pricePhase: String,
+    val priceCents: Int,
+    val currency: String,
+    val active: Boolean,
+    val visible: Boolean,
+    val position: Int,
+)
+
+@Serializable
+data class CommercialPlanDto(
+    val id: String,
+    val code: String,
+    val name: String,
+    val description: String? = null,
+    val level: Int,
+    val benefits: List<CommercialBenefitDto> = emptyList(),
+)
+
+@Serializable
+data class CommercialBenefitDto(
+    val id: String,
+    val code: String,
+    val booleanValue: Boolean? = null,
+    val integerValue: Int? = null,
+    val numericValue: Double? = null,
+    val textValue: String? = null,
+)
+
+@Serializable data class CommercialPurchasesResponse(val data: List<CommercialPurchaseDto>)
+@Serializable data class CommercialSubscriptionsResponse(val data: List<CommercialSubscriptionDto>)
+@Serializable
+data class CommercialPurchaseDto(
+    val id: String,
+    val provider: String,
+    val productCode: String,
+    val productType: String,
+    val status: String,
+    val priceCents: Int? = null,
+    val currency: String,
+    val externalTransactionId: String? = null,
+    val purchasedAt: String? = null,
+)
+
+@Serializable
+data class CommercialSubscriptionDto(
+    val id: String,
+    val provider: String,
+    val productCode: String,
+    val status: String,
+    val startedAt: String,
+    val endedAt: String? = null,
+    val renewsAt: String? = null,
+    val externalId: String? = null,
+)
+
 @Serializable data class ResponderRequest(val preguntaId: String, val opcionSeleccionadaId: String)
 @Serializable data class ResponderResponse(val esCorrecta: Boolean, val opcionCorrectaId: String? = null)
 @Serializable data class AppFeedbackRequest(val preguntaId: String, val tipoFeedback: String = "otro", val descripcion: String = "", val intentoId: String? = null)
-@Serializable data class AppEventoRequest(val nombreEvento: String, val pantalla: String? = null, val entidadTipo: String? = null, val entidadId: String? = null, val propiedades: JsonObject = JsonObject(emptyMap()))
+@Serializable data class AppEventoRequest(
+    val nombreEvento: String,
+    val pantalla: String? = null,
+    val entidadTipo: String? = null,
+    val entidadId: String? = null,
+    val propiedades: JsonObject = JsonObject(emptyMap()),
+    val eventVersion: Int = 1,
+    val occurredEn: String? = null,
+    val especialidadId: String? = null,
+    val intentoId: String? = null,
+    val preguntaId: String? = null,
+    val idempotencyKey: String? = null,
+)
 
 // ---------- Gateway Supabase (service role; SIEMPRE filtra por usuarioId) ----------
 
@@ -185,7 +285,22 @@ class AppV1Gateway private constructor(
 ) {
     fun hasAdminRole(usuarioId: String): Boolean {
         usuarioId.validatedUuid("usuarioId")
-        return get("/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId&limit=1").isNotEmpty()
+        return hasAnyCanonicalRole(usuarioId, CanonicalAuthorization.adminRoleCodes)
+    }
+
+    fun hasModeratorOrAdminRole(usuarioId: String): Boolean {
+        usuarioId.validatedUuid("usuarioId")
+        return hasAnyCanonicalRole(usuarioId, CanonicalAuthorization.moderatorOrAdminRoleCodes)
+    }
+
+    private fun hasAnyCanonicalRole(usuarioId: String, roleCodes: Set<String>): Boolean {
+        val roleIds = get("/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId")
+            .mapNotNull { it.str("rol_id") }
+            .distinct()
+        if (roleIds.isEmpty()) return false
+        val roleFilter = roleCodes.joinToString(",")
+        val idFilter = roleIds.joinToString(",")
+        return get("/rest/v1/roles_app?select=id&codigo=in.($roleFilter)&id=in.($idFilter)&limit=1").isNotEmpty()
     }
 
     fun home(usuarioId: String): AppHomeResponse {
@@ -253,27 +368,15 @@ class AppV1Gateway private constructor(
             get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
         ) { "La pregunta no pertenece al examen del intento." }
         require(
-            get("/rest/v1/respuestas_intento?select=id&intento_id=eq.$intentoId&pregunta_id=eq.${req.preguntaId}&limit=1").isEmpty(),
-        ) { "La pregunta ya fue respondida en este intento." }
-        require(
             get("/rest/v1/opciones_pregunta?select=id&id=eq.${req.opcionSeleccionadaId}&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
         ) { "La opcion no pertenece a la pregunta." }
-        val correctaId = get("/rest/v1/soluciones_pregunta?select=opcion_correcta_id&pregunta_id=eq.${req.preguntaId}&limit=1")
-            .firstOrNull()?.str("opcion_correcta_id")
-        require(!correctaId.isNullOrBlank()) { "La pregunta no tiene una solucion valida." }
-        val esCorrecta = correctaId == req.opcionSeleccionadaId
-        val body = buildJsonObject {
-            put("intento_id", intentoId)
-            put("pregunta_id", req.preguntaId)
-            put("opcion_seleccionada_id", req.opcionSeleccionadaId)
-            put("es_correcta", esCorrecta)
-            put("usuario_id", usuarioId)
-            put("examen_id", examenId)
-            put("opcion_correcta_id", correctaId)
-            put("respondida_en", Instant.now().toString())
-        }
-        post("/rest/v1/respuestas_intento", body)
-        return ResponderResponse(esCorrecta, correctaId)
+        val result = rpc("/rest/v1/rpc/record_answer", buildJsonObject {
+            put("p_usuario_id", usuarioId)
+            put("p_intento_id", intentoId)
+            put("p_pregunta_id", req.preguntaId)
+            put("p_opcion_seleccionada_id", req.opcionSeleccionadaId)
+        }).firstOrNull() ?: error("La respuesta no fue registrada.")
+        return ResponderResponse(result.bool("es_correcta") ?: false, result.str("opcion_correcta_id"))
     }
 
     fun finalizar(usuarioId: String, intentoId: String): AppIntentoDto {
@@ -352,15 +455,82 @@ class AppV1Gateway private constructor(
 
     fun registrarEvento(usuarioId: String, req: AppEventoRequest): String {
         usuarioId.validatedUuid("usuarioId")
+        require(req.eventVersion > 0) { "eventVersion debe ser mayor que cero." }
+        require(!req.idempotencyKey.isNullOrBlank()) { "idempotencyKey es obligatoria para evitar duplicados por retry." }
         val body = buildJsonObject {
-            put("usuario_id", usuarioId)
-            put("nombre_evento", req.nombreEvento)
-            if (req.pantalla != null) put("pantalla", req.pantalla)
-            if (req.entidadTipo != null) put("entidad_tipo", req.entidadTipo)
-            if (req.entidadId != null) put("entidad_id", req.entidadId)
-            put("propiedades", req.propiedades)
+            put("p_usuario_id", usuarioId)
+            put("p_nombre_evento", req.nombreEvento)
+            if (req.pantalla != null) put("p_pantalla", req.pantalla)
+            if (req.entidadTipo != null) put("p_entidad_tipo", req.entidadTipo)
+            if (req.entidadId != null) put("p_entidad_id", req.entidadId)
+            put("p_propiedades", req.propiedades)
+            put("p_event_version", req.eventVersion)
+            put("p_occurred_en", req.occurredEn ?: Instant.now().toString())
+            if (req.especialidadId != null) put("p_especialidad_id", req.especialidadId)
+            if (req.intentoId != null) put("p_intento_id", req.intentoId)
+            if (req.preguntaId != null) put("p_pregunta_id", req.preguntaId)
+            put("p_idempotency_key", req.idempotencyKey.trim())
         }
-        return post("/rest/v1/eventos_app", body).first().str("id").orEmpty()
+        return rpc("/rest/v1/rpc/record_event", body).firstOrNull()?.str("event_id")
+            ?: error("El evento no fue registrado.")
+    }
+
+    fun commercialCatalog(): CommercialCatalogResponse {
+        val products = get(
+            "/rest/v1/productos_comerciales?select=id,codigo,tipo_producto,nombre,descripcion,plan_id&activo=eq.true&visible=eq.true&order=posicion.asc,codigo.asc",
+        )
+        val productIds = products.mapNotNull { it.str("id") }
+        val tariffs = if (productIds.isEmpty()) {
+            emptyList()
+        } else {
+            get("/rest/v1/tarifas_producto_comercial?select=*&producto_id=in.(${productIds.joinToString(",")})&activo=eq.true&visible=eq.true&order=posicion.asc")
+        }
+        val plans = get(
+            "/rest/v1/planes_suscripcion?select=id,codigo,nombre,descripcion,nivel&activo=eq.true&visible=eq.true&order=posicion.asc,codigo.asc",
+        )
+        val planIds = plans.mapNotNull { it.str("id") }
+        val benefits = if (planIds.isEmpty()) {
+            emptyList()
+        } else {
+            get("/rest/v1/beneficios_plan?select=*&plan_id=in.(${planIds.joinToString(",")})&order=codigo_beneficio.asc")
+        }
+        val tariffsByProduct = tariffs.groupBy { it.str("producto_id") }
+        val benefitsByPlan = benefits.groupBy { it.str("plan_id") }
+        return CommercialCatalogResponse(
+            products = products.map { product ->
+                CommercialProductDto(
+                    id = product.str("id")!!,
+                    code = product.str("codigo").orEmpty(),
+                    productType = product.str("tipo_producto").orEmpty(),
+                    name = product.str("nombre").orEmpty(),
+                    description = product.str("descripcion"),
+                    planId = product.str("plan_id"),
+                    tariffs = tariffsByProduct[product.str("id")].orEmpty().map { it.toCommercialTariff() },
+                )
+            },
+            plans = plans.map { plan ->
+                CommercialPlanDto(
+                    id = plan.str("id")!!,
+                    code = plan.str("codigo").orEmpty(),
+                    name = plan.str("nombre").orEmpty(),
+                    description = plan.str("descripcion"),
+                    level = plan.int("nivel") ?: 0,
+                    benefits = benefitsByPlan[plan.str("id")].orEmpty().map { it.toCommercialBenefit() },
+                )
+            },
+        )
+    }
+
+    fun commercialPurchases(usuarioId: String): List<CommercialPurchaseDto> {
+        usuarioId.validatedUuid("usuarioId")
+        return get("/rest/v1/compras_usuario?select=*&usuario_id=eq.$usuarioId&order=comprada_en.desc.nullslast,creado_en.desc")
+            .map { it.toCommercialPurchase() }
+    }
+
+    fun commercialSubscriptions(usuarioId: String): List<CommercialSubscriptionDto> {
+        usuarioId.validatedUuid("usuarioId")
+        return get("/rest/v1/suscripciones?select=*&usuario_id=eq.$usuarioId&order=inicio_en.desc")
+            .map { it.toCommercialSubscription() }
     }
 
     private fun perfil(usuarioId: String): AppPerfilDto? =
@@ -394,8 +564,53 @@ class AppV1Gateway private constructor(
         porcentajeAcierto = dbl("porcentaje_acierto") ?: 0.0,
     )
 
+    private fun JsonObject.toCommercialTariff() = CommercialTariffDto(
+        id = str("id")!!,
+        billingPeriod = str("periodo_facturacion").orEmpty(),
+        pricePhase = str("fase_precio").orEmpty(),
+        priceCents = int("precio_centimos") ?: 0,
+        currency = str("moneda").orEmpty(),
+        active = bool("activo") ?: false,
+        visible = bool("visible") ?: false,
+        position = int("posicion") ?: 0,
+    )
+
+    private fun JsonObject.toCommercialBenefit() = CommercialBenefitDto(
+        id = str("id")!!,
+        code = str("codigo_beneficio").orEmpty(),
+        booleanValue = bool("valor_boolean"),
+        integerValue = int("valor_integer"),
+        numericValue = dbl("valor_numeric"),
+        textValue = str("valor_text"),
+    )
+
+    private fun JsonObject.toCommercialPurchase() = CommercialPurchaseDto(
+        id = str("id")!!,
+        provider = str("proveedor").orEmpty(),
+        productCode = str("producto_codigo").orEmpty(),
+        productType = str("tipo_producto").orEmpty(),
+        status = str("estado").orEmpty(),
+        priceCents = int("precio_centimos"),
+        currency = str("moneda").orEmpty(),
+        externalTransactionId = str("identificador_transaccion"),
+        purchasedAt = str("comprada_en"),
+    )
+
+    private fun JsonObject.toCommercialSubscription() = CommercialSubscriptionDto(
+        id = str("id")!!,
+        provider = str("proveedor").orEmpty(),
+        productCode = str("producto_codigo").orEmpty(),
+        status = str("estado").orEmpty(),
+        startedAt = str("inicio_en").orEmpty(),
+        endedAt = str("fin_en"),
+        renewsAt = str("renovacion_en"),
+        externalId = str("identificador_externo"),
+    )
+
     // --- helpers REST ---
     private fun get(path: String): List<JsonObject> = request("GET", path, null)
+    private fun rpc(path: String, body: JsonObject): List<JsonObject> =
+        request("POST", path, json.encodeToString(body))
     private fun post(path: String, body: JsonObject): List<JsonObject> =
         request("POST", path, json.encodeToString(buildJsonArray { add(body) }), prefer = "return=representation")
     private fun patch(path: String, body: JsonObject): List<JsonObject> =
@@ -410,6 +625,7 @@ class AppV1Gateway private constructor(
         val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
         val response = client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
         if (response.statusCode() !in 200..299) {
+            mapSupabaseDomainError(response.statusCode(), response.body())?.let { throw it }
             throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.statusCode()}: ${response.body().take(300)}")
         }
         val text = response.body()

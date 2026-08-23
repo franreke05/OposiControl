@@ -1,5 +1,11 @@
 # Route Map
 
+## Canonical V1 reconciliation — 2026-08-20
+
+The route families are classified as follows: `/content/*` and `/admin/*` are legacy compatibility surfaces; `/api/v1/app/*` and `/api/v1/admin/*` are canonical candidates; `/v1/*` is a gateway/compatibility surface; `/v1/auth/*` and OposiBot aliases are `UNKNOWN`/possible external consumers. The local source shows overlapping admin/content capability across `Application.kt`, `AdminGateway`, `AdminV1Routes` and `V1Routes`.
+
+No route was deleted or changed. Any deprecation requires consumer evidence, parity tests, telemetry and human approval.
+
 ## Runtime profiles
 
 | Profile | Observed surface | Readiness note |
@@ -21,6 +27,6 @@ No route was deleted or consolidated in this pass. Candidate canonical surfaces 
 
 ## CURRENT_IMPLEMENTATION
 
-Las rutas Ktor se catalogan en `AUDIT_OPOSICONTROL/11_ENDPOINT_CATALOG.md` y en el código bajo `backend/ktor`. Este documento es el índice canónico de esa evidencia, no una lista de endpoints inventados.
+Las rutas Ktor se catalogan en `docs/integration/ENDPOINT_CATALOG.md` y en el código bajo `backend/ktor`. Este documento es el índice canónico de esa evidencia, no una lista de endpoints inventados.
 
-Estado: contratos observados en código; runtime live `NOT_VERIFIED`. Cambios de ruta son propiedad Backend/Ktor y requieren Architecture + Quality.
+Estado: contratos observados en código; Supabase live `READ_ONLY_VERIFIED` para la reconciliación, pero consumidores y runtime de rutas siguen sin handshake completo. Cambios de ruta son propiedad Backend/Ktor y requieren Architecture + Quality.

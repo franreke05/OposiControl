@@ -1,0 +1,3 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Policy classifications and proposed access shapes live in docs/database/CANONICAL_RLS_PLAN.md.
+-- Every UPDATE target requires SELECT, USING and WITH CHECK review.

@@ -17,6 +17,14 @@ class BackendSecurityTest {
     }
 
     @Test
+    fun staticTokenIsLimitedToLegacyDevelopmentSurfaces() {
+        assertEquals(true, isLegacyStaticTokenPath("/content/noticias"))
+        assertEquals(true, isLegacyStaticTokenPath("/admin/backend/restart"))
+        assertEquals(false, isLegacyStaticTokenPath("/api/v1/admin/examenes"))
+        assertEquals(false, isLegacyStaticTokenPath("/api/v1/app/home"))
+    }
+
+    @Test
     fun postgrestIdentifiersMustBeCanonicalUuids() {
         assertEquals(
             "123e4567-e89b-12d3-a456-426614174000",

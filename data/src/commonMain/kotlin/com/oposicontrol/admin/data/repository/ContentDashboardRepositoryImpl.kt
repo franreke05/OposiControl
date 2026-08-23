@@ -14,6 +14,7 @@ import com.oposicontrol.admin.domain.repository.CommerceRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.repository.DashboardRepository
 import com.oposicontrol.admin.domain.repository.NewsRepository
+import com.oposicontrol.admin.domain.repository.ModerationRepository
 import kotlinx.coroutines.flow.first
 import kotlin.time.Clock
 
@@ -22,6 +23,7 @@ class ContentDashboardRepositoryImpl(
     private val commerceRepository: CommerceRepository,
     private val newsRepository: NewsRepository,
     private val dashboardApi: DashboardApi,
+    private val moderationRepository: ModerationRepository,
 ) : DashboardRepository {
     override suspend fun getMetrics(): AppResult<DashboardMetrics> {
         return when (val specialties = contentRepository.refreshSpecialties()) {
@@ -35,6 +37,9 @@ class ContentDashboardRepositoryImpl(
                     val commerceSnapshot = loadCommerceSnapshot()
                     val news = newsRepository.refreshNews().getOrNull().orEmpty()
                     val performanceMetrics = runCatching { dashboardApi.getMetrics() }.getOrNull()
+                    val pendingForumReports = runCatching {
+                        moderationRepository.listPendingReports().getOrNull()?.size ?: 0
+                    }.getOrDefault(0)
                     val questionsWithoutResources = audits.sumOf { it.summary.questionsWithoutResources }
                     val unlinkedResources = audits.sumOf { it.summary.unlinkedResources }
                     val pendingResources = audits.sumOf { it.summary.pendingResources }
@@ -70,6 +75,7 @@ class ContentDashboardRepositoryImpl(
                             activeLimitedResources = activeLimitedResources,
                             nextCommerceExpiryLabel = buildNextCommerceExpiryLabel(commerceSnapshot),
                             latestImportLabel = "Ultima revision: ${exams.value.maxByOrNull { it.updatedAt }?.updatedAt ?: now}",
+                            pendingForumReports = pendingForumReports,
                             alerts = buildAlerts(
                                 questionsWithoutResources = questionsWithoutResources,
                                 unlinkedResources = unlinkedResources,

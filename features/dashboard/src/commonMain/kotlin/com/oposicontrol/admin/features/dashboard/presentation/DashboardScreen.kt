@@ -50,10 +50,13 @@ import kotlin.math.roundToInt
 
 enum class DashboardQuickAction {
     REVIEW_PENDING,
+    REVIEW_FORUM_REPORTS,
     IMPORT_QUESTIONS,
     AUDIT_RESOURCES,
     CREATE_NEWS,
     CREATE_EXAM,
+    OPEN_USERS,
+    OPEN_SUPPORT,
     ACTIVATE_OFFER,
     REVIEW_TICKETS,
     OPEN_AUDIT,

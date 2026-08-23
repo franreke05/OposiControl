@@ -659,7 +659,11 @@ data class AdminTicketTransactionDto(
 )
 
 @Serializable
-data class AdminTicketAdjustmentDto(val amount: Double, val reason: String)
+data class AdminTicketAdjustmentDto(
+    val amount: Double,
+    val reason: String,
+    val idempotencyKey: String? = null,
+)
 
 @Serializable
 data class AdminSupportConversationDto(

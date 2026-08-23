@@ -16,9 +16,13 @@ object BackendRoutes {
     const val ADMIN_V1_COMUNIDADES = "/api/v1/admin/comunidades-autonomas"
     const val ADMIN_V1_DASHBOARD = "/api/v1/admin/dashboard"
     const val ADMIN_V1_REPORTES = "/api/v1/admin/reportes"
+    const val ADMIN_V1_FORO_HILOS = "/api/v1/admin/moderacion/hilos"
+    fun adminV1ForoHilo(hiloId: String) = "$ADMIN_V1_FORO_HILOS/$hiloId"
+    fun adminV1ForoHiloRespuestas(hiloId: String) = "$ADMIN_V1_FORO_HILOS/$hiloId/respuestas"
 
     fun adminV1Usuario(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId"
     fun adminV1UsuarioTickets(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId/tickets"
+    fun adminV1Reporte(reporteId: String) = "$ADMIN_V1_REPORTES/$reporteId"
     fun adminV1ReporteResolver(reporteId: String) = "$ADMIN_V1_REPORTES/$reporteId/resolver"
     fun adminV1ModerationActions() = "/api/v1/admin/moderacion/actions"
 

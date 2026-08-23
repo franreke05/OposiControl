@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
@@ -41,9 +43,16 @@ fun GlassTextField(
     singleLine: Boolean = true,
     textStyle: TextStyle = MaterialTheme.typography.bodyLarge,
     visualTransformation: VisualTransformation = VisualTransformation.None,
+    trailingContent: (@Composable () -> Unit)? = null,
 ) {
     val tokens = GlassTheme.tokens
     var focused by remember { mutableStateOf(false) }
+    var textFieldValue by remember { mutableStateOf(TextFieldValue(value)) }
+    LaunchedEffect(value) {
+        if (textFieldValue.text != value) {
+            textFieldValue = TextFieldValue(value)
+        }
+    }
     val animatedStroke by animateColorAsState(
         targetValue = if (focused) tokens.accent.copy(alpha = 0.48f) else tokens.glassStroke,
         animationSpec = tween(durationMillis = 160),
@@ -54,8 +63,11 @@ fun GlassTextField(
     )
     BasicTextField(
         modifier = modifier.onFocusChanged { focused = it.isFocused },
-        value = value,
-        onValueChange = onValueChange,
+        value = textFieldValue,
+        onValueChange = {
+            textFieldValue = it
+            onValueChange(it.text)
+        },
         singleLine = singleLine,
         textStyle = textStyle.copy(color = tokens.textPrimary),
         cursorBrush = SolidColor(tokens.accent),
@@ -69,21 +81,27 @@ fun GlassTextField(
                 tint = animatedTint,
                 strokeColor = animatedStroke,
             ) {
-                Box(
-                    modifier = Modifier.padding(
-                        horizontal = 16.dp,
-                        vertical = 12.dp,
-                    ),
-                    contentAlignment = Alignment.CenterStart,
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (value.isBlank()) {
-                        Text(
-                            text = placeholder,
-                            style = textStyle,
-                            color = tokens.textSecondary,
-                        )
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        if (textFieldValue.text.isBlank()) {
+                            Text(
+                                text = placeholder,
+                                style = textStyle,
+                                color = tokens.textSecondary,
+                            )
+                        }
+                        innerTextField()
                     }
-                    innerTextField()
+                    trailingContent?.invoke()
                 }
             }
         },

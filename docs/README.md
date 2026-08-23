@@ -13,8 +13,6 @@ Leer: `AGENTS.md` → `docs/README.md` → `docs/brain/SOURCE_OF_TRUTH.md` → `
 - `backend/`, `database/`, `integration/`, `product/`, `engineering/`: catálogos especializados.
 - `registry/`: componentes, riesgos, deuda, unknowns y contradicciones.
 - `governance/`: cómo se actualiza esta memoria.
-- `ledger/`: trazabilidad por intervención.
-- `archive/`: evidencia histórica preservada, sin autoridad sobre el estado actual.
 
 ## Operational Knowledge Map
 
@@ -33,7 +31,6 @@ Leer: `AGENTS.md` → `docs/README.md` → `docs/brain/SOURCE_OF_TRUTH.md` → `
 | Technical debt | `docs/registry/TECH_DEBT.md` |
 | Unknowns | `docs/registry/UNKNOWNS.md` |
 | Contradictions | `docs/registry/CONTRADICTIONS.md` |
-| Ledger | `docs/ledger/` |
 | Hashira laws/routing | `.claude/HASHIRA_LAWS.md`, `.claude/HASHIRA_ROUTING.md` |
 
 `archive = historical evidence`; `archive != current truth`.
@@ -75,6 +72,8 @@ Son 17 módulos de feature activos. El detalle de dependencias y límites está 
 
 ## Estados y autoridad
 
-Cada documento debe distinguir `CURRENT_IMPLEMENTATION`, `TARGET_REQUIREMENT`, `CONFIRMED_PRODUCT_DECISION`, `PRODUCT_DECISION_PENDING`, `NOT_VERIFIED`, `DOCUMENTED_ONLY` y `LIVE_VERIFIED`. Actualmente `LIVE_VERIFIED: NO` para Supabase/Storage; no se hizo ninguna escritura live.
+La evidencia live actualizada del alcance Product Metrics V1 está en `docs/brain/CURRENT_STATE.md`: MAIN `ndiooyyqtaeysnedywer` tiene las migraciones `002`–`010` aplicadas y verificadas. La marca global `LIVE_VERIFIED: NO` solo permanece para áreas fuera de ese alcance, como cobertura completa de Storage, legacy y proveedores externos.
 
-La carpeta raíz `AUDIT_OPOSICONTROL/` sigue preservada porque era trabajo no rastreado previo. Su evidencia histórica está archivada en `docs/archive/audits/2026-08-19/`.
+Cada documento debe distinguir `CURRENT_IMPLEMENTATION`, `TARGET_REQUIREMENT`, `CONFIRMED_PRODUCT_DECISION`, `PRODUCT_DECISION_PENDING`, `NOT_VERIFIED`, `DOCUMENTED_ONLY` y `LIVE_VERIFIED`. `LIVE_VERIFIED: NO` sigue aplicando a Supabase/Storage fuera del alcance Product Metrics V1; dentro del alcance autorizado sí hubo migraciones y fixtures controlados, todos verificados y limpiados.
+
+Las auditorías y actas cerradas no forman parte del working tree operativo; la información vigente está consolidada en Second Brain, registries y documentos técnicos. Git conserva el historial versionado.

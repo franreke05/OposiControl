@@ -83,7 +83,7 @@ Antes de editar:
 Antes de cerrar:
 
 - Ejecutar las pruebas proporcionales al cambio y registrar los resultados, incluidos fallos preexistentes.
-- Actualizar `docs/brain/CURRENT_STATE.md`, el registro afectado y el ledger de la sesión.
+- Actualizar `docs/brain/CURRENT_STATE.md` y el registro afectado. Las podas documentales no crean actas históricas adicionales.
 - Comprobar que no se hayan introducido secretos, staging accidental ni cambios funcionales fuera de alcance.
 - Aplicar revisión cruzada: quien implementa no se certifica en solitario.
 
@@ -100,14 +100,13 @@ Antes de cerrar:
 | Contratos OposiBot y compatibilidad DTO | Integration |
 | Tests, build, regresion y review | Quality |
 | Deploy, entorno, Docker y observabilidad | Release/Infra |
-| Second Brain, docs, ledger y registries | Documentation |
+| Second Brain, docs y registries | Documentation |
 
 La matriz exacta y las reglas de seleccion estan en [.claude/HASHIRA_ROUTING.md](./.claude/HASHIRA_ROUTING.md); las leyes obligatorias estan en [.claude/HASHIRA_LAWS.md](./.claude/HASHIRA_LAWS.md).
 
 ## Canonical Location Quick Reference
 
 - Decisiones duraderas: `docs/architecture/adr/`.
-- Historial de trabajo: `docs/ledger/`.
 - Riesgos: `docs/registry/RISKS.md`.
 - Deuda tecnica: `docs/registry/TECH_DEBT.md`.
 - Unknowns: `docs/registry/UNKNOWNS.md`.
@@ -117,7 +116,7 @@ La matriz exacta y las reglas de seleccion estan en [.claude/HASHIRA_ROUTING.md]
 
 ## Fuente de verdad
 
-La precedencia es: comportamiento runtime observado; pruebas ejecutadas; configuración activa; Supabase/storage verificado en lectura; código fuente ejecutado; `docs/brain/SOURCE_OF_TRUTH.md`; ADR aceptadas; contratos y documentos especializados; registros; ledger; archivo histórico. La documentación no puede elevar una hipótesis por encima de evidencia posterior.
+La precedencia es: comportamiento runtime observado; pruebas ejecutadas; configuración activa; Supabase/storage verificado en lectura; código fuente ejecutado; `docs/brain/SOURCE_OF_TRUTH.md`; ADR aceptadas; contratos y documentos especializados; registros. La documentación no puede elevar una hipótesis por encima de evidencia posterior.
 
 ## Alcance protegido de la reorganización
 

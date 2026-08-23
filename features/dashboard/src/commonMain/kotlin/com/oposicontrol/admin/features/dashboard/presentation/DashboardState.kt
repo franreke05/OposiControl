@@ -5,4 +5,6 @@ import com.oposicontrol.admin.domain.model.DashboardMetrics
 
 data class DashboardState(
     val metrics: UiAsync<DashboardMetrics> = UiAsync.Loading,
+    val quickActionsExpanded: Boolean = true,
+    val summaryExpanded: Boolean = true,
 )

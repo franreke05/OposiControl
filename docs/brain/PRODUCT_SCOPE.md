@@ -7,7 +7,7 @@
 - PDF backend con PDFBox; UI con formatos Aiken/GIFT; existe API de staging documentada en el audit.
 - Exámenes verificados en código: `rafaga` e `inmersivo`; `razonado` no está verificado.
 - Login temporalmente deshabilitado por `TEMPORARILY_DISABLE_LOGIN = true`.
-- Supabase live: `LIVE_VERIFIED: NO`.
+- Supabase live outside the verified Product Metrics/wallet scope: `LIVE_VERIFIED: NO`.
 
 ## TARGET_PRODUCT
 

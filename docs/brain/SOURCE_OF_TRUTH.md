@@ -1,47 +1,38 @@
 # Source of Truth
 
-Current cleanup ledger: `docs/ledger/2026/08/OPC-20260820-005_repository-cleanup-and-consolidation.md`.
+The applied Database Redesign V1 closure is recorded in
+`docs/database/MIGRATION_STATE.md`; the tracked package is
+`supabase/canonical/database_redesign_v1/`. No table, row, Storage object or
+legacy compatibility adapter was removed.
 
-## Precedencia
+## Agent read path
 
-1. Comportamiento runtime observado.
-2. Pruebas ejecutadas.
-3. Configuración activa.
-4. Supabase/storage verificado en lectura.
-5. Código fuente ejecutado.
-6. Este Second Brain.
-7. ADRs aceptadas.
-8. Contratos y documentos especializados.
-9. Registries.
-10. Ledger.
-11. Archivo histórico y evidencia.
+1. AGENTS.md
+2. .claude/HASHIRA_LAWS.md and .claude/HASHIRA_ROUTING.md
+3. CURRENT_STATE.md
+4. SYSTEM_MAP.md
+5. The domain document listed below
+6. The active registry only when the task is affected
 
-Una fuente superior puede invalidar una afirmación inferior. La ausencia de observación live no se rellena con una inferencia del SQL o de un documento antiguo.
+## Authority by domain
 
-## Estados obligatorios
+| DOMAIN | AUTHORITATIVE LOCATION |
+|---|---|
+| Current operational state | CURRENT_STATE.md |
+| Architecture and boundaries | SYSTEM_MAP.md and docs/architecture |
+| Database and migrations | docs/database and tracked SQL |
+| Backend routes and services | docs/backend and backend/ktor |
+| Product scope and pending decisions | PRODUCT_SCOPE.md and docs/product/CLIENT_DECISIONS_REQUIRED.md |
+| OposiBot compatibility | docs/integration/OPOSIBOT_CONTRACT.md and OPOSIBOT_CONSUMER_MATRIX.md |
+| Active risks/debt/unknowns | docs/registry |
+| Canonical migration candidates | supabase/canonical package files |
 
-- `CURRENT_IMPLEMENTATION`: observado en código/runtime actual.
-- `TARGET_REQUIREMENT`: objetivo no necesariamente implementado.
-- `CONFIRMED_PRODUCT_DECISION`: decisión confirmada por el encargo/product owner.
-- `PRODUCT_DECISION_PENDING`: falta decisión humana.
-- `NOT_VERIFIED`: no probado o no observado.
-- `DOCUMENTED_ONLY`: existe solo como documentación.
-- `LIVE_VERIFIED: NO`: Supabase/storage no ha sido verificado live en esta fase.
+## Evidence rules
 
-## Límites de identidad
+Runtime behavior and executed tests outrank configuration, read-only live evidence, source code, this Second Brain, ADRs and specialized documentation. An unverified claim remains NOT_VERIFIED; a target remains TARGET_REQUIREMENT.
 
-El producto de este repositorio es OposiControl/OposiBot con cliente actual confirmado `ARTURO`. `Claudia` y `CaravanTruck` pertenecen a otro contexto y no se mezclan sin evidencia de repositorio/contrato.
+MAIN Product Metrics/wallet evidence is verified for migrations 002–010, canonical writers and exercised invariants. This does not certify unrelated legacy schema, Storage, external providers or deployed OposiBot consumers.
 
-## Punteros canónicos
+## Protected compatibility
 
-- Estado operativo: [CURRENT_STATE.md](./CURRENT_STATE.md)
-- Arranque de producto y decisiones: [PRODUCT_SCOPE.md](./PRODUCT_SCOPE.md).
-- Detalle especializado: [docs/README.md](../README.md) y su Operational Knowledge Map.
-- Decisiones duraderas: [ADRs](../architecture/adr/README.md).
-- Riesgos, deuda, unknowns y contradicciones: [RISKS.md](../registry/RISKS.md), [TECH_DEBT.md](../registry/TECH_DEBT.md), [UNKNOWNS.md](../registry/UNKNOWNS.md), [CONTRADICTIONS.md](../registry/CONTRADICTIONS.md).
-- Historial de intervenciones: [ledger](../ledger/).
-- Alcance: [PRODUCT_SCOPE.md](./PRODUCT_SCOPE.md)
-- Mapa de sistema: [SYSTEM_MAP.md](./SYSTEM_MAP.md)
-- Decisiones: [ADRs](../architecture/adr/README.md)
-- Riesgos y unknowns: [registry](../registry/RISKS.md), [UNKNOWNS.md](../registry/UNKNOWNS.md)
-- Sesión de reorganización: [ledger](../ledger/2026/08/OPC-20260819-001_second-brain-hashira-reorganization.md)
+Do not remove public.usuario, /v1/auth/* or POST_OPOSIBOT_LEGACY_CLEANUP dependencies until the external consumer and UUID transition gates pass.

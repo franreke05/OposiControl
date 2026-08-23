@@ -1,0 +1,4 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Canonical exam values: rafaga, razonado, inmersivo.
+-- Canonical question values: rafaga, razonada, inmersiva.
+-- guiado/guiada are boundary aliases only; constraints/data require a reviewed migration.

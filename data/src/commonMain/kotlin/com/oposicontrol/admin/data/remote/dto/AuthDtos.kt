@@ -48,6 +48,42 @@ data class SupabaseUserDto(
     val userMetadata: JsonObject = JsonObject(emptyMap()),
 )
 
+/**
+ * Forma de error de Supabase Auth (GoTrue). Todos los campos opcionales a
+ * propósito: distintas versiones de GoTrue devuelven formas distintas
+ * (`error`/`error_description` en unas, `error_code`/`msg` en otras) y no
+ * asumimos cuál usa este proyecto en concreto — con [ignoreUnknownKeys] ya
+ * activado globalmente, decodifica cualquiera de las dos sin fallar.
+ */
+@Serializable
+data class SupabaseAuthErrorDto(
+    val error: String? = null,
+    @SerialName("error_description")
+    val errorDescription: String? = null,
+    @SerialName("error_code")
+    val errorCode: String? = null,
+    val msg: String? = null,
+)
+
+/**
+ * Traduce el error real de Supabase a un mensaje humano en español. Nunca
+ * reenvía el texto/código crudo del proveedor: solo distingue un puñado de
+ * categorías conocidas y, si no reconoce ninguna, cae en un mensaje genérico
+ * seguro — nunca en el JSON de error ni en el nombre de una excepción.
+ */
+fun SupabaseAuthErrorDto.toFriendlyMessage(isRefresh: Boolean): String {
+    val code = (errorCode ?: error).orEmpty().lowercase()
+    val sessionExpired = "Tu sesión ha caducado. Vuelve a iniciar sesión."
+    return when {
+        code.contains("invalid") || code.contains("grant") || code.contains("credentials") ->
+            if (isRefresh) sessionExpired else "Usuario o contraseña incorrectos."
+        code.contains("email_not_confirmed") -> "Debes confirmar tu correo antes de iniciar sesión."
+        code.contains("too_many") || code.contains("rate") -> "Demasiados intentos. Espera un momento y vuelve a intentarlo."
+        isRefresh -> sessionExpired
+        else -> "No se pudo iniciar sesión. Inténtalo de nuevo."
+    }
+}
+
 fun SupabaseAuthResponseDto.toSessionDto(): SessionDto {
     val displayName = user.userMetadata["display_name"]?.jsonPrimitive?.contentOrNull
         ?: user.userMetadata["name"]?.jsonPrimitive?.contentOrNull

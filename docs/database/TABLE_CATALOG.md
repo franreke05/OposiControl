@@ -1,5 +1,7 @@
 # Table Catalog
 
+Current scope exception: the Product Metrics tables and wallet objects used by migrations `002`–`010` were inspected in MAIN on 2026-08-21. This exception does not promote the entire legacy/V1 catalog to live-verified status. The blanket baseline below applies to that legacy/V1 catalog.
+
 Catálogo de tablas inferidas desde código y SQL documentado. No es confirmación del esquema live.
 
 | Grupo | Estado | Fuente |

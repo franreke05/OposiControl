@@ -12,7 +12,7 @@ Estas leyes gobiernan cambios en OposiControl. Son reglas de trabajo y revisión
 - **HL-08 No Fake Integration.** No inventar consumidores, endpoints, DTOs, respuestas live o conexiones.
 - **HL-09 No Silent Debt.** Toda deuda nueva o descubierta entra en el registro correspondiente.
 - **HL-10 ADR for Durable Decisions.** Las decisiones duraderas de arquitectura o gobernanza requieren ADR.
-- **HL-11 Ledger Required.** Toda reorganización o cambio transversal deja ledger con alcance, evidencia y resultado.
+- **HL-11 Current-State Synchronization.** Todo cambio transversal actualiza `CURRENT_STATE.md` y el registro afectado; las podas documentales no crean diarios históricos duplicados.
 - **HL-12 Current State Synchronization.** `CURRENT_STATE.md` se actualiza al cerrar una intervención transversal.
 - **HL-13 Stop on Contradiction.** Una contradicción no se tapa con documentación; se registra y se detiene el supuesto afectado.
 - **HL-14 Protect Dirty Work.** Los cambios previos del working tree son protegidos hasta contar con autorización explícita.

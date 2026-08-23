@@ -1,5 +1,9 @@
 # OposiBot Contract
 
+## Canonical V1 reconciliation — 2026-08-20
+
+The consumer repository is now audited read-only. `RealAuthApi` consumes all twelve `/v1/auth/*` endpoints. No active client call was found for `/content/*`, `/v1/*` outside auth, `/api/v1/app/*` or `/api/v1/admin/*`. Full evidence is in [OPOSIBOT_CONSUMER_MATRIX](./OPOSIBOT_CONSUMER_MATRIX.md). No OposiBot file was changed.
+
 ## Ownership
 
 OposiControl owns the server-side boundary observed in this repository:
@@ -28,6 +32,6 @@ The contract is derived from Ktor routes/DTOs and the audit catalog. Exact endpo
 
 ## NOT_VERIFIED
 
-No OposiBot consumer repository, compatibility test or live handshake was verified. No consumer behavior is invented.
+The OposiBot repository was inspected read-only at commit `e4bf669e3db8f9ecfbd1c07b0a4d459e1a318038`. HTTP compatibility and live handshake remain unverified; source consumption of the twelve auth routes is verified.
 
-Consumer compatibility: `NOT_VERIFIED`.
+Consumer compatibility: `SOURCE_CONSUMED / HTTP_NOT_VERIFIED`.

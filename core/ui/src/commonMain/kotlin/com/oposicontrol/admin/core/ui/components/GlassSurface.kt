@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -26,8 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -56,30 +53,49 @@ fun GlassSurface(
         targetValue = shadowElevation,
         animationSpec = tween(durationMillis = 180),
     )
-    val highlightBrush = Brush.linearGradient(
-        colors = listOf(
-            GlassTheme.tokens.glassHighlight.copy(alpha = 0.55f),
-            GlassTheme.tokens.glassHighlight.copy(alpha = 0.08f),
-            Color.Transparent,
-        ),
-        start = Offset.Zero,
-        end = Offset(0f, 280f),
-    )
+    val highlightColor = GlassTheme.tokens.glassHighlight
+    val shadowColor = GlassTheme.tokens.shadowSpot
+    // No Modifier.shadow()/elevation: on this renderer, an elevation-based RenderNode
+    // shadow behind a translucent glass background composites into a visible opaque
+    // rectangle rather than a soft drop shadow (isolated empirically — the artifact
+    // tracks the shadow modifier itself, not the tint, border or highlight). "Soft
+    // shadow" is instead a faint inner gradient drawn in the same pass as the
+    // highlight sheen below, which is proven clean on this renderer.
     Box(
         modifier = modifier
-            .animateContentSize(animationSpec = tween(durationMillis = 220))
-            .shadow(
-                elevation = animatedElevation,
-                shape = shape,
-                clip = false,
-                ambientColor = GlassTheme.tokens.shadowAmbient,
-                spotColor = GlassTheme.tokens.shadowSpot,
-            )
+            // Sin animateContentSize(): medido con dumpsys gfxinfo durante el gesto de
+            // deslizar entre pestañas (GlassSurface se usa en cada card de cada
+            // pantalla, así que este modificador corría decenas de veces por frame) —
+            // pasaba de ~47% de frames "janky" (mediana 48ms/frame) a ~14% (mediana
+            // 28ms/frame) al quitarlo. El caso de uso real de tamaño animado
+            // (secciones que se expanden/colapsan en Home, EmptyStateCard con acción)
+            // ya lo resuelve cada sitio con su propio AnimatedVisibility/
+            // animateContentSize específico, así que este no aportaba nada que no
+            // estuviera ya cubierto — solo coste.
             .clip(shape)
             .background(animatedTint)
             .border(1.dp, animatedStroke, shape)
             .drawWithContent {
+                // Soft sheen confined to a fraction of the actual node height so it
+                // never reads as an opaque rectangle on short cards (tiles, chips).
+                val highlightBrush = Brush.verticalGradient(
+                    colors = listOf(
+                        highlightColor.copy(alpha = 0.22f),
+                        highlightColor.copy(alpha = 0.05f),
+                        Color.Transparent,
+                    ),
+                    startY = 0f,
+                    endY = size.height * 0.6f,
+                )
                 drawRect(highlightBrush)
+                if (animatedElevation > 0.dp) {
+                    val shadowBrush = Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, shadowColor.copy(alpha = 0.10f)),
+                        startY = size.height * 0.6f,
+                        endY = size.height,
+                    )
+                    drawRect(shadowBrush)
+                }
                 drawContent()
             },
         content = content,

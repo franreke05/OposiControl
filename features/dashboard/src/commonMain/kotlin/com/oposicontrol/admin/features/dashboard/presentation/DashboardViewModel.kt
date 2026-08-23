@@ -12,7 +12,10 @@ class DashboardViewModel(
     private val dashboardRepository: DashboardRepository,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<DashboardState, DashboardIntent>(
-    initialState = DashboardState(),
+    initialState = DashboardState(
+        quickActionsExpanded = HomeSectionPreferences.quickActionsExpanded,
+        summaryExpanded = HomeSectionPreferences.summaryExpanded,
+    ),
     dispatcherProvider = dispatcherProvider,
 ) {
     init {
@@ -22,6 +25,16 @@ class DashboardViewModel(
     override suspend fun handleIntent(intent: DashboardIntent) {
         when (intent) {
             DashboardIntent.Refresh -> refresh()
+            DashboardIntent.ToggleQuickActions -> updateState {
+                val expanded = !it.quickActionsExpanded
+                HomeSectionPreferences.quickActionsExpanded = expanded
+                it.copy(quickActionsExpanded = expanded)
+            }
+            DashboardIntent.ToggleSummary -> updateState {
+                val expanded = !it.summaryExpanded
+                HomeSectionPreferences.summaryExpanded = expanded
+                it.copy(summaryExpanded = expanded)
+            }
         }
     }
 

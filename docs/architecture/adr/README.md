@@ -11,4 +11,4 @@ Estas ADRs registran decisiones duraderas o dirección de producto confirmada. N
 - [ADR-007](./ADR-007-desktop-mobile-admin-strategy.md) — desktop/mobile.
 - [ADR-008](./ADR-008-bulk-import-staged-reviewable.md) — importación staged/reviewable.
 
-Estado de live DB/runtime en todas: `LIVE_VERIFIED: NO` salvo evidencia posterior explícita.
+Estado de live DB/runtime fuera del alcance Product Metrics/wallet: `LIVE_VERIFIED: NO` salvo evidencia posterior explícita.

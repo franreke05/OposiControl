@@ -1,67 +1,44 @@
 # Current State
 
-Fecha de corte: `2026-08-20`.
+Database Redesign V1 closure: controlled MAIN migrations 012, 013 and 014
+are applied. The duplicate attempt index was removed; anonymous mutation
+grants and mutation grants on public derived views were revoked. No table,
+row, Storage object or legacy compatibility adapter was removed.
 
-- Rama: `main`.
-- HEAD capturado antes del pase: `465c911e456e4263b51f3b9fb30cc3e2a8ee3f3d`.
-- `SECOND_BRAIN: ACTIVE`.
-- `HASHIRA: ACTIVE`.
-- `MIGRATION: COMPLETED`.
-- `TECHNICAL_REMEDIATION: COMPLETED_FOR_LOCAL_BUILD_BASELINE`.
-- `BACKEND_READINESS: NOT_READY`.
-- `REPOSITORY_CLEANUP: COMPLETED_WITH_NO_KOTLIN_DELETIONS`.
-- `LIVE_VERIFIED: NO` para Supabase, storage y despliegues.
+## Operational dashboard — 2026-08-21
 
-## Topology
+| AREA | STATUS | CURRENT FACT | REFERENCE |
+|---|---|---|---|
+| Database | VERIFIED | Product Metrics/wallet migrations 002–010; canonical writers live | ../database/MIGRATION_STATE.md |
+| Backend | VERIFIED / BACKEND_PASS | Ktor owns service-role mutations through canonical RPCs | ../backend/SERVICE_MAP.md |
+| Authenticated JWT E2E | BLOCKED_EXTERNAL | No valid non-personal Auth fixture is available locally | ../registry/RISKS.md |
+| Payments | WAITING_EXTERNAL_PROVIDER | Checkout/webhook provider contract is absent | ../product/COMMERCIAL_CODE_CONSUMER_MATRIX.md |
+| Product policy | WAITING_PRODUCT_DECISION | Eight Product Metrics policy decisions remain open | ../product/CLIENT_DECISIONS_REQUIRED.md |
+| UI runtime | M0-M1 IMPLEMENTED / NOT_VERIFIED | Mobile shell/Home and authenticated error states compile; physical/emulator runtime and valid admin JWT E2E remain unverified | ../engineering/TESTING.md |
 
-Active Gradle modules are `composeApp`, `core/common`, `core/network`, `core/database`, `core/ui`, `core/testing`, `domain`, `data`, `backend/ktor` and 17 features: `auth`, `dashboard`, `users`, `roles`, `settings`, `audit`, `specialties`, `communities`, `tags`, `news-types`, `news`, `exams`, `exam-access`, `store`, `tickets`, `support`, `moderation`.
+## Current architecture
 
-## Backend readiness
+ARTURO Compose Multiplatform client → domain/data → backend/ktor → Supabase service-role boundary. OposiBot is an external consumer boundary; its /v1/auth/* contract and public.usuario adapter remain protected.
 
-The backend has `combined` and `consumer` profiles. Combined mounts public V1 reads, app routes, optional OposiBots auth, admin V1, legacy admin/content and OposiBots admin. Consumer mounts live health and OposiBots auth. Other profile values fall through to combined behavior.
+Canonical backend writers: record_answer, record_event, admin_grant_tickets.
 
-Authentication entry is controlled: the client login bypass is disabled and gateway admin routes require bearer auth. Authorization remains partial because `hasAdminRole` accepts any role assignment; the explicit admin role model is still a product decision. Static backend token is temporary/legacy and dev flags are restricted in code to dev/test.
+Authorization model: Ktor distinguishes superadmin/admin from moderador; canonical `/api/v1/*` routes require JWT role authorization, and static-token use is limited to local legacy compatibility surfaces.
 
-Service-role references are backend-only in the inspected source. The concentration of privileged gateway access, ownership enforcement and live RLS remain security gates.
+Mobile rebuild M0-M1: verified JWTs are passed as Bearer tokens to Ktor; admin routes return 403 for a valid JWT without a canonical `admin`/`superadmin` role. Home mobile consumes the existing real dashboard repository and exposes loading, empty, error, offline and retry states. Runtime certification remains NOT_VERIFIED.
 
-## Database and live infrastructure
+Canonical exam vocabulary is rafaga / razonado / inmersivo; broader app consumers and legacy aliases require compatibility review before removal.
 
-`DATABASE_MIGRATION_STATE: SEVERE_DRIFT`.
+## Preserved boundaries
 
-`LIVE_SUPABASE: NOT_VERIFIED / INFRASTRUCTURE_GAP` because the Supabase connector was not connected (`USER_NOT_LOGGED_IN`) and the CLI is not installed. No live project, table, RLS, RPC, Storage or applied migration history was read. No write occurred.
+OposiBot, public.usuario, /v1/auth/*, Opositeca, OposiRed, PDF/import, exam-resources, news-assets and POST_OPOSIBOT_LEGACY_CLEANUP remain protected. The deferred cleanup has not executed.
 
-## PDF / Arturo
+Supabase/Storage outside the verified Product Metrics/wallet scope remains NOT_VERIFIED.
 
-`PDF_FORMAT_CONTRACT: STAGED / WAITING_CLIENT_INPUT`.
+## Start here
 
-PDFBox and staging routes exist, but atomic final persistence, publication boundary and the final real templates/grammar remain pending. This pass did not freeze a parser or mutate the schema.
-
-## Build evidence
-
-- `:features:audit:compileDebugKotlinAndroid`: PASS.
-- `:features:news:testDebugUnitTest`: PASS.
-- `:features:exams:testDebugUnitTest`: PASS.
-- `:backend:ktor:test`: PASS.
-- `test`: PASS.
-- `:composeApp:compileKotlinJvm`: PASS.
-- `:composeApp:compileKotlinIosSimulatorArm64`: PASS as Kotlin/Native compilation only; no iOS runtime, Xcode or signing verification.
-
-## Working tree protection
-
-Preexisting protected tracked changes remain untouched: `backend/ktor/build.gradle.kts`, `OposiBotsAuthGateway.kt` and `OposiBotsAuthRoutes.kt`. Protected local artifacts remain `.logs/`, `.mcp.json` and `AUDIT_OPOSICONTROL/`. No staging, commit or push was performed.
-
-Functional files changed in this pass: `AuditViewModel.kt` Clock API, News draft interface/DI/test seam/save-draft behavior, and `AppRoot.kt` login flag. Documentation and ledger changes accompany them.
-
-## Repository cleanup
-
-The active AI entry is now `AGENTS.md` plus `.claude/HASHIRA_LAWS.md`, `.claude/HASHIRA_ROUTING.md` and the ten Hashira agents. The former root `CODEX_CONTEXT.md` was safe-deleted because its canonical digest exists and no active tooling references it. The empty Superpowers placeholder was safe-deleted. The former `.ai` skill tree, root audit, completed Superpowers plan and two legacy admin notes were moved to `docs/archive/` and marked historical/non-canonical.
-
-No Kotlin file, Gradle module, dependency, SQL file, test or resource was physically deleted: repository-wide KMP/DI/route/expect-actual/reflection checks did not produce a candidate meeting every `SAFE_DELETE` condition. Legacy/V1 backend routes, auth foundations, PDF importers, OposiBot contracts and SQL evidence remain retained.
-
-## Open P1 gates
-
-Supabase live verification, canonical migration selection, schema/RLS reconciliation, explicit admin-role authorization, static-token retirement, legacy/V1 compatibility evidence, PDF atomicity, UI runtime verification and deployment/proxy validation remain open.
-
-## Next gate
-
-Connect the authorized Supabase project for a read-only audit, decide the admin role model, reconcile the canonical migration chain, then run security/integration/release review. Do not declare `BACKEND_BASELINE_READY` before those gates pass.
+- Architecture: SYSTEM_MAP.md
+- Authority and routing: SOURCE_OF_TRUTH.md
+- Database: ../database/MIGRATION_STATE.md
+- Backend: ../backend/ROUTE_MAP.md
+- Product decisions: ../product/CLIENT_DECISIONS_REQUIRED.md
+- Active attention: ../registry/RISKS.md, ../registry/TECH_DEBT.md, ../registry/UNKNOWNS.md

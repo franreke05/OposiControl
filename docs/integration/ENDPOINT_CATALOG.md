@@ -1,14 +1,16 @@
 # Endpoint Catalog
 
-Catálogo activo reconstruido desde código Ktor y `AUDIT_OPOSICONTROL/11_ENDPOINT_CATALOG.md`.
+Current backend additions verified in source: `/api/v1/app/commercial/catalog`, `/api/v1/app/commercial/purchases` and `/api/v1/app/commercial/subscriptions` are read-only authenticated contracts. They use canonical internal commercial tables; provider checkout, webhooks and external writers remain `WAITING_EXTERNAL_PROVIDER`.
+
+Catálogo activo reconstruido desde código Ktor; la evidencia histórica de auditoría ya no forma parte del working tree.
 
 Reglas de verdad:
 
 - `SOURCE_VERIFIED`: la ruta/familia aparece en código fuente activo.
 - `DOCUMENTED_ONLY`: solo aparece en documentación histórica.
-- `LIVE_NOT_VERIFIED`: no se verificó disponibilidad, DB, RLS, storage ni consumidor externo en runtime.
+- `LIVE_READ_ONLY_VERIFIED`: Supabase catalog, data counts, functions, migration statements and Storage object counts were inspected without writes; HTTP runtime remains unverified.
 - Los campos no demostrados se mantienen como `UNKNOWN`.
-- `OposiBot consumer` es `NOT_VERIFIED` en todo el catálogo.
+- `OposiBot consumer` se clasifica por evidencia en `docs/integration/OPOSIBOT_CONSUMER_MATRIX.md`.
 
 Para evitar repetir afirmaciones, cada tabla declara los metadatos comunes aplicables a todas sus filas: DTOs, errores, consumidores y evidencia. No se inventan nombres de DTO ni respuestas live.
 
@@ -17,13 +19,13 @@ Para evitar repetir afirmaciones, cada tabla declara los metadatos comunes aplic
 - Request DTO: `UNKNOWN` salvo que el nombre aparezca explícitamente en el route/source.
 - Response DTO: `UNKNOWN` salvo que el nombre aparezca explícitamente en el route/source.
 - Errors: status/JSON exacto `NOT_VERIFIED` en runtime; tests de endpoint existen en backend según auditoría, pero no se asigna cobertura por fila sin prueba específica.
-- DB/RPC/Storage dependency: Supabase/gateway esperado; estado live `LIVE_NOT_VERIFIED`.
+- DB/RPC/Storage dependency: Supabase/gateway esperado; estado live `READ_ONLY_VERIFIED`, runtime/authorization behavior pending.
 - Admin UI consumer: `PARTIAL / SOURCE_NOT_MAPPED` salvo evidencia de repositorio explícita.
-- OposiBot consumer: `NOT_VERIFIED`.
+- OposiBot consumer: `CONSUMED`, `NOT_CONSUMED`, `LEGACY` or `UNKNOWN` according to the consumer matrix.
 
 ## `/content/*` — legacy admin/content
 
-Common: Domain `content`; Authorization `ADMIN_REQUIRED`; Route implementation `Application.kt`; Service `UNKNOWN`; Gateway `SupabaseContentGateway`; Request/Response DTO `UNKNOWN`; Errors `UNKNOWN`; Tests `SOURCE_DOCUMENTED / endpoint tests reported`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `PARTIAL`; OposiBot `NOT_VERIFIED`; Evidence `Application.kt`, `11_ENDPOINT_CATALOG.md`.
+Common: Domain `content`; Authorization `ADMIN_REQUIRED`; Route implementation `Application.kt`; Service `UNKNOWN`; Gateway `SupabaseContentGateway`; Request/Response DTO `UNKNOWN`; Errors `UNKNOWN`; Tests `SOURCE_DOCUMENTED / endpoint tests reported`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `PARTIAL`; OposiBot `NOT_VERIFIED`; Evidence `Application.kt` and backend source.
 
 | Endpoint ID | Method | Path | Status |
 |---|---|---|---|
@@ -50,7 +52,7 @@ Known storage limits preserved from evidence: portada/assets `10 MB`; resource u
 
 ## `/v1/*` — public read API
 
-Common: Domain `public app read`; Authorization `PUBLIC`; Route implementation `V1Routes.kt`; Service `UNKNOWN`; Gateway `SupabaseV1Gateway`; Request/Response DTO `UNKNOWN`; Errors `UNKNOWN`; Tests `SOURCE_DOCUMENTED / endpoint tests reported`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `V1Routes.kt`, `11_ENDPOINT_CATALOG.md`.
+Common: Domain `public app read`; Authorization `PUBLIC`; Route implementation `V1Routes.kt`; Service `UNKNOWN`; Gateway `SupabaseV1Gateway`; Request/Response DTO `UNKNOWN`; Errors `UNKNOWN`; Tests `SOURCE_DOCUMENTED / endpoint tests reported`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `V1Routes.kt` and backend source.
 
 | Endpoint ID | Method | Path | Status |
 |---|---|---|---|
@@ -61,7 +63,7 @@ Common: Domain `public app read`; Authorization `PUBLIC`; Route implementation `
 
 ## `/api/v1/admin/*` — admin V1
 
-Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `AdminV1Routes.kt`; Service `UNKNOWN`; Gateway `AdminV1Gateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `backend tests / source documented`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `PARTIAL`; OposiBot `NOT_VERIFIED`; Evidence `AdminV1Routes.kt`, `BackendRoutes.kt`, `11_ENDPOINT_CATALOG.md`.
+Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `AdminV1Routes.kt`; Service `UNKNOWN`; Gateway `AdminV1Gateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `backend tests / source documented`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `PARTIAL`; OposiBot `NOT_VERIFIED`; Evidence `AdminV1Routes.kt`, `BackendRoutes.kt` and backend source.
 
 | Endpoint ID | Method | Path | Status |
 |---|---|---|---|
@@ -101,7 +103,7 @@ Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `Ad
 
 ## `/api/v1/app/*` — authenticated app API
 
-Common: Domain `app`; Authorization `JWT_REQUIRED`, with documented dev fallback controlled by `OPOSICONTROL_ALLOW_DEV_USER`; Route implementation `AppV1Routes.kt`; Service `UNKNOWN`; Gateway `AppV1Gateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `SOURCE_DOCUMENTED`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `AppV1Routes.kt`, `11_ENDPOINT_CATALOG.md`.
+Common: Domain `app`; Authorization `JWT_REQUIRED`, with documented dev fallback controlled by `OPOSICONTROL_ALLOW_DEV_USER`; Route implementation `AppV1Routes.kt`; Service `UNKNOWN`; Gateway `AppV1Gateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `SOURCE_DOCUMENTED`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `AppV1Routes.kt` and backend source.
 
 | Endpoint ID | Method | Path | Status |
 |---|---|---|---|
@@ -118,7 +120,7 @@ Common: Domain `app`; Authorization `JWT_REQUIRED`, with documented dev fallback
 
 ## `/v1/auth/*` — OposiBots authentication
 
-Common: Domain `OposiBots auth`; Authorization varies by handler: public/rate-limited for registration and credential exchange; bearer for protected operations; exact matrix `UNKNOWN` without runtime route test; Route implementation `OposiBotsAuthRoutes.kt`; Service `UNKNOWN`; Gateway `OposiBotsAuthGateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `backend auth tests / source documented`; DB/RPC/Storage `Supabase Auth expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `OposiBotsAuthRoutes.kt`, `11_ENDPOINT_CATALOG.md`.
+Common: Domain `OposiBots auth`; Authorization varies by handler: public/rate-limited for registration and credential exchange; bearer for protected operations; exact matrix `UNKNOWN` without runtime route test; Route implementation `OposiBotsAuthRoutes.kt`; Service `UNKNOWN`; Gateway `OposiBotsAuthGateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `backend auth tests / source documented`; DB/RPC/Storage `Supabase Auth expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `OposiBotsAuthRoutes.kt` and backend source.
 
 | Endpoint ID | Method | Path | Status |
 |---|---|---|---|
@@ -137,7 +139,7 @@ Common: Domain `OposiBots auth`; Authorization varies by handler: public/rate-li
 
 ## OposiBots users admin
 
-Common: Domain `OposiBots user administration`; Authorization `ADMIN_REQUIRED`; Route implementation `OposiBotsUserAdminRoutes.kt`; Service `UNKNOWN`; Gateway `OposiBotsUserAdminGateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `OposiBotsUserAdminRoutesTest.kt`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `OposiBotsUserAdminRoutes.kt`, `OposiBotsUserAdminRoutesTest.kt`, `11_ENDPOINT_CATALOG.md`.
+Common: Domain `OposiBots user administration`; Authorization `ADMIN_REQUIRED`; Route implementation `OposiBotsUserAdminRoutes.kt`; Service `UNKNOWN`; Gateway `OposiBotsUserAdminGateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `OposiBotsUserAdminRoutesTest.kt`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `OposiBotsUserAdminRoutes.kt`, `OposiBotsUserAdminRoutesTest.kt` and backend source.
 
 | Endpoint ID | Method | Path | Status |
 |---|---|---|---|

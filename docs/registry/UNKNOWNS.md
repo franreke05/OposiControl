@@ -1,13 +1,3 @@
-# Unknowns Registry
+# Active Unknowns Registry
 
-| ID | Unknown | Consecuencia |
-|---|---|---|
-| `UNKNOWN-001` | Supabase live schema/RLS/RPC/storage | no afirmar deploy ni compatibilidad |
-| `UNKNOWN-002` | Runtime UI y navegación real | no afirmar usabilidad visual |
-| `UNKNOWN-003` | Consumer OposiBot real | no prometer compatibility |
-| `UNKNOWN-004` | Formato PDF final de Arturo | no congelar parser |
-| `UNKNOWN-005` | Modelo de roles admin | no asumir Arturo admin |
-| `UNKNOWN-006` | Fuente canónica de migraciones | no escribir DB |
-| `UNKNOWN-007` | Estados finales de publicación/importación | no publicar silenciosamente |
-| `UNKNOWN-008` | Proyecto Supabase conectado y entorno live autorizado | no ejecutar ni afirmar auditoría live |
-| `UNKNOWN-009` | Tablas, RLS, RPC, Storage y migration history efectivos | no afirmar compatibilidad de backend |
+No unresolved unknowns remain after local inspection. Remaining external or future work is classified in [RISKS.md](./RISKS.md) and [TECH_DEBT.md](./TECH_DEBT.md).

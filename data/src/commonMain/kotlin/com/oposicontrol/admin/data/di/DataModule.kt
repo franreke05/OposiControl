@@ -29,6 +29,8 @@ import com.oposicontrol.admin.data.repository.KtorAdminOperationsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorAdminV1ContentRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorCommunitiesRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorConnectionDiagnosticsRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorForumRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorTesterRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorModerationRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorNewsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorTagSearchRepositoryImpl
@@ -46,6 +48,8 @@ import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.repository.DashboardRepository
+import com.oposicontrol.admin.domain.repository.ForumRepository
+import com.oposicontrol.admin.domain.repository.TesterRepository
 import com.oposicontrol.admin.domain.repository.ModerationRepository
 import com.oposicontrol.admin.domain.repository.NewsRepository
 import com.oposicontrol.admin.domain.repository.RolesRepository
@@ -162,9 +166,27 @@ val dataModule = module {
         )
     }
 
+    single<ForumRepository> {
+        KtorForumRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
+    single<TesterRepository> {
+        KtorTesterRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
     single<AuditRepository> { AuditRepositoryImpl(get()) }
     single<AuthRepository> { AuthRepositoryImpl(get(), get()) }
-    single<DashboardRepository> { ContentDashboardRepositoryImpl(get(), get(), get(), get()) }
+    single<DashboardRepository> { ContentDashboardRepositoryImpl(get(), get(), get(), get(), get()) }
     single<UsersRepository> { UsersRepositoryImpl(get()) }
     single<RolesRepository> { RolesRepositoryImpl(get()) }
     single<SettingsRepository> { SettingsRepositoryImpl(get()) }

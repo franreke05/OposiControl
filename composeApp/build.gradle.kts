@@ -24,7 +24,11 @@ fun String.toBuildConfigString(): String {
     return "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
-val backendTokenForBuild = localEnvValue("OPOSICONTROL_BACKEND_TOKEN")
+val localSupabaseUrl = localEnvValue("SUPABASE_URL")
+val localSupabasePublicKey = localEnvValue("SUPABASE_ANON_KEY")
+    .ifBlank { localEnvValue("SUPABASE_PUBLISHABLE_KEY") }
+    .takeUnless { it.startsWith("sb_secret_", ignoreCase = true) }
+    .orEmpty()
 
 kotlin {
     androidTarget {
@@ -60,6 +64,9 @@ kotlin {
             implementation(projects.features.moderation)
             implementation(projects.features.news)
             implementation(projects.features.newsTypes)
+            implementation(projects.features.reports)
+            implementation(projects.features.forum)
+            implementation(projects.features.opositester)
             implementation(projects.features.roles)
             implementation(projects.features.settings)
             implementation(projects.features.specialties)
@@ -76,6 +83,9 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.koin.compose)
             implementation(libs.koin.core)
+        }
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
@@ -118,9 +128,10 @@ android {
                 "String", "BASE_URL",
                 localEnvValue("BASE_URL").ifBlank { "http://10.0.2.2:8080" }.toBuildConfigString(),
             )
-            buildConfigField("String", "BACKEND_TOKEN", backendTokenForBuild.toBuildConfigString())
-            buildConfigField("String", "SUPABASE_URL", "\"\"")
-            buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
+            // The legacy static token must never be embedded in a client artifact.
+            buildConfigField("String", "BACKEND_TOKEN", "\"\"")
+            buildConfigField("String", "SUPABASE_URL", localSupabaseUrl.toBuildConfigString())
+            buildConfigField("String", "SUPABASE_ANON_KEY", localSupabasePublicKey.toBuildConfigString())
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
             buildConfigField("boolean", "ENABLE_LOGS", "true")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "false")
@@ -182,9 +193,11 @@ compose.desktop {
         mainClass = "com.oposicontrol.admin.app.MainKt"
 
         jvmArgs(
-            "-Doposi.BACKEND_TOKEN=$backendTokenForBuild",
+            "-Doposi.BACKEND_TOKEN=",
             "-Doposi.BASE_URL=http://localhost:8080",
             "-Doposi.APP_ENV=dev",
+            "-Doposi.SUPABASE_URL=$localSupabaseUrl",
+            "-Doposi.SUPABASE_ANON_KEY=$localSupabasePublicKey",
         )
 
         nativeDistributions {
@@ -198,8 +211,10 @@ compose.desktop {
 tasks.matching { it.name == "jvmRun" }.configureEach {
     if (this is JavaExec) {
         mainClass.set("com.oposicontrol.admin.app.MainKt")
-        systemProperty("oposi.BACKEND_TOKEN", backendTokenForBuild)
+        systemProperty("oposi.BACKEND_TOKEN", "")
         systemProperty("oposi.BASE_URL", "http://localhost:8080")
         systemProperty("oposi.APP_ENV", "dev")
+        systemProperty("oposi.SUPABASE_URL", localSupabaseUrl)
+        systemProperty("oposi.SUPABASE_ANON_KEY", localSupabasePublicKey)
     }
 }

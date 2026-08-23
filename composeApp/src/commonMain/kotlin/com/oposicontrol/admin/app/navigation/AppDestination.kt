@@ -1,5 +1,12 @@
+@file:Suppress("DEPRECATION")
+
 package com.oposicontrol.admin.app.navigation
 
+/**
+ * Source-compatible migration marker for old feature code. AppRoute and
+ * AppNavigator are the active navigation contract.
+ */
+@Deprecated("Use AppRoute and AppNavigator")
 sealed interface AppDestination {
     data object Auth : AppDestination
     data class Admin(val section: AdminSection) : AppDestination

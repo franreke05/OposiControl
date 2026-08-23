@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Lucide icon "users" (https://lucide.dev), ISC license.
+     <circle> converted to an equivalent two-arc <path> (Android vector
+     drawables only support <path>/<group>/<clip-path>, not <rect>/<circle>). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M16,21 v-2 a4,4 0 0,0 -4,-4 H6 a4,4 0 0,0 -4,4 v2" />
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M16,3.128 a4,4 0 0,1 0,7.744" />
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M22,21 v-2 a4,4 0 0,0 -3,-3.87" />
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M5,7 A4,4 0 1,0 13,7 A4,4 0 1,0 5,7" />
+</vector>

@@ -1,0 +1,3 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Function classifications and callers live in docs/database/SECURITY_DEFINER_MATRIX.md.
+-- Broken legacy functions must not be rewritten from memory or removed without consumer proof.

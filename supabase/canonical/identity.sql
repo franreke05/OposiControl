@@ -1,0 +1,4 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Target: auth.users.id UUID -> perfiles_usuario.usuario_id -> roles_usuario.usuario_id.
+-- Preconditions: recover migration history, verify profile FKs, map legacy callers,
+-- confirm public.usuario remains empty, and approve a separate removal migration.

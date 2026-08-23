@@ -103,6 +103,7 @@ fun MobileContentScreen(
     onRestartBackend: () -> Unit = {},
     connectionDiagnostics: @Composable () -> Unit = {},
     adminContent: @Composable () -> Unit = {},
+    showNavigationChrome: Boolean = true,
 ) {
     val examsState by examsViewModel.state.collectAsState()
     val newsState by newsViewModel.state.collectAsState()
@@ -118,6 +119,7 @@ fun MobileContentScreen(
         onRestartBackend = onRestartBackend,
         connectionDiagnostics = connectionDiagnostics,
         adminContent = adminContent,
+        showNavigationChrome = showNavigationChrome,
     )
 }
 
@@ -202,8 +204,9 @@ fun MobileContentContent(
     onRestartBackend: () -> Unit = {},
     connectionDiagnostics: @Composable () -> Unit = {},
     adminContent: @Composable () -> Unit = {},
+    showNavigationChrome: Boolean = true,
 ) {
-    var activeView by rememberSaveable { mutableStateOf(initialView) }
+    var activeView by rememberSaveable(initialView) { mutableStateOf(initialView) }
     var isNewsFullscreen by rememberSaveable { mutableStateOf(false) }
     LockScreenOrientation(
         if (isNewsFullscreen) {
@@ -253,7 +256,11 @@ fun MobileContentContent(
                         start = UiSpacing.screenMobile,
                         top = 12.dp,
                         end = UiSpacing.screenMobile,
-                        bottom = UiSpacing.mobileBottomBarClearance + navBarBottom,
+                        bottom = if (showNavigationChrome) {
+                            UiSpacing.mobileBottomBarClearance + navBarBottom
+                        } else {
+                            navBarBottom
+                        },
                     )
                     .mobileContentSwipe(
                         activeView = activeView,
@@ -262,23 +269,25 @@ fun MobileContentContent(
                     ),
                 verticalArrangement = Arrangement.spacedBy(UiSpacing.normal),
             ) {
-                MobileTopBar(
-                    activeView = activeView,
-                    subtitle = when (activeView) {
-                        MobileContentView.Noticias -> newsState.editorTitle.ifBlank { "Sin seleccion" }
-                        MobileContentView.Admin -> "Panel de administracion"
-                        else -> state.editorTitle.ifBlank { "Sin seleccion" }
-                    },
-                    status = when (activeView) {
-                        MobileContentView.Noticias -> newsState.editorStatus.ifBlank { "draft" }
-                        MobileContentView.Admin -> "active"
-                        else -> state.editorStatus.ifBlank { "draft" }
-                    },
-                    backendActionLabel = backendActionLabel,
-                    backendActionInProgress = backendActionInProgress,
-                    showBackendAction = activeView == MobileContentView.Solucionarios,
-                    onRestartBackend = onRestartBackend,
-                )
+                if (showNavigationChrome) {
+                    MobileTopBar(
+                        activeView = activeView,
+                        subtitle = when (activeView) {
+                            MobileContentView.Noticias -> newsState.editorTitle.ifBlank { "Sin seleccion" }
+                            MobileContentView.Admin -> "Panel de administracion"
+                            else -> state.editorTitle.ifBlank { "Sin seleccion" }
+                        },
+                        status = when (activeView) {
+                            MobileContentView.Noticias -> newsState.editorStatus.ifBlank { "draft" }
+                            MobileContentView.Admin -> "active"
+                            else -> state.editorStatus.ifBlank { "draft" }
+                        },
+                        backendActionLabel = backendActionLabel,
+                        backendActionInProgress = backendActionInProgress,
+                        showBackendAction = activeView == MobileContentView.Solucionarios,
+                        onRestartBackend = onRestartBackend,
+                    )
+                }
                 connectionDiagnostics()
                 if (activeView != MobileContentView.Admin) {
                     FormFeedback(
@@ -338,11 +347,13 @@ fun MobileContentContent(
                 }
             }
 
-            MobileBottomTabBar(
-                activeView = activeView,
-                onSelected = { activeView = it },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
+            if (showNavigationChrome) {
+                MobileBottomTabBar(
+                    activeView = activeView,
+                    onSelected = { activeView = it },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+            }
         }
     }
 }

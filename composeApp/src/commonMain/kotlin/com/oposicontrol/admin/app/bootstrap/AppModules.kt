@@ -10,9 +10,12 @@ import com.oposicontrol.admin.features.communities.di.communitiesFeatureModule
 import com.oposicontrol.admin.features.dashboard.di.dashboardFeatureModule
 import com.oposicontrol.admin.features.examaccess.di.examAccessFeatureModule
 import com.oposicontrol.admin.features.exams.di.examsFeatureModule
+import com.oposicontrol.admin.features.forum.di.forumFeatureModule
 import com.oposicontrol.admin.features.moderation.di.moderationFeatureModule
+import com.oposicontrol.admin.features.opositester.di.opositesterFeatureModule
 import com.oposicontrol.admin.features.news.di.newsFeatureModule
 import com.oposicontrol.admin.features.newstypes.di.newsTypesFeatureModule
+import com.oposicontrol.admin.features.reports.di.reportsFeatureModule
 import com.oposicontrol.admin.features.roles.di.rolesFeatureModule
 import com.oposicontrol.admin.features.settings.di.settingsFeatureModule
 import com.oposicontrol.admin.features.specialties.di.specialtiesFeatureModule
@@ -47,5 +50,8 @@ fun appModules(
         moderationFeatureModule,
         settingsFeatureModule,
         auditFeatureModule,
+        reportsFeatureModule,
+        forumFeatureModule,
+        opositesterFeatureModule,
     )
 }

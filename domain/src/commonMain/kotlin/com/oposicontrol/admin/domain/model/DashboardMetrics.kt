@@ -27,6 +27,7 @@ data class DashboardMetrics(
     val activeLimitedResources: Int = 0,
     val nextCommerceExpiryLabel: String = "Sin vencimientos programados",
     val latestImportLabel: String = "Sin registro de importaciones",
+    val pendingForumReports: Int = 0,
     val alerts: List<DashboardAlert> = emptyList(),
     val recentEvents: List<DashboardActivityEvent> = emptyList(),
 )

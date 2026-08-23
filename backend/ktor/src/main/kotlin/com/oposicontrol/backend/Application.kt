@@ -21,6 +21,7 @@ import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.host
+import io.ktor.server.request.path
 import io.ktor.server.response.respond
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -102,10 +103,22 @@ fun Application.module() {
                 ErrorDto(error = "unauthorized", message = cause.message ?: "No autorizado."),
             )
         }
+        exception<AppForbidden> { call, cause ->
+            call.respond(
+                HttpStatusCode.Forbidden,
+                ErrorDto(error = "forbidden", message = cause.message ?: "No tienes permisos para realizar esta acción."),
+            )
+        }
         exception<OposiBotsUserAdminNotFoundException> { call, cause ->
             call.respond(
                 HttpStatusCode.NotFound,
                 ErrorDto(error = "not_found", message = cause.message ?: "Usuario no encontrado."),
+            )
+        }
+        exception<BackendDomainException> { call, cause ->
+            call.respond(
+                cause.status,
+                ErrorDto(error = cause.errorCode.lowercase(), message = cause.message),
             )
         }
         exception<IllegalArgumentException> { call, cause ->
@@ -143,9 +156,8 @@ fun Application.module() {
                     (credentials.token == expected || (allowDevToken && credentials.token == "dev-local"))
                 if (staticTokenAccepted) return@authenticate UserIdPrincipal("oposicontrol-admin")
 
-                runCatching {
-                    jwtVerifier.subFrom(credentials.token).takeIf(appV1Gateway::hasAdminRole)
-                }.getOrNull()
+                runCatching { jwtVerifier.subFrom(credentials.token) }
+                    .getOrNull()
                     ?.let(::UserIdPrincipal)
             }
         }
@@ -167,9 +179,14 @@ fun Application.module() {
             intercept(ApplicationCallPipeline.Plugins) {
                 if (
                     call.principal<UserIdPrincipal>()?.name == "oposicontrol-admin" &&
-                    !isLocalDevelopmentPeer(appEnv, call.request.origin.remoteHost)
+                    (!isLocalDevelopmentPeer(appEnv, call.request.origin.remoteHost) ||
+                        !isLegacyStaticTokenPath(call.request.path()))
                 ) {
-                    throw AppUnauthorized("El acceso administrativo local no se expone fuera de la red de desarrollo.")
+                    throw AppUnauthorized("El token estatico solo esta permitido en superficies legacy locales de desarrollo.")
+                }
+                val principal = call.principal<UserIdPrincipal>()
+                if (principal != null && principal.name != "oposicontrol-admin" && !appV1Gateway.hasAdminRole(principal.name)) {
+                    throw AppForbidden("No tienes permisos para acceder al panel de administración.")
                 }
             }
             adminRoutes(adminGateway)
@@ -474,6 +491,10 @@ internal fun isLocalDevelopmentPeer(appEnv: String, remoteHost: String): Boolean
         }
     }.getOrDefault(false)
 }
+
+internal fun isLegacyStaticTokenPath(path: String): Boolean =
+    path == "/admin" || path.startsWith("/admin/") ||
+        path == "/content" || path.startsWith("/content/")
 
 fun io.ktor.server.application.ApplicationCall.requiredPath(name: String): String {
     return parameters[name]?.takeIf { it.isNotBlank() }
