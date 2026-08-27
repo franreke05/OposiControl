@@ -23,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -173,7 +174,17 @@ private fun FilterRow(
 private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
     GlassSurface(
         modifier = Modifier
-            .defaultMinSize(minHeight = 48.dp)
+            // Reserva 48dp táctiles sin agrandar la píldora visible (que sigue
+            // midiendo 40dp): Compose ya expande el hit-test de clickable() al
+            // mínimo del sistema, pero minimumInteractiveComponentSize() lo deja
+            // garantizado y explícito en vez de depender de que el Row tenga
+            // hueco de sobra porque el hermano FilterIconButton mide 48dp.
+            // (Resolución de conflicto de integración: se conserva esta versión
+            // -- la de recovery/mobile-opositester-06-07 -- sobre la alternativa
+            // mas simple que llego a integration via dcbe04d, porque preserva el
+            // tamaño visual original de la píldora en vez de agrandarla.)
+            .minimumInteractiveComponentSize()
+            .defaultMinSize(minHeight = 40.dp)
             .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
             .semantics {

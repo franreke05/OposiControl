@@ -101,6 +101,7 @@ Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `Ad
 | `ADMIN-031` | GET/POST/PATCH/DELETE | `/api/v1/admin/etiquetas[/{id}]` | `SOURCE_VERIFIED` |
 | `ADMIN-032` | GET/POST/PATCH/DELETE | `/api/v1/admin/comunidades-autonomas[/{id}]` | `SOURCE_VERIFIED` |
 | `ADMIN-033` | GET | `/api/v1/admin/dashboard` | `SOURCE_VERIFIED` |
+| `ADMIN-034` | GET | `/api/v1/admin/feedback/preguntas/{id}` | `SOURCE_VERIFIED` |
 
 ## `/api/v1/app/*` — authenticated app API
 

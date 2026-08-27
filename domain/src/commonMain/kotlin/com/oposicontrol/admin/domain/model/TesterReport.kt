@@ -25,3 +25,32 @@ data class TesterReportPage(
     val items: List<TesterReport>,
     val nextCursor: String?,
 )
+
+/**
+ * Contexto real de la pregunta asociada a una incidencia, resuelto por el
+ * backend sin N+1. [specialtyName] es null cuando la especialidad no se
+ * pudo resolver — nunca se muestra el uuid en su lugar. No incluye examen:
+ * `preguntas` no guarda una relación 1:1 con examen (la relación real es
+ * M:N vía `preguntas_examen`), así que ese dato queda fuera hasta que haya
+ * una forma de resolverlo sin ambigüedad.
+ */
+data class TesterQuestionContext(
+    val code: String,
+    val title: String,
+    val specialtyName: String?,
+)
+
+/**
+ * Detalle completo de una incidencia de OposiTester (Screen 07). [question]
+ * es null cuando la pregunta asociada ya no existe o no se pudo resolver —
+ * nunca se fabrica un contexto falso.
+ */
+data class TesterReportDetail(
+    val id: String,
+    val authorName: String,
+    val type: String,
+    val description: String,
+    val status: String,
+    val createdAt: String,
+    val question: TesterQuestionContext?,
+)

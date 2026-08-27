@@ -1,6 +1,7 @@
 package com.oposicontrol.admin.domain.repository
 
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.domain.model.TesterReportDetail
 import com.oposicontrol.admin.domain.model.TesterReportPage
 
 /** Incidencias reales de OposiTester (feedback_pregunta) — independiente de
@@ -21,4 +22,18 @@ interface TesterRepository {
         type: String? = null,
         pageSize: Int = 20,
     ): AppResult<TesterReportPage>
+
+    /** Detalle real de una incidencia (Screen 07). [AppError.NotFound] si ya
+     * no existe. */
+    suspend fun getReport(id: String): AppResult<TesterReportDetail>
+
+    /**
+     * Resuelve una incidencia con el único contrato real soportado por el
+     * backend (`POST .../resolver`): [estado] debe ser "resuelto",
+     * "descartado" o "revisado" — el backend rechaza cualquier otro valor.
+     * [nota] es opcional; si se manda no vacía, el backend la guarda
+     * SOBRESCRIBIENDO `descripcion` (comportamiento real confirmado en
+     * `AdminV1Gateway.resolverFeedback`, no inventado aquí).
+     */
+    suspend fun resolveReport(id: String, estado: String, nota: String? = null): AppResult<Unit>
 }

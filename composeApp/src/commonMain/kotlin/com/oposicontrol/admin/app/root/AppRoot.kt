@@ -53,6 +53,7 @@ import com.oposicontrol.admin.features.forum.presentation.ForumIntent
 import com.oposicontrol.admin.features.forum.presentation.ForumScreen
 import com.oposicontrol.admin.features.forum.presentation.ForumViewModel
 import com.oposicontrol.admin.features.forum.presentation.ThreadDetailScreen
+import com.oposicontrol.admin.features.opositester.presentation.TesterDetailScreen
 import com.oposicontrol.admin.features.opositester.presentation.TesterListScreen
 import com.oposicontrol.admin.features.moderation.presentation.ModerationIntent
 import com.oposicontrol.admin.features.moderation.presentation.ModerationScreen
@@ -191,9 +192,10 @@ fun AppRoot(
                 showBreadcrumbs = !compactLayout,
                 showScreenHeader = !(compactLayout && route == AppRoute.Home),
                 // Detalle interno: gana espacio y evita cambiar de pestaña sin darse
-                // cuenta mientras se lee/modera un hilo (Screen 05 §5). Solo esta
-                // ruta; el resto del panel mantiene la bottom nav igual que siempre.
-                showBottomBar = !(compactLayout && route is AppRoute.Community.Thread),
+                // cuenta mientras se lee/modera un hilo (Screen 05 §5) o una incidencia
+                // de OposiTester (Screen 07). El resto del panel mantiene la bottom nav
+                // igual que siempre.
+                showBottomBar = !(compactLayout && (route is AppRoute.Community.Thread || route is AppRoute.OposiTester.Detail)),
                 primaryActionLabel = legacySection?.primaryActionLabel.takeIf { legacyRoute?.onPrimaryAction != null },
                 onPrimaryAction = legacyRoute?.onPrimaryAction,
                 canGoBack = backStack.size > 1,
@@ -226,9 +228,6 @@ fun AppRoot(
                             )
                             pageRoute is AppRoute.OposiTester.List -> TesterListScreen(
                                 viewModel = koinInject(),
-                                // Screen 07 (detalle) todavía no existe: la ruta tipada ya
-                                // está lista, cae en el adaptador genérico "no implementado
-                                // todavía" hasta que se construya, mismo patrón que Foro→Hilo.
                                 onOpenReport = { reportId -> navigator.push(AppRoute.OposiTester.Detail(reportId)) },
                             )
                             pageRoute == route -> if (legacyRoute != null) legacyRoute.content() else LegacyRouteAdapter(metadata.title, metadata.description)
@@ -257,6 +256,9 @@ fun AppRoot(
                         onOpenAssociatedReports = { navigator.selectPrimaryTab(AppRoute.Reports.List) },
                         onBack = { navigator.pop() },
                     )
+                } else if (compactLayout && route is AppRoute.OposiTester.Detail) {
+                    val testerId = (route as AppRoute.OposiTester.Detail).testerId
+                    TesterDetailScreen(viewModel = koinInject(parameters = { parametersOf(testerId) }))
                 } else if (legacyRoute != null) {
                     legacyRoute.content()
                 } else {

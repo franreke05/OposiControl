@@ -50,7 +50,9 @@ fun TesterReport.toUi(now: Instant): TesterReportUi {
     )
 }
 
-private fun mapTesterStatus(estado: String): Pair<TesterReportStatusKind, String> = when (estado.lowercase()) {
+/** internal (no private): TesterDetailModels.kt en el mismo módulo reutiliza
+ * exactamente el mismo mapeo de estado para Screen 07 — nunca se duplica. */
+internal fun mapTesterStatus(estado: String): Pair<TesterReportStatusKind, String> = when (estado.lowercase()) {
     "pendiente" -> TesterReportStatusKind.PENDING to "Pendiente"
     "resuelto" -> TesterReportStatusKind.RESOLVED to "Resuelto"
     "descartado" -> TesterReportStatusKind.DISCARDED to "Descartado"
