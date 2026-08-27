@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Logback estaba en runtime classpath (ver comentario en build.gradle.kts,
+  S1D1/DAY_02 2026-08-13) pero SIN configuracion propia -- corria con el
+  default de Logback (BasicConfigurator: consola, INFO, patron minimo).
+  Este archivo:
+    - hace LOG_LEVEL configurable via env var (Logback resuelve ${VAR}
+      contra system properties y variables de entorno del SO, en ese
+      orden -- no hace falta leerla a mano en Kotlin).
+    - anade %mdc al patron para que request_id (puesto por
+      installRequestCorrelation, ver Observability.kt) aparezca en CUALQUIER
+      log de la misma request/hilo, incluidas las gateways que no reciben
+      el id por parametro.
+  No cambia el binding SLF4J->Logback ya existente ni los loggers actuales
+  (OC-KTOR-AUTH, OC-KTOR-AUTH-GATEWAY, etc.) -- solo les da formato/nivel
+  configurable en vez de depender del default implicito.
+-->
+<configuration>
+    <variable name="LOG_LEVEL" value="${LOG_LEVEL:-INFO}" />
+
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{ISO8601} %-5level [%thread] %logger{36} - %msg %mdc%n</pattern>
+        </encoder>
+    </appender>
+
+    <root level="${LOG_LEVEL}">
+        <appender-ref ref="STDOUT" />
+    </root>
+</configuration>

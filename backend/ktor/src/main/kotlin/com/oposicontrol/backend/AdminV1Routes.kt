@@ -266,6 +266,12 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val examenId = call.request.queryParameters["examenId"]
                     ?.takeIf { it.isNotBlank() }
                     ?.also { it.validatedUuid("examenId") }
+                logStrategicEvent(
+                    StrategicEvent.IMPORT_STARTED,
+                    operation = "rafaga_import",
+                    entityType = "especialidades",
+                    entityId = especialidadId,
+                )
 
                 var pdfBytes: ByteArray? = null
                 call.receiveMultipart().forEachPart { part ->
@@ -287,6 +293,16 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val (preguntas, errores) = parseRafagaText(rawText)
 
                 if (errores.isNotEmpty()) {
+                    // count = numero de errores, nunca su contenido (podria
+                    // llevar fragmentos del PDF -- ver redaction, prohibido).
+                    logStrategicEvent(
+                        StrategicEvent.IMPORT_VALIDATION_FAILED,
+                        operation = "rafaga_import",
+                        result = "validation_failed",
+                        entityType = "especialidades",
+                        entityId = especialidadId,
+                        count = errores.size,
+                    )
                     return@post call.respond(
                         HttpStatusCode.UnprocessableEntity,
                         RafagaImportErrorResponse(errores.map { RafagaParseErrorDto(it.numero, it.campo, it.detalle) }),
@@ -317,6 +333,14 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     importadas++
                 }
 
+                logStrategicEvent(
+                    StrategicEvent.IMPORT_PUBLISHED,
+                    operation = "rafaga_import",
+                    result = "success",
+                    entityType = "especialidades",
+                    entityId = especialidadId,
+                    count = importadas,
+                )
                 call.respond(HttpStatusCode.Created, RafagaImportResponse(importadas))
             }
         }
@@ -2002,6 +2026,13 @@ class AdminV1Gateway private constructor(
         ).decodeList<FeedbackRow>().firstOrNull() ?: error("Feedback no encontrado.")
         val autorNombre = saved.usuarioId?.let { resolveUserDisplayNames(listOf(it))[it] }.orEmpty()
         registrarAuditoria("feedback_$estado", "feedback_pregunta", id)
+        logStrategicEvent(
+            StrategicEvent.FEEDBACK_RESOLVED,
+            operation = "resolver_feedback",
+            result = estado,
+            entityType = "feedback_pregunta",
+            entityId = id,
+        )
         return saved.toDto(autorNombre)
     }
 
@@ -2452,6 +2483,14 @@ class AdminV1Gateway private constructor(
         )
         request("PATCH", "/rest/v1/reportes_contenido?id=eq.$id", sbJson.encodeToString(patch), prefer = "return=minimal")
         registrarAuditoria("reporte_$estado", "reportes_contenido", id)
+        logStrategicEvent(
+            StrategicEvent.REPORT_RESOLVED,
+            operation = "resolver_reporte",
+            result = estado,
+            entityType = "reportes_contenido",
+            entityId = id,
+            userId = actorId,
+        )
     }
 
     // TICKETS MANUALES (carteras_usuario + transacciones_cartera)
@@ -2816,6 +2855,15 @@ class AdminV1Gateway private constructor(
     // Registro de acciones sensibles. No debe tumbar la operacion principal si falla.
     // TODO(fase4): rellenar usuario_id desde el JWT de Supabase.
     fun registrarAuditoria(accion: String, tabla: String?, registroId: String?) {
+        // Punto unico: toda escritura admin sensible pasa por aqui, asi que
+        // es el sitio correcto para el evento estrategico generico
+        // ADMIN_ACTION sin tener que tocar cada llamador (~20 sitios).
+        logStrategicEvent(
+            StrategicEvent.ADMIN_ACTION,
+            operation = accion,
+            entityType = tabla,
+            entityId = registroId,
+        )
         try {
             request(
                 "POST", "/rest/v1/auditoria_log",
@@ -2936,9 +2984,17 @@ class AdminV1Gateway private constructor(
         val response = try {
             client.send(builder.method(method, HttpRequest.BodyPublishers.ofByteArray(bytes)).build(), HttpResponse.BodyHandlers.ofString())
         } catch (e: Exception) {
+            // Punto unico de subida a Storage (ver KDoc de requestBinary): un
+            // solo sitio cubre cualquier upload futuro sin tocar cada llamador.
+            logStrategicEvent(StrategicEvent.STORAGE_UPLOAD_FAILED, operation = method, errorType = e::class.simpleName)
             throw IllegalStateException("Supabase storage error: ${e.message}", e)
         }
         if (response.statusCode() !in 200..299) {
+            logStrategicEvent(
+                StrategicEvent.STORAGE_UPLOAD_FAILED,
+                operation = method,
+                result = response.statusCode().toString(),
+            )
             throw IllegalStateException("Supabase storage $method -> ${response.statusCode()}: ${response.body().take(200)}")
         }
         return response.body()
