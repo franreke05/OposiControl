@@ -242,6 +242,45 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 post {
                     call.respond(HttpStatusCode.Created, AdminLoteResponse(gateway.crearLote(call.receive())))
                 }
+                post("/pdf") {
+                    var examenId = ""
+                    var tipoExamen = "rafaga"
+                    var nombreArchivo = "importacion.pdf"
+                    var pdfBytes: ByteArray? = null
+                    call.receiveMultipart().forEachPart { part ->
+                        try {
+                            when (part) {
+                                is PartData.FormItem -> when (part.name) {
+                                    "examenId" -> examenId = part.value
+                                    "tipoExamen" -> tipoExamen = part.value
+                                }
+                                is PartData.FileItem -> if (part.name == "file") {
+                                    nombreArchivo = part.originalFileName ?: nombreArchivo
+                                    val bytes = part.streamProvider().readNBytes(20 * 1024 * 1024 + 1)
+                                    require(bytes.size <= 20 * 1024 * 1024) { "El PDF supera el límite de 20 MB." }
+                                    pdfBytes = bytes
+                                }
+                                else -> Unit
+                            }
+                        } finally {
+                            part.dispose()
+                        }
+                    }
+                    if (examenId.isBlank()) {
+                        return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad_request", "examenId es obligatorio"))
+                    }
+                    val bytes = pdfBytes
+                        ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad_request", "Campo 'file' con el PDF es obligatorio"))
+                    val lote = runCatching {
+                        gateway.crearLoteDesdePdf(examenId, tipoExamen, nombreArchivo, bytes)
+                    }.getOrElse { error ->
+                        return@post call.respond(
+                            HttpStatusCode.UnprocessableEntity,
+                            ErrorDto("pdf_unprocessable", error.message ?: "No se pudo procesar el PDF."),
+                        )
+                    }
+                    call.respond(HttpStatusCode.Created, AdminLoteResponse(lote))
+                }
                 get("/{loteId}") {
                     val lote = gateway.getLote(call.requiredPath("loteId"))
                     if (lote == null) {
@@ -731,6 +770,7 @@ data class AdminStagingItemDto(
     val etiquetaTexto: String = "",
     val bloqueOriginal: String = "",
     val estadoParseo: String = "ok",
+    val errorParseo: String? = null,
     val preguntaId: String? = null,
 )
 
@@ -816,6 +856,7 @@ private fun StagingRow.toDto() = AdminStagingItemDto(
     etiquetaTexto = etiquetaTexto.orEmpty(),
     bloqueOriginal = bloqueOriginal,
     estadoParseo = estadoParseo,
+    errorParseo = errorParseo,
     preguntaId = preguntaId,
 )
 
@@ -1864,6 +1905,45 @@ class AdminV1Gateway private constructor(
         return getLote(loteId) ?: error("No se pudo leer el lote creado.")
     }
 
+    fun crearLoteDesdePdf(
+        examenId: String,
+        tipoExamen: String,
+        nombreArchivo: String,
+        pdfBytes: ByteArray,
+    ): AdminLoteDto {
+        val examen = getExamen(examenId) ?: error("El examen del lote ya no existe.")
+        val canonicalType = canonicalExamType(tipoExamen).takeIf { it == canonicalExamType(examen.tipoExamen) }
+            ?: canonicalExamType(examen.tipoExamen)
+        val rawText = extractTextFromPdf(pdfBytes)
+        if (rawText.isBlank()) error("El PDF no contiene texto seleccionable. No se admite OCR en este flujo.")
+        val (preguntas, errores) = parseRafagaText(rawText)
+        if (errores.isNotEmpty()) {
+            error(errores.joinToString(" ") { "Pregunta ${it.numero}: ${it.detalle}." })
+        }
+        return crearLote(
+            CrearLoteRequest(
+                examenId = examenId,
+                nombreArchivo = nombreArchivo,
+                tipoExamen = canonicalType,
+                preguntas = preguntas.map { p ->
+                    AdminStagingItemDto(
+                        posicion = p.numero,
+                        bloqueOriginal = p.titulo,
+                        titulo = p.titulo,
+                        opcionA = p.opciones.getOrNull(0)?.second.orEmpty(),
+                        opcionB = p.opciones.getOrNull(1)?.second.orEmpty(),
+                        opcionC = p.opciones.getOrNull(2)?.second.orEmpty(),
+                        opcionD = p.opciones.getOrNull(3)?.second.orEmpty(),
+                        respuestaCorrecta = p.respuesta,
+                        razonamiento = p.razonamiento,
+                        fuenteTexto = p.fuente,
+                        etiquetaTexto = p.etiquetas.joinToString(","),
+                    )
+                },
+            ),
+        )
+    }
+
     fun updateStaging(id: String, item: AdminStagingItemDto): AdminStagingItemDto {
         val patch = StagingPatch(
             titulo = item.titulo,
@@ -1888,10 +1968,12 @@ class AdminV1Gateway private constructor(
     fun importarLote(loteId: String): AdminLoteDto {
         val lote = getLote(loteId) ?: error("Lote no encontrado.")
         val examen = getExamen(lote.examenId) ?: error("El examen del lote ya no existe.")
-        val tipoPregunta = if (examen.tipoExamen == "inmersivo") "inmersiva" else "rafaga"
+        val tipoPregunta = canonicalQuestionType(examen.tipoExamen)
         var importadas = 0
+        var errores = 0
+        val omitidas = lote.staging.count { it.estadoParseo == "omitida" }
         for (s in lote.staging) {
-            if (s.preguntaId != null || s.estadoParseo == "importada") continue
+            if (s.preguntaId != null || s.estadoParseo !in setOf("ok", "aprobada")) continue
             try {
                 val opciones = listOf("A" to s.opcionA, "B" to s.opcionB, "C" to s.opcionC, "D" to s.opcionD)
                     .filter { it.second.isNotBlank() }
@@ -1917,6 +1999,7 @@ class AdminV1Gateway private constructor(
                 )
                 importadas++
             } catch (error: Exception) {
+                errores++
                 val msg = (error.message ?: "error").replace("\"", "'").take(300)
                 request(
                     "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.${s.id}",
@@ -1925,13 +2008,30 @@ class AdminV1Gateway private constructor(
                 )
             }
         }
+        val estadoFinal = when {
+            errores > 0 || omitidas > 0 -> "parcial"
+            importadas > 0 -> "importado"
+            else -> "revisar"
+        }
         request(
             "PATCH", "/rest/v1/lotes_importacion_preguntas?id=eq.$loteId",
-            """{"estado":"importado","total_importadas":$importadas}""",
+            """{"estado":"$estadoFinal","total_importadas":$importadas}""",
             prefer = "return=minimal",
         )
-        registrarAuditoria("lote_importado", "lotes_importacion_preguntas", loteId)
+        registrarAuditoria("lote_$estadoFinal", "lotes_importacion_preguntas", loteId)
         return getLote(loteId) ?: error("No se pudo leer el lote importado.")
+    }
+
+    private fun canonicalExamType(value: String): String = when (value.lowercase()) {
+        "razonado", "guiado" -> "razonado"
+        "inmersivo" -> "inmersivo"
+        else -> "rafaga"
+    }
+
+    private fun canonicalQuestionType(value: String): String = when (canonicalExamType(value)) {
+        "razonado" -> "razonada"
+        "inmersivo" -> "inmersiva"
+        else -> "rafaga"
     }
 
     private fun LoteRow.toDto(staging: List<AdminStagingItemDto>) = AdminLoteDto(

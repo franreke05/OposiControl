@@ -102,6 +102,16 @@ class AppNavigatorTest {
     }
 
     @Test
+    fun contentUploadRouteKeepsItsOwnStackEntry() {
+        val navigator = AppNavigator()
+
+        navigator.push(AppRoute.Content.Imports)
+
+        assertEquals(AppRoute.Content.Imports, navigator.currentRoute.value)
+        assertEquals(listOf(AppRoute.Home, AppRoute.Content.Imports), navigator.backStack.value)
+    }
+
+    @Test
     fun mobilePrimaryNavigationUsesTheProductDestinations() {
         assertEquals(
             listOf(

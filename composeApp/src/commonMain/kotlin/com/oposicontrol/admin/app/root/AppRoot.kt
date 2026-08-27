@@ -46,6 +46,7 @@ import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessViewMod
 import com.oposicontrol.admin.features.exams.presentation.ExamsIntent
 import com.oposicontrol.admin.features.exams.presentation.ExamsScreen
 import com.oposicontrol.admin.features.exams.presentation.ExamsViewModel
+import com.oposicontrol.admin.features.exams.presentation.ContentUploadScreen
 import com.oposicontrol.admin.features.exams.presentation.QuestionsResourcesScreen
 import com.oposicontrol.admin.features.exams.presentation.MobileContentView
 import com.oposicontrol.admin.features.forum.presentation.ForumIntent
@@ -154,6 +155,7 @@ fun AppRoot(
                     openSection = navigator::openSection,
                     mobileExperience = compactLayout,
                     onSystemStatusClick = { navigator.push(AppRoute.System.Status) },
+                    onOpenContentUpload = { navigator.push(AppRoute.Content.Imports) },
                 )
             }
             // Swipe-between-tabs only applies while sitting at the root of one of
@@ -173,7 +175,13 @@ fun AppRoot(
                         .firstOrNull { it.metadata.id == id }
                         ?.route
                         ?.let { selectedRoute ->
-                            if (compactLayout) navigator.selectPrimaryTab(selectedRoute) else navigator.reset(selectedRoute)
+                            if (compactLayout && selectedRoute in primaryTabRoutes) {
+                                navigator.selectPrimaryTab(selectedRoute)
+                            } else if (compactLayout) {
+                                navigator.push(selectedRoute)
+                            } else {
+                                navigator.reset(selectedRoute)
+                            }
                         }
                 },
                 environmentLabel = environmentLabel,
@@ -231,6 +239,8 @@ fun AppRoot(
                             )
                         }
                     }
+                } else if (compactLayout && route == AppRoute.Content.Imports) {
+                    ContentUploadScreen(viewModel = koinInject())
                 } else if (compactLayout && route is AppRoute.Content) {
                     MobileContentRoot(
                         appConfig = appConfig,
@@ -422,6 +432,7 @@ private fun adminSectionRoute(
     openSection: (AdminSection) -> Unit,
     mobileExperience: Boolean,
     onSystemStatusClick: () -> Unit = {},
+    onOpenContentUpload: () -> Unit = {},
 ): AdminSectionRoute {
     return when (section) {
         AdminSection.DASHBOARD -> {
@@ -433,7 +444,10 @@ private fun adminSectionRoute(
                         MobileDashboardScreen(
                             viewModel = viewModel,
                             environmentLabel = environmentLabel,
-                            onQuickAction = { action -> handleDashboardAction(action, openSection) },
+                            onQuickAction = { action ->
+                                if (action == DashboardQuickAction.IMPORT_QUESTIONS) onOpenContentUpload()
+                                else handleDashboardAction(action, openSection)
+                            },
                         )
                     } else {
                         DashboardScreen(

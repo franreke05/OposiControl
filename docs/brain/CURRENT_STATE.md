@@ -28,6 +28,12 @@ Mobile rebuild M0-M1: verified JWTs are passed as Bearer tokens to Ktor; admin r
 
 Canonical exam vocabulary is rafaga / razonado / inmersivo; broader app consumers and legacy aliases require compatibility review before removal.
 
+## Mobile content upload — Screen 09
+
+The isolated branch `feature/mobile-content-upload` contains the mobile `AppRoute.Content.Imports` flow: authenticated PDF upload to staging, review/edit, approve or skip, and explicit publish through the existing admin import boundary. PDF processing is digital/selectable-text only through PDFBox; OCR is intentionally unsupported. The flow does not create Storage buckets, migrations, RPCs, or MAIN seed data. Existing legacy `/api/v1/admin/rafagas/import` remains separate.
+
+The implementation reports partial publication when row-level import errors or skipped staging rows exist. No live MAIN write was executed while implementing or validating this branch; an explicit user publish action can write final content through the existing admin boundary. Duplicate detection, atomic final persistence, asynchronous worker processing, resource association for immersive content, live Supabase/RLS compatibility, and runtime visual verification remain open evidence gaps.
+
 ## Preserved boundaries
 
 OposiBot, public.usuario, /v1/auth/*, Opositeca, OposiRed, PDF/import, exam-resources, news-assets and POST_OPOSIBOT_LEGACY_CLEANUP remain protected. The deferred cleanup has not executed.

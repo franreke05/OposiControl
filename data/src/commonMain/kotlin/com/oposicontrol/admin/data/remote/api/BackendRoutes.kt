@@ -8,6 +8,7 @@ object BackendRoutes {
     const val ADMIN_V1_EXAMENES = "/api/v1/admin/examenes"
     const val ADMIN_V1_PREGUNTAS = "/api/v1/admin/preguntas"
     const val ADMIN_V1_IMPORTACIONES_PREGUNTAS = "/api/v1/admin/importaciones/preguntas"
+    const val ADMIN_V1_IMPORTACIONES_PREGUNTAS_PDF = "/api/v1/admin/importaciones/preguntas/pdf"
     const val ADMIN_V1_FEEDBACK_PREGUNTAS = "/api/v1/admin/feedback/preguntas"
     const val ADMIN_V1_AUDITORIA = "/api/v1/admin/auditoria"
     const val ADMIN_V1_USUARIOS = "/api/v1/admin/usuarios"
@@ -58,4 +59,10 @@ object BackendRoutes {
     fun adminV1ExamenDespublicar(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/despublicar"
 
     fun adminV1ExamenPortada(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/portada"
+
+    fun adminV1Importacion(batchId: String): String = "$ADMIN_V1_IMPORTACIONES_PREGUNTAS/$batchId"
+
+    fun adminV1ImportacionStaging(itemId: String): String = "/api/v1/admin/importaciones/staging/$itemId"
+
+    fun adminV1ImportacionPublish(batchId: String): String = "/api/v1/admin/importaciones/$batchId/importar"
 }
