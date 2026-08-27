@@ -34,6 +34,11 @@ private class FakeTesterRepository(
         calls += Triple(status, cursor, type)
         return responder(status, cursor, type)
     }
+
+    // No usados por TesterListViewModel — solo Screen 07 (TesterDetailViewModel)
+    // los ejercita, ver TesterDetailViewModelTest.
+    override suspend fun getReport(id: String) = error("not used")
+    override suspend fun resolveReport(id: String, estado: String, nota: String?) = error("not used")
 }
 
 private fun newViewModel(testScheduler: TestCoroutineScheduler, repository: TesterRepository) = TesterListViewModel(

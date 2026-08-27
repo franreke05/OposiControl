@@ -334,6 +334,11 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     ),
                 )
             }
+            get("/{id}") {
+                val detail = gateway.getFeedbackDetail(call.requiredPath("id"))
+                    ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Incidencia no encontrada."))
+                call.respond(AdminFeedbackDetailResponse(detail))
+            }
             post("/{id}/resolver") {
                 val req = runCatching { call.receive<ResolverFeedbackRequest>() }.getOrDefault(ResolverFeedbackRequest())
                 call.respond(AdminFeedbackResponse(gateway.resolverFeedback(call.requiredPath("id"), req)))
@@ -852,6 +857,64 @@ data class ResolverFeedbackRequest(
 )
 
 @Serializable
+data class AdminFeedbackDetailResponse(val data: AdminFeedbackDetailDto)
+
+/** Detalle real de una incidencia de OposiTester (Screen 07): mismos campos
+ * que [AdminFeedbackDto] más [pregunta], contexto de la pregunta asociada
+ * resuelto sin N+1 (una fila) — null si la pregunta ya no existe. No incluye
+ * examen: `preguntas` no tiene relación 1:1 con examen (ver
+ * `preguntas_examen`, M:N), así que ese dato queda fuera hasta que haya una
+ * forma real y no ambigua de resolverlo. */
+@Serializable
+data class AdminFeedbackDetailDto(
+    val id: String = "",
+    val usuarioId: String? = null,
+    val autorNombre: String = "",
+    val preguntaId: String = "",
+    val intentoId: String? = null,
+    val tipoFeedback: String = "",
+    val descripcion: String = "",
+    val estado: String = "pendiente",
+    val creadoEn: String = "",
+    val pregunta: AdminFeedbackPreguntaContextDto? = null,
+)
+
+/** [especialidadNombre] null si la especialidad no se pudo resolver — nunca
+ * se muestra el uuid crudo en su lugar. */
+@Serializable
+data class AdminFeedbackPreguntaContextDto(
+    val codigoPregunta: String,
+    val titulo: String,
+    val especialidadNombre: String? = null,
+)
+
+/** Pura y testeable sin red: separa el ensamblado del DTO de detalle de las
+ * llamadas HTTP de [AdminV1Routes.Gateway.getFeedbackDetail]. */
+internal fun buildFeedbackDetailDto(
+    row: FeedbackRow,
+    autorNombre: String,
+    pregunta: AdminPreguntaDto?,
+    especialidadNombre: String?,
+): AdminFeedbackDetailDto = AdminFeedbackDetailDto(
+    id = row.id.orEmpty(),
+    usuarioId = row.usuarioId,
+    autorNombre = autorNombre,
+    preguntaId = row.preguntaId,
+    intentoId = row.intentoId,
+    tipoFeedback = row.tipoFeedback,
+    descripcion = row.descripcion.orEmpty(),
+    estado = row.estado,
+    creadoEn = row.creadoEn.orEmpty(),
+    pregunta = pregunta?.let {
+        AdminFeedbackPreguntaContextDto(
+            codigoPregunta = it.codigoPregunta,
+            titulo = it.titulo,
+            especialidadNombre = especialidadNombre,
+        )
+    },
+)
+
+@Serializable
 data class AdminAuditoriasResponse(val data: List<AdminAuditoriaDto>)
 
 @Serializable
@@ -864,8 +927,10 @@ data class AdminAuditoriaDto(
     val creadoEn: String? = null,
 )
 
+// internal (no private): AdminV1FeedbackDetailTest construye filas directamente
+// para probar buildFeedbackDetailDto sin red.
 @Serializable
-private data class FeedbackRow(
+internal data class FeedbackRow(
     val id: String? = null,
     @SerialName("usuario_id") val usuarioId: String? = null,
     @SerialName("pregunta_id") val preguntaId: String,
@@ -2003,6 +2068,26 @@ class AdminV1Gateway private constructor(
         val autorNombre = saved.usuarioId?.let { resolveUserDisplayNames(listOf(it))[it] }.orEmpty()
         registrarAuditoria("feedback_$estado", "feedback_pregunta", id)
         return saved.toDto(autorNombre)
+    }
+
+    /** Detalle real de una incidencia para Screen 07: la fila de
+     * feedback_pregunta más el contexto de su pregunta asociada (código
+     * humano, título y nombre de especialidad), resuelto en como máximo dos
+     * llamadas extra — nunca N+1 (esto es un detalle de un único id, no un
+     * listado). [pregunta] es null si la pregunta ya no existe; en ese caso
+     * tampoco se resuelve especialidad. */
+    fun getFeedbackDetail(id: String): AdminFeedbackDetailDto? {
+        val row = request("GET", "/rest/v1/feedback_pregunta?select=*&id=eq.$id&limit=1", null)
+            .decodeList<FeedbackRow>().firstOrNull() ?: return null
+        val autorNombre = row.usuarioId?.let { resolveUserDisplayNames(listOf(it))[it] }.orEmpty()
+        val pregunta = runCatching { getPregunta(row.preguntaId) }.getOrNull()
+        val especialidadNombre = pregunta?.especialidadId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { specId ->
+                request("GET", "/rest/v1/especialidades?select=id,nombre&id=eq.$specId&limit=1", null)
+                    .decodeList<EspecialidadNombreRow>().firstOrNull()?.nombre
+            }
+        return buildFeedbackDetailDto(row, autorNombre, pregunta, especialidadNombre)
     }
 
     // USUARIOS (perfiles_usuario + roles_usuario)
