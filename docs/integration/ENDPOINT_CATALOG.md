@@ -103,6 +103,16 @@ Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `Ad
 | `ADMIN-033` | GET | `/api/v1/admin/dashboard` | `SOURCE_VERIFIED` |
 | `ADMIN-034` | GET | `/api/v1/admin/feedback/preguntas/{id}` | `SOURCE_VERIFIED` |
 
+## `/health/*` — public, unauthenticated
+
+Common: Domain `observability`; Authorization `PUBLIC` (mounted outside `authenticate("gateway-auth")` on purpose — orchestrators/load balancers cannot send a Bearer token); Route implementation `Observability.kt` (`observabilityHealthRoutes`); Tests `ObservabilityTest`; DB/RPC/Storage `none for /health/live; a single lightweight GET to Supabase PostgREST root for /health/ready (no business query)`; Evidence `Observability.kt`, `ObservabilityTest.kt`.
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `HEALTH-001` | GET | `/health` | `SOURCE_VERIFIED` — legacy, unchanged, kept for backward compatibility |
+| `HEALTH-002` | GET | `/health/live` | `SOURCE_VERIFIED` — process alive, never depends on external state |
+| `HEALTH-003` | GET | `/health/ready` | `SOURCE_VERIFIED` — checks Supabase reachability; `200` ready / `503` not_ready |
+
 ## `/api/v1/app/*` — authenticated app API
 
 Common: Domain `app`; Authorization `JWT_REQUIRED`, with documented dev fallback controlled by `OPOSICONTROL_ALLOW_DEV_USER`; Route implementation `AppV1Routes.kt`; Service `UNKNOWN`; Gateway `AppV1Gateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `SOURCE_DOCUMENTED`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `AppV1Routes.kt` and backend source.
@@ -158,5 +168,6 @@ Common: Domain `OposiBots user administration`; Authorization `ADMIN_REQUIRED`; 
 | `/api/v1/app/*` | `PRESERVED` |
 | `/v1/auth/*` | `PRESERVED` |
 | OposiBots admin users | `PRESERVED` |
+| `/health/*` | `PRESERVED` (`/health` unchanged; `/health/live` and `/health/ready` new, additive) |
 
 Preserved means every family and route grouping from the forensic source is represented here. It does not mean runtime/live compatibility is verified.

@@ -11,7 +11,9 @@
 
 ## CURRENT RISKS
 
-Non-atomic persistence, partial errors, duplicate handling and publication boundaries remain open. The mobile flow inserts into staging first; final publication uses the existing row-level admin import boundary and reports partial results instead of claiming atomic success.
+Non-atomic persistence, partial errors and duplicate handling remain open **in the live route** — confirmed, not silently accepted. The mobile flow inserts into staging first; final publication uses the existing row-level admin import boundary and reports partial results instead of claiming atomic success.
+
+A candidate fix is designed (2026-08-27): `public.admin_import_lote_preguntas(p_lote_id)`, one Postgres transaction, all-or-nothing, with duplicate candidates flagged (`estado_parseo = 'duplicada_candidata'`) for human review — never auto-skipped, never auto-replacing an existing question. Status `APPLY_PENDING_APPROVAL`: written without live Supabase schema access, not applied to any database, not wired into the active Kotlin route. See `supabase/canonical/content_import_atomicity_candidate_v1/README.md` for the exact gaps that must be confirmed before applying (real `admin_create_question` signature, `preguntas`/staging column shapes, `estado_parseo` constraint).
 
 ## TARGET_PRODUCT
 
@@ -35,4 +37,4 @@ The legacy `/api/v1/admin/rafagas/import` route remains separate and is not reus
 
 ## Backend readiness note
 
-The backend exposes PDF/import staging and PDFBox-based processing behind authenticated admin routes. Source review found a documented non-atomic fallback in admin operations; it remains a P1 boundary and is not promoted to final persistence in this pass. Live schema/RLS/RPC/Storage compatibility is not verified because Supabase access was unavailable.
+The backend exposes PDF/import staging and PDFBox-based processing behind authenticated admin routes, now integrated into `integration/mobile-finish`. Source review found a documented non-atomic fallback in admin operations; it remains a P1 boundary and is not promoted to final persistence in this pass — a candidate fix is designed but not applied (see CURRENT RISKS above). Live schema/RLS/RPC/Storage compatibility is not verified because Supabase access was unavailable.
