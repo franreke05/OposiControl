@@ -40,4 +40,5 @@ Registro activo de las 17 secciones administrativas requeridas. La navegación e
 - Desktop entry: `DesktopModerationRoot → AppRoot`; source exposes the administrative `AdminSection` set.
 - Mobile entry: `MobileContentRoot → MobileContentScreen/MobileAdminPanel`; the mobile panel currently exposes a smaller subset: Moderation, Users, Tickets, Support, Access and Settings.
 - The source also contains `SETTINGS`, but the required product registry here intentionally covers the 17 requested sections and does not count Settings as one of them.
+- `AppRoute.System.Status` is a typed route prepared for future Screen 10 and is opened from the Settings row; it remains separate from the legacy `AppRoute.System.Diagnostics` route and currently uses the generic not-implemented adapter.
 - Runtime visual reachability remains `NOT_VERIFIED`.

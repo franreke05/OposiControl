@@ -69,6 +69,7 @@ sealed interface AppRoute {
         data object Roles : System
         data object Audit : System
         data object Settings : System
+        data object Status : System
         data object Diagnostics : System
     }
 }

@@ -153,6 +153,7 @@ fun AppRoot(
                     environmentLabel = environmentLabel,
                     openSection = navigator::openSection,
                     mobileExperience = compactLayout,
+                    onSystemStatusClick = { navigator.push(AppRoute.System.Status) },
                 )
             }
             // Swipe-between-tabs only applies while sitting at the root of one of
@@ -420,6 +421,7 @@ private fun adminSectionRoute(
     environmentLabel: String,
     openSection: (AdminSection) -> Unit,
     mobileExperience: Boolean,
+    onSystemStatusClick: () -> Unit = {},
 ): AdminSectionRoute {
     return when (section) {
         AdminSection.DASHBOARD -> {
@@ -560,7 +562,12 @@ private fun adminSectionRoute(
             val viewModel: SettingsViewModel = koinInject()
             AdminSectionRoute(
                 onPrimaryAction = { viewModel.dispatch(SettingsIntent.Refresh) },
-                content = { SettingsScreen(viewModel) },
+                content = {
+                    SettingsScreen(
+                        viewModel = viewModel,
+                        onSystemStatusClick = onSystemStatusClick,
+                    )
+                },
             )
         }
 

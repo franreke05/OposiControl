@@ -14,7 +14,7 @@ row, Storage object or legacy compatibility adapter was removed.
 | Authenticated JWT E2E | BLOCKED_EXTERNAL | No valid non-personal Auth fixture is available locally | ../registry/RISKS.md |
 | Payments | WAITING_EXTERNAL_PROVIDER | Checkout/webhook provider contract is absent | ../product/COMMERCIAL_CODE_CONSUMER_MATRIX.md |
 | Product policy | WAITING_PRODUCT_DECISION | Eight Product Metrics policy decisions remain open | ../product/CLIENT_DECISIONS_REQUIRED.md |
-| UI runtime | M0-M1 IMPLEMENTED / NOT_VERIFIED | Mobile shell/Home and authenticated error states compile; physical/emulator runtime and valid admin JWT E2E remain unverified | ../engineering/TESTING.md |
+| UI runtime | M0-M1 IMPLEMENTED / NOT_VERIFIED | Mobile shell/Home and authenticated error states compile; typed `AppRoute.System.Status` is prepared from Settings without implementing Screen 10; physical/emulator runtime and valid admin JWT E2E remain unverified | ../engineering/TESTING.md |
 
 ## Current architecture
 

@@ -173,7 +173,7 @@ private fun FilterRow(
 private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
     GlassSurface(
         modifier = Modifier
-            .defaultMinSize(minHeight = 40.dp)
+            .defaultMinSize(minHeight = 48.dp)
             .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
             .semantics {

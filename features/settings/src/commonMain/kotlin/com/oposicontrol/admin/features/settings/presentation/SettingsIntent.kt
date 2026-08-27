@@ -7,4 +7,5 @@ sealed interface SettingsIntent {
     data class ToggleVerboseLogs(val value: Boolean) : SettingsIntent
     data object Save : SettingsIntent
     data object Refresh : SettingsIntent
+    data object Logout : SettingsIntent
 }

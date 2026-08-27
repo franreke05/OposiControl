@@ -3,6 +3,7 @@ package com.oposicontrol.admin.app.navigation
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class AppNavigatorTest {
@@ -85,6 +86,19 @@ class AppNavigatorTest {
         assertEquals(AppRoute.Content.Exams, AdminSection.EXAMS.toAppRoute())
         assertEquals(AppRoute.System.Audit, AdminSection.AUDIT.toAppRoute())
         assertEquals(AppRoute.Commercial.Tickets, AdminSection.TICKETS.toAppRoute())
+    }
+
+    @Test
+    fun systemStatusIsIndependentFromDiagnostics() {
+        val navigator = AppNavigator(initialRoute = AppRoute.System.Settings)
+
+        navigator.push(AppRoute.System.Status)
+
+        assertEquals(AppRoute.System.Status, navigator.currentRoute.value)
+        assertNotEquals(AppRoute.System.Diagnostics, navigator.currentRoute.value)
+        assertEquals("system.status", AppRoute.System.Status.navigationId())
+        assertEquals("Estado del sistema", AppRoute.System.Status.metadata().title)
+        assertEquals(null, AppRoute.System.Status.toLegacySection())
     }
 
     @Test
