@@ -7,6 +7,12 @@ import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
+import com.oposicontrol.admin.domain.usecase.content.CreateContentDraftUseCase
+import com.oposicontrol.admin.domain.usecase.content.GetContentImportBatchUseCase
+import com.oposicontrol.admin.domain.usecase.content.ListContentImportBatchesUseCase
+import com.oposicontrol.admin.domain.usecase.content.PublishContentImportBatchUseCase
+import com.oposicontrol.admin.domain.usecase.content.UpdateContentImportStagingUseCase
+import com.oposicontrol.admin.domain.usecase.content.UploadPdfToStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetRafagaQuestionsUseCase
@@ -27,6 +33,7 @@ import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadQuestionResourceUseCase
 import com.oposicontrol.admin.features.exams.presentation.ExamsViewModel
+import com.oposicontrol.admin.features.exams.presentation.ContentUploadViewModel
 import org.koin.dsl.module
 
 val examsFeatureModule = module {
@@ -54,6 +61,12 @@ val examsFeatureModule = module {
     factory { MoveRafagaQuestionUseCase(get()) }
     factory { UploadExamCoverUseCase(get()) }
     factory { ClearExamCoverUseCase(get()) }
+    factory { ListContentImportBatchesUseCase(get()) }
+    factory { GetContentImportBatchUseCase(get()) }
+    factory { UploadPdfToStagingUseCase(get()) }
+    factory { UpdateContentImportStagingUseCase(get()) }
+    factory { PublishContentImportBatchUseCase(get()) }
+    factory { CreateContentDraftUseCase(get()) }
     factory { UploadQuestionResourceUseCase(get()) }
     factory { DeleteQuestionResourceUseCase(get()) }
     single {
@@ -85,6 +98,22 @@ val examsFeatureModule = module {
             clearExamCoverUseCase = get(),
             uploadQuestionResourceUseCase = get(),
             deleteQuestionResourceUseCase = get(),
+            analyticsTracker = get(),
+        )
+    }
+    factory {
+        ContentUploadViewModel(
+            dispatcherProvider = get(),
+            observeSpecialtiesUseCase = get(),
+            observeExamsUseCase = get(),
+            refreshSpecialtiesUseCase = get(),
+            refreshExamsUseCase = get(),
+            listBatchesUseCase = get(),
+            getBatchUseCase = get(),
+            uploadPdfUseCase = get(),
+            updateStagingUseCase = get(),
+            publishBatchUseCase = get(),
+            createDraftUseCase = get(),
             analyticsTracker = get(),
         )
     }

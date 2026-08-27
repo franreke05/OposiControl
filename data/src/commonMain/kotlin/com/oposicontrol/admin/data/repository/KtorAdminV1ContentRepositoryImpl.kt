@@ -13,6 +13,9 @@ import io.ktor.client.request.forms.formData
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import com.oposicontrol.admin.domain.model.Exam
+import com.oposicontrol.admin.domain.model.ContentImportBatch
+import com.oposicontrol.admin.domain.model.ContentImportStagingItem
+import com.oposicontrol.admin.domain.model.canonicalExamType
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamResourceAudit
 import com.oposicontrol.admin.domain.model.ExamResourceSummary
@@ -26,6 +29,7 @@ import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.ContentRepository
+import com.oposicontrol.admin.domain.repository.ContentImportRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.expectSuccess
@@ -52,7 +56,7 @@ class KtorAdminV1ContentRepositoryImpl(
     private val sessionLocalDataSource: SessionLocalDataSource,
     private val adapter: NetworkResultAdapter,
     private val fileReader: PlatformFileReader,
-) : ContentRepository {
+) : ContentRepository, ContentImportRepository {
     private val specialtiesFlow = MutableStateFlow<List<Specialty>>(emptyList())
     private val examsFlow = MutableStateFlow<List<Exam>>(emptyList())
     private val rafagasFlow = MutableStateFlow<List<Rafaga>>(emptyList())
@@ -133,7 +137,7 @@ class KtorAdminV1ContentRepositoryImpl(
     }
 
     override suspend fun upsertExam(exam: Exam) = adapter.safeCall {
-        upsertExamDto(exam.toDto(typeExam = "inmersivo"), exam.status).toExam(findSpecialtyName(exam.specialtyId))
+        upsertExamDto(exam.toDto(typeExam = canonicalExamType(exam.typeExam)), exam.status).toExam(findSpecialtyName(exam.specialtyId))
             .also { refreshExamCaches() }
     }
 
@@ -213,6 +217,76 @@ class KtorAdminV1ContentRepositoryImpl(
             expectSuccess = false
         }.requireBackendSuccess(importEndpoint)
         getAdminQuestions(examId).map { it.toExamQuestion(examId) }
+    }
+
+    override suspend fun listImportBatches(): AppResult<List<ContentImportBatch>> = adapter.safeCall {
+        val response = client.get(adminUrl(BackendRoutes.ADMIN_V1_IMPORTACIONES_PREGUNTAS)) {
+            adminHeaders()
+            expectSuccess = false
+        }
+        response.requireBackendSuccess(BackendRoutes.ADMIN_V1_IMPORTACIONES_PREGUNTAS)
+        response.body<AdminLotesResponse>().data.map { it.toDomain() }
+    }
+
+    override suspend fun getImportBatch(batchId: String): AppResult<ContentImportBatch> = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1Importacion(batchId)
+        val response = client.get(adminUrl(endpoint)) {
+            adminHeaders()
+            expectSuccess = false
+        }
+        response.requireBackendSuccess(endpoint)
+        response.body<AdminLoteResponse>().data.toDomain()
+    }
+
+    override suspend fun uploadPdfToStaging(
+        examId: String,
+        examType: String,
+        fileUri: String,
+        fileName: String,
+    ): AppResult<ContentImportBatch> = adapter.safeCall {
+        val path = fileUri.removePrefix("file://")
+        val asset = when (val result = fileReader.read(path)) {
+            is AppResult.Failure -> throw IllegalStateException(result.error.message)
+            is AppResult.Success -> result.value
+        }
+        require(asset.bytes.size <= ADMIN_V1_IMPORT_MAX_BYTES) { "El PDF supera el límite de 20 MB." }
+        val endpoint = BackendRoutes.ADMIN_V1_IMPORTACIONES_PREGUNTAS_PDF
+        val response = client.post(adminUrl(endpoint)) {
+            adminHeaders()
+            expectSuccess = false
+            setBody(MultiPartFormDataContent(formData {
+                append("examenId", examId)
+                append("tipoExamen", canonicalExamType(examType))
+                append("file", asset.bytes, Headers.build {
+                    append(HttpHeaders.ContentDisposition, "form-data; name=\"file\"; filename=\"${fileName.sanitizeMultipartFilename()}\"")
+                    append(HttpHeaders.ContentType, "application/pdf")
+                })
+            }))
+        }
+        response.requireBackendSuccess(endpoint)
+        response.body<AdminLoteResponse>().data.toDomain()
+    }
+
+    override suspend fun updateStaging(item: ContentImportStagingItem): AppResult<ContentImportStagingItem> = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1ImportacionStaging(item.id)
+        val response = client.patch(adminUrl(endpoint)) {
+            adminHeaders()
+            contentType(ContentType.Application.Json)
+            setBody(item.toDto())
+            expectSuccess = false
+        }
+        response.requireBackendSuccess(endpoint)
+        response.body<AdminStagingResponse>().data.toDomain()
+    }
+
+    override suspend fun publishImportBatch(batchId: String): AppResult<ContentImportBatch> = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1ImportacionPublish(batchId)
+        val response = client.post(adminUrl(endpoint)) {
+            adminHeaders()
+            expectSuccess = false
+        }
+        response.requireBackendSuccess(endpoint)
+        response.body<AdminLoteResponse>().data.toDomain()
     }
 
     override suspend fun deleteQuestion(examId: String, questionId: String) = adapter.safeCall {
@@ -577,6 +651,12 @@ private data class AdminRecursosResponse(val data: List<AdminRecursoDto>)
 private data class AdminLoteResponse(val data: AdminLoteDto)
 
 @Serializable
+private data class AdminLotesResponse(val data: List<AdminLoteDto>)
+
+@Serializable
+private data class AdminStagingResponse(val data: AdminStagingItemDto)
+
+@Serializable
 private data class AdminEspecialidadDto(
     val id: String = "",
     val codigo: String = "",
@@ -685,7 +765,55 @@ private data class AdminStagingItemDto(
     val etiquetaTexto: String = "",
     val bloqueOriginal: String = "",
     val estadoParseo: String = "ok",
+    val errorParseo: String? = null,
     val preguntaId: String? = null,
+)
+
+private fun AdminLoteDto.toDomain() = ContentImportBatch(
+    id = id,
+    examId = examenId,
+    fileName = nombreArchivo,
+    examType = canonicalExamType(tipoExamen),
+    status = estado,
+    detectedCount = totalDetectadas,
+    importedCount = totalImportadas,
+    staging = staging.map { it.toDomain() },
+)
+
+private fun AdminStagingItemDto.toDomain() = ContentImportStagingItem(
+    id = id,
+    position = posicion,
+    title = titulo,
+    optionA = opcionA,
+    optionB = opcionB,
+    optionC = opcionC,
+    optionD = opcionD,
+    correctAnswer = respuestaCorrecta,
+    reasoning = razonamiento,
+    sourceText = fuenteTexto,
+    tagText = etiquetaTexto,
+    originalBlock = bloqueOriginal,
+    parseStatus = estadoParseo,
+    parseError = errorParseo,
+    questionId = preguntaId,
+)
+
+private fun ContentImportStagingItem.toDto() = AdminStagingItemDto(
+    id = id,
+    posicion = position,
+    titulo = title,
+    opcionA = optionA,
+    opcionB = optionB,
+    opcionC = optionC,
+    opcionD = optionD,
+    respuestaCorrecta = correctAnswer,
+    razonamiento = reasoning,
+    fuenteTexto = sourceText,
+    etiquetaTexto = tagText,
+    bloqueOriginal = originalBlock,
+    estadoParseo = parseStatus,
+    errorParseo = parseError,
+    preguntaId = questionId,
 )
 
 private fun AdminEspecialidadDto.toDomain(linkedExams: Int = 0) = Specialty(
@@ -945,3 +1073,4 @@ private fun nowInstant(): Instant = Instant.parse(Clock.System.now().toString())
 private fun String.sanitizeMultipartFilename(): String = replace("\"", "").ifBlank { "portada.jpg" }
 
 private const val ADMIN_V1_COVER_MAX_BYTES = 10 * 1024 * 1024
+private const val ADMIN_V1_IMPORT_MAX_BYTES = 20 * 1024 * 1024

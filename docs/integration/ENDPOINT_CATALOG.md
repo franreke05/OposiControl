@@ -78,6 +78,7 @@ Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `Ad
 | `ADMIN-009` | GET/POST | `/api/v1/admin/preguntas/{id}/recursos` | `SOURCE_VERIFIED` |
 | `ADMIN-010` | PATCH/DELETE | `/api/v1/admin/preguntas/{id}/recursos/{recursoId}` | `SOURCE_VERIFIED` |
 | `ADMIN-011` | GET/POST | `/api/v1/admin/importaciones/preguntas[/{loteId}]` | `SOURCE_VERIFIED` |
+| `ADMIN-011A` | POST multipart | `/api/v1/admin/importaciones/preguntas/pdf` | `SOURCE_VERIFIED` — digital/selectable-text PDF to staging; 20 MB limit; no OCR |
 | `ADMIN-012` | PATCH | `/api/v1/admin/importaciones/staging/{id}` | `SOURCE_VERIFIED` |
 | `ADMIN-013` | POST | `/api/v1/admin/importaciones/{loteId}/importar` | `SOURCE_VERIFIED` |
 | `ADMIN-014` | POST | `/api/v1/admin/rafagas/import` | `SOURCE_VERIFIED` |

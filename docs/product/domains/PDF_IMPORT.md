@@ -2,15 +2,16 @@
 
 ## CURRENT_IMPLEMENTATION
 
+- Screen 09 status: `PASS_WITH_GAPS`; `CONTENT_IMPORT_READY_FOR_REAL_CLIENT_DATA: NO`.
 - Backend parser uses PDFBox.
 - UI supports/mentions Aiken and GIFT.
-- A staging API exists in the current code/docs.
+- A staging API exists in the current code/docs, including the authenticated mobile multipart PDF entrypoint.
 - Current PDF scope is digital/selectable text; OCR is `NOT_REQUIRED_CURRENT_SCOPE`.
 - Existing audit documents parser failures, validation, transactions and duplicate concerns.
 
 ## CURRENT RISKS
 
-Non-atomic persistence, partial errors, duplicate handling and publication boundaries remain open. Do not insert directly into final tables.
+Non-atomic persistence, partial errors, duplicate handling and publication boundaries remain open. The mobile flow inserts into staging first; final publication uses the existing row-level admin import boundary and reports partial results instead of claiming atomic success.
 
 ## TARGET_PRODUCT
 
@@ -22,9 +23,15 @@ Non-atomic persistence, partial errors, duplicate handling and publication bound
 
 Owner of missing information: `Arturo / Client`.
 
-## DO NOT IMPLEMENT YET
+## IMPLEMENTED IN SCREEN 09 BRANCH
 
-No parser rewrite, DTO freeze, schema/migration/RPC/RLS/storage change, final persistence change or UI flow change is authorized by this reorganization.
+- Mobile route and guided UI for exam selection, PDF upload, staging review, field correction, approval, skip and explicit publish.
+- PDFBox selectable-text extraction with a 20 MB request limit and humane rejection for blank/unsupported or malformed PDFs.
+- Canonical exam vocabulary mapping for `rafaga`, `razonado` and `inmersivo`; legacy `guiado` is accepted as a compatibility alias.
+- No OCR, no new Storage bucket, and no schema/migration/RPC/RLS change. No live MAIN seed/write was executed during implementation or validation; explicit publish remains the user-controlled final-content write through the existing admin boundary.
+- Verification: branch `feature/mobile-content-upload`, commit `9eea7da`; JVM tests, `:composeApp:assembleDevDebug` and `git diff --check` passed. Runtime remains pending because no ADB device was connected.
+
+The legacy `/api/v1/admin/rafagas/import` route remains separate and is not reused by Screen 09.
 
 ## Backend readiness note
 

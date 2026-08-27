@@ -47,6 +47,7 @@ import com.oposicontrol.admin.domain.repository.CommerceRepository
 import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
+import com.oposicontrol.admin.domain.repository.ContentImportRepository
 import com.oposicontrol.admin.domain.repository.DashboardRepository
 import com.oposicontrol.admin.domain.repository.ForumRepository
 import com.oposicontrol.admin.domain.repository.TesterRepository
@@ -90,6 +91,7 @@ val dataModule = module {
             fileReader = get(),
         )
     }
+    single<ContentImportRepository> { get<ContentRepository>() as ContentImportRepository }
 
     single<CommerceRepository> {
         val appConfig: AppConfig = get()
