@@ -74,6 +74,8 @@ import com.oposicontrol.admin.features.roles.presentation.RolesViewModel
 import com.oposicontrol.admin.features.settings.presentation.SettingsIntent
 import com.oposicontrol.admin.features.settings.presentation.SettingsScreen
 import com.oposicontrol.admin.features.settings.presentation.SettingsViewModel
+import com.oposicontrol.admin.features.settings.presentation.SystemStatusScreen
+import com.oposicontrol.admin.features.settings.presentation.SystemStatusViewModel
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesIntent
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesScreen
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesViewModel
@@ -192,10 +194,13 @@ fun AppRoot(
                 showBreadcrumbs = !compactLayout,
                 showScreenHeader = !(compactLayout && route == AppRoute.Home),
                 // Detalle interno: gana espacio y evita cambiar de pestaña sin darse
-                // cuenta mientras se lee/modera un hilo (Screen 05 §5) o una incidencia
-                // de OposiTester (Screen 07). El resto del panel mantiene la bottom nav
-                // igual que siempre.
-                showBottomBar = !(compactLayout && (route is AppRoute.Community.Thread || route is AppRoute.OposiTester.Detail)),
+                // cuenta mientras se lee/modera un hilo (Screen 05 §5), una incidencia
+                // de OposiTester (Screen 07) o el estado del sistema (Screen 10). El
+                // resto del panel mantiene la bottom nav igual que siempre.
+                showBottomBar = !(
+                    compactLayout &&
+                        (route is AppRoute.Community.Thread || route is AppRoute.OposiTester.Detail || route == AppRoute.System.Status)
+                    ),
                 primaryActionLabel = legacySection?.primaryActionLabel.takeIf { legacyRoute?.onPrimaryAction != null },
                 onPrimaryAction = legacyRoute?.onPrimaryAction,
                 canGoBack = backStack.size > 1,
@@ -240,6 +245,9 @@ fun AppRoot(
                     }
                 } else if (compactLayout && route == AppRoute.Content.Imports) {
                     ContentUploadScreen(viewModel = koinInject())
+                } else if (route == AppRoute.System.Status) {
+                    val viewModel: SystemStatusViewModel = koinInject()
+                    SystemStatusScreen(viewModel = viewModel)
                 } else if (compactLayout && route is AppRoute.Content) {
                     MobileContentRoot(
                         appConfig = appConfig,

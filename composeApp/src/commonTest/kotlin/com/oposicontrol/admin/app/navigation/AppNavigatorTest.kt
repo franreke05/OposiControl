@@ -131,4 +131,13 @@ class AppNavigatorTest {
         assertEquals(AppRoute.Auth, resolveGuardRoute(SessionState.UNAUTHENTICATED, AppRoute.Home))
         assertEquals(AppRoute.Home, resolveGuardRoute(SessionState.AUTHENTICATED, AppRoute.Auth))
     }
+
+    @Test
+    fun systemStatusIsIndependentFromDiagnostics() {
+        assertNotEquals<AppRoute>(AppRoute.System.Diagnostics, AppRoute.System.Status)
+        assertEquals("system.status", AppRoute.System.Status.navigationId())
+        assertEquals("Estado del sistema", AppRoute.System.Status.metadata().title)
+        assertEquals(null, AppRoute.System.Status.toLegacySection())
+        assertEquals(null, AppRoute.System.Diagnostics.toLegacySection())
+    }
 }

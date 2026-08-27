@@ -179,6 +179,9 @@ fun AppRoute.metadata(): AppRouteMetadata = when (this) {
         title = "Estado del sistema",
         description = "Estado operativo del panel y sus servicios.",
         group = NavigationGroupId.SYSTEM,
+        // visibility explicito (no el default DESKTOP_AND_MOBILE): Screen 10
+        // es una pantalla mobile, igual que en la version de Screen 10 real
+        // (feature/mobile-settings) -- se preserva desde la ruta ya preparada.
         visibility = NavigationVisibility.MOBILE_ONLY,
     )
     is AppRoute.System -> appNavigationGroups.metadataFor(this)
