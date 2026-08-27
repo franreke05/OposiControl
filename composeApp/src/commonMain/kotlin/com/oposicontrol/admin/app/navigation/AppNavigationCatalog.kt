@@ -174,6 +174,12 @@ fun AppRoute.metadata(): AppRouteMetadata = when (this) {
     is AppRoute.Support -> appNavigationGroups.metadataFor(this)
     is AppRoute.Moderation -> appNavigationGroups.metadataFor(this)
     is AppRoute.Analytics -> appNavigationGroups.metadataFor(this)
+    AppRoute.System.Status -> AppRouteMetadata(
+        id = "system.status",
+        title = "Estado del sistema",
+        description = "Resumen operativo de los servicios.",
+        group = NavigationGroupId.SYSTEM,
+    )
     is AppRoute.System -> appNavigationGroups.metadataFor(this)
 }
 
@@ -201,6 +207,7 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     AppRoute.System.Roles -> AdminSection.ROLES
     AppRoute.System.Audit -> AdminSection.AUDIT
     AppRoute.System.Settings -> AdminSection.SETTINGS
+    AppRoute.System.Status -> null
     AppRoute.System.Diagnostics -> null
 }
 

@@ -72,6 +72,8 @@ import com.oposicontrol.admin.features.roles.presentation.RolesViewModel
 import com.oposicontrol.admin.features.settings.presentation.SettingsIntent
 import com.oposicontrol.admin.features.settings.presentation.SettingsScreen
 import com.oposicontrol.admin.features.settings.presentation.SettingsViewModel
+import com.oposicontrol.admin.features.settings.presentation.SystemStatusScreen
+import com.oposicontrol.admin.features.settings.presentation.SystemStatusViewModel
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesIntent
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesScreen
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesViewModel
@@ -153,6 +155,7 @@ fun AppRoot(
                     environmentLabel = environmentLabel,
                     openSection = navigator::openSection,
                     mobileExperience = compactLayout,
+                    onSystemStatusClick = { navigator.push(AppRoute.System.Status) },
                 )
             }
             // Swipe-between-tabs only applies while sitting at the root of one of
@@ -184,7 +187,7 @@ fun AppRoot(
                 // Detalle interno: gana espacio y evita cambiar de pestaña sin darse
                 // cuenta mientras se lee/modera un hilo (Screen 05 §5). Solo esta
                 // ruta; el resto del panel mantiene la bottom nav igual que siempre.
-                showBottomBar = !(compactLayout && route is AppRoute.Community.Thread),
+                showBottomBar = !(compactLayout && (route is AppRoute.Community.Thread || route == AppRoute.System.Status)),
                 primaryActionLabel = legacySection?.primaryActionLabel.takeIf { legacyRoute?.onPrimaryAction != null },
                 onPrimaryAction = legacyRoute?.onPrimaryAction,
                 canGoBack = backStack.size > 1,
@@ -230,6 +233,9 @@ fun AppRoot(
                             )
                         }
                     }
+                } else if (route == AppRoute.System.Status) {
+                    val viewModel: SystemStatusViewModel = koinInject()
+                    SystemStatusScreen(viewModel = viewModel)
                 } else if (compactLayout && route is AppRoute.Content) {
                     MobileContentRoot(
                         appConfig = appConfig,
@@ -420,6 +426,7 @@ private fun adminSectionRoute(
     environmentLabel: String,
     openSection: (AdminSection) -> Unit,
     mobileExperience: Boolean,
+    onSystemStatusClick: () -> Unit = {},
 ): AdminSectionRoute {
     return when (section) {
         AdminSection.DASHBOARD -> {
@@ -560,7 +567,7 @@ private fun adminSectionRoute(
             val viewModel: SettingsViewModel = koinInject()
             AdminSectionRoute(
                 onPrimaryAction = { viewModel.dispatch(SettingsIntent.Refresh) },
-                content = { SettingsScreen(viewModel) },
+                content = { SettingsScreen(viewModel, onSystemStatusClick = onSystemStatusClick) },
             )
         }
 
