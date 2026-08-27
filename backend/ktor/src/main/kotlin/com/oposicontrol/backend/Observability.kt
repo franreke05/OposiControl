@@ -383,9 +383,17 @@ data class ReadinessResponse(
 /** Timeout corto y explicito para la unica llamada de red que hace
  * readiness (probe de alcanzabilidad, no una query de negocio). No viene de
  * config (la tarea solo pide configurar LOG_LEVEL/SLOW_REQUEST_THRESHOLD_MS/
- * ENVIRONMENT) -- 2s es un limite generoso para un GET raiz de PostgREST sin
- * bloquear el probe de orquestacion, documentado aqui en vez de disperso. */
-private val READINESS_TIMEOUT: Duration = Duration.ofSeconds(2)
+ * ENVIRONMENT) -- documentado aqui en vez de disperso.
+ *
+ * Corregido a 5s (era 2s) tras probarlo en real: un curl caliente a
+ * Supabase responde en ~0.4s, pero el PRIMER handshake TLS que hace un
+ * `HttpClient` de un JVM recien arrancado puede tardar mas de 2s por el
+ * coste de arranque en frio (negociacion ALPN/TLS, SecureRandom) -- con 2s
+ * el primer /health/ready tras cada arranque fallaba en falso
+ * (`UPSTREAM_TIMEOUT`) aunque Supabase estuviera perfectamente arriba;
+ * la segunda llamada, ya con el cliente "caliente", pasaba. 5s absorbe
+ * ese coste de arranque sin dejar de ser un limite corto para un probe. */
+private val READINESS_TIMEOUT: Duration = Duration.ofSeconds(5)
 
 private val readinessHttpClient: HttpClient = HttpClient.newBuilder()
     .connectTimeout(READINESS_TIMEOUT)
