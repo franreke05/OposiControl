@@ -2,6 +2,7 @@
 
 ## CURRENT_IMPLEMENTATION
 
+- Screen 09 status: `PASS_WITH_GAPS`; `CONTENT_IMPORT_READY_FOR_REAL_CLIENT_DATA: NO`.
 - Backend parser uses PDFBox.
 - UI supports/mentions Aiken and GIFT.
 - A staging API exists in the current code/docs, including the authenticated mobile multipart PDF entrypoint.
@@ -28,6 +29,7 @@ Owner of missing information: `Arturo / Client`.
 - PDFBox selectable-text extraction with a 20 MB request limit and humane rejection for blank/unsupported or malformed PDFs.
 - Canonical exam vocabulary mapping for `rafaga`, `razonado` and `inmersivo`; legacy `guiado` is accepted as a compatibility alias.
 - No OCR, no new Storage bucket, and no schema/migration/RPC/RLS change. No live MAIN seed/write was executed during implementation or validation; explicit publish remains the user-controlled final-content write through the existing admin boundary.
+- Verification: branch `feature/mobile-content-upload`, commit `9eea7da`; JVM tests, `:composeApp:assembleDevDebug` and `git diff --check` passed. Runtime remains pending because no ADB device was connected.
 
 The legacy `/api/v1/admin/rafagas/import` route remains separate and is not reused by Screen 09.
 

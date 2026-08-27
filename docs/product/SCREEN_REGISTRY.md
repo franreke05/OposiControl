@@ -14,7 +14,7 @@ Registro activo de las 17 secciones administrativas requeridas. La navegación e
 | `NEWS_TYPES` / News Types | news taxonomy | `AdminSection.NEWS_TYPES` | `features:news-types` | `NewsTypesScreen.kt` | YES | PARTIAL | PARTIAL | UNKNOWN | `AdminOperationsRepository` | `/admin/news-types` | legacy endpoint/schema | source + audit | SPECIALTY segmentation applies to news |
 | `NEWS` / News | editorial content | `AdminSection.NEWS` | `features:news` | `NewsScreen.kt` | YES | PARTIAL | PARTIAL | UNKNOWN | `KtorNewsRepositoryImpl` | `/content/noticias`, `/content/noticias/assets` | persistence drift; mobile desktop split | source + audit | professional admin workflow |
 | `EXAMS` / Exams | exam content | `AdminSection.EXAMS` | `features:exams` | `ExamsScreen.kt` | YES | PARTIAL | PARTIAL | UNKNOWN | content/admin V1 repositories | `/content/solucionarios`, `/content/rafaga`, `/api/v1/admin/examenes` | current/target exam types differ | source + audit | inmersivo/razonado/rafaga target |
-| `QUESTIONS_RESOURCES` / Questions & Resources | content/import | `AdminSection.QUESTIONS_RESOURCES`, `AppRoute.Content.Imports` | `features:exams` | `ExamsScreen.kt`, `QuestionsResourcesScreen`, `ContentUploadScreen.kt` | YES | PARTIAL | PARTIAL | PARTIAL | admin V1/content repositories | `/content/preguntas/*`, `/api/v1/admin/preguntas/*`, `/api/v1/admin/importaciones/*` | duplicate detection and atomic publication remain open | source + audit + Screen 09 implementation | staged/reviewable mobile import |
+| `QUESTIONS_RESOURCES` / Questions & Resources | content/import | `AdminSection.QUESTIONS_RESOURCES`, `AppRoute.Content.Imports` | `features:exams` | `ExamsScreen.kt`, `QuestionsResourcesScreen`, `ContentUploadScreen.kt` | YES | PASS_WITH_GAPS | PARTIAL | PARTIAL | admin V1/content repositories | `/content/preguntas/*`, `/api/v1/admin/preguntas/*`, `/api/v1/admin/importaciones/*` | duplicate detection, atomic publication, resources, live Supabase/RLS and runtime remain open | source + Screen 09 commit `9eea7da` | staged/reviewable mobile import; not ready for real client data |
 | `EXAM_ACCESS` / Exam Access | access control | `AdminSection.EXAM_ACCESS` | `features:exam-access` | `ExamAccessScreen.kt` | YES | PARTIAL | PARTIAL | PARTIAL | `AdminOperationsRepository` | `/admin/exam-access`, `/api/v1/admin/accesos` | legacy schema dependence | source + audit | no role assumption |
 | `STORE` / Store | commerce | `AdminSection.STORE` | `features:store` | `StoreScreen.kt` | YES | PARTIAL | PARTIAL | UNKNOWN | `SupabaseCommerceRepositoryImpl` | direct Supabase expected by code; Ktor family UNKNOWN | direct client persistence risk; live not verified | source + audit | no implementation in this pass |
 | `TICKETS` / Tickets | ticket wallet | `AdminSection.TICKETS` | `features:tickets` | `TicketsScreen.kt` | YES | PARTIAL | PARTIAL | PARTIAL | `AdminOperationsRepository` | `/admin/ticket-wallets`, `/api/v1/admin/tickets` | legacy schema dependence | source + audit | operational admin flow |
@@ -34,6 +34,13 @@ Registro activo de las 17 secciones administrativas requeridas. La navegación e
 
 - `CURRENT: BUILD_BLOCKING`.
 - Cause: `AuditViewModel.kt` unresolved `System`.
+
+### Screen 09 — Content Upload
+
+- `CURRENT: PASS_WITH_GAPS`.
+- Branch/commit: `feature/mobile-content-upload` / `9eea7da`.
+- `CONTENT_IMPORT_READY_FOR_REAL_CLIENT_DATA: NO`.
+- Runtime, duplicate handling, atomic publication, live Supabase/RLS compatibility, asynchronous processing and immersive resources remain pending.
 
 ## Navigation and scope notes
 

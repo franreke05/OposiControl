@@ -30,9 +30,21 @@ Canonical exam vocabulary is rafaga / razonado / inmersivo; broader app consumer
 
 ## Mobile content upload — Screen 09
 
+Status: `PASS_WITH_GAPS`.
+
 The isolated branch `feature/mobile-content-upload` contains the mobile `AppRoute.Content.Imports` flow: authenticated PDF upload to staging, review/edit, approve or skip, and explicit publish through the existing admin import boundary. PDF processing is digital/selectable-text only through PDFBox; OCR is intentionally unsupported. The flow does not create Storage buckets, migrations, RPCs, or MAIN seed data. Existing legacy `/api/v1/admin/rafagas/import` remains separate.
 
+Implemented scope: specialty/exam selection, lote creation, multipart PDF upload, 20 MB limit, PDFBox extraction, staging, editing/review, approval, skip and explicit publication for `rafaga`, `razonado` and `inmersivo`.
+
 The implementation reports partial publication when row-level import errors or skipped staging rows exist. No live MAIN write was executed while implementing or validating this branch; an explicit user publish action can write final content through the existing admin boundary. Duplicate detection, atomic final persistence, asynchronous worker processing, resource association for immersive content, live Supabase/RLS compatibility, and runtime visual verification remain open evidence gaps.
+
+- Branch/commit: `feature/mobile-content-upload` / `9eea7da` (`feat(mobile): implement content upload workflow`), pushed to `origin`.
+- Backend/data: `POST /api/v1/admin/importaciones/preguntas/pdf` creates reviewable staging through Ktor; existing list, detail, staging PATCH and publish endpoints remain the integration boundary.
+- Verification: `:backend:ktor:test`, `:core:ui:jvmTest`, `:features:opositester:jvmTest`, `:features:settings:jvmTest`, `:features:exams:jvmTest`, `:domain:jvmTest`, `:data:jvmTest`, `:composeApp:jvmTest`, `:composeApp:assembleDevDebug` and `git diff --check` passed. APK was generated, but no ADB device was connected, so runtime remains `NOT_VERIFIED`.
+- Priority state: P0 none; P1 duplicate detection, atomic publication, live Supabase/RLS compatibility and runtime/JWT E2E; P2 asynchronous worker and immersive-resource association.
+- CONTENT_IMPORT_READY_FOR_REAL_CLIENT_DATA: `NO`.
+- Database/infra state: `DATABASE_CHANGES: NONE`; `MAIN_WRITES: NONE`; `MIGRATIONS: NONE`; `STORAGE_NEW_BUCKETS: NONE`.
+- Exact next step: run the full mobile flow on any available emulator/device with a non-production admin JWT, then close the duplicate and atomic-publication contract before real MAIN content.
 
 ## Preserved boundaries
 
