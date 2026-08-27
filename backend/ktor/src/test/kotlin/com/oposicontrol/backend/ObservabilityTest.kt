@@ -17,6 +17,10 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -131,6 +135,49 @@ class ObservabilityTest {
     @Test
     fun looksLikeUpstreamTimeout_falseForAnOrdinaryBusinessError() {
         assertFalse(IllegalStateException("Supabase POST /rest/v1/x -> 409: conflict").looksLikeUpstreamTimeout())
+    }
+
+    // ----- P1: HTTP timeouts (gateways sin timeout, ver newUpstreamHttpClient) -----
+
+    @Test
+    fun newUpstreamHttpClient_appliesTheConfiguredConnectTimeout() {
+        val client = newUpstreamHttpClient()
+
+        assertEquals(
+            java.time.Duration.ofMillis(ObservabilityConfig.upstreamConnectTimeoutMs),
+            client.connectTimeout().orElse(null),
+        )
+    }
+
+    @Test
+    fun upstreamRequestTimeout_matchesTheConfiguredValue_andIsFinite() {
+        assertEquals(java.time.Duration.ofMillis(ObservabilityConfig.upstreamRequestTimeoutMs), UPSTREAM_REQUEST_TIMEOUT)
+        assertTrue(UPSTREAM_REQUEST_TIMEOUT.toMillis() > 0)
+    }
+
+    @Test
+    fun aRequestWithoutAReachableHost_failsWithinTheConfiguredTimeout_neverHangs() {
+        // Puerto local sin listener + timeout corto propio (no el de
+        // produccion, para que el test no tarde 20s): reproduce el mismo
+        // patron que usan las gateways (HttpRequest.Builder.timeout(...))
+        // y prueba que efectivamente acota la espera en vez de colgar el
+        // hilo -- el riesgo real que motiva este P1.
+        val client = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofMillis(500)).build()
+        val request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:1"))
+            .timeout(java.time.Duration.ofSeconds(2))
+            .GET()
+            .build()
+
+        val elapsed = kotlin.time.TimeSource.Monotonic.markNow()
+        val threw = try {
+            client.send(request, HttpResponse.BodyHandlers.discarding())
+            false
+        } catch (_: Exception) {
+            true
+        }
+
+        assertTrue(threw)
+        assertTrue(elapsed.elapsedNow().inWholeSeconds < 5, "no debe tardar mucho mas que el timeout configurado")
     }
 
     // ----- readiness dependency check -----

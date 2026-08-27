@@ -120,7 +120,7 @@ private fun ApplicationCall.usuarioId(verifier: SupabaseJwtVerifier, allowDevUse
 class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
     private val issuer = "$supabaseUrl/auth/v1"
     private val jwksUrl = "$issuer/.well-known/jwks.json"
-    private val client = HttpClient.newHttpClient()
+    private val client = newUpstreamHttpClient()
 
     @Volatile private var keys: Map<String, ECPublicKey> = emptyMap()
     @Volatile private var fetchedAt = 0L
@@ -137,7 +137,7 @@ class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
     private fun refresh() {
         if (keys.isNotEmpty() && System.currentTimeMillis() - fetchedAt < 60_000) return
         val body = client.send(
-            HttpRequest.newBuilder(URI.create(jwksUrl)).GET().build(),
+            HttpRequest.newBuilder(URI.create(jwksUrl)).timeout(UPSTREAM_REQUEST_TIMEOUT).GET().build(),
             HttpResponse.BodyHandlers.ofString(),
         ).body()
         keys = json.parseToJsonElement(body).jsonObject["keys"]!!.jsonArray
@@ -281,7 +281,7 @@ class AppV1Gateway private constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
     private val json: Json,
-    private val client: HttpClient = HttpClient.newHttpClient(),
+    private val client: HttpClient = newUpstreamHttpClient(),
 ) {
     fun hasAdminRole(usuarioId: String): Boolean {
         usuarioId.validatedUuid("usuarioId")
@@ -618,6 +618,7 @@ class AppV1Gateway private constructor(
 
     private fun request(method: String, path: String, body: String?, prefer: String? = null): List<JsonObject> {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", "application/json")

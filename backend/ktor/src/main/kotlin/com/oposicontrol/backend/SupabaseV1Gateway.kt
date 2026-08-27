@@ -19,7 +19,7 @@ class SupabaseV1Gateway private constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
     private val json: Json,
-    private val client: HttpClient = HttpClient.newHttpClient(),
+    private val client: HttpClient = newUpstreamHttpClient(),
 ) {
     fun listEspecialidades(): List<V1EspecialidadDto> {
         return request(
@@ -134,6 +134,7 @@ class SupabaseV1Gateway private constructor(
 
     private fun request(method: String, path: String, body: String?): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", "application/json")

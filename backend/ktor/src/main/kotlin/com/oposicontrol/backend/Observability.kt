@@ -64,7 +64,45 @@ object ObservabilityConfig {
      * ya resuelve variables de entorno con ese nombre); se expone aqui solo
      * para que quede visible como parte de la configuracion documentada. */
     val logLevel: String = System.getenv("LOG_LEVEL")?.trim()?.ifBlank { null } ?: "INFO"
+
+    /** Tope del handshake TCP hacia Supabase. Corto a proposito -- si no
+     * conecta en unos segundos, no va a conectar; fallar rapido libera el
+     * hilo de la request. */
+    val upstreamConnectTimeoutMs: Long =
+        System.getenv("UPSTREAM_CONNECT_TIMEOUT_MS")?.toLongOrNull()?.takeIf { it > 0 } ?: 5_000L
+
+    /** Tope de connect+respuesta completa para UNA llamada a Supabase (REST
+     * o Storage). Mas generoso que el connect timeout porque cubre uploads
+     * de recursos/portadas e imports de PDF, que legitimamente tardan mas
+     * que un GET simple -- pero sigue siendo un limite finito: ninguna
+     * llamada puede colgar el hilo de la request indefinidamente. */
+    val upstreamRequestTimeoutMs: Long =
+        System.getenv("UPSTREAM_REQUEST_TIMEOUT_MS")?.toLongOrNull()?.takeIf { it > 0 } ?: 20_000L
 }
+
+// ---------------------------------------------------------------------
+// HTTP client compartido para las gateways de Supabase (P1: timeouts)
+// ---------------------------------------------------------------------
+
+/** Duracion (java.time, la que usan HttpClient/HttpRequest) del timeout de
+ * request a Supabase -- ver [ObservabilityConfig.upstreamRequestTimeoutMs]. */
+val UPSTREAM_REQUEST_TIMEOUT: Duration = Duration.ofMillis(ObservabilityConfig.upstreamRequestTimeoutMs)
+
+/**
+ * Unico punto de construccion del `HttpClient` que usan TODAS las gateways
+ * de Supabase (Admin, AdminV1, News, V1, TagSearch, App, Content). Antes
+ * cada una creaba su propio `HttpClient.newHttpClient()` sin ningun
+ * timeout -- una respuesta colgada de Supabase podia bloquear el hilo de la
+ * request indefinidamente (P1 confirmado, ver ObservabilityTest y el
+ * informe de auditoria previo). `connectTimeout` aqui cubre el handshake;
+ * el timeout de respuesta completa se aplica POR REQUEST con
+ * `.timeout(UPSTREAM_REQUEST_TIMEOUT)` en cada `HttpRequest.Builder` (un
+ * client-level timeout de Java no cubre eso, solo el connect).
+ */
+fun newUpstreamHttpClient(): HttpClient =
+    HttpClient.newBuilder()
+        .connectTimeout(Duration.ofMillis(ObservabilityConfig.upstreamConnectTimeoutMs))
+        .build()
 
 // ---------------------------------------------------------------------
 // Taxonomia de eventos estrategicos

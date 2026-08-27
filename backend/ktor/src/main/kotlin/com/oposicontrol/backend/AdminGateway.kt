@@ -82,7 +82,7 @@ class SupabaseAdminGateway private constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
     private val json: Json,
-    private val client: HttpClient = HttpClient.newHttpClient(),
+    private val client: HttpClient = newUpstreamHttpClient(),
 ) {
     fun listUsers(): List<AdminUserDto> = emptyListOnMissingLegacySchema("listUsers") {
         val rolesByUser = roleAssignments()
@@ -513,6 +513,7 @@ class SupabaseAdminGateway private constructor(
 
     private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", "application/json")

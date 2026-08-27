@@ -1512,7 +1512,7 @@ class AdminV1Gateway private constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
     private val json: Json,
-    private val client: HttpClient = HttpClient.newHttpClient(),
+    private val client: HttpClient = newUpstreamHttpClient(),
 ) {
     @Volatile private var storageBucketChecked = false
 
@@ -3107,6 +3107,7 @@ class AdminV1Gateway private constructor(
             // DB write failed after Storage upload — delete the orphaned object best-effort.
             runCatching {
                 val req = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/object/$bucket/$encodedPath"))
+                    .timeout(UPSTREAM_REQUEST_TIMEOUT)
                     .header("apikey", serviceRoleKey)
                     .header("Authorization", "Bearer $serviceRoleKey")
                     .DELETE().build()
@@ -3121,6 +3122,7 @@ class AdminV1Gateway private constructor(
                 val prevEncoded = prev.split('/').joinToString("/") { it.urlEncode() }
                 runCatching {
                     val req = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/object/$bucket/$prevEncoded"))
+                        .timeout(UPSTREAM_REQUEST_TIMEOUT)
                         .header("apikey", serviceRoleKey)
                         .header("Authorization", "Bearer $serviceRoleKey")
                         .DELETE().build()
@@ -3143,6 +3145,7 @@ class AdminV1Gateway private constructor(
         if (storageBucketChecked) return
         val body = """{"id":"$bucket","name":"$bucket","public":true}"""
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/bucket"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", "application/json")
@@ -3162,6 +3165,7 @@ class AdminV1Gateway private constructor(
 
     private fun requestBinary(method: String, url: String, bytes: ByteArray, contentType: String, upsert: Boolean = false): String {
         val builder = HttpRequest.newBuilder(URI.create(url))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", contentType)
@@ -3187,6 +3191,7 @@ class AdminV1Gateway private constructor(
 
     private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", "application/json")

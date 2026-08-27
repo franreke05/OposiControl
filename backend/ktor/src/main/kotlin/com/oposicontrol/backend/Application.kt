@@ -857,7 +857,7 @@ private class SupabaseContentGateway private constructor(
     private val serviceRoleKey: String,
     private val examResourcesBucket: String,
     private val json: Json,
-    private val client: HttpClient = HttpClient.newHttpClient(),
+    private val client: HttpClient = newUpstreamHttpClient(),
 ) {
     @Volatile
     private var storageBucketChecked = false
@@ -1342,6 +1342,7 @@ private class SupabaseContentGateway private constructor(
         val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
         val path = "/storage/v1/object/$examResourcesBucket/$encodedPath"
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", mimeType)
@@ -1364,6 +1365,7 @@ private class SupabaseContentGateway private constructor(
         val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
         val path = "/storage/v1/object/$examResourcesBucket/$encodedPath"
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
         val response = try {
@@ -1381,6 +1383,7 @@ private class SupabaseContentGateway private constructor(
         val bucketId = examResourcesBucket.toStorageBucketId()
         val body = """{"id":"$bucketId","name":"$bucketId","public":true}"""
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/bucket"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", "application/json")
@@ -1403,6 +1406,7 @@ private class SupabaseContentGateway private constructor(
 
     private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", "application/json")

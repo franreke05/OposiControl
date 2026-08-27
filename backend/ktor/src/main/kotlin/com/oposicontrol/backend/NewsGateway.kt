@@ -96,7 +96,7 @@ class SupabaseNewsGateway private constructor(
     private val serviceRoleKey: String,
     private val newsAssetsBucket: String,
     private val json: Json,
-    private val client: HttpClient = HttpClient.newHttpClient(),
+    private val client: HttpClient = newUpstreamHttpClient(),
 ) : NewsGateway {
     @Volatile
     private var storageBucketChecked = false
@@ -152,6 +152,7 @@ class SupabaseNewsGateway private constructor(
         val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
         val path = "/storage/v1/object/$newsAssetsBucket/$encodedPath"
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", mimeType)
@@ -171,6 +172,7 @@ class SupabaseNewsGateway private constructor(
         val bucketId = newsAssetsBucket.toStorageBucketId()
         val body = """{"id":"$bucketId","name":"$bucketId","public":true}"""
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/bucket"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", "application/json")
@@ -198,6 +200,7 @@ class SupabaseNewsGateway private constructor(
         prefer: String? = null,
     ): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
             .header("apikey", serviceRoleKey)
             .header("Authorization", "Bearer $serviceRoleKey")
             .header("Content-Type", "application/json")
