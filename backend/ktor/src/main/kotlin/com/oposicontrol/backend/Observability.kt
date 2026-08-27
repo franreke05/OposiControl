@@ -78,7 +78,78 @@ object ObservabilityConfig {
      * llamada puede colgar el hilo de la request indefinidamente. */
     val upstreamRequestTimeoutMs: Long =
         System.getenv("UPSTREAM_REQUEST_TIMEOUT_MS")?.toLongOrNull()?.takeIf { it > 0 } ?: 20_000L
+
+    // --- Sentry (preparacion, SDK NO anadido -- ver KDoc de sentryConfigured) ---
+    val sentryDsn: String? = System.getenv("SENTRY_DSN")?.trim()?.ifBlank { null }
+    val sentryEnvironment: String = System.getenv("SENTRY_ENVIRONMENT")?.trim()?.ifBlank { null } ?: environment
+    val sentryRelease: String? = System.getenv("SENTRY_RELEASE")?.trim()?.ifBlank { null }
+
+    /** true solo si hay DSN real en el entorno -- nunca hardcodeado, nunca
+     * logueado (un DSN no es tan sensible como un JWT pero tampoco se
+     * expone sin necesidad). El servicio Sentry tuvo una incidencia el
+     * mismo dia que se preparo esto: sin DSN disponible aqui, se deja
+     * `SENTRY_CONFIGURATION_PENDING` en vez de bloquear el resto de la
+     * integracion. */
+    val sentryConfigured: Boolean get() = sentryDsn != null
 }
+
+// ---------------------------------------------------------------------
+// future Sentry / future Prometheus — puntos de integracion documentados,
+// NADA de esto anade el SDK ni simula metricas. Ver punto 13/15 de la
+// tarea de integracion final: preparar, no montar infraestructura real.
+// ---------------------------------------------------------------------
+
+/**
+ * future Sentry: cuando se anada el SDK de Sentry JVM (Ktor) --
+ * `io.sentry:sentry` + `Sentry.init { dsn = ObservabilityConfig.sentryDsn;
+ * environment = ObservabilityConfig.sentryEnvironment; release =
+ * ObservabilityConfig.sentryRelease }`, condicionado a
+ * [ObservabilityConfig.sentryConfigured] -- estos son los DOS puntos que
+ * ya existen y no hay que tocar nada mas para conectarlos:
+ *   1. [logStrategicEvent]: cada llamada es candidata a
+ *      `Sentry.captureMessage`/`addBreadcrumb` con los mismos campos como
+ *      tags (request_id, operation, entity_type, entity_id, error_type) --
+ *      nunca el mensaje crudo de una excepcion sin pasar por
+ *      [redactedMessage] primero.
+ *   2. Los 4 handlers de `StatusPages` en Application.kt (AppUnauthorized,
+ *      AppForbidden, IllegalStateException, Throwable): junto al
+ *      `logStrategicEvent` que ya hacen, un `Sentry.captureException(cause)`
+ *      con `request_id`/`environment`/`release` como tags. Reglas de
+ *      contenido (nunca mandar): JWT, refresh token, service role,
+ *      password, respuestas de examen, PDFs, bodies completos, contenido
+ *      de mensajes, emails innecesarios. Si mandar: internal user id,
+ *      release, environment, platform, request id, error type, operation.
+ *
+ * En KMP (composeApp) el equivalente es `io.sentry:sentry-kotlin-multiplatform`
+ * inicializado una vez en el arranque de la app con las mismas tres env
+ * vars (via BuildConfig/AppConfig, no hardcodeadas) -- no forma parte de
+ * este backend y no se toco en esta tarea.
+ *
+ * Estado real: [ObservabilityConfig.sentryConfigured] es `false` en este
+ * entorno (sin `SENTRY_DSN`, servicio con incidencia el dia que se preparo
+ * esto) -- `SENTRY_CONFIGURATION_PENDING`, no bloqueante.
+ */
+internal val sentryIntegrationDoc: String get() = "" // ver KDoc arriba -- sin uso real, solo ancla la doc a un simbolo compilable.
+
+/**
+ * future Prometheus: nada de esto existe todavia (no hay
+ * `micrometer-registry-prometheus` ni endpoint `/metrics`). Puntos donde
+ * se instrumentaria cuando llegue el momento, sin fingir metricas ahora:
+ *   - [installRequestCorrelation]: contador de requests y latencia
+ *     (p50/p95/p99) por method+path+status -- ya mide duracion, solo falta
+ *     alimentar un `Timer`/`Counter` de Micrometer ahi mismo.
+ *   - Los handlers de `StatusPages`: contador 4xx/5xx por tipo de error.
+ *   - [observabilityHealthRoutes]: gauge de health (1/0) por check
+ *     (`ktor`, `supabase`, `worker` cuando exista).
+ *   - JVM: heap/GC/threads via `JvmMemoryMetrics`/`JvmGcMetrics` de
+ *     Micrometer, sin codigo propio.
+ *   - worker queue: no aplica -- no existe ningun worker en este backend.
+ * Contrato futuro hacia Screen 10: estas metricas + `/health/ready` +
+ * logs/Sentry alimentarian un futuro endpoint de agregacion EN KTOR
+ * (nunca Screen 10 leyendo logs/Prometheus directamente) -- ver
+ * `docs/brain/CURRENT_STATE.md` para el estado de Screen 10.
+ */
+internal val prometheusIntegrationDoc: String get() = "" // ver KDoc arriba -- sin uso real, solo ancla la doc a un simbolo compilable.
 
 // ---------------------------------------------------------------------
 // HTTP client compartido para las gateways de Supabase (P1: timeouts)
