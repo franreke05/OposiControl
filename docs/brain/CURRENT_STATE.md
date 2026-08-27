@@ -15,6 +15,7 @@ row, Storage object or legacy compatibility adapter was removed.
 | Payments | WAITING_EXTERNAL_PROVIDER | Checkout/webhook provider contract is absent | ../product/COMMERCIAL_CODE_CONSUMER_MATRIX.md |
 | Product policy | WAITING_PRODUCT_DECISION | Eight Product Metrics policy decisions remain open | ../product/CLIENT_DECISIONS_REQUIRED.md |
 | UI runtime | M0-M1 IMPLEMENTED / NOT_VERIFIED | Mobile shell/Home and authenticated error states compile; physical/emulator runtime and valid admin JWT E2E remain unverified | ../engineering/TESTING.md |
+| OposiTester mobile (Screen 06/07) | SCREEN_06 PASS / SCREEN_07 PASS_WITH_RUNTIME_DATA_PENDING | Lista recuperada y detalle implementado en `recovery/mobile-opositester-06-07` (`63c6357`, `b674fc5`; pushed a origin). Nuevo `GET /api/v1/admin/feedback/preguntas/{id}` aditivo; acciones reales resolver/descartar sobre el contrato `.../resolver` existente. P1: verificación visual en runtime pendiente (sin emulador en esta sesión — ver RISKS.md UI-001). P2: contexto de examen no resuelto (relación M:N ambigua) y estado "revisado" no expuesto como acción propia. Siguiente paso: integrar la rama a `integration/mobile-finish` tras revisión. | ../engineering/TESTING.md |
 
 ## Current architecture
 
