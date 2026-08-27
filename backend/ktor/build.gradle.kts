@@ -35,6 +35,10 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
     testImplementation("io.ktor:ktor-server-test-host:${libs.versions.ktor.get()}")
+    // logback-classic ya esta en runtime (linea de arriba); en test scope
+    // tambien para poder adjuntar un appender en memoria y verificar el
+    // contenido real de los logs estrategicos (ObservabilityTest).
+    testImplementation("ch.qos.logback:logback-classic:1.5.16")
 }
 
 tasks.named<JavaExec>("run") {

@@ -96,14 +96,37 @@ fun Application.module() {
     install(ContentNegotiation) {
         json(json)
     }
+    // Observability foundation (Observability.kt): request correlation, logs
+    // estrategicos, health/readiness. No toca OposiBot -- ver KDoc del archivo.
+    installRequestCorrelation()
     install(StatusPages) {
+        // Centralizado (punto 7 de la tarea de observabilidad): cada handler
+        // de aqui abajo emite UN evento estrategico, con request_id/duration
+        // ya disponibles via installRequestCorrelation -- nunca se duplica el
+        // mismo error en logs sueltos ademas de aqui.
         exception<AppUnauthorized> { call, cause ->
+            logStrategicEvent(
+                StrategicEvent.AUTH_LOGIN_FAILED,
+                requestId = call.requestIdOrNull(),
+                operation = call.request.path(),
+                result = "unauthorized",
+                durationMs = call.elapsedMsOrNull(),
+                errorType = cause::class.simpleName,
+            )
             call.respond(
                 HttpStatusCode.Unauthorized,
                 ErrorDto(error = "unauthorized", message = cause.message ?: "No autorizado."),
             )
         }
         exception<AppForbidden> { call, cause ->
+            logStrategicEvent(
+                StrategicEvent.AUTHORIZATION_DENIED,
+                requestId = call.requestIdOrNull(),
+                operation = call.request.path(),
+                result = "forbidden",
+                durationMs = call.elapsedMsOrNull(),
+                errorType = cause::class.simpleName,
+            )
             call.respond(
                 HttpStatusCode.Forbidden,
                 ErrorDto(error = "forbidden", message = cause.message ?: "No tienes permisos para realizar esta acción."),
@@ -128,16 +151,31 @@ fun Application.module() {
             )
         }
         exception<IllegalStateException> { call, cause ->
-            val message = cause.safeBackendMessage("Backend error")
-            System.err.println("[ktor] backend/supabase error: $message")
+            val message = cause.redactedMessage("Backend error")
+            val isTimeout = cause.looksLikeUpstreamTimeout()
+            logStrategicEvent(
+                if (isTimeout) StrategicEvent.UPSTREAM_TIMEOUT else StrategicEvent.SUPABASE_REQUEST_FAILED,
+                requestId = call.requestIdOrNull(),
+                operation = call.request.path(),
+                result = "error",
+                durationMs = call.elapsedMsOrNull(),
+                errorType = cause::class.simpleName,
+            )
             call.respond(
                 HttpStatusCode.InternalServerError,
                 ErrorDto(error = "backend_supabase_error", message = message),
             )
         }
         exception<Throwable> { call, cause ->
-            val message = "${cause::class.simpleName}: ${cause.safeBackendMessage("Unexpected backend error", 200)}"
-            System.err.println("[ktor] unexpected error $message")
+            val message = "${cause::class.simpleName}: ${cause.redactedMessage("Unexpected backend error", 200)}"
+            logStrategicEvent(
+                StrategicEvent.UNCAUGHT_EXCEPTION,
+                requestId = call.requestIdOrNull(),
+                operation = call.request.path(),
+                result = "error",
+                durationMs = call.elapsedMsOrNull(),
+                errorType = cause::class.simpleName,
+            )
             call.respond(
                 HttpStatusCode.InternalServerError,
                 ErrorDto(error = "backend_internal_error", message = message),
@@ -172,6 +210,11 @@ fun Application.module() {
                 ),
             )
         }
+        // /health/live y /health/ready (Observability.kt): mas precisos que
+        // /health (que se deja igual, por compatibilidad con lo que ya lo
+        // consulta). Publicos a proposito, igual que /health -- un balanceador
+        // u orquestador no puede mandar el Bearer de gateway-auth.
+        observabilityHealthRoutes()
         v1Routes(v1Gateway)
         appV1Routes(appV1Gateway, jwtVerifier, allowDevUser)
         authRuntime?.let(::oposiBotsAuthRoutes)
@@ -655,7 +698,9 @@ private suspend inline fun <reified T : Any> ApplicationCall.respondBackendSupab
     }
 }
 
-private fun Throwable.safeBackendMessage(defaultMessage: String, maxLength: Int = 300): String {
+// internal (no private): Observability.kt reutiliza esta redaccion
+// (Bearer/apikey + truncado) para logs estrategicos en vez de duplicarla.
+internal fun Throwable.safeBackendMessage(defaultMessage: String, maxLength: Int = 300): String {
     return message
         ?.replace(Regex("Bearer\\s+[A-Za-z0-9._~+/-]+=*"), "Bearer [redacted]")
         ?.replace(Regex("apikey[=:]\\s*[A-Za-z0-9._~+/-]+=*"), "apikey=[redacted]")
