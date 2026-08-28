@@ -86,6 +86,12 @@ class AppNavigatorTest {
         assertEquals(AppRoute.Content.Exams, AdminSection.EXAMS.toAppRoute())
         assertEquals(AppRoute.System.Audit, AdminSection.AUDIT.toAppRoute())
         assertEquals(AppRoute.Commercial.Tickets, AdminSection.TICKETS.toAppRoute())
+        // MODERATION used to reverse-map to Community.OposiRed, back when
+        // OposiRed rendered the legacy ModerationScreen. OposiRed now renders
+        // ForumScreen and its toLegacySection() returns null, so MODERATION
+        // must round-trip through Moderation.Queue instead.
+        assertEquals(AppRoute.Moderation.Queue, AdminSection.MODERATION.toAppRoute())
+        assertEquals(AdminSection.MODERATION, AppRoute.Moderation.Queue.toLegacySection())
     }
 
     @Test

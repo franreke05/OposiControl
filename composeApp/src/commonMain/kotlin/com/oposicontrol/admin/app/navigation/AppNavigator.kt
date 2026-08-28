@@ -100,7 +100,7 @@ fun AdminSection.toAppRoute(): AppRoute = when (this) {
     AdminSection.STORE -> AppRoute.Commercial.Catalog
     AdminSection.TICKETS -> AppRoute.Commercial.Tickets
     AdminSection.SUPPORT -> AppRoute.Support.Inbox
-    AdminSection.MODERATION -> AppRoute.Community.OposiRed
+    AdminSection.MODERATION -> AppRoute.Moderation.Queue
     AdminSection.SETTINGS -> AppRoute.System.Settings
     AdminSection.AUDIT -> AppRoute.System.Audit
 }

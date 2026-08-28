@@ -21,7 +21,7 @@ actual fun platformRuntimeConfigSource(): RuntimeConfigSource = JvmRuntimeConfig
  * System.* directly) so every layer is unit-testable without touching real
  * process state — see PlatformRuntimeConfigSourceJvmTest.
  */
-open class JvmRuntimeConfigSource(
+internal open class JvmRuntimeConfigSource(
     private val systemProperty: (String) -> String? = System::getProperty,
     private val systemEnv: (String) -> String? = System::getenv,
     private val startDir: File = File(System.getProperty("user.dir")),
