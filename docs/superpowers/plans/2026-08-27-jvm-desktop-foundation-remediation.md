@@ -1222,7 +1222,7 @@ class KtorCommerceRepositoryImplTest {
         val requests = mutableListOf<HttpRequestData>()
         val client = HttpClient(MockEngine { request ->
             requests += request
-            respond(content = ByteReadChannel("[]"), status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "application/json"))
+            respond(content = ByteReadChannel("{\"data\":[]}"), status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
         val config = appConfig()
         val repository = KtorCommerceRepositoryImpl(client, config, sessionLocalDataSource(), NetworkResultAdapter(NoOpLogger))
@@ -1251,7 +1251,7 @@ class KtorCommerceRepositoryImplTest {
         val requests = mutableListOf<HttpRequestData>()
         val client = HttpClient(MockEngine { request ->
             requests += request
-            respond(content = ByteReadChannel("[]"), status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "application/json"))
+            respond(content = ByteReadChannel("{\"data\":[]}"), status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "application/json"))
         })
         val repository = KtorCommerceRepositoryImpl(client, appConfig(), sessionLocalDataSource(), NetworkResultAdapter(NoOpLogger))
 
@@ -1333,24 +1333,24 @@ class KtorCommerceRepositoryImpl(
     override suspend fun refreshCommerce(): AppResult<Unit> = adapter.safeCall {
         val itemsResponse = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_ARTICULOS)) { backendHeaders() }
         itemsResponse.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_ARTICULOS)
-        items.value = itemsResponse.body<List<StoreItemRowDto>>().map { it.toDomain() }
+        items.value = itemsResponse.body<StoreItemsResponse>().data.map { it.toDomain() }
 
         offers.value = runCatching {
             val r = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_OFERTAS)) { backendHeaders() }
             r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_OFERTAS)
-            r.body<List<StoreOfferRowDto>>().map { it.toDomain() }
+            r.body<StoreOffersResponse>().data.map { it.toDomain() }
         }.getOrElse { emptyList() }
 
         limited.value = runCatching {
             val r = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_RECURSOS_TEMPORALES)) { backendHeaders() }
             r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_RECURSOS_TEMPORALES)
-            r.body<List<LimitedResourceRowDto>>().map { it.toDomain() }
+            r.body<LimitedResourcesResponse>().data.map { it.toDomain() }
         }.getOrElse { emptyList() }
 
         bursts.value = runCatching {
             val r = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_RAFAGAS)) { backendHeaders() }
             r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_RAFAGAS)
-            r.body<List<BurstCampaignRowDto>>().map { it.toDomain() }
+            r.body<BurstCampaignsResponse>().data.map { it.toDomain() }
         }.getOrElse { emptyList() }
         Unit
     }
@@ -1362,7 +1362,7 @@ class KtorCommerceRepositoryImpl(
                 setBody(item.toRowDto())
             }
             r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_ARTICULOS)
-            r.body<StoreItemRowDto>().toDomain()
+            r.body<StoreItemResponse>().data.toDomain()
         }
         if (result is AppResult.Success) refreshCommerce()
         return result
@@ -1375,7 +1375,7 @@ class KtorCommerceRepositoryImpl(
                 setBody(offer.toRowDto())
             }
             r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_OFERTAS)
-            r.body<StoreOfferRowDto>().toDomain()
+            r.body<StoreOfferResponse>().data.toDomain()
         }
         if (result is AppResult.Success) refreshCommerce()
         return result
@@ -1388,7 +1388,7 @@ class KtorCommerceRepositoryImpl(
                 setBody(window.toRowDto())
             }
             r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_RECURSOS_TEMPORALES)
-            r.body<LimitedResourceRowDto>().toDomain()
+            r.body<LimitedResourceResponse>().data.toDomain()
         }
         if (result is AppResult.Success) refreshCommerce()
         return result
@@ -1401,7 +1401,7 @@ class KtorCommerceRepositoryImpl(
                 setBody(campaign.toRowDto())
             }
             r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_RAFAGAS)
-            r.body<BurstCampaignRowDto>().toDomain()
+            r.body<BurstCampaignResponse>().data.toDomain()
         }
         if (result is AppResult.Success) refreshCommerce()
         return result
@@ -1419,6 +1419,28 @@ class KtorCommerceRepositoryImpl(
         header(HttpHeaders.Authorization, "Bearer $token")
     }
 }
+
+// Backend wraps every list/single resource in {"data": ...} (see AdminV1Routes.kt's
+// AdminArticulosTiendaResponse/AdminArticuloTiendaResponse and its siblings for the
+// other 3 resources, Task 6) -- matching every other AdminV1 response DTO
+// (AdminEspecialidadesResponse, ReportesV1Response in KtorModerationRepositoryImpl,
+// etc). These unwrap that envelope; do not deserialize the bare row list/object.
+@Serializable
+private data class StoreItemsResponse(val data: List<StoreItemRowDto>)
+@Serializable
+private data class StoreItemResponse(val data: StoreItemRowDto)
+@Serializable
+private data class StoreOffersResponse(val data: List<StoreOfferRowDto>)
+@Serializable
+private data class StoreOfferResponse(val data: StoreOfferRowDto)
+@Serializable
+private data class LimitedResourcesResponse(val data: List<LimitedResourceRowDto>)
+@Serializable
+private data class LimitedResourceResponse(val data: LimitedResourceRowDto)
+@Serializable
+private data class BurstCampaignsResponse(val data: List<BurstCampaignRowDto>)
+@Serializable
+private data class BurstCampaignResponse(val data: BurstCampaignRowDto)
 
 @Serializable
 private data class StoreItemRowDto(
