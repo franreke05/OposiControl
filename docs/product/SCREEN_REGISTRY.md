@@ -50,7 +50,7 @@ Registro activo de las 17 secciones administrativas requeridas. La navegación e
 
 ## Navigation and scope notes
 
-- Desktop entry: `DesktopModerationRoot → AppRoot`; source exposes the administrative `AdminSection` set.
+- Desktop entry: `main()` (`composeApp/src/jvmMain/.../main.kt`) → `OposiControlAdminApp` (`App.kt`) → `AppRoot`; source exposes the administrative `AdminSection` set. `DesktopModerationRoot` is an unused pass-through wrapper (dead code, not deleted in this phase) — it is not the real entrypoint.
 - Mobile entry: `MobileContentRoot → MobileContentScreen/MobileAdminPanel`; the mobile panel exposes the operational subset plus the Dashboard quick action to `AppRoute.Content.Imports` for Screen 09.
 - The source also contains `SETTINGS`, but the required product registry here intentionally covers the 17 requested sections and does not count Settings as one of them.
 - `AppRoute.System.Status` (Screen 10) is now implemented (`SystemStatusScreen`/`SystemStatusViewModel`), opened from the Settings row; it remains separate from the legacy `AppRoute.System.Diagnostics` route. Backed by `NotConnectedSystemStatusRepository` — real UI, no real backend yet, no fake metrics.
