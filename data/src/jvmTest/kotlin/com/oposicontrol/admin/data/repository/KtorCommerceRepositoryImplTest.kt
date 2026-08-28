@@ -8,6 +8,7 @@ import com.oposicontrol.admin.core.common.logging.NoOpLogger
 import com.oposicontrol.admin.core.database.AdminDatabase
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.domain.model.CommerceStatus
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -18,6 +19,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
@@ -92,5 +94,32 @@ class KtorCommerceRepositoryImplTest {
             assertEquals("Bearer test-token", request.headers[HttpHeaders.Authorization])
             assertNull(request.headers["apikey"])
         }
+    }
+
+    @Test
+    fun refreshCommerceToleratesBackendOmittedDefaultedFields() = runTest {
+        // Mirrors a realistic backend response for /articulos: the server's
+        // response Json does not set encodeDefaults, so a field whose value
+        // equals its Kotlin default (activo = true) is omitted entirely --
+        // no "activo" key at all, not even `"activo":true`. The client-side
+        // row DTO must tolerate that the same way the server DTO defaults it.
+        val client = HttpClient(MockEngine { request ->
+            val body = if (request.url.encodedPath == "/api/v1/admin/tienda/articulos") {
+                "{\"data\":[{\"id\":1,\"nombre\":\"Escudo\",\"tipo_articulo\":\"protector\",\"precio_tickets\":50}]}"
+            } else {
+                "{\"data\":[]}"
+            }
+            respond(content = ByteReadChannel(body), status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        }) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repository = KtorCommerceRepositoryImpl(client, appConfig(), sessionLocalDataSource(), NetworkResultAdapter(NoOpLogger))
+
+        repository.refreshCommerce()
+
+        val item = repository.observeStoreItems().first().single()
+        assertEquals("Escudo", item.name)
+        assertEquals(50, item.priceTickets)
+        assertEquals(CommerceStatus.ACTIVE, item.status)
     }
 }

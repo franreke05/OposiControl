@@ -167,52 +167,58 @@ private data class KtorBurstCampaignsResponse(val data: List<KtorBurstCampaignRo
 @Serializable
 private data class KtorBurstCampaignResponse(val data: KtorBurstCampaignRowDto)
 
+// Defaults mirror AdminV1Routes.kt's server-side DTOs exactly. The backend
+// response Json (Application.kt) does not set encodeDefaults = true, so a
+// field whose value equals its Kotlin default is omitted from the wire
+// response entirely -- these row DTOs must tolerate that the same way every
+// other KtorXxxRepositoryImpl DTO in this codebase does (e.g.
+// KtorAdminV1ContentRepositoryImpl's AdminEspecialidadDto).
 @Serializable
 private data class KtorStoreItemRowDto(
     val id: Int? = null,
-    val nombre: String,
-    @SerialName("tipo_articulo") val type: String,
-    @SerialName("precio_tickets") val priceTickets: Int,
-    val activo: Boolean,
+    val nombre: String = "",
+    @SerialName("tipo_articulo") val type: String = "",
+    @SerialName("precio_tickets") val priceTickets: Int = 0,
+    val activo: Boolean = true,
 )
 
 @Serializable
 private data class KtorStoreOfferRowDto(
     val id: Int? = null,
-    @SerialName("articulo_tienda_id") val itemId: Int,
-    val titulo: String,
+    @SerialName("articulo_tienda_id") val itemId: Int = 0,
+    val titulo: String = "",
     @SerialName("discount_percent") val discountPercent: Int? = null,
     @SerialName("special_price_tickets") val specialPriceTickets: Int? = null,
     @SerialName("starts_at") val startsAt: String? = null,
     @SerialName("ends_at") val endsAt: String? = null,
-    val status: String,
+    val status: String = "draft",
 )
 
 @Serializable
 private data class KtorLimitedResourceRowDto(
     val id: Int? = null,
-    @SerialName("articulo_tienda_id") val itemId: Int,
-    @SerialName("recurso_id") val resourceId: Int,
-    val titulo: String,
+    @SerialName("articulo_tienda_id") val itemId: Int = 0,
+    @SerialName("recurso_id") val resourceId: Int = 0,
+    val titulo: String = "",
     @SerialName("starts_at") val startsAt: String? = null,
     @SerialName("ends_at") val endsAt: String? = null,
-    @SerialName("access_duration_hours") val accessDurationHours: Int,
-    val status: String,
+    @SerialName("access_duration_hours") val accessDurationHours: Int = 0,
+    val status: String = "draft",
 )
 
 @Serializable
 private data class KtorBurstCampaignRowDto(
     val id: Int? = null,
-    val titulo: String,
+    val titulo: String = "",
     val descripcion: String = "",
-    val tipo: String,
+    val tipo: String = "daily_streak",
     @SerialName("starts_at") val startsAt: String? = null,
     @SerialName("ends_at") val endsAt: String? = null,
-    val multiplier: Double,
-    @SerialName("reward_tickets") val rewardTickets: Int,
+    val multiplier: Double = 1.0,
+    @SerialName("reward_tickets") val rewardTickets: Int = 0,
     @SerialName("linked_exam_id") val linkedExamId: Int? = null,
     @SerialName("linked_store_item_id") val linkedStoreItemId: Int? = null,
-    val status: String,
+    val status: String = "draft",
 )
 
 private fun KtorStoreItemRowDto.toDomain() = StoreItem(
