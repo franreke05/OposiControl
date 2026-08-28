@@ -55,9 +55,16 @@ internal fun migrateLegacyDatabaseIfNeeded(
     target: File,
     legacyFile: File = File(DATABASE_FILE_NAME),
 ) {
+    // Always ensure the target's parent directory exists, even when there's
+    // nothing to migrate -- createDriver() opens a JDBC connection at this
+    // exact path right after calling this function, and the SQLite JDBC
+    // driver does not create missing parent directories itself (it only
+    // creates the database file, given a directory that already exists).
+    // Without this, the very first run on a machine with no prior
+    // OposiControl app-data folder throws SQLException("... does not
+    // exist") before Login can even be constructed -- confirmed via a real
+    // crash log during Task 8's runtime verification.
+    runCatching { target.parentFile?.mkdirs() }
     if (target.exists() || !legacyFile.isFile) return
-    runCatching {
-        target.parentFile?.mkdirs()
-        legacyFile.copyTo(target)
-    }
+    runCatching { legacyFile.copyTo(target) }
 }

@@ -86,4 +86,14 @@ class DatabaseDriverFactoryJvmTest {
 
         assertFalse(target.exists())
     }
+
+    @Test
+    fun migrationCreatesTheParentDirectoryEvenWhenThereIsNoLegacyFileToMigrate() {
+        val target = File(tempHome, "fresh-install/nested/oposicontrol-desktop.db")
+
+        migrateLegacyDatabaseIfNeeded(target, File(tempHome, "does-not-exist.db"))
+
+        assertTrue(target.parentFile.isDirectory)
+        assertFalse(target.exists())
+    }
 }
