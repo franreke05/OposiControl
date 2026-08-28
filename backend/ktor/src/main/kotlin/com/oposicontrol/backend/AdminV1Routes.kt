@@ -542,6 +542,24 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         get("/dashboard") {
             call.respond(gateway.getDashboardMetrics())
         }
+        route("/tienda") {
+            route("/articulos") {
+                get { call.respond(AdminArticulosTiendaResponse(gateway.listArticulosTienda())) }
+                post { call.respond(AdminArticuloTiendaResponse(gateway.upsertArticuloTienda(call.receive()))) }
+            }
+            route("/ofertas") {
+                get { call.respond(AdminOfertasTiendaResponse(gateway.listOfertasTienda())) }
+                post { call.respond(AdminOfertaTiendaResponse(gateway.upsertOfertaTienda(call.receive()))) }
+            }
+            route("/recursos-temporales") {
+                get { call.respond(AdminRecursosTemporalesTiendaResponse(gateway.listRecursosTemporalesTienda())) }
+                post { call.respond(AdminRecursoTemporalTiendaResponse(gateway.upsertRecursoTemporalTienda(call.receive()))) }
+            }
+            route("/rafagas") {
+                get { call.respond(AdminCampanasRafagaResponse(gateway.listCampanasRafaga())) }
+                post { call.respond(AdminCampanaRafagaResponse(gateway.upsertCampanaRafaga(call.receive()))) }
+            }
+        }
     }
 }
 
@@ -558,6 +576,71 @@ data class AdminExamenesResponse(val data: List<AdminExamenDto>)
 
 @Serializable
 data class AdminExamenResponse(val data: AdminExamenDto)
+
+@Serializable
+data class AdminArticulosTiendaResponse(val data: List<AdminArticuloTiendaDto>)
+@Serializable
+data class AdminArticuloTiendaResponse(val data: AdminArticuloTiendaDto)
+@Serializable
+data class AdminOfertasTiendaResponse(val data: List<AdminOfertaTiendaDto>)
+@Serializable
+data class AdminOfertaTiendaResponse(val data: AdminOfertaTiendaDto)
+@Serializable
+data class AdminRecursosTemporalesTiendaResponse(val data: List<AdminRecursoTemporalTiendaDto>)
+@Serializable
+data class AdminRecursoTemporalTiendaResponse(val data: AdminRecursoTemporalTiendaDto)
+@Serializable
+data class AdminCampanasRafagaResponse(val data: List<AdminCampanaRafagaDto>)
+@Serializable
+data class AdminCampanaRafagaResponse(val data: AdminCampanaRafagaDto)
+
+@Serializable
+data class AdminArticuloTiendaDto(
+    val id: Int? = null,
+    val nombre: String = "",
+    @SerialName("tipo_articulo") val tipoArticulo: String = "",
+    @SerialName("precio_tickets") val precioTickets: Int = 0,
+    val activo: Boolean = true,
+)
+
+@Serializable
+data class AdminOfertaTiendaDto(
+    val id: Int? = null,
+    @SerialName("articulo_tienda_id") val articuloTiendaId: Int = 0,
+    val titulo: String = "",
+    @SerialName("discount_percent") val discountPercent: Int? = null,
+    @SerialName("special_price_tickets") val specialPriceTickets: Int? = null,
+    @SerialName("starts_at") val startsAt: String? = null,
+    @SerialName("ends_at") val endsAt: String? = null,
+    val status: String = "draft",
+)
+
+@Serializable
+data class AdminRecursoTemporalTiendaDto(
+    val id: Int? = null,
+    @SerialName("articulo_tienda_id") val articuloTiendaId: Int = 0,
+    @SerialName("recurso_id") val recursoId: Int = 0,
+    val titulo: String = "",
+    @SerialName("starts_at") val startsAt: String? = null,
+    @SerialName("ends_at") val endsAt: String? = null,
+    @SerialName("access_duration_hours") val accessDurationHours: Int = 0,
+    val status: String = "draft",
+)
+
+@Serializable
+data class AdminCampanaRafagaDto(
+    val id: Int? = null,
+    val titulo: String = "",
+    val descripcion: String = "",
+    val tipo: String = "daily_streak",
+    @SerialName("starts_at") val startsAt: String? = null,
+    @SerialName("ends_at") val endsAt: String? = null,
+    val multiplier: Double = 1.0,
+    @SerialName("reward_tickets") val rewardTickets: Int = 0,
+    @SerialName("linked_exam_id") val linkedExamId: Int? = null,
+    @SerialName("linked_store_item_id") val linkedStoreItemId: Int? = null,
+    val status: String = "draft",
+)
 
 // Especialidad: las columnas reales ya son palabras simples => DTO == fila Supabase.
 @Serializable
@@ -3061,6 +3144,54 @@ class AdminV1Gateway private constructor(
             System.err.println("[ktor] auditoria fallida ($accion): ${error.message?.take(160)}")
         }
     }
+
+    // TIENDA (Store) -- proxies what the Desktop client used to call directly
+    // on Supabase with the anon key + user JWT. Same tables/columns/ids
+    // (legacy serial Int, not UUID) as before; only the origin of the HTTP
+    // call moves behind the Ktor boundary. See KtorCommerceRepositoryImpl.
+    fun listArticulosTienda(): List<AdminArticuloTiendaDto> =
+        request("GET", "/rest/v1/articulo_tienda?select=*&order=nombre.asc", null).decodeList()
+
+    fun upsertArticuloTienda(input: AdminArticuloTiendaDto): AdminArticuloTiendaDto =
+        request(
+            "POST",
+            "/rest/v1/articulo_tienda?on_conflict=id",
+            sbJson.encodeToString(listOf(input)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<AdminArticuloTiendaDto>().first()
+
+    fun listOfertasTienda(): List<AdminOfertaTiendaDto> =
+        request("GET", "/rest/v1/oferta_tienda?select=*&order=starts_at.desc", null).decodeList()
+
+    fun upsertOfertaTienda(input: AdminOfertaTiendaDto): AdminOfertaTiendaDto =
+        request(
+            "POST",
+            "/rest/v1/oferta_tienda?on_conflict=id",
+            sbJson.encodeToString(listOf(input)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<AdminOfertaTiendaDto>().first()
+
+    fun listRecursosTemporalesTienda(): List<AdminRecursoTemporalTiendaDto> =
+        request("GET", "/rest/v1/recurso_temporal_tienda?select=*&order=starts_at.desc", null).decodeList()
+
+    fun upsertRecursoTemporalTienda(input: AdminRecursoTemporalTiendaDto): AdminRecursoTemporalTiendaDto =
+        request(
+            "POST",
+            "/rest/v1/recurso_temporal_tienda?on_conflict=id",
+            sbJson.encodeToString(listOf(input)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<AdminRecursoTemporalTiendaDto>().first()
+
+    fun listCampanasRafaga(): List<AdminCampanaRafagaDto> =
+        request("GET", "/rest/v1/campana_rafaga?select=*&order=starts_at.desc", null).decodeList()
+
+    fun upsertCampanaRafaga(input: AdminCampanaRafagaDto): AdminCampanaRafagaDto =
+        request(
+            "POST",
+            "/rest/v1/campana_rafaga?on_conflict=id",
+            sbJson.encodeToString(listOf(input)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<AdminCampanaRafagaDto>().first()
 
     private fun perfilesUsuario(): List<PerfilUsuarioRow> =
         request("GET", "/rest/v1/perfiles_usuario?select=*&order=creado_en.desc&limit=1000", null)

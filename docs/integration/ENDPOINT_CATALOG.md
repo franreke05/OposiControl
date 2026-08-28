@@ -102,6 +102,10 @@ Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `Ad
 | `ADMIN-032` | GET/POST/PATCH/DELETE | `/api/v1/admin/comunidades-autonomas[/{id}]` | `SOURCE_VERIFIED` |
 | `ADMIN-033` | GET | `/api/v1/admin/dashboard` | `SOURCE_VERIFIED` |
 | `ADMIN-034` | GET | `/api/v1/admin/feedback/preguntas/{id}` | `SOURCE_VERIFIED` |
+| `ADMIN-035` | GET/POST | `/api/v1/admin/tienda/articulos` | `SOURCE_VERIFIED` — replaces Desktop's direct Supabase call from `SupabaseCommerceRepositoryImpl` |
+| `ADMIN-036` | GET/POST | `/api/v1/admin/tienda/ofertas` | `SOURCE_VERIFIED` |
+| `ADMIN-037` | GET/POST | `/api/v1/admin/tienda/recursos-temporales` | `SOURCE_VERIFIED` |
+| `ADMIN-038` | GET/POST | `/api/v1/admin/tienda/rafagas` | `SOURCE_VERIFIED` |
 
 ## `/health/*` — public, unauthenticated
 
