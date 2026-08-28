@@ -11,10 +11,15 @@ plugins {
 
 fun localEnvValue(key: String): String {
     providers.environmentVariable(key).orNull?.let { return it }
-    val envFile = rootProject.file(".env")
-    if (!envFile.isFile) return ""
-    return envFile.readLines()
-        .firstOrNull { line -> line.trimStart().startsWith("$key=") }
+    // providers.fileContents (not rootProject.file(...).readLines()) registers
+    // .env as a tracked configuration-cache input: editing .env and re-running
+    // with --configuration-cache now picks up the new value instead of silently
+    // reusing whatever was cached from the first run.
+    val envFileText = providers.fileContents(rootProject.layout.projectDirectory.file(".env")).asText.orNull
+        ?: return ""
+    return envFileText.lineSequence()
+        .map { it.trim() }
+        .firstOrNull { line -> line.isNotEmpty() && !line.startsWith("#") && line.startsWith("$key=") }
         ?.substringAfter("=")
         ?.trim()
         .orEmpty()
