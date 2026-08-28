@@ -69,7 +69,6 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
                 "Informes operativos y de moderacion.",
                 NavigationGroupId.REPORTS,
                 "reports",
-                visibility = NavigationVisibility.MOBILE_ONLY,
             ),
         ),
     ),
@@ -137,7 +136,6 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
                 "Incidencias de los usuarios",
                 NavigationGroupId.OPOSITESTER,
                 "tester",
-                visibility = NavigationVisibility.MOBILE_ONLY,
             ),
         ),
     ),
@@ -193,7 +191,8 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     AppRoute.Auth -> null
     AppRoute.Home -> AdminSection.DASHBOARD
     AppRoute.Content.Exams, is AppRoute.Content.ExamDetail -> AdminSection.EXAMS
-    AppRoute.Content.Questions, AppRoute.Content.Resources, AppRoute.Content.Imports -> AdminSection.QUESTIONS_RESOURCES
+    AppRoute.Content.Questions, AppRoute.Content.Resources -> AdminSection.QUESTIONS_RESOURCES
+    AppRoute.Content.Imports -> null
     AppRoute.Content.Taxonomy -> AdminSection.SPECIALTIES
     AppRoute.Publication.News -> AdminSection.NEWS
     AppRoute.Publication.NewsTypes -> AdminSection.NEWS_TYPES
@@ -202,8 +201,7 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     AppRoute.Commercial.Catalog, AppRoute.Commercial.Plans -> AdminSection.STORE
     AppRoute.Commercial.Tickets -> AdminSection.TICKETS
     AppRoute.Commercial.Subscriptions -> AdminSection.EXAM_ACCESS
-    AppRoute.Community.OposiRed -> AdminSection.MODERATION
-    is AppRoute.Community.Thread, is AppRoute.Community.ModerationDetail -> null
+    AppRoute.Community.OposiRed, is AppRoute.Community.Thread, is AppRoute.Community.ModerationDetail -> null
     is AppRoute.Reports, is AppRoute.OposiTester -> null
     AppRoute.Support.Inbox -> AdminSection.SUPPORT
     AppRoute.Moderation.Queue -> AdminSection.MODERATION
