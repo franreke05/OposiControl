@@ -102,6 +102,49 @@ import org.koin.core.parameter.parametersOf
 
 private const val TEMPORARILY_DISABLE_LOGIN = false
 
+internal enum class AppContentTarget {
+    TAB_PAGER,
+    CONTENT_UPLOAD,
+    SYSTEM_STATUS,
+    FORUM,
+    THREAD_DETAIL,
+    REPORTS_LIST,
+    REPORTS_DETAIL,
+    OPOSITESTER_LIST,
+    OPOSITESTER_DETAIL,
+    MOBILE_CONTENT_ROOT,
+    LEGACY_SECTION,
+    LEGACY_PLACEHOLDER,
+}
+
+/**
+ * Single source of truth for "what renders in the AppShell content slot",
+ * kept as a pure function (route/layout in, target out) so Desktop
+ * reachability for Reports/Forum/OposiTester/Content Upload is unit-tested
+ * without a Compose UI test harness — see AppRootContentTargetTest. The
+ * composable below must switch on exactly this function's result, not
+ * re-derive the same conditions inline.
+ */
+internal fun resolveContentTarget(
+    route: AppRoute,
+    compactLayout: Boolean,
+    showTabPager: Boolean,
+    hasLegacyRoute: Boolean,
+): AppContentTarget = when {
+    showTabPager -> AppContentTarget.TAB_PAGER
+    route == AppRoute.Content.Imports -> AppContentTarget.CONTENT_UPLOAD
+    route == AppRoute.System.Status -> AppContentTarget.SYSTEM_STATUS
+    route == AppRoute.Community.OposiRed -> AppContentTarget.FORUM
+    route is AppRoute.Community.Thread -> AppContentTarget.THREAD_DETAIL
+    route is AppRoute.Reports.List -> AppContentTarget.REPORTS_LIST
+    route is AppRoute.Reports.Detail -> AppContentTarget.REPORTS_DETAIL
+    route is AppRoute.OposiTester.List -> AppContentTarget.OPOSITESTER_LIST
+    route is AppRoute.OposiTester.Detail -> AppContentTarget.OPOSITESTER_DETAIL
+    compactLayout && route is AppRoute.Content -> AppContentTarget.MOBILE_CONTENT_ROOT
+    hasLegacyRoute -> AppContentTarget.LEGACY_SECTION
+    else -> AppContentTarget.LEGACY_PLACEHOLDER
+}
+
 @Composable
 fun AppRoot(
     appConfig: AppConfig,
@@ -215,8 +258,8 @@ fun AppRoot(
                     }
                 },
             ) {
-                if (showTabPager) {
-                    MobilePrimaryTabPager(
+                when (resolveContentTarget(route, compactLayout, showTabPager, legacyRoute != null)) {
+                    AppContentTarget.TAB_PAGER -> MobilePrimaryTabPager(
                         routes = primaryTabRoutes,
                         currentIndex = currentPrimaryTabIndex,
                         onSettledIndexChange = { index -> navigator.selectPrimaryTab(primaryTabRoutes[index]) },
@@ -243,34 +286,47 @@ fun AppRoot(
                             )
                         }
                     }
-                } else if (compactLayout && route == AppRoute.Content.Imports) {
-                    ContentUploadScreen(viewModel = koinInject())
-                } else if (route == AppRoute.System.Status) {
-                    val viewModel: SystemStatusViewModel = koinInject()
-                    SystemStatusScreen(viewModel = viewModel)
-                } else if (compactLayout && route is AppRoute.Content) {
-                    MobileContentRoot(
+                    AppContentTarget.CONTENT_UPLOAD -> ContentUploadScreen(viewModel = koinInject())
+                    AppContentTarget.SYSTEM_STATUS -> {
+                        val viewModel: SystemStatusViewModel = koinInject()
+                        SystemStatusScreen(viewModel = viewModel)
+                    }
+                    AppContentTarget.FORUM -> ForumScreen(
+                        viewModel = koinInject(),
+                        onOpenThread = { threadId -> navigator.push(AppRoute.Community.Thread(threadId)) },
+                        onOpenPendingReports = { navigator.selectPrimaryTab(AppRoute.Reports.List) },
+                    )
+                    AppContentTarget.THREAD_DETAIL -> {
+                        val threadId = (route as AppRoute.Community.Thread).threadId
+                        ThreadDetailScreen(
+                            viewModel = koinInject(parameters = { parametersOf(threadId) }),
+                            onOpenAssociatedReports = { navigator.selectPrimaryTab(AppRoute.Reports.List) },
+                            onBack = { navigator.pop() },
+                        )
+                    }
+                    AppContentTarget.REPORTS_LIST -> ReportsScreen(
+                        viewModel = koinInject(),
+                        onOpenReport = { reportId -> navigator.push(AppRoute.Reports.Detail(reportId)) },
+                    )
+                    AppContentTarget.REPORTS_DETAIL -> {
+                        val reportId = (route as AppRoute.Reports.Detail).reportId
+                        ReportDetailScreen(viewModel = koinInject(parameters = { parametersOf(reportId) }))
+                    }
+                    AppContentTarget.OPOSITESTER_LIST -> TesterListScreen(
+                        viewModel = koinInject(),
+                        onOpenReport = { reportId -> navigator.push(AppRoute.OposiTester.Detail(reportId)) },
+                    )
+                    AppContentTarget.OPOSITESTER_DETAIL -> {
+                        val testerId = (route as AppRoute.OposiTester.Detail).testerId
+                        TesterDetailScreen(viewModel = koinInject(parameters = { parametersOf(testerId) }))
+                    }
+                    AppContentTarget.MOBILE_CONTENT_ROOT -> MobileContentRoot(
                         appConfig = appConfig,
                         initialView = route.toMobileContentView(),
                         showNavigationChrome = false,
                     )
-                } else if (compactLayout && route is AppRoute.Reports.Detail) {
-                    val reportId = (route as AppRoute.Reports.Detail).reportId
-                    ReportDetailScreen(viewModel = koinInject(parameters = { parametersOf(reportId) }))
-                } else if (compactLayout && route is AppRoute.Community.Thread) {
-                    val threadId = (route as AppRoute.Community.Thread).threadId
-                    ThreadDetailScreen(
-                        viewModel = koinInject(parameters = { parametersOf(threadId) }),
-                        onOpenAssociatedReports = { navigator.selectPrimaryTab(AppRoute.Reports.List) },
-                        onBack = { navigator.pop() },
-                    )
-                } else if (compactLayout && route is AppRoute.OposiTester.Detail) {
-                    val testerId = (route as AppRoute.OposiTester.Detail).testerId
-                    TesterDetailScreen(viewModel = koinInject(parameters = { parametersOf(testerId) }))
-                } else if (legacyRoute != null) {
-                    legacyRoute.content()
-                } else {
-                    LegacyRouteAdapter(metadata.title, metadata.description)
+                    AppContentTarget.LEGACY_SECTION -> legacyRoute?.content()
+                    AppContentTarget.LEGACY_PLACEHOLDER -> LegacyRouteAdapter(metadata.title, metadata.description)
                 }
             }
             }
