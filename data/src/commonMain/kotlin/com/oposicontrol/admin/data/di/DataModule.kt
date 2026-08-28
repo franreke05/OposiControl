@@ -37,7 +37,7 @@ import com.oposicontrol.admin.data.repository.KtorTagSearchRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorTagsRepositoryImpl
 import com.oposicontrol.admin.data.repository.RolesRepositoryImpl
 import com.oposicontrol.admin.data.repository.SettingsRepositoryImpl
-import com.oposicontrol.admin.data.repository.SupabaseCommerceRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorCommerceRepositoryImpl
 import com.oposicontrol.admin.data.repository.UsersRepositoryImpl
 import com.oposicontrol.admin.data.storage.PlatformFileReader
 import com.oposicontrol.admin.domain.repository.AdminOperationsRepository
@@ -94,10 +94,9 @@ val dataModule = module {
     single<ContentImportRepository> { get<ContentRepository>() as ContentImportRepository }
 
     single<CommerceRepository> {
-        val appConfig: AppConfig = get()
-        SupabaseCommerceRepositoryImpl(
+        KtorCommerceRepositoryImpl(
             client = get(),
-            appConfig = appConfig,
+            appConfig = get(),
             sessionLocalDataSource = get(),
             adapter = get(),
         )

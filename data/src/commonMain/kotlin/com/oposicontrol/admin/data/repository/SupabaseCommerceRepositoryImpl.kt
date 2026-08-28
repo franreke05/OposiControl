@@ -30,6 +30,9 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+@Deprecated(
+    "Superseded by KtorCommerceRepositoryImpl -- Desktop must not call Supabase directly (anon key + user JWT bypassing the Ktor trust boundary). No longer wired in dataModule. Kept, not deleted, per Phase 0 policy.",
+)
 class SupabaseCommerceRepositoryImpl(
     private val client: HttpClient,
     private val appConfig: AppConfig,
