@@ -12,6 +12,7 @@ import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.http.content.PartData
 import io.ktor.http.content.forEachPart
@@ -130,6 +131,20 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             delete("/{id}") {
                 val saved = gateway.archiveEspecialidad(call.requiredPath("id"))
                 call.respond(AdminEspecialidadResponse(saved))
+            }
+            // Modos disponibles por especialidad (§ especialidades como configuración
+            // de producto). PUT y no PATCH: el cuerpo es el estado completo de los
+            // flags, así que enviar uno parcial no debe dejar el resto a medias.
+            get("/{id}/capacidades") {
+                call.respond(
+                    AdminEspecialidadCapacidadesResponse(
+                        gateway.getCapacidadesEspecialidad(call.requiredPath("id")),
+                    ),
+                )
+            }
+            put("/{id}/capacidades") {
+                val saved = gateway.upsertCapacidadesEspecialidad(call.requiredPath("id"), call.receive())
+                call.respond(AdminEspecialidadCapacidadesResponse(saved))
             }
         }
         route("/examenes") {
@@ -570,6 +585,9 @@ data class AdminEspecialidadesResponse(val data: List<AdminEspecialidadDto>)
 
 @Serializable
 data class AdminEspecialidadResponse(val data: AdminEspecialidadDto)
+
+@Serializable
+data class AdminEspecialidadCapacidadesResponse(val data: AdminEspecialidadCapacidadesDto)
 
 @Serializable
 data class AdminExamenesResponse(val data: List<AdminExamenDto>)
@@ -1611,6 +1629,74 @@ class AdminV1Gateway private constructor(
     fun listEspecialidades(): List<AdminEspecialidadDto> =
         request("GET", "/rest/v1/especialidades?select=*&order=posicion.asc,nombre.asc", null)
             .decodeList()
+
+    /**
+     * Capacidades (modos disponibles) de una especialidad.
+     *
+     * Si la especialidad todavía no tiene fila, devuelve los valores por defecto
+     * del esquema marcados como `configurado = false`, en lugar de un 404: para el
+     * panel "aún no configurada" es un estado normal, no un error.
+     *
+     * Si la tabla no existe en el proyecto Supabase apuntado, falla explícito
+     * (NOT_PROVISIONED) en vez de devolver todo en false, que se leería como
+     * "esta especialidad no tiene ningún modo" y es justo lo contrario de la verdad.
+     */
+    fun getCapacidadesEspecialidad(especialidadId: String): AdminEspecialidadCapacidadesDto {
+        especialidadId.validatedUuid("especialidadId")
+        val rows = try {
+            request(
+                "GET",
+                "/rest/v1/capacidades_especialidad?select=*&especialidad_id=eq.$especialidadId&limit=1",
+                null,
+            ).decodeList<CapacidadesEspecialidadRow>()
+        } catch (error: IllegalStateException) {
+            throw error.asCapabilitiesNotProvisionedOrRethrow()
+        }
+        return rows.firstOrNull()?.toDto() ?: defaultCapacidades(especialidadId)
+    }
+
+    /**
+     * Alta o actualización de las capacidades. Upsert sobre la PK
+     * `especialidad_id`: el panel no debería tener que saber si la fila ya existía.
+     */
+    fun upsertCapacidadesEspecialidad(
+        especialidadId: String,
+        input: AdminEspecialidadCapacidadesDto,
+    ): AdminEspecialidadCapacidadesDto {
+        especialidadId.validatedUuid("especialidadId")
+        val row = input.validated().toRow(especialidadId)
+        val saved = try {
+            request(
+                "POST",
+                "/rest/v1/capacidades_especialidad",
+                sbJson.encodeToString(listOf(row)),
+                prefer = "resolution=merge-duplicates,return=representation",
+            ).decodeList<CapacidadesEspecialidadRow>().firstOrNull()
+        } catch (error: IllegalStateException) {
+            throw error.asCapabilitiesNotProvisionedOrRethrow()
+        }
+        registrarAuditoria("capacidades_especialidad_actualizadas", "capacidades_especialidad", especialidadId)
+        return saved?.toDto() ?: getCapacidadesEspecialidad(especialidadId)
+    }
+
+    /**
+     * PGRST205 = la tabla no está en el cache de esquema de PostgREST, es decir no
+     * existe en este proyecto. Se traduce a un error de dominio propio para que el
+     * panel pueda enseñar NOT_CONFIGURED; cualquier otro fallo se propaga tal cual.
+     */
+    private fun IllegalStateException.asCapabilitiesNotProvisionedOrRethrow(): Exception {
+        val text = message.orEmpty()
+        val missingTable = text.contains("PGRST205") ||
+            text.contains("Could not find the table") ||
+            text.contains("schema cache")
+        if (!missingTable) return this
+        return BackendDomainException(
+            "SPECIALTY_CAPABILITIES_NOT_PROVISIONED",
+            HttpStatusCode.NotImplemented,
+            "La tabla capacidades_especialidad no existe en el proyecto Supabase configurado. " +
+                "Las capacidades por especialidad no se pueden leer ni administrar hasta que se aprovisione.",
+        )
+    }
 
     fun createEspecialidad(input: AdminEspecialidadDto): AdminEspecialidadDto {
         require(input.nombre.isNotBlank()) { "La especialidad necesita nombre." }

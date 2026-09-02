@@ -135,6 +135,10 @@ fun SpecialtiesScreen(
                     FormFeedback(state.actionState, successText = "Especialidad sincronizada.")
                 }
             }
+
+            if (state.selectedId != null) {
+                SpecialtyCapabilitiesSection(state = state, viewModel = viewModel)
+            }
         },
     )
 
@@ -149,5 +153,139 @@ fun SpecialtiesScreen(
             },
             onDismiss = { confirmDelete = false },
         )
+    }
+}
+
+/**
+ * Modos disponibles de la especialidad seleccionada.
+ *
+ * Va en su propia seccion y con su propio guardado porque escribe en otra tabla
+ * y, sobre todo, porque cambia lo que ve el usuario final en OposiBot: apagar
+ * "inmersivos" aqui hace desaparecer ese modo de la app. Mezclarlo con el boton
+ * de guardar el nombre invitaria a cambiarlo sin querer.
+ */
+@Composable
+private fun SpecialtyCapabilitiesSection(
+    state: SpecialtiesState,
+    viewModel: SpecialtiesViewModel,
+) {
+    FormSection(
+        title = "Modos disponibles",
+        description = "OposiBot solo muestra los modos habilitados aqui. No todas las especialidades " +
+            "tienen el mismo contenido.",
+    ) {
+        AsyncStatePane(
+            state.capabilities,
+            emptyMessage = "Sin configuracion de modos para esta especialidad.",
+        ) { _ ->
+            val draft = state.capabilitiesDraft
+            if (draft == null) {
+                Text(
+                    text = "Selecciona una especialidad para ver sus modos.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                return@AsyncStatePane
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (!draft.configured) {
+                    // Nadie ha decidido esto todavia: lo mostrado son los valores por
+                    // defecto del esquema, no una eleccion. Decirlo evita que se lea
+                    // como "ya revisado".
+                    Text(
+                        text = "Todavia sin configurar. Se muestran los valores por defecto; " +
+                            "guarda para fijarlos explicitamente.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                // Vocabulario canonico: rafaga / razonado / inmersivo.
+                GlassToggleRow(
+                    title = "Rafagas",
+                    description = "Preguntas sueltas con solucionario de opcion correcta.",
+                    checked = draft.permiteRafagas,
+                    onCheckedChange = {
+                        viewModel.dispatch(
+                            SpecialtiesIntent.ToggleCapability(SpecialtyCapabilityToggle.RAFAGAS, it),
+                        )
+                    },
+                )
+                GlassToggleRow(
+                    title = "Razonados",
+                    description = "Solucionario con explicacion escrita.",
+                    checked = draft.permiteRazonados,
+                    onCheckedChange = {
+                        viewModel.dispatch(
+                            SpecialtiesIntent.ToggleCapability(SpecialtyCapabilityToggle.RAZONADOS, it),
+                        )
+                    },
+                )
+                GlassToggleRow(
+                    title = "Inmersivos",
+                    description = "Unico modo que admite recursos multimedia.",
+                    checked = draft.permiteInmersivos,
+                    onCheckedChange = {
+                        viewModel.dispatch(
+                            SpecialtiesIntent.ToggleCapability(SpecialtyCapabilityToggle.INMERSIVOS, it),
+                        )
+                    },
+                )
+                GlassToggleRow(
+                    title = "Demos",
+                    description = "Permite probar modos no incluidos en el plan del usuario.",
+                    checked = draft.permiteDemos,
+                    onCheckedChange = {
+                        viewModel.dispatch(
+                            SpecialtiesIntent.ToggleCapability(SpecialtyCapabilityToggle.DEMOS, it),
+                        )
+                    },
+                )
+                GlassToggleRow(
+                    title = "OposiMarket",
+                    description = "Acceso a packs, potenciadores y protectores.",
+                    checked = draft.permiteOposimarket,
+                    onCheckedChange = {
+                        viewModel.dispatch(
+                            SpecialtiesIntent.ToggleCapability(SpecialtyCapabilityToggle.OPOSIMARKET, it),
+                        )
+                    },
+                )
+
+                Text(
+                    text = "Modos de examen activos: " +
+                        draft.enabledExamModes.joinToString(", ").ifBlank { "ninguno" },
+                    style = MaterialTheme.typography.labelMedium,
+                )
+
+                if (draft.hasNoExamModes) {
+                    // El backend rechaza guardar esto sin mensaje; se avisa antes de
+                    // que el admin pulse Guardar, no despues.
+                    Text(
+                        text = "Sin ningun modo de examen el usuario no tendra nada que hacer. " +
+                            "Explica por que abajo.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+
+                Text(text = "Mensaje de limitacion", style = MaterialTheme.typography.labelMedium)
+                GlassTextField(
+                    value = draft.limitationMessage.orEmpty(),
+                    onValueChange = { viewModel.dispatch(SpecialtiesIntent.UpdateLimitationMessage(it)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = "Ej. Contenido inmersivo en preparacion para esta especialidad",
+                    singleLine = false,
+                )
+
+                GlassActionButton(
+                    text = if (state.capabilitiesDirty) "Guardar modos" else "Modos guardados",
+                    enabled = state.capabilitiesDirty,
+                    onClick = { viewModel.dispatch(SpecialtiesIntent.SaveCapabilities) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                FormFeedback(state.capabilitiesActionState, successText = "Modos actualizados.")
+            }
+        }
     }
 }

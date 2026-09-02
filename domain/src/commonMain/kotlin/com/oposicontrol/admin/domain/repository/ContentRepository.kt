@@ -10,6 +10,7 @@ import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import kotlinx.coroutines.flow.Flow
 
 interface ContentRepository {
@@ -26,6 +27,10 @@ interface ContentRepository {
 
     suspend fun upsertSpecialty(specialty: Specialty): AppResult<Specialty>
     suspend fun deleteSpecialty(specialtyId: String): AppResult<Unit>
+
+    /** Modos disponibles por especialidad. Ver [SpecialtyCapabilities]. */
+    suspend fun getSpecialtyCapabilities(specialtyId: String): AppResult<SpecialtyCapabilities>
+    suspend fun saveSpecialtyCapabilities(capabilities: SpecialtyCapabilities): AppResult<SpecialtyCapabilities>
 
     suspend fun upsertExam(exam: Exam): AppResult<Exam>
     suspend fun deleteExam(examId: String): AppResult<Unit>

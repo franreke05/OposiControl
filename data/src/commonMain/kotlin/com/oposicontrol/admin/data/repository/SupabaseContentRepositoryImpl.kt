@@ -26,6 +26,7 @@ import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import com.oposicontrol.admin.domain.model.UnlinkedResource
 import com.oposicontrol.admin.domain.model.UnlinkedResourceReason
 import com.oposicontrol.admin.domain.repository.ContentRepository
@@ -263,6 +264,27 @@ class SupabaseContentRepositoryImpl(
         if (result is AppResult.Success) refreshSpecialties()
         return result
     }
+
+    /**
+     * Las capacidades por especialidad se administran únicamente a través del
+     * límite canónico de Ktor (`/api/v1/admin/especialidades/{id}/capacidades`).
+     *
+     * Esta implementación legacy habla directamente con Supabase con la anon key y
+     * el JWT del usuario, así que no puede servirlas sin saltarse ese límite. Se
+     * devuelve un fallo explícito en lugar de un valor por defecto silencioso: un
+     * "todo desactivado" inventado aquí apagaría modos que sí existen.
+     */
+    override suspend fun getSpecialtyCapabilities(specialtyId: String): AppResult<SpecialtyCapabilities> =
+        AppResult.Failure(capabilitiesNeedKtorBoundary())
+
+    override suspend fun saveSpecialtyCapabilities(
+        capabilities: SpecialtyCapabilities,
+    ): AppResult<SpecialtyCapabilities> = AppResult.Failure(capabilitiesNeedKtorBoundary())
+
+    private fun capabilitiesNeedKtorBoundary() = AppError.Validation(
+        "Las capacidades por especialidad sólo se pueden administrar a través del backend Ktor. " +
+            "Configura BASE_URL para usar el repositorio canónico.",
+    )
 
     override suspend fun upsertExam(exam: Exam): AppResult<Exam> {
         val accessToken = requireAccessToken("guardar examenes") ?: return authFailure("guardar examenes")

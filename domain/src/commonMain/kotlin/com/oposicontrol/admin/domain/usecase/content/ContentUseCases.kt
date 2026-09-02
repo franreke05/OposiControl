@@ -10,6 +10,7 @@ import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import com.oposicontrol.admin.domain.repository.ContentRepository
 
 class ObserveSpecialtiesUseCase(
@@ -22,6 +23,39 @@ class RefreshSpecialtiesUseCase(
     private val repository: ContentRepository,
 ) {
     suspend operator fun invoke() = repository.refreshSpecialties()
+}
+
+class GetSpecialtyCapabilitiesUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(specialtyId: String): AppResult<SpecialtyCapabilities> {
+        if (specialtyId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona una especialidad."))
+        }
+        return repository.getSpecialtyCapabilities(specialtyId)
+    }
+}
+
+class SaveSpecialtyCapabilitiesUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(capabilities: SpecialtyCapabilities): AppResult<SpecialtyCapabilities> {
+        if (capabilities.specialtyId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona una especialidad."))
+        }
+        // Misma regla que aplica el backend, comprobada antes de la llamada para
+        // dar el mensaje en el formulario en vez de como error de red. El backend
+        // la sigue validando: esto es conveniencia de UI, no la autoridad.
+        if (capabilities.hasNoExamModes && capabilities.limitationMessage.isNullOrBlank()) {
+            return AppResult.Failure(
+                AppError.Validation(
+                    "Una especialidad sin ningún modo de examen necesita un mensaje que explique " +
+                        "al usuario por qué no hay contenido disponible.",
+                ),
+            )
+        }
+        return repository.saveSpecialtyCapabilities(capabilities)
+    }
 }
 
 class UpsertSpecialtyUseCase(

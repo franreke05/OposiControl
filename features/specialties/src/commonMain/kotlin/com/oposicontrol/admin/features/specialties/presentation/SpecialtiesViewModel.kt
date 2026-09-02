@@ -7,7 +7,10 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
+import com.oposicontrol.admin.domain.usecase.content.GetSpecialtyCapabilitiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.SaveSpecialtyCapabilitiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
@@ -21,6 +24,8 @@ class SpecialtiesViewModel(
     private val refreshSpecialtiesUseCase: RefreshSpecialtiesUseCase,
     private val upsertSpecialtyUseCase: UpsertSpecialtyUseCase,
     private val deleteSpecialtyUseCase: DeleteSpecialtyUseCase,
+    private val getSpecialtyCapabilitiesUseCase: GetSpecialtyCapabilitiesUseCase,
+    private val saveSpecialtyCapabilitiesUseCase: SaveSpecialtyCapabilitiesUseCase,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<SpecialtiesState, SpecialtiesIntent>(
     initialState = SpecialtiesState(),
@@ -67,6 +72,70 @@ class SpecialtiesViewModel(
             }
 
             is SpecialtiesIntent.UpdateSortOrder -> updateState { it.copy(editorSortOrder = intent.value) }
+
+            is SpecialtiesIntent.ToggleCapability -> updateCapabilityDraft { draft ->
+                when (intent.capability) {
+                    SpecialtyCapabilityToggle.RAFAGAS -> draft.copy(permiteRafagas = intent.value)
+                    SpecialtyCapabilityToggle.RAZONADOS -> draft.copy(permiteRazonados = intent.value)
+                    SpecialtyCapabilityToggle.INMERSIVOS -> draft.copy(permiteInmersivos = intent.value)
+                    SpecialtyCapabilityToggle.DEMOS -> draft.copy(permiteDemos = intent.value)
+                    SpecialtyCapabilityToggle.OPOSIMARKET -> draft.copy(permiteOposimarket = intent.value)
+                }
+            }
+
+            is SpecialtiesIntent.UpdateLimitationMessage -> updateCapabilityDraft { draft ->
+                draft.copy(limitationMessage = intent.value)
+            }
+
+            SpecialtiesIntent.SaveCapabilities -> saveCapabilities()
+        }
+    }
+
+    private fun updateCapabilityDraft(transform: (SpecialtyCapabilities) -> SpecialtyCapabilities) {
+        val draft = currentState().capabilitiesDraft ?: return
+        updateState { it.copy(capabilitiesDraft = transform(draft), capabilitiesActionState = UiAsync.Idle) }
+    }
+
+    private suspend fun loadCapabilities(specialtyId: String) {
+        updateState { it.copy(capabilities = UiAsync.Loading, capabilitiesDraft = null, capabilitiesActionState = UiAsync.Idle) }
+        when (val result = getSpecialtyCapabilitiesUseCase(specialtyId)) {
+            is AppResult.Failure -> updateState { it.copy(capabilities = UiAsync.Error(result.error)) }
+            is AppResult.Success -> updateState {
+                it.copy(capabilities = UiAsync.Success(result.value), capabilitiesDraft = result.value)
+            }
+        }
+    }
+
+    private suspend fun saveCapabilities() {
+        val draft = currentState().capabilitiesDraft
+            ?: return updateState {
+                it.copy(
+                    capabilitiesActionState = UiAsync.Error(
+                        AppError.Validation("Selecciona una especialidad para editar sus modos."),
+                    ),
+                )
+            }
+        updateState { it.copy(capabilitiesActionState = UiAsync.Loading) }
+        when (val result = saveSpecialtyCapabilitiesUseCase(draft)) {
+            is AppResult.Failure -> updateState { it.copy(capabilitiesActionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction(
+                    "specialty_capabilities_save",
+                    mapOf(
+                        "specialty_id" to draft.specialtyId,
+                        // Qué modos quedan activos importa más que el evento en sí:
+                        // es lo que cambia para el usuario final de OposiBot.
+                        "enabled_modes" to result.value.enabledExamModes.joinToString("|"),
+                    ),
+                )
+                updateState {
+                    it.copy(
+                        capabilities = UiAsync.Success(result.value),
+                        capabilitiesDraft = result.value,
+                        capabilitiesActionState = UiAsync.Success(Unit),
+                    )
+                }
+            }
         }
     }
 
@@ -80,6 +149,7 @@ class SpecialtiesViewModel(
 
     private fun select(id: String, resetActionState: Boolean = true) {
         val item = allItems.firstOrNull { it.id == id } ?: return
+        val alreadySelected = currentState().selectedId == item.id
         updateState {
             it.copy(
                 selectedId = item.id,
@@ -89,6 +159,12 @@ class SpecialtiesViewModel(
                 editorIsActive = item.isActive,
                 actionState = if (resetActionState) UiAsync.Idle else it.actionState,
             )
+        }
+        // Al cambiar de especialidad se recargan sus modos. Se evita recargar
+        // cuando es la misma (p. ej. tras guardar el formulario principal) para no
+        // descartar un borrador de capacidades a medio editar.
+        if (!alreadySelected) {
+            scope.launch { loadCapabilities(item.id) }
         }
     }
 

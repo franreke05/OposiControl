@@ -17,6 +17,7 @@ import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
@@ -187,6 +188,26 @@ private class ExamsTestRepository : ContentRepository {
     }
     override suspend fun upsertSpecialty(specialty: Specialty): AppResult<Specialty> = AppResult.Success(specialty)
     override suspend fun deleteSpecialty(specialtyId: String): AppResult<Unit> = AppResult.Success(Unit)
+
+    // Los modos por especialidad no intervienen en esta pantalla; se responde el
+    // valor por defecto para satisfacer el contrato sin simular configuracion.
+    override suspend fun getSpecialtyCapabilities(specialtyId: String): AppResult<SpecialtyCapabilities> =
+        AppResult.Success(
+            SpecialtyCapabilities(
+                permiteRafagas = true,
+                permiteRazonados = false,
+                permiteInmersivos = false,
+                permiteDemos = true,
+                permiteOposimarket = true,
+                specialtyId = specialtyId,
+                configured = false,
+            ),
+        )
+
+    override suspend fun saveSpecialtyCapabilities(
+        capabilities: SpecialtyCapabilities,
+    ): AppResult<SpecialtyCapabilities> = AppResult.Success(capabilities)
+
     override suspend fun upsertExam(exam: Exam): AppResult<Exam> = AppResult.Success(exam)
     override suspend fun deleteExam(examId: String): AppResult<Unit> = AppResult.Success(Unit)
     override suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga> = AppResult.Success(rafaga)

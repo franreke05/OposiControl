@@ -219,13 +219,49 @@ object ContentAccess {
     }
 }
 
+/**
+ * Qué modos existen realmente para una especialidad.
+ *
+ * No todas las oposiciones tienen el mismo contenido: unas sólo tienen ráfagas,
+ * otras ráfagas y razonados, y sólo algunas el ecosistema completo con inmersivos.
+ * OposiBot debe pintar únicamente lo habilitado, así que esto es configuración de
+ * producto administrable, no una constante de frontend — habilitar un modo para
+ * una especialidad no puede exigir recompilar la app.
+ *
+ * Respaldo: `public.capacidades_especialidad`, administrable desde
+ * `/api/v1/admin/especialidades/{id}/capacidades`.
+ */
 data class SpecialtyCapabilities(
     val permiteRafagas: Boolean,
     val permiteRazonados: Boolean,
     val permiteInmersivos: Boolean,
     val permiteDemos: Boolean,
     val permiteOposimarket: Boolean,
-)
+    /** Vacío en los usos de sólo lectura de acceso, donde la especialidad ya es contexto. */
+    val specialtyId: String = "",
+    /** Explicación mostrable cuando la especialidad tiene contenido limitado. */
+    val limitationMessage: String? = null,
+    /**
+     * `false` cuando la especialidad aún no tiene fila propia y esto son los
+     * valores por defecto. Distinto de "configurada con todo desactivado": el
+     * panel necesita poder avisar de que nadie ha decidido esto todavía.
+     */
+    val configured: Boolean = true,
+) {
+    /** Modos de examen habilitados, en vocabulario canónico rafaga/razonado/inmersivo. */
+    val enabledExamModes: List<String>
+        get() = buildList {
+            if (permiteRafagas) add("rafaga")
+            if (permiteRazonados) add("razonado")
+            if (permiteInmersivos) add("inmersivo")
+        }
+
+    /**
+     * `true` cuando el usuario final no tendría ningún examen que hacer. Demos y
+     * market no cuentan: habilitan otras superficies, no un tipo de examen.
+     */
+    val hasNoExamModes: Boolean get() = enabledExamModes.isEmpty()
+}
 
 object SpecialtyAccess {
     fun allows(capabilities: SpecialtyCapabilities, examType: ExamType): Boolean = when (examType) {
