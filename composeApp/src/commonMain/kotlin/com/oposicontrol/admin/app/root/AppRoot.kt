@@ -85,6 +85,7 @@ import com.oposicontrol.admin.features.communities.presentation.CommunitiesViewM
 import com.oposicontrol.admin.features.tags.presentation.TagsIntent
 import com.oposicontrol.admin.features.tags.presentation.TagsScreen
 import com.oposicontrol.admin.features.tags.presentation.TagsViewModel
+import com.oposicontrol.admin.features.store.presentation.CommercialCatalogScreen
 import com.oposicontrol.admin.features.store.presentation.StoreIntent
 import com.oposicontrol.admin.features.store.presentation.StoreScreen
 import com.oposicontrol.admin.features.store.presentation.StoreViewModel
@@ -112,6 +113,7 @@ internal enum class AppContentTarget {
     REPORTS_DETAIL,
     OPOSITESTER_LIST,
     OPOSITESTER_DETAIL,
+    COMMERCIAL_CATALOG,
     MOBILE_CONTENT_ROOT,
     LEGACY_SECTION,
     LEGACY_PLACEHOLDER,
@@ -140,6 +142,10 @@ internal fun resolveContentTarget(
     route is AppRoute.Reports.Detail -> AppContentTarget.REPORTS_DETAIL
     route is AppRoute.OposiTester.List -> AppContentTarget.OPOSITESTER_LIST
     route is AppRoute.OposiTester.Detail -> AppContentTarget.OPOSITESTER_DETAIL
+    // El catálogo comercial (planes, packs de OT y tarifas) es administración de
+    // escritorio: tablas y formularios densos, no una pantalla de móvil. En
+    // compacto se deja caer al adaptador legacy en vez de servir media pantalla.
+    route == AppRoute.Commercial.Catalog && !compactLayout -> AppContentTarget.COMMERCIAL_CATALOG
     compactLayout && route is AppRoute.Content -> AppContentTarget.MOBILE_CONTENT_ROOT
     hasLegacyRoute -> AppContentTarget.LEGACY_SECTION
     else -> AppContentTarget.LEGACY_PLACEHOLDER
@@ -325,6 +331,7 @@ fun AppRoot(
                         initialView = route.toMobileContentView(),
                         showNavigationChrome = false,
                     )
+                    AppContentTarget.COMMERCIAL_CATALOG -> CommercialCatalogScreen(viewModel = koinInject())
                     AppContentTarget.LEGACY_SECTION -> legacyRoute?.content()
                     AppContentTarget.LEGACY_PLACEHOLDER -> LegacyRouteAdapter(metadata.title, metadata.description)
                 }

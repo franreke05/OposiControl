@@ -100,4 +100,50 @@ class AppRootContentTargetTest {
             resolveContentTarget(AppRoute.System.Diagnostics, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
         )
     }
+
+    @Test
+    fun desktopReachesTheCommercialCatalog() {
+        assertEquals(
+            AppContentTarget.COMMERCIAL_CATALOG,
+            resolveContentTarget(
+                AppRoute.Commercial.Catalog,
+                compactLayout = false,
+                showTabPager = false,
+                // La ruta tiene mapeo legacy (AdminSection.STORE); el catálogo
+                // canónico debe ganarle, o el escritorio seguiría abriendo la
+                // pantalla de tienda antigua.
+                hasLegacyRoute = true,
+            ),
+        )
+    }
+
+    @Test
+    fun compactLayoutKeepsTheLegacyStoreInsteadOfTheDesktopCatalog() {
+        // El catálogo es una vista densa de escritorio (tabla + formulario). En
+        // compacto se prefiere lo que ya existía a servir media pantalla.
+        assertEquals(
+            AppContentTarget.LEGACY_SECTION,
+            resolveContentTarget(
+                AppRoute.Commercial.Catalog,
+                compactLayout = true,
+                showTabPager = false,
+                hasLegacyRoute = true,
+            ),
+        )
+    }
+
+    @Test
+    fun theTabPagerStillWinsOverTheCommercialCatalog() {
+        // La navegación principal de móvil no puede quedar secuestrada por una
+        // pantalla de escritorio.
+        assertEquals(
+            AppContentTarget.TAB_PAGER,
+            resolveContentTarget(
+                AppRoute.Commercial.Catalog,
+                compactLayout = false,
+                showTabPager = true,
+                hasLegacyRoute = true,
+            ),
+        )
+    }
 }

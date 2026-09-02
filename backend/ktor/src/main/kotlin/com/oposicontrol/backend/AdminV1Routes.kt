@@ -557,6 +557,27 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         get("/dashboard") {
             call.respond(gateway.getDashboardMetrics())
         }
+        // Catálogo comercial data-driven: planes, packs de OT y sus precios.
+        // Es lo que consume `/v1/comercial/catalogo` en OposiBot, así que editar
+        // aquí cambia la app sin desplegar nada.
+        route("/comercial") {
+            route("/productos") {
+                get { call.respond(AdminProductosComercialesResponse(gateway.listProductosComerciales())) }
+                post { call.respond(AdminProductoComercialResponse(gateway.upsertProductoComercial(call.receive()))) }
+                route("/{productoId}/tarifas") {
+                    get {
+                        call.respond(AdminTarifasProductoResponse(gateway.listTarifas(call.requiredPath("productoId"))))
+                    }
+                    post {
+                        call.respond(
+                            AdminTarifaProductoResponse(
+                                gateway.upsertTarifa(call.requiredPath("productoId"), call.receive()),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
         route("/tienda") {
             route("/articulos") {
                 get { call.respond(AdminArticulosTiendaResponse(gateway.listArticulosTienda())) }
@@ -588,6 +609,18 @@ data class AdminEspecialidadResponse(val data: AdminEspecialidadDto)
 
 @Serializable
 data class AdminEspecialidadCapacidadesResponse(val data: AdminEspecialidadCapacidadesDto)
+
+@Serializable
+data class AdminProductosComercialesResponse(val data: List<AdminProductoComercialDto>)
+
+@Serializable
+data class AdminProductoComercialResponse(val data: AdminProductoComercialDto)
+
+@Serializable
+data class AdminTarifasProductoResponse(val data: List<AdminTarifaProductoDto>)
+
+@Serializable
+data class AdminTarifaProductoResponse(val data: AdminTarifaProductoDto)
 
 @Serializable
 data class AdminExamenesResponse(val data: List<AdminExamenDto>)
@@ -3209,6 +3242,112 @@ class AdminV1Gateway private constructor(
             attemptsPerDay = emptyList(),
             unavailableMetrics = unavailable.toList(),
         )
+    }
+
+    // ---------- CATÁLOGO COMERCIAL (productos_comerciales + tarifas) ----------
+    // OposiBot ya lee este catálogo; esto es la mitad de escritura que faltaba,
+    // para que cambiar un precio o los OT de un pack no requiera tocar código.
+
+    fun listProductosComerciales(): List<AdminProductoComercialDto> {
+        val productos = request(
+            "GET",
+            "/rest/v1/productos_comerciales?select=*&order=posicion.asc,codigo.asc",
+            null,
+        ).decodeList<ProductoComercialRow>()
+        if (productos.isEmpty()) return emptyList()
+
+        // Una sola consulta para todas las tarifas en lugar de una por producto:
+        // el catálogo es pequeño pero N+1 sobre PostgREST se nota igual.
+        val tarifasPorProducto = request(
+            "GET",
+            "/rest/v1/tarifas_producto_comercial?select=*&order=posicion.asc",
+            null,
+        ).decodeList<TarifaProductoRow>()
+            .groupBy { it.productoId }
+
+        return productos.map { producto ->
+            producto.toDto(tarifasPorProducto[producto.id].orEmpty().map { it.toDto() })
+        }
+    }
+
+    fun upsertProductoComercial(input: AdminProductoComercialDto): AdminProductoComercialDto {
+        val valid = input.validated()
+        val id = valid.id.ifBlank { UUID.randomUUID().toString() }
+        val row = ProductoComercialRow(
+            id = id,
+            codigo = valid.codigo,
+            tipoProducto = valid.tipoProducto,
+            nombre = valid.nombre,
+            descripcion = valid.descripcion,
+            planId = valid.planId?.takeIf { it.isNotBlank() },
+            precioCentimos = valid.precioCentimos,
+            moneda = valid.moneda,
+            cantidadTickets = valid.cantidadTickets,
+            activo = valid.activo,
+            visible = valid.visible,
+            destacado = valid.destacado,
+            etiquetaPromocional = valid.etiquetaPromocional,
+            posicion = valid.posicion,
+        )
+        val saved = request(
+            "POST",
+            "/rest/v1/productos_comerciales",
+            sbJson.encodeToString(listOf(row)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<ProductoComercialRow>().firstOrNull()
+            ?: error("El producto comercial no se pudo guardar.")
+
+        registrarAuditoria("producto_comercial_guardado", "productos_comerciales", id)
+        return saved.toDto(tarifas = listTarifas(id))
+    }
+
+    fun listTarifas(productoId: String): List<AdminTarifaProductoDto> {
+        productoId.validatedUuid("productoId")
+        return request(
+            "GET",
+            "/rest/v1/tarifas_producto_comercial?select=*&producto_id=eq.$productoId&order=posicion.asc",
+            null,
+        ).decodeList<TarifaProductoRow>().map { it.toDto() }
+    }
+
+    fun upsertTarifa(productoId: String, input: AdminTarifaProductoDto): AdminTarifaProductoDto {
+        productoId.validatedUuid("productoId")
+        val valid = input.validated()
+        val id = valid.id.ifBlank { UUID.randomUUID().toString() }
+
+        // Comprobado contra las tarifas ya guardadas más ésta: dos activas para el
+        // mismo periodo y fase dejarían el precio indefinido para la app.
+        val resulting = listTarifas(productoId).filterNot { it.id == id } + valid.copy(id = id, productoId = productoId)
+        resulting.findAmbiguousTariff()?.let { clash ->
+            throw BackendDomainException(
+                "TARIFF_AMBIGUOUS",
+                HttpStatusCode.Conflict,
+                "Ya existe una tarifa activa y visible para ${clash.periodoFacturacion}/${clash.fasePrecio}. " +
+                    "Desactiva la anterior antes de crear otra, o el precio mostrado sería indeterminado.",
+            )
+        }
+
+        val row = TarifaProductoRow(
+            id = id,
+            productoId = productoId,
+            periodoFacturacion = valid.periodoFacturacion,
+            fasePrecio = valid.fasePrecio,
+            precioCentimos = valid.precioCentimos,
+            moneda = valid.moneda,
+            activo = valid.activo,
+            visible = valid.visible,
+            posicion = valid.posicion,
+        )
+        val saved = request(
+            "POST",
+            "/rest/v1/tarifas_producto_comercial",
+            sbJson.encodeToString(listOf(row)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<TarifaProductoRow>().firstOrNull()
+            ?: error("La tarifa no se pudo guardar.")
+
+        registrarAuditoria("tarifa_producto_guardada", "tarifas_producto_comercial", id)
+        return saved.toDto()
     }
 
     // ROLES (roles_app — catálogo, sin permisos granulares por ahora)

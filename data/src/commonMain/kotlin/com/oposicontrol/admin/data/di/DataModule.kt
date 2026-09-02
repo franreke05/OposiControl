@@ -38,12 +38,14 @@ import com.oposicontrol.admin.data.repository.KtorTagsRepositoryImpl
 import com.oposicontrol.admin.data.repository.RolesRepositoryImpl
 import com.oposicontrol.admin.data.repository.SettingsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorCommerceRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorCommercialCatalogRepositoryImpl
 import com.oposicontrol.admin.data.repository.UsersRepositoryImpl
 import com.oposicontrol.admin.data.storage.PlatformFileReader
 import com.oposicontrol.admin.domain.repository.AdminOperationsRepository
 import com.oposicontrol.admin.domain.repository.AuditRepository
 import com.oposicontrol.admin.domain.repository.AuthRepository
 import com.oposicontrol.admin.domain.repository.CommerceRepository
+import com.oposicontrol.admin.domain.repository.CommercialCatalogRepository
 import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
@@ -95,6 +97,17 @@ val dataModule = module {
 
     single<CommerceRepository> {
         KtorCommerceRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
+    // Catálogo comercial canónico (planes, packs de OT y tarifas). Distinto del
+    // modelo legacy de tienda de CommerceRepository: éste es el que lee OposiBot.
+    single<CommercialCatalogRepository> {
+        KtorCommercialCatalogRepositoryImpl(
             client = get(),
             appConfig = get(),
             sessionLocalDataSource = get(),
