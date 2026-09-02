@@ -482,6 +482,16 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         }
         route("/tickets") {
             get { call.respond(gateway.listTicketWallets()) }
+            // Resumen agregado de la economía de OT.
+            get("/resumen") { call.respond(AdminTicketsOverviewResponse(gateway.getTicketsOverview())) }
+            // Concesión administrativa. Pasa por el RPC atómico e idempotente;
+            // esta ruta nunca escribe un saldo por su cuenta.
+            post("/conceder") {
+                call.respond(
+                    HttpStatusCode.Created,
+                    AdminGrantTicketsResponse(gateway.grantTicketsAdmin(call.receive())),
+                )
+            }
             get("/{usuarioId}/transacciones") {
                 call.respond(gateway.listTicketTransactions(call.requiredPath("usuarioId")))
             }
@@ -3592,6 +3602,76 @@ class AdminV1Gateway private constructor(
 
         registrarAuditoria("tarifa_producto_guardada", "tarifas_producto_comercial", id)
         return saved.toDto()
+    }
+
+    // ---------- OPOSITICKETS (concesión administrativa + resumen) ----------
+
+    /**
+     * Concesión administrativa de OposiTickets.
+     *
+     * Delega íntegramente en `admin_grant_tickets`: aquí no se calcula ni se
+     * escribe ningún saldo. El RPC es atómico, idempotente y el único escritor
+     * de cartera y ledger.
+     */
+    fun grantTicketsAdmin(input: AdminGrantTicketsRequestDto): AdminGrantTicketsResultDto {
+        val valid = input.validated()
+        valid.usuarioId.validatedUuid("usuarioId")
+        // El motivo lleva la referencia embebida cuando existe: el ledger guarda
+        // descripción, no un campo de referencia libre, así que es la única forma
+        // de conservar el origen sin inventar columna.
+        val descripcion = valid.referencia
+            ?.let { "${valid.motivo} [ref: $it]" }
+            ?: valid.motivo
+        val saldo = grantTickets(
+            usuarioId = valid.usuarioId,
+            cantidad = valid.cantidad,
+            motivo = descripcion,
+            tipo = valid.tipo,
+            idempotencyKey = valid.idempotencyKey,
+        )
+        return AdminGrantTicketsResultDto(
+            usuarioId = valid.usuarioId,
+            cantidad = valid.cantidad,
+            saldoResultante = saldo,
+            tipo = valid.tipo,
+            idempotencyKey = valid.idempotencyKey.orEmpty(),
+        )
+    }
+
+    /**
+     * Resumen de la economía de OposiTickets.
+     *
+     * Sólo conteos exactos server-side. Los totales que exigen SUM (OT en
+     * circulación, emitidos, consumidos) no se calculan trayendo filas: se
+     * declaran no disponibles hasta que exista un agregado, porque sumarlos aquí
+     * daría un número recortado en silencio y con pinta de correcto.
+     */
+    fun getTicketsOverview(): AdminTicketsOverviewDto {
+        val unavailable = linkedSetOf(
+            AdminTicketsMetricKey.OT_EN_CIRCULACION,
+            AdminTicketsMetricKey.OT_EMITIDOS,
+            AdminTicketsMetricKey.OT_CONSUMIDOS,
+        )
+
+        fun count(key: String, path: String): Int? =
+            runCatching { exactCount(path) }.getOrElse {
+                unavailable += key
+                null
+            }
+
+        return AdminTicketsOverviewDto(
+            carteras = count(AdminTicketsMetricKey.CARTERAS, "/rest/v1/carteras_usuario?select=usuario_id"),
+            movimientos = count(AdminTicketsMetricKey.MOVIMIENTOS, "/rest/v1/transacciones_cartera?select=id"),
+            movimientosCredito = count(
+                AdminTicketsMetricKey.MOVIMIENTOS_CREDITO,
+                "/rest/v1/transacciones_cartera?select=id&cantidad=gt.0",
+            ),
+            movimientosDebito = count(
+                AdminTicketsMetricKey.MOVIMIENTOS_DEBITO,
+                "/rest/v1/transacciones_cartera?select=id&cantidad=lt.0",
+            ),
+            unavailableMetrics = unavailable.toList(),
+        )
     }
 
     // ---------- OPOSIMARKET (packs, servicios, promociones, reglas de pop-up) ----------
