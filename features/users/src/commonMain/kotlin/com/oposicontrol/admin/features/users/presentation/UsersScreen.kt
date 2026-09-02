@@ -185,6 +185,12 @@ fun UsersScreen(
                     FormFeedback(state.actionState, successText = "Operación completada.")
                 }
             }
+
+            // Ficha de solo lectura debajo del editor: rendimiento, liga, economía
+            // y comunidad. Sólo tiene sentido con un usuario ya seleccionado.
+            if (state.selectedUserId != null) {
+                UserDetailPanel(state)
+            }
         },
     )
 

@@ -1,0 +1,322 @@
+package com.oposicontrol.admin.features.users.presentation
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.oposicontrol.admin.core.ui.components.AdminTable
+import com.oposicontrol.admin.core.ui.components.AdminTableColumn
+import com.oposicontrol.admin.core.ui.components.AdminTableRow
+import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.StatusChip
+import com.oposicontrol.admin.domain.model.UserDetail
+import com.oposicontrol.admin.domain.model.UserDetailSection
+import kotlin.math.roundToInt
+
+/**
+ * Ficha de solo lectura del usuario seleccionado.
+ *
+ * Regla que gobierna toda la pantalla: **una sección ausente se dice, no se
+ * rellena**. La mayoría de estas tablas están aprovisionadas pero todavía vacías,
+ * así que lo habitual es que falten secciones; enseñar ceros haría creer que el
+ * usuario tiene racha 0 o nota 0 cuando en realidad no hay dato. Se distingue
+ * además "no existe la fila" (NO_DATA) de "no se pudo leer" (NO_DISPONIBLE).
+ */
+@Composable
+fun UserDetailPanel(state: UsersState) {
+    AsyncStatePane(
+        state.detail,
+        emptyMessage = "Selecciona un usuario para ver su ficha.",
+    ) { detail ->
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            UserProfileSection(detail)
+            UserPerformanceSection(detail)
+            UserCompetitiveSection(detail)
+            UserEconomySection(detail)
+            UserCommunitySection(detail)
+            UserWeaknessSection(detail)
+        }
+    }
+}
+
+@Composable
+private fun UserProfileSection(detail: UserDetail) {
+    FormSection(
+        title = "Perfil",
+        description = "Identidad y datos de onboarding.",
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Field("Usuario", detail.profile.displayName ?: detail.profile.username)
+            Field("ID", detail.profile.userId)
+            Field("Alta", detail.profile.createdAt)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                StatusChip(if (detail.profile.isGuest) "invitado" else "registrado")
+                StatusChip(if (detail.profile.onboardingCompleted) "onboarding-ok" else "onboarding-pendiente")
+            }
+
+            val extended = detail.extendedProfile
+            when {
+                detail.isUnavailable(UserDetailSection.EXTENDED_PROFILE) -> Unavailable()
+                extended == null -> NoData("El usuario aún no ha completado el perfil ampliado.")
+                else -> {
+                    Field("Nombre completo", extended.fullName)
+                    Field("Edad", extended.age?.toString())
+                    Field("Ciudad", extended.city)
+                    Field("Situación laboral", extended.employmentStatus)
+                    Field("Centro de trabajo", extended.workplace)
+                    Field(
+                        "Tiempo disponible",
+                        extended.availableStudyMinutes?.let { "$it min/día" },
+                    )
+                    Field("Franja preferente", extended.preferredStudySlot)
+                    Field("Examen objetivo", extended.targetExamDate)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UserPerformanceSection(detail: UserDetail) {
+    FormSection(title = "Rendimiento", description = "Actividad acumulada de estudio.") {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val performance = detail.performance
+            when {
+                detail.isUnavailable(UserDetailSection.PERFORMANCE) -> Unavailable()
+                performance == null -> NoData("Sin estadísticas registradas todavía.")
+                else -> {
+                    Field("Exámenes finalizados", performance.finishedExams.toString())
+                    Field("Preguntas respondidas", performance.answeredQuestions.toString())
+                    Field("Aciertos", performance.correctAnswers.toString())
+                    // No hay columna de falladas: se deriva de respondidas - correctas.
+                    Field("Fallos", performance.failedAnswers.toString())
+                    Field("Porcentaje de acierto", "${performance.successRate.roundToInt()}%")
+                    Field("Nivel", performance.level.toString())
+                }
+            }
+
+            val streak = detail.streak
+            when {
+                detail.isUnavailable(UserDetailSection.STREAK) -> Unavailable()
+                streak == null -> NoData("Sin racha registrada.")
+                else -> {
+                    Field("Racha actual", "${streak.currentDays} días")
+                    Field("Mejor racha", "${streak.bestDays} días")
+                    Field("Última actividad", streak.lastActivityDate)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UserCompetitiveSection(detail: UserDetail) {
+    FormSection(
+        title = "Liga y ranking",
+        description = "Nota media móvil, evolución y posición.",
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val competitive = detail.competitive
+            when {
+                detail.isUnavailable(UserDetailSection.COMPETITIVE) -> Unavailable()
+                competitive == null -> NoData(
+                    "El usuario todavía no compite: el estado competitivo se crea al alcanzar " +
+                        "el mínimo de preguntas de la primera liga.",
+                )
+                else -> {
+                    Field("Liga", competitive.leagueName ?: competitive.leagueCode)
+                    Field(
+                        "Ventana de cálculo",
+                        competitive.calculationWindow?.let { "últimas $it preguntas" },
+                    )
+                    Field("Preguntas válidas", competitive.rankingEligibleQuestions?.toString())
+                    Field("Nota media", competitive.currentAverage?.let { formatScore(it) })
+                    Field("Evolución", competitive.evolution?.let { formatSignedScore(it) })
+                    // Sin este contador no se sabe si la evolución es reciente o
+                    // lleva tiempo congelada esperando al siguiente bloque.
+                    Field(
+                        "Preguntas desde la última evolución",
+                        competitive.questionsSinceLastEvolution?.toString(),
+                    )
+                    Field("Posición en liga", competitive.leagueRank?.toString())
+                    Field("Posición global", competitive.globalRank?.toString())
+                    competitive.globalPercentile?.let { percentile ->
+                        Field("Percentil global", "${percentile.roundToInt()}%")
+                        // Etiquetado explícito: es una comparativa interna de la app,
+                        // no una probabilidad oficial de obtener plaza.
+                        Text(
+                            text = "Indicador comparativo interno frente a otros usuarios. " +
+                                "No es una probabilidad oficial de obtener plaza.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UserEconomySection(detail: UserDetail) {
+    FormSection(title = "Economía", description = "Saldo, plan y suscripciones.") {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            val economy = detail.economy
+            when {
+                detail.isUnavailable(UserDetailSection.ECONOMY) -> Unavailable()
+                economy == null -> NoData("Sin cartera ni estado premium registrados.")
+                else -> {
+                    Field("Saldo OposiTickets", economy.ticketBalance.toString())
+                    Field("Plan", economy.productCode ?: "gratuito")
+                    Field("Estado", economy.subscriptionStatus)
+                    Field("Proveedor", economy.provider)
+                    Field("Renovación", economy.renewsAt)
+                    Field("Fin", economy.endsAt)
+                }
+            }
+
+            if (detail.isUnavailable(UserDetailSection.SUBSCRIPTIONS)) {
+                Unavailable()
+            } else if (detail.subscriptions.isNotEmpty()) {
+                Text("Historial de suscripciones", style = MaterialTheme.typography.labelMedium)
+                AdminTable(
+                    columns = listOf(
+                        AdminTableColumn("Producto", 1.0f),
+                        AdminTableColumn("Estado", 0.7f),
+                        AdminTableColumn("Proveedor", 0.7f),
+                        AdminTableColumn("Inicio", 0.9f),
+                    ),
+                    rows = detail.subscriptions.map { subscription ->
+                        AdminTableRow(
+                            key = subscription.id,
+                            cells = listOf(
+                                subscription.productCode,
+                                subscription.status,
+                                subscription.provider,
+                                subscription.startedAt.orEmpty(),
+                            ),
+                        )
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun UserCommunitySection(detail: UserDetail) {
+    FormSection(title = "Comunidad", description = "Aportaciones como OposiTester.") {
+        val tester = detail.testerState
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            when {
+                detail.isUnavailable(UserDetailSection.TESTER) -> Unavailable()
+                tester == null -> NoData("El usuario aún no ha enviado reportes.")
+                else -> {
+                    Field("Reportes enviados", tester.reportsSubmitted.toString())
+                    Field("Reportes validados", tester.reportsValidated.toString())
+                    Field("OposiTickets ganados", tester.ticketsEarned.toString())
+                    Field("Nivel", tester.level)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UserWeaknessSection(detail: UserDetail) {
+    FormSection(
+        title = "Debilidades por etiqueta",
+        description = "Peor porcentaje de acierto primero.",
+    ) {
+        when {
+            detail.isUnavailable(UserDetailSection.WEAKNESSES) -> Unavailable()
+            detail.weaknesses.isEmpty() -> NoData("Sin práctica suficiente por etiqueta.")
+            else -> AdminTable(
+                columns = listOf(
+                    AdminTableColumn("Etiqueta", 1.2f),
+                    AdminTableColumn("Respondidas", 0.7f),
+                    AdminTableColumn("Fallos", 0.6f),
+                    AdminTableColumn("Acierto", 0.6f),
+                    AdminTableColumn("Dominio", 0.7f),
+                ),
+                rows = detail.weaknesses.map { weakness ->
+                    AdminTableRow(
+                        key = weakness.tagId,
+                        cells = listOf(
+                            weakness.tag,
+                            weakness.answered.toString(),
+                            weakness.failed.toString(),
+                            "${weakness.successRate.roundToInt()}%",
+                            weakness.masteryLevel.orEmpty(),
+                        ),
+                    )
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun Field(label: String, value: String?) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(190.dp),
+        )
+        Text(
+            // Un campo vacío se marca; no se deja en blanco, que se confunde con
+            // un valor legítimamente vacío.
+            text = value?.takeIf { it.isNotBlank() } ?: NO_DATA_TEXT,
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = if (value.isNullOrBlank()) FontWeight.Normal else FontWeight.Medium,
+        )
+    }
+}
+
+@Composable
+private fun NoData(reason: String) {
+    Text(
+        text = "$NO_DATA_TEXT — $reason",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun Unavailable() {
+    Text(
+        text = "$NOT_AVAILABLE_TEXT — no se pudo leer esta sección.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+    )
+}
+
+private const val NO_DATA_TEXT = "NO_DATA"
+private const val NOT_AVAILABLE_TEXT = "NO_DISPONIBLE"
+
+/** Nota sobre 10 con un decimal, como se presenta al usuario final. */
+internal fun formatScore(score: Double): String {
+    val tenths = (score * 10).roundToInt()
+    return "${tenths / 10},${tenths % 10}"
+}
+
+/** Evolución con signo explícito: "+0,8" se lee distinto que "0,8". */
+internal fun formatSignedScore(delta: Double): String {
+    val tenths = (delta * 10).roundToInt()
+    val sign = if (tenths >= 0) "+" else "-"
+    val absolute = if (tenths < 0) -tenths else tenths
+    return "$sign${absolute / 10},${absolute % 10}"
+}

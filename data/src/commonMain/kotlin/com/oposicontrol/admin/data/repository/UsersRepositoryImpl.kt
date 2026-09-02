@@ -3,6 +3,7 @@ package com.oposicontrol.admin.data.repository
 import com.oposicontrol.admin.data.remote.source.UsersDataSource
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.User
+import com.oposicontrol.admin.domain.model.UserDetail
 import com.oposicontrol.admin.domain.repository.UsersRepository
 import kotlinx.coroutines.flow.Flow
 
@@ -16,4 +17,6 @@ class UsersRepositoryImpl(
     override suspend fun upsertUser(user: User): AppResult<User> = remote.upsertUser(user)
 
     override suspend fun deleteUser(userId: String): AppResult<Unit> = remote.deleteUser(userId)
+
+    override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = remote.getUserDetail(userId)
 }

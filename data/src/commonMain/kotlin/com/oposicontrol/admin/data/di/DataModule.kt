@@ -12,6 +12,7 @@ import com.oposicontrol.admin.data.remote.api.AuditApi
 import com.oposicontrol.admin.data.remote.api.AuthApi
 import com.oposicontrol.admin.data.remote.api.DashboardApi
 import com.oposicontrol.admin.data.remote.api.RolesApi
+import com.oposicontrol.admin.data.remote.api.UserDetailApi
 import com.oposicontrol.admin.data.remote.api.UsersApi
 import com.oposicontrol.admin.data.remote.source.AuditDataSource
 import com.oposicontrol.admin.data.remote.source.AuthDataSource
@@ -77,9 +78,10 @@ val dataModule = module {
     single { UsersApi(get(), get(), get()) }
     single { RolesApi(get(), get(), get()) }
     single { AuditApi(get(), get(), get()) }
+    single { UserDetailApi(get(), get(), get()) }
 
     single<AuthDataSource> { RealAuthDataSource(get(), get()) }
-    single<UsersDataSource> { RealUsersDataSource(get(), get()) }
+    single<UsersDataSource> { RealUsersDataSource(get(), get(), get()) }
     single<RolesDataSource> { RealRolesDataSource(get(), get()) }
     single<AuditDataSource> { RealAuditDataSource(get(), get()) }
 

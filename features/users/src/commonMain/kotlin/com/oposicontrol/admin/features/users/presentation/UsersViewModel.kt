@@ -88,6 +88,7 @@ class UsersViewModel(
 
     private fun selectUser(userId: String) {
         val user = (currentState().users as? UiAsync.Success)?.value?.firstOrNull { it.id == userId } ?: return
+        val alreadySelected = currentState().selectedUserId == user.id
         updateState {
             it.copy(
                 selectedUserId = user.id,
@@ -97,6 +98,20 @@ class UsersViewModel(
                 editorIsActive = user.isActive,
                 actionState = UiAsync.Idle,
             )
+        }
+        // La ficha se carga aparte del formulario de edición: es sólo lectura,
+        // tiene su propio estado de carga y su propio error, y no debe impedir
+        // editar nombre/roles si alguna de sus secciones falla.
+        if (!alreadySelected) {
+            scope.launch { loadUserDetail(user.id) }
+        }
+    }
+
+    private suspend fun loadUserDetail(userId: String) {
+        updateState { it.copy(detail = UiAsync.Loading) }
+        when (val result = usersRepository.getUserDetail(userId)) {
+            is AppResult.Failure -> updateState { it.copy(detail = UiAsync.Error(result.error)) }
+            is AppResult.Success -> updateState { it.copy(detail = UiAsync.Success(result.value)) }
         }
     }
 

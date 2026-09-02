@@ -442,6 +442,13 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
                 call.respond(AdminUserResponse(user))
             }
+            // Ficha completa: perfil, rendimiento, estado competitivo, racha,
+            // economía, suscripciones, OposiTester y debilidades por etiqueta.
+            get("/{id}/detalle") {
+                val detail = gateway.getUsuarioDetalle(call.requiredPath("id"))
+                    ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
+                call.respond(AdminUserDetailResponse(detail))
+            }
             patch("/{id}") {
                 val saved = gateway.updateUsuario(call.requiredPath("id"), call.receive())
                 call.respond(AdminUserResponse(saved))
@@ -616,6 +623,9 @@ data class AdminEspecialidadResponse(val data: AdminEspecialidadDto)
 
 @Serializable
 data class AdminEspecialidadCapacidadesResponse(val data: AdminEspecialidadCapacidadesDto)
+
+@Serializable
+data class AdminUserDetailResponse(val data: AdminUserDetailDto)
 
 @Serializable
 data class AdminProductosComercialesResponse(val data: List<AdminProductoComercialDto>)
@@ -1466,6 +1476,28 @@ private data class CategoriaOposiredRow(val id: String, val nombre: String? = nu
 private data class CarteraRow(
     @SerialName("usuario_id") val usuarioId: String = "",
     @SerialName("saldo_tickets") val saldoTickets: Int = 0,
+)
+
+/** Nivel de liga (`ligas_nivel`): la ventana de cálculo y el mínimo de preguntas son configuración. */
+@Serializable
+internal data class LigaNivelRow(
+    val id: String = "",
+    val codigo: String = "",
+    val nombre: String = "",
+    @SerialName("preguntas_minimas") val preguntasMinimas: Int = 0,
+    @SerialName("ventana_calculo") val ventanaCalculo: Int = 0,
+    val activa: Boolean = true,
+    val posicion: Int = 0,
+)
+
+@Serializable
+private data class EstadoPremiumRow(
+    @SerialName("es_premium") val esPremium: Boolean = false,
+    @SerialName("estado_suscripcion") val estadoSuscripcion: String? = null,
+    @SerialName("producto_codigo") val productoCodigo: String? = null,
+    val proveedor: String? = null,
+    @SerialName("renovacion_en") val renovacionEn: String? = null,
+    @SerialName("fin_en") val finEn: String? = null,
 )
 
 @Serializable
@@ -3283,6 +3315,144 @@ class AdminV1Gateway private constructor(
             globalErrorRate = globalErrorRate ?: 0.0,
             attemptsPerDay = emptyList(),
             unavailableMetrics = unavailable.toList(),
+        )
+    }
+
+    /**
+     * Ficha completa de un usuario.
+     *
+     * Se compone en el backend porque la pantalla de detalle necesita siempre
+     * todas las secciones; hacerlo aquí evita ocho round-trips desde el cliente.
+     * Todas las consultas van acotadas a un único `usuario_id`, así que el coste
+     * no crece con el tamaño de las tablas.
+     *
+     * Cada sección se lee por separado y de forma tolerante: si una tabla no está
+     * aprovisionada, esa sección se marca como no disponible y el resto de la
+     * ficha se sirve igualmente. Una ficha parcial es útil; un 500 no.
+     */
+    fun getUsuarioDetalle(usuarioId: String): AdminUserDetailDto? {
+        usuarioId.validatedUuid("usuarioId")
+        val perfil = request(
+            "GET",
+            "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$usuarioId&limit=1",
+            null,
+        ).decodeList<AdminUserProfileDto>().firstOrNull() ?: return null
+
+        val unavailable = linkedSetOf<String>()
+
+        /** Lee una sección; si falla, la marca y devuelve null en vez de tumbar la ficha. */
+        fun <T> section(key: String, read: () -> T?): T? =
+            runCatching(read).getOrElse {
+                unavailable += key
+                null
+            }
+
+        val detalle = section(AdminUserDetailSection.DETALLE) {
+            request(
+                "GET",
+                "/rest/v1/perfiles_usuario_detalle?select=*&usuario_id=eq.$usuarioId&limit=1",
+                null,
+            ).decodeList<AdminUserProfileDetailDto>().firstOrNull()
+        }
+
+        val rendimiento = section(AdminUserDetailSection.RENDIMIENTO) {
+            request(
+                "GET",
+                "/rest/v1/estadisticas_usuario?select=*&usuario_id=eq.$usuarioId&limit=1",
+                null,
+            ).decodeList<AdminUserPerformanceDto>().firstOrNull()
+        }
+
+        val competitivo = section(AdminUserDetailSection.COMPETITIVO) {
+            val row = request(
+                "GET",
+                "/rest/v1/estado_competitivo_usuario?select=*&usuario_id=eq.$usuarioId&limit=1",
+                null,
+            ).decodeList<AdminUserCompetitiveDto>().firstOrNull()
+            // El nivel de liga se resuelve aparte: la fila competitiva sólo guarda
+            // el id, y el panel necesita el nombre para que signifique algo.
+            row?.ligaNivelId?.let { nivelId ->
+                val nivel = request(
+                    "GET",
+                    "/rest/v1/ligas_nivel?select=codigo,nombre&id=eq.$nivelId&limit=1",
+                    null,
+                ).decodeList<LigaNivelRow>().firstOrNull()
+                row.copy(ligaCodigo = nivel?.codigo, ligaNombre = nivel?.nombre)
+            } ?: row
+        }
+
+        val racha = section(AdminUserDetailSection.RACHA) {
+            request(
+                "GET",
+                "/rest/v1/rachas_usuario?select=*&usuario_id=eq.$usuarioId&limit=1",
+                null,
+            ).decodeList<AdminUserStreakDto>().firstOrNull()
+        }
+
+        val economia = section(AdminUserDetailSection.ECONOMIA) {
+            val cartera = request(
+                "GET",
+                "/rest/v1/carteras_usuario?select=*&usuario_id=eq.$usuarioId&limit=1",
+                null,
+            ).decodeList<CarteraRow>().firstOrNull()
+            val premium = request(
+                "GET",
+                "/rest/v1/estado_premium_usuario?select=*&usuario_id=eq.$usuarioId&limit=1",
+                null,
+            ).decodeList<EstadoPremiumRow>().firstOrNull()
+            if (cartera == null && premium == null) {
+                null
+            } else {
+                AdminUserEconomyDto(
+                    saldoTickets = cartera?.saldoTickets ?: 0,
+                    esPremium = premium?.esPremium ?: false,
+                    estadoSuscripcion = premium?.estadoSuscripcion,
+                    productoCodigo = premium?.productoCodigo,
+                    proveedor = premium?.proveedor,
+                    renovacionEn = premium?.renovacionEn,
+                    finEn = premium?.finEn,
+                )
+            }
+        }
+
+        val suscripciones = section(AdminUserDetailSection.SUSCRIPCIONES) {
+            request(
+                "GET",
+                "/rest/v1/suscripciones?select=*&usuario_id=eq.$usuarioId&order=inicio_en.desc&limit=20",
+                null,
+            ).decodeList<AdminUserSubscriptionDto>()
+        }.orEmpty()
+
+        val opositester = section(AdminUserDetailSection.OPOSITESTER) {
+            request(
+                "GET",
+                "/rest/v1/estado_opositester_usuario?select=*&usuario_id=eq.$usuarioId&limit=1",
+                null,
+            ).decodeList<AdminUserTesterStateDto>().firstOrNull()
+        }
+
+        val debilidades = section(AdminUserDetailSection.DEBILIDADES) {
+            // Peor porcentaje primero: la vista existe justo para esto, y el orden
+            // hace que el recorte deje lo accionable arriba.
+            request(
+                "GET",
+                "/rest/v1/v_usuario_debilidades_etiqueta?select=*&usuario_id=eq.$usuarioId" +
+                    "&order=porcentaje_acierto.asc&limit=$ADMIN_USER_WEAKNESSES_LIMIT",
+                null,
+            ).decodeList<AdminUserWeaknessDto>()
+        }.orEmpty()
+
+        return AdminUserDetailDto(
+            perfil = perfil,
+            detalle = detalle,
+            rendimiento = rendimiento,
+            competitivo = competitivo,
+            racha = racha,
+            economia = economia,
+            suscripciones = suscripciones,
+            opositester = opositester,
+            debilidades = debilidades,
+            seccionesNoDisponibles = unavailable.toList(),
         )
     }
 
