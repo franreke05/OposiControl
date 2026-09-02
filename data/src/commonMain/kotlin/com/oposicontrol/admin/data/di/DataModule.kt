@@ -41,6 +41,7 @@ import com.oposicontrol.admin.data.repository.SettingsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorCommerceRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorCommercialCatalogRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorMarketCatalogRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorProductAnalyticsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorRankingsRepositoryImpl
 import com.oposicontrol.admin.data.repository.UsersRepositoryImpl
 import com.oposicontrol.admin.data.storage.PlatformFileReader
@@ -50,6 +51,7 @@ import com.oposicontrol.admin.domain.repository.AuthRepository
 import com.oposicontrol.admin.domain.repository.CommerceRepository
 import com.oposicontrol.admin.domain.repository.CommercialCatalogRepository
 import com.oposicontrol.admin.domain.repository.MarketCatalogRepository
+import com.oposicontrol.admin.domain.repository.ProductAnalyticsRepository
 import com.oposicontrol.admin.domain.repository.RankingsRepository
 import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
@@ -103,6 +105,16 @@ val dataModule = module {
 
     single<CommerceRepository> {
         KtorCommerceRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
+    // Analitica de producto. Solo lectura y agregada en Ktor.
+    single<ProductAnalyticsRepository> {
+        KtorProductAnalyticsRepositoryImpl(
             client = get(),
             appConfig = get(),
             sessionLocalDataSource = get(),

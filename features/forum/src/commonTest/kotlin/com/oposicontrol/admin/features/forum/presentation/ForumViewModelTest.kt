@@ -58,7 +58,12 @@ private class FakeModerationRepository(
     override suspend fun listReports(includeResolved: Boolean): AppResult<List<ForumReport>> = AppResult.Success(emptyList())
     override suspend fun getReport(reportId: String): AppResult<ForumReportDetail> = error("not used by ForumViewModel")
     override suspend fun resolveReport(reportId: String, action: String, notes: String?, ticketsReporter: Int): AppResult<Unit> = error("not used by ForumViewModel")
-    override suspend fun grantTickets(userId: String, amount: Int, reason: String): AppResult<Int> = error("not used by ForumViewModel")
+    override suspend fun grantTickets(
+        userId: String,
+        amount: Int,
+        reason: String,
+        idempotencyKey: String,
+    ): AppResult<Int> = error("not used by ForumViewModel")
     override suspend fun warnUser(userId: String, message: String): AppResult<Unit> = error("not used by ForumViewModel")
 }
 

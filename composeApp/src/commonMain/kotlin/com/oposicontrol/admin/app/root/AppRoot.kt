@@ -86,6 +86,7 @@ import com.oposicontrol.admin.features.tags.presentation.TagsIntent
 import com.oposicontrol.admin.features.tags.presentation.TagsScreen
 import com.oposicontrol.admin.features.tags.presentation.TagsViewModel
 import com.oposicontrol.admin.features.store.presentation.CommercialCatalogScreen
+import com.oposicontrol.admin.features.analytics.presentation.ProductAnalyticsScreen
 import com.oposicontrol.admin.features.rankings.presentation.RankingsScreen
 import com.oposicontrol.admin.features.store.presentation.MarketScreen
 import com.oposicontrol.admin.features.store.presentation.MarketViewModel
@@ -119,6 +120,7 @@ internal enum class AppContentTarget {
     COMMERCIAL_CATALOG,
     MARKET,
     RANKINGS,
+    PRODUCT_ANALYTICS,
     MOBILE_CONTENT_ROOT,
     LEGACY_SECTION,
     LEGACY_PLACEHOLDER,
@@ -156,6 +158,8 @@ internal fun resolveContentTarget(
     route == AppRoute.Commercial.Market && !compactLayout -> AppContentTarget.MARKET
     // Rankings es una tabla densa con paginacion: escritorio.
     route == AppRoute.Rankings && !compactLayout -> AppContentTarget.RANKINGS
+    // Analitica de producto: secciones con tablas densas, escritorio.
+    route == AppRoute.Analytics.Home && !compactLayout -> AppContentTarget.PRODUCT_ANALYTICS
     compactLayout && route is AppRoute.Content -> AppContentTarget.MOBILE_CONTENT_ROOT
     hasLegacyRoute -> AppContentTarget.LEGACY_SECTION
     else -> AppContentTarget.LEGACY_PLACEHOLDER
@@ -344,6 +348,7 @@ fun AppRoot(
                     AppContentTarget.COMMERCIAL_CATALOG -> CommercialCatalogScreen(viewModel = koinInject())
                     AppContentTarget.MARKET -> MarketScreen(viewModel = koinInject())
                     AppContentTarget.RANKINGS -> RankingsScreen(viewModel = koinInject())
+                    AppContentTarget.PRODUCT_ANALYTICS -> ProductAnalyticsScreen(viewModel = koinInject())
                     AppContentTarget.LEGACY_SECTION -> legacyRoute?.content()
                     AppContentTarget.LEGACY_PLACEHOLDER -> LegacyRouteAdapter(metadata.title, metadata.description)
                 }

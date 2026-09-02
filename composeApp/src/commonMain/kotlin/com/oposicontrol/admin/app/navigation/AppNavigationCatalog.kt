@@ -211,7 +211,9 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     is AppRoute.Reports, is AppRoute.OposiTester -> null
     AppRoute.Support.Inbox -> AdminSection.SUPPORT
     AppRoute.Moderation.Queue -> AdminSection.MODERATION
-    AppRoute.Analytics.Home, AppRoute.Analytics.Events, AppRoute.Analytics.Performance -> AdminSection.DASHBOARD
+    // Analitica de producto tiene pantalla propia de escritorio; no cae al legacy.
+    AppRoute.Analytics.Home -> null
+    AppRoute.Analytics.Events, AppRoute.Analytics.Performance -> AdminSection.DASHBOARD
     AppRoute.System.Roles -> AdminSection.ROLES
     AppRoute.System.Audit -> AdminSection.AUDIT
     AppRoute.System.Settings -> AdminSection.SETTINGS

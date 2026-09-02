@@ -82,6 +82,8 @@ fun Application.module() {
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir busqueda desde Ktor.")
     val adminGateway = SupabaseAdminGateway.fromEnvironment(json)
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir admin desde Ktor.")
+    val adminAnalyticsGateway = AdminAnalyticsGateway.fromEnvironment(json)
+        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir analitica desde Ktor.")
     val adminRankingsGateway = AdminRankingsGateway.fromEnvironment(json)
         ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir rankings desde Ktor.")
     val v1Gateway = SupabaseV1Gateway.fromEnvironment(json)
@@ -268,6 +270,7 @@ fun Application.module() {
             adminRoutes(adminGateway)
             adminV1Routes(adminV1Gateway)
             adminRankingsRoutes(adminRankingsGateway)
+            adminAnalyticsRoutes(adminAnalyticsGateway)
             oposiBotsUserAdminRoutes(oposiBotsUserAdminGateway)
             post("/admin/backend/restart") {
                 val restart = BackendRestartRequest.fromEnvironment()

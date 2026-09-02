@@ -49,7 +49,12 @@ private class FakeModerationRepository(
         return resolveResult
     }
 
-    override suspend fun grantTickets(userId: String, amount: Int, reason: String): AppResult<Int> = AppResult.Success(0)
+    override suspend fun grantTickets(
+        userId: String,
+        amount: Int,
+        reason: String,
+        idempotencyKey: String,
+    ): AppResult<Int> = AppResult.Success(0)
     override suspend fun warnUser(userId: String, message: String): AppResult<Unit> = AppResult.Success(Unit)
 }
 
