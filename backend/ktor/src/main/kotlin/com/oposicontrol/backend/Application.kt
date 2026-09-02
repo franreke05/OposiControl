@@ -192,7 +192,11 @@ fun Application.module() {
                 )
                 val staticTokenAccepted = expected.isNotBlank() &&
                     (credentials.token == expected || (allowDevToken && credentials.token == "dev-local"))
-                if (staticTokenAccepted) return@authenticate UserIdPrincipal("oposicontrol-admin")
+
+                // Este bloque sólo establece identidad. La autorización (confinar el
+                // token estático y exigir rol admin) se aplica en AdminAuthorizationPlugin,
+                // que corre en el hook AuthenticationChecked y puede distinguir 401 de 403.
+                if (staticTokenAccepted) return@authenticate UserIdPrincipal(STATIC_TOKEN_PRINCIPAL)
 
                 runCatching { jwtVerifier.subFrom(credentials.token) }
                     .getOrNull()
@@ -219,18 +223,15 @@ fun Application.module() {
         appV1Routes(appV1Gateway, jwtVerifier, allowDevUser)
         authRuntime?.let(::oposiBotsAuthRoutes)
         authenticate("gateway-auth") {
-            intercept(ApplicationCallPipeline.Plugins) {
-                if (
-                    call.principal<UserIdPrincipal>()?.name == "oposicontrol-admin" &&
-                    (!isLocalDevelopmentPeer(appEnv, call.request.origin.remoteHost) ||
-                        !isLegacyStaticTokenPath(call.request.path()))
-                ) {
-                    throw AppUnauthorized("El token estatico solo esta permitido en superficies legacy locales de desarrollo.")
-                }
-                val principal = call.principal<UserIdPrincipal>()
-                if (principal != null && principal.name != "oposicontrol-admin" && !appV1Gateway.hasAdminRole(principal.name)) {
-                    throw AppForbidden("No tienes permisos para acceder al panel de administración.")
-                }
+            // Confina el token estático a superficies legacy locales y exige rol
+            // admin a cualquier JWT. Sustituye a un intercept en fase Plugins que
+            // nunca llegaba a rechazar nada (ver AdminAuthorizationPlugin).
+            val environmentName = appEnv
+            install(AdminAuthorizationPlugin) {
+                // `this.` explícito: sin él, `appEnv` resuelve al val externo del
+                // módulo en vez de a la propiedad de configuración del plugin.
+                this.appEnv = environmentName
+                this.hasAdminRole = { appV1Gateway.hasAdminRole(it) }
             }
             adminRoutes(adminGateway)
             adminV1Routes(adminV1Gateway)

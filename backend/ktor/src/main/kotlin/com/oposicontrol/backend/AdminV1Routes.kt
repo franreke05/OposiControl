@@ -428,7 +428,14 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         }
         route("/usuarios") {
             get {
-                call.respond(AdminUsersResponse(gateway.listUsuarios()))
+                // `limit`/`offset` opcionales: sin ellos se sirve la primera página
+                // con el tamaño por defecto, así que los consumidores anteriores
+                // siguen funcionando sin cambios.
+                val page = gateway.listUsuarios(
+                    limit = call.request.queryParameters["limit"]?.toIntOrNull(),
+                    offset = call.request.queryParameters["offset"]?.toIntOrNull(),
+                )
+                call.respond(page)
             }
             get("/{id}") {
                 val user = gateway.getUsuario(call.requiredPath("id"))
@@ -1305,7 +1312,6 @@ data class AdminV1RoleDto(
 @Serializable
 data class AdminV1PermissionDto(val key: String, val label: String)
 
-@Serializable data class AdminUsersResponse(val data: List<AdminV1UserDto>)
 @Serializable data class AdminUserResponse(val data: AdminV1UserDto)
 @Serializable data class AdminRolesV1Response(val data: List<AdminV1RoleDto>)
 @Serializable data class OkDto(val ok: Boolean = true)
@@ -2424,25 +2430,61 @@ class AdminV1Gateway private constructor(
     }
 
     // USUARIOS (perfiles_usuario + roles_usuario)
-    fun listUsuarios(): List<AdminV1UserDto> {
-        val perfiles = request("GET", "/rest/v1/perfiles_usuario?select=*&order=creado_en.desc&limit=200", null)
-            .decodeList<PerfilUsuarioRow>()
-        val rolAsignaciones = request("GET", "/rest/v1/roles_usuario?select=*", null)
-            .decodeList<RolUsuarioRow>()
-        val rolesByUser = rolAsignaciones.groupBy({ it.usuarioId }, { it.rolId })
-        val balanceByUser = request("GET", "/rest/v1/carteras_usuario?select=usuario_id,saldo_tickets", null)
-            .decodeList<CarteraRow>().associate { it.usuarioId to it.saldoTickets }
-        return perfiles.map { p ->
-            AdminV1UserDto(
-                id = p.usuarioId,
-                fullName = p.nombreMostrar.orEmpty(),
-                email = p.username.orEmpty(),
-                roleIds = rolesByUser[p.usuarioId].orEmpty(),
-                isActive = !p.esInvitado,
-                createdAt = p.creadoEn.orEmpty(),
-                ticketsBalance = balanceByUser[p.usuarioId] ?: 0,
-            )
+    /**
+     * Página de usuarios.
+     *
+     * Antes traía `limit=200` fijo y, para enriquecerlos, pedía **todas** las
+     * filas de `roles_usuario` y `carteras_usuario` sin filtro: con cien mil
+     * usuarios, mostrar los primeros veinte descargaba doscientas mil filas. Ahora
+     * el enriquecimiento se limita a los ids de la página con `in.(...)`, así que
+     * el coste depende del tamaño de página y no del tamaño de la tabla.
+     *
+     * El total se pide aparte con un conteo exacto para que la UI pueda paginar
+     * de verdad en lugar de adivinar si hay más.
+     */
+    fun listUsuarios(limit: Int?, offset: Int?): AdminUsersPage {
+        val page = AdminPageRequest.of(limit, offset)
+        val perfiles = request(
+            "GET",
+            "/rest/v1/perfiles_usuario?select=*&order=creado_en.desc" +
+                "&limit=${page.limit}&offset=${page.offset}",
+            null,
+        ).decodeList<PerfilUsuarioRow>()
+
+        val total = runCatching { exactCount("/rest/v1/perfiles_usuario?select=usuario_id") }.getOrNull()
+
+        if (perfiles.isEmpty()) {
+            return AdminUsersPage(data = emptyList(), total = total, limit = page.limit, offset = page.offset)
         }
+
+        // Sólo los usuarios de esta página: el filtro es lo que evita el escaneo
+        // completo de las tablas de roles y carteras.
+        val ids = perfiles.joinToString(",") { it.usuarioId }
+        val rolesByUser = request("GET", "/rest/v1/roles_usuario?select=*&usuario_id=in.($ids)", null)
+            .decodeList<RolUsuarioRow>()
+            .groupBy({ it.usuarioId }, { it.rolId })
+        val balanceByUser = request(
+            "GET",
+            "/rest/v1/carteras_usuario?select=usuario_id,saldo_tickets&usuario_id=in.($ids)",
+            null,
+        ).decodeList<CarteraRow>().associate { it.usuarioId to it.saldoTickets }
+
+        return AdminUsersPage(
+            data = perfiles.map { p ->
+                AdminV1UserDto(
+                    id = p.usuarioId,
+                    fullName = p.nombreMostrar.orEmpty(),
+                    email = p.username.orEmpty(),
+                    roleIds = rolesByUser[p.usuarioId].orEmpty(),
+                    isActive = !p.esInvitado,
+                    createdAt = p.creadoEn.orEmpty(),
+                    ticketsBalance = balanceByUser[p.usuarioId] ?: 0,
+                )
+            },
+            total = total,
+            limit = page.limit,
+            offset = page.offset,
+        )
     }
 
     fun getUsuario(usuarioId: String): AdminV1UserDto? {
