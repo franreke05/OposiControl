@@ -1,15 +1,26 @@
 package com.oposicontrol.admin.app.navigation
 
+/**
+ * Agrupación del menú.
+ *
+ * La estructura sigue cómo se administra el producto, no cómo está organizado el
+ * código: quien ajusta precios entra en Economía y encuentra planes, tickets,
+ * packs y Market juntos, en vez de repartidos entre "Comercial" y "Tienda".
+ *
+ * `REPORTS` y `OPOSITESTER` ya no son grupos propios de escritorio: son trabajo
+ * de comunidad y viven dentro de `COMMUNITY`. Siguen siendo destinos de primer
+ * nivel en móvil, donde sí son la tarea principal — ver [mobilePrimaryNavigation],
+ * que los selecciona por ruta y no por grupo justamente para que reorganizar el
+ * escritorio no toque la barra inferior del móvil.
+ */
 enum class NavigationGroupId {
     HOME,
-    REPORTS,
     CONTENT,
-    PUBLICATION,
     USERS,
-    COMMERCIAL,
-    COMMUNITY_SUPPORT,
+    ECONOMY,
+    COMMUNITY,
     ANALYTICS,
-    OPOSITESTER,
+    OPERATIONS,
     SYSTEM,
 }
 
@@ -55,89 +66,68 @@ private fun item(
 val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
     AppRouteMenuGroup(
         NavigationGroupId.HOME,
-        "Inicio",
-        listOf(item(AppRoute.Home, "home", "Inicio", "Resumen operativo del panel.", NavigationGroupId.HOME, "home")),
-    ),
-    AppRouteMenuGroup(
-        NavigationGroupId.REPORTS,
-        "Informes",
-        listOf(
-            item(
-                AppRoute.Reports.List,
-                "reports",
-                "Informes",
-                "Informes operativos y de moderacion.",
-                NavigationGroupId.REPORTS,
-                "reports",
-            ),
-        ),
+        "Dashboard",
+        listOf(item(AppRoute.Home, "home", "Dashboard", "Resumen operativo del panel.", NavigationGroupId.HOME, "home")),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.CONTENT,
         "Contenido",
         listOf(
+            item(AppRoute.Content.Taxonomy, "content.taxonomy", "Especialidades", "Especialidades, comunidades, etiquetas y modos disponibles.", NavigationGroupId.CONTENT, "⌘"),
             item(AppRoute.Content.Exams, "content.exams", "Examenes", "Catalogo, preguntas y publicacion de examenes.", NavigationGroupId.CONTENT, "▣"),
             item(AppRoute.Content.Questions, "content.questions", "Preguntas", "Revision y edicion de preguntas.", NavigationGroupId.CONTENT, "?"),
-            item(AppRoute.Content.Resources, "content.resources", "Recursos", "Recursos asociados al contenido.", NavigationGroupId.CONTENT, "◇"),
-            item(AppRoute.Content.Imports, "content.imports", "Importaciones", "Entradas y revisiones de importacion.", NavigationGroupId.CONTENT, "⇧"),
-            item(AppRoute.Content.Taxonomy, "content.taxonomy", "Taxonomia", "Especialidades, comunidades y etiquetas.", NavigationGroupId.CONTENT, "⌘"),
-        ),
-    ),
-    AppRouteMenuGroup(
-        NavigationGroupId.PUBLICATION,
-        "Publicacion",
-        listOf(
-            item(AppRoute.Publication.News, "publication.news", "Noticias", "Comunicacion y contenidos editoriales.", NavigationGroupId.PUBLICATION, "✦"),
-            item(AppRoute.Publication.NewsTypes, "publication.news-types", "Tipos de noticia", "Catalogo editorial.", NavigationGroupId.PUBLICATION, "≡"),
-            item(AppRoute.Publication.Assets, "publication.assets", "Assets", "Recursos visuales de publicacion.", NavigationGroupId.PUBLICATION, "▧"),
+            item(AppRoute.Content.Resources, "content.resources", "Recursos", "Recursos asociados al contenido inmersivo.", NavigationGroupId.CONTENT, "◇"),
+            item(AppRoute.Content.Imports, "content.imports", "Importacion", "Subida de PDF, revision y publicacion.", NavigationGroupId.CONTENT, "⇧"),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.USERS,
         "Usuarios",
-        listOf(item(AppRoute.Users.List, "users", "Usuarios", "Identidad, acceso y soporte de usuarios.", NavigationGroupId.USERS, "◎")),
-    ),
-    AppRouteMenuGroup(
-        NavigationGroupId.COMMERCIAL,
-        "Comercial",
         listOf(
-            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catalogo", "Productos y ofertas.", NavigationGroupId.COMMERCIAL, "◇"),
-            item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes y beneficios.", NavigationGroupId.COMMERCIAL, "◆"),
-            item(AppRoute.Commercial.Tickets, "commercial.tickets", "Tickets", "Carteras y movimientos.", NavigationGroupId.COMMERCIAL, "◈"),
-            item(AppRoute.Commercial.Subscriptions, "commercial.subscriptions", "Suscripciones", "Accesos y suscripciones.", NavigationGroupId.COMMERCIAL, "◌"),
-            item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Packs, servicios, promociones y pop-ups.", NavigationGroupId.COMMERCIAL, "◇", NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Users.List, "users", "Usuarios", "Identidad, perfil, rendimiento y economia por usuario.", NavigationGroupId.USERS, "◎"),
         ),
     ),
     AppRouteMenuGroup(
-        NavigationGroupId.COMMUNITY_SUPPORT,
-        "Comunidad y soporte",
+        NavigationGroupId.ECONOMY,
+        "Economia",
         listOf(
-            item(AppRoute.Community.OposiRed, "community.oposired", "Foro", "Actividad de OposiRed", NavigationGroupId.COMMUNITY_SUPPORT, "forum"),
-            item(AppRoute.Support.Inbox, "support", "Soporte", "Conversaciones y seguimiento.", NavigationGroupId.COMMUNITY_SUPPORT, "◫"),
-            item(AppRoute.Moderation.Queue, "moderation", "Moderacion", "Revision de acciones y reportes.", NavigationGroupId.COMMUNITY_SUPPORT, "⚑"),
+            item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes de suscripcion y beneficios.", NavigationGroupId.ECONOMY, "◆"),
+            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catalogo comercial", "Productos, packs y tarifas.", NavigationGroupId.ECONOMY, "◇"),
+            item(AppRoute.Commercial.Tickets, "commercial.tickets", "OposiTickets", "Carteras, movimientos y concesiones.", NavigationGroupId.ECONOMY, "◈"),
+            item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Packs, servicios, promociones y pop-ups.", NavigationGroupId.ECONOMY, "▦", NavigationVisibility.DESKTOP_ONLY),
+            // Etiquetado por lo que realmente abre: esta ruta mapea a la pantalla
+            // de accesos a examen, no a la gestion de suscripciones.
+            item(AppRoute.Commercial.Subscriptions, "commercial.subscriptions", "Accesos", "Accesos concedidos a examenes.", NavigationGroupId.ECONOMY, "◌"),
+        ),
+    ),
+    AppRouteMenuGroup(
+        NavigationGroupId.COMMUNITY,
+        "Comunidad",
+        listOf(
+            item(AppRoute.Community.OposiRed, "community.oposired", "OposiRed", "Hilos y comentarios de la comunidad.", NavigationGroupId.COMMUNITY, "forum"),
+            item(AppRoute.Moderation.Queue, "moderation", "Moderacion", "Acciones de moderacion y su auditoria.", NavigationGroupId.COMMUNITY, "⚑"),
+            item(AppRoute.Reports.List, "reports", "Reportes", "Reportes de contenido y su resolucion.", NavigationGroupId.COMMUNITY, "reports"),
+            item(AppRoute.OposiTester.List, "opositester", "OposiTester", "Incidencias enviadas por los usuarios.", NavigationGroupId.COMMUNITY, "tester"),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.ANALYTICS,
         "Analitica",
         listOf(
-            item(AppRoute.Analytics.Home, "analytics", "Analitica", "Metricas operativas y de producto.", NavigationGroupId.ANALYTICS, "◒"),
+            item(AppRoute.Analytics.Home, "analytics", "Producto", "Uso, sesiones y actividad.", NavigationGroupId.ANALYTICS, "◒"),
+            item(AppRoute.Analytics.Performance, "analytics.performance", "Estudio", "Rendimiento, dificultad y debilidades.", NavigationGroupId.ANALYTICS, "↗"),
             item(AppRoute.Analytics.Events, "analytics.events", "Eventos", "Eventos y calidad de datos.", NavigationGroupId.ANALYTICS, "·"),
-            item(AppRoute.Analytics.Performance, "analytics.performance", "Rendimiento", "Rendimiento y conversion.", NavigationGroupId.ANALYTICS, "↗"),
         ),
     ),
     AppRouteMenuGroup(
-        NavigationGroupId.OPOSITESTER,
-        "OposiTester",
+        NavigationGroupId.OPERATIONS,
+        "Operaciones",
         listOf(
-            item(
-                AppRoute.OposiTester.List,
-                "opositester",
-                "OposiTester",
-                "Incidencias de los usuarios",
-                NavigationGroupId.OPOSITESTER,
-                "tester",
-            ),
+            item(AppRoute.Publication.News, "publication.news", "Noticias", "Comunicacion y contenidos editoriales.", NavigationGroupId.OPERATIONS, "✦"),
+            item(AppRoute.Publication.NewsTypes, "publication.news-types", "Tipos de noticia", "Catalogo editorial.", NavigationGroupId.OPERATIONS, "≡"),
+            item(AppRoute.Publication.Assets, "publication.assets", "Assets", "Recursos visuales de publicacion.", NavigationGroupId.OPERATIONS, "▧"),
+            item(AppRoute.Support.Inbox, "support", "Soporte", "Conversaciones y seguimiento.", NavigationGroupId.OPERATIONS, "◫"),
+            item(AppRoute.System.Audit, "system.audit", "Auditoria", "Trazabilidad de operaciones sensibles.", NavigationGroupId.OPERATIONS, "☷"),
         ),
     ),
     AppRouteMenuGroup(
@@ -145,20 +135,29 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         "Sistema",
         listOf(
             item(AppRoute.System.Roles, "system.roles", "Roles", "Roles y acceso administrativo.", NavigationGroupId.SYSTEM, "⚿"),
-            item(AppRoute.System.Audit, "system.audit", "Auditoria", "Trazabilidad de operaciones.", NavigationGroupId.SYSTEM, "☷"),
-            item(AppRoute.System.Settings, "system.settings", "Configuración", "Configuración local del panel.", NavigationGroupId.SYSTEM, "settings"),
-            item(AppRoute.System.Diagnostics, "system.diagnostics", "Diagnostico", "Estado de conectividad y backend.", NavigationGroupId.SYSTEM, "⌁"),
+            item(AppRoute.System.Settings, "system.settings", "Configuracion", "Configuracion local del panel.", NavigationGroupId.SYSTEM, "settings"),
+            item(AppRoute.System.Diagnostics, "system.diagnostics", "Estado", "Conectividad y estado del backend.", NavigationGroupId.SYSTEM, "⌁"),
         ),
     ),
 )
 
+/**
+ * Destinos de la barra inferior de movil.
+ *
+ * Se seleccionan por RUTA, no por grupo: reorganizar la agrupacion de escritorio
+ * no debe mover la navegacion principal del movil, que responde a otra tarea
+ * (supervision rapida de comunidad, reportes y OposiTester).
+ */
 val mobilePrimaryNavigation: List<AppRouteMenuItem> = listOf(
-    appNavigationGroups.first { it.id == NavigationGroupId.HOME }.items.single(),
-    appNavigationGroups.first { it.id == NavigationGroupId.REPORTS }.items.single(),
-    appNavigationGroups.first { it.id == NavigationGroupId.COMMUNITY_SUPPORT }.items.first(),
-    appNavigationGroups.first { it.id == NavigationGroupId.OPOSITESTER }.items.single(),
-    appNavigationGroups.first { it.id == NavigationGroupId.SYSTEM }.items.first { it.route == AppRoute.System.Settings },
-)
+    AppRoute.Home,
+    AppRoute.Reports.List,
+    AppRoute.Community.OposiRed,
+    AppRoute.OposiTester.List,
+    AppRoute.System.Settings,
+).map { route -> appNavigationGroups.itemFor(route) }
+
+private fun List<AppRouteMenuGroup>.itemFor(route: AppRoute): AppRouteMenuItem =
+    asSequence().flatMap { it.items.asSequence() }.first { it.route == route }
 
 fun AppRoute.metadata(): AppRouteMetadata = when (this) {
     AppRoute.Auth -> AppRouteMetadata("auth", "Acceso", "Inicia sesion para continuar.", NavigationGroupId.SYSTEM, requiresAuth = false)
