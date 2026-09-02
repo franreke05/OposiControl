@@ -578,6 +578,8 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 call.respond(OkDto())
             }
         }
+        // Estado agregado de los servicios. El panel consume esto, nunca logs.
+        get("/estado-sistema") { call.respond(AdminSystemStatusResponse(gateway.getSystemStatus())) }
         get("/dashboard") {
             call.respond(gateway.getDashboardMetrics())
         }
@@ -3622,6 +3624,54 @@ class AdminV1Gateway private constructor(
 
         registrarAuditoria("tarifa_producto_guardada", "tarifas_producto_comercial", id)
         return saved.toDto()
+    }
+
+    // ---------- ESTADO DEL SISTEMA (agregación en Ktor) ----------
+
+    /**
+     * Resumen del estado de los servicios.
+     *
+     * Sólo informa de lo que puede comprobar: Ktor (que está respondiendo, por
+     * definición) y Supabase (con una lectura mínima real, cronometrada). Todo lo
+     * demás se declara no instrumentado en vez de darse por bueno — un panel en
+     * verde por desconocimiento se mira y se cree.
+     */
+    fun getSystemStatus(): AdminSystemStatusDto {
+        val startedAt = System.nanoTime()
+        val supabaseReachable = runCatching {
+            // Lectura deliberadamente mínima: comprobar que responde, no medir la
+            // base de datos ni cargarla con una consulta cara.
+            exactCount("/rest/v1/especialidades?select=id")
+            true
+        }.getOrDefault(false)
+        val latencyMs = (System.nanoTime() - startedAt) / 1_000_000
+
+        val supabaseLevel = supabaseLevelFrom(
+            reachable = supabaseReachable,
+            latencyMs = latencyMs,
+            slowThresholdMs = SUPABASE_SLOW_THRESHOLD_MS,
+        )
+        // Si esta línea se ejecuta, Ktor está sirviendo la petición.
+        val ktorLevel = SystemStatusLevelWire.OPERATIVE
+
+        return AdminSystemStatusDto(
+            overallStatus = aggregateSystemStatus(listOf(ktorLevel, supabaseLevel)),
+            ktorStatus = ktorLevel,
+            supabaseStatus = supabaseLevel,
+            workerStatus = SystemStatusLevelWire.UNKNOWN,
+            // La latencia medida es la de esta comprobación contra Supabase, que
+            // sí es un dato real; no se presenta como latencia general de la API.
+            apiLatencyMs = latencyMs,
+            updatedAt = Instant.now().toString(),
+            notInstrumented = listOf(
+                SystemStatusNotInstrumented.WORKER,
+                SystemStatusNotInstrumented.CPU,
+                SystemStatusNotInstrumented.MEMORY,
+                SystemStatusNotInstrumented.API_ERRORS,
+                SystemStatusNotInstrumented.MOBILE_CRASHES,
+                SystemStatusNotInstrumented.QUEUE_DEPTH,
+            ),
+        )
     }
 
     // ---------- PLANES DE SUSCRIPCIÓN (planes_suscripcion + beneficios_plan) ----------

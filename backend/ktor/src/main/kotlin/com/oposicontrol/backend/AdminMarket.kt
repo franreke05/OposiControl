@@ -180,6 +180,9 @@ internal fun AdminPopupRuleDto.validated(): AdminPopupRuleDto {
 /** Vocabulario canónico de examen. `guiado` es sólo alias legacy y no se acepta. */
 internal val CANONICAL_EXAM_TYPES = setOf("rafaga", "razonado", "inmersivo")
 
+/** Por encima de esto, una lectura correcta pero lenta se reporta como degradada. */
+internal const val SUPABASE_SLOW_THRESHOLD_MS = 1500L
+
 // ---------- Envolturas de respuesta ----------
 
 @Serializable
