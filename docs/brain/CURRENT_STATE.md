@@ -183,6 +183,66 @@ Dos 500 observados son deriva legacy preexistente, no introducida aquí:
 `DATABASE_CHANGES: NONE`. `MAIN_WRITES: NONE` — todas las llamadas en vivo fueron
 lecturas, conteos o sondas de autorización.
 
+## Desktop Control Center — cierre (2026-09-02)
+
+### Verticales cerradas en esta fase
+
+| Área | Estado | Nota |
+|---|---|---|
+| Planes de suscripción | `IMPLEMENTED` | `GET/POST /api/v1/admin/planes` y `.../{id}/beneficios` sobre `planes_suscripcion` + `beneficios_plan`. Modelo EAV: se exige **exactamente un** valor por beneficio (sin valor no dice nada; con dos, gana el que lea primero el consumidor). `false` y `0` cuentan como valor presente — son decisiones explícitas. Los precios NO están en el plan: viven en `tarifas_producto_comercial` por periodo y fase, y hay un test que lo defiende. |
+| Concesión admin de OT | `IMPLEMENTED` | `POST /api/v1/admin/tickets/conceder`. No escribe saldo: delega entero en `admin_grant_tickets`. Clave de idempotencia y motivo obligatorios, cero rechazado, negativo permitido (corregir es legítimo), tope por operación como red contra el dedo gordo, y una recompensa de reporte no puede ser negativa. |
+| Resumen OT | `IMPLEMENTED / PARCIAL_HONESTO` | Sólo conteos exactos server-side. OT en circulación / emitidos / consumidos exigen SUM, que PostgREST no expresa; se declaran no disponibles en vez de sumarse trayendo filas (se recortaría en `max-rows` y daría un total menor con pinta de correcto). |
+| Estado del sistema | `CONNECTED (parcial)` | `GET /api/v1/admin/estado-sistema`. Cierra el contrato que Screen 10 esperaba. Informa de Ktor y Supabase (lectura mínima cronometrada); el resto se declara `notInstrumented` con `null`, no con `0`. Lo desconocido no pinta verde, y tampoco degrada el global — si no, nadie mira el color. |
+| Shell / IA | `REDESIGNED` | De diez grupos (varios con un único elemento) a ocho: Dashboard, Contenido, Usuarios, Economía, Comunidad, Analítica, Operaciones, Sistema. Reports y OposiTester dejan de ser grupos propios de escritorio y pasan a Comunidad, **sin dejar de ser destinos de primer nivel en móvil**: `mobilePrimaryNavigation` ahora selecciona por ruta y no por grupo, justamente para que reorganizar el escritorio no toque la barra inferior. |
+| Empaquetado Desktop | `PASS` | `packageDistributionForCurrentOS` genera `OposiControlAdmin-1.0.0.msi` (86 MB). Sin firmar: no hay certificado, y eso es `EXTERNAL_PENDING`, no un P1. |
+
+### P1 encontrado y corregido: conceder tickets era imposible desde el cliente
+
+`GrantTicketsBody` llevaba sólo `cantidad` y `motivo`. El backend exige clave de
+idempotencia y responde 422 sin ella, así que la acción "conceder OposiTickets"
+de la pantalla de usuarios **nunca pudo funcionar**.
+
+El arreglo no es sólo mandar una clave: una generada al pulsar contentaría al
+backend y seguiría permitiendo que un doble clic concediese dos veces. La clave
+se acuña **al abrir el diálogo** y se conserva durante toda la operación, de modo
+que reintentos y dobles clics reutilizan la misma; al cerrar se limpia, para que
+la siguiente concesión legítima no choque con la anterior y desaparezca en
+silencio.
+
+### Import atomicity — candidato corregido
+
+El candidato `001` se escribió sin acceso al esquema y delega en
+`admin_create_question`, que **no existe** (lista de RPC verificada en vivo). Es
+decir, nunca pudo aplicarse.
+
+`002_admin_import_lote_preguntas_real_schema.sql` lo sustituye, escrito contra el
+esquema verificado. Documenta además un problema peor que "lote parcial": una
+pregunta ocupa **cuatro tablas** (`preguntas`, `opciones_pregunta`,
+`soluciones_pregunta`, `preguntas_examen`), así que el bucle REST actual puede
+dejar **preguntas malformadas** —opciones sin solución, o pregunta sin opciones—,
+que es contenido corrupto servido a usuarios reales, no sólo una importación
+incompleta.
+
+La función corre en una transacción; aborta si detecta candidatos a duplicado
+(mismo título normalizado en la misma especialidad) y los devuelve, de modo que
+decide una persona; nunca auto-omite ni auto-reemplaza. No introduce ningún valor
+nuevo en `estado_parseo`, porque el CHECK de esa columna es desconocido y un valor
+inventado rompería la inserción.
+
+`IMPORT_ATOMICITY: BLOCKED_ONLY_BY_DATABASE_APPLY_APPROVAL`.
+`DATABASE_APPLY_APPROVAL_REQUIRED: supabase/canonical/content_import_atomicity_candidate_v1/002_admin_import_lote_preguntas_real_schema.sql`
+
+### Externo pendiente
+
+- **Sentry**: no hay `SENTRY_DSN` disponible en el entorno. Los puntos de
+  integración siguen preparados. `EXTERNAL_PENDING`, no P1.
+- **Prometheus/Grafana**: sin infraestructura. `EXTERNAL_PENDING`.
+- **Firma del instalador**: no hay certificado. El MSI se genera sin firmar.
+- **JWT admin no-admin para E2E**: sigue sin fixture (RISK-022); la distinción
+  401/403 está cubierta por test de integración HTTP, no en vivo.
+
+`DATABASE_CHANGES: NONE`. `MAIN_WRITES: NONE`.
+
 ## Preserved boundaries
 
 OposiBot, public.usuario, /v1/auth/*, Opositeca, OposiRed, PDF/import, exam-resources, news-assets and POST_OPOSIBOT_LEGACY_CLEANUP remain protected. The deferred cleanup has not executed.

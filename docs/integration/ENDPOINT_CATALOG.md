@@ -209,6 +209,27 @@ Runtime-verified end to end: the desktop client authenticates with a real admin
 JWT and receives 200 from `/api/v1/admin/dashboard`, `/especialidades`,
 `/examenes`, `/examenes/{id}/preguntas` and `/reportes`.
 
+## Desktop Control Center — cierre (2026-09-02)
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `ADM-PLAN-001` | GET/POST | `/api/v1/admin/planes` | `SOURCE_VERIFIED`; `planes_suscripcion` reachable |
+| `ADM-PLAN-002` | GET/POST | `/api/v1/admin/planes/{planId}/beneficios` | `SOURCE_VERIFIED`; `beneficios_plan` reachable |
+| `ADM-OT-001` | GET | `/api/v1/admin/tickets/resumen` | `SOURCE_VERIFIED`, registered and 401-protected |
+| `ADM-OT-002` | POST | `/api/v1/admin/tickets/conceder` | `SOURCE_VERIFIED`; delegates entirely to `admin_grant_tickets`, no write executed |
+| `ADM-SYS-001` | GET | `/api/v1/admin/estado-sistema` | `SOURCE_VERIFIED`, registered and 401-protected. Closes the aggregation contract Screen 10 was waiting on |
+
+Changed behaviour:
+
+| Endpoint | Change |
+|---|---|
+| `POST /api/v1/admin/usuarios/{id}/tickets` | The client now sends `idempotencyKey`. It previously did not, so this endpoint could only ever return 422 — granting tickets from the panel was impossible. |
+
+Client-side rule now enforced: the idempotency key is minted when the grant
+dialog opens and held for the whole operation, so retries and double clicks reuse
+it. A key generated per attempt would satisfy the endpoint and still allow a
+double grant.
+
 ## Knowledge-loss check
 
 | Family | Result |
