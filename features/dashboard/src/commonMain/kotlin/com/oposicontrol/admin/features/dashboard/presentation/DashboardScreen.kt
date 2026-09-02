@@ -43,6 +43,7 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.domain.model.DashboardActivityEvent
 import com.oposicontrol.admin.domain.model.DashboardAlert
 import com.oposicontrol.admin.domain.model.DashboardAlertSeverity
+import com.oposicontrol.admin.domain.model.DashboardMetricKey
 import com.oposicontrol.admin.domain.model.DashboardMetrics
 import com.oposicontrol.admin.domain.model.DayCount
 import kotlinx.datetime.Instant
@@ -492,11 +493,28 @@ private fun DashboardAttemptBar(day: DayCount, maxCount: Int) {
 private fun DashboardPerformanceMetricGrid(metrics: DashboardMetrics, compact: Boolean) {
     val cardWidth = if (compact) 138.dp else 248.dp
     val cardHeight = if (compact) 86.dp else 92.dp
+    // Una métrica que el backend no pudo calcular se enseña como NO_DATA, nunca
+    // como el 0 de relleno que viaja en el DTO: en un panel de administración un
+    // cero inventado es indistinguible de un cero real y se toman decisiones con él.
+    fun kpi(key: String, title: String, supporting: String, format: () -> String) = if (metrics.isAvailable(key)) {
+        KpiItem(title, format(), supporting)
+    } else {
+        KpiItem(title, NO_DATA_LABEL, NO_DATA_SUPPORTING)
+    }
+
     val items = listOf(
-        KpiItem("Usuarios activos (30d)", metrics.activeUsers30d.toString(), "Ultimos 30 dias"),
-        KpiItem("Intentos totales", metrics.totalAttempts.toString(), "Completados"),
-        KpiItem("Puntuacion media", "${metrics.avgScore.roundToInt()}%", "Acierto global"),
-        KpiItem("Tasa de error", "${metrics.globalErrorRate.roundToInt()}%", "Respuestas falladas"),
+        kpi(DashboardMetricKey.ACTIVE_USERS_30D, "Usuarios activos (30d)", "Ultimos 30 dias") {
+            metrics.activeUsers30d.toString()
+        },
+        kpi(DashboardMetricKey.TOTAL_ATTEMPTS, "Intentos totales", "Completados") {
+            metrics.totalAttempts.toString()
+        },
+        kpi(DashboardMetricKey.AVG_SCORE, "Puntuacion media", "Acierto global") {
+            "${metrics.avgScore.roundToInt()}%"
+        },
+        kpi(DashboardMetricKey.GLOBAL_ERROR_RATE, "Tasa de error", "Respuestas falladas") {
+            "${metrics.globalErrorRate.roundToInt()}%"
+        },
     )
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items.chunked(2).forEach { rowItems ->
@@ -959,6 +977,10 @@ private fun shortDateLabel(date: String): String {
         date.takeLast(4)
     }
 }
+
+/** Texto único para una métrica sin fuente conectada. Ver DashboardMetrics.unavailableMetrics. */
+internal const val NO_DATA_LABEL = "NO_DATA"
+internal const val NO_DATA_SUPPORTING = "Sin fuente conectada"
 
 private data class KpiItem(
     val title: String,

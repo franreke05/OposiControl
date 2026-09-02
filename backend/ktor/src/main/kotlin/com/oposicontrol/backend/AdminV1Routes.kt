@@ -1308,6 +1308,13 @@ data class AdminDashboardDto(
     @EncodeDefault val avgScore: Double = 0.0,
     @EncodeDefault val globalErrorRate: Double = 0.0,
     @EncodeDefault val attemptsPerDay: List<DayCountDto> = emptyList(),
+    /**
+     * Métricas que el backend no ha podido calcular en esta respuesta, por su
+     * nombre de campo (ver [DashboardMetricKey]). El cliente debe pintar NO_DATA
+     * para cada una en lugar del valor numérico, que en ese caso es sólo relleno
+     * de serialización y no un dato real. Vacío = todo lo devuelto es real.
+     */
+    @EncodeDefault val unavailableMetrics: List<String> = emptyList(),
 )
 
 @Serializable
@@ -1441,18 +1448,11 @@ private data class AdminReplaceQuestionOptionsRpc(
     @SerialName("p_solution") val solution: AdminSolucionRow,
 )
 
-// Rows privados para etiquetas y comunidades
-@Serializable
-private data class ScoreRow(@SerialName("porcentaje_acierto") val puntuacion: Double? = null)
-
-@Serializable
-private data class UsuarioIdRow(@SerialName("usuario_id") val usuarioId: String = "")
-
-@Serializable
-private data class EsCorrectaRow(@SerialName("es_correcta") val esCorrecta: Boolean = true)
-
-@Serializable
-private data class IniciadoEnRow(@SerialName("iniciado_en") val iniciadoEn: String = "")
+// ScoreRow / UsuarioIdRow / EsCorrectaRow / IniciadoEnRow existían sólo para leer
+// filas crudas y agregarlas aquí (media, usuarios distintos, intentos por día).
+// Esa vía quedaba recortada en silencio por el max-rows de PostgREST, así que se
+// retiró junto con el cálculo; cuando exista el read model agregado, el DTO que
+// lo consuma tendrá forma de agregado, no de fila cruda.
 
 @Serializable
 private data class V1EtiquetaRow(
@@ -3040,67 +3040,88 @@ class AdminV1Gateway private constructor(
     }
 
     // DASHBOARD — conteos reales de tablas del esquema activo
+    /**
+     * Métricas del dashboard admin.
+     *
+     * Dos reglas que esta función respeta y la versión anterior no:
+     *
+     * 1. **Un cero es un cero, no un fallo.** Antes cada métrica terminaba en
+     *    `catch { 0 }` / `getOrDefault(0)`, así que "no pude leer la tabla" y
+     *    "hay cero filas" llegaban a la UI idénticos. Ahora una métrica que no se
+     *    puede calcular se nombra en `unavailableMetrics` y el cliente pinta
+     *    NO_DATA en vez de un número inventado.
+     * 2. **Contar se cuenta en el servidor.** Antes se traían todas las filas
+     *    (`select=id` y `.size`), que PostgREST recorta en silencio al llegar a su
+     *    `max-rows`: por encima de ese techo el número mostrado era sencillamente
+     *    falso, y además crecía sin límite en memoria. Ahora se usa
+     *    `Prefer: count=exact` con `Range: 0-0`, que devuelve el total exacto sin
+     *    transferir ni una fila.
+     *
+     * `activeUsers30d`, `avgScore` y `attemptsPerDay` necesitan DISTINCT, AVG y
+     * GROUP BY, que PostgREST no expone. Calcularlos trayendo filas crudas tenía
+     * el mismo techo silencioso, así que se declaran no disponibles hasta que
+     * exista el read model/RPC agregado. Preferimos un hueco honesto a un número
+     * que parece cierto y no lo es.
+     */
     fun getDashboardMetrics(): AdminDashboardDto {
-        fun count(table: String, filter: String = "") = try {
-            val body = request("GET", "/rest/v1/$table?select=id${if (filter.isNotBlank()) "&$filter" else ""}", null)
-            json.decodeFromString<List<kotlinx.serialization.json.JsonObject>>(body).size
-        } catch (_: Exception) { 0 }
+        val unavailable = linkedSetOf<String>()
+
+        /** Conteo exacto server-side; null (y métrica marcada) si no se puede leer. */
+        fun count(metricKey: String, table: String, filter: String = ""): Int? {
+            val total = runCatching {
+                exactCount("/rest/v1/$table?select=id${if (filter.isNotBlank()) "&$filter" else ""}")
+            }.getOrNull()
+            if (total == null) unavailable += metricKey
+            return total
+        }
+
         val now = Instant.now()
-        val today = LocalDate.now(ZoneOffset.UTC)
-        val thirtyDaysAgo = now.minus(30, ChronoUnit.DAYS).toString()
-        val totalExams = count("examenes")
-        val published = count("examenes", "publicado_en=not.is.null&activo=eq.true")
-        val totalAttempts = count("intentos_examen", "estado=eq.completado")
-        val activeUsers30d = runCatching {
-            request(
-                "GET",
-                "/rest/v1/intentos_examen?select=usuario_id&estado=eq.completado&iniciado_en=gte.$thirtyDaysAgo",
-                null,
-            ).decodeList<UsuarioIdRow>()
-                .map { it.usuarioId }
-                .filter { it.isNotBlank() }
-                .distinct()
-                .size
-        }.getOrDefault(0)
-        val avgScore = runCatching {
-            val values = request(
-                "GET",
-                "/rest/v1/intentos_examen?select=porcentaje_acierto&estado=eq.completado",
-                null,
-            ).decodeList<ScoreRow>().mapNotNull { it.puntuacion }
-            if (values.isEmpty()) 0.0 else values.average()
-        }.getOrDefault(0.0)
-        val attemptsPerDay = runCatching {
-            val grouped = request(
-                "GET",
-                "/rest/v1/intentos_examen?select=iniciado_en&estado=eq.completado&iniciado_en=gte.$thirtyDaysAgo&order=iniciado_en.asc&limit=500",
-                null,
-            ).decodeList<IniciadoEnRow>()
-                .mapNotNull { row -> row.iniciadoEn.toUtcDateOrNull() }
-                .groupingBy { it }
-                .eachCount()
-            (29 downTo 0).map { daysAgo ->
-                val date = today.minusDays(daysAgo.toLong())
-                DayCountDto(date = date.toString(), count = grouped[date] ?: 0)
-            }
-        }.getOrDefault(emptyList())
-        val globalErrorRate = runCatching {
-            val answers = request("GET", "/rest/v1/respuestas_intento?select=es_correcta&limit=5000", null)
-                .decodeList<EsCorrectaRow>()
-            if (answers.isEmpty()) 0.0 else answers.count { !it.esCorrecta } * 100.0 / answers.size
-        }.getOrDefault(0.0)
+        val totalSpecialties = count(DashboardMetricKey.TOTAL_SPECIALTIES, "especialidades")
+        val totalExams = count(DashboardMetricKey.TOTAL_EXAMS, "examenes")
+        val published = count(DashboardMetricKey.PUBLISHED_EXAMS, "examenes", "publicado_en=not.is.null&activo=eq.true")
+        val totalQuestions = count(DashboardMetricKey.TOTAL_QUESTIONS, "preguntas")
+        val totalAttempts = count(DashboardMetricKey.TOTAL_ATTEMPTS, "intentos_examen", "estado=eq.completado")
+
+        // draftExams se deriva de dos conteos: sólo es fiable si ambos lo son.
+        val draftExams = if (totalExams != null && published != null) {
+            (totalExams - published).coerceAtLeast(0)
+        } else {
+            unavailable += DashboardMetricKey.DRAFT_EXAMS
+            null
+        }
+
+        // Tasa de error global: dos conteos exactos en lugar de una muestra
+        // arbitraria de 5.000 respuestas, que no era representativa de nada.
+        val totalAnswers = runCatching { exactCount("/rest/v1/respuestas_intento?select=id") }.getOrNull()
+        val wrongAnswers = runCatching {
+            exactCount("/rest/v1/respuestas_intento?select=id&es_correcta=eq.false")
+        }.getOrNull()
+        val globalErrorRate = if (totalAnswers != null && wrongAnswers != null && totalAnswers > 0) {
+            wrongAnswers * 100.0 / totalAnswers
+        } else {
+            unavailable += DashboardMetricKey.GLOBAL_ERROR_RATE
+            null
+        }
+
+        // Requieren DISTINCT / AVG / GROUP BY: sin agregación server-side no hay
+        // forma honesta de calcularlos. Ver ADMIN_DASHBOARD_AGGREGATES en TECH_DEBT.
+        unavailable += DashboardMetricKey.ACTIVE_USERS_30D
+        unavailable += DashboardMetricKey.AVG_SCORE
+        unavailable += DashboardMetricKey.ATTEMPTS_PER_DAY
+
         return AdminDashboardDto(
-            totalSpecialties = count("especialidades"),
-            totalExams = totalExams,
-            publishedExams = published,
-            draftExams = totalExams - published,
-            totalQuestions = count("preguntas"),
+            totalSpecialties = totalSpecialties ?: 0,
+            totalExams = totalExams ?: 0,
+            publishedExams = published ?: 0,
+            draftExams = draftExams ?: 0,
+            totalQuestions = totalQuestions ?: 0,
             lastUpdatedAt = now.toString(),
-            totalAttempts = totalAttempts,
-            activeUsers30d = activeUsers30d,
-            avgScore = avgScore,
-            globalErrorRate = globalErrorRate,
-            attemptsPerDay = attemptsPerDay,
+            totalAttempts = totalAttempts ?: 0,
+            activeUsers30d = 0,
+            avgScore = 0.0,
+            globalErrorRate = globalErrorRate ?: 0.0,
+            attemptsPerDay = emptyList(),
+            unavailableMetrics = unavailable.toList(),
         )
     }
 
@@ -3320,6 +3341,43 @@ class AdminV1Gateway private constructor(
         return response.body()
     }
 
+    /**
+     * Conteo exacto sin traer filas.
+     *
+     * `Prefer: count=exact` hace que PostgREST devuelva el total en la cabecera
+     * `Content-Range`, y `Range: 0-0` limita el cuerpo a una fila. Así el conteo
+     * no depende del `max-rows` del servidor ni carga la tabla entera en memoria.
+     *
+     * Lanza si la respuesta no trae un total utilizable: quien llama decide si eso
+     * significa "métrica no disponible", pero nunca puede confundirse con un cero.
+     */
+    private fun exactCount(path: String): Int {
+        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
+            .header("apikey", serviceRoleKey)
+            .header("Authorization", "Bearer $serviceRoleKey")
+            .header("Content-Type", "application/json")
+            .header("Prefer", "count=exact")
+            .header("Range-Unit", "items")
+            .header("Range", "0-0")
+        val response = try {
+            client.send(builder.GET().build(), HttpResponse.BodyHandlers.ofString())
+        } catch (error: Exception) {
+            throw IllegalStateException(
+                "Supabase network error on COUNT ${path.substringBefore('?')}: ${error::class.simpleName}: ${error.message}",
+                error,
+            )
+        }
+        // 206 Partial Content es la respuesta normal a un Range acotado.
+        if (response.statusCode() !in 200..299) {
+            throw IllegalStateException(
+                "Supabase COUNT ${path.substringBefore('?')} -> ${response.statusCode()}: ${response.body().take(200)}",
+            )
+        }
+        return parseContentRangeTotal(response.headers().firstValue("content-range").orElse(null))
+            ?: throw IllegalStateException("Supabase COUNT ${path.substringBefore('?')} no devolvió Content-Range utilizable.")
+    }
+
     private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
@@ -3341,9 +3399,6 @@ class AdminV1Gateway private constructor(
     }
 
     private inline fun <reified T> String.decodeList(): List<T> = json.decodeFromString(this)
-
-    private fun String.toUtcDateOrNull(): LocalDate? =
-        runCatching { Instant.parse(this).atZone(ZoneOffset.UTC).toLocalDate() }.getOrNull()
 
     private fun String.toSlug(): String =
         lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "item" }

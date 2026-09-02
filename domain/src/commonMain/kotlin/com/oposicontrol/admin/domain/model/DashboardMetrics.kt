@@ -30,7 +30,38 @@ data class DashboardMetrics(
     val pendingForumReports: Int = 0,
     val alerts: List<DashboardAlert> = emptyList(),
     val recentEvents: List<DashboardActivityEvent> = emptyList(),
-)
+    /**
+     * Métricas que el backend no pudo calcular, por su clave estable
+     * ([DashboardMetricKey]). El valor numérico correspondiente es relleno de
+     * serialización, no un dato: la UI debe pintar NO_DATA en su lugar.
+     *
+     * Existe porque antes un fallo de lectura llegaba a pantalla como un `0`
+     * indistinguible de un cero real, y un panel de administración que enseña
+     * "0 exámenes" cuando en realidad no ha podido preguntar es peor que uno que
+     * admite no saberlo.
+     */
+    val unavailableMetrics: Set<String> = emptySet(),
+) {
+    /** `false` si [key] no se pudo calcular y por tanto no debe mostrarse como número. */
+    fun isAvailable(key: String): Boolean = key !in unavailableMetrics
+}
+
+/**
+ * Claves estables de métrica compartidas con el backend (`DashboardMetricKey`).
+ * Coinciden con el nombre del campo en el DTO de transporte.
+ */
+object DashboardMetricKey {
+    const val TOTAL_SPECIALTIES = "totalSpecialties"
+    const val TOTAL_EXAMS = "totalExams"
+    const val PUBLISHED_EXAMS = "publishedExams"
+    const val DRAFT_EXAMS = "draftExams"
+    const val TOTAL_QUESTIONS = "totalQuestions"
+    const val TOTAL_ATTEMPTS = "totalAttempts"
+    const val ACTIVE_USERS_30D = "activeUsers30d"
+    const val AVG_SCORE = "avgScore"
+    const val GLOBAL_ERROR_RATE = "globalErrorRate"
+    const val ATTEMPTS_PER_DAY = "attemptsPerDay"
+}
 
 data class DayCount(
     val date: String,

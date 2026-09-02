@@ -38,6 +38,7 @@ class DashboardApi(
             avgScore = avgScore,
             globalErrorRate = globalErrorRate,
             attemptsPerDay = attemptsPerDay.map { DayCount(date = it.date, count = it.count) },
+            unavailableMetrics = unavailableMetrics.toSet(),
         )
     }
 
@@ -59,6 +60,8 @@ private data class AdminDashboardV1Dto(
     val avgScore: Double = 0.0,
     val globalErrorRate: Double = 0.0,
     val attemptsPerDay: List<DayCountV1Dto> = emptyList(),
+    // Backends anteriores no envían este campo; ausente = todo lo recibido es real.
+    val unavailableMetrics: List<String> = emptyList(),
 )
 
 @Serializable

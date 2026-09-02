@@ -78,7 +78,7 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
     }
 }
 
-class SupabaseAdminGateway private constructor(
+class SupabaseAdminGateway internal constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
     private val json: Json,
@@ -261,52 +261,37 @@ class SupabaseAdminGateway private constructor(
         ).decodeList<TicketTransactionRow>().map { it.toDto() }
     }
 
+    /**
+     * DESHABILITADA A PROPOSITO — no borrada (ver ADR de legacy: primero se
+     * sustituye funcionalmente, el cleanup destructivo va despues).
+     *
+     * Esta ruta legacy hacia una mutacion monetaria NO atomica sobre
+     * `cartera_tickets`: leia el saldo, sumaba en memoria y escribia el
+     * resultado, y despues insertaba la fila de ledger en una segunda llamada
+     * suelta. Eso pierde escrituras concurrentes (lost update) y puede dejar
+     * saldo y ledger divergentes si la segunda llamada falla. Ademas nunca
+     * registraba saldo_antes/saldo_despues ni aceptaba clave de idempotencia.
+     *
+     * El escritor canonico `admin_grant_tickets` ya resuelve esto (atomico,
+     * idempotente y seguro ante concurrencia) y se expone en
+     * `/api/v1/admin/tickets/{usuarioId}/transacciones`.
+     *
+     * No se traduce automaticamente la llamada legacy al RPC canonico porque las
+     * familias de identidad no coinciden: aqui el usuario es un entero legacy y
+     * el RPC exige el uuid de `auth.users`. Adivinar esa correspondencia moveria
+     * dinero a la cartera equivocada, asi que se rechaza en la puerta.
+     *
+     * Las lecturas legacy se conservan (`listTicketWallets` /
+     * `listTicketTransactions`): solo se cierra la escritura.
+     */
     fun appendTicketAdjustment(userId: String, input: AdminTicketAdjustmentDto): AdminTicketTransactionDto {
-        require(input.amount != 0.0) { "El ajuste no puede ser 0." }
-        require(input.reason.isNotBlank()) { "El ajuste necesita razon." }
-        val numericUserId = userId.toIntId()
-        val current = request("GET", "/rest/v1/cartera_tickets?select=*&usuario_id=eq.$numericUserId", null)
-            .decodeList<TicketWalletRow>()
-            .firstOrNull()
-        val newBalance = (current?.saldo ?: 0.0) + input.amount
-        require(newBalance >= 0.0) { "Saldo insuficiente para crear el debito." }
-        if (current == null) {
-            request(
-                "POST",
-                "/rest/v1/cartera_tickets",
-                json.encodeToString(listOf(TicketWalletUpsertRow(numericUserId, newBalance))),
-                prefer = "return=minimal",
-            )
-        } else {
-            request("PATCH", "/rest/v1/cartera_tickets?usuario_id=eq.$numericUserId", """{"saldo":$newBalance}""")
-        }
-        return request(
-            "POST",
-            "/rest/v1/transaccion_ticket",
-            json.encodeToString(
-                listOf(
-                    TicketTransactionInsertRow(
-                        usuarioId = numericUserId,
-                        tipo = if (input.amount >= 0) "credito" else "debito",
-                        monto = kotlin.math.abs(input.amount),
-                        razon = input.reason,
-                    ),
-                ),
-            ),
-            prefer = "return=representation",
-        ).decodeList<TicketTransactionRow>().first().toDto(signedAmount = input.amount)
-            .also { transaction ->
-                appendAudit(
-                    AdminAuditEventDto(
-                        id = "",
-                        actorName = "backend-admin",
-                        action = "TICKET_TRANSACTION_CREATE",
-                        target = "transaccion_ticket:${transaction.id}",
-                        occurredAt = Instant.now().toString(),
-                        metadata = mapOf("usuario_id" to userId, "monto" to input.amount.toString()),
-                    ),
-                )
-            }
+        throw BackendDomainException(
+            "WALLET_LEGACY_ROUTE_DISABLED",
+            HttpStatusCode.Gone,
+            "El ajuste manual de cartera legacy esta deshabilitado porque no era atomico. " +
+                "Usa POST /api/v1/admin/tickets/{usuarioId}/transacciones, que escribe mediante " +
+                "el RPC atomico e idempotente admin_grant_tickets.",
+        )
     }
 
     fun listSupportConversations(): List<AdminSupportConversationDto> = emptyListOnMissingLegacySchema("listSupportConversations") {
