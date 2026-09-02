@@ -162,6 +162,29 @@ Common: Domain `OposiBots user administration`; Authorization `ADMIN_REQUIRED`; 
 | `BOT-ADMIN-001` | GET/POST | `/api/v1/admin/oposibots/usuarios` | `SOURCE_VERIFIED` |
 | `BOT-ADMIN-002` | GET/PATCH/DELETE | `/api/v1/admin/oposibots/usuarios/{id}` | `SOURCE_VERIFIED` |
 
+## Desktop Control Center — additive admin endpoints (2026-09-02)
+
+Common: Authorization `ADMIN_REQUIRED` (enforced from the `AuthenticationChecked`
+hook — see `AdminAuthorizationGuard.kt`); Route implementation `AdminV1Routes.kt`;
+Gateway `AdminV1Gateway`; Admin UI Desktop.
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `ADM-CAP-001` | GET | `/api/v1/admin/especialidades/{id}/capacidades` | `SOURCE_VERIFIED`, route reachable and auth-protected at runtime (`401` unauthenticated) |
+| `ADM-CAP-002` | PUT | `/api/v1/admin/especialidades/{id}/capacidades` | `SOURCE_VERIFIED` |
+| `ADM-COM-001` | GET | `/api/v1/admin/comercial/productos` | `LIVE_VERIFIED` — returned real rows from MAIN (`free`, `rafagas`) |
+| `ADM-COM-002` | POST | `/api/v1/admin/comercial/productos` | `SOURCE_VERIFIED` (no write executed) |
+| `ADM-COM-003` | GET | `/api/v1/admin/comercial/productos/{id}/tarifas` | `SOURCE_VERIFIED` |
+| `ADM-COM-004` | POST | `/api/v1/admin/comercial/productos/{id}/tarifas` | `SOURCE_VERIFIED` (no write executed) |
+
+Changed behaviour on existing endpoints:
+
+| Endpoint | Change |
+|---|---|
+| `GET /api/v1/admin/usuarios` | Accepts `limit`/`offset` (clamped, hard max) and returns `total`/`limit`/`offset` alongside `data`. Additive: existing consumers read `data` and ignore unknown keys. |
+| `GET /api/v1/admin/dashboard` | Adds `unavailableMetrics`; numeric fields for listed metrics are serialization filler, not data. |
+| `POST /admin/ticket-wallets/{id}/transactions` | Now `410 Gone`. The non-atomic balance write is closed; use `POST /api/v1/admin/tickets/{usuarioId}/transacciones`. Legacy reads unchanged. |
+
 ## Knowledge-loss check
 
 | Family | Result |

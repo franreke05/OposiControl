@@ -11,4 +11,17 @@ Catálogo de tablas inferidas desde código y SQL documentado. No es confirmaci�
 | Support | `CODE_EXPECTED` / `DOCUMENTED` | código y audit |
 | Import/staging | `CODE_EXPECTED` / `DOCUMENTED` | API/parser/docs |
 
-`LIVE_VERIFIED: NO` para todas las tablas; no se listan columnas como live facts si solo provienen de SQL histórico.
+`LIVE_VERIFIED: NO` para todas las tablas salvo las excepciones anotadas; no se listan columnas como live facts si solo provienen de SQL histórico.
+
+## Excepción — 2026-09-02
+
+`public.productos_comerciales` pasa a `LIVE_VERIFIED` (lectura): el endpoint admin
+`GET /api/v1/admin/comercial/productos`, contra el proyecto MAIN configurado en
+`.env`, devolvió filas reales (`free` y `rafagas`, `tipo_producto = suscripcion`).
+Esto confirma la tabla y los campos leídos por ese endpoint; **no** promueve
+`tarifas_producto_comercial`, `planes_suscripcion`, `beneficios_plan` ni
+`capacidades_especialidad`, que siguen siendo `CODE_EXPECTED` porque no se
+ejercitaron con datos en esta sesión.
+
+Verificado además que Supabase responde: `/health/ready` devolvió
+`{"ktor":"up","supabase":"up"}`. Ninguna escritura fue ejecutada.

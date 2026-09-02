@@ -58,6 +58,44 @@ The implementation still reports partial publication when row-level import error
 
 All 10 required mobile screens (Home, Informes, Detalle informe, Foro, Detalle hilo, OposiTester, OposiTester Detail, Configuración, Subir contenido, Estado del sistema) are merged into `integration/mobile-finish`, along with the backend observability foundation. Four previously separate branches (`feature/backend-observability-foundation`, `feature/mobile-content-upload`, `recovery/mobile-opositester-06-07`, `feature/mobile-settings`) were merged with real conflicts resolved semantically (never blind ours/theirs) — see git log on `integration/mobile-finish` for the four merge commits plus follow-up fixes (HTTP timeout P1, a duplicate-test-name compile error left by two independent merges touching `AppNavigatorTest.kt`, Sentry/Prometheus prep). `git diff --check` clean; full requested test suite green; Android `assembleDevDebug` green; JVM/desktop target compiles. Runtime visual verification remains `NOT_VERIFIED` (no ADB device available in any session in this project so far). `OposiControl-Claude` (uncommitted, superseded by the recovery branch) and `OposiControl-Codex` (uncommitted, beyond `feature/mobile-settings`'s `9efd31b`) worktrees were left untouched, per instruction — they are not required for this integration and were not merged from their uncommitted state.
 
+## Desktop Control Center — vertical 1 (2026-09-02)
+
+Branch `feature/desktop-control-center`, based on `phase0/jvm-desktop-foundation`
+(a strict superset of `integration/mobile-finish`; the JVM foundation work was
+verified present and green before building on it, not assumed).
+
+**First session in this project with live runtime evidence.** Ktor was started
+from the branch with the repository's real `.env` and answered
+`/health/ready` → `{"ktor":"up","supabase":"up"}`, so the repository's Supabase
+credentials are confirmed working. This closes the long-standing
+`NOT_VERIFIED` note about them — and corrects its stated cause: the placeholder
+`another-modified-url.supabase.co` was not Gradle-daemon reuse but a **stub
+`.env` inside the git worktree** (3 keys, placeholder URL, no service-role key).
+Worktrees do not inherit the untracked `.env`, so anything run from one silently
+gets broken configuration. The real `.env` was copied into the worktree (it is
+gitignored; nothing was committed).
+
+| AREA | STATUS | FACT |
+|---|---|---|
+| Admin authorization | `FIXED / RUNTIME_VERIFIED` | Both admin authorization rules were **written but never enforced**: they lived in an `intercept(ApplicationCallPipeline.Plugins)` inside the `authenticate` block that never rejected. With the server up, the static gateway token reached `GET /api/v1/admin/comercial/productos` and returned real rows. The pre-existing test passed throughout because it asserted only the path predicate, never a refusal. Moved to a route-scoped plugin on Ktor's `AuthenticationChecked` hook. Verified live: canonical+static `200 → 401`; legacy+static `200` (compatibility kept); no token `401`; `/health/ready` `200`. |
+| Legacy wallet write | `CLOSED / RUNTIME_VERIFIED` | `POST /admin/ticket-wallets/{id}/transactions` did `saldo + amount` then a separate ledger insert — lost updates under concurrency, divergent balance/ledger on partial failure, no idempotency key, no `saldo_antes/después`. Now `410` (verified live), pointing at the canonical atomic `admin_grant_tickets`. Not auto-translated: legacy integer ids vs `auth.users` uuid would move tickets into the wrong wallet. Legacy reads untouched. |
+| Admin dashboard | `FIXED` | Every metric ended in `catch { 0 }`, so "could not read" and "genuinely zero" were indistinguishable; counts fetched all rows (`select=id` + `.size`), silently truncated by PostgREST `max-rows`. Now `Prefer: count=exact` + `Range: 0-0`; error rate from two exact counts instead of an arbitrary 5000-row sample. Metrics needing DISTINCT/AVG/GROUP BY are reported in `unavailableMetrics` and rendered `NO_DATA`. |
+| Specialty capabilities | `IMPLEMENTED` | `GET`/`PUT /api/v1/admin/especialidades/{id}/capacidades` over the existing `capacidades_especialidad`. No new schema. Missing row returns schema defaults flagged `configurado=false` (distinct from "configured with everything off"); missing table returns `SPECIALTY_CAPABILITIES_NOT_PROVISIONED`, never "all modes disabled". A specialty left with zero exam modes requires a limitation message. Desktop section with its own save. |
+| Commercial catalog | `IMPLEMENTED / LIVE_READ_VERIFIED` | `GET`/`POST /api/v1/admin/comercial/productos` and `.../{id}/tarifas`. No new schema: `productos_comerciales` already had every field required to be configurable, and `tarifas_producto_comercial` already models `periodo_facturacion` × `fase_precio` (first-period vs renewal). **`productos_comerciales` is now `LIVE_VERIFIED`**: the endpoint returned real rows (`free`, `rafagas`, `tipo_producto=suscripcion`). Money is integer cents end to end. Desktop screen at `Commercial.Catalog`. |
+| Users listing | `FIXED` | Was `limit=200` fixed, and enriched each page by fetching **every** row of `roles_usuario` and `carteras_usuario`. Now `limit`/`offset` with a hard cap, `total` nullable (unknown ≠ zero), and enrichment filtered to the page's ids. |
+
+Tests: 151 backend (was 87), plus domain/data/composeApp/features suites — all
+green. `git diff --check` clean.
+
+Not verified: Desktop **visual** click-through. The JVM app launches cleanly with
+correct configuration and no startup crash (so the Koin graph resolves), but this
+environment cannot capture or drive a native window, so screen-by-screen visual
+confirmation of the new panels remains open — as does any flow needing a real
+admin JWT, which was not available.
+
+`DATABASE_CHANGES: NONE`. `MAIN_WRITES: NONE` — every live call made was a read
+or an authorization probe; no administrative write was executed.
+
 ## Preserved boundaries
 
 OposiBot, public.usuario, /v1/auth/*, Opositeca, OposiRed, PDF/import, exam-resources, news-assets and POST_OPOSIBOT_LEGACY_CLEANUP remain protected. The deferred cleanup has not executed.
