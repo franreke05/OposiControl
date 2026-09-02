@@ -97,9 +97,23 @@ class OposiBotsAuthRoutesTest {
     @Test
     fun localAdminBypassRejectsPublicPeersAndProduction() {
         assertTrue(isLocalDevelopmentPeer("dev", "127.0.0.1"))
-        assertTrue(isLocalDevelopmentPeer("test", "192.168.1.20"))
+        assertTrue(isLocalDevelopmentPeer("dev", "::1"))
         assertFalse(isLocalDevelopmentPeer("dev", "8.8.8.8"))
         assertFalse(isLocalDevelopmentPeer("production", "127.0.0.1"))
+
+        // Cambio deliberado: antes se aceptaba toda la RFC1918, así que cualquier
+        // equipo de la red llegaba a /admin/roles o /admin/backend/restart con un
+        // token que además viaja compilado en la app Android. "Desarrollo local"
+        // es esta máquina, no la red entera.
+        assertFalse(isLocalDevelopmentPeer("test", "192.168.1.20"))
+        assertFalse(isLocalDevelopmentPeer("dev", "10.0.0.5"))
+        assertFalse(isLocalDevelopmentPeer("dev", "fd00::1"))
+
+        // Y nunca un nombre de host: `remoteHost` lo deriva por DNS inverso, que
+        // controla quien conecta. Un PTR propio hacia un dominio con A 127.0.0.1
+        // hacía pasar por loopback a una petición remota.
+        assertFalse(isLocalDevelopmentPeer("dev", "localhost"))
+        assertFalse(isLocalDevelopmentPeer("dev", "attacker-controlled.example.com"))
     }
 
     @Test

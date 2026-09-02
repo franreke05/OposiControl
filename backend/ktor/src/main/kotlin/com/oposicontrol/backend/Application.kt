@@ -15,6 +15,7 @@ import io.ktor.server.auth.bearer
 import io.ktor.server.auth.principal
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
+import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.statuspages.StatusPages
@@ -142,6 +143,16 @@ fun Application.module() {
             call.respond(
                 cause.status,
                 ErrorDto(error = cause.errorCode.lowercase(), message = cause.message),
+            )
+        }
+        // Un cuerpo JSON mal formado llega como BadRequestException, que NO extiende
+        // IllegalArgumentException: sin este handler caía en el catch-all y cada
+        // payload inválido de cualquier endpoint devolvía un 500 con el nombre de
+        // la clase interna esperada. Es un 400 del cliente, y no se filtra el DTO.
+        exception<BadRequestException> { call, _ ->
+            call.respond(
+                HttpStatusCode.BadRequest,
+                ErrorDto(error = "bad_request", message = "El cuerpo de la petición no es válido."),
             )
         }
         exception<IllegalArgumentException> { call, cause ->
@@ -523,17 +534,38 @@ internal fun allowsDevBypass(appEnv: String, enabled: Boolean): Boolean {
     return enabled && appEnv.lowercase() in setOf("dev", "development", "test")
 }
 
+/**
+ * ¿La llamada viene de la propia máquina, en un entorno de desarrollo?
+ *
+ * Es la única barrera de red del token estático, así que se decide **sólo con la
+ * dirección literal del socket**. Dos reglas que no deben relajarse:
+ *
+ * 1. **Nunca un nombre de host.** `origin.remoteHost` hace resolución inversa
+ *    sobre el peer, y ese nombre lo controla quien conecta: con un PTR propio que
+ *    apunte a un dominio cuyo registro A sea `127.0.0.1`, una petición remota se
+ *    resolvía como loopback y abría la superficie legacy desde Internet. Aquí se
+ *    parsea la IP tal cual, sin `getByName` y sin ninguna consulta DNS.
+ * 2. **Sólo loopback.** Antes también se aceptaba `isSiteLocalAddress` y los
+ *    prefijos `fc`/`fd`, es decir toda la RFC1918: cualquier equipo de la misma
+ *    red llegaba a `/admin/roles` o a `/admin/backend/restart` con un token que
+ *    además viaja compilado en la app Android. "Desarrollo local" es esta
+ *    máquina, no la red entera.
+ *
+ * Detrás de un proxy o un túnel, el peer TCP es siempre loopback: por eso el
+ * token estático no puede ser la única defensa de nada sensible.
+ */
 internal fun isLocalDevelopmentPeer(appEnv: String, remoteHost: String): Boolean {
     if (appEnv.lowercase() !in setOf("dev", "development", "test")) return false
-    val normalized = remoteHost.substringBefore('%').trim('[', ']')
-    return runCatching {
-        InetAddress.getByName(normalized).let { address ->
-            address.isLoopbackAddress ||
-                address.isSiteLocalAddress ||
-                normalized.startsWith("fc", ignoreCase = true) ||
-                normalized.startsWith("fd", ignoreCase = true)
-        }
-    }.getOrDefault(false)
+    val literal = remoteHost.substringBefore('%').trim('[', ']')
+    if (literal.isEmpty()) return false
+    // Un nombre de host (no una IP literal) se rechaza: sólo se confía en lo que
+    // no depende de DNS.
+    if (!literal.all { it.isDigit() || it == '.' || it == ':' || (it in "abcdefABCDEF") }) return false
+    return literal == "::1" ||
+        literal == "0:0:0:0:0:0:0:1" ||
+        literal.startsWith("127.") ||
+        // IPv4 mapeada en IPv6, como la entrega Netty en algunos stacks duales.
+        literal.startsWith("::ffff:127.", ignoreCase = true)
 }
 
 internal fun isLegacyStaticTokenPath(path: String): Boolean =

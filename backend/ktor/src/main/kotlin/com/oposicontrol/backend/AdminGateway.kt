@@ -59,7 +59,11 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
             call.respond(gateway.listTicketTransactions(call.requiredPath("userId")))
         }
         post("/ticket-wallets/{userId}/transactions") {
-            call.respond(HttpStatusCode.Created, gateway.appendTicketAdjustment(call.requiredPath("userId"), call.receive()))
+            // El cuerpo NO se lee: la ruta está deshabilitada y `call.receive()` se
+            // evaluaría antes que el rechazo (Kotlin evalúa los argumentos de
+            // izquierda a derecha), de modo que un JSON mal formado moría en
+            // BadRequestException con un 500 en lugar del 410 previsto.
+            gateway.rejectLegacyTicketAdjustment(call.requiredPath("userId"))
         }
         get("/support/conversations") { call.respond(gateway.listSupportConversations()) }
         get("/support/conversations/{conversationId}/messages") {
@@ -284,7 +288,7 @@ class SupabaseAdminGateway internal constructor(
      * Las lecturas legacy se conservan (`listTicketWallets` /
      * `listTicketTransactions`): solo se cierra la escritura.
      */
-    fun appendTicketAdjustment(userId: String, input: AdminTicketAdjustmentDto): AdminTicketTransactionDto {
+    fun rejectLegacyTicketAdjustment(userId: String): Nothing {
         throw BackendDomainException(
             "WALLET_LEGACY_ROUTE_DISABLED",
             HttpStatusCode.Gone,
@@ -634,6 +638,15 @@ data class AdminTicketWalletDto(
     val status: String,
 )
 
+/**
+ * Movimiento de cartera de OposiTickets.
+ *
+ * Los cuatro últimos campos son la parte auditable y llegan sólo desde el ledger
+ * canónico (`transacciones_cartera`): sin saldo antes/después no se puede
+ * reconstruir el histórico ni detectar un descuadre, y sin origen y clave de
+ * idempotencia no se sabe qué provocó el movimiento ni si un reintento lo
+ * duplicó. Son nullable porque la superficie legacy no los tiene.
+ */
 @Serializable
 data class AdminTicketTransactionDto(
     val id: String,
@@ -642,6 +655,12 @@ data class AdminTicketTransactionDto(
     val amount: Double,
     val reason: String,
     val occurredAt: String,
+    val balanceBefore: Int? = null,
+    val balanceAfter: Int? = null,
+    /** Qué originó el movimiento: "admin", una compra, una recompensa… */
+    val originType: String? = null,
+    val originId: String? = null,
+    val idempotencyKey: String? = null,
 )
 
 @Serializable

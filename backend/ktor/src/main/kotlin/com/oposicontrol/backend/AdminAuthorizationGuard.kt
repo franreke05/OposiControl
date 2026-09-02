@@ -27,14 +27,22 @@ internal val AdminAuthorizationPlugin = createRouteScopedPlugin(
 ) {
     val appEnv = pluginConfig.appEnv
     val hasAdminRole = pluginConfig.hasAdminRole
+    val isLocalPeer = pluginConfig.isLocalPeer
     on(AuthenticationChecked) { call ->
-        val principal = call.principal<UserIdPrincipal>() ?: return@on
+        // Falla cerrado, no abierto. Si algún día se añade otro proveedor a
+        // `authenticate(...)` o cambia el tipo de principal, `return@on` dejaría
+        // pasar cada llamada autenticada al handler sin error y sin traza.
+        val principal = call.principal<UserIdPrincipal>()
+            ?: throw AppUnauthorized("Principal no reconocido para la superficie de administración.")
         adminAuthorizationFailure(
             principalName = principal.name,
             path = call.request.path(),
-            remoteHost = call.request.origin.remoteHost,
+            // remoteAddress, no remoteHost: el segundo hace DNS inverso sobre el peer
+            // y ese nombre lo controla quien conecta (ver isLocalDevelopmentPeer).
+            remoteAddress = call.request.origin.remoteAddress,
             appEnv = appEnv,
             hasAdminRole = hasAdminRole,
+            isLocalPeer = isLocalPeer,
         )?.let { throw it }
     }
 }
@@ -42,6 +50,17 @@ internal val AdminAuthorizationPlugin = createRouteScopedPlugin(
 internal class AdminAuthorizationConfig {
     var appEnv: String = ""
     var hasAdminRole: (String) -> Boolean = { false }
+
+    /**
+     * Cómo se decide que el par es local. El valor por defecto es la comprobación
+     * real y estricta sobre la IP del socket.
+     *
+     * Es configurable únicamente porque el motor de pruebas de Ktor reporta
+     * `localhost` como dirección del par, y aceptar nombres de host en producción
+     * es justo el agujero que se cerró (ver `isLocalDevelopmentPeer`). El seam
+     * permite ejercitar el camino permitido sin relajar la regla real.
+     */
+    var isLocalPeer: (appEnv: String, remoteAddress: String) -> Boolean = ::isLocalDevelopmentPeer
 }
 
 /**
@@ -59,10 +78,11 @@ internal class AdminAuthorizationConfig {
  * plugin de autenticación rellene el principal: ambas comprobaciones leían
  * `principal == null`, no rechazaban nada, y la llamada continuaba. Las reglas
  * estaban escritas pero no se aplicaban — con el servidor en marcha, el token
- * estático llegaba a las rutas canónicas de admin y devolvía datos reales. (Ojo
- * al escribir aquí una ruta con comodín: Kotlin anida comentarios de bloque, así
- * que un `/` seguido de `*` dentro del KDoc lo deja sin cerrar.) Ahora se ejecuta
- * en `ApplicationCallPipeline.Call`, ya con el principal resuelto.
+ * estático llegaba a las rutas canónicas de admin y devolvía datos reales. Ahora
+ * se aplica desde [AdminAuthorizationPlugin], en el hook `AuthenticationChecked`.
+ *
+ * (Ojo al escribir aquí una ruta con comodín: Kotlin anida comentarios de bloque,
+ * así que un `/` seguido de `*` dentro del KDoc lo deja sin cerrar.)
  *
  * La decisión se aísla aquí para poder probarla entera (principal + ruta + par +
  * entorno). Probar sólo el predicado de rutas es justo lo que dejó pasar el fallo.
@@ -72,12 +92,13 @@ internal class AdminAuthorizationConfig {
 internal fun adminAuthorizationFailure(
     principalName: String,
     path: String,
-    remoteHost: String,
+    remoteAddress: String,
     appEnv: String,
     hasAdminRole: (String) -> Boolean,
+    isLocalPeer: (String, String) -> Boolean = ::isLocalDevelopmentPeer,
 ): Exception? {
     if (principalName == STATIC_TOKEN_PRINCIPAL) {
-        val allowed = isLocalDevelopmentPeer(appEnv, remoteHost) && isLegacyStaticTokenPath(path)
+        val allowed = isLocalPeer(appEnv, remoteAddress) && isLegacyStaticTokenPath(path)
         return if (allowed) {
             null
         } else {

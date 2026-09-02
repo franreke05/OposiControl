@@ -1602,6 +1602,13 @@ private data class TransaccionCarteraRow(
     val cantidad: Int,
     val descripcion: String? = null,
     @SerialName("creado_en") val creadoEn: String? = null,
+    // Parte auditable del ledger: permite reconstruir el histórico, detectar un
+    // descuadre y saber qué originó cada movimiento.
+    @SerialName("saldo_anterior") val saldoAnterior: Int? = null,
+    @SerialName("saldo_resultante") val saldoResultante: Int? = null,
+    @SerialName("referencia_tipo") val referenciaTipo: String? = null,
+    @SerialName("referencia_id") val referenciaId: String? = null,
+    @SerialName("idempotency_key") val idempotencyKey: String? = null,
 )
 
 @Serializable
@@ -1676,6 +1683,11 @@ private fun TransaccionCarteraRow.toDto() = AdminTicketTransactionDto(
     amount = cantidad.toDouble(),
     reason = descripcion.orEmpty(),
     occurredAt = creadoEn.orEmpty(),
+    balanceBefore = saldoAnterior,
+    balanceAfter = saldoResultante,
+    originType = referenciaTipo,
+    originId = referenciaId,
+    idempotencyKey = idempotencyKey,
 )
 
 // ---------- Gateway Supabase (esquema real) ----------

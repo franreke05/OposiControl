@@ -37,10 +37,7 @@ class LegacyWalletMutationTest {
     @Test
     fun legacyTicketAdjustment_isRejectedBeforeAnyUpstreamCall() {
         val failure = assertFailsWith<BackendDomainException> {
-            gateway().appendTicketAdjustment(
-                userId = "42",
-                input = AdminTicketAdjustmentDto(amount = 50.0, reason = "recompensa manual"),
-            )
+            gateway().rejectLegacyTicketAdjustment(userId = "42")
         }
 
         assertEquals("WALLET_LEGACY_ROUTE_DISABLED", failure.errorCode)
@@ -50,10 +47,7 @@ class LegacyWalletMutationTest {
     @Test
     fun rejectionMessagePointsToTheCanonicalAtomicRoute() {
         val failure = assertFailsWith<BackendDomainException> {
-            gateway().appendTicketAdjustment(
-                userId = "42",
-                input = AdminTicketAdjustmentDto(amount = -10.0, reason = "correccion"),
-            )
+            gateway().rejectLegacyTicketAdjustment(userId = "42")
         }
 
         assertTrue(
@@ -63,17 +57,16 @@ class LegacyWalletMutationTest {
     }
 
     /**
-     * El rechazo no puede depender de que el importe sea valido: un ajuste de 0 o
-     * sin motivo tambien debe morir en la puerta legacy, no en una validacion que
-     * sugiera que con otros datos la ruta si escribiria.
+     * El rechazo no puede depender del cuerpo de la peticion.
+     *
+     * La ruta ya ni siquiera lo lee: leerlo primero hacia que un JSON mal formado
+     * muriese en BadRequestException con un 500, en lugar del 410 previsto. El
+     * rechazo ocurre por la ruta que es, no por lo que se envie.
      */
     @Test
-    fun rejectionDoesNotDependOnPayloadValidity() {
+    fun rejectionDoesNotDependOnAnyRequestBody() {
         val failure = assertFailsWith<BackendDomainException> {
-            gateway().appendTicketAdjustment(
-                userId = "42",
-                input = AdminTicketAdjustmentDto(amount = 0.0, reason = ""),
-            )
+            gateway().rejectLegacyTicketAdjustment(userId = "cualquier-cosa")
         }
 
         assertEquals("WALLET_LEGACY_ROUTE_DISABLED", failure.errorCode)

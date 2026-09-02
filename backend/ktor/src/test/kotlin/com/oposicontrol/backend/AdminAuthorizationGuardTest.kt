@@ -22,13 +22,13 @@ class AdminAuthorizationGuardTest {
     private fun failureFor(
         principalName: String,
         path: String,
-        remoteHost: String = "127.0.0.1",
+        remoteAddress: String = "127.0.0.1",
         appEnv: String = "dev",
         adminRoles: Set<String> = emptySet(),
     ) = adminAuthorizationFailure(
         principalName = principalName,
         path = path,
-        remoteHost = remoteHost,
+        remoteAddress = remoteAddress,
         appEnv = appEnv,
         hasAdminRole = { it in adminRoles },
     )
@@ -62,7 +62,7 @@ class AdminAuthorizationGuardTest {
         val failure = failureFor(
             STATIC_TOKEN_PRINCIPAL,
             "/admin/backend/restart",
-            remoteHost = "203.0.113.10",
+            remoteAddress = "203.0.113.10",
         )
 
         assertTrue(failure is AppUnauthorized)
@@ -114,7 +114,7 @@ class AdminAuthorizationGuardTest {
         adminAuthorizationFailure(
             principalName = "usuario-objetivo",
             path = "/api/v1/admin/usuarios",
-            remoteHost = "127.0.0.1",
+            remoteAddress = "127.0.0.1",
             appEnv = "dev",
             hasAdminRole = { asked += it; true },
         )
@@ -130,7 +130,7 @@ class AdminAuthorizationGuardTest {
         adminAuthorizationFailure(
             principalName = STATIC_TOKEN_PRINCIPAL,
             path = "/api/v1/admin/usuarios",
-            remoteHost = "127.0.0.1",
+            remoteAddress = "127.0.0.1",
             appEnv = "dev",
             hasAdminRole = { consulted = true; true },
         )
