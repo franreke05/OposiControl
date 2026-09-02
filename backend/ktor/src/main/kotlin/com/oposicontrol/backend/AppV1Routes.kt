@@ -283,15 +283,43 @@ class AppV1Gateway private constructor(
     private val json: Json,
     private val client: HttpClient = newUpstreamHttpClient(),
 ) {
+    /** Caché de decisiones de rol admin. Concurrente: la consultan varias peticiones a la vez. */
+    private val adminRoleCache = java.util.concurrent.ConcurrentHashMap<String, CachedRoleDecision>()
+
+    /**
+     * ¿Tiene rol admin?
+     *
+     * Se consulta en cada petición administrativa (la autorización se aplica en
+     * el hook `AuthenticationChecked`), así que sin caché cada carga de pantalla
+     * costaba dos viajes secuenciales a Supabase, y cualquiera con un JWT válido
+     * podía amplificar una petición en dos llamadas upstream indefinidamente.
+     *
+     * TTL corto a propósito: revocar un rol debe surtir efecto en segundos, no en
+     * la siguiente sesión. Sólo se cachea el resultado positivo o negativo ya
+     * calculado; un fallo de lectura no se cachea, para que un Supabase caído no
+     * deje congelada una respuesta equivocada.
+     */
     fun hasAdminRole(usuarioId: String): Boolean {
         usuarioId.validatedUuid("usuarioId")
-        return hasAnyCanonicalRole(usuarioId, CanonicalAuthorization.adminRoleCodes)
+        val now = System.currentTimeMillis()
+        adminRoleCache[usuarioId]?.let { cached ->
+            if (now < cached.expiresAtMillis) return cached.hasRole
+        }
+        val hasRole = hasAnyCanonicalRole(usuarioId, CanonicalAuthorization.adminRoleCodes)
+        adminRoleCache[usuarioId] = CachedRoleDecision(hasRole, now + ADMIN_ROLE_CACHE_TTL_MILLIS)
+        // Poda barata: sin ella el mapa crece con cada usuario que pasa por aquí.
+        if (adminRoleCache.size > ADMIN_ROLE_CACHE_MAX_ENTRIES) {
+            adminRoleCache.entries.removeAll { it.value.expiresAtMillis <= now }
+        }
+        return hasRole
     }
 
     fun hasModeratorOrAdminRole(usuarioId: String): Boolean {
         usuarioId.validatedUuid("usuarioId")
         return hasAnyCanonicalRole(usuarioId, CanonicalAuthorization.moderatorOrAdminRoleCodes)
     }
+
+    private data class CachedRoleDecision(val hasRole: Boolean, val expiresAtMillis: Long)
 
     private fun hasAnyCanonicalRole(usuarioId: String, roleCodes: Set<String>): Boolean {
         val roleIds = get("/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId")
@@ -636,6 +664,10 @@ class AppV1Gateway private constructor(
     }
 
     companion object {
+        /** Corto a propósito: revocar un rol debe surtir efecto en segundos. */
+        private const val ADMIN_ROLE_CACHE_TTL_MILLIS = 30_000L
+        private const val ADMIN_ROLE_CACHE_MAX_ENTRIES = 1_000
+
         fun fromEnvironment(json: Json): AppV1Gateway? {
             val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
             val key = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()

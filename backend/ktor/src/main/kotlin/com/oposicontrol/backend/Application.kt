@@ -51,6 +51,9 @@ import kotlin.system.exitProcess
 private const val STORED_QUESTION_PREFIX = "__OPOSICONTROL_QUESTION_V1__\n"
 private const val COVER_MAX_BYTES = 10 * 1024 * 1024
 private const val RESOURCE_MAX_BYTES = 50 * 1024 * 1024
+/** Detalle de fallos upstream: se registra aquí y nunca se devuelve al cliente. */
+private val UpstreamFailureLogger: org.slf4j.Logger = org.slf4j.LoggerFactory.getLogger("OC-KTOR-UPSTREAM")
+
 
 fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
@@ -162,19 +165,35 @@ fun Application.module() {
             )
         }
         exception<IllegalStateException> { call, cause ->
-            val message = cause.redactedMessage("Backend error")
             val isTimeout = cause.looksLikeUpstreamTimeout()
+            val requestId = call.requestIdOrNull()
             logStrategicEvent(
                 if (isTimeout) StrategicEvent.UPSTREAM_TIMEOUT else StrategicEvent.SUPABASE_REQUEST_FAILED,
-                requestId = call.requestIdOrNull(),
+                requestId = requestId,
                 operation = call.request.path(),
                 result = "error",
                 durationMs = call.elapsedMsOrNull(),
                 errorType = cause::class.simpleName,
             )
+            // El detalle del upstream se registra, no se devuelve. Los errores de
+            // PostgREST incluyen un campo `hint` que sugiere nombres de tablas
+            // reales ("Perhaps you meant the table 'public.servicios'"), y esta
+            // ruta es alcanzable sin autenticar: era un oráculo de esquema. El
+            // request id permite correlacionar con el log sin filtrar nada.
+            UpstreamFailureLogger.warn(
+                "upstream failure on {} (requestId={}): {}",
+                call.request.path(),
+                requestId,
+                cause.redactedMessage("Backend error"),
+            )
             call.respond(
                 HttpStatusCode.InternalServerError,
-                ErrorDto(error = "backend_supabase_error", message = message),
+                ErrorDto(
+                    error = "backend_supabase_error",
+                    message = requestId
+                        ?.let { "Error al consultar el servicio de datos. Referencia: $it" }
+                        ?: "Error al consultar el servicio de datos.",
+                ),
             )
         }
         exception<Throwable> { call, cause ->
