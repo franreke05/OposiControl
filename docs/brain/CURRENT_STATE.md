@@ -96,6 +96,93 @@ admin JWT, which was not available.
 `DATABASE_CHANGES: NONE`. `MAIN_WRITES: NONE` — every live call made was a read
 or an authorization probe; no administrative write was executed.
 
+## Desktop Control Center — vertical 2 (2026-09-02)
+
+### Corrección importante del registro anterior
+
+La sesión previa declaró `nota media`, `liga`, `ranking`, `evolución`, `racha`,
+popup rules, marketing y consumibles como `NOT_INSTRUMENTED`. **Era incorrecto.**
+Se dedujo de `estadisticas_usuario` en solitario, más documentación
+desactualizada y un fixture de dry-run desechable. Una auditoría del esquema
+**en vivo** (PostgREST OpenAPI, sólo lectura) devuelve **90 tablas**, y esas
+métricas viven en tablas propias:
+
+| Necesidad de producto | Dónde vive realmente |
+|---|---|
+| Nota media, evolución, ventana de cálculo | `estado_competitivo_usuario.nota_media_actual`, `nota_referencia_evolucion`, `evolucion_nota`, `preguntas_desde_ultima_evolucion`, `ventana_calculo` |
+| Liga y ranking | `estado_competitivo_usuario.liga_nivel_id`, `ranking_liga_posicion`, `ranking_global_posicion`, `percentil_global`; catálogo en `ligas_nivel`, `ligas`, `ranking_liga` |
+| Racha y racha máxima | `rachas_usuario.racha_actual_dias`, `mejor_racha_dias` |
+| Perfil ampliado (edad, ciudad, franja…) | `perfiles_usuario_detalle` — contiene todos los campos del PDF |
+| Debilidades por etiqueta | vista `v_usuario_debilidades_etiqueta` (ya existe) |
+| Dificultad de preguntas | vista `v_preguntas_dificultad_global` (ya existe) |
+| Reglas de pop-up | `reglas_popup_comercial` (17 columnas: disparador, pantalla, momento, plan mínimo, frecuencia, prioridad) |
+| Consumibles | `servicios` + `activaciones_servicio_usuario` |
+| Packs OT | `paquetes_opositickets` |
+| Sesiones y tiempo de uso | `sesiones_estudio` |
+| Marketing/atribución | `atribucion_usuario`, `invitaciones_referido`, `eventos_conversion_premium` |
+
+Existen además 5 RPC de rollup (`recalcular_estadisticas_*`), que es el patrón
+correcto para agregados y evita calcularlos por petición.
+
+**`ligas_nivel` está sembrada exactamente con el modelo documentado**: Liga 50
+(ventana 50) y 200/500/800/1000 (ventana 100). Las ligas ya son configuración
+data-driven: no hacen falta ni decisión de producto ni migración.
+
+Estado real de los datos: el esquema existe pero la mayoría de tablas están
+**vacías** (`SCHEMA_EXISTS_NOT_POPULATED`). Con filas: `perfiles_usuario` (3),
+`carteras_usuario` (2), `transacciones_cartera` (16, todas `ajuste`/`admin`),
+`suscripciones` (1), `ligas_nivel` (5), `productos_comerciales`.
+
+### Revisión de seguridad independiente
+
+Un revisor que no implementó el código confirmó el arreglo de autorización
+(**117/117** sondas canónicas devuelven 401; los intentos de bypass por
+normalización de rutas, codificación y cabeceras fallaron todos) y confirmó que
+existe **una sola** vía de mutación de saldo en todo el repositorio, a través del
+RPC atómico e idempotente. Encontró además defectos reales, todos corregidos y
+verificados en ejecución:
+
+| ID | Sev | Defecto | Estado |
+|---|---|---|---|
+| F1 | P1 | `isLocalDevelopmentPeer` recibía `remoteHost`, que Netty deriva por **DNS inverso**: con un PTR propio hacia un dominio con A `127.0.0.1`, una petición remota pasaba por loopback. Aceptaba además toda la RFC1918. | FIXED — sólo IP literal de socket, sólo loopback |
+| F2 | P1 | Las pruebas nuevas repetían el error que dejó pasar el bug original: comprobaban la función pura, no el cableado. | FIXED — `AdminAuthorizationWiringTest`, 11 casos por HTTP real |
+| F3 | P1 | El 410 del wallet se saltaba por orden de evaluación (`call.receive()` primero) → 500 con cuerpos mal formados. Causa raíz más amplia: `BadRequestException` no extiende `IllegalArgumentException`, así que **cualquier** JSON inválido daba 500 filtrando el nombre de clase interna. | FIXED — la ruta no lee el cuerpo; handler 400 añadido |
+| F4 | P2 | El guard fallaba **abierto** ante un principal de tipo inesperado. | FIXED — falla cerrado |
+| F5 | P2 | `/dashboard/metrics`, `/tags`, `/search` pasaron a 401 con token estático. | INVESTIGADO — no es regresión: el cliente usa rutas canónicas y `/search` ya estaba desactivado en cliente |
+| F7 | P2 | `/v1/examenes` público sin filtro de publicación: exámenes sin publicar visibles sin autenticar. | FIXED |
+| F8 | P2 | Los cuerpos de error upstream se devolvían literales; el `hint` de PostgREST es un oráculo de esquema, alcanzable sin autenticar. | FIXED — se registra, se devuelve mensaje genérico + request id |
+| F9 | P2 | `hasAdminRole` añadía dos viajes upstream sin caché por petición admin. | FIXED — caché concurrente, TTL 30 s |
+
+**Pendientes registrados, no corregidos** (ver RISKS.md): F6 (la allow-list legacy
+es un prefijo e incluye operaciones destructivas), F10 (instalar
+`XForwardedHeaders` reabriría F1), F11 (las denegaciones se registran como fallo
+de login), F12 (el token estático viaja compilado en la APK), y la posible
+existencia de un overload legacy de 4 argumentos de `admin_grant_tickets` sin
+clave de idempotencia.
+
+### Entregado en esta vertical
+
+| Área | Estado | Hecho |
+|---|---|---|
+| User detail | `IMPLEMENTED` | `GET /api/v1/admin/usuarios/{id}/detalle`: perfil, perfil ampliado, rendimiento, estado competitivo, racha, economía, suscripciones, OposiTester y debilidades. Secciones nullable con tres estados distintos (dato / NO_DATA / NO_DISPONIBLE). Las 10 consultas verificadas HTTP 200 contra la base real. |
+| OT ledger | `ENRICHED` | Expuestos `saldo_anterior`, `saldo_resultante`, `referencia_tipo`, `referencia_id`, `idempotency_key`. |
+| Market | `IMPLEMENTED` | `GET/POST /api/v1/admin/market/{packs,servicios,promociones,popups}` + pantalla Desktop de cuatro secciones. Sin esquema nuevo; las cuatro consultas verificadas HTTP 200. |
+
+### Runtime verificado
+
+Con Ktor real contra la base de datos, la app Desktop **autentica y obtiene 200**
+en rutas canónicas: `/api/v1/admin/dashboard`, `/especialidades`, `/examenes`,
+`/examenes/{id}/preguntas`, `/reportes`. Confirma la cadena completa
+Desktop → Ktor → Supabase **con autorización aplicada**, y que el arreglo de
+seguridad no rompe el cliente (presenta un JWT admin real, no el token estático).
+
+Dos 500 observados son deriva legacy preexistente, no introducida aquí:
+`/api/v1/admin/tienda/articulos` y `/content/noticias` apuntan a tablas
+(`articulo_tienda`, `noticia`) que no existen en la base viva.
+
+`DATABASE_CHANGES: NONE`. `MAIN_WRITES: NONE` — todas las llamadas en vivo fueron
+lecturas, conteos o sondas de autorización.
+
 ## Preserved boundaries
 
 OposiBot, public.usuario, /v1/auth/*, Opositeca, OposiRed, PDF/import, exam-resources, news-assets and POST_OPOSIBOT_LEGACY_CLEANUP remain protected. The deferred cleanup has not executed.

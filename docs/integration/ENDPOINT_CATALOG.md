@@ -185,6 +185,30 @@ Changed behaviour on existing endpoints:
 | `GET /api/v1/admin/dashboard` | Adds `unavailableMetrics`; numeric fields for listed metrics are serialization filler, not data. |
 | `POST /admin/ticket-wallets/{id}/transactions` | Now `410 Gone`. The non-atomic balance write is closed; use `POST /api/v1/admin/tickets/{usuarioId}/transacciones`. Legacy reads unchanged. |
 
+## Desktop Control Center — vertical 2 (2026-09-02)
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `ADM-USR-010` | GET | `/api/v1/admin/usuarios/{id}/detalle` | `SOURCE_VERIFIED`; the 10 underlying queries each return HTTP 200 against MAIN |
+| `ADM-MKT-001` | GET/POST | `/api/v1/admin/market/packs` | `SOURCE_VERIFIED`; `paquetes_opositickets` reachable (HTTP 200, empty) |
+| `ADM-MKT-002` | GET/POST | `/api/v1/admin/market/servicios` | `SOURCE_VERIFIED`; `servicios` reachable (HTTP 200, empty) |
+| `ADM-MKT-003` | GET/POST | `/api/v1/admin/market/promociones` | `SOURCE_VERIFIED`; `promociones` reachable (HTTP 200, empty) |
+| `ADM-MKT-004` | GET/POST | `/api/v1/admin/market/popups` | `SOURCE_VERIFIED`; `reglas_popup_comercial` reachable (HTTP 200, empty) |
+
+Changed behaviour:
+
+| Endpoint | Change |
+|---|---|
+| `GET /api/v1/admin/tickets/{id}/transacciones` | Adds `balanceBefore`, `balanceAfter`, `originType`, `originId`, `idempotencyKey`. Additive and nullable — the legacy surface has none of them. |
+| `POST /admin/ticket-wallets/{id}/transactions` | Now returns `410` regardless of the request body. It previously returned 500 when the body failed to deserialize, because the body was read before the rejection. |
+| `GET /v1/examenes`, `GET /v1/examenes/{id}` | Now also require `publicado_en=not.is.null`, matching the authenticated route. Unpublished exams were visible unauthenticated. |
+| Any endpoint, malformed JSON body | `400` with a generic message (was `500` leaking the expected internal class name). |
+| Any endpoint, upstream failure | Generic message plus the request id; the upstream body (including PostgREST `hint`, which names tables) is logged server-side instead of returned. |
+
+Runtime-verified end to end: the desktop client authenticates with a real admin
+JWT and receives 200 from `/api/v1/admin/dashboard`, `/especialidades`,
+`/examenes`, `/examenes/{id}/preguntas` and `/reportes`.
+
 ## Knowledge-loss check
 
 | Family | Result |
