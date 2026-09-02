@@ -592,6 +592,26 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 }
             }
         }
+        // OposiMarket administrable. Los precios y las reglas viven aquí como
+        // datos: cambiarlos no debe requerir un despliegue.
+        route("/market") {
+            route("/packs") {
+                get { call.respond(AdminTicketPacksResponse(gateway.listTicketPacks())) }
+                post { call.respond(AdminTicketPackResponse(gateway.upsertTicketPack(call.receive()))) }
+            }
+            route("/servicios") {
+                get { call.respond(AdminServicesResponse(gateway.listServices())) }
+                post { call.respond(AdminServiceResponse(gateway.upsertService(call.receive()))) }
+            }
+            route("/promociones") {
+                get { call.respond(AdminPromotionsResponse(gateway.listPromotions())) }
+                post { call.respond(AdminPromotionResponse(gateway.upsertPromotion(call.receive()))) }
+            }
+            route("/popups") {
+                get { call.respond(AdminPopupRulesResponse(gateway.listPopupRules())) }
+                post { call.respond(AdminPopupRuleResponse(gateway.upsertPopupRule(call.receive()))) }
+            }
+        }
         route("/tienda") {
             route("/articulos") {
                 get { call.respond(AdminArticulosTiendaResponse(gateway.listArticulosTienda())) }
@@ -3572,6 +3592,75 @@ class AdminV1Gateway private constructor(
 
         registrarAuditoria("tarifa_producto_guardada", "tarifas_producto_comercial", id)
         return saved.toDto()
+    }
+
+    // ---------- OPOSIMARKET (packs, servicios, promociones, reglas de pop-up) ----------
+    // Las cuatro tablas ya existen; esto es la superficie de administración que
+    // faltaba para poblarlas sin desplegar código.
+
+    fun listTicketPacks(): List<AdminTicketPackDto> =
+        request("GET", "/rest/v1/paquetes_opositickets?select=*&order=posicion.asc,cantidad_tickets.asc", null)
+            .decodeList()
+
+    fun upsertTicketPack(input: AdminTicketPackDto): AdminTicketPackDto {
+        val row = input.validated().let { it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }) }
+        val saved = request(
+            "POST",
+            "/rest/v1/paquetes_opositickets",
+            sbJson.encodeToString(listOf(row)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<AdminTicketPackDto>().firstOrNull() ?: error("El pack no se pudo guardar.")
+        registrarAuditoria("pack_opositickets_guardado", "paquetes_opositickets", row.id)
+        return saved
+    }
+
+    fun listServices(): List<AdminServiceDto> =
+        request("GET", "/rest/v1/servicios?select=*&order=tipo_servicio.asc,codigo.asc", null).decodeList()
+
+    fun upsertService(input: AdminServiceDto): AdminServiceDto {
+        val row = input.validated().let { it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }) }
+        val saved = request(
+            "POST",
+            "/rest/v1/servicios",
+            sbJson.encodeToString(listOf(row)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<AdminServiceDto>().firstOrNull() ?: error("El servicio no se pudo guardar.")
+        registrarAuditoria("servicio_market_guardado", "servicios", row.id)
+        return saved
+    }
+
+    fun listPromotions(): List<AdminPromotionDto> =
+        request("GET", "/rest/v1/promociones?select=*&order=codigo.asc", null).decodeList()
+
+    fun upsertPromotion(input: AdminPromotionDto): AdminPromotionDto {
+        val row = input.validated().let { it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }) }
+        val saved = request(
+            "POST",
+            "/rest/v1/promociones",
+            sbJson.encodeToString(listOf(row)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<AdminPromotionDto>().firstOrNull() ?: error("La promoción no se pudo guardar.")
+        registrarAuditoria("promocion_guardada", "promociones", row.id)
+        return saved
+    }
+
+    fun listPopupRules(): List<AdminPopupRuleDto> =
+        request(
+            "GET",
+            "/rest/v1/reglas_popup_comercial?select=*&order=prioridad.desc,codigo.asc",
+            null,
+        ).decodeList()
+
+    fun upsertPopupRule(input: AdminPopupRuleDto): AdminPopupRuleDto {
+        val row = input.validated().let { it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }) }
+        val saved = request(
+            "POST",
+            "/rest/v1/reglas_popup_comercial",
+            sbJson.encodeToString(listOf(row)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<AdminPopupRuleDto>().firstOrNull() ?: error("La regla no se pudo guardar.")
+        registrarAuditoria("regla_popup_guardada", "reglas_popup_comercial", row.id)
+        return saved
     }
 
     // ROLES (roles_app — catálogo, sin permisos granulares por ahora)
