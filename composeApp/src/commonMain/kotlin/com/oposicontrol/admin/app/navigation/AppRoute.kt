@@ -23,6 +23,9 @@ sealed interface AppRoute {
         data object Assets : Publication
     }
 
+    /** Clasificacion, ligas y posicion por opositor. Solo consulta. */
+    data object Rankings : AppRoute
+
     sealed interface Users : AppRoute {
         data object List : Users
         data class Detail(val userId: String) : Users

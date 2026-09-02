@@ -75,6 +75,7 @@ kotlin {
             implementation(projects.features.roles)
             implementation(projects.features.settings)
             implementation(projects.features.specialties)
+            implementation(projects.features.rankings)
             implementation(projects.features.store)
             implementation(projects.features.support)
             implementation(projects.features.tags)

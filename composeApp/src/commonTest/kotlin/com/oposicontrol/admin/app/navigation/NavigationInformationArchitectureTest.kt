@@ -30,6 +30,7 @@ class NavigationInformationArchitectureTest {
             AppRoute.Content.Resources,
             AppRoute.Content.Imports,
             AppRoute.Users.List,
+            AppRoute.Rankings,
             AppRoute.Commercial.Plans,
             AppRoute.Commercial.Catalog,
             AppRoute.Commercial.Tickets,

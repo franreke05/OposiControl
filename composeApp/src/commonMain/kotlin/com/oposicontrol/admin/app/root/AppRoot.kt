@@ -86,6 +86,7 @@ import com.oposicontrol.admin.features.tags.presentation.TagsIntent
 import com.oposicontrol.admin.features.tags.presentation.TagsScreen
 import com.oposicontrol.admin.features.tags.presentation.TagsViewModel
 import com.oposicontrol.admin.features.store.presentation.CommercialCatalogScreen
+import com.oposicontrol.admin.features.rankings.presentation.RankingsScreen
 import com.oposicontrol.admin.features.store.presentation.MarketScreen
 import com.oposicontrol.admin.features.store.presentation.MarketViewModel
 import com.oposicontrol.admin.features.store.presentation.StoreIntent
@@ -117,6 +118,7 @@ internal enum class AppContentTarget {
     OPOSITESTER_DETAIL,
     COMMERCIAL_CATALOG,
     MARKET,
+    RANKINGS,
     MOBILE_CONTENT_ROOT,
     LEGACY_SECTION,
     LEGACY_PLACEHOLDER,
@@ -152,6 +154,8 @@ internal fun resolveContentTarget(
     // OposiMarket es administración densa de escritorio (cuatro tablas), no una
     // pantalla de móvil.
     route == AppRoute.Commercial.Market && !compactLayout -> AppContentTarget.MARKET
+    // Rankings es una tabla densa con paginacion: escritorio.
+    route == AppRoute.Rankings && !compactLayout -> AppContentTarget.RANKINGS
     compactLayout && route is AppRoute.Content -> AppContentTarget.MOBILE_CONTENT_ROOT
     hasLegacyRoute -> AppContentTarget.LEGACY_SECTION
     else -> AppContentTarget.LEGACY_PLACEHOLDER
@@ -339,6 +343,7 @@ fun AppRoot(
                     )
                     AppContentTarget.COMMERCIAL_CATALOG -> CommercialCatalogScreen(viewModel = koinInject())
                     AppContentTarget.MARKET -> MarketScreen(viewModel = koinInject())
+                    AppContentTarget.RANKINGS -> RankingsScreen(viewModel = koinInject())
                     AppContentTarget.LEGACY_SECTION -> legacyRoute?.content()
                     AppContentTarget.LEGACY_PLACEHOLDER -> LegacyRouteAdapter(metadata.title, metadata.description)
                 }

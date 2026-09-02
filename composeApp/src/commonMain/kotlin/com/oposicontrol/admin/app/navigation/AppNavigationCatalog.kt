@@ -85,6 +85,7 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         "Usuarios",
         listOf(
             item(AppRoute.Users.List, "users", "Usuarios", "Identidad, perfil, rendimiento y economia por usuario.", NavigationGroupId.USERS, "◎"),
+            item(AppRoute.Rankings, "rankings", "Rankings y ligas", "Clasificacion, ligas y posicion por opositor.", NavigationGroupId.USERS, "◈", NavigationVisibility.DESKTOP_ONLY),
         ),
     ),
     AppRouteMenuGroup(
@@ -165,6 +166,7 @@ fun AppRoute.metadata(): AppRouteMetadata = when (this) {
     is AppRoute.Content -> appNavigationGroups.metadataFor(if (this is AppRoute.Content.ExamDetail) AppRoute.Content.Exams else this)
     is AppRoute.Publication -> appNavigationGroups.metadataFor(this)
     is AppRoute.Users -> appNavigationGroups.metadataFor(if (this is AppRoute.Users.Detail) AppRoute.Users.List else this)
+    AppRoute.Rankings -> appNavigationGroups.metadataFor(this)
     is AppRoute.Commercial -> appNavigationGroups.metadataFor(this)
     is AppRoute.Community -> appNavigationGroups.metadataFor(AppRoute.Community.OposiRed)
     is AppRoute.Reports -> appNavigationGroups.metadataFor(AppRoute.Reports.List)
@@ -198,6 +200,8 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     AppRoute.Publication.NewsTypes -> AdminSection.NEWS_TYPES
     AppRoute.Publication.Assets -> AdminSection.NEWS
     AppRoute.Users.List, is AppRoute.Users.Detail -> AdminSection.USERS
+    // Pantalla propia de escritorio: no cae al adaptador legacy.
+    AppRoute.Rankings -> null
     AppRoute.Commercial.Catalog, AppRoute.Commercial.Plans -> AdminSection.STORE
     // Market tiene pantalla propia de escritorio; no cae al adaptador legacy.
     AppRoute.Commercial.Market -> null
