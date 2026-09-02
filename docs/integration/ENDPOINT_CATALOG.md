@@ -243,3 +243,24 @@ double grant.
 | `/health/*` | `PRESERVED` (`/health` unchanged; `/health/live` and `/health/ready` new, additive) |
 
 Preserved means every family and route grouping from the forensic source is represented here. It does not mean runtime/live compatibility is verified.
+
+## Rankings y Analítica (2026-09-02)
+
+Todas bajo `authenticate("gateway-auth")`, verificadas registradas y con 401.
+
+| Endpoint | Method | Path |
+|---|---|---|
+| `ADM-RNK-001` | GET | `/api/v1/admin/rankings/ligas` |
+| `ADM-RNK-002` | GET | `/api/v1/admin/rankings/global` |
+| `ADM-RNK-003` | GET | `/api/v1/admin/rankings/liga/{ligaNivelId}` |
+| `ADM-RNK-004` | GET | `/api/v1/admin/rankings/usuario/{usuarioId}` |
+| `ADM-RNK-005` | GET | `/api/v1/admin/rankings/usuarios?q=` |
+| `ADM-ANL-001..006` | GET | `/api/v1/admin/analytics/{producto,estudio,retencion,comunidad,economia,marketing}` |
+
+Rankings es **solo lectura por construcción**: el gateway no tiene ningún método
+de escritura, y un test lo impone.
+
+Analítica devuelve, además de los valores, `unavailableMetrics` (la unión de lo no
+disponible) y `notInstrumented` (el subconjunto que nombra el read model concreto
+que falta). Los campos numéricos no llevan default: una métrica no disponible
+viaja como `null` explícito.

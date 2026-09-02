@@ -243,6 +243,53 @@ inventado rompería la inserción.
 
 `DATABASE_CHANGES: NONE`. `MAIN_WRITES: NONE`.
 
+### Rankings y Analítica (2026-09-02)
+
+Ambas verticales se construyeron con revisión independiente y se integraron en el
+shell.
+
+**Rankings** (`/api/v1/admin/rankings/*`, módulo `features:rankings`). Solo
+lectura de extremo a extremo: el gateway no expone ningún método de escritura y
+hay un test que lo impone — una clasificación que se puede ajustar a mano deja de
+significar algo. `RankingPageRequest` no es `data class` a propósito: un `copy()`
+generado permitiría saltarse el tope de página. `percentil_global` se pinta
+siempre con la etiqueta explícita de indicador comparativo interno, nunca como
+probabilidad de plaza. Verificado en vivo: `ligas_nivel` coincide exactamente con
+el modelo documentado; `estado_competitivo_usuario` y `ranking_liga` están vacías,
+así que la pantalla muestra un cero real en vez de inventar clasificación.
+
+**Analítica** (`/api/v1/admin/analytics/*`, módulo `features:analytics`). 63
+métricas reales y 22 `NOT_INSTRUMENTED`, cada una respondiendo con el read model
+concreto que necesita (AVG, SUM, GROUP BY, o percentil sobre diferencia de
+timestamps). Distingue dos clases de "sin número": `unavailableMetrics` (la unión)
+y `notInstrumented` (el subconjunto con su hueco nombrado). Los campos numéricos
+no tienen default, de modo que una métrica no disponible viaja como `null`
+explícito y no puede volver a rellenarse con cero aguas abajo.
+
+Detalles que conviene no perder:
+- Los usuarios activos se cuentan sin `DISTINCT` porque `rachas_usuario.usuario_id`
+  es la clave primaria: una fila por usuario significa que contar filas **es**
+  contar usuarios.
+- La distribución por liga es un conteo exacto por fila de `ligas_nivel`, acotado
+  por un catálogo de cinco filas y no por el volumen de usuarios.
+- Las particiones no pierden filas en silencio: los intentos llevan un bucket
+  derivado "otros" donde afloran las filas con vocabulario legacy, los movimientos
+  de cartera se parten por el signo de `cantidad` y no por el texto de `tipo`, y
+  las suscripciones tienen bucket para estados fuera de los cinco conocidos.
+- Se comprobó la garantía de honestidad por mutación: reintroducir `catch { 0 }`
+  hizo fallar cinco pruebas de inmediato.
+
+### Estado final
+
+`TESTS: 638, 0 fallos` (backend 280). `BUILD: verde`.
+`DESKTOP_PACKAGE: OposiControlAdmin-1.0.0.msi` generado.
+`DATABASE_CHANGES: NONE`. `MAIN_WRITES: NONE`.
+
+Rutas nuevas verificadas en ejecución (registradas y protegidas con 401):
+`/api/v1/admin/{planes, tickets/resumen, tickets/conceder, estado-sistema,
+rankings/*, analytics/*, market/*, comercial/*, especialidades/{id}/capacidades,
+usuarios/{id}/detalle}`.
+
 ## Preserved boundaries
 
 OposiBot, public.usuario, /v1/auth/*, Opositeca, OposiRed, PDF/import, exam-resources, news-assets and POST_OPOSIBOT_LEGACY_CLEANUP remain protected. The deferred cleanup has not executed.
