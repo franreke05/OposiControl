@@ -602,6 +602,26 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 }
             }
         }
+        // Planes de suscripción y sus beneficios. Los precios NO están aquí:
+        // viven en tarifas_producto_comercial, por periodo y fase.
+        route("/planes") {
+            get { call.respond(AdminPlansResponse(gateway.listPlanes())) }
+            post { call.respond(AdminPlanResponse(gateway.upsertPlan(call.receive()))) }
+            route("/{planId}/beneficios") {
+                get {
+                    call.respond(
+                        AdminPlanBenefitsResponse(gateway.listPlanBenefits(call.requiredPath("planId"))),
+                    )
+                }
+                post {
+                    call.respond(
+                        AdminPlanBenefitResponse(
+                            gateway.upsertPlanBenefit(call.requiredPath("planId"), call.receive()),
+                        ),
+                    )
+                }
+            }
+        }
         // OposiMarket administrable. Los precios y las reglas viven aquí como
         // datos: cambiarlos no debe requerir un despliegue.
         route("/market") {
@@ -3602,6 +3622,69 @@ class AdminV1Gateway private constructor(
 
         registrarAuditoria("tarifa_producto_guardada", "tarifas_producto_comercial", id)
         return saved.toDto()
+    }
+
+    // ---------- PLANES DE SUSCRIPCIÓN (planes_suscripcion + beneficios_plan) ----------
+
+    fun listPlanes(): List<AdminPlanDto> {
+        val planes = request(
+            "GET",
+            "/rest/v1/planes_suscripcion?select=*&order=posicion.asc,nivel.asc",
+            null,
+        ).decodeList<PlanRow>()
+        if (planes.isEmpty()) return emptyList()
+
+        // Una sola consulta para todos los beneficios: el catálogo es pequeño,
+        // pero un N+1 sobre PostgREST se nota igual y no cuesta nada evitarlo.
+        val beneficiosPorPlan = request(
+            "GET",
+            "/rest/v1/beneficios_plan?select=*&order=codigo_beneficio.asc",
+            null,
+        ).decodeList<AdminPlanBenefitDto>()
+            .groupBy { it.planId }
+
+        return planes.map { plan -> plan.toDto(beneficiosPorPlan[plan.id].orEmpty()) }
+    }
+
+    fun upsertPlan(input: AdminPlanDto): AdminPlanDto {
+        val valid = input.validated()
+        val id = valid.id.ifBlank { UUID.randomUUID().toString() }
+        val saved = request(
+            "POST",
+            "/rest/v1/planes_suscripcion",
+            sbJson.encodeToString(listOf(valid.copy(id = id).toRow())),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<PlanRow>().firstOrNull() ?: error("El plan no se pudo guardar.")
+        registrarAuditoria("plan_suscripcion_guardado", "planes_suscripcion", id)
+        return saved.toDto(listPlanBenefits(id))
+    }
+
+    fun listPlanBenefits(planId: String): List<AdminPlanBenefitDto> {
+        planId.validatedUuid("planId")
+        return request(
+            "GET",
+            "/rest/v1/beneficios_plan?select=*&plan_id=eq.$planId&order=codigo_beneficio.asc",
+            null,
+        ).decodeList()
+    }
+
+    fun upsertPlanBenefit(planId: String, input: AdminPlanBenefitDto): AdminPlanBenefitDto {
+        planId.validatedUuid("planId")
+        val valid = input.validated()
+        val row = valid.copy(
+            id = valid.id.ifBlank { UUID.randomUUID().toString() },
+            // El plan lo fija la ruta: si el cuerpo trajera otro, se estaría
+            // editando el plan equivocado.
+            planId = planId,
+        )
+        val saved = request(
+            "POST",
+            "/rest/v1/beneficios_plan",
+            sbJson.encodeToString(listOf(row)),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<AdminPlanBenefitDto>().firstOrNull() ?: error("El beneficio no se pudo guardar.")
+        registrarAuditoria("beneficio_plan_guardado", "beneficios_plan", row.id)
+        return saved
     }
 
     // ---------- OPOSITICKETS (concesión administrativa + resumen) ----------
