@@ -105,6 +105,7 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
             item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes y beneficios.", NavigationGroupId.COMMERCIAL, "◆"),
             item(AppRoute.Commercial.Tickets, "commercial.tickets", "Tickets", "Carteras y movimientos.", NavigationGroupId.COMMERCIAL, "◈"),
             item(AppRoute.Commercial.Subscriptions, "commercial.subscriptions", "Suscripciones", "Accesos y suscripciones.", NavigationGroupId.COMMERCIAL, "◌"),
+            item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Packs, servicios, promociones y pop-ups.", NavigationGroupId.COMMERCIAL, "◇", NavigationVisibility.DESKTOP_ONLY),
         ),
     ),
     AppRouteMenuGroup(
@@ -199,6 +200,8 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     AppRoute.Publication.Assets -> AdminSection.NEWS
     AppRoute.Users.List, is AppRoute.Users.Detail -> AdminSection.USERS
     AppRoute.Commercial.Catalog, AppRoute.Commercial.Plans -> AdminSection.STORE
+    // Market tiene pantalla propia de escritorio; no cae al adaptador legacy.
+    AppRoute.Commercial.Market -> null
     AppRoute.Commercial.Tickets -> AdminSection.TICKETS
     AppRoute.Commercial.Subscriptions -> AdminSection.EXAM_ACCESS
     AppRoute.Community.OposiRed, is AppRoute.Community.Thread, is AppRoute.Community.ModerationDetail -> null

@@ -33,6 +33,9 @@ sealed interface AppRoute {
         data object Plans : Commercial
         data object Tickets : Commercial
         data object Subscriptions : Commercial
+
+        /** OposiMarket: packs de OT, servicios, promociones y reglas de pop-up. */
+        data object Market : Commercial
     }
 
     sealed interface Community : AppRoute {

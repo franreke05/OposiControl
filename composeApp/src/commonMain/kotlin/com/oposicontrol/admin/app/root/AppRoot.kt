@@ -86,6 +86,8 @@ import com.oposicontrol.admin.features.tags.presentation.TagsIntent
 import com.oposicontrol.admin.features.tags.presentation.TagsScreen
 import com.oposicontrol.admin.features.tags.presentation.TagsViewModel
 import com.oposicontrol.admin.features.store.presentation.CommercialCatalogScreen
+import com.oposicontrol.admin.features.store.presentation.MarketScreen
+import com.oposicontrol.admin.features.store.presentation.MarketViewModel
 import com.oposicontrol.admin.features.store.presentation.StoreIntent
 import com.oposicontrol.admin.features.store.presentation.StoreScreen
 import com.oposicontrol.admin.features.store.presentation.StoreViewModel
@@ -114,6 +116,7 @@ internal enum class AppContentTarget {
     OPOSITESTER_LIST,
     OPOSITESTER_DETAIL,
     COMMERCIAL_CATALOG,
+    MARKET,
     MOBILE_CONTENT_ROOT,
     LEGACY_SECTION,
     LEGACY_PLACEHOLDER,
@@ -146,6 +149,9 @@ internal fun resolveContentTarget(
     // escritorio: tablas y formularios densos, no una pantalla de móvil. En
     // compacto se deja caer al adaptador legacy en vez de servir media pantalla.
     route == AppRoute.Commercial.Catalog && !compactLayout -> AppContentTarget.COMMERCIAL_CATALOG
+    // OposiMarket es administración densa de escritorio (cuatro tablas), no una
+    // pantalla de móvil.
+    route == AppRoute.Commercial.Market && !compactLayout -> AppContentTarget.MARKET
     compactLayout && route is AppRoute.Content -> AppContentTarget.MOBILE_CONTENT_ROOT
     hasLegacyRoute -> AppContentTarget.LEGACY_SECTION
     else -> AppContentTarget.LEGACY_PLACEHOLDER
@@ -332,6 +338,7 @@ fun AppRoot(
                         showNavigationChrome = false,
                     )
                     AppContentTarget.COMMERCIAL_CATALOG -> CommercialCatalogScreen(viewModel = koinInject())
+                    AppContentTarget.MARKET -> MarketScreen(viewModel = koinInject())
                     AppContentTarget.LEGACY_SECTION -> legacyRoute?.content()
                     AppContentTarget.LEGACY_PLACEHOLDER -> LegacyRouteAdapter(metadata.title, metadata.description)
                 }

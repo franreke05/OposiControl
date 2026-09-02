@@ -146,4 +146,32 @@ class AppRootContentTargetTest {
             ),
         )
     }
+
+    @Test
+    fun desktopReachesTheMarket() {
+        assertEquals(
+            AppContentTarget.MARKET,
+            resolveContentTarget(
+                AppRoute.Commercial.Market,
+                compactLayout = false,
+                showTabPager = false,
+                hasLegacyRoute = false,
+            ),
+        )
+    }
+
+    @Test
+    fun compactLayoutDoesNotOpenTheMarket() {
+        // Cuatro tablas densas no caben en una pantalla de móvil; se prefiere el
+        // marcador de posición a servir media pantalla.
+        assertEquals(
+            AppContentTarget.LEGACY_PLACEHOLDER,
+            resolveContentTarget(
+                AppRoute.Commercial.Market,
+                compactLayout = true,
+                showTabPager = false,
+                hasLegacyRoute = false,
+            ),
+        )
+    }
 }
