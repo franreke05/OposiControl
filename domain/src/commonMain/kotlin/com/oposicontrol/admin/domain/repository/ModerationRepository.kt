@@ -11,7 +11,20 @@ interface ModerationRepository {
     suspend fun getReport(reportId: String): AppResult<ForumReportDetail>
     suspend fun resolveReport(reportId: String, action: String, notes: String?, ticketsReporter: Int): AppResult<Unit>
     /** Concede tickets manualmente a un usuario. Devuelve el nuevo saldo. */
-    suspend fun grantTickets(userId: String, amount: Int, reason: String): AppResult<Int>
+    /**
+     * Concede OposiTickets.
+     *
+     * [idempotencyKey] es obligatoria y debe ser **estable para la misma
+     * operación lógica**: si se generase una nueva en cada intento, un doble clic
+     * o un reintento de red concedería los tickets dos veces. Quien llama la fija
+     * al abrir el diálogo, no al pulsar.
+     */
+    suspend fun grantTickets(
+        userId: String,
+        amount: Int,
+        reason: String,
+        idempotencyKey: String,
+    ): AppResult<Int>
     /** Registra una advertencia de moderación sobre un usuario. */
     suspend fun warnUser(userId: String, message: String): AppResult<Unit>
 }

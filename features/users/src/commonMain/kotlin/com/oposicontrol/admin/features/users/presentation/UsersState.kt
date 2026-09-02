@@ -23,6 +23,11 @@ data class UsersState(
     // Quick-action dialogs
     val ticketsDialogOpen: Boolean = false,
     val ticketsInput: String = "",
+    /**
+     * Clave de idempotencia de la concesión en curso. Se fija al abrir el
+     * diálogo para que reintentos y dobles clics no concedan dos veces.
+     */
+    val ticketsIdempotencyKey: String? = null,
     val warningDialogOpen: Boolean = false,
     val warningInput: String = "",
 ) {

@@ -4,6 +4,7 @@ import com.oposicontrol.admin.core.common.analytics.AnalyticsTracker
 import com.oposicontrol.admin.core.common.coroutine.DispatcherProvider
 import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.User
 import com.oposicontrol.admin.domain.repository.ModerationRepository
@@ -67,8 +68,19 @@ class UsersViewModel(
                 it.copy(editorRoleIds = next)
             }
             // Quick-action: tickets dialog
-            UsersIntent.OpenTicketsDialog -> updateState { it.copy(ticketsDialogOpen = true, ticketsInput = "", actionState = UiAsync.Idle) }
-            UsersIntent.DismissTicketsDialog -> updateState { it.copy(ticketsDialogOpen = false, ticketsInput = "") }
+            UsersIntent.OpenTicketsDialog -> updateState {
+                it.copy(
+                    ticketsDialogOpen = true,
+                    ticketsInput = "",
+                    // Una clave por apertura de diálogo: estable durante toda la
+                    // operación, distinta para la siguiente.
+                    ticketsIdempotencyKey = "grant:${it.selectedUserId.orEmpty()}:${Clock.System.now().toEpochMilliseconds()}",
+                    actionState = UiAsync.Idle,
+                )
+            }
+            UsersIntent.DismissTicketsDialog -> updateState {
+                it.copy(ticketsDialogOpen = false, ticketsInput = "", ticketsIdempotencyKey = null)
+            }
             is UsersIntent.UpdateTicketsInput -> updateState { it.copy(ticketsInput = intent.value) }
             UsersIntent.ConfirmTickets -> {
                 val amount = currentState().ticketsInput.toIntOrNull() ?: return
@@ -117,8 +129,18 @@ class UsersViewModel(
 
     private suspend fun grantTickets(amount: Int) {
         val userId = currentState().selectedUserId ?: return
+        // La clave se fija al abrir el diálogo, no al pulsar: así un doble clic o
+        // un reintento reutilizan la misma y el backend devuelve el movimiento
+        // original en lugar de conceder los tickets otra vez.
+        val idempotencyKey = currentState().ticketsIdempotencyKey ?: return updateState {
+            it.copy(
+                actionState = UiAsync.Error(
+                    AppError.Validation("Vuelve a abrir el diálogo para conceder OposiTickets."),
+                ),
+            )
+        }
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = moderationRepository.grantTickets(userId, amount, "Ajuste manual")) {
+        when (val result = moderationRepository.grantTickets(userId, amount, "Ajuste manual", idempotencyKey)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("tickets_grant", mapOf("user_id" to userId, "amount" to amount.toString()))

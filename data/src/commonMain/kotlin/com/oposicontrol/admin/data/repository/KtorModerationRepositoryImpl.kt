@@ -65,11 +65,16 @@ class KtorModerationRepositoryImpl(
         Unit
     }
 
-    override suspend fun grantTickets(userId: String, amount: Int, reason: String) = adapter.safeCall {
+    override suspend fun grantTickets(
+        userId: String,
+        amount: Int,
+        reason: String,
+        idempotencyKey: String,
+    ) = adapter.safeCall {
         val path = BackendRoutes.adminV1UsuarioTickets(userId)
         val r = client.post(url(path)) {
             backendHeaders(); contentType(ContentType.Application.Json)
-            setBody(GrantTicketsBody(cantidad = amount, motivo = reason))
+            setBody(GrantTicketsBody(cantidad = amount, motivo = reason, idempotencyKey = idempotencyKey))
         }
         r.requireSuccess(path)
         r.body<GrantTicketsResponse>().saldo
@@ -120,7 +125,14 @@ class KtorModerationRepositoryImpl(
 )
 @Serializable private data class ReportesV1Response(val data: List<ReporteV1Dto>)
 @Serializable private data class ResolverReporteBody(val accion: String, val notas: String? = null, val ticketsReporter: Int = 0)
-@Serializable private data class GrantTicketsBody(val cantidad: Int, val motivo: String)
+// La clave de idempotencia viaja en el cuerpo: sin ella el backend responde 422,
+// asi que la version anterior de este DTO hacia que conceder tickets fuese
+// imposible desde el cliente.
+@Serializable private data class GrantTicketsBody(
+    val cantidad: Int,
+    val motivo: String,
+    val idempotencyKey: String,
+)
 @Serializable private data class GrantTicketsResponse(val saldo: Int = 0)
 @Serializable private data class WarnUserBody(val actionType: String, val targetUser: String, val reason: String)
 
