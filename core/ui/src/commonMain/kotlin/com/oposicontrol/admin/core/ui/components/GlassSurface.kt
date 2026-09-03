@@ -182,7 +182,10 @@ fun GlassActionButton(
     var focused by remember { mutableStateOf(false) }
 
     val interactive = enabled && !loading
-    val radius = 10.dp
+    // 16dp era el radio del boton en movil; se conserva alli y se ajusta a 10dp
+    // en escritorio, donde una esquina tan redondeada desentona con el resto de
+    // controles del panel.
+    val radius = if (isDesktop) 10.dp else 16.dp
     val shape = RoundedCornerShape(radius)
 
     val container by animateColorAsState(

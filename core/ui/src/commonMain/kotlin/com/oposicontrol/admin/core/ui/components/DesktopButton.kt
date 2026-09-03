@@ -103,6 +103,11 @@ fun DesktopButton(
     val interactive = enabled && !loading
     val palette = buttonPalette(variant, tokens)
     val shape = RoundedCornerShape(10.dp)
+    // Las alturas de [ButtonSize] están pensadas para puntero. Si este botón
+    // acaba dibujándose en móvil —ConfirmDialog, por ejemplo, lo comparten las
+    // dos plataformas— se eleva al mínimo táctil: 40dp es cómodo con ratón y
+    // demasiado pequeño para un dedo.
+    val height = if (GlassTheme.isDesktop) size.height else maxOf(size.height, 48.dp)
 
     val container by animateColorAsState(
         targetValue = when {
@@ -126,7 +131,7 @@ fun DesktopButton(
 
     Row(
         modifier = modifier
-            .height(size.height)
+            .height(height)
             .defaultMinSize(minWidth = 72.dp)
             .clip(shape)
             .background(container)
@@ -273,7 +278,9 @@ fun DesktopIconButton(
 
     Box(
         modifier = modifier
-            .size(size)
+            // Mismo criterio que en [DesktopButton]: con dedo, nunca por debajo
+            // del mínimo táctil.
+            .size(if (GlassTheme.isDesktop) size else maxOf(size, 48.dp))
             .clip(shape)
             .background(container)
             .border(if (focused && enabled) 2.dp else 1.dp, borderColor, shape)
