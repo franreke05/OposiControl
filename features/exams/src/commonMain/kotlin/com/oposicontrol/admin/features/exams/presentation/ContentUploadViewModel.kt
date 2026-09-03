@@ -132,6 +132,9 @@ class ContentUploadViewModel(
     }
 
     private suspend fun uploadPdf() {
+        // Misma guarda que publishBatch: subir el PDF crea un lote en staging,
+        // así que un doble toque crearía dos lotes para el mismo archivo.
+        if (currentState().actionState is UiAsync.Loading) return
         val state = currentState()
         updateState { it.copy(actionState = UiAsync.Loading) }
         when (val result = uploadPdfUseCase(state.selectedExamId.orEmpty(), state.selectedExamType, state.selectedPdfUri, state.selectedPdfName)) {
@@ -176,6 +179,12 @@ class ContentUploadViewModel(
     }
 
     private suspend fun publishBatch() {
+        // Guarda antes de cualquier punto de suspensión: publicar escribe en el
+        // contenido canónico y el flujo de importación todavía NO es atómico
+        // (content_import_atomicity_candidate_v1 sigue pendiente de aplicar),
+        // así que dos publicaciones solapadas podrían duplicar preguntas. En un
+        // dispatcher confinado a un solo hilo esto basta, sin Mutex adicional.
+        if (currentState().actionState is UiAsync.Loading) return
         val batchId = (currentState().activeBatch as? UiAsync.Success)?.value?.id
             ?: return showError("Abre un lote antes de publicar.")
         updateState { it.copy(actionState = UiAsync.Loading) }

@@ -35,8 +35,22 @@ class ThreadDetailViewModel(
     // El hilo y la primera página de respuestas son independientes entre sí:
     // se piden en paralelo (coroutineScope + launch) para no hacer esperar al
     // usuario dos round-trips seguidos por nada.
-    private suspend fun loadAll() {
-        updateState { it.copy(thread = UiAsync.Loading, replies = UiAsync.Loading, nextRepliesCursor = null) }
+    /**
+     * [preserveContent] mantiene el hilo y las respuestas ya visibles mientras
+     * se recargan. Solo lo usa el pull-to-refresh: ahí el indicador de
+     * `PullToRefreshBox` ya comunica la carga, así que poner además
+     * `thread`/`replies = Loading` borraba el contenido y mostraba el esqueleto
+     * *debajo* del propio spinner (doble loader). Mismo criterio que
+     * ReportsViewModel.load(asPullToRefresh).
+     */
+    private suspend fun loadAll(preserveContent: Boolean = false) {
+        updateState {
+            it.copy(
+                thread = if (preserveContent) it.thread else UiAsync.Loading,
+                replies = if (preserveContent) it.replies else UiAsync.Loading,
+                nextRepliesCursor = null,
+            )
+        }
         coroutineScope {
             launch { loadThread() }
             launch { loadFirstReplyPage() }
@@ -64,7 +78,7 @@ class ThreadDetailViewModel(
 
     private suspend fun refresh() {
         updateState { it.copy(refreshing = true) }
-        loadAll()
+        loadAll(preserveContent = true)
         updateState { it.copy(refreshing = false) }
     }
 
