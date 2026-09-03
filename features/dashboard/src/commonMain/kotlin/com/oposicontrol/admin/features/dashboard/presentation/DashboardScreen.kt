@@ -42,6 +42,7 @@ import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.layout.DesktopBreakpoint
 import com.oposicontrol.admin.core.ui.layout.desktopBreakpointFor
 import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.AppIconImage
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.theme.AdminTheme
@@ -270,7 +271,14 @@ private fun DashboardHero(
             verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 18.dp),
         ) {
             Text(
-                text = if (metrics.alerts.isEmpty()) "Contenido listo para operar" else "${metrics.alerts.size} puntos requieren revisión",
+                // Concordancia real: con una sola alerta el título decía "1 puntos
+                // requieren revisión". Es el tipo de detalle que hace que un panel
+                // parezca a medio terminar.
+                text = when (metrics.alerts.size) {
+                    0 -> "Contenido listo para operar"
+                    1 -> "1 punto requiere revisión"
+                    else -> "${metrics.alerts.size} puntos requieren revisión"
+                },
                 style = MaterialTheme.typography.headlineSmall.copy(
                     fontSize = if (compact) 22.sp else 26.sp,
                     letterSpacing = 0.sp,
@@ -388,7 +396,7 @@ private fun DashboardAlertsSection(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            DashboardSectionTitle("Requiere atencion")
+            DashboardSectionTitle("Requiere atención")
             val visibleAlerts = alerts.ifEmpty {
                 listOf(
                     DashboardAlert(
@@ -600,42 +608,47 @@ private fun DashboardAlertRow(alert: DashboardAlert, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .heightIn(min = 44.dp)
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .background(alertColor(alert.severity).copy(alpha = 0.08f))
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(10.dp)
-                .clip(RoundedCornerShape(5.dp))
+                .size(8.dp)
+                .clip(RoundedCornerShape(4.dp))
                 .background(alertColor(alert.severity)),
         )
-        Column(modifier = Modifier.width(190.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        // `weight(1f)` y no `width(190.dp)`: con el ancho fijo el detalle se
+        // cortaba con puntos suspensivos a 190dp aunque la fila midiera 1.500,
+        // dejando el resto de la fila vacío. El texto ahora ocupa lo que hay y la
+        // acción se ancla al extremo derecho.
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
                 text = alert.title,
-                style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp, letterSpacing = 0.sp),
+                style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = alert.detail,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, letterSpacing = 0.sp),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         Text(
             text = alert.actionLabel,
-            style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, letterSpacing = 0.sp),
-            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelMedium,
+            color = GlassTheme.tokens.accentInk,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        AppIconImage(AppIcon.CHEVRON_RIGHT, size = 14.dp, tint = GlassTheme.tokens.textSecondary)
     }
 }
 

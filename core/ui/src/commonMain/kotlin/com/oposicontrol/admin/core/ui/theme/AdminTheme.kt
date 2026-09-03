@@ -66,6 +66,21 @@ data class GlassTokens(
     val danger: Color,
     /** Información neutra (chips de estado desconocido, ayuda). */
     val info: Color,
+    /**
+     * Coral oscurecido, y SÓLO para rellenos que llevan texto blanco encima.
+     *
+     * El coral de marca `#FF8A5B` es demasiado claro para sostener texto blanco:
+     * medido da 2,32:1, por debajo incluso del 3:1 que WCAG pide a un elemento de
+     * interfaz, y muy por debajo del 4,5:1 que corresponde a un texto de 14sp
+     * como el de un botón. Es un caso en el que dos cosas que se pidieron —coral
+     * `#FF8A5B` y texto blanco— no pueden cumplirse a la vez.
+     *
+     * La identidad se conserva donde se ve: `accent` sigue siendo el coral exacto
+     * en el item activo de la sidebar, indicadores, iconos, bordes y realces. Sólo
+     * cambia el relleno del botón primario, que pasa a este tono más profundo del
+     * mismo color y alcanza 4,6:1.
+     */
+    val accentInk: Color,
 )
 
 private val LightGlassTokens = GlassTokens(
@@ -77,7 +92,9 @@ private val LightGlassTokens = GlassTokens(
     glassHighlight = Color(0xCCFFFFFF),
     accent = Color(0xFFFF8A5B),
     success = Color(0xFF2E9E6B),
-    warning = Color(0xFFD9920A),
+    // Ambar oscurecido: el anterior (#D9920A) daba 2,55:1 sobre superficie clara,
+    // ilegible como texto de chip. Este da 4,4:1.
+    warning = Color(0xFFA66A00),
     textPrimary = Color(0xFF142230),
     textSecondary = Color(0xFF516173),
     divider = Color(0x33FFFFFF),
@@ -92,6 +109,7 @@ private val LightGlassTokens = GlassTokens(
     focusRing = Color(0xFFFF8A5B),
     danger = Color(0xFFC0392B),
     info = Color(0xFF3E7CB1),
+    accentInk = Color(0xFFC2521F),
 )
 
 private val LocalGlassTokens = staticCompositionLocalOf { LightGlassTokens }

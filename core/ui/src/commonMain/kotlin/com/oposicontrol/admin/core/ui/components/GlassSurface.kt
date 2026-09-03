@@ -170,7 +170,9 @@ fun GlassActionButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     loading: Boolean = false,
-    tint: Color = GlassTheme.tokens.accent,
+    // accentInk: este boton pinta texto blanco encima, y el coral de marca no
+    // llega al contraste minimo con blanco. Ver GlassTokens.accentInk.
+    tint: Color = GlassTheme.tokens.accentInk,
     textColor: Color = Color.White,
     onClick: () -> Unit,
 ) {
@@ -197,7 +199,7 @@ fun GlassActionButton(
         },
         animationSpec = tween(120),
     )
-    val content = if (enabled) textColor else Color(0xFF8A96A3)
+    val content = if (enabled) textColor else Color(0xFF6B7684)
     val stroke by animateColorAsState(
         targetValue = when {
             focused && interactive -> tokens.focusRing

@@ -317,14 +317,16 @@ private fun buttonPalette(
     tokens: GlassTokens,
 ): ButtonPalette = when (variant) {
     ButtonVariant.PRIMARY -> ButtonPalette(
-        container = tokens.accent,
-        containerHover = Color(0xFFF2764A),
-        containerPressed = Color(0xFFE0673D),
+        // accentInk, no accent: el coral de marca no sostiene texto blanco a un
+        // contraste accesible (2,32:1 medido). Ver GlassTokens.accentInk.
+        container = tokens.accentInk,
+        containerHover = Color(0xFFAC4819),
+        containerPressed = Color(0xFF963E15),
         // Deshabilitado opaco, no translúcido: el blanco al 53% del botón
         // anterior dejaba el texto gris flotando sobre lo que hubiera detrás.
         containerDisabled = Color(0xFFEDEFF2),
         content = Color.White,
-        contentDisabled = Color(0xFF8A96A3),
+        contentDisabled = Color(0xFF6B7684),
         border = Color.Transparent,
         borderHover = Color.Transparent,
         borderDisabled = Color(0xFFE2E6EB),
@@ -335,7 +337,7 @@ private fun buttonPalette(
         containerPressed = Color(0xFFDFE7F1),
         containerDisabled = Color(0xFFF4F6F9),
         content = tokens.textPrimary,
-        contentDisabled = Color(0xFF8A96A3),
+        contentDisabled = Color(0xFF6B7684),
         border = tokens.border,
         borderHover = tokens.borderStrong,
         borderDisabled = Color(0xFFE9EDF2),
@@ -357,7 +359,7 @@ private fun buttonPalette(
         containerPressed = Color(0xFF922B21),
         containerDisabled = Color(0xFFEDEFF2),
         content = Color.White,
-        contentDisabled = Color(0xFF8A96A3),
+        contentDisabled = Color(0xFF6B7684),
         border = Color.Transparent,
         borderHover = Color.Transparent,
         borderDisabled = Color(0xFFE2E6EB),
@@ -368,7 +370,7 @@ private fun buttonPalette(
         containerPressed = Color(0xFF20744D),
         containerDisabled = Color(0xFFEDEFF2),
         content = Color.White,
-        contentDisabled = Color(0xFF8A96A3),
+        contentDisabled = Color(0xFF6B7684),
         border = Color.Transparent,
         borderHover = Color.Transparent,
         borderDisabled = Color(0xFFE2E6EB),
