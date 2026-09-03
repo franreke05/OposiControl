@@ -103,7 +103,7 @@ class ContentDashboardRepositoryImpl(
                             activeBurstCampaigns = activeBursts,
                             activeLimitedResources = activeLimitedResources,
                             nextCommerceExpiryLabel = buildNextCommerceExpiryLabel(commerceSnapshot),
-                            latestImportLabel = "Ultima revision: ${exams.value.maxByOrNull { it.updatedAt }?.updatedAt ?: now}",
+                            latestImportLabel = "Última revisión: ${exams.value.maxByOrNull { it.updatedAt }?.updatedAt ?: now}",
                             pendingForumReports = pendingForumReports,
                             alerts = buildAlerts(
                                 questionsWithoutResources = questionsWithoutResources,
@@ -199,8 +199,8 @@ class ContentDashboardRepositoryImpl(
             if (activeBursts == 0) {
                 DashboardAlert(
                     id = "inactive_bursts",
-                    title = "Sin rafagas activas",
-                    detail = "No hay campanas de impulso funcionando ahora.",
+                    title = "Sin ráfagas activas",
+                    detail = "No hay campañas de impulso funcionando ahora.",
                     actionLabel = "Programar",
                     severity = DashboardAlertSeverity.INFO,
                 )
