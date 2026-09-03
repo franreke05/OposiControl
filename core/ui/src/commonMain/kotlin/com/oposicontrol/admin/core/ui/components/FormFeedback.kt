@@ -38,7 +38,9 @@ fun FormFeedback(
         val (color, text) = when (state) {
             is UiAsync.Loading -> tokens.warning to loadingText
             is UiAsync.Success -> tokens.success to successText
-            is UiAsync.Error -> MaterialTheme.colorScheme.error to state.error.message
+            // Mismo criterio que ErrorStateCard: lo que se lee es humano, no el texto
+            // que viene del transporte.
+            is UiAsync.Error -> MaterialTheme.colorScheme.error to state.error.humanMessage()
             else -> tokens.textSecondary to ""
         }
         Row(

@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -24,7 +24,10 @@ import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.ui.components.GlassSurface
+import com.oposicontrol.admin.core.ui.components.Help
+import com.oposicontrol.admin.core.ui.components.InfoHelpButton
 import com.oposicontrol.admin.core.ui.components.StatusChip
+import com.oposicontrol.admin.core.ui.components.humanMessage
 import com.oposicontrol.admin.domain.model.ConnectionDiagnosticCheck
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 
@@ -35,11 +38,15 @@ fun ConnectionDiagnosticsPanel(
     modifier: Modifier = Modifier,
     refreshSignal: Int = 0,
 ) {
-    var status by remember { mutableStateOf("Comprobando") }
+    // Vocabulario de §38, el mismo en todo el panel: OPERATIVO / DEGRADADO /
+    // CAÍDO / NO CONECTADO / DESCONOCIDO. Antes eran "OK", "Falla" y
+    // "Comprobando" — tres palabras propias de esta pantalla que no significaban
+    // nada en el resto de la aplicación.
+    var status by remember { mutableStateOf(EstadoDesconocido) }
     var checks by remember { mutableStateOf<List<ConnectionDiagnosticCheck>>(emptyList()) }
 
     LaunchedEffect(appConfig.baseUrl, appConfig.backendToken, refreshSignal) {
-        status = "Comprobando"
+        status = EstadoDesconocido
         checks = listOf(
             ConnectionDiagnosticCheck("URL backend", true, appConfig.baseUrl),
             ConnectionDiagnosticCheck("HTTP local", true, "debug/dev permite 10.0.2.2, localhost y 127.0.0.1"),
@@ -47,17 +54,24 @@ fun ConnectionDiagnosticsPanel(
         )
         when (val result = diagnosticsRepository.runChecks()) {
             is AppResult.Failure -> {
-                status = "Falla"
-                checks = checks + ConnectionDiagnosticCheck("Cliente", false, result.error.message)
+                // No se pudo llegar al backend siquiera: eso es caído, no
+                // degradado. La distinción importa — degradado significa que
+                // responde pero algo falla dentro.
+                status = EstadoCaido
+                checks = checks + ConnectionDiagnosticCheck("Cliente", false, result.error.humanMessage())
             }
             is AppResult.Success -> {
                 checks = checks + result.value.checks
-                status = if (result.value.checks.all { it.ok }) "OK" else "Falla"
+                status = when {
+                    result.value.checks.all { it.ok } -> EstadoOperativo
+                    result.value.checks.none { it.ok } -> EstadoCaido
+                    else -> EstadoDegradado
+                }
             }
         }
     }
 
-    if (status != "OK") {
+    if (status != EstadoOperativo) {
         GlassSurface(
             modifier = modifier
                 .fillMaxWidth()
@@ -68,14 +82,18 @@ fun ConnectionDiagnosticsPanel(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
-                        text = "Conexión backend",
+                        text = "Conexión con el servidor",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    InfoHelpButton(Help.estadoSistema)
                     StatusChip(status)
                 }
                 checks.take(10).forEach { check ->
@@ -93,8 +111,8 @@ private fun DiagnosticLine(check: ConnectionDiagnosticCheck) {
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         StatusChip(
-            status = if (check.ok) "OK" else "ERROR",
-            modifier = Modifier.width(74.dp),
+            status = if (check.ok) EstadoOperativo else EstadoCaido,
+            modifier = Modifier.widthIn(min = 96.dp),
         )
         Text(
             text = "${check.name}: ${check.detail}",
@@ -106,3 +124,12 @@ private fun DiagnosticLine(check: ConnectionDiagnosticCheck) {
         )
     }
 }
+
+// Vocabulario canónico de estado del sistema (§38). Constantes y no literales
+// sueltos: son las mismas palabras que interpreta `statusToneFor` para elegir
+// color e icono, así que una errata aquí degradaría el chip a "desconocido" sin
+// que nadie se enterase.
+private const val EstadoOperativo = "Operativo"
+private const val EstadoDegradado = "Degradado"
+private const val EstadoCaido = "Caído"
+private const val EstadoDesconocido = "Desconocido"

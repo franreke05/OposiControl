@@ -10,9 +10,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.components.AdminTable
+import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.AppIconImage
+import com.oposicontrol.admin.core.ui.components.ButtonSize
+import com.oposicontrol.admin.core.ui.components.DesktopTab
+import com.oposicontrol.admin.core.ui.components.DesktopTabs
+import com.oposicontrol.admin.core.ui.components.Help
+import com.oposicontrol.admin.core.ui.components.SecondaryButton
+import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
@@ -39,21 +48,28 @@ fun MarketScreen(viewModel: MarketViewModel) {
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            MarketSection.entries.forEach { section ->
-                GlassActionButton(
-                    text = section.label(),
-                    onClick = { viewModel.dispatch(MarketIntent.SelectSection(section)) },
-                    tint = if (section == state.section) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-            GlassActionButton(
+        // Antes eran cuatro botones rellenos, el activo en coral y los otros tres
+        // en gris sólido. Cuatro rectángulos de color compitiendo entre sí para
+        // decir algo que una pestaña dice con un subrayado: esto no son cuatro
+        // acciones, es una sola vista con cuatro caras.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+        ) {
+            DesktopTabs(
+                modifier = Modifier.weight(1f),
+                tabs = MarketSection.entries.map { DesktopTab(it.name, it.label(), it.icon()) },
+                selectedId = state.section.name,
+                onSelect = { id ->
+                    MarketSection.entries.firstOrNull { it.name == id }
+                        ?.let { viewModel.dispatch(MarketIntent.SelectSection(it)) }
+                },
+            )
+            SecondaryButton(
                 text = "Actualizar",
                 onClick = { viewModel.dispatch(MarketIntent.Refresh) },
+                size = ButtonSize.COMPACT,
+                icon = { AppIconImage(AppIcon.REFRESH, size = 14.dp) },
             )
         }
 
@@ -71,8 +87,14 @@ private fun PacksSection(state: MarketState) {
     FormSection(
         title = "Packs de OposiTickets",
         description = "El coste por ticket indica si la escala de packs compensa.",
+        help = Help.packs,
     ) {
-        AsyncStatePane(state.packs, emptyMessage = "No hay packs configurados todavía.") { packs ->
+        AsyncStatePane(
+            state = state.packs,
+            emptyTitle = "Sin packs",
+            emptyMessage = "No se ha configurado ningún pack de OposiTickets todavía.",
+            emptyIcon = AppIcon.CATALOG,
+        ) { packs ->
             AdminTable(
                 columns = listOf(
                     AdminTableColumn("Pack", 1.2f),
@@ -104,8 +126,14 @@ private fun ServicesSection(state: MarketState) {
     FormSection(
         title = "Servicios",
         description = "Potenciadores y protectores del Market.",
+        help = Help.potenciadores,
     ) {
-        AsyncStatePane(state.services, emptyMessage = "No hay servicios configurados todavía.") { services ->
+        AsyncStatePane(
+            state = state.services,
+            emptyTitle = "Sin servicios",
+            emptyMessage = "No hay potenciadores ni protectores publicados en el Market.",
+            emptyIcon = AppIcon.MARKET,
+        ) { services ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AdminTable(
                     columns = listOf(
@@ -145,8 +173,17 @@ private fun ServicesSection(state: MarketState) {
 
 @Composable
 private fun PromotionsSection(state: MarketState) {
-    FormSection(title = "Promociones", description = "Cupones y descuentos con ventana de validez.") {
-        AsyncStatePane(state.promotions, emptyMessage = "No hay promociones configuradas todavía.") { promotions ->
+    FormSection(
+        title = "Promociones",
+        description = "Cupones y descuentos con ventana de validez.",
+        help = Help.promociones,
+    ) {
+        AsyncStatePane(
+            state = state.promotions,
+            emptyTitle = "Sin promociones activas",
+            emptyMessage = "No se ha creado ninguna promoción todavía.",
+            emptyIcon = AppIcon.PLANS,
+        ) { promotions ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AdminTable(
                     columns = listOf(
@@ -189,8 +226,14 @@ private fun PopupRulesSection(state: MarketState) {
     FormSection(
         title = "Reglas de pop-up",
         description = "Dónde, cuándo y a quién se muestra cada pop-up comercial.",
+        help = Help.reglasPopup,
     ) {
-        AsyncStatePane(state.popupRules, emptyMessage = "No hay reglas configuradas todavía.") { rules ->
+        AsyncStatePane(
+            state = state.popupRules,
+            emptyTitle = "Sin reglas de aparición",
+            emptyMessage = "Ninguna oferta tiene reglas: por ahora no se muestra ningún pop-up.",
+            emptyIcon = AppIcon.INFO,
+        ) { rules ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AdminTable(
                     columns = listOf(
@@ -233,4 +276,11 @@ private fun MarketSection.label(): String = when (this) {
     MarketSection.SERVICES -> "Servicios"
     MarketSection.PROMOTIONS -> "Promociones"
     MarketSection.POPUPS -> "Pop-ups"
+}
+
+private fun MarketSection.icon(): AppIcon = when (this) {
+    MarketSection.PACKS -> AppIcon.CATALOG
+    MarketSection.SERVICES -> AppIcon.MARKET
+    MarketSection.PROMOTIONS -> AppIcon.PLANS
+    MarketSection.POPUPS -> AppIcon.INFO
 }

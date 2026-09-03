@@ -59,6 +59,14 @@ data class AdminTableColumn(
      */
     val sortKey: String? = null,
     val numeric: Boolean = false,
+    /**
+     * Explicación de la columna, mostrada con un icono `i` en la cabecera.
+     *
+     * Va en la cabecera y no en cada celda por lo evidente: una tabla de cuarenta
+     * filas con un icono de ayuda por fila sería ruido. El concepto se explica
+     * una vez, arriba, donde está su nombre.
+     */
+    val help: HelpTopic? = null,
 )
 
 data class AdminTableRow(
@@ -230,6 +238,7 @@ private fun TableHeader(
                         modifier = Modifier.padding(start = 4.dp),
                     )
                 }
+                column.help?.let { InfoHelpButton(it) }
             }
         }
         if (actionsWidth > 0.dp) {

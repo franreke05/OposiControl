@@ -20,12 +20,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
+import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.AppIconImage
+import com.oposicontrol.admin.core.ui.components.ButtonSize
+import com.oposicontrol.admin.core.ui.components.HelpPanel
+import com.oposicontrol.admin.core.ui.components.HelpStep
+import com.oposicontrol.admin.core.ui.components.SecondaryButton
+import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.GlassTextField
@@ -45,20 +53,40 @@ fun ContentUploadScreen(viewModel: ContentUploadViewModel) {
         viewModel.dispatch(ContentUploadIntent.SelectPdf(picked.uri, picked.name, picked.mimeType))
     }
     val activeBatch = (state.activeBatch as? UiAsync.Success)?.value
+    var helpOpen by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = UiSpacing.screenMobile, vertical = 12.dp),
+            .padding(
+                horizontal = if (GlassTheme.isDesktop) 0.dp else UiSpacing.screenMobile,
+                vertical = 12.dp,
+            ),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("Subir contenido", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        ) {
+            Text("Subir contenido", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            // La importación es el proceso con más pasos del panel y el único
+            // donde equivocarse publica contenido a los usuarios. Es justo el
+            // caso de §16 nivel 3: no basta un tooltip, hace falta ver el
+            // recorrido entero.
+            SecondaryButton(
+                text = if (helpOpen) "Ocultar ayuda" else "Cómo funciona",
+                onClick = { helpOpen = !helpOpen },
+                size = ButtonSize.COMPACT,
+                icon = { AppIconImage(AppIcon.HELP, size = 14.dp) },
+            )
+        }
         Text(
             "Añade exámenes y preguntas con revisión humana antes de llevarlas al contenido canónico.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        ImportHelpPanel(visible = helpOpen, onClose = { helpOpen = false })
         FormFeedback(
             state = state.actionState,
             loadingText = "Procesando importación...",
@@ -299,6 +327,33 @@ private fun StagingEditorCard(
                 Button(onClick = { onSave(edited) }, modifier = Modifier.weight(1f)) { Text("Guardar y aprobar") }
                 TextButton(onClick = { onSkip(item) }, modifier = Modifier.weight(1f)) { Text("Saltar") }
             }
+        }
+    }
+}
+
+/**
+ * Ayuda de nivel 3 para la importación (§16, §61).
+ *
+ * Los cinco pasos y, sobre todo, la frase que evita el susto: nada de lo que se
+ * sube llega a los usuarios hasta el último paso. Es la duda que tiene cualquiera
+ * la primera vez que arrastra un PDF a un panel de administración.
+ */
+@Composable
+private fun ImportHelpPanel(visible: Boolean, onClose: () -> Unit) {
+    HelpPanel(title = "Cómo funciona la importación", visible = visible, onClose = onClose) {
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            HelpStep(1, "Sube el PDF. Sólo se lee texto seleccionable; no se hace OCR.")
+            HelpStep(2, "Revisa las preguntas detectadas una a una.")
+            HelpStep(3, "Corrige lo que haya salido mal y descarta lo que no sirva.")
+            HelpStep(4, "Revisa los duplicados con preguntas que ya existen.")
+            HelpStep(5, "Publica. Sólo en este paso el contenido llega a los usuarios.")
+            Text(
+                text = "Mientras el lote está en revisión no afecta a nadie: puedes dejarlo a " +
+                    "medias y retomarlo más tarde.",
+                style = MaterialTheme.typography.bodySmall,
+                color = GlassTheme.tokens.textSecondary,
+                modifier = Modifier.padding(top = Spacing.xxs),
+            )
         }
     }
 }

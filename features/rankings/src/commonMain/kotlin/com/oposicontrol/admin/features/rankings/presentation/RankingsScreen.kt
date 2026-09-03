@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.components.AdminTable
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
+import com.oposicontrol.admin.core.ui.components.Help
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
@@ -113,7 +114,7 @@ private fun LeagueCatalogueSection(state: RankingsState, viewModel: RankingsView
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AdminTable(
                     columns = listOf(
-                        AdminTableColumn("Liga", 1.0f),
+                        AdminTableColumn("Liga", 1.0f, help = Help.liga),
                         AdminTableColumn("Mínimo", 0.6f),
                         AdminTableColumn("Ventana", 0.7f),
                         AdminTableColumn("Estado", 0.6f),
@@ -179,8 +180,8 @@ private fun UserSearchSection(state: RankingsState, viewModel: RankingsViewModel
                 AdminTable(
                     columns = listOf(
                         AdminTableColumn("Opositor", 1.2f),
-                        AdminTableColumn("Liga", 0.8f),
-                        AdminTableColumn("Nota", 0.6f),
+                        AdminTableColumn("Liga", 0.8f, help = Help.liga),
+                        AdminTableColumn("Nota", 0.6f, numeric = true, help = Help.notaMedia),
                         AdminTableColumn("Global", 0.6f),
                     ),
                     rows = page.entries.map { entry ->
@@ -245,11 +246,11 @@ private fun RankingTableSection(state: RankingsState, viewModel: RankingsViewMod
 private fun RankingTable(page: RankingPage, selectedUserId: String?, viewModel: RankingsViewModel) {
     AdminTable(
         columns = listOf(
-            AdminTableColumn("#", 0.4f),
+            AdminTableColumn("#", 0.4f, numeric = true, help = Help.ranking),
             AdminTableColumn("Opositor", 1.2f),
-            AdminTableColumn("Liga", 0.8f),
-            AdminTableColumn("Nota", 0.6f),
-            AdminTableColumn("Evolución", 0.7f),
+            AdminTableColumn("Liga", 0.8f, help = Help.liga),
+            AdminTableColumn("Nota", 0.6f, numeric = true, help = Help.notaMedia),
+            AdminTableColumn("Evolución", 0.7f, help = Help.evolucion),
             AdminTableColumn("Preg.", 0.5f),
             AdminTableColumn("Liga #", 0.6f),
             AdminTableColumn("Global #", 0.6f),

@@ -2,8 +2,7 @@ package com.oposicontrol.admin.features.analytics.presentation
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
@@ -11,9 +10,20 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.components.AdminTable
+import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.AppIconImage
+import com.oposicontrol.admin.core.ui.components.ButtonSize
+import com.oposicontrol.admin.core.ui.components.DesktopTab
+import com.oposicontrol.admin.core.ui.components.DesktopTabs
+import com.oposicontrol.admin.core.ui.components.SecondaryButton
+import com.oposicontrol.admin.core.ui.components.SummaryCard
+import com.oposicontrol.admin.core.ui.layout.DesktopBreakpoint
+import com.oposicontrol.admin.core.ui.layout.DesktopWindow
+import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
@@ -53,9 +63,13 @@ fun ProductAnalyticsScreen(viewModel: ProductAnalyticsViewModel) {
 
         AsyncStatePane(
             state = state.current,
-            emptyMessage = "Esta sección no tiene todavía ninguna métrica.",
+            emptyTitle = "Sección sin métricas",
+            emptyMessage = "Esta sección no tiene todavía ninguna métrica definida.",
+            emptyIcon = AppIcon.ANALYTICS,
+            onRetry = { viewModel.dispatch(ProductAnalyticsIntent.Refresh) },
         ) { report ->
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                CoverageHeader(report, DesktopWindow.breakpoint)
                 MetricsSection(report)
                 report.tables.forEach { table -> AnalyticsTableSection(table) }
             }
@@ -63,32 +77,74 @@ fun ProductAnalyticsScreen(viewModel: ProductAnalyticsViewModel) {
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SectionSelector(
     selected: AnalyticsSection,
     onSelect: (AnalyticsSection) -> Unit,
     onRefresh: () -> Unit,
 ) {
-    // FlowRow y no Row: son siete botones y en una ventana estrecha el último se
-    // saldría de pantalla sin posibilidad de pulsarlo.
-    FlowRow(
+    // Pestañas y no siete botones rellenos: elegir sección no son siete acciones
+    // distintas, es una sola vista con siete caras, y siete rectángulos de color
+    // seguidos tapaban visualmente la tabla que viene justo debajo. Las pestañas
+    // se desplazan solas en horizontal si la ventana es estrecha, así que sigue
+    // sin perderse la última.
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Spacing.md),
     ) {
-        AnalyticsSection.entries.forEach { section ->
-            GlassActionButton(
-                text = section.label(),
-                onClick = { onSelect(section) },
-                tint = if (section == selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+        DesktopTabs(
+            modifier = Modifier.weight(1f),
+            tabs = AnalyticsSection.entries.map { DesktopTab(it.name, it.label()) },
+            selectedId = selected.name,
+            onSelect = { id ->
+                AnalyticsSection.entries.firstOrNull { it.name == id }?.let(onSelect)
+            },
+        )
+        SecondaryButton(
+            text = "Actualizar",
+            onClick = onRefresh,
+            size = ButtonSize.COMPACT,
+            icon = { AppIconImage(AppIcon.REFRESH, size = 14.dp) },
+        )
+    }
+}
+
+/**
+ * Cabecera de cobertura (§36: primero los KPI, luego el detalle).
+ *
+ * Los tres números no son métricas de producto: dicen cuánto de esta pantalla se
+ * puede creer. Es lo primero que hay que saber antes de leer cualquier cifra de
+ * abajo, y evita la trampa de §62 — un cero medido y un cero por falta de
+ * instrumentación se leen igual en una tabla, pero aquí quedan separados.
+ */
+@Composable
+private fun CoverageHeader(report: AnalyticsSectionReport, breakpoint: DesktopBreakpoint) {
+    val unavailable = report.metrics.size - report.availableCount - report.notInstrumentedCount
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+    ) {
+        SummaryCard(
+            modifier = Modifier.weight(1f),
+            title = "Con dato real",
+            value = report.availableCount.toString(),
+            supporting = "de ${report.metrics.size} métricas",
+        )
+        SummaryCard(
+            modifier = Modifier.weight(1f),
+            title = "Sin instrumentar",
+            value = report.notInstrumentedCount.toString(),
+            supporting = "nadie las mide todavía",
+        )
+        if (breakpoint.isAtLeastStandard) {
+            SummaryCard(
+                modifier = Modifier.weight(1f),
+                title = "No disponibles",
+                value = unavailable.coerceAtLeast(0).toString(),
+                supporting = "no se pudieron leer",
             )
         }
-        GlassActionButton(text = "Actualizar", onClick = onRefresh)
     }
 }
 

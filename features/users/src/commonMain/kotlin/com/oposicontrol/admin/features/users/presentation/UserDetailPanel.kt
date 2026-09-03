@@ -8,13 +8,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.components.AdminTable
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
+import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.DesktopTab
+import com.oposicontrol.admin.core.ui.components.DesktopTabs
+import com.oposicontrol.admin.core.ui.components.Help
+import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.components.FormSection
 import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.domain.model.UserDetail
@@ -33,18 +42,54 @@ import kotlin.math.roundToInt
 @Composable
 fun UserDetailPanel(state: UsersState) {
     AsyncStatePane(
-        state.detail,
-        emptyMessage = "Selecciona un usuario para ver su ficha.",
+        state = state.detail,
+        emptyTitle = "Sin usuario seleccionado",
+        emptyMessage = "Elige un usuario de la lista para ver su ficha completa.",
+        emptyIcon = AppIcon.USERS,
     ) { detail ->
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            UserProfileSection(detail)
-            UserPerformanceSection(detail)
-            UserCompetitiveSection(detail)
-            UserEconomySection(detail)
-            UserCommunitySection(detail)
-            UserWeaknessSection(detail)
+        // §32: las seis secciones existían ya, pero apiladas. Puestas una debajo
+        // de otra son unos setenta campos en una sola columna, y encontrar la
+        // racha o el saldo obliga a recorrerla entera. En pestañas, cada vista
+        // responde a una pregunta concreta.
+        //
+        // La selección se recuerda con `rememberSaveable` y clavada al id del
+        // usuario: al cambiar de usuario se vuelve a Perfil, porque seguir en
+        // "Economía" mirando a otra persona es fácil de no notar.
+        var selectedTab by rememberSaveable(detail.profile.userId) {
+            mutableStateOf(UserDetailTab.PERFIL.id)
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+            DesktopTabs(
+                tabs = UserDetailTab.entries.map { DesktopTab(it.id, it.label, it.icon) },
+                selectedId = selectedTab,
+                onSelect = { selectedTab = it },
+            )
+            when (selectedTab) {
+                UserDetailTab.PERFIL.id -> UserProfileSection(detail)
+                UserDetailTab.RENDIMIENTO.id -> UserPerformanceSection(detail)
+                UserDetailTab.COMPETICION.id -> UserCompetitiveSection(detail)
+                UserDetailTab.ECONOMIA.id -> UserEconomySection(detail)
+                UserDetailTab.COMUNIDAD.id -> UserCommunitySection(detail)
+                UserDetailTab.DEBILIDADES.id -> UserWeaknessSection(detail)
+            }
         }
     }
+}
+
+/**
+ * Pestañas de la ficha de usuario.
+ *
+ * El orden va de lo más consultado a lo más específico: quien abre una ficha casi
+ * siempre viene a mirar quién es y cómo va, no sus debilidades por tema.
+ */
+private enum class UserDetailTab(val id: String, val label: String, val icon: AppIcon) {
+    PERFIL("perfil", "Perfil", AppIcon.USERS),
+    RENDIMIENTO("rendimiento", "Rendimiento", AppIcon.PERFORMANCE),
+    COMPETICION("competicion", "Competición", AppIcon.RANKINGS),
+    ECONOMIA("economia", "Economía", AppIcon.TICKETS),
+    COMUNIDAD("comunidad", "Comunidad", AppIcon.FORUM),
+    DEBILIDADES("debilidades", "Debilidades", AppIcon.ANALYTICS),
 }
 
 @Composable
@@ -86,7 +131,11 @@ private fun UserProfileSection(detail: UserDetail) {
 
 @Composable
 private fun UserPerformanceSection(detail: UserDetail) {
-    FormSection(title = "Rendimiento", description = "Actividad acumulada de estudio.") {
+    FormSection(
+        title = "Rendimiento",
+        description = "Actividad acumulada de estudio.",
+        help = Help.notaMedia,
+    ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val performance = detail.performance
             when {
@@ -122,6 +171,9 @@ private fun UserCompetitiveSection(detail: UserDetail) {
     FormSection(
         title = "Liga y ranking",
         description = "Nota media móvil, evolución y posición.",
+        // De las tres, «evolución» es la que más se malinterpreta: no es la nota,
+        // es la diferencia contra la referencia anterior.
+        help = Help.evolucion,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val competitive = detail.competitive
@@ -167,7 +219,11 @@ private fun UserCompetitiveSection(detail: UserDetail) {
 
 @Composable
 private fun UserEconomySection(detail: UserDetail) {
-    FormSection(title = "Economía", description = "Saldo, plan y suscripciones.") {
+    FormSection(
+        title = "Economía",
+        description = "Saldo, plan y suscripciones.",
+        help = Help.saldo,
+    ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val economy = detail.economy
             when {

@@ -18,6 +18,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AdminTable
+import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.Help
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
@@ -54,9 +56,12 @@ fun TicketsScreen(
                         columns = listOf(
                             AdminTableColumn("Usuario", 1.2f),
                             AdminTableColumn("Especialidad", 1f),
-                            AdminTableColumn("Saldo", 0.8f),
+                            AdminTableColumn("Saldo", 0.8f, numeric = true, help = Help.saldo),
                             AdminTableColumn("Estado", 0.8f),
                         ),
+                        emptyTitle = "Sin carteras",
+                        emptyMessage = "Ningún usuario tiene todavía una cartera de OposiTickets " +
+                            "en esta especialidad.",
                         rows = wallets.map { wallet ->
                             AdminTableRow(
                                 key = wallet.userId,
@@ -74,14 +79,16 @@ fun TicketsScreen(
                 if (selectedWallet != null) {
                     SummaryCard(
                         title = selectedWallet.userName,
-                        value = "${selectedWallet.balance} tickets",
+                        value = "${selectedWallet.balance} OT",
                         supporting = "${selectedWallet.specialty} · ${selectedWallet.status}",
+                        help = Help.oposiTickets,
                     )
                 }
 
                 FormSection(
                     title = "Ajuste de saldo",
-                    description = "Abona o corrige tickets sobre carteras reales.",
+                    description = "Abona o corrige OposiTickets sobre carteras reales.",
+                    help = Help.saldo,
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         FieldLabel("Importe (+/-)")
@@ -109,16 +116,22 @@ fun TicketsScreen(
                 }
 
                 FormSection(
-                    title = "Historial de transacciones",
-                    description = "Movimientos del usuario seleccionado.",
+                    title = "Movimientos",
+                    description = "Entradas y salidas de OT del usuario seleccionado.",
+                    help = Help.ledger,
                 ) {
-                    AsyncStatePane(state.transactions, emptyMessage = "Esta cartera no tiene movimientos.") { items ->
+                    AsyncStatePane(
+                        state = state.transactions,
+                        emptyTitle = "Sin movimientos",
+                        emptyMessage = "Esta cartera todavía no ha registrado ninguna entrada ni salida de OT.",
+                        emptyIcon = AppIcon.TICKETS,
+                    ) { items ->
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(items, key = { it.id }) { movement ->
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     StatusChip(movement.type)
                                     Text(movement.reason, style = MaterialTheme.typography.titleSmall)
-                                    Text("${movement.amount} tickets", style = MaterialTheme.typography.bodyMedium)
+                                    Text("${movement.amount} OT", style = MaterialTheme.typography.bodyMedium)
                                     Text(movement.occurredAt, style = MaterialTheme.typography.bodySmall, color = GlassTheme.tokens.textSecondary)
                                 }
                             }
@@ -130,11 +143,23 @@ fun TicketsScreen(
     )
 
     if (confirmAdjust) {
+        // §33: antes de mover saldo, el diálogo repite los tres datos de la
+        // operación —a quién, cuánto y por qué— porque es la última oportunidad
+        // de ver un importe mal tecleado antes de que quede registrado.
+        val restaSaldo = state.adjustmentAmount.trim().startsWith("-")
+        val motivo = state.adjustmentReason.ifBlank { "sin motivo indicado" }
         ConfirmDialog(
-            title = "Confirmar ajuste",
-            message = "Se aplicará ${state.adjustmentAmount} tickets a ${selectedWallet?.userName ?: "la cartera"}. ¿Continuar?",
-            confirmLabel = "Aplicar",
-            destructive = false,
+            title = if (restaSaldo) "Retirar OposiTickets" else "Conceder OposiTickets",
+            message = buildString {
+                append("Usuario: ${selectedWallet?.userName ?: "la cartera seleccionada"}\n")
+                append("Cantidad: ${state.adjustmentAmount} OT\n")
+                append("Motivo: $motivo\n\n")
+                append("Quedará registrado como un movimiento y no se puede deshacer.")
+            },
+            confirmLabel = if (restaSaldo) "Retirar" else "Conceder",
+            // Rojo sólo cuando se quita saldo: conceder OT no es una acción
+            // destructiva y pintarla de rojo enseñaría a ignorar el color.
+            destructive = restaSaldo,
             onConfirm = {
                 confirmAdjust = false
                 viewModel.dispatch(TicketsIntent.ApplyAdjustment)
