@@ -43,21 +43,49 @@ import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.style.TextOverflow
 import com.oposicontrol.admin.core.ui.theme.Sizing
 
+/**
+ * Superficie de tarjeta.
+ *
+ * En escritorio deja de ser cristal. El fondo translúcido es bonito en una
+ * captura y agotador en una jornada de trabajo: una tabla de cuarenta filas
+ * sobre un degradado que se transparenta se lee peor, y el brillo superior
+ * compite con el propio contenido. Con muchas tarjetas a la vez —y un backoffice
+ * son muchas— el efecto se acumula hasta que nada destaca.
+ *
+ * La identidad no se pierde: el fondo azul atmosférico sigue detrás, y el cristal
+ * se conserva íntegro en móvil, donde hay una tarjeta en pantalla y el efecto sí
+ * aporta.
+ *
+ * La sustitución sólo afecta a los tintes de cristal. Si quien llama pasa un
+ * color con intención —coral, rojo de peligro— se respeta tal cual.
+ */
 @Composable
 fun GlassSurface(
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(24.dp),
+    // 24dp de radio es lenguaje de tarjeta de movil; en una rejilla de paneles
+    // administrativos las esquinas muy redondeadas restan sensacion de densidad.
+    shape: Shape = RoundedCornerShape(if (GlassTheme.isDesktop) 12.dp else 24.dp),
     tint: Color = GlassTheme.tokens.glassFill,
     strokeColor: Color = GlassTheme.tokens.glassStroke,
     shadowElevation: Dp = 12.dp,
     content: @Composable BoxScope.() -> Unit,
 ) {
+    val tokens = GlassTheme.tokens
+    val solid = GlassTheme.isDesktop
+    val resolvedTint = when {
+        !solid -> tint
+        tint == tokens.glassFill -> tokens.surfaceSolid
+        tint == tokens.glassFillStrong -> tokens.surfaceMuted
+        else -> tint
+    }
+    val resolvedStroke = if (solid && strokeColor == tokens.glassStroke) tokens.border else strokeColor
+
     val animatedTint by animateColorAsState(
-        targetValue = tint,
+        targetValue = resolvedTint,
         animationSpec = tween(durationMillis = 180),
     )
     val animatedStroke by animateColorAsState(
-        targetValue = strokeColor,
+        targetValue = resolvedStroke,
         animationSpec = tween(durationMillis = 180),
     )
     val animatedElevation by animateDpAsState(
@@ -87,25 +115,31 @@ fun GlassSurface(
             .background(animatedTint)
             .border(1.dp, animatedStroke, shape)
             .drawWithContent {
-                // Soft sheen confined to a fraction of the actual node height so it
-                // never reads as an opaque rectangle on short cards (tiles, chips).
-                val highlightBrush = Brush.verticalGradient(
-                    colors = listOf(
-                        highlightColor.copy(alpha = 0.22f),
-                        highlightColor.copy(alpha = 0.05f),
-                        Color.Transparent,
-                    ),
-                    startY = 0f,
-                    endY = size.height * 0.6f,
-                )
-                drawRect(highlightBrush)
-                if (animatedElevation > 0.dp) {
-                    val shadowBrush = Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, shadowColor.copy(alpha = 0.10f)),
-                        startY = size.height * 0.6f,
-                        endY = size.height,
+                // El brillo y el degradado de sombra son la parte decorativa del
+                // cristal. En escritorio se omiten: sobre una superficie opaca no
+                // simulan profundidad, sólo ensucian el fondo de la tarjeta y
+                // rebajan el contraste del texto que va encima.
+                if (!solid) {
+                    // Soft sheen confined to a fraction of the actual node height so it
+                    // never reads as an opaque rectangle on short cards (tiles, chips).
+                    val highlightBrush = Brush.verticalGradient(
+                        colors = listOf(
+                            highlightColor.copy(alpha = 0.22f),
+                            highlightColor.copy(alpha = 0.05f),
+                            Color.Transparent,
+                        ),
+                        startY = 0f,
+                        endY = size.height * 0.6f,
                     )
-                    drawRect(shadowBrush)
+                    drawRect(highlightBrush)
+                    if (animatedElevation > 0.dp) {
+                        val shadowBrush = Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, shadowColor.copy(alpha = 0.10f)),
+                            startY = size.height * 0.6f,
+                            endY = size.height,
+                        )
+                        drawRect(shadowBrush)
+                    }
                 }
                 drawContent()
             },

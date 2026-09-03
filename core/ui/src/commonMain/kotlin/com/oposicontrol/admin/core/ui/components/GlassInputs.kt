@@ -137,10 +137,13 @@ fun GlassSearchBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                text = "Buscar",
-                style = affordanceStyle,
-                color = tokens.textSecondary,
+            // Un icono, no la palabra «Buscar». La etiqueta de texto se leía
+            // pegada al placeholder y salía «Buscar  Buscar por texto o
+            // etiquetas»: la misma palabra dos veces en el mismo control.
+            AppIconImage(
+                icon = AppIcon.SEARCH,
+                size = 16.dp,
+                tint = tokens.textSecondary,
             )
             BasicTextField(
                 value = value,
@@ -163,21 +166,12 @@ fun GlassSearchBar(
                 },
             )
             AnimatedVisibility(visible = value.isNotBlank()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Limpiar",
-                        style = affordanceStyle,
-                        color = tokens.textSecondary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = { onValueChange("") },
-                            )
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
-                    )
+                DesktopIconButton(
+                    label = "Limpiar búsqueda",
+                    onClick = { onValueChange("") },
+                    size = 24.dp,
+                ) {
+                    AppIconImage(AppIcon.CLOSE, size = 13.dp)
                 }
             }
         }

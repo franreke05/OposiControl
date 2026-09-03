@@ -109,8 +109,8 @@ fun DesktopShell(
         )
         Column(modifier = Modifier.fillMaxSize()) {
             DesktopTopBar(
+                title = title,
                 environmentLabel = environmentLabel,
-                globalSearch = globalSearch,
                 helpOpen = helpOpen,
                 onToggleHelp = { helpOpen = !helpOpen },
             )
@@ -128,7 +128,7 @@ fun DesktopShell(
                             breakpoint = breakpoint,
                         )
                     }
-                    Box(
+                    Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(
@@ -136,8 +136,17 @@ fun DesktopShell(
                                 end = breakpoint.screenPadding,
                                 bottom = breakpoint.screenPadding,
                             ),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md),
                     ) {
-                        content()
+                        // La búsqueda global va aquí y no en la cabecera: no es una
+                        // caja de texto, es un panel entero —campo, chips de filtro,
+                        // etiquetas y lista de resultados— que necesita crecer hacia
+                        // abajo. Metido en una barra de 60dp se desbordaba por arriba
+                        // y por debajo, tapando el título de la página.
+                        globalSearch()
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                            content()
+                        }
                     }
                 }
                 if (helpOpen) {
@@ -364,10 +373,17 @@ private fun SidebarRow(
 // Cabecera
 // ---------------------------------------------------------------------------
 
+/**
+ * Barra superior fija.
+ *
+ * Su trabajo es el contexto persistente: dónde estoy, contra qué entorno estoy
+ * trabajando y dónde está la ayuda. La búsqueda global NO vive aquí — es un panel
+ * con resultados, no un campo, y se renderiza en el flujo de contenido.
+ */
 @Composable
 private fun DesktopTopBar(
+    title: String,
     environmentLabel: String,
-    globalSearch: @Composable () -> Unit,
     helpOpen: Boolean,
     onToggleHelp: () -> Unit,
 ) {
@@ -382,9 +398,14 @@ private fun DesktopTopBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
-        Box(modifier = Modifier.weight(1f).widthIn(max = 520.dp)) {
-            globalSearch()
-        }
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleMedium,
+            color = tokens.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         EnvironmentChip(environmentLabel)
         InfoTooltip(text = "Ayuda del panel") {
             DesktopIconButton(
