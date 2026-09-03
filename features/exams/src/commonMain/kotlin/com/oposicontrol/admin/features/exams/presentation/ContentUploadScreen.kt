@@ -95,6 +95,7 @@ fun ContentUploadScreen(viewModel: ContentUploadViewModel) {
         if (activeBatch != null) {
             ImportReview(
                 batch = activeBatch,
+                busy = state.actionState is UiAsync.Loading,
                 onBack = { viewModel.dispatch(ContentUploadIntent.CloseBatch) },
                 onSave = { viewModel.dispatch(ContentUploadIntent.SaveStaging(it)) },
                 onSkip = { viewModel.dispatch(ContentUploadIntent.SkipStaging(it)) },
@@ -261,6 +262,7 @@ private fun ImportBatchRow(batch: ContentImportBatch, onClick: () -> Unit) {
 @Composable
 private fun ImportReview(
     batch: ContentImportBatch,
+    busy: Boolean,
     onBack: () -> Unit,
     onSave: (ContentImportStagingItem) -> Unit,
     onSkip: (ContentImportStagingItem) -> Unit,
@@ -284,9 +286,13 @@ private fun ImportReview(
             }
             Button(
                 onClick = onPublish,
-                enabled = approved > 0 && batch.status != "importado",
+                // `!busy` no es cosmético: publicar escribe en el contenido
+                // canónico por un camino que todavía no es atómico, así que un
+                // segundo toque mientras la primera petición sigue en vuelo
+                // podría duplicar preguntas.
+                enabled = approved > 0 && batch.status != "importado" && !busy,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Publicar aprobadas al contenido canónico") }
+            ) { Text(if (busy) "Publicando…" else "Publicar aprobadas al contenido canónico") }
         }
     }
 }

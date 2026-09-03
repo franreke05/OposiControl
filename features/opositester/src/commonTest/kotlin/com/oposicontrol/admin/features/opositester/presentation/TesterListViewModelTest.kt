@@ -8,6 +8,7 @@ import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.TesterReport
 import com.oposicontrol.admin.domain.model.TesterReportPage
 import com.oposicontrol.admin.domain.repository.TesterRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.runTest
@@ -221,4 +222,95 @@ class TesterListViewModelTest {
 
         assertEquals(1, repository.calls.count { it.second == "cursor-2" })
     }
+
+    /**
+     * Regresión: `refresh()` llamaba a `loadFirstPage()` sin más, que ponía
+     * `reports = UiAsync.Loading`. Como `PullToRefreshBox` ya muestra su propio
+     * indicador con `refreshing`, el usuario veía desaparecer la lista y salir
+     * el esqueleto *debajo* del spinner (doble loader). Durante un
+     * pull-to-refresh el contenido anterior debe seguir visible.
+     */
+    @Test
+    fun pullToRefresh_keepsThePreviousListVisibleWhileReloading() = runTest {
+        val repository = GatedTesterRepository(firstPage = listOf(report("t1")), secondPage = listOf(report("t2")))
+        val viewModel = newViewModel(testScheduler, repository)
+        // Primero dejar que la carga inicial llegue a la puerta, y solo
+        // entonces abrirla: `release()` antes de que el repositorio haya sido
+        // llamado abriria una puerta que nadie esta esperando.
+        testScheduler.advanceUntilIdle()
+        repository.release()
+        testScheduler.advanceUntilIdle()
+        assertIs<UiAsync.Success<List<TesterReport>>>(viewModel.state.value.reports)
+
+        viewModel.dispatch(TesterIntent.PullToRefresh)
+        // La recarga queda parada dentro del repositorio: este es exactamente
+        // el instante que veia el usuario con el doble loader.
+        testScheduler.advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.refreshing, "el indicador de pull-to-refresh debe estar activo")
+        val midRefresh = assertIs<UiAsync.Success<List<TesterReport>>>(
+            viewModel.state.value.reports,
+            "la lista no debe volver a Loading durante un pull-to-refresh",
+        )
+        assertEquals(listOf("t1"), midRefresh.value.map { it.id })
+
+        repository.release()
+        testScheduler.advanceUntilIdle()
+        val after = assertIs<UiAsync.Success<List<TesterReport>>>(viewModel.state.value.reports)
+        assertEquals(listOf("t2"), after.value.map { it.id })
+        assertTrue(!viewModel.state.value.refreshing)
+    }
+
+    /**
+     * Un cambio de filtro sí es una carga nueva: ahí el esqueleto es correcto,
+     * porque la lista anterior ya no corresponde al filtro seleccionado. Sin
+     * esta contraprueba, `loadFirstPage(preserveContent = true)` podria
+     * aplicarse a todo y nadie se enteraria.
+     */
+    @Test
+    fun changingTheFilter_stillShowsTheLoadingSkeleton() = runTest {
+        val repository = GatedTesterRepository(firstPage = listOf(report("t1")), secondPage = listOf(report("t2")))
+        val viewModel = newViewModel(testScheduler, repository)
+        testScheduler.advanceUntilIdle()
+        repository.release()
+        testScheduler.advanceUntilIdle()
+        assertIs<UiAsync.Success<List<TesterReport>>>(viewModel.state.value.reports)
+
+        viewModel.dispatch(TesterIntent.SetMainFilter(TesterMainFilter.ALL))
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(UiAsync.Loading, viewModel.state.value.reports)
+
+        repository.release()
+        testScheduler.advanceUntilIdle()
+    }
+}
+
+/**
+ * Repositorio que se queda suspendido hasta que el test lo libera, para poder
+ * observar el estado *a mitad* de una carga (lo que un fake sincrono no deja
+ * ver: alli la carga entera se completa dentro del mismo turno del scheduler).
+ */
+private class GatedTesterRepository(
+    private val firstPage: List<TesterReport>,
+    private val secondPage: List<TesterReport>,
+) : TesterRepository {
+    private var gate = CompletableDeferred<Unit>()
+    private var callCount = 0
+
+    fun release() {
+        gate.complete(Unit)
+        gate = CompletableDeferred()
+    }
+
+    override suspend fun listReports(status: String?, cursor: String?, type: String?, pageSize: Int): AppResult<TesterReportPage> {
+        val current = gate
+        callCount++
+        val page = if (callCount <= 1) firstPage else secondPage
+        current.await()
+        return AppResult.Success(TesterReportPage(page, null))
+    }
+
+    override suspend fun getReport(id: String) = error("not used")
+    override suspend fun resolveReport(id: String, estado: String, nota: String?) = error("not used")
 }

@@ -13,6 +13,7 @@ import com.oposicontrol.admin.domain.model.ForumThreadDetail
 import com.oposicontrol.admin.domain.model.ForumThreadPage
 import com.oposicontrol.admin.domain.repository.ForumRepository
 import com.oposicontrol.admin.domain.repository.ModerationRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.runTest
@@ -45,6 +46,35 @@ private class FakeForumRepository(
     override suspend fun listThreads(cursor: String?, reportedOnly: Boolean, categoryId: String?, pageSize: Int): AppResult<ForumThreadPage> {
         calls += Triple(cursor, reportedOnly, categoryId)
         return responder(cursor, reportedOnly, categoryId)
+    }
+
+    override suspend fun getThread(threadId: String): AppResult<ForumThreadDetail> = error("not used by ForumViewModelTest")
+    override suspend fun listReplies(threadId: String, cursor: String?, pageSize: Int): AppResult<ForumReplyPage> = error("not used by ForumViewModelTest")
+}
+
+/**
+ * Repositorio que se queda suspendido hasta que el test lo libera, para poder
+ * observar el estado *a mitad* de una carga (lo que un fake sincrono no deja
+ * ver: alli la carga entera se completa dentro del mismo turno del scheduler).
+ */
+private class GatedForumRepository(
+    private val firstPage: List<ForumThread>,
+    private val secondPage: List<ForumThread>,
+) : ForumRepository {
+    private var gate = CompletableDeferred<Unit>()
+    private var callCount = 0
+
+    fun release() {
+        gate.complete(Unit)
+        gate = CompletableDeferred()
+    }
+
+    override suspend fun listThreads(cursor: String?, reportedOnly: Boolean, categoryId: String?, pageSize: Int): AppResult<ForumThreadPage> {
+        val current = gate
+        callCount++
+        val page = if (callCount <= 1) firstPage else secondPage
+        current.await()
+        return AppResult.Success(ForumThreadPage(page, null))
     }
 
     override suspend fun getThread(threadId: String): AppResult<ForumThreadDetail> = error("not used by ForumViewModelTest")
@@ -282,6 +312,68 @@ class ForumViewModelTest {
         testScheduler.advanceUntilIdle()
 
         assertNull(viewModel.state.value.pendingReportsCount)
+    }
+
+    /**
+     * Regresión: `refresh()` llamaba a `loadFirstPage()` sin más, que ponía
+     * `threads = UiAsync.Loading`. Como `PullToRefreshBox` ya muestra su propio
+     * indicador con `refreshing`, el usuario veía desaparecer la lista y salir
+     * el esqueleto *debajo* del spinner (doble loader). Durante un
+     * pull-to-refresh el contenido anterior debe seguir visible.
+     */
+    @Test
+    fun pullToRefresh_keepsThePreviousListVisibleWhileReloading() = runTest {
+        val repository = GatedForumRepository(firstPage = listOf(thread("h1")), secondPage = listOf(thread("h2")))
+        val viewModel = newViewModel(testScheduler, repository)
+        // Primero dejar que la carga inicial llegue a la puerta, y solo
+        // entonces abrirla: `release()` antes de que el repositorio haya sido
+        // llamado abriria una puerta que nadie esta esperando.
+        testScheduler.advanceUntilIdle()
+        repository.release()
+        testScheduler.advanceUntilIdle()
+        assertIs<UiAsync.Success<List<ForumThread>>>(viewModel.state.value.threads)
+
+        viewModel.dispatch(ForumIntent.PullToRefresh)
+        // La recarga queda parada dentro del repositorio: este es exactamente
+        // el instante que veia el usuario con el doble loader.
+        testScheduler.advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.refreshing, "el indicador de pull-to-refresh debe estar activo")
+        val midRefresh = assertIs<UiAsync.Success<List<ForumThread>>>(
+            viewModel.state.value.threads,
+            "la lista no debe volver a Loading durante un pull-to-refresh",
+        )
+        assertEquals(listOf("h1"), midRefresh.value.map { it.id })
+
+        repository.release()
+        testScheduler.advanceUntilIdle()
+        val after = assertIs<UiAsync.Success<List<ForumThread>>>(viewModel.state.value.threads)
+        assertEquals(listOf("h2"), after.value.map { it.id })
+        assertTrue(!viewModel.state.value.refreshing)
+    }
+
+    /**
+     * Un cambio de filtro sí es una carga nueva: ahí el esqueleto es correcto,
+     * porque la lista anterior ya no corresponde al filtro seleccionado. Sin
+     * esta contraprueba, `loadFirstPage(preserveContent = true)` podria
+     * aplicarse a todo y nadie se enteraria.
+     */
+    @Test
+    fun changingTheFilter_stillShowsTheLoadingSkeleton() = runTest {
+        val repository = GatedForumRepository(firstPage = listOf(thread("h1")), secondPage = listOf(thread("h2")))
+        val viewModel = newViewModel(testScheduler, repository)
+        testScheduler.advanceUntilIdle()
+        repository.release()
+        testScheduler.advanceUntilIdle()
+        assertIs<UiAsync.Success<List<ForumThread>>>(viewModel.state.value.threads)
+
+        viewModel.dispatch(ForumIntent.SetMainFilter(ForumMainFilter.REPORTED))
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(UiAsync.Loading, viewModel.state.value.threads)
+
+        repository.release()
+        testScheduler.advanceUntilIdle()
     }
 
     private fun mockReport(id: String) = ForumReport(

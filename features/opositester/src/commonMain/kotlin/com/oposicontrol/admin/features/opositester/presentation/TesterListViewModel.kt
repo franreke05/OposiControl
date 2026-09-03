@@ -43,8 +43,20 @@ class TesterListViewModel(
         }
     }
 
-    private suspend fun loadFirstPage() {
-        updateState { it.copy(reports = UiAsync.Loading, nextCursor = null) }
+    /**
+     * [preserveContent] mantiene la lista ya visible mientras se recarga. Solo
+     * lo usa el pull-to-refresh: ahí el indicador de `PullToRefreshBox` ya
+     * comunica la carga, así que poner además `reports = Loading` borraba el
+     * contenido y mostraba el esqueleto *debajo* del propio spinner (doble
+     * loader). Mismo criterio que ReportsViewModel.load(asPullToRefresh).
+     */
+    private suspend fun loadFirstPage(preserveContent: Boolean = false) {
+        updateState {
+            it.copy(
+                reports = if (preserveContent) it.reports else UiAsync.Loading,
+                nextCursor = null,
+            )
+        }
         val state = currentState()
         val status = if (state.mainFilter == TesterMainFilter.PENDING) PENDING_STATUS else null
         when (val result = testerRepository.listReports(status = status, cursor = null, type = state.typeFilter?.value)) {
@@ -61,7 +73,7 @@ class TesterListViewModel(
 
     private suspend fun refresh() {
         updateState { it.copy(refreshing = true) }
-        loadFirstPage()
+        loadFirstPage(preserveContent = true)
         updateState { it.copy(refreshing = false) }
     }
 
