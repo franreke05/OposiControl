@@ -31,6 +31,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.Sizing
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 
@@ -76,15 +77,15 @@ fun GlassTextField(
             GlassSurface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .defaultMinSize(minHeight = 54.dp),
-                shape = RoundedCornerShape(16.dp),
+                    .defaultMinSize(minHeight = if (GlassTheme.isDesktop) Sizing.inputHeight else 54.dp),
+                shape = RoundedCornerShape(if (GlassTheme.isDesktop) 10.dp else 16.dp),
                 tint = animatedTint,
                 strokeColor = animatedStroke,
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(horizontal = 12.dp, vertical = if (GlassTheme.isDesktop) 6.dp else 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -123,8 +124,8 @@ fun GlassSearchBar(
         animationSpec = tween(durationMillis = 160),
     )
     GlassSurface(
-        modifier = modifier.defaultMinSize(minHeight = 52.dp),
-        shape = RoundedCornerShape(16.dp),
+        modifier = modifier.defaultMinSize(minHeight = if (GlassTheme.isDesktop) Sizing.inputHeight else 52.dp),
+        shape = RoundedCornerShape(if (GlassTheme.isDesktop) 10.dp else 16.dp),
         tint = tokens.glassFill,
         strokeColor = animatedStroke,
     ) {

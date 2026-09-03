@@ -31,6 +31,17 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.text.style.TextOverflow
+import com.oposicontrol.admin.core.ui.theme.Sizing
 
 @Composable
 fun GlassSurface(
@@ -102,27 +113,68 @@ fun GlassSurface(
     )
 }
 
+/**
+ * Botón heredado, presente en 68 llamadas.
+ *
+ * Se mantiene la firma —cambiarla obligaría a tocar esas 68 pantallas de golpe—
+ * pero se le añade lo que le faltaba para funcionar con ratón y teclado:
+ *
+ *  - hover, que no tenía ninguno;
+ *  - anillo de foco, que `indication = null` estaba eliminando junto con el
+ *    resaltado, dejando la navegación por Tab invisible;
+ *  - `loading`, que bloquea el clic y evita el doble envío;
+ *  - un deshabilitado opaco y legible: el blanco al 53% anterior dejaba texto
+ *    gris flotando sobre lo que hubiera detrás;
+ *  - 40dp de alto en escritorio y 50dp en móvil, porque el dedo y el puntero no
+ *    piden lo mismo.
+ *
+ * Para superficie nueva usa [DesktopButton], que además tiene variantes.
+ */
 @Composable
 fun GlassActionButton(
     text: String,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    tint: Color = if (enabled) GlassTheme.tokens.accent else GlassTheme.tokens.glassFillStrong,
-    textColor: Color = if (enabled) Color.White else GlassTheme.tokens.textSecondary,
+    loading: Boolean = false,
+    tint: Color = GlassTheme.tokens.accent,
+    textColor: Color = Color.White,
     onClick: () -> Unit,
 ) {
+    val tokens = GlassTheme.tokens
+    val isDesktop = GlassTheme.isDesktop
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
+    val hovered by interactionSource.collectIsHoveredAsState()
+    var focused by remember { mutableStateOf(false) }
+
+    val interactive = enabled && !loading
+    val radius = 10.dp
+    val shape = RoundedCornerShape(radius)
+
+    val container by animateColorAsState(
+        targetValue = when {
+            !enabled -> Color(0xFFEDEFF2)
+            pressed -> tint.darken(0.14f)
+            hovered -> tint.darken(0.06f)
+            else -> tint
+        },
+        animationSpec = tween(120),
+    )
+    val content = if (enabled) textColor else Color(0xFF8A96A3)
+    val stroke by animateColorAsState(
+        targetValue = when {
+            focused && interactive -> tokens.focusRing
+            !enabled -> Color(0xFFE2E6EB)
+            else -> container
+        },
+        animationSpec = tween(120),
+    )
     val animatedScale by animateFloatAsState(
-        targetValue = if (pressed && enabled) 0.98f else 1f,
+        targetValue = if (pressed && interactive) 0.985f else 1f,
         animationSpec = tween(durationMillis = 120),
     )
-    val animatedElevation by animateDpAsState(
-        targetValue = if (pressed && enabled) 6.dp else 12.dp,
-        animationSpec = tween(durationMillis = 120),
-    )
-    val radius = 16.dp
-    GlassSurface(
+
+    Box(
         modifier = modifier
             .graphicsLayer {
                 scaleX = animatedScale
@@ -130,34 +182,49 @@ fun GlassActionButton(
             }
             .defaultMinSize(
                 minWidth = 88.dp,
-                minHeight = 50.dp,
+                minHeight = if (isDesktop) Sizing.buttonNormal else 50.dp,
             )
-            .clip(RoundedCornerShape(radius))
+            .clip(shape)
+            .background(container)
+            .border(if (focused && interactive) 2.dp else 1.dp, stroke, shape)
+            .hoverable(interactionSource, enabled = interactive)
+            .pointerHoverIcon(if (interactive) PointerIcon.Hand else PointerIcon.Default)
+            .onFocusChanged { focused = it.isFocused }
             .clickable(
-                enabled = enabled,
+                enabled = interactive,
                 interactionSource = interactionSource,
                 indication = null,
                 onClick = onClick,
-            ),
-        shape = RoundedCornerShape(radius),
-        tint = tint,
-        strokeColor = tint.copy(alpha = 0.5f),
-        shadowElevation = animatedElevation,
+            )
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .wrapContentSize()
-                .padding(
-                    horizontal = 18.dp,
-                    vertical = 12.dp,
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(15.dp),
+                color = content,
+                strokeWidth = 2.dp,
+            )
+        } else {
             Text(
                 text = text,
-                style = MaterialTheme.typography.titleMedium,
-                color = textColor,
+                style = if (isDesktop) {
+                    MaterialTheme.typography.labelLarge
+                } else {
+                    MaterialTheme.typography.titleMedium
+                },
+                color = content,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
 }
+
+/** Oscurece un color mezclándolo con negro; para hover y pressed. */
+private fun Color.darken(amount: Float): Color = Color(
+    red = red * (1f - amount),
+    green = green * (1f - amount),
+    blue = blue * (1f - amount),
+    alpha = alpha,
+)

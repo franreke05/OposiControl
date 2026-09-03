@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 /**
@@ -33,7 +34,11 @@ fun ConfirmDialog(
     onDismiss: () -> Unit,
 ) {
     val tokens = GlassTheme.tokens
-    Dialog(onDismissRequest = onDismiss) {
+    // `dismissOnBackPress` cubre Esc en escritorio y el gesto atrás en móvil (§50).
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true),
+    ) {
         GlassSurface(
             modifier = Modifier.widthIn(min = 280.dp, max = 420.dp),
             shape = RoundedCornerShape(24.dp),
@@ -62,17 +67,15 @@ fun ConfirmDialog(
                         .padding(top = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
                 ) {
-                    GlassActionButton(
-                        text = dismissLabel,
-                        tint = tokens.glassFill,
-                        textColor = tokens.textPrimary,
-                        onClick = onDismiss,
-                    )
-                    GlassActionButton(
-                        text = confirmLabel,
-                        tint = if (destructive) MaterialTheme.colorScheme.error else tokens.accent,
-                        onClick = onConfirm,
-                    )
+                    // Cancelar como secundario y no como primario apagado: en un
+                    // diálogo destructivo la salida segura tiene que leerse como
+                    // un botón de verdad, no como el botón peligroso desactivado.
+                    SecondaryButton(text = dismissLabel, onClick = onDismiss)
+                    if (destructive) {
+                        DangerButton(text = confirmLabel, onClick = onConfirm)
+                    } else {
+                        PrimaryButton(text = confirmLabel, onClick = onConfirm)
+                    }
                 }
             }
         }

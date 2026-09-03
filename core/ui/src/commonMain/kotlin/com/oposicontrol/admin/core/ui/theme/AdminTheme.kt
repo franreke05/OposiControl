@@ -96,9 +96,26 @@ private val LightGlassTokens = GlassTokens(
 
 private val LocalGlassTokens = staticCompositionLocalOf { LightGlassTokens }
 
+/**
+ * Si esta composición se está dibujando como panel de escritorio o como móvil.
+ *
+ * Existe porque hay componentes que comparten las dos plataformas —botones,
+ * campos de texto— y que necesitan medidas distintas por una razón física: 48dp
+ * es el mínimo para tocar con el dedo y 40dp es lo correcto para apuntar con un
+ * ratón. Un único valor para los dos casos siempre está mal en uno de ellos.
+ *
+ * Es una divergencia de MEDIDA, no de comportamiento: la lógica sigue siendo la
+ * misma en ambas plataformas.
+ */
+val LocalRendersAsDesktop = staticCompositionLocalOf { false }
+
 object GlassTheme {
     val tokens: GlassTokens
         @Composable get() = LocalGlassTokens.current
+
+    /** true en la ventana de escritorio, false en móvil. */
+    val isDesktop: Boolean
+        @Composable get() = LocalRendersAsDesktop.current
 }
 
 @OptIn(ExperimentalResourceApi::class)
@@ -129,6 +146,7 @@ fun AdminTheme(
             CompositionLocalProvider(
                 LocalGlassTokens provides tokens,
                 LocalDesktopBreakpoint provides desktopBreakpoint,
+                LocalRendersAsDesktop provides rendersAsDesktop,
             ) {
                 MaterialTheme(
                     colorScheme = lightColorScheme(
