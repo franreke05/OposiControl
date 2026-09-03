@@ -111,7 +111,7 @@ internal fun MobileLayeredNewsEditor(
     if (confirmDelete) {
         ConfirmDialog(
             title = "Eliminar noticia",
-            message = "Se eliminara la noticia seleccionada. Esta accion no se puede deshacer.",
+            message = "Se eliminara la noticia seleccionada. Esta acción no se puede deshacer.",
             confirmLabel = "Eliminar",
             onConfirm = {
                 confirmDelete = false
@@ -143,7 +143,7 @@ private fun MobileLayeredNewsEditorPreview(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             NewsEditorHeader(
-                title = state.editorTitle.ifBlank { "Noticia sin titulo" },
+                title = state.editorTitle.ifBlank { "Noticia sin título" },
                 selectedLabel = selectedLayer?.name ?: "Lienzo",
                 actionLabel = "Pantalla",
                 onAction = onOpenFullscreen,

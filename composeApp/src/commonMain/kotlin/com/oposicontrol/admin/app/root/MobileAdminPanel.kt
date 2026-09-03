@@ -68,12 +68,12 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private enum class AdminSection(val label: String, val icon: MobileIcon, val description: String) {
-    Moderacion("Moderacion", MobileIcon.Eye, "Reportes del foro OposiRed"),
+    Moderacion("Moderación", MobileIcon.Eye, "Reportes del foro OposiRed"),
     Usuarios("Usuarios", MobileIcon.Users, "Usuarios y dar opositickets"),
     Tickets("Tickets", MobileIcon.Wallet, "Carteras y ajustes de saldo"),
     Soporte("Soporte", MobileIcon.Chat, "Conversaciones de soporte"),
-    Accesos("Accesos", MobileIcon.Key, "Control de accesos a examenes"),
-    Ajustes("Ajustes", MobileIcon.Gear, "Configuracion del sistema"),
+    Accesos("Accesos", MobileIcon.Key, "Control de accesos a exámenes"),
+    Ajustes("Ajustes", MobileIcon.Gear, "Configuración del sistema"),
 }
 
 private val AdminUserCardShape = RoundedCornerShape(12.dp)

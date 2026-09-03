@@ -43,7 +43,7 @@ fun CommercialCatalogScreen(
         listPane = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 GlassActionButton(
-                    text = "Actualizar catalogo",
+                    text = "Actualizar catálogo",
                     modifier = Modifier.fillMaxWidth(),
                     onClick = { viewModel.dispatch(CommercialCatalogIntent.Refresh) },
                 )
@@ -85,7 +85,7 @@ fun CommercialCatalogScreen(
             if (product == null) {
                 FormSection(
                     title = "Producto comercial",
-                    description = "Selecciona un producto del catalogo para editarlo.",
+                    description = "Selecciona un producto del catálogo para editarlo.",
                 ) {
                     Text(
                         text = "Sin producto seleccionado.",
@@ -144,7 +144,7 @@ fun CommercialCatalogScreen(
                             viewModel.dispatch(CommercialCatalogIntent.UpdatePromotionalLabel(it))
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = "Ej. Mas elegido",
+                        placeholder = "Ej. Más elegido",
                     )
 
                     GlassToggleRow(
@@ -154,7 +154,7 @@ fun CommercialCatalogScreen(
                         onCheckedChange = { viewModel.dispatch(CommercialCatalogIntent.ToggleActive(it)) },
                     )
                     GlassToggleRow(
-                        title = "Visible en el catalogo",
+                        title = "Visible en el catálogo",
                         description = "Controla si aparece en OposiMarket.",
                         checked = state.editorVisible,
                         onCheckedChange = { viewModel.dispatch(CommercialCatalogIntent.ToggleVisible(it)) },
@@ -183,7 +183,7 @@ fun CommercialCatalogScreen(
                         onClick = { viewModel.dispatch(CommercialCatalogIntent.Save) },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    FormFeedback(state.actionState, successText = "Catalogo actualizado.")
+                    FormFeedback(state.actionState, successText = "Catálogo actualizado.")
                 }
             }
 

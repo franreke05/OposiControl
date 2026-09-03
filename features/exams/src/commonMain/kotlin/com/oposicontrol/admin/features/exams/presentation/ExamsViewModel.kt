@@ -542,7 +542,7 @@ class ExamsViewModel(
             }
         val priceTickets = currentState().editorPriceTickets.toIntOrNull()
             ?: return updateState {
-                it.copy(actionState = UiAsync.Error(AppError.Validation("El precio en tickets debe ser un numero valido.")))
+                it.copy(actionState = UiAsync.Error(AppError.Validation("El precio en tickets debe ser un número valido.")))
             }
         if (priceTickets < 0) {
             return updateState {
@@ -558,7 +558,7 @@ class ExamsViewModel(
         val durationMinutes = currentState().editorDurationMinutes.takeIf { it.isNotBlank() }?.toIntOrNull()
             ?: currentState().editorDurationMinutes.takeIf { it.isNotBlank() }?.let {
                 return updateState {
-                    it.copy(actionState = UiAsync.Error(AppError.Validation("La duracion debe ser numerica.")))
+                    it.copy(actionState = UiAsync.Error(AppError.Validation("La duración debe ser numerica.")))
                 }
             }
         val publishFrom = currentState().editorPublishFrom.takeIf { it.isNotBlank() }?.let {
@@ -641,7 +641,7 @@ class ExamsViewModel(
             }
         val priceTickets = currentState().editorPriceTickets.toIntOrNull()
             ?: return updateState {
-                it.copy(actionState = UiAsync.Error(AppError.Validation("El precio en tickets debe ser un numero valido.")))
+                it.copy(actionState = UiAsync.Error(AppError.Validation("El precio en tickets debe ser un número valido.")))
             }
         val publishFrom = currentState().editorPublishFrom.takeIf { it.isNotBlank() }?.let {
             runCatching { kotlinx.datetime.Instant.parse(it) }.getOrNull()
@@ -1172,7 +1172,7 @@ class ExamsViewModel(
                     importState = UiAsync.Error(
                         AppError.Validation(report.issues.joinToString("\n") { issue -> issue.message }),
                     ),
-                    importSummary = "Importacion cancelada: ${report.issues.size} errores detectados.",
+                    importSummary = "Importación cancelada: ${report.issues.size} errores detectados.",
                 )
             }
             return
@@ -1222,7 +1222,7 @@ class ExamsViewModel(
                 val summary = buildString {
                     append("${result.value.size} preguntas importadas")
                     if (report.duplicateCount > 0) append(" | ${report.duplicateCount} duplicadas omitidas")
-                    if (report.skippedOverLimit > 0) append(" | ${report.skippedOverLimit} por encima del limite de 50")
+                    if (report.skippedOverLimit > 0) append(" | ${report.skippedOverLimit} por encima del límite de 50")
                 }
                 updateState { it.copy(importState = UiAsync.Success(result.value.size), importSummary = summary) }
             }

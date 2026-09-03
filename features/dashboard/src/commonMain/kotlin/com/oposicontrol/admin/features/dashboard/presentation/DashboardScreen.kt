@@ -36,6 +36,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.ui.components.ButtonSize
+import com.oposicontrol.admin.core.ui.components.PrimaryButton
+import com.oposicontrol.admin.core.ui.components.SecondaryButton
+import com.oposicontrol.admin.core.ui.layout.DesktopBreakpoint
+import com.oposicontrol.admin.core.ui.layout.desktopBreakpointFor
+import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.theme.AdminTheme
@@ -94,10 +100,16 @@ fun DashboardContent(
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val compact = maxWidth < 720.dp
         val tablet = maxWidth in 720.dp..1039.dp
+        // El tope escala con la ventana en vez de quedarse fijo en 1120dp. Con el
+        // tope antiguo, un monitor de 1920 o 2560 mostraba una columna estrecha
+        // centrada entre dos franjas vacías enormes — se pagaba el monitor grande
+        // sin recibir nada a cambio. Sigue habiendo un tope porque una fila de
+        // tarjetas de 2500dp de ancho tampoco se lee bien.
         val contentWidth = when {
             compact -> maxWidth
-            tablet -> minOf(maxWidth, 920.dp)
-            else -> minOf(maxWidth, 1120.dp)
+            tablet -> minOf(maxWidth, 980.dp)
+            desktopBreakpointFor(maxWidth) == DesktopBreakpoint.WIDE -> minOf(maxWidth, 1760.dp)
+            else -> minOf(maxWidth, 1400.dp)
         }
         val sectionGap = if (compact) 16.dp else 20.dp
 
@@ -108,7 +120,14 @@ fun DashboardContent(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(sectionGap),
             ) {
-                AsyncStatePane(state.metrics, emptyMessage = "Todavia no hay metricas.") { metrics ->
+                AsyncStatePane(
+                    state = state.metrics,
+                    emptyTitle = "Todavía no hay métricas",
+                    emptyMessage = "El panel aún no ha recibido datos de actividad.",
+                    emptyIcon = AppIcon.ANALYTICS,
+                    loadingRows = 8,
+                    onRetry = onRefresh,
+                ) { metrics ->
                     Column(verticalArrangement = Arrangement.spacedBy(sectionGap)) {
                         DashboardOperationalTop(
                             metrics = metrics,
@@ -132,7 +151,7 @@ fun DashboardContent(
                             compact = compact,
                         )
                         DashboardPanelGroup(
-                            title = "Tienda y campanas",
+                            title = "Tienda y campañas",
                             panels = commercePanels(metrics),
                             compact = compact,
                         )
@@ -208,7 +227,7 @@ private fun DashboardHeaderText(metrics: DashboardMetrics, compact: Boolean) {
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = "${metrics.totalExams} examenes, ${metrics.totalQuestions} preguntas y ${metrics.publishedNews} noticias bajo control",
+            text = "${metrics.totalExams} exámenes, ${metrics.totalQuestions} preguntas y ${metrics.publishedNews} noticias bajo control",
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = if (compact) 11.sp else 13.sp, letterSpacing = 0.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -251,7 +270,7 @@ private fun DashboardHero(
             verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 18.dp),
         ) {
             Text(
-                text = if (metrics.alerts.isEmpty()) "Contenido listo para operar" else "${metrics.alerts.size} puntos requieren revision",
+                text = if (metrics.alerts.isEmpty()) "Contenido listo para operar" else "${metrics.alerts.size} puntos requieren revisión",
                 style = MaterialTheme.typography.headlineSmall.copy(
                     fontSize = if (compact) 22.sp else 26.sp,
                     letterSpacing = 0.sp,
@@ -261,7 +280,7 @@ private fun DashboardHero(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "Prioriza recursos, importaciones y publicaciones antes de revisar tienda y campanas.",
+                text = "Prioriza recursos, importaciones y publicaciones antes de revisar tienda y campañas.",
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, letterSpacing = 0.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = if (compact) 2 else 1,
@@ -308,7 +327,7 @@ private fun DashboardKpiGrid(metrics: DashboardMetrics, compact: Boolean, tablet
         val columns = if (compact || tablet) 2 else 4
         val cardWidth = if (columns == 4) 262.dp else (maxWidth - gap) / 2
         val items = listOf(
-            KpiItem("Examenes publicados", metrics.publishedExams.toString(), "${metrics.draftExams} borradores"),
+            KpiItem("Exámenes publicados", metrics.publishedExams.toString(), "${metrics.draftExams} borradores"),
             KpiItem("Preguntas sin recurso", metrics.questionsWithoutResources.toString(), "${metrics.linkedResources} recursos enlazados"),
             KpiItem("Noticias en borrador", metrics.draftNews.toString(), "${metrics.publishedNews} publicadas"),
             KpiItem("Ofertas activas", metrics.activeOffers.toString(), "${metrics.scheduledOffers} programadas"),
@@ -503,13 +522,13 @@ private fun DashboardPerformanceMetricGrid(metrics: DashboardMetrics, compact: B
     }
 
     val items = listOf(
-        kpi(DashboardMetricKey.ACTIVE_USERS_30D, "Usuarios activos (30d)", "Ultimos 30 dias") {
+        kpi(DashboardMetricKey.ACTIVE_USERS_30D, "Usuarios activos (30d)", "Últimos 30 días") {
             metrics.activeUsers30d.toString()
         },
         kpi(DashboardMetricKey.TOTAL_ATTEMPTS, "Intentos totales", "Completados") {
             metrics.totalAttempts.toString()
         },
-        kpi(DashboardMetricKey.AVG_SCORE, "Puntuacion media", "Acierto global") {
+        kpi(DashboardMetricKey.AVG_SCORE, "Puntuación media", "Acierto global") {
             "${metrics.avgScore.roundToInt()}%"
         },
         kpi(DashboardMetricKey.GLOBAL_ERROR_RATE, "Tasa de error", "Respuestas falladas") {
@@ -524,7 +543,7 @@ private fun DashboardPerformanceMetricGrid(metrics: DashboardMetrics, compact: B
                         item = item,
                         accentColor = when (item.title) {
                             "Tasa de error" -> MaterialTheme.colorScheme.error
-                            "Puntuacion media" -> GlassTheme.tokens.success
+                            "Puntuación media" -> GlassTheme.tokens.success
                             else -> MaterialTheme.colorScheme.primary
                         },
                         modifier = Modifier.width(cardWidth).height(cardHeight),
@@ -625,10 +644,10 @@ private fun DashboardQuickActions(compact: Boolean, onQuickAction: (DashboardQui
     val actions = listOf(
         QuickActionItem("Contenido", "Crear examen", DashboardQuickAction.CREATE_EXAM),
         QuickActionItem("Contenido", "Importar preguntas", DashboardQuickAction.IMPORT_QUESTIONS),
-        QuickActionItem("Publicacion", "Crear noticia", DashboardQuickAction.CREATE_NEWS),
-        QuickActionItem("Publicacion", "Activar oferta", DashboardQuickAction.ACTIVATE_OFFER),
+        QuickActionItem("Publicación", "Crear noticia", DashboardQuickAction.CREATE_NEWS),
+        QuickActionItem("Publicación", "Activar oferta", DashboardQuickAction.ACTIVATE_OFFER),
         QuickActionItem("Control", "Revisar tickets", DashboardQuickAction.REVIEW_TICKETS),
-        QuickActionItem("Control", "Ver auditoria", DashboardQuickAction.OPEN_AUDIT),
+        QuickActionItem("Control", "Ver auditoría", DashboardQuickAction.OPEN_AUDIT),
     )
     DashboardSectionSurface {
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -748,10 +767,10 @@ private fun DashboardBottomSection(
         InfoPanel(
             title = "Estado tecnico",
             lines = listOf(
-                "Ultima sync: ${compactInstant(metrics.lastUpdatedAt)}",
+                "Última sync: ${compactInstant(metrics.lastUpdatedAt)}",
                 "Origen: $environmentLabel",
                 "Backend: activo",
-                "Auditoria: disponible",
+                "Auditoría: disponible",
             ),
         ),
     )
@@ -764,7 +783,7 @@ private fun DashboardBottomSection(
             ) {
                 DashboardSectionTitle("Actividad y sistema")
                 Text(
-                    text = "Ver auditoria",
+                    text = "Ver auditoría",
                     modifier = Modifier.clickable(onClick = onOpenAudit),
                     style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp, letterSpacing = 0.sp),
                     color = MaterialTheme.colorScheme.primary,
@@ -830,52 +849,21 @@ private fun DashboardChip(label: String) {
     }
 }
 
+// Los botones propios del dashboard (`DashboardExactButton`, `DashboardGhostButton`
+// y su `DashboardButtonSurface`) se han sustituido por los del sistema de diseño.
+// No tenían hover ni foco ni estado deshabilitado, y su texto iba forzado a 12sp
+// —dos puntos por debajo de cualquier otro botón de la app— así que el dashboard
+// parecía usar controles de otra aplicación. Se conservan los nombres como
+// envoltorios finos para no reescribir las nueve llamadas.
+
 @Composable
 private fun DashboardExactButton(text: String, modifier: Modifier, onClick: () -> Unit) {
-    DashboardButtonSurface(
-        text = text,
-        modifier = modifier,
-        tint = MaterialTheme.colorScheme.primary,
-        textColor = MaterialTheme.colorScheme.onPrimary,
-        onClick = onClick,
-    )
+    PrimaryButton(text = text, onClick = onClick, modifier = modifier, size = ButtonSize.COMPACT)
 }
 
 @Composable
 private fun DashboardGhostButton(text: String, modifier: Modifier, onClick: () -> Unit) {
-    DashboardButtonSurface(
-        text = text,
-        modifier = modifier,
-        tint = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-        textColor = MaterialTheme.colorScheme.onSurface,
-        onClick = onClick,
-    )
-}
-
-@Composable
-private fun DashboardButtonSurface(
-    text: String,
-    modifier: Modifier,
-    tint: Color,
-    textColor: Color,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(tint)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp, letterSpacing = 0.sp),
-            color = textColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+    SecondaryButton(text = text, onClick = onClick, modifier = modifier, size = ButtonSize.COMPACT)
 }
 
 @Composable
@@ -902,7 +890,7 @@ private fun actionForAlert(alert: DashboardAlert): DashboardQuickAction {
 private fun contentPanels(metrics: DashboardMetrics): List<InfoPanel> {
     return listOf(
         InfoPanel(
-            title = "Examenes",
+            title = "Exámenes",
             lines = listOf(
                 "${metrics.publishedExams} publicados",
                 "${metrics.draftExams} borradores",
@@ -938,7 +926,7 @@ private fun commercePanels(metrics: DashboardMetrics): List<InfoPanel> {
             lines = listOf(
                 "${metrics.activeStoreItems} items activos",
                 "${metrics.activeLimitedResources} recursos temporales",
-                "Catalogo admin operativo",
+                "Catálogo admin operativo",
                 metrics.nextCommerceExpiryLabel,
             ),
         ),
@@ -1038,7 +1026,7 @@ private fun DashboardPreview() {
                         activeBurstCampaigns = 1,
                         activeLimitedResources = 2,
                         nextCommerceExpiryLabel = "Proximo vencimiento: 2026-04-18 10:00",
-                        latestImportLabel = "Ultima revision: 2026-04-14 09:00",
+                        latestImportLabel = "Última revisión: 2026-04-14 09:00",
                         alerts = listOf(
                             DashboardAlert(
                                 id = "questions_without_resources",

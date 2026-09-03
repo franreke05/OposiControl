@@ -243,7 +243,7 @@ private fun NewsListCard(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         Text(
-                            text = item.title.ifBlank { "Noticia sin titulo" },
+                            text = item.title.ifBlank { "Noticia sin título" },
                             style = MaterialTheme.typography.titleMedium.copy(letterSpacing = 0.sp),
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 2,
@@ -337,7 +337,7 @@ private fun NewsVisualEditor(
 ) {
     FormSection(
         title = if (state.selectedId == null) "Nueva noticia" else "Noticia ${state.selectedId}",
-        description = "Campos alineados con la tabla noticia: titulo, tipo_fondo, especialidad_id, texto, tipo_noticia_id, imagen_path, estado y publicar_desde.",
+        description = "Campos alineados con la tabla noticia: título, tipo_fondo, especialidad_id, texto, tipo_noticia_id, imagen_path, estado y publicar_desde.",
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -407,15 +407,15 @@ private fun NewsArticleForm(
     onIntent: (NewsIntent) -> Unit,
 ) {
     FormSection(
-        title = "Datos de publicacion",
+        title = "Datos de publicación",
         description = "Usa IDs numericos cuando trabajes contra Supabase real: especialidad_id y tipo_noticia_id.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            NewsFieldLabel("Titulo")
+            NewsFieldLabel("Título")
             GlassTextField(
                 value = state.editorTitle,
                 onValueChange = { onIntent(NewsIntent.UpdateTitle(it)) },
-                placeholder = "Titulo visible de la noticia",
+                placeholder = "Título visible de la noticia",
                 modifier = Modifier.fillMaxWidth(),
             )
             NewsFieldLabel("Texto")
@@ -466,7 +466,7 @@ private fun NewsArticleForm(
             GlassTextField(
                 value = state.editorImagePath,
                 onValueChange = { onIntent(NewsIntent.UpdateImagePath(it)) },
-                placeholder = "storage/path o URL publica",
+                placeholder = "storage/path o URL pública",
                 modifier = Modifier.fillMaxWidth(),
             )
             NewsFieldLabel("Publicar desde")
@@ -488,11 +488,11 @@ private fun NewsLayerPanel(
     val selectedLayer = state.editorLayers.firstOrNull { it.id == state.selectedLayerId }
     FormSection(
         title = "Capas visuales",
-        description = "El editor conserva orden, posicion, tamano, visibilidad y opacidad para construir una noticia visual.",
+        description = "El editor conserva orden, posición, tamano, visibilidad y opacidad para construir una noticia visual.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                NewsCompactButton("Titulo", 82) { onIntent(NewsIntent.AddTitleLayer) }
+                NewsCompactButton("Título", 82) { onIntent(NewsIntent.AddTitleLayer) }
                 NewsCompactButton("Texto", 76) { onIntent(NewsIntent.AddLayer) }
                 NewsCompactButton("Imagen atras", 122, enabled = state.editorImagePath.isNotBlank()) { onIntent(NewsIntent.AddLayerWithImage(state.editorImagePath)) }
             }
@@ -517,7 +517,7 @@ private fun NewsLayerStrip(
 ) {
     if (state.editorLayers.isEmpty()) {
         Text(
-            text = "Sin capas. Crea una capa para destacar titulo, cuerpo o llamada a la accion.",
+            text = "Sin capas. Crea una capa para destacar título, cuerpo o llamada a la acción.",
             style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -603,7 +603,7 @@ private fun NewsCanvasInspector(
         GlassTextField(
             value = state.editorBackgroundPath,
             onValueChange = { onIntent(NewsIntent.UpdateBackgroundPath(it)) },
-            placeholder = "content://, storage/path o URL publica",
+            placeholder = "content://, storage/path o URL pública",
             modifier = Modifier.fillMaxWidth(),
         )
     }
@@ -628,14 +628,14 @@ private fun NewsLayerInspector(
         GlassTextField(
             value = layer.name,
             onValueChange = { onIntent(NewsIntent.UpdateLayerName(layer.id, it)) },
-            placeholder = "Titulo, cuerpo, CTA...",
+            placeholder = "Título, cuerpo, CTA...",
             modifier = Modifier.fillMaxWidth(),
         )
         NewsFieldLabel("Tipo")
         GlassTextField(
             value = layer.kind,
             onValueChange = { onIntent(NewsIntent.UpdateLayerKind(layer.id, it)) },
-            placeholder = "titulo, texto, imagen, cta",
+            placeholder = "título, texto, imagen, cta",
             modifier = Modifier.fillMaxWidth(),
         )
         NewsFieldLabel("Contenido")
@@ -692,7 +692,7 @@ private fun NewsNumericField(
 private fun NewsValidationPanel(state: NewsState) {
     val report = state.validationReport ?: return
     FormSection(
-        title = "Revision editorial",
+        title = "Revisión editorial",
         description = "Validaciones antes de guardar, programar o publicar.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1057,7 +1057,7 @@ private fun NewsScreenPreview() {
                 editorLayers = listOf(
                     NewsLayerDraft(
                         id = "layer-1",
-                        name = "Titulo",
+                        name = "Título",
                         kind = "titulo",
                         content = "Convocatoria TCAE",
                         x = 24,
@@ -1072,7 +1072,7 @@ private fun NewsScreenPreview() {
                         id = "layer-2",
                         name = "Cuerpo",
                         kind = "texto",
-                        content = "Plazas abiertas con calendario pendiente de publicacion oficial.",
+                        content = "Plazas abiertas con calendario pendiente de publicación oficial.",
                         x = 48,
                         y = 132,
                         width = 420,

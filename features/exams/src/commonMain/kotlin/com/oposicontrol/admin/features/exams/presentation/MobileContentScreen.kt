@@ -134,7 +134,7 @@ fun MobileContentScreenPreview() {
                     specialtyId = "s1",
                     specialtyName = "TCAE",
                     title = "Examen de prueba",
-                    description = "Descripcion",
+                    description = "Descripción",
                     priceTickets = 0,
                     status = ExamStatus.PUBLISHED,
                     publishFrom = null,
@@ -228,7 +228,7 @@ fun MobileContentContent(
             AlertDialog(
                 onDismissRequest = { onIntent(ExamsIntent.DismissPendingDelete) },
                 title = { Text("Confirmar eliminacion") },
-                text = { Text(state.pendingDeleteMessage.ifBlank { "Esta accion no se puede deshacer." }) },
+                text = { Text(state.pendingDeleteMessage.ifBlank { "Esta acción no se puede deshacer." }) },
                 confirmButton = {
                     TextButton(onClick = { onIntent(ExamsIntent.ConfirmPendingDelete) }) {
                         Text("Eliminar")
@@ -273,9 +273,9 @@ fun MobileContentContent(
                     MobileTopBar(
                         activeView = activeView,
                         subtitle = when (activeView) {
-                            MobileContentView.Noticias -> newsState.editorTitle.ifBlank { "Sin seleccion" }
+                            MobileContentView.Noticias -> newsState.editorTitle.ifBlank { "Sin selección" }
                             MobileContentView.Admin -> "Panel de administracion"
-                            else -> state.editorTitle.ifBlank { "Sin seleccion" }
+                            else -> state.editorTitle.ifBlank { "Sin selección" }
                         },
                         status = when (activeView) {
                             MobileContentView.Noticias -> newsState.editorStatus.ifBlank { "draft" }
@@ -957,7 +957,7 @@ private fun SolucionarioEditor(
             GlassTextField(
                 value = state.editorDescription,
                 onValueChange = { onIntent(ExamsIntent.UpdateDescription(it)) },
-                placeholder = "Descripcion",
+                placeholder = "Descripción",
                 singleLine = false,
             )
             GlassTextField(
@@ -1071,7 +1071,7 @@ private fun RafagaEditor(
             GlassTextField(
                 value = state.editorTitle,
                 onValueChange = { onIntent(ExamsIntent.UpdateTitle(it)) },
-                placeholder = "titulo",
+                placeholder = "Título",
             )
             GlassTextField(
                 value = state.editorPriceTickets,
@@ -1334,20 +1334,20 @@ private fun SolucionarioList(
                 ContentExamSection(
                     title = "Rafagas",
                     items = rafagas,
-                    emptyText = "No hay examenes rafaga activos para esta especialidad.",
+                    emptyText = "No hay exámenes rafaga activos para esta especialidad.",
                     onClick = { onIntent(ExamsIntent.SelectExam(it)) },
                 )
                 ContentExamSection(
                     title = "Solucionarios / Inmersivos",
                     items = inmersivos,
-                    emptyText = "No hay examenes inmersivos activos para esta especialidad.",
+                    emptyText = "No hay exámenes inmersivos activos para esta especialidad.",
                     onClick = { onIntent(ExamsIntent.SelectExam(it)) },
                     pendingLabel = "endpoint premium pendiente",
                 )
                 ContentQuestionsPreview(state = state, onIntent = onIntent)
             }
 
-            UiAsync.Empty -> EmptyStateCard("Sin examenes", "No hay examenes activos para esta especialidad.")
+            UiAsync.Empty -> EmptyStateCard("Sin exámenes", "No hay exámenes activos para esta especialidad.")
             is UiAsync.Error -> EmptyStateCard("No se pudo cargar contenido", exams.error.message)
             UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando contenido /v1.")
             UiAsync.Idle -> EmptyStateCard("Listo", "Sin carga activa.")
@@ -1464,7 +1464,7 @@ private fun ContentExamCard(
             ) {
                 Column(modifier = Modifier.width(156.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = exam.title.ifBlank { "Examen sin titulo" },
+                        text = exam.title.ifBlank { "Examen sin título" },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
@@ -1591,7 +1591,7 @@ private fun ContentQuestionCard(
             ) {
                 Column(modifier = Modifier.width(226.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = question.statement.ifBlank { "Pregunta sin titulo" },
+                        text = question.statement.ifBlank { "Pregunta sin título" },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 3,
@@ -1712,7 +1712,7 @@ private fun QuestionsPanel(
 
                 is UiAsync.Error -> EmptyStateCard("No se pudieron cargar preguntas", questions.error.message)
                 UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando preguntas.")
-                UiAsync.Idle -> EmptyStateCard("Selecciona un solucionario", "Las preguntas apareceran aqui.")
+                UiAsync.Idle -> EmptyStateCard("Selecciona un solucionario", "Las preguntas apareceran aquí.")
             }
             if (state.editorQuestionId != null) {
                 QuestionEditor(state = state, onIntent = onIntent)
@@ -1759,7 +1759,7 @@ private fun RafagaQuestionsPanel(
                 UiAsync.Empty -> DropZone("Sin preguntas. Crea la primera rafaga_pregunta.", DropTargetState.Idle)
                 is UiAsync.Error -> EmptyStateCard("No se pudieron cargar preguntas", questions.error.message)
                 UiAsync.Loading -> EmptyStateCard("Cargando", "Preparando preguntas.")
-                UiAsync.Idle -> EmptyStateCard("Selecciona una rafaga", "Las preguntas apareceran aqui.")
+                UiAsync.Idle -> EmptyStateCard("Selecciona una rafaga", "Las preguntas apareceran aquí.")
             }
             if (state.editorQuestionId != null) {
                 RafagaQuestionEditor(state = state, onIntent = onIntent)
@@ -1904,7 +1904,7 @@ private fun QuestionSelectorCard(
                 StatusChip(if (question.hasResources) "${question.resourceCount}" else "0")
             }
             Text(
-                text = question.title.ifBlank { "Pregunta sin titulo" },
+                text = question.title.ifBlank { "Pregunta sin título" },
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -1965,7 +1965,7 @@ private fun QuestionEditor(
         GlassTextField(
             value = state.editorQuestionTitle,
             onValueChange = { onIntent(ExamsIntent.UpdateQuestionTitle(it)) },
-            placeholder = "Titulo",
+            placeholder = "Título",
         )
         GlassTextField(
             value = state.editorQuestionStatement,
@@ -2166,7 +2166,7 @@ private fun LinkedResourcesRow(
                 ) {
                     StatusChip(resource.type.toLegendLabel())
                     Text(
-                        text = resource.title.ifBlank { "Recurso sin titulo" },
+                        text = resource.title.ifBlank { "Recurso sin título" },
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -2326,7 +2326,7 @@ private fun ResourceTile(
                 GlassTextField(
                     value = displayValue,
                     onValueChange = onValueChange,
-                    placeholder = "URL publica opcional",
+                    placeholder = "URL pública opcional",
                     singleLine = false,
                 )
             }
@@ -2552,7 +2552,7 @@ private fun MobileSpecialtiesPanel(
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
-                MobileSectionLabel("Informacion")
+                MobileSectionLabel("Información")
                 GlassTextField(
                     value = state.specialtyEditorName,
                     onValueChange = { onIntent(ExamsIntent.UpdateSpecialtyName(it)) },
@@ -2561,7 +2561,7 @@ private fun MobileSpecialtiesPanel(
                 GlassTextField(
                     value = state.specialtyEditorDescription,
                     onValueChange = { onIntent(ExamsIntent.UpdateSpecialtyDescription(it)) },
-                    placeholder = "slug o descripcion",
+                    placeholder = "slug o descripción",
                 )
                 GlassTextField(
                     value = state.specialtyEditorSortOrder,
@@ -2644,7 +2644,7 @@ private fun SpecialtyMobileCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = specialty.description.ifBlank { "Sin descripcion" },
+                        text = specialty.description.ifBlank { "Sin descripción" },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -2654,7 +2654,7 @@ private fun SpecialtyMobileCard(
                 StatusChip(if (specialty.isActive) "activa" else "inactiva")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact)) {
-                StatusChip("${specialty.linkedExams} examenes")
+                StatusChip("${specialty.linkedExams} exámenes")
                 StatusChip("orden ${specialty.sortOrder}")
             }
         }
@@ -3003,7 +3003,7 @@ private fun MobileNewsCard(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text(
-                        text = item.title.ifBlank { "Noticia sin titulo" },
+                        text = item.title.ifBlank { "Noticia sin título" },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 2,
@@ -3163,7 +3163,7 @@ private fun QuestionResourceDraft.toResourceTileUi(): ResourceTileUi {
     val hasLocalUri = inputValue.startsWith("content://") || inputValue.startsWith("file://")
     return ResourceTileUi(
         type = type.ifBlank { "documento" },
-        title = title.ifBlank { "Recurso sin titulo" },
+        title = title.ifBlank { "Recurso sin título" },
         valuePreview = when {
             linkedValue != null -> linkedValue.substringAfterLast('/').ifBlank { "Recurso subido" }
             localFileName.isNotBlank() -> localFileName

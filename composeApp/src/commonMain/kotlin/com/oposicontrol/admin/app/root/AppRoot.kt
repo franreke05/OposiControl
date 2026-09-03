@@ -483,7 +483,7 @@ private fun AppRouteMenuItem.toShellItem(): ShellNavigationItem = ShellNavigatio
 private fun AppRoute.breadcrumbs(): List<String> = when (this) {
     AppRoute.Home -> emptyList()
     AppRoute.Auth -> listOf("Acceso")
-    is AppRoute.Content.ExamDetail -> listOf("Contenido", "Examenes", examId)
+    is AppRoute.Content.ExamDetail -> listOf("Contenido", "Exámenes", examId)
     is AppRoute.Reports.Detail -> listOf("Informes", reportId)
     is AppRoute.Community.Thread -> listOf("Foro", threadId)
     is AppRoute.Community.ModerationDetail -> listOf("Foro", reportId)
@@ -495,7 +495,7 @@ private fun AppRoute.headerTitle(): String = when (this) {
     is AppRoute.Content.ExamDetail -> "Editor de examen"
     is AppRoute.Reports.Detail -> "Informe"
     is AppRoute.Community.Thread -> "Hilo del foro"
-    is AppRoute.Community.ModerationDetail -> "Detalle de moderacion"
+    is AppRoute.Community.ModerationDetail -> "Detalle de moderación"
     is AppRoute.OposiTester.Detail -> "Detalle de OposiTester"
     else -> metadata().title
 }

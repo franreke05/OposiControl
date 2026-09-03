@@ -68,10 +68,10 @@ fun ExamsContent(
                         )
                     },
                 )
-                AsyncStatePane(state.exams, emptyMessage = "No hay examenes.") { exams ->
+                AsyncStatePane(state.exams, emptyMessage = "No hay exámenes.") { exams ->
                     AdminTable(
                         columns = listOf(
-                            AdminTableColumn("Titulo", 1.2f),
+                            AdminTableColumn("Título", 1.2f),
                             AdminTableColumn("Especialidad", 0.9f),
                             AdminTableColumn("Tickets", 0.5f),
                             AdminTableColumn("Estado", 0.7f),
@@ -88,7 +88,7 @@ fun ExamsContent(
                                     exam.questionCount.toString(),
                                 ),
                                 selected = exam.id == state.selectedExamId,
-                                supporting = exam.publishFrom?.toString() ?: "Sin fecha de publicacion",
+                                supporting = exam.publishFrom?.toString() ?: "Sin fecha de publicación",
                             )
                         },
                         onRowClick = { onIntent(ExamsIntent.SelectExam(it)) },
@@ -99,12 +99,12 @@ fun ExamsContent(
         detailPane = {
             FormSection(
                 title = if (state.selectedExamId == null) "Nuevo examen" else "Detalle de examen",
-                description = "Contenido agrupado por especialidad, con estado y fecha opcional de publicacion.",
+                description = "Contenido agrupado por especialidad, con estado y fecha opcional de publicación.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatusChip(state.editorStatus)
                     EditorField(
-                        label = "Titulo",
+                        label = "Título",
                         value = state.editorTitle,
                         onValueChange = { onIntent(ExamsIntent.UpdateTitle(it)) },
                         modifier = Modifier.fillMaxWidth(),
@@ -248,10 +248,10 @@ fun QuestionsResourcesScreen(
                     title = "Examen activo",
                     description = "Selecciona el examen y gestiona preguntas con 4 opciones e IDs estables.",
                 ) {
-                    AsyncStatePane(state.exams, emptyMessage = "No hay examenes cargados.") { exams ->
+                    AsyncStatePane(state.exams, emptyMessage = "No hay exámenes cargados.") { exams ->
                         AdminTable(
                             columns = listOf(
-                                AdminTableColumn("Titulo", 1.1f),
+                                AdminTableColumn("Título", 1.1f),
                                 AdminTableColumn("Estado", 0.6f),
                                 AdminTableColumn("Preguntas", 0.6f),
                             ),
@@ -290,7 +290,7 @@ fun QuestionsResourcesScreen(
                         }
                         AdminTable(
                             columns = listOf(
-                                AdminTableColumn("Titulo", 1f),
+                                AdminTableColumn("Título", 1f),
                                 AdminTableColumn("Estado", 0.6f),
                                 AdminTableColumn("Recursos", 0.6f),
                             ),
@@ -314,7 +314,7 @@ fun QuestionsResourcesScreen(
                     }
                 }
                 FormSection(
-                    title = "Auditoria de recursos",
+                    title = "Auditoría de recursos",
                     description = "Resumen de preguntas con recurso y recursos detectados sin enlace.",
                 ) {
                     when (val audit = state.resourceAudit) {
@@ -369,7 +369,7 @@ fun QuestionsResourcesScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     EditorField(
-                        label = "Titulo de la pregunta",
+                        label = "Título de la pregunta",
                         value = state.editorQuestionTitle,
                         onValueChange = { viewModel.dispatch(ExamsIntent.UpdateQuestionTitle(it)) },
                         modifier = Modifier.fillMaxWidth(),
@@ -411,7 +411,7 @@ fun QuestionsResourcesScreen(
                                 placeholder = "image | audio | video | text",
                             )
                             EditorField(
-                                label = "Titulo recurso",
+                                label = "Título recurso",
                                 value = resource.title,
                                 onValueChange = { viewModel.dispatch(ExamsIntent.UpdateResourceTitle(resource.id, it)) },
                                 modifier = Modifier.fillMaxWidth(),

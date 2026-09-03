@@ -19,7 +19,7 @@ enum class AdminSection(
 ) {
     DASHBOARD(
         label = "Dashboard",
-        description = "Resumen operativo del panel y acceso rapido a los modulos.",
+        description = "Resumen operativo del panel y acceso rápido a los modulos.",
         primaryActionLabel = "Actualizar",
     ),
     USERS(
@@ -34,22 +34,22 @@ enum class AdminSection(
     ),
     SPECIALTIES(
         label = "Especialidades",
-        description = "Catalogo base que organiza el contenido y los examenes.",
+        description = "Catálogo base que organiza el contenido y los exámenes.",
         primaryActionLabel = "Nueva especialidad",
     ),
     COMMUNITIES(
         label = "Comunidades",
-        description = "Catalogo de comunidades autonomas para acotar examenes por territorio.",
+        description = "Catálogo de comunidades autonomas para acotar exámenes por territorio.",
         primaryActionLabel = "Nueva comunidad",
     ),
     TAGS(
         label = "Etiquetas",
-        description = "Taxonomia que alimenta la busqueda global y la clasificacion de contenido.",
+        description = "Taxonomia que alimenta la busqueda global y la clasificación de contenido.",
         primaryActionLabel = "Nueva etiqueta",
     ),
     NEWS_TYPES(
         label = "Tipos de noticia",
-        description = "Catalogo de tipos editoriales y estados para comunicacion interna.",
+        description = "Catálogo de tipos editoriales y estados para comunicación interna.",
         primaryActionLabel = "Nuevo tipo",
     ),
     NEWS(
@@ -58,8 +58,8 @@ enum class AdminSection(
         primaryActionLabel = "Nueva noticia",
     ),
     EXAMS(
-        label = "Examenes",
-        description = "Metadatos, publicacion y agrupacion de preguntas por especialidad.",
+        label = "Exámenes",
+        description = "Metadatos, publicación y agrupacion de preguntas por especialidad.",
         primaryActionLabel = "Crear examen",
     ),
     QUESTIONS_RESOURCES(
@@ -69,12 +69,12 @@ enum class AdminSection(
     ),
     EXAM_ACCESS(
         label = "Accesos",
-        description = "Concesion y revision de accesos a examenes por usuario.",
+        description = "Concesion y revisión de accesos a exámenes por usuario.",
         primaryActionLabel = "Nuevo acceso",
     ),
     STORE(
         label = "Tienda",
-        description = "Catalogo basico de items y productos internos.",
+        description = "Catálogo básico de items y productos internos.",
         primaryActionLabel = "Nuevo item",
     ),
     TICKETS(
@@ -88,9 +88,9 @@ enum class AdminSection(
         primaryActionLabel = null,
     ),
     MODERATION(
-        label = "Moderacion",
+        label = "Moderación",
         description = "Acciones administrativas y registro de medidas sobre usuarios.",
-        primaryActionLabel = "Nueva accion",
+        primaryActionLabel = "Nueva acción",
     ),
     SETTINGS(
         label = "Ajustes",
@@ -98,7 +98,7 @@ enum class AdminSection(
         primaryActionLabel = "Actualizar",
     ),
     AUDIT(
-        label = "Auditoria",
+        label = "Auditoría",
         description = "Linea temporal de operaciones administrativas y cambios clave.",
         primaryActionLabel = "Actualizar",
     ),

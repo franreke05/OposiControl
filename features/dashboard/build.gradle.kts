@@ -19,5 +19,10 @@ kotlin {
             implementation(libs.koin.core)
             implementation(libs.kotlinx.datetime)
         }
+        commonTest.dependencies {
+            implementation(projects.core.testing)
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
+        }
     }
 }

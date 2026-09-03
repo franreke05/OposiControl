@@ -172,7 +172,7 @@ class NewsViewModel(
             is NewsIntent.Select -> select(intent.id)
             is NewsIntent.SelectBackgroundFile -> updateAndValidate {
                 val titleLayers = it.editorLayers.withSingleTitleLayer(
-                    title = it.editorTitle.ifBlank { "Titulo de noticia" },
+                    title = it.editorTitle.ifBlank { "Título de noticia" },
                     canvasWidth = it.editorCanvasWidth,
                     canvasHeight = it.editorCanvasHeight,
                 )
@@ -192,7 +192,7 @@ class NewsViewModel(
                     it.editorLayers
                 } else {
                     it.editorLayers.withSingleTitleLayer(
-                        title = it.editorTitle.ifBlank { "Titulo de noticia" },
+                        title = it.editorTitle.ifBlank { "Título de noticia" },
                         canvasWidth = it.editorCanvasWidth,
                         canvasHeight = it.editorCanvasHeight,
                     )
@@ -285,7 +285,7 @@ class NewsViewModel(
                 editorCanvasHeight = NewsCanvasDefaultHeight,
                 editorBackgroundAssetStatus = "linked",
                 editorImageAssetStatus = "linked",
-                editorLayers = defaultLayers("Titulo de noticia", "Especialidad - Tipo", ""),
+                editorLayers = defaultLayers("Título de noticia", "Especialidad - Tipo", ""),
                 selectedTarget = NewsEditorSelection.ARTICLE,
                 selectedLayerId = null,
                 actionState = UiAsync.Idle,
@@ -458,7 +458,7 @@ class NewsViewModel(
     private fun addTitleLayer() {
         updateAndValidate { state ->
             val layers = state.editorLayers.withSingleTitleLayer(
-                title = state.editorTitle.ifBlank { "Titulo de noticia" },
+                title = state.editorTitle.ifBlank { "Título de noticia" },
                 canvasWidth = state.editorCanvasWidth,
                 canvasHeight = state.editorCanvasHeight,
             )
@@ -689,7 +689,7 @@ class NewsViewModel(
 
 private fun defaultLayers(title: String, subtitle: String, body: String): List<NewsLayerDraft> {
     return listOf(
-        NewsLayerDraft(randomUuid(), "Titulo", "titulo", title, 48, 42, 430, 82, 100, visible = true, sortOrder = 0),
+        NewsLayerDraft(randomUuid(), "Título", "titulo", title, 48, 42, 430, 82, 100, visible = true, sortOrder = 0),
         NewsLayerDraft(randomUuid(), "Subtitulo", "texto", subtitle, 48, 142, 360, 44, 92, visible = true, sortOrder = 1),
         NewsLayerDraft(randomUuid(), "Texto", "texto", body, 48, 220, 430, 112, 88, visible = body.isNotBlank(), sortOrder = 2),
     )
@@ -708,9 +708,9 @@ private fun List<NewsLayerDraft>.withSingleTitleLayer(
     val nonTitle = filterNot { it.kind.toLayerKind() == NewsLayerKind.TITLE }
     val normalizedTitle = (titleLayer ?: NewsLayerDraft(
         id = randomUuid(),
-        name = "Titulo",
+        name = "Título",
         kind = "titulo",
-        content = title.ifBlank { "Titulo de noticia" },
+        content = title.ifBlank { "Título de noticia" },
         x = 48,
         y = 42,
         width = 460,
@@ -721,9 +721,9 @@ private fun List<NewsLayerDraft>.withSingleTitleLayer(
         visible = true,
         sortOrder = nonTitle.size,
     )).copy(
-        name = titleLayer?.name?.ifBlank { "Titulo" } ?: "Titulo",
+        name = titleLayer?.name?.ifBlank { "Título" } ?: "Título",
         kind = "titulo",
-        content = title.ifBlank { titleLayer?.content.orEmpty().ifBlank { "Titulo de noticia" } },
+        content = title.ifBlank { titleLayer?.content.orEmpty().ifBlank { "Título de noticia" } },
         visible = true,
         sortOrder = nonTitle.size,
     )

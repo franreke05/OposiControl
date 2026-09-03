@@ -80,7 +80,7 @@ fun StoreScreen(
                     OutlinedTextField(
                         value = state.editorDescription,
                         onValueChange = { viewModel.dispatch(StoreIntent.UpdateDescription(it)) },
-                        label = { Text("Descripcion") },
+                        label = { Text("Descripción") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     OutlinedTextField(
@@ -130,7 +130,7 @@ private fun StoreCommerceBlocks(
         description = "Descuento o precio especial programado sobre el articulo seleccionado.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(state.offerTitle, { onIntent(StoreIntent.UpdateOfferTitle(it)) }, label = { Text("Titulo oferta") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(state.offerTitle, { onIntent(StoreIntent.UpdateOfferTitle(it)) }, label = { Text("Título oferta") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.offerDiscountPercent, { onIntent(StoreIntent.UpdateOfferDiscountPercent(it)) }, label = { Text("Descuento %") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.offerSpecialPriceTickets, { onIntent(StoreIntent.UpdateOfferSpecialPriceTickets(it)) }, label = { Text("Precio especial tickets") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.offerStartsAt, { onIntent(StoreIntent.UpdateOfferStartsAt(it)) }, label = { Text("Inicio ISO") }, modifier = Modifier.fillMaxWidth())
@@ -138,7 +138,7 @@ private fun StoreCommerceBlocks(
             Button(onClick = { onIntent(StoreIntent.SaveOffer) }, modifier = Modifier.fillMaxWidth()) { Text("Guardar oferta") }
             AsyncStatePane(state.offers, emptyMessage = "Sin ofertas.") { offers ->
                 AdminTable(
-                    columns = listOf(AdminTableColumn("Titulo", 1f), AdminTableColumn("Beneficio", 0.7f), AdminTableColumn("Estado", 0.7f)),
+                    columns = listOf(AdminTableColumn("Título", 1f), AdminTableColumn("Beneficio", 0.7f), AdminTableColumn("Estado", 0.7f)),
                     rows = offers.map { AdminTableRow(it.id, listOf(it.title, it.benefit, it.status), supporting = it.window) },
                 )
             }
@@ -146,10 +146,10 @@ private fun StoreCommerceBlocks(
     }
     FormSection(
         title = "Recursos temporales",
-        description = "Ventanas de disponibilidad limitada y duracion de acceso.",
+        description = "Ventanas de disponibilidad limitada y duración de acceso.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(state.limitedTitle, { onIntent(StoreIntent.UpdateLimitedTitle(it)) }, label = { Text("Titulo recurso") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(state.limitedTitle, { onIntent(StoreIntent.UpdateLimitedTitle(it)) }, label = { Text("Título recurso") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.limitedResourceId, { onIntent(StoreIntent.UpdateLimitedResourceId(it)) }, label = { Text("ID recurso") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.limitedAccessHours, { onIntent(StoreIntent.UpdateLimitedAccessHours(it)) }, label = { Text("Horas acceso") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.limitedStartsAt, { onIntent(StoreIntent.UpdateLimitedStartsAt(it)) }, label = { Text("Inicio ISO") }, modifier = Modifier.fillMaxWidth())
@@ -157,7 +157,7 @@ private fun StoreCommerceBlocks(
             Button(onClick = { onIntent(StoreIntent.SaveLimitedResource) }, modifier = Modifier.fillMaxWidth()) { Text("Guardar recurso temporal") }
             AsyncStatePane(state.limitedResources, emptyMessage = "Sin recursos temporales.") { resources ->
                 AdminTable(
-                    columns = listOf(AdminTableColumn("Titulo", 1f), AdminTableColumn("Horas", 0.5f), AdminTableColumn("Estado", 0.7f)),
+                    columns = listOf(AdminTableColumn("Título", 1f), AdminTableColumn("Horas", 0.5f), AdminTableColumn("Estado", 0.7f)),
                     rows = resources.map { AdminTableRow(it.id, listOf(it.title, it.durationHours.toString(), it.status), supporting = it.window) },
                 )
             }
@@ -165,11 +165,11 @@ private fun StoreCommerceBlocks(
     }
     FormSection(
         title = "Rafagas",
-        description = "Campanas de examen con multiplicador y recompensa de tickets.",
+        description = "Campañas de examen con multiplicador y recompensa de tickets.",
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(state.burstTitle, { onIntent(StoreIntent.UpdateBurstTitle(it)) }, label = { Text("Titulo rafaga") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(state.burstDescription, { onIntent(StoreIntent.UpdateBurstDescription(it)) }, label = { Text("Descripcion") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(state.burstTitle, { onIntent(StoreIntent.UpdateBurstTitle(it)) }, label = { Text("Título rafaga") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(state.burstDescription, { onIntent(StoreIntent.UpdateBurstDescription(it)) }, label = { Text("Descripción") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.burstType, { onIntent(StoreIntent.UpdateBurstType(it)) }, label = { Text("Tipo de examen") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.burstLinkedExamId, { onIntent(StoreIntent.UpdateBurstLinkedExamId(it)) }, label = { Text("ID examen") }, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(state.burstMultiplier, { onIntent(StoreIntent.UpdateBurstMultiplier(it)) }, label = { Text("Multiplicador") }, modifier = Modifier.fillMaxWidth())
@@ -179,7 +179,7 @@ private fun StoreCommerceBlocks(
             Button(onClick = { onIntent(StoreIntent.SaveBurst) }, modifier = Modifier.fillMaxWidth()) { Text("Guardar rafaga") }
             AsyncStatePane(state.bursts, emptyMessage = "Sin rafagas.") { bursts ->
                 AdminTable(
-                    columns = listOf(AdminTableColumn("Titulo", 1f), AdminTableColumn("Examen", 0.7f), AdminTableColumn("Estado", 0.7f)),
+                    columns = listOf(AdminTableColumn("Título", 1f), AdminTableColumn("Examen", 0.7f), AdminTableColumn("Estado", 0.7f)),
                     rows = bursts.map { AdminTableRow(it.id, listOf(it.title, it.linkedExamId.orEmpty(), it.status), supporting = it.reward) },
                 )
             }

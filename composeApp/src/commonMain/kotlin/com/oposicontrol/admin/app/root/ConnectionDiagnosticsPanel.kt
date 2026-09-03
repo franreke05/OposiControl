@@ -70,7 +70,7 @@ fun ConnectionDiagnosticsPanel(
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = "Conexion backend",
+                        text = "Conexión backend",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,

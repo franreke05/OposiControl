@@ -76,31 +76,31 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         "Contenido",
         listOf(
             item(AppRoute.Content.Taxonomy, "content.taxonomy", "Especialidades", "Especialidades, comunidades, etiquetas y modos disponibles.", NavigationGroupId.CONTENT, AppIcon.LAYERS.key),
-            item(AppRoute.Content.Exams, "content.exams", "Examenes", "Catalogo, preguntas y publicacion de examenes.", NavigationGroupId.CONTENT, AppIcon.EXAMS.key),
-            item(AppRoute.Content.Questions, "content.questions", "Preguntas", "Revision y edicion de preguntas.", NavigationGroupId.CONTENT, AppIcon.QUESTIONS.key),
+            item(AppRoute.Content.Exams, "content.exams", "Exámenes", "Catálogo, preguntas y publicación de exámenes.", NavigationGroupId.CONTENT, AppIcon.EXAMS.key),
+            item(AppRoute.Content.Questions, "content.questions", "Preguntas", "Revisión y edición de preguntas.", NavigationGroupId.CONTENT, AppIcon.QUESTIONS.key),
             item(AppRoute.Content.Resources, "content.resources", "Recursos", "Recursos asociados al contenido inmersivo.", NavigationGroupId.CONTENT, AppIcon.RESOURCES.key),
-            item(AppRoute.Content.Imports, "content.imports", "Importacion", "Subida de PDF, revision y publicacion.", NavigationGroupId.CONTENT, AppIcon.IMPORT.key),
+            item(AppRoute.Content.Imports, "content.imports", "Importación", "Subida de PDF, revisión y publicación.", NavigationGroupId.CONTENT, AppIcon.IMPORT.key),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.USERS,
         "Usuarios",
         listOf(
-            item(AppRoute.Users.List, "users", "Usuarios", "Identidad, perfil, rendimiento y economia por usuario.", NavigationGroupId.USERS, AppIcon.USERS.key),
-            item(AppRoute.Rankings, "rankings", "Rankings y ligas", "Clasificacion, ligas y posicion por opositor.", NavigationGroupId.USERS, AppIcon.RANKINGS.key, NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Users.List, "users", "Usuarios", "Identidad, perfil, rendimiento y economía por usuario.", NavigationGroupId.USERS, AppIcon.USERS.key),
+            item(AppRoute.Rankings, "rankings", "Rankings y ligas", "Clasificación, ligas y posición por opositor.", NavigationGroupId.USERS, AppIcon.RANKINGS.key, NavigationVisibility.DESKTOP_ONLY),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.ECONOMY,
-        "Economia",
+        "Economía",
         listOf(
-            item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes de suscripcion y beneficios.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key),
-            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catalogo comercial", "Productos, packs y tarifas.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key),
+            item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes de suscripción y beneficios.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key),
+            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catálogo comercial", "Productos, packs y tarifas.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key),
             item(AppRoute.Commercial.Tickets, "commercial.tickets", "OposiTickets", "Carteras, movimientos y concesiones.", NavigationGroupId.ECONOMY, AppIcon.TICKETS.key),
             item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Packs, servicios, promociones y pop-ups.", NavigationGroupId.ECONOMY, AppIcon.MARKET.key, NavigationVisibility.DESKTOP_ONLY),
             // Etiquetado por lo que realmente abre: esta ruta mapea a la pantalla
             // de accesos a examen, no a la gestion de suscripciones.
-            item(AppRoute.Commercial.Subscriptions, "commercial.subscriptions", "Accesos", "Accesos concedidos a examenes.", NavigationGroupId.ECONOMY, AppIcon.ACCESS.key),
+            item(AppRoute.Commercial.Subscriptions, "commercial.subscriptions", "Accesos", "Accesos concedidos a exámenes.", NavigationGroupId.ECONOMY, AppIcon.ACCESS.key),
         ),
     ),
     AppRouteMenuGroup(
@@ -108,14 +108,14 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         "Comunidad",
         listOf(
             item(AppRoute.Community.OposiRed, "community.oposired", "OposiRed", "Hilos y comentarios de la comunidad.", NavigationGroupId.COMMUNITY, AppIcon.FORUM.key),
-            item(AppRoute.Moderation.Queue, "moderation", "Moderacion", "Acciones de moderacion y su auditoria.", NavigationGroupId.COMMUNITY, AppIcon.MODERATION.key),
-            item(AppRoute.Reports.List, AppIcon.REPORTS.key, "Reportes", "Reportes de contenido y su resolucion.", NavigationGroupId.COMMUNITY, "reports"),
+            item(AppRoute.Moderation.Queue, "moderation", "Moderación", "Acciones de moderación y su auditoría.", NavigationGroupId.COMMUNITY, AppIcon.MODERATION.key),
+            item(AppRoute.Reports.List, AppIcon.REPORTS.key, "Reportes", "Reportes de contenido y su resolución.", NavigationGroupId.COMMUNITY, "reports"),
             item(AppRoute.OposiTester.List, "opositester", "OposiTester", "Incidencias enviadas por los usuarios.", NavigationGroupId.COMMUNITY, AppIcon.TESTER.key),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.ANALYTICS,
-        "Analitica",
+        "Analítica",
         listOf(
             item(AppRoute.Analytics.Home, "analytics", "Producto", "Uso, sesiones y actividad.", NavigationGroupId.ANALYTICS, AppIcon.ANALYTICS.key),
             item(AppRoute.Analytics.Performance, "analytics.performance", "Estudio", "Rendimiento, dificultad y debilidades.", NavigationGroupId.ANALYTICS, AppIcon.PERFORMANCE.key),
@@ -126,11 +126,11 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         NavigationGroupId.OPERATIONS,
         "Operaciones",
         listOf(
-            item(AppRoute.Publication.News, "publication.news", "Noticias", "Comunicacion y contenidos editoriales.", NavigationGroupId.OPERATIONS, AppIcon.NEWS.key),
-            item(AppRoute.Publication.NewsTypes, "publication.news-types", "Tipos de noticia", "Catalogo editorial.", NavigationGroupId.OPERATIONS, AppIcon.NEWS_TYPES.key),
-            item(AppRoute.Publication.Assets, "publication.assets", "Assets", "Recursos visuales de publicacion.", NavigationGroupId.OPERATIONS, AppIcon.ASSETS.key),
+            item(AppRoute.Publication.News, "publication.news", "Noticias", "Comunicación y contenidos editoriales.", NavigationGroupId.OPERATIONS, AppIcon.NEWS.key),
+            item(AppRoute.Publication.NewsTypes, "publication.news-types", "Tipos de noticia", "Catálogo editorial.", NavigationGroupId.OPERATIONS, AppIcon.NEWS_TYPES.key),
+            item(AppRoute.Publication.Assets, "publication.assets", "Assets", "Recursos visuales de publicación.", NavigationGroupId.OPERATIONS, AppIcon.ASSETS.key),
             item(AppRoute.Support.Inbox, "support", "Soporte", "Conversaciones y seguimiento.", NavigationGroupId.OPERATIONS, AppIcon.SUPPORT.key),
-            item(AppRoute.System.Audit, "system.audit", "Auditoria", "Trazabilidad de operaciones sensibles.", NavigationGroupId.OPERATIONS, AppIcon.AUDIT.key),
+            item(AppRoute.System.Audit, "system.audit", "Auditoría", "Trazabilidad de operaciones sensibles.", NavigationGroupId.OPERATIONS, AppIcon.AUDIT.key),
         ),
     ),
     AppRouteMenuGroup(
@@ -138,7 +138,7 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         "Sistema",
         listOf(
             item(AppRoute.System.Roles, "system.roles", "Roles", "Roles y acceso administrativo.", NavigationGroupId.SYSTEM, AppIcon.ROLES.key),
-            item(AppRoute.System.Settings, "system.settings", "Configuracion", "Configuracion local del panel.", NavigationGroupId.SYSTEM, AppIcon.SETTINGS.key),
+            item(AppRoute.System.Settings, "system.settings", "Configuración", "Configuración local del panel.", NavigationGroupId.SYSTEM, AppIcon.SETTINGS.key),
             item(AppRoute.System.Diagnostics, "system.diagnostics", "Estado", "Conectividad y estado del backend.", NavigationGroupId.SYSTEM, AppIcon.STATUS.key),
         ),
     ),
@@ -163,7 +163,7 @@ private fun List<AppRouteMenuGroup>.itemFor(route: AppRoute): AppRouteMenuItem =
     asSequence().flatMap { it.items.asSequence() }.first { it.route == route }
 
 fun AppRoute.metadata(): AppRouteMetadata = when (this) {
-    AppRoute.Auth -> AppRouteMetadata("auth", "Acceso", "Inicia sesion para continuar.", NavigationGroupId.SYSTEM, requiresAuth = false)
+    AppRoute.Auth -> AppRouteMetadata("auth", "Acceso", "Inicia sesión para continuar.", NavigationGroupId.SYSTEM, requiresAuth = false)
     AppRoute.Home -> appNavigationGroups.metadataFor(this)
     is AppRoute.Content -> appNavigationGroups.metadataFor(if (this is AppRoute.Content.ExamDetail) AppRoute.Content.Exams else this)
     is AppRoute.Publication -> appNavigationGroups.metadataFor(this)

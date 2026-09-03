@@ -42,7 +42,7 @@ fun SpecialtiesScreen(
                 FilterBar(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(SpecialtiesIntent.UpdateSearch(it)) },
-                    placeholder = "Buscar por nombre o descripcion",
+                    placeholder = "Buscar por nombre o descripción",
                 )
                 GlassActionButton(
                     text = "Nueva especialidad",
@@ -55,7 +55,7 @@ fun SpecialtiesScreen(
                             AdminTableColumn("Nombre", 1.2f),
                             AdminTableColumn("Estado", 0.7f),
                             AdminTableColumn("Orden", 0.5f),
-                            AdminTableColumn("Examenes", 0.6f),
+                            AdminTableColumn("Exámenes", 0.6f),
                         ),
                         rows = items.map { item ->
                             AdminTableRow(
@@ -67,7 +67,7 @@ fun SpecialtiesScreen(
                                     item.linkedExams.toString(),
                                 ),
                                 selected = item.id == state.selectedId,
-                                supporting = item.description.ifBlank { "Sin descripcion" },
+                                supporting = item.description.ifBlank { "Sin descripción" },
                             )
                         },
                         onRowClick = { viewModel.dispatch(SpecialtiesIntent.Select(it)) },
@@ -78,7 +78,7 @@ fun SpecialtiesScreen(
         detailPane = {
             FormSection(
                 title = if (state.selectedId == null) "Nueva especialidad" else "Detalle de especialidad",
-                description = "El admin solo gestiona estructura de contenido y examenes asociados.",
+                description = "El admin solo gestiona estructura de contenido y exámenes asociados.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatusChip(if (state.editorIsActive) "active" else "inactive")
@@ -93,7 +93,7 @@ fun SpecialtiesScreen(
                         placeholder = "Ej. Auxiliar Administrativo",
                     )
                     Text(
-                        text = "Descripcion",
+                        text = "Descripción",
                         style = MaterialTheme.typography.labelMedium,
                     )
                     GlassTextField(
@@ -171,12 +171,12 @@ private fun SpecialtyCapabilitiesSection(
 ) {
     FormSection(
         title = "Modos disponibles",
-        description = "OposiBot solo muestra los modos habilitados aqui. No todas las especialidades " +
+        description = "OposiBot solo muestra los modos habilitados aquí. No todas las especialidades " +
             "tienen el mismo contenido.",
     ) {
         AsyncStatePane(
             state.capabilities,
-            emptyMessage = "Sin configuracion de modos para esta especialidad.",
+            emptyMessage = "Sin configuración de modos para esta especialidad.",
         ) { _ ->
             val draft = state.capabilitiesDraft
             if (draft == null) {
@@ -193,7 +193,7 @@ private fun SpecialtyCapabilitiesSection(
                     // defecto del esquema, no una eleccion. Decirlo evita que se lea
                     // como "ya revisado".
                     Text(
-                        text = "Todavia sin configurar. Se muestran los valores por defecto; " +
+                        text = "Todavía sin configurar. Se muestran los valores por defecto; " +
                             "guarda para fijarlos explicitamente.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
