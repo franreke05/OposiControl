@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.features.exams.presentation
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -32,6 +34,7 @@ import com.oposicontrol.admin.core.ui.components.AppIconImage
 import com.oposicontrol.admin.core.ui.components.ButtonSize
 import com.oposicontrol.admin.core.ui.components.HelpPanel
 import com.oposicontrol.admin.core.ui.components.HelpStep
+import com.oposicontrol.admin.core.ui.components.PrimaryButton
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.components.FormFeedback
@@ -279,20 +282,21 @@ private fun ImportReview(
             }
             Text(batch.fileName, style = MaterialTheme.typography.bodyMedium)
             Text("${batch.detectedCount} detectadas · ${batch.staging.size - errors} válidas · $pending requieren revisión · $errors con error", style = MaterialTheme.typography.bodySmall)
-            Text("Detección de duplicados no disponible: no se reemplaza contenido existente automáticamente.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("El procesamiento actual es síncrono; worker asíncrono pendiente.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            PublicationSafetyNotice()
             batch.staging.sortedBy { it.position }.forEach { item ->
                 StagingEditorCard(item = item, onSave = onSave, onSkip = onSkip)
             }
-            Button(
+            PrimaryButton(
+                text = "Publicar aprobadas",
                 onClick = onPublish,
                 // `!busy` no es cosmético: publicar escribe en el contenido
                 // canónico por un camino que todavía no es atómico, así que un
                 // segundo toque mientras la primera petición sigue en vuelo
                 // podría duplicar preguntas.
                 enabled = approved > 0 && batch.status != "importado" && !busy,
+                loading = busy,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (busy) "Publicando…" else "Publicar aprobadas al contenido canónico") }
+            )
         }
     }
 }
@@ -361,5 +365,54 @@ private fun ImportHelpPanel(visible: Boolean, onClose: () -> Unit) {
                 modifier = Modifier.padding(top = Spacing.xxs),
             )
         }
+    }
+}
+
+/**
+ * Aviso de seguridad de publicación (§39).
+ *
+ * Mientras la publicación por lotes no sea atómica, un fallo a mitad puede dejar
+ * parte de las preguntas publicadas y parte no. Eso es un hecho del sistema
+ * actual y quien publica tiene derecho a saberlo antes de pulsar, no después.
+ *
+ * Se dice en términos de lo que le pasa a su contenido —puede quedarse a medias,
+ * revísalo— y no en términos de transacciones ni de migraciones pendientes: el
+ * detalle técnico está en el Second Brain, no en esta pantalla.
+ *
+ * Cuando la publicación pase a ser todo-o-nada, este aviso se retira.
+ */
+@Composable
+private fun PublicationSafetyNotice() {
+    val tokens = GlassTheme.tokens
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(tokens.warning.copy(alpha = 0.10f))
+            .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AppIconImage(AppIcon.WARNING, size = 15.dp, tint = tokens.warning)
+            Text(
+                text = "Antes de publicar",
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.warning,
+            )
+        }
+        Text(
+            text = "Si la publicación falla a mitad, algunas preguntas pueden quedar publicadas " +
+                "y otras no. Comprueba el examen al terminar.",
+            style = MaterialTheme.typography.bodySmall,
+            color = tokens.textSecondary,
+        )
+        Text(
+            text = "Tampoco se detectan duplicados todavía: no se reemplaza contenido que ya exista.",
+            style = MaterialTheme.typography.bodySmall,
+            color = tokens.textSecondary,
+        )
     }
 }

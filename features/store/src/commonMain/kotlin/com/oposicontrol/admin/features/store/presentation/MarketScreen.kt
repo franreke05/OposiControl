@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -41,8 +42,22 @@ import com.oposicontrol.admin.domain.model.formatPriceCents
  * son datos comerciales que el usuario final ve al instante.
  */
 @Composable
-fun MarketScreen(viewModel: MarketViewModel) {
+fun MarketScreen(
+    viewModel: MarketViewModel,
+    /**
+     * Pestaña con la que abrir. La fijan las entradas de menú de Consumibles,
+     * Promociones y Pop-ups, que apuntan a esta misma pantalla: sin esto,
+     * pulsar "Promociones" abriría Market en Packs y habría que buscarla.
+     */
+    initialSection: MarketSection? = null,
+) {
     val state by viewModel.state.collectAsState()
+
+    LaunchedEffect(initialSection) {
+        if (initialSection != null && initialSection != state.section) {
+            viewModel.dispatch(MarketIntent.SelectSection(initialSection))
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),

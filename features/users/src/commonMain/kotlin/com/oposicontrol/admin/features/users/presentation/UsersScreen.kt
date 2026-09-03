@@ -52,44 +52,13 @@ fun UsersScreen(
     CrudSplitLayout(
         modifier = Modifier.fillMaxSize(),
         listPane = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                FilterBar(
-                    searchValue = state.searchQuery,
-                    onSearchChange = { viewModel.dispatch(UsersIntent.UpdateSearch(it)) },
-                    placeholder = "Buscar por nombre o email",
-                )
-                GlassActionButton(
-                    text = "Nuevo usuario",
-                    modifier = Modifier.width(144.dp),
-                    onClick = { viewModel.dispatch(UsersIntent.CreateNew) },
-                )
-                AsyncStatePane(state.users, emptyMessage = "No hay usuarios disponibles.") { users ->
-                    val filtered = users.filter {
-                        state.searchQuery.isBlank() ||
-                            it.fullName.contains(state.searchQuery, ignoreCase = true) ||
-                            it.email.contains(state.searchQuery, ignoreCase = true)
-                    }
-                    AdminTable(
-                        columns = listOf(
-                            AdminTableColumn("Nombre", 1.2f),
-                            AdminTableColumn("Email", 1.3f),
-                            AdminTableColumn("Estado", 0.7f),
-                        ),
-                        rows = filtered.map { user ->
-                            AdminTableRow(
-                                key = user.id,
-                                cells = listOf(user.fullName, user.email, if (user.isActive) "activo" else "bloqueado"),
-                                selected = user.id == state.selectedUserId,
-                                supporting = user.roleIds
-                                    .map { roleName[it] ?: it }
-                                    .joinToString()
-                                    .ifBlank { "Sin roles" },
-                            )
-                        },
-                        onRowClick = { viewModel.dispatch(UsersIntent.SelectUser(it)) },
-                    )
-                }
-            }
+            UsersListPane(
+                state = state,
+                roleName = roleName,
+                onSearch = { viewModel.dispatch(UsersIntent.UpdateSearch(it)) },
+                onSelect = { viewModel.dispatch(UsersIntent.SelectUser(it)) },
+                onCreate = { viewModel.dispatch(UsersIntent.CreateNew) },
+            )
         },
         detailPane = {
             FormSection(

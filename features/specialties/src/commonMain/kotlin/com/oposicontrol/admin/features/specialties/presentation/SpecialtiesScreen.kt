@@ -24,6 +24,7 @@ import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.FilterBar
 import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.Help
 import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.GlassToggleRow
@@ -173,6 +174,7 @@ private fun SpecialtyCapabilitiesSection(
         title = "Modos disponibles",
         description = "OposiBot solo muestra los modos habilitados aquí. No todas las especialidades " +
             "tienen el mismo contenido.",
+        help = Help.capacidadesEspecialidad,
     ) {
         AsyncStatePane(
             state.capabilities,
@@ -202,8 +204,8 @@ private fun SpecialtyCapabilitiesSection(
 
                 // Vocabulario canonico: rafaga / razonado / inmersivo.
                 GlassToggleRow(
-                    title = "Rafagas",
-                    description = "Preguntas sueltas con solucionario de opcion correcta.",
+                    title = "Ráfagas",
+                    description = "Preguntas sueltas con solucionario de opción correcta.",
                     checked = draft.permiteRafagas,
                     onCheckedChange = {
                         viewModel.dispatch(
@@ -213,7 +215,7 @@ private fun SpecialtyCapabilitiesSection(
                 )
                 GlassToggleRow(
                     title = "Razonados",
-                    description = "Solucionario con explicacion escrita.",
+                    description = "Solucionario con explicación escrita.",
                     checked = draft.permiteRazonados,
                     onCheckedChange = {
                         viewModel.dispatch(
@@ -223,7 +225,7 @@ private fun SpecialtyCapabilitiesSection(
                 )
                 GlassToggleRow(
                     title = "Inmersivos",
-                    description = "Unico modo que admite recursos multimedia.",
+                    description = "Único modo que admite recursos multimedia.",
                     checked = draft.permiteInmersivos,
                     onCheckedChange = {
                         viewModel.dispatch(

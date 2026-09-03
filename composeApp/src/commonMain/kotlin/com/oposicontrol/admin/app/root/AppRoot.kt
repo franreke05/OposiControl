@@ -92,6 +92,7 @@ import com.oposicontrol.admin.features.store.presentation.CommercialCatalogScree
 import com.oposicontrol.admin.features.analytics.presentation.ProductAnalyticsScreen
 import com.oposicontrol.admin.features.rankings.presentation.RankingsScreen
 import com.oposicontrol.admin.features.store.presentation.MarketScreen
+import com.oposicontrol.admin.features.store.presentation.MarketSection
 import com.oposicontrol.admin.features.store.presentation.MarketViewModel
 import com.oposicontrol.admin.features.store.presentation.StoreIntent
 import com.oposicontrol.admin.features.store.presentation.StoreScreen
@@ -158,7 +159,16 @@ internal fun resolveContentTarget(
     route == AppRoute.Commercial.Catalog && !compactLayout -> AppContentTarget.COMMERCIAL_CATALOG
     // OposiMarket es administración densa de escritorio (cuatro tablas), no una
     // pantalla de móvil.
-    route == AppRoute.Commercial.Market && !compactLayout -> AppContentTarget.MARKET
+    //
+    // Las cuatro rutas abren la misma pantalla; con qué pestaña lo decide
+    // `marketSectionFor`. Son entradas de menú distintas sobre una sola
+    // pantalla, no cuatro pantallas.
+    (
+        route == AppRoute.Commercial.Market ||
+            route == AppRoute.Commercial.Consumables ||
+            route == AppRoute.Commercial.Promotions ||
+            route == AppRoute.Commercial.PopupRules
+        ) && !compactLayout -> AppContentTarget.MARKET
     // Rankings es una tabla densa con paginacion: escritorio.
     route == AppRoute.Rankings && !compactLayout -> AppContentTarget.RANKINGS
     // Analitica de producto: secciones con tablas densas, escritorio.
@@ -361,7 +371,10 @@ fun AppRoot(
                         showNavigationChrome = false,
                     )
                     AppContentTarget.COMMERCIAL_CATALOG -> CommercialCatalogScreen(viewModel = koinInject())
-                    AppContentTarget.MARKET -> MarketScreen(viewModel = koinInject())
+                    AppContentTarget.MARKET -> MarketScreen(
+                        viewModel = koinInject(),
+                        initialSection = marketSectionFor(route),
+                    )
                     AppContentTarget.RANKINGS -> RankingsScreen(viewModel = koinInject())
                     AppContentTarget.PRODUCT_ANALYTICS -> ProductAnalyticsScreen(viewModel = koinInject())
                     AppContentTarget.LEGACY_SECTION -> legacyRoute?.content()
@@ -718,4 +731,18 @@ private fun handleDashboardAction(
         DashboardQuickAction.OPEN_AUDIT -> AdminSection.AUDIT
     }
     openSection(target)
+}
+
+/**
+ * Pestaña de Market con la que abrir según la entrada de menú usada.
+ *
+ * `null` para la entrada "OposiMarket": ahí se respeta la pestaña en la que
+ * estuviera el usuario, que es lo natural al volver a una pantalla que ya
+ * estabas usando.
+ */
+private fun marketSectionFor(route: AppRoute): MarketSection? = when (route) {
+    AppRoute.Commercial.Consumables -> MarketSection.SERVICES
+    AppRoute.Commercial.Promotions -> MarketSection.PROMOTIONS
+    AppRoute.Commercial.PopupRules -> MarketSection.POPUPS
+    else -> null
 }

@@ -98,6 +98,9 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
             item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catálogo comercial", "Productos, packs y tarifas.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key),
             item(AppRoute.Commercial.Tickets, "commercial.tickets", "OposiTickets", "Carteras, movimientos y concesiones.", NavigationGroupId.ECONOMY, AppIcon.TICKETS.key),
             item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Packs, servicios, promociones y pop-ups.", NavigationGroupId.ECONOMY, AppIcon.MARKET.key, NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Commercial.Consumables, "commercial.consumables", "Consumibles", "Potenciadores y protectores que se compran con OT.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key, NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Commercial.Promotions, "commercial.promotions", "Promociones", "Cupones y descuentos con ventana de validez.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key, NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Commercial.PopupRules, "commercial.popups", "Pop-ups", "Cuándo y a quién se muestra cada oferta.", NavigationGroupId.ECONOMY, AppIcon.INFO.key, NavigationVisibility.DESKTOP_ONLY),
             // Etiquetado por lo que realmente abre: esta ruta mapea a la pantalla
             // de accesos a examen, no a la gestion de suscripciones.
             item(AppRoute.Commercial.Subscriptions, "commercial.subscriptions", "Accesos", "Accesos concedidos a exámenes.", NavigationGroupId.ECONOMY, AppIcon.ACCESS.key),
@@ -207,6 +210,10 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     AppRoute.Commercial.Catalog, AppRoute.Commercial.Plans -> AdminSection.STORE
     // Market tiene pantalla propia de escritorio; no cae al adaptador legacy.
     AppRoute.Commercial.Market -> null
+    AppRoute.Commercial.Consumables,
+    AppRoute.Commercial.Promotions,
+    AppRoute.Commercial.PopupRules,
+    -> null
     AppRoute.Commercial.Tickets -> AdminSection.TICKETS
     AppRoute.Commercial.Subscriptions -> AdminSection.EXAM_ACCESS
     AppRoute.Community.OposiRed, is AppRoute.Community.Thread, is AppRoute.Community.ModerationDetail -> null

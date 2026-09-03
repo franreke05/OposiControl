@@ -39,6 +39,16 @@ sealed interface AppRoute {
 
         /** OposiMarket: packs de OT, servicios, promociones y reglas de pop-up. */
         data object Market : Commercial
+
+        // Las tres siguientes abren la MISMA pantalla de Market, cada una en su
+        // pestaña. Son entradas de menú, no pantallas nuevas: el backend, el
+        // repositorio y la tabla ya existen dentro de Market, y duplicarlos daría
+        // dos sitios donde mantener lo mismo. Lo que aportan es encontrarlas —
+        // quien busca "Promociones" en el menú no tiene por qué saber que viven
+        // dentro de Market.
+        data object Consumables : Commercial
+        data object Promotions : Commercial
+        data object PopupRules : Commercial
     }
 
     sealed interface Community : AppRoute {
