@@ -7,6 +7,7 @@ import com.oposicontrol.admin.domain.model.CommerceStatus
 import com.oposicontrol.admin.domain.model.DashboardActivityEvent
 import com.oposicontrol.admin.domain.model.DashboardAlert
 import com.oposicontrol.admin.domain.model.DashboardAlertSeverity
+import com.oposicontrol.admin.domain.model.DashboardMetricKey
 import com.oposicontrol.admin.domain.model.DashboardMetrics
 import com.oposicontrol.admin.domain.model.ExamResourceAudit
 import com.oposicontrol.admin.domain.model.ExamStatus
@@ -31,15 +32,43 @@ class ContentDashboardRepositoryImpl(
             is AppResult.Success -> when (val exams = contentRepository.refreshExams()) {
                 is AppResult.Failure -> exams
                 is AppResult.Success -> {
-                    val audits = exams.value.mapNotNull { exam ->
-                        contentRepository.getExamResourceAudit(exam.id).getOrNull()
+                    // Cada fuente que falla se ANOTA en vez de convertirse en un
+                    // cero. El cero seguía llegando a la pantalla como un dato
+                    // más, indistinguible de un cero real: se comprobó en
+                    // logcat que `articulo_tienda` y `/content/noticias` fallaban
+                    // de verdad y Home mostraba ceros limpios.
+                    //
+                    // Se sigue devolviendo `Success`: que se caiga el catálogo
+                    // comercial no puede vaciar Home entera. Lo que se pierde es
+                    // ese bloque, no la pantalla.
+                    val auditResults = exams.value.map { exam ->
+                        contentRepository.getExamResourceAudit(exam.id)
                     }
-                    val commerceSnapshot = loadCommerceSnapshot()
-                    val news = newsRepository.refreshNews().getOrNull().orEmpty()
+                    val audits = auditResults.mapNotNull { it.getOrNull() }
+
+                    // El refresco se hace UNA vez y su resultado se reutiliza:
+                    // llamar a `refreshCommerce()` aquí y otra vez dentro de
+                    // `loadCommerceSnapshot()` duplicaría la petición de red.
+                    val commerce = commerceRepository.refreshCommerce()
+                    val commerceSnapshot = loadCommerceSnapshot(commerce)
+
+                    val newsResult = newsRepository.refreshNews()
+                    val news = newsResult.getOrNull().orEmpty()
+
                     val performanceMetrics = runCatching { dashboardApi.getMetrics() }.getOrNull()
-                    val pendingForumReports = runCatching {
-                        moderationRepository.listPendingReports().getOrNull()?.size ?: 0
-                    }.getOrDefault(0)
+
+                    val pendingReportsResult = runCatching { moderationRepository.listPendingReports() }
+                        .getOrNull()
+                    val pendingForumReports = pendingReportsResult?.getOrNull()?.size ?: 0
+
+                    val unavailable = unavailableDashboardMetrics(
+                        resourceAuditFailed = auditResults.any { it is AppResult.Failure },
+                        commerceFailed = commerce is AppResult.Failure,
+                        newsFailed = newsResult is AppResult.Failure,
+                        performanceMissing = performanceMetrics == null,
+                        forumReportsFailed = pendingReportsResult == null ||
+                            pendingReportsResult is AppResult.Failure,
+                    )
                     val questionsWithoutResources = audits.sumOf { it.summary.questionsWithoutResources }
                     val unlinkedResources = audits.sumOf { it.summary.unlinkedResources }
                     val pendingResources = audits.sumOf { it.summary.pendingResources }
@@ -89,6 +118,7 @@ class ContentDashboardRepositoryImpl(
                                 activeOffers = activeOffers,
                                 timestamp = now,
                             ),
+                            unavailableMetrics = unavailable,
                         ),
                     )
                 }
@@ -96,8 +126,8 @@ class ContentDashboardRepositoryImpl(
         }
     }
 
-    private suspend fun loadCommerceSnapshot(): CommerceSnapshot {
-        return when (commerceRepository.refreshCommerce()) {
+    private suspend fun loadCommerceSnapshot(refresh: AppResult<*>): CommerceSnapshot {
+        return when (refresh) {
             is AppResult.Failure -> CommerceSnapshot()
             is AppResult.Success -> CommerceSnapshot(
                 items = commerceRepository.observeStoreItems().first(),
@@ -222,4 +252,36 @@ class ContentDashboardRepositoryImpl(
         val limitedResources: List<com.oposicontrol.admin.domain.model.LimitedResourceWindow> = emptyList(),
         val bursts: List<com.oposicontrol.admin.domain.model.BurstCampaign> = emptyList(),
     )
+}
+
+/**
+ * Qué métricas de Home NO tienen dato, dadas las fuentes que han fallado.
+ *
+ * Está separada del repositorio y es pura porque es la decisión que importa y la
+ * única que se puede comprobar sin levantar cinco dobles de repositorio. El
+ * defecto que corrige era este: cada fuente caída se convertía en un cero limpio
+ * (`getOrNull().orEmpty()`, `?: 0`, `getOrDefault(0)`) y llegaba a pantalla como
+ * un dato más. Se verificó en logcat que `articulo_tienda` y `/content/noticias`
+ * fallaban de verdad mientras Home mostraba ceros impecables.
+ *
+ * Las cuatro métricas de rendimiento van juntas a propósito: las calcula el
+ * backend en una sola respuesta, así que o están las cuatro o no está ninguna.
+ */
+internal fun unavailableDashboardMetrics(
+    resourceAuditFailed: Boolean,
+    commerceFailed: Boolean,
+    newsFailed: Boolean,
+    performanceMissing: Boolean,
+    forumReportsFailed: Boolean,
+): Set<String> = buildSet {
+    if (resourceAuditFailed) add(DashboardMetricKey.RESOURCE_AUDIT)
+    if (commerceFailed) add(DashboardMetricKey.COMMERCE)
+    if (newsFailed) add(DashboardMetricKey.NEWS)
+    if (forumReportsFailed) add(DashboardMetricKey.FORUM_REPORTS)
+    if (performanceMissing) {
+        add(DashboardMetricKey.TOTAL_ATTEMPTS)
+        add(DashboardMetricKey.ACTIVE_USERS_30D)
+        add(DashboardMetricKey.AVG_SCORE)
+        add(DashboardMetricKey.GLOBAL_ERROR_RATE)
+    }
 }

@@ -48,6 +48,7 @@ import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.LoadingStateCard
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.domain.model.DashboardMetricKey
 import com.oposicontrol.admin.domain.model.DashboardMetrics
 import oposicontrol.core.ui.generated.resources.Res
 import oposicontrol.core.ui.generated.resources.ic_exams
@@ -409,25 +410,48 @@ private fun MobileTodaySummary(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    HomeMetricTile("Exámenes publicados", metrics.publishedExams, Modifier.weight(1f))
-                    HomeMetricTile("Preguntas", metrics.totalQuestions, Modifier.weight(1f))
+                    HomeMetricTile("Exámenes publicados", metrics.publishedExams, Modifier.weight(1f), available = metrics.isAvailable(DashboardMetricKey.PUBLISHED_EXAMS))
+                    HomeMetricTile("Preguntas", metrics.totalQuestions, Modifier.weight(1f), available = metrics.isAvailable(DashboardMetricKey.TOTAL_QUESTIONS))
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    HomeMetricTile("Usuarios activos", metrics.activeUsers30d, Modifier.weight(1f), detail = "Últimos 30 días")
-                    HomeMetricTile("Intentos totales", metrics.totalAttempts, Modifier.weight(1f))
+                    HomeMetricTile("Usuarios activos", metrics.activeUsers30d, Modifier.weight(1f), detail = "Últimos 30 días", available = metrics.isAvailable(DashboardMetricKey.ACTIVE_USERS_30D))
+                    HomeMetricTile("Intentos totales", metrics.totalAttempts, Modifier.weight(1f), available = metrics.isAvailable(DashboardMetricKey.TOTAL_ATTEMPTS))
                 }
             }
         }
     }
 }
 
+/**
+ * Tarjeta de métrica de Home.
+ *
+ * `available` es lo que separa un cero real de un cero inventado. Sin ese
+ * parámetro la tarjeta pintaba `value.toString()` sin más, y cuando la fuente
+ * fallaba —comprobado en logcat con `articulo_tienda` y `/content/noticias`— se
+ * leía un «0» impecable que no significaba nada. La pantalla de Estado del
+ * sistema ya hacía esto bien; Home no.
+ */
 @Composable
-private fun HomeMetricTile(label: String, value: Int, modifier: Modifier, detail: String? = null) {
+private fun HomeMetricTile(
+    label: String,
+    value: Int,
+    modifier: Modifier,
+    detail: String? = null,
+    available: Boolean = true,
+) {
     GlassSurface(modifier = modifier.heightIn(min = 92.dp), tint = GlassTheme.tokens.glassFill, shadowElevation = 6.dp) {
         Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(value.toString(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            detail?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Text(
+                text = if (available) value.toString() else "Sin dato",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                color = if (available) GlassTheme.tokens.textPrimary else GlassTheme.tokens.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val supporting = if (available) detail else "No se pudo consultar"
+            supporting?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }

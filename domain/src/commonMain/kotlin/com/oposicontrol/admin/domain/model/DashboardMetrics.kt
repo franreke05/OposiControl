@@ -61,6 +61,26 @@ object DashboardMetricKey {
     const val AVG_SCORE = "avgScore"
     const val GLOBAL_ERROR_RATE = "globalErrorRate"
     const val ATTEMPTS_PER_DAY = "attemptsPerDay"
+
+    // --- Fuentes que consulta el propio cliente -----------------------------
+    //
+    // Las de arriba las calcula el backend y llegan ya marcadas. Éstas las lee
+    // el cliente por su cuenta, y hasta ahora un fallo de cualquiera de ellas se
+    // convertía en un cero limpio: `getOrNull().orEmpty()`, `?: 0`,
+    // `getOrDefault(0)`. Un panel que enseña "0 noticias publicadas" cuando en
+    // realidad no ha podido preguntarlo es peor que uno que admite no saberlo.
+
+    /** Catálogo comercial: productos, ofertas, ráfagas y recursos limitados. */
+    const val COMMERCE = "commerce"
+
+    /** Noticias publicadas y en borrador. */
+    const val NEWS = "news"
+
+    /** Reportes de comunidad pendientes de revisar. */
+    const val FORUM_REPORTS = "forumReports"
+
+    /** Auditoría de recursos por examen. */
+    const val RESOURCE_AUDIT = "resourceAudit"
 }
 
 data class DayCount(

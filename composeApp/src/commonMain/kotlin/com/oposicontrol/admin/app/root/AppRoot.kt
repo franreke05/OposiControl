@@ -13,6 +13,9 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.Modifier
 import com.oposicontrol.admin.app.navigation.AppRoute
+import com.oposicontrol.admin.app.navigation.handleSystemBack
+import com.oposicontrol.admin.app.navigation.parentRoute
+import com.oposicontrol.admin.app.platform.PlatformBackHandler
 import com.oposicontrol.admin.app.navigation.AppRouteMenuGroup
 import com.oposicontrol.admin.app.navigation.AppRouteMenuItem
 import com.oposicontrol.admin.app.navigation.AdminSection
@@ -208,6 +211,18 @@ fun AppRoot(
         )
 
         else -> {
+            // Único punto de enganche del botón/gesto Atrás del sistema, y va
+            // aquí porque es el único sitio que ve la pila completa. Antes no
+            // había ninguno: Atrás cerraba la aplicación desde cualquier
+            // pantalla de detalle.
+            //
+            // `enabled` se recalcula con la pila, así que en una pantalla raíz el
+            // handler se desactiva y el gesto llega al sistema — que es el
+            // comportamiento normal de Android, no un caso especial.
+            PlatformBackHandler(
+                enabled = backStack.size > 1 || route.parentRoute() != null,
+                onBack = { navigator.handleSystemBack() },
+            )
             WarmUpPrimaryTabs(authState.isAuthenticated)
             BoxWithConstraints(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
             val breakpoint = appBreakpointFor(maxWidth)

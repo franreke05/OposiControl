@@ -913,54 +913,57 @@ private fun contentPanels(metrics: DashboardMetrics): List<InfoPanel> {
         ),
         InfoPanel(
             title = "Recursos",
-            lines = listOf(
-                "${metrics.linkedResources} enlazados",
-                "${metrics.pendingResources} pendientes",
-                "${metrics.unlinkedResources} sin enlazar",
-                "${metrics.questionsWithoutResources} preguntas sin recurso",
-            ),
+            lines = if (metrics.isAvailable(DashboardMetricKey.RESOURCE_AUDIT)) {
+                listOf(
+                    "${metrics.linkedResources} enlazados",
+                    "${metrics.pendingResources} pendientes",
+                    "${metrics.unlinkedResources} sin enlazar",
+                    "${metrics.questionsWithoutResources} preguntas sin recurso",
+                )
+            } else {
+                listOf(SOURCE_DOWN_LINE)
+            },
         ),
         InfoPanel(
             title = "Noticias",
-            lines = listOf(
-                "${metrics.publishedNews} publicadas",
-                "${metrics.draftNews} borradores",
-                "Editor visual conectado",
-                "Capas y fondo persistidos",
-            ),
+            lines = if (metrics.isAvailable(DashboardMetricKey.NEWS)) {
+                listOf(
+                    "${metrics.publishedNews} publicadas",
+                    "${metrics.draftNews} borradores",
+                )
+            } else {
+                listOf(SOURCE_DOWN_LINE)
+            },
         ),
     )
 }
 
 private fun commercePanels(metrics: DashboardMetrics): List<InfoPanel> {
+    // Las tres secciones salen de la misma fuente: si el catálogo comercial no
+    // responde, ninguna de ellas tiene dato. Antes las tres mostraban ceros
+    // limpios y además líneas de relleno («Control por fechas», «Estados
+    // draft/active/scheduled») que parecían información y no lo eran.
+    val commerceDown = !metrics.isAvailable(DashboardMetricKey.COMMERCE)
+    fun panel(title: String, lines: () -> List<String>) =
+        InfoPanel(title = title, lines = if (commerceDown) listOf(SOURCE_DOWN_LINE) else lines())
+
     return listOf(
-        InfoPanel(
-            title = "Tienda",
-            lines = listOf(
+        panel("Tienda") {
+            listOf(
                 "${metrics.activeStoreItems} items activos",
                 "${metrics.activeLimitedResources} recursos temporales",
-                "Catálogo admin operativo",
                 metrics.nextCommerceExpiryLabel,
-            ),
-        ),
-        InfoPanel(
-            title = "Ofertas",
-            lines = listOf(
+            )
+        },
+        panel("Ofertas") {
+            listOf(
                 "${metrics.activeOffers} activas",
                 "${metrics.scheduledOffers} programadas",
-                "Estados draft/active/scheduled",
-                "Control por fechas",
-            ),
-        ),
-        InfoPanel(
-            title = "Rafagas",
-            lines = listOf(
-                "${metrics.activeBurstCampaigns} activas",
-                "Multiplicadores y tickets",
-                "Vinculo con examen o tienda",
-                "Programacion temporal",
-            ),
-        ),
+            )
+        },
+        panel("Ráfagas") {
+            listOf("${metrics.activeBurstCampaigns} activas")
+        },
     )
 }
 
@@ -980,8 +983,11 @@ private fun shortDateLabel(date: String): String {
 }
 
 /** Texto único para una métrica sin fuente conectada. Ver DashboardMetrics.unavailableMetrics. */
-internal const val NO_DATA_LABEL = "NO_DATA"
-internal const val NO_DATA_SUPPORTING = "Sin fuente conectada"
+// Etiqueta visible del estado NO_DATA. El estado se conserva (§62), pero lo que
+// se lee es castellano: «NO_DATA» es una constante de código, no algo que deba
+// aparecer en la pantalla de quien administra.
+internal const val NO_DATA_LABEL = "Sin dato"
+internal const val NO_DATA_SUPPORTING = "No se pudo consultar"
 
 private data class KpiItem(
     val title: String,
@@ -1073,3 +1079,12 @@ private fun DashboardPreview() {
         )
     }
 }
+
+/**
+ * Línea única de un panel cuya fuente no respondió.
+ *
+ * No es un cero ni un vacío: es la afirmación de que no lo sabemos. La distinción
+ * importa porque «0 ofertas activas» es una decisión de negocio y «no se pudo
+ * consultar el catálogo» es una avería, y en pantalla se veían igual.
+ */
+private const val SOURCE_DOWN_LINE = "Sin dato — no se pudo consultar esta fuente"

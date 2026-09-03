@@ -16,6 +16,7 @@ import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import com.oposicontrol.admin.domain.repository.ContentImportRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.usecase.content.CreateContentDraftUseCase
@@ -104,6 +105,17 @@ private class ContentUploadTestContentRepository : ContentRepository {
     override suspend fun deleteResource(questionId: String, resourceId: String): AppResult<Unit> = error("not used by ContentUploadViewModel")
     override suspend fun uploadExamCover(examId: String, localPathOrUri: String): AppResult<Exam> = error("not used by ContentUploadViewModel")
     override suspend fun clearExamCover(examId: String): AppResult<Exam> = error("not used by ContentUploadViewModel")
+
+    // Añadidos al integrar: `ContentRepository` creció con las capacidades de
+    // especialidad en la rama de escritorio, después de que se escribiera este
+    // doble en la rama de QA móvil. No los usa `ContentUploadViewModel`, así que
+    // siguen el mismo criterio que el resto: fallar si alguien los llama, en vez
+    // de devolver un valor inventado que enmascararía el error.
+    override suspend fun getSpecialtyCapabilities(specialtyId: String): AppResult<SpecialtyCapabilities> =
+        error("not used by ContentUploadViewModel")
+
+    override suspend fun saveSpecialtyCapabilities(capabilities: SpecialtyCapabilities): AppResult<SpecialtyCapabilities> =
+        error("not used by ContentUploadViewModel")
 }
 
 /**
