@@ -1,5 +1,7 @@
 package com.oposicontrol.admin.app.navigation
 
+import com.oposicontrol.admin.core.ui.components.AppIcon
+
 /**
  * Agrupación del menú.
  *
@@ -67,77 +69,77 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
     AppRouteMenuGroup(
         NavigationGroupId.HOME,
         "Dashboard",
-        listOf(item(AppRoute.Home, "home", "Dashboard", "Resumen operativo del panel.", NavigationGroupId.HOME, "home")),
+        listOf(item(AppRoute.Home, AppIcon.HOME.key, "Dashboard", "Resumen operativo del panel.", NavigationGroupId.HOME, "home")),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.CONTENT,
         "Contenido",
         listOf(
-            item(AppRoute.Content.Taxonomy, "content.taxonomy", "Especialidades", "Especialidades, comunidades, etiquetas y modos disponibles.", NavigationGroupId.CONTENT, "⌘"),
-            item(AppRoute.Content.Exams, "content.exams", "Examenes", "Catalogo, preguntas y publicacion de examenes.", NavigationGroupId.CONTENT, "▣"),
-            item(AppRoute.Content.Questions, "content.questions", "Preguntas", "Revision y edicion de preguntas.", NavigationGroupId.CONTENT, "?"),
-            item(AppRoute.Content.Resources, "content.resources", "Recursos", "Recursos asociados al contenido inmersivo.", NavigationGroupId.CONTENT, "◇"),
-            item(AppRoute.Content.Imports, "content.imports", "Importacion", "Subida de PDF, revision y publicacion.", NavigationGroupId.CONTENT, "⇧"),
+            item(AppRoute.Content.Taxonomy, "content.taxonomy", "Especialidades", "Especialidades, comunidades, etiquetas y modos disponibles.", NavigationGroupId.CONTENT, AppIcon.LAYERS.key),
+            item(AppRoute.Content.Exams, "content.exams", "Examenes", "Catalogo, preguntas y publicacion de examenes.", NavigationGroupId.CONTENT, AppIcon.EXAMS.key),
+            item(AppRoute.Content.Questions, "content.questions", "Preguntas", "Revision y edicion de preguntas.", NavigationGroupId.CONTENT, AppIcon.QUESTIONS.key),
+            item(AppRoute.Content.Resources, "content.resources", "Recursos", "Recursos asociados al contenido inmersivo.", NavigationGroupId.CONTENT, AppIcon.RESOURCES.key),
+            item(AppRoute.Content.Imports, "content.imports", "Importacion", "Subida de PDF, revision y publicacion.", NavigationGroupId.CONTENT, AppIcon.IMPORT.key),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.USERS,
         "Usuarios",
         listOf(
-            item(AppRoute.Users.List, "users", "Usuarios", "Identidad, perfil, rendimiento y economia por usuario.", NavigationGroupId.USERS, "◎"),
-            item(AppRoute.Rankings, "rankings", "Rankings y ligas", "Clasificacion, ligas y posicion por opositor.", NavigationGroupId.USERS, "◈", NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Users.List, "users", "Usuarios", "Identidad, perfil, rendimiento y economia por usuario.", NavigationGroupId.USERS, AppIcon.USERS.key),
+            item(AppRoute.Rankings, "rankings", "Rankings y ligas", "Clasificacion, ligas y posicion por opositor.", NavigationGroupId.USERS, AppIcon.RANKINGS.key, NavigationVisibility.DESKTOP_ONLY),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.ECONOMY,
         "Economia",
         listOf(
-            item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes de suscripcion y beneficios.", NavigationGroupId.ECONOMY, "◆"),
-            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catalogo comercial", "Productos, packs y tarifas.", NavigationGroupId.ECONOMY, "◇"),
-            item(AppRoute.Commercial.Tickets, "commercial.tickets", "OposiTickets", "Carteras, movimientos y concesiones.", NavigationGroupId.ECONOMY, "◈"),
-            item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Packs, servicios, promociones y pop-ups.", NavigationGroupId.ECONOMY, "▦", NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes de suscripcion y beneficios.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key),
+            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catalogo comercial", "Productos, packs y tarifas.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key),
+            item(AppRoute.Commercial.Tickets, "commercial.tickets", "OposiTickets", "Carteras, movimientos y concesiones.", NavigationGroupId.ECONOMY, AppIcon.TICKETS.key),
+            item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Packs, servicios, promociones y pop-ups.", NavigationGroupId.ECONOMY, AppIcon.MARKET.key, NavigationVisibility.DESKTOP_ONLY),
             // Etiquetado por lo que realmente abre: esta ruta mapea a la pantalla
             // de accesos a examen, no a la gestion de suscripciones.
-            item(AppRoute.Commercial.Subscriptions, "commercial.subscriptions", "Accesos", "Accesos concedidos a examenes.", NavigationGroupId.ECONOMY, "◌"),
+            item(AppRoute.Commercial.Subscriptions, "commercial.subscriptions", "Accesos", "Accesos concedidos a examenes.", NavigationGroupId.ECONOMY, AppIcon.ACCESS.key),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.COMMUNITY,
         "Comunidad",
         listOf(
-            item(AppRoute.Community.OposiRed, "community.oposired", "OposiRed", "Hilos y comentarios de la comunidad.", NavigationGroupId.COMMUNITY, "forum"),
-            item(AppRoute.Moderation.Queue, "moderation", "Moderacion", "Acciones de moderacion y su auditoria.", NavigationGroupId.COMMUNITY, "⚑"),
-            item(AppRoute.Reports.List, "reports", "Reportes", "Reportes de contenido y su resolucion.", NavigationGroupId.COMMUNITY, "reports"),
-            item(AppRoute.OposiTester.List, "opositester", "OposiTester", "Incidencias enviadas por los usuarios.", NavigationGroupId.COMMUNITY, "tester"),
+            item(AppRoute.Community.OposiRed, "community.oposired", "OposiRed", "Hilos y comentarios de la comunidad.", NavigationGroupId.COMMUNITY, AppIcon.FORUM.key),
+            item(AppRoute.Moderation.Queue, "moderation", "Moderacion", "Acciones de moderacion y su auditoria.", NavigationGroupId.COMMUNITY, AppIcon.MODERATION.key),
+            item(AppRoute.Reports.List, AppIcon.REPORTS.key, "Reportes", "Reportes de contenido y su resolucion.", NavigationGroupId.COMMUNITY, "reports"),
+            item(AppRoute.OposiTester.List, "opositester", "OposiTester", "Incidencias enviadas por los usuarios.", NavigationGroupId.COMMUNITY, AppIcon.TESTER.key),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.ANALYTICS,
         "Analitica",
         listOf(
-            item(AppRoute.Analytics.Home, "analytics", "Producto", "Uso, sesiones y actividad.", NavigationGroupId.ANALYTICS, "◒"),
-            item(AppRoute.Analytics.Performance, "analytics.performance", "Estudio", "Rendimiento, dificultad y debilidades.", NavigationGroupId.ANALYTICS, "↗"),
-            item(AppRoute.Analytics.Events, "analytics.events", "Eventos", "Eventos y calidad de datos.", NavigationGroupId.ANALYTICS, "·"),
+            item(AppRoute.Analytics.Home, "analytics", "Producto", "Uso, sesiones y actividad.", NavigationGroupId.ANALYTICS, AppIcon.ANALYTICS.key),
+            item(AppRoute.Analytics.Performance, "analytics.performance", "Estudio", "Rendimiento, dificultad y debilidades.", NavigationGroupId.ANALYTICS, AppIcon.PERFORMANCE.key),
+            item(AppRoute.Analytics.Events, "analytics.events", "Eventos", "Eventos y calidad de datos.", NavigationGroupId.ANALYTICS, AppIcon.EVENTS.key),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.OPERATIONS,
         "Operaciones",
         listOf(
-            item(AppRoute.Publication.News, "publication.news", "Noticias", "Comunicacion y contenidos editoriales.", NavigationGroupId.OPERATIONS, "✦"),
-            item(AppRoute.Publication.NewsTypes, "publication.news-types", "Tipos de noticia", "Catalogo editorial.", NavigationGroupId.OPERATIONS, "≡"),
-            item(AppRoute.Publication.Assets, "publication.assets", "Assets", "Recursos visuales de publicacion.", NavigationGroupId.OPERATIONS, "▧"),
-            item(AppRoute.Support.Inbox, "support", "Soporte", "Conversaciones y seguimiento.", NavigationGroupId.OPERATIONS, "◫"),
-            item(AppRoute.System.Audit, "system.audit", "Auditoria", "Trazabilidad de operaciones sensibles.", NavigationGroupId.OPERATIONS, "☷"),
+            item(AppRoute.Publication.News, "publication.news", "Noticias", "Comunicacion y contenidos editoriales.", NavigationGroupId.OPERATIONS, AppIcon.NEWS.key),
+            item(AppRoute.Publication.NewsTypes, "publication.news-types", "Tipos de noticia", "Catalogo editorial.", NavigationGroupId.OPERATIONS, AppIcon.NEWS_TYPES.key),
+            item(AppRoute.Publication.Assets, "publication.assets", "Assets", "Recursos visuales de publicacion.", NavigationGroupId.OPERATIONS, AppIcon.ASSETS.key),
+            item(AppRoute.Support.Inbox, "support", "Soporte", "Conversaciones y seguimiento.", NavigationGroupId.OPERATIONS, AppIcon.SUPPORT.key),
+            item(AppRoute.System.Audit, "system.audit", "Auditoria", "Trazabilidad de operaciones sensibles.", NavigationGroupId.OPERATIONS, AppIcon.AUDIT.key),
         ),
     ),
     AppRouteMenuGroup(
         NavigationGroupId.SYSTEM,
         "Sistema",
         listOf(
-            item(AppRoute.System.Roles, "system.roles", "Roles", "Roles y acceso administrativo.", NavigationGroupId.SYSTEM, "⚿"),
-            item(AppRoute.System.Settings, "system.settings", "Configuracion", "Configuracion local del panel.", NavigationGroupId.SYSTEM, "settings"),
-            item(AppRoute.System.Diagnostics, "system.diagnostics", "Estado", "Conectividad y estado del backend.", NavigationGroupId.SYSTEM, "⌁"),
+            item(AppRoute.System.Roles, "system.roles", "Roles", "Roles y acceso administrativo.", NavigationGroupId.SYSTEM, AppIcon.ROLES.key),
+            item(AppRoute.System.Settings, "system.settings", "Configuracion", "Configuracion local del panel.", NavigationGroupId.SYSTEM, AppIcon.SETTINGS.key),
+            item(AppRoute.System.Diagnostics, "system.diagnostics", "Estado", "Conectividad y estado del backend.", NavigationGroupId.SYSTEM, AppIcon.STATUS.key),
         ),
     ),
 )

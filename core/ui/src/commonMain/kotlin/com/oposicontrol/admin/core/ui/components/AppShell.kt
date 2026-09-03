@@ -23,7 +23,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -43,13 +42,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.layout.AppBreakpoint
 import com.oposicontrol.admin.core.ui.layout.appBreakpointFor
-import oposicontrol.core.ui.generated.resources.Res
-import oposicontrol.core.ui.generated.resources.ic_forum
-import oposicontrol.core.ui.generated.resources.ic_home
-import oposicontrol.core.ui.generated.resources.ic_reports
-import oposicontrol.core.ui.generated.resources.ic_settings
-import oposicontrol.core.ui.generated.resources.ic_tester
-import org.jetbrains.compose.resources.painterResource
 
 data class ShellNavigationItem(
     val id: String,
@@ -96,28 +88,27 @@ fun AppShell(
     ) {
         val breakpoint = appBreakpointFor(maxWidth)
         if (breakpoint == AppBreakpoint.EXPANDED) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                ShellDesktopSidebar(
-                    groups = groups,
-                    currentRouteId = currentRouteId,
-                    onRouteSelected = onRouteSelected,
-                )
-                ShellContent(
-                    title = title,
-                    description = description,
-                    environmentLabel = environmentLabel,
-                    breadcrumbs = breadcrumbs,
-                    showBreadcrumbs = showBreadcrumbs,
-                    showScreenHeader = showScreenHeader,
-                    compactLayout = false,
-                    primaryActionLabel = primaryActionLabel,
-                    onPrimaryAction = onPrimaryAction,
-                    canGoBack = canGoBack,
-                    onBack = onBack,
-                    globalSearch = globalSearch,
-                    content = content,
-                )
-            }
+            // El escritorio tiene su propio shell: cabecera fija, sidebar
+            // plegable y contenido con scroll independiente. La rama compacta de
+            // abajo es la del móvil y no la comparte — es la garantía de que
+            // rediseñar el panel no puede mover la barra inferior.
+            DesktopShell(
+                currentRouteId = currentRouteId,
+                groups = groups,
+                onRouteSelected = onRouteSelected,
+                environmentLabel = environmentLabel,
+                title = title,
+                description = description,
+                breadcrumbs = breadcrumbs,
+                showBreadcrumbs = showBreadcrumbs,
+                showPageHeader = showScreenHeader,
+                primaryActionLabel = primaryActionLabel,
+                onPrimaryAction = onPrimaryAction,
+                canGoBack = canGoBack,
+                onBack = onBack,
+                globalSearch = globalSearch,
+                content = content,
+            )
         } else {
             Scaffold(
                 modifier = Modifier.fillMaxSize(),
@@ -208,82 +199,6 @@ private fun ShellContent(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             content()
         }
-    }
-}
-
-@Composable
-private fun ShellDesktopSidebar(
-    groups: List<ShellNavigationGroup>,
-    currentRouteId: String,
-    onRouteSelected: (String) -> Unit,
-) {
-    GlassSurface(
-        modifier = Modifier.width(280.dp).fillMaxHeight(),
-        tint = com.oposicontrol.admin.core.ui.theme.GlassTheme.tokens.glassFillStrong,
-    ) {
-        Column(
-            modifier = Modifier.fillMaxHeight().padding(horizontal = 20.dp, vertical = 22.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Text("OposiControl Admin", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("Panel operativo", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            HorizontalDivider()
-            Column(
-                modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                groups.forEach { group ->
-                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(
-                            group.label.uppercase(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        group.items.forEach { item ->
-                            ShellNavigationRow(item, item.id == currentRouteId, onRouteSelected)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ShellNavigationRow(
-    item: ShellNavigationItem,
-    selected: Boolean,
-    onRouteSelected: (String) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .defaultMinSize(minHeight = 46.dp)
-            .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface.copy(alpha = 0.34f),
-                MaterialTheme.shapes.medium,
-            )
-            .clickable { onRouteSelected(item.id) }
-            .semantics {
-                this.selected = selected
-                contentDescription = item.label
-            }
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        ShellNavigationIcon(item.icon, selected)
-        Text(
-            item.label,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        item.badge?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
     }
 }
 
@@ -380,29 +295,22 @@ fun BackHeader(onBack: () -> Unit, title: String? = null) {
     }
 }
 
-// Real, licensed icon set (Lucide — https://lucide.dev, ISC license), bundled as
-// Android vector drawables under composeResources/drawable/ic_*.xml. Replaces the
-// earlier hand-drawn Canvas glyphs.
-private val ShellIconDrawables = mapOf(
-    "home" to Res.drawable.ic_home,
-    "reports" to Res.drawable.ic_reports,
-    "forum" to Res.drawable.ic_forum,
-    "tester" to Res.drawable.ic_tester,
-    "settings" to Res.drawable.ic_settings,
-)
-
+/**
+ * Los iconos salen ahora del registro único ([AppIcon]), no de un mapa local de
+ * cinco entradas.
+ *
+ * El mapa anterior sólo cubría los cinco destinos de la barra inferior del móvil
+ * y cualquier otra clave caía en un `Text(icon)`, que es lo que pintaba los
+ * glifos Unicode del menú de escritorio como texto suelto. Con un único registro
+ * ese camino de escape ya no existe: una clave desconocida se resuelve a un icono
+ * neutro en vez de a un carácter que la fuente puede no tener.
+ */
 @Composable
 private fun ShellNavigationIcon(icon: String, selected: Boolean, iconSize: Dp = 22.dp) {
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    val drawable = ShellIconDrawables[icon]
-    if (drawable == null) {
-        Text(icon, color = color)
-        return
-    }
-    Icon(
-        painter = painterResource(drawable),
-        contentDescription = null,
+    AppIconImage(
+        icon = AppIcon.fromKey(icon) ?: AppIcon.CHEVRON_RIGHT,
+        size = iconSize,
         tint = color,
-        modifier = Modifier.size(iconSize),
     )
 }

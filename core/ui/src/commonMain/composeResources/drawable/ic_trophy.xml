@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Lucide icon "trophy" (https://lucide.dev), ISC license. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M6,9 H4.5 a2.5,2.5 0 0,1 0,-5 H6" />
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M18,9 h1.5 a2.5,2.5 0 0,0 0,-5 H18" />
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4,22 h16" />
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M10,14.66 V17 c0,0.55 -0.47,0.98 -0.97,1.21 C7.85,18.75 7,20.24 7,22" />
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M14,14.66 V17 c0,0.55 0.47,0.98 0.97,1.21 C16.15,18.75 17,20.24 17,22" />
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M18,2 H6 v7 a6,6 0 0,0 12,0 Z" />
+</vector>

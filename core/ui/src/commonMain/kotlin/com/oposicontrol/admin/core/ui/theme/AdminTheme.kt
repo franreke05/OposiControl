@@ -4,19 +4,23 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
 import com.oposicontrol.admin.core.ui.components.GlassBackground
+import com.oposicontrol.admin.core.ui.layout.AppBreakpoint
 import com.oposicontrol.admin.core.ui.layout.AppLayout
+import com.oposicontrol.admin.core.ui.layout.LocalDesktopBreakpoint
 import com.oposicontrol.admin.core.ui.layout.ProvideAppLayoutMetrics
+import com.oposicontrol.admin.core.ui.layout.appBreakpointFor
+import com.oposicontrol.admin.core.ui.layout.desktopBreakpointFor
 import com.oposicontrol.admin.core.ui.layout.rememberAppLayoutMetrics
 import oposicontrol.core.ui.generated.resources.Res
 import oposicontrol.core.ui.generated.resources.manrope_regular
@@ -40,6 +44,28 @@ data class GlassTokens(
     val divider: Color,
     val shadowAmbient: Color,
     val shadowSpot: Color,
+    // --- Roles añadidos para escritorio -------------------------------------
+    // El escritorio necesita superficies que no dependan de lo que haya detrás:
+    // una tabla de 40 filas sobre cristal translúcido es preciosa en una captura
+    // e ilegible cuando trabajas ocho horas con ella.
+    /** Superficie opaca para tablas, formularios y paneles densos. */
+    val surfaceSolid: Color,
+    /** Superficie opaca ligeramente hundida: cabeceras de tabla, barras de filtro. */
+    val surfaceMuted: Color,
+    /** Realce bajo el puntero. Sutil a propósito: confirma, no llama la atención. */
+    val surfaceHover: Color,
+    /** Fila o item de navegación seleccionado. */
+    val surfaceSelected: Color,
+    /** Borde de 1dp visible sobre superficie opaca. */
+    val border: Color,
+    /** Borde de separación fuerte (contorno de tabla, divisorias de shell). */
+    val borderStrong: Color,
+    /** Anillo de foco de teclado. Es el mismo coral: el foco es una acción. */
+    val focusRing: Color,
+    /** Acción destructiva. */
+    val danger: Color,
+    /** Información neutra (chips de estado desconocido, ayuda). */
+    val info: Color,
 )
 
 private val LightGlassTokens = GlassTokens(
@@ -57,13 +83,22 @@ private val LightGlassTokens = GlassTokens(
     divider = Color(0x33FFFFFF),
     shadowAmbient = Color(0x22000000),
     shadowSpot = Color(0x33000000),
+    surfaceSolid = Color(0xFFFCFDFE),
+    surfaceMuted = Color(0xFFF1F5FA),
+    surfaceHover = Color(0xFFE9EFF7),
+    surfaceSelected = Color(0xFFFFF1EA),
+    border = Color(0xFFDCE5EF),
+    borderStrong = Color(0xFFC3D1E0),
+    focusRing = Color(0xFFFF8A5B),
+    danger = Color(0xFFC0392B),
+    info = Color(0xFF3E7CB1),
 )
 
-private var currentGlassTokens: GlassTokens = LightGlassTokens
+private val LocalGlassTokens = staticCompositionLocalOf { LightGlassTokens }
 
 object GlassTheme {
     val tokens: GlassTokens
-        @Composable get() = currentGlassTokens
+        @Composable get() = LocalGlassTokens.current
 }
 
 @OptIn(ExperimentalResourceApi::class)
@@ -73,6 +108,10 @@ fun AdminTheme(
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val metrics = rememberAppLayoutMetrics(maxWidth = maxWidth, maxHeight = maxHeight)
+        val appBreakpoint = appBreakpointFor(maxWidth)
+        val desktopBreakpoint = desktopBreakpointFor(maxWidth)
+        val rendersAsDesktop = appBreakpoint == AppBreakpoint.EXPANDED
+
         ProvideAppLayoutMetrics(metrics) {
             val layout = AppLayout.metrics
             val tokens = LightGlassTokens
@@ -80,74 +119,41 @@ fun AdminTheme(
                 Font(Res.font.manrope_regular, FontWeight.Normal),
                 Font(Res.font.manrope_semibold, FontWeight.SemiBold),
             )
-            val typography = Typography(
-                displayLarge = TextStyle(
-                    fontFamily = manrope,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = layout.text(32.sp, 28.sp),
-                    letterSpacing = (-0.5f * layout.contentScale).sp,
-                ),
-                headlineSmall = TextStyle(
-                    fontFamily = manrope,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = layout.text(24.sp, 21.sp),
-                ),
-                titleLarge = TextStyle(
-                    fontFamily = manrope,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = layout.text(20.sp, 18.sp),
-                ),
-                titleMedium = TextStyle(
-                    fontFamily = manrope,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = layout.text(16.sp, 15.sp),
-                ),
-                bodyLarge = TextStyle(
-                    fontFamily = manrope,
-                    fontWeight = FontWeight.Normal,
-                    fontSize = layout.text(15.sp, 14.sp),
-                ),
-                bodyMedium = TextStyle(
-                    fontFamily = manrope,
-                    fontWeight = FontWeight.Normal,
-                    fontSize = layout.text(13.sp, 12.sp),
-                ),
-                bodySmall = TextStyle(
-                    fontFamily = manrope,
-                    fontWeight = FontWeight.Normal,
-                    fontSize = layout.text(12.sp, 11.sp),
-                ),
-                labelLarge = TextStyle(
-                    fontFamily = manrope,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = layout.text(12.sp, 11.sp),
-                ),
-                labelMedium = TextStyle(
-                    fontFamily = manrope,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = layout.text(11.sp, 10.sp),
-                ),
-            )
-            currentGlassTokens = tokens
-            MaterialTheme(
-                colorScheme = lightColorScheme(
-                    primary = tokens.accent,
-                    onPrimary = Color.White,
-                    secondary = Color(0xFF5A6D83),
-                    background = tokens.backgroundBottom,
-                    onBackground = tokens.textPrimary,
-                    surface = tokens.glassFill,
-                    surfaceVariant = tokens.glassFillStrong,
-                    onSurface = tokens.textPrimary,
-                    onSurfaceVariant = tokens.textSecondary,
-                    error = Color(0xFFB84B3B),
-                    onError = Color.White,
-                ),
-                typography = typography,
+            // Manrope Medium (500) no está en el repo: sólo hay Regular y SemiBold.
+            // Compose resuelve un FontWeight.Medium pedido a Regular, así que la
+            // jerarquía se construye deliberadamente con esos dos pesos en vez de
+            // pedir un Medium que se renderizaría idéntico al cuerpo de texto.
+            val typography = remember(rendersAsDesktop, layout) {
+                if (rendersAsDesktop) desktopTypography(manrope) else mobileTypography(manrope, layout)
+            }
+            CompositionLocalProvider(
+                LocalGlassTokens provides tokens,
+                LocalDesktopBreakpoint provides desktopBreakpoint,
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    GlassBackground(modifier = Modifier.fillMaxSize())
-                    content()
+                MaterialTheme(
+                    colorScheme = lightColorScheme(
+                        primary = tokens.accent,
+                        onPrimary = Color.White,
+                        primaryContainer = tokens.surfaceSelected,
+                        onPrimaryContainer = Color(0xFF8A3B18),
+                        secondary = Color(0xFF5A6D83),
+                        background = tokens.backgroundBottom,
+                        onBackground = tokens.textPrimary,
+                        surface = tokens.glassFill,
+                        surfaceVariant = tokens.glassFillStrong,
+                        onSurface = tokens.textPrimary,
+                        onSurfaceVariant = tokens.textSecondary,
+                        outline = tokens.border,
+                        outlineVariant = tokens.borderStrong,
+                        error = tokens.danger,
+                        onError = Color.White,
+                    ),
+                    typography = typography,
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        GlassBackground(modifier = Modifier.fillMaxSize())
+                        content()
+                    }
                 }
             }
         }
