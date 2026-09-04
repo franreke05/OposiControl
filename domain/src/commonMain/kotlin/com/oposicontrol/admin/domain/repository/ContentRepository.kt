@@ -33,6 +33,25 @@ interface ContentRepository {
     suspend fun saveSpecialtyCapabilities(capabilities: SpecialtyCapabilities): AppResult<SpecialtyCapabilities>
 
     suspend fun upsertExam(exam: Exam): AppResult<Exam>
+
+    /**
+     * Publica el examen. Endpoint dedicado (`POST .../publicar`), no un `upsert`
+     * con el estado cambiado a mano: el backend audita esta acción
+     * (`examen_publicado`) y fija `publicado_en` con SU reloj — un valor de
+     * fecha que el cliente enviara aquí se ignoraría, así que esta función no
+     * acepta ninguna fecha. No existe publicación programada a futuro en el
+     * contrato actual.
+     */
+    suspend fun publishExam(examId: String): AppResult<Exam>
+
+    /** Endpoint dedicado (`POST .../despublicar`), auditado como `examen_despublicado`. */
+    suspend fun unpublishExam(examId: String): AppResult<Exam>
+
+    /**
+     * Archiva el examen. El nombre histórico es `deleteExam`, pero el endpoint
+     * real al que llama (`DELETE .../examenes/{id}`) archiva —pone
+     * `activo=false`— en vez de borrar la fila.
+     */
     suspend fun deleteExam(examId: String): AppResult<Unit>
     suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga>
     suspend fun deleteRafaga(rafagaId: String): AppResult<Unit>

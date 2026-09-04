@@ -167,6 +167,68 @@ object Help {
             "Sólo las preguntas inmersivas pueden tener recursos.",
     )
 
+    val codigoExamen = HelpTopic(
+        title = "Código del examen",
+        body = "Identificador interno para reconocer el examen de un vistazo. " +
+            "Si lo dejas en blanco al crear el examen, se genera uno automáticamente.",
+    )
+
+    val comunidadAutonoma = HelpTopic(
+        title = "Comunidad autónoma",
+        body = "Limita el examen a una comunidad concreta. Déjalo sin elegir si el examen " +
+            "vale para toda España.",
+    )
+
+    val tipoExamen = HelpTopic(
+        title = "Tipo de examen",
+        body = "Ráfaga son preguntas sueltas con la opción correcta marcada. Razonado añade una " +
+            "explicación escrita. Inmersivo es el único que admite recursos multimedia. " +
+            "Sólo se pueden elegir los modos que la especialidad tenga habilitados.",
+    )
+
+    val numeroPreguntas = HelpTopic(
+        title = "Número de preguntas",
+        body = "Se calcula solo a partir de las preguntas realmente asociadas al examen. " +
+            "Añade o quita preguntas en la pestaña Preguntas para cambiarlo.",
+    )
+
+    val duracionExamen = HelpTopic(
+        title = "Duración",
+        body = "Minutos de los que dispone el usuario para completar el examen. " +
+            "Déjalo en blanco si no quieres poner límite de tiempo.",
+    )
+
+    val examenOficial = HelpTopic(
+        title = "Examen oficial",
+        body = "Marca si el examen corresponde a una convocatoria real ya celebrada, " +
+            "en vez de a un simulacro o material de práctica.",
+    )
+
+    val tipoAcceso = HelpTopic(
+        title = "Tipo de acceso",
+        body = "Gratuito: cualquier usuario puede abrirlo. Premium: hace falta comprarlo con " +
+            "OposiTickets o tener una suscripción activa.",
+    )
+
+    val precioExamen = HelpTopic(
+        title = "Precio en OposiTickets",
+        body = "Lo que cuesta desbloquear este examen si un usuario lo compra suelto, " +
+            "sin pasar por una suscripción.",
+    )
+
+    val demoEspecialidad = HelpTopic(
+        title = "Demo",
+        body = "Si los usuarios pueden probar contenido gratis antes de comprar se decide para " +
+            "toda la especialidad, no examen a examen — se configura en Especialidades.",
+    )
+
+    val estadoExamen = HelpTopic(
+        title = "Estado",
+        body = "Borrador: sólo lo ves tú. Publicado: visible para los usuarios con acceso. " +
+            "Archivado: deja de estar disponible sin borrar las preguntas.",
+        example = "Publicar y despublicar quedan registrados en el historial del examen.",
+    )
+
     // --- Sistema -------------------------------------------------------------
 
     val estadoSistema = HelpTopic(

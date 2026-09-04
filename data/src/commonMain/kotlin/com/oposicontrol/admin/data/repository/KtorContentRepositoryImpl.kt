@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.data.repository
 
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.core.common.config.AppConfig
@@ -185,6 +186,16 @@ class KtorContentRepositoryImpl(
         refreshSpecialties()
         Unit
     }
+
+    // Este repositorio habla con el contrato `/content/solucionarios` anterior a
+    // los endpoints `/admin/v1/examenes/{id}/publicar|despublicar` reales, que no
+    // tienen equivalente aquí. No está cableado en DI (ver DataModule.kt): nada
+    // llega a ejecutar esto en producción.
+    override suspend fun publishExam(examId: String): AppResult<Exam> =
+        AppResult.Failure(AppError.Unknown("Publicar examen no está soportado en este repositorio legacy."))
+
+    override suspend fun unpublishExam(examId: String): AppResult<Exam> =
+        AppResult.Failure(AppError.Unknown("Despublicar examen no está soportado en este repositorio legacy."))
 
     override suspend fun upsertRafaga(rafaga: Rafaga) = adapter.safeCall {
         val saved: RafagaDto = client.requestWithBody(

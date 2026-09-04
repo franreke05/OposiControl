@@ -216,6 +216,8 @@ private class FakeCapabilitiesRepository(
     override suspend fun getExamResourceAudit(examId: String) = outOfScope()
     override suspend fun upsertExam(exam: com.oposicontrol.admin.domain.model.Exam) = outOfScope()
     override suspend fun deleteExam(examId: String) = outOfScope()
+    override suspend fun publishExam(examId: String) = outOfScope()
+    override suspend fun unpublishExam(examId: String) = outOfScope()
     override suspend fun upsertRafaga(rafaga: com.oposicontrol.admin.domain.model.Rafaga) = outOfScope()
     override suspend fun deleteRafaga(rafagaId: String) = outOfScope()
     override suspend fun upsertQuestion(question: com.oposicontrol.admin.domain.model.ExamQuestion) = outOfScope()

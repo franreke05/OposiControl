@@ -2,8 +2,10 @@ package com.oposicontrol.admin.features.exams.presentation
 
 import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
+import com.oposicontrol.admin.domain.model.Community
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamResourceAudit
 import com.oposicontrol.admin.domain.model.ExamResourceSummary
@@ -18,7 +20,10 @@ import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
+import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
+import com.oposicontrol.admin.domain.usecase.communities.ObserveCommunitiesUseCase
+import com.oposicontrol.admin.domain.usecase.communities.RefreshCommunitiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
@@ -29,15 +34,18 @@ import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetRafagaQuestionsUseCase
+import com.oposicontrol.admin.domain.usecase.content.GetSpecialtyCapabilitiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.ImportQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveRafagasUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveSpecialtiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.PublishExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshRafagasUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshSpecialtiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.UnpublishExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaQuestionUseCase
@@ -49,18 +57,21 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ExamsViewModelTest {
-    @Test
-    fun `selecting exam loads related questions`() = runTest {
-        val repository = ExamsTestRepository()
-        val viewModel = ExamsViewModel(
+
+    private fun TestScope.buildViewModel(repository: ExamsTestRepository): ExamsViewModel {
+        return ExamsViewModel(
             dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
             observeSpecialtiesUseCase = ObserveSpecialtiesUseCase(repository),
             observeExamsUseCase = ObserveExamsUseCase(repository),
@@ -75,6 +86,11 @@ class ExamsViewModelTest {
             getExamResourceAuditUseCase = GetExamResourceAuditUseCase(repository),
             upsertExamUseCase = UpsertExamUseCase(repository),
             deleteExamUseCase = DeleteExamUseCase(repository),
+            publishExamUseCase = PublishExamUseCase(repository),
+            unpublishExamUseCase = UnpublishExamUseCase(repository),
+            getSpecialtyCapabilitiesUseCase = GetSpecialtyCapabilitiesUseCase(repository),
+            observeCommunitiesUseCase = ObserveCommunitiesUseCase(repository),
+            refreshCommunitiesUseCase = RefreshCommunitiesUseCase(repository),
             upsertRafagaUseCase = UpsertRafagaUseCase(repository),
             deleteRafagaUseCase = DeleteRafagaUseCase(repository),
             upsertQuestionUseCase = UpsertQuestionUseCase(repository),
@@ -90,6 +106,12 @@ class ExamsViewModelTest {
             deleteQuestionResourceUseCase = DeleteQuestionResourceUseCase(repository),
             analyticsTracker = NoOpAnalyticsTracker,
         )
+    }
+
+    @Test
+    fun `selecting exam loads related questions`() = runTest {
+        val repository = ExamsTestRepository()
+        val viewModel = buildViewModel(repository)
         advanceUntilIdle()
 
         viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
@@ -101,10 +123,165 @@ class ExamsViewModelTest {
         assertEquals(2, questions.size)
         assertEquals("question-tcae-1", questions.first().id)
     }
+
+    // Regresión del bug donde saveExam() nunca incluía `code` al construir el
+    // Exam a persistir: cualquier edición borraba en silencio el código real
+    // que el servidor había autogenerado al crear el examen.
+    @Test
+    fun `saving exam sends the typed code to the repository`() = runTest {
+        val repository = ExamsTestRepository()
+        val viewModel = buildViewModel(repository)
+        advanceUntilIdle()
+
+        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
+        advanceUntilIdle()
+        viewModel.dispatch(ExamsIntent.UpdateCode("EX-2026-001"))
+        viewModel.dispatch(ExamsIntent.SaveExam)
+        advanceUntilIdle()
+
+        assertEquals("EX-2026-001", repository.lastUpsertedExam?.code)
+        // saveExam() deja actionState en Success, pero reselecciona el examen
+        // guardado a continuación y selectExam() lo resetea a Idle a propósito
+        // (para no arrastrar un banner de "guardado" al reabrir el editor) —
+        // el estado terminal observable aquí es Idle, no Success.
+        assertEquals(UiAsync.Idle, viewModel.state.value.actionState)
+        assertEquals("exam-tcae-marzo", viewModel.state.value.selectedExamId)
+    }
+
+    @Test
+    fun `saving exam with a blank code preserves the existing one`() = runTest {
+        val repository = ExamsTestRepository()
+        val viewModel = buildViewModel(repository)
+        advanceUntilIdle()
+
+        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
+        advanceUntilIdle()
+        viewModel.dispatch(ExamsIntent.UpdateCode(""))
+        viewModel.dispatch(ExamsIntent.SaveExam)
+        advanceUntilIdle()
+
+        assertEquals("TCAE-2026-03", repository.lastUpsertedExam?.code)
+    }
+
+    // La especialidad de este examen (ver fake) sólo permite ráfaga: guardar un
+    // tipo que no está entre sus capacidades debe rechazarse en el cliente, ya
+    // que el backend no valida tipoExamen contra capacidades_especialidad.
+    @Test
+    fun `saving exam rejects a type not allowed by the specialty`() = runTest {
+        val repository = ExamsTestRepository()
+        val viewModel = buildViewModel(repository)
+        advanceUntilIdle()
+
+        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
+        advanceUntilIdle()
+        viewModel.dispatch(ExamsIntent.UpdateTypeExam("inmersivo"))
+        viewModel.dispatch(ExamsIntent.SaveExam)
+        advanceUntilIdle()
+
+        val action = viewModel.state.value.actionState
+        assertTrue(action is UiAsync.Error)
+        assertTrue((action.error as AppError.Validation).message.contains("no permite"))
+        assertNull(repository.lastUpsertedExam)
+    }
+
+    // Antes "capabilities != null && !capabilities.allows(typeExam)" se saltaba
+    // por completo la comprobación cuando specialtyCapabilities no era Success
+    // (fallo de red) y dejaba guardar cualquier tipo sin verificar.
+    @Test
+    fun `saving exam blocks when specialty capabilities failed to load`() = runTest {
+        val repository = ExamsTestRepository()
+        val viewModel = buildViewModel(repository)
+        advanceUntilIdle()
+
+        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
+        advanceUntilIdle()
+        repository.capabilitiesShouldFail = true
+        // Reintentar contra la misma especialidad, ahora fallando.
+        viewModel.dispatch(ExamsIntent.UpdateSpecialtyId("specialty-tcae"))
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.specialtyCapabilities is UiAsync.Error)
+        // El tipo ya persistido ("rafaga") no se invalida ni se borra en silencio.
+        assertEquals("rafaga", viewModel.state.value.editorTypeExam)
+
+        viewModel.dispatch(ExamsIntent.SaveExam)
+        advanceUntilIdle()
+
+        val action = viewModel.state.value.actionState
+        assertTrue(action is UiAsync.Error)
+        assertTrue((action.error as AppError.Validation).message.contains("comprobar"))
+        assertNull(repository.lastUpsertedExam)
+    }
+
+    @Test
+    fun `publishing an exam uses the dedicated endpoint and updates its status`() = runTest {
+        val repository = ExamsTestRepository()
+        val viewModel = buildViewModel(repository)
+        advanceUntilIdle()
+
+        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
+        advanceUntilIdle()
+        viewModel.dispatch(ExamsIntent.PublishExam)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.lifecycleActionState is UiAsync.Success)
+        val exams = (viewModel.state.value.exams as UiAsync.Success).value
+        val published = exams.first { it.id == "exam-tcae-marzo" }
+        assertEquals(ExamStatus.PUBLISHED, published.status)
+        assertNotNull(published.publishedAt)
+    }
+
+    @Test
+    fun `unpublishing an exam clears its published date`() = runTest {
+        val repository = ExamsTestRepository()
+        val viewModel = buildViewModel(repository)
+        advanceUntilIdle()
+
+        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
+        advanceUntilIdle()
+        viewModel.dispatch(ExamsIntent.PublishExam)
+        advanceUntilIdle()
+        viewModel.dispatch(ExamsIntent.UnpublishExam)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value.lifecycleActionState is UiAsync.Success)
+        val exams = (viewModel.state.value.exams as UiAsync.Success).value
+        val unpublished = exams.first { it.id == "exam-tcae-marzo" }
+        assertEquals(ExamStatus.DRAFT, unpublished.status)
+        assertNull(unpublished.publishedAt)
+    }
+
+    // El botón "Archivar" dispara RequestDeleteSelectedExam -> ConfirmPendingDelete,
+    // no un DeleteSelectedExam directo: es el mismo mecanismo que Rafaga/Pregunta/
+    // Especialidad, así que el mensaje de confirmación también debe ser el real.
+    @Test
+    fun `requesting to archive an exam sets the real confirmation message`() = runTest {
+        val repository = ExamsTestRepository()
+        val viewModel = buildViewModel(repository)
+        advanceUntilIdle()
+
+        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
+        advanceUntilIdle()
+        viewModel.dispatch(ExamsIntent.RequestDeleteSelectedExam)
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(PendingDeleteTarget.Exam, state.pendingDeleteTarget)
+        assertTrue(state.pendingDeleteMessage.contains("no se eliminan"))
+
+        viewModel.dispatch(ExamsIntent.ConfirmPendingDelete)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.pendingDeleteTarget)
+        assertTrue(viewModel.state.value.actionState is UiAsync.Success)
+    }
 }
 
-private class ExamsTestRepository : ContentRepository {
+private class ExamsTestRepository : ContentRepository, CommunitiesRepository {
     private val now = Instant.parse("2026-04-15T09:00:00Z")
+    var lastUpsertedExam: Exam? = null
+        private set
+
     private val specialties = MutableStateFlow(
         listOf(
             Specialty(
@@ -123,6 +300,7 @@ private class ExamsTestRepository : ContentRepository {
         listOf(
             Exam(
                 id = "exam-tcae-marzo",
+                code = "TCAE-2026-03",
                 specialtyId = "specialty-tcae",
                 specialtyName = "TCAE",
                 title = "TCAE Marzo",
@@ -140,6 +318,7 @@ private class ExamsTestRepository : ContentRepository {
         ),
     )
     private val rafagas = MutableStateFlow<List<Rafaga>>(emptyList())
+    private val communities = MutableStateFlow<List<Community>>(emptyList())
     private val rafagaQuestions = mutableMapOf<String, MutableList<RafagaQuestion>>()
     private val questions = mutableMapOf(
         "exam-tcae-marzo" to mutableListOf(
@@ -151,6 +330,10 @@ private class ExamsTestRepository : ContentRepository {
     override fun observeSpecialties(): Flow<List<Specialty>> = specialties
     override fun observeExams(): Flow<List<Exam>> = exams
     override fun observeRafagas(): Flow<List<Rafaga>> = rafagas
+    override fun observeCommunities(): Flow<List<Community>> = communities
+    override suspend fun refreshCommunities(): AppResult<List<Community>> = AppResult.Success(communities.value)
+    override suspend fun upsertCommunity(community: Community): AppResult<Community> = AppResult.Success(community)
+    override suspend fun deleteCommunity(communityId: String): AppResult<Unit> = AppResult.Success(Unit)
     override suspend fun refreshSpecialties(): AppResult<List<Specialty>> = AppResult.Success(specialties.value)
     override suspend fun refreshExams(): AppResult<List<Exam>> = AppResult.Success(exams.value)
     override suspend fun refreshRafagas(): AppResult<List<Rafaga>> = AppResult.Success(rafagas.value)
@@ -189,10 +372,15 @@ private class ExamsTestRepository : ContentRepository {
     override suspend fun upsertSpecialty(specialty: Specialty): AppResult<Specialty> = AppResult.Success(specialty)
     override suspend fun deleteSpecialty(specialtyId: String): AppResult<Unit> = AppResult.Success(Unit)
 
-    // Los modos por especialidad no intervienen en esta pantalla; se responde el
-    // valor por defecto para satisfacer el contrato sin simular configuracion.
-    override suspend fun getSpecialtyCapabilities(specialtyId: String): AppResult<SpecialtyCapabilities> =
-        AppResult.Success(
+    // Esta especialidad sólo permite ráfaga: es lo que ejercitan los tests de
+    // validación de tipo de examen contra capacidades_especialidad.
+    var capabilitiesShouldFail = false
+
+    override suspend fun getSpecialtyCapabilities(specialtyId: String): AppResult<SpecialtyCapabilities> {
+        if (capabilitiesShouldFail) {
+            return AppResult.Failure(AppError.Network("sin conexión"))
+        }
+        return AppResult.Success(
             SpecialtyCapabilities(
                 permiteRafagas = true,
                 permiteRazonados = false,
@@ -203,13 +391,35 @@ private class ExamsTestRepository : ContentRepository {
                 configured = false,
             ),
         )
+    }
 
     override suspend fun saveSpecialtyCapabilities(
         capabilities: SpecialtyCapabilities,
     ): AppResult<SpecialtyCapabilities> = AppResult.Success(capabilities)
 
-    override suspend fun upsertExam(exam: Exam): AppResult<Exam> = AppResult.Success(exam)
+    override suspend fun upsertExam(exam: Exam): AppResult<Exam> {
+        lastUpsertedExam = exam
+        exams.value = if (exams.value.any { it.id == exam.id }) {
+            exams.value.map { if (it.id == exam.id) exam else it }
+        } else {
+            exams.value + exam
+        }
+        return AppResult.Success(exam)
+    }
     override suspend fun deleteExam(examId: String): AppResult<Unit> = AppResult.Success(Unit)
+
+    // Publicar/despublicar reales: no pasan por upsertExam, así que se modelan
+    // aparte para que un test que use PublishExam nunca vea tocado lastUpsertedExam.
+    override suspend fun publishExam(examId: String): AppResult<Exam> {
+        val updated = exams.value.first { it.id == examId }.copy(status = ExamStatus.PUBLISHED, publishedAt = now)
+        exams.value = exams.value.map { if (it.id == examId) updated else it }
+        return AppResult.Success(updated)
+    }
+    override suspend fun unpublishExam(examId: String): AppResult<Exam> {
+        val updated = exams.value.first { it.id == examId }.copy(status = ExamStatus.DRAFT, publishedAt = null)
+        exams.value = exams.value.map { if (it.id == examId) updated else it }
+        return AppResult.Success(updated)
+    }
     override suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga> = AppResult.Success(rafaga)
     override suspend fun deleteRafaga(rafagaId: String): AppResult<Unit> = AppResult.Success(Unit)
     override suspend fun uploadExamCover(examId: String, localPathOrUri: String): AppResult<Exam> {

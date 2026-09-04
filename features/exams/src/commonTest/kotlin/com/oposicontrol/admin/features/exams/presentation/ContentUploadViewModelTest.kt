@@ -92,6 +92,8 @@ private class ContentUploadTestContentRepository : ContentRepository {
     override suspend fun deleteSpecialty(specialtyId: String): AppResult<Unit> = error("not used by ContentUploadViewModel")
     override suspend fun upsertExam(exam: Exam): AppResult<Exam> = error("not used by ContentUploadViewModel")
     override suspend fun deleteExam(examId: String): AppResult<Unit> = error("not used by ContentUploadViewModel")
+    override suspend fun publishExam(examId: String): AppResult<Exam> = error("not used by ContentUploadViewModel")
+    override suspend fun unpublishExam(examId: String): AppResult<Exam> = error("not used by ContentUploadViewModel")
     override suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga> = error("not used by ContentUploadViewModel")
     override suspend fun deleteRafaga(rafagaId: String): AppResult<Unit> = error("not used by ContentUploadViewModel")
     override suspend fun upsertQuestion(question: ExamQuestion): AppResult<ExamQuestion> = error("not used by ContentUploadViewModel")

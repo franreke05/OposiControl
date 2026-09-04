@@ -170,6 +170,30 @@ class KtorAdminV1ContentRepositoryImpl(
             .also { refreshExamCaches() }
     }
 
+    override suspend fun publishExam(examId: String) = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1ExamenPublicar(examId)
+        val response = client.post(adminUrl(endpoint)) {
+            adminHeaders()
+            expectSuccess = false
+        }
+        response.requireBackendSuccess(endpoint)
+        val dto = response.body<AdminExamenResponse>().data
+        dto.toExam(findSpecialtyName(dto.especialidadId)).also { refreshExamCaches() }
+    }
+
+    override suspend fun unpublishExam(examId: String) = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1ExamenDespublicar(examId)
+        val response = client.post(adminUrl(endpoint)) {
+            adminHeaders()
+            expectSuccess = false
+        }
+        response.requireBackendSuccess(endpoint)
+        val dto = response.body<AdminExamenResponse>().data
+        dto.toExam(findSpecialtyName(dto.especialidadId)).also { refreshExamCaches() }
+    }
+
+    // El nombre viene de la interfaz histórica; el endpoint real archiva
+    // (`activo=false`), no borra la fila. Ver el comentario en ContentRepository.
     override suspend fun deleteExam(examId: String) = adapter.safeCall {
         val endpoint = BackendRoutes.adminV1Examen(examId)
         client.delete(adminUrl(endpoint)) {
@@ -754,6 +778,14 @@ private data class AdminExamenDto(
     val portadaUrl: String? = null,
     val portadaStoragePath: String? = null,
     val portadaMimeType: String? = null,
+    /**
+     * Metadatos de sólo lectura. Backend `AdminExamenDto` los añade con default
+     * `null`; en escritura `Exam.toDto()` no los asigna, así que
+     * `encodeDefaults=false` los omite del JSON — nunca se envían, nunca pueden
+     * sobreescribir la fecha real a null.
+     */
+    val creadoEn: String? = null,
+    val actualizadoEn: String? = null,
 )
 
 @Serializable
@@ -924,8 +956,15 @@ private fun AdminExamenDto.toExam(specialtyName: String) = Exam(
     coverUrl = portadaUrl,
     coverStoragePath = portadaStoragePath,
     coverMimeType = portadaMimeType,
-    createdAt = nowInstant(),
-    updatedAt = nowInstant(),
+    // El backend ya trae la fecha real (ver AdminExamenDto.creadoEn/actualizadoEn
+    // en Ktor). Antes de exponerlos aquí, este mapper rellenaba los dos con
+    // "ahora" incondicionalmente — así que "Creado" en la ficha de un examen de
+    // hace un año habría mostrado la hora en la que alguien abrió la pantalla.
+    // El fallback a nowInstant() sólo cubre el examen recién creado en esta
+    // misma sesión, cuya respuesta aún podría no traer el valor si el backend
+    // desplegado no tiene este cambio.
+    createdAt = creadoEn.toInstantOrNull() ?: nowInstant(),
+    updatedAt = actualizadoEn.toInstantOrNull() ?: nowInstant(),
     deletedAt = if (activo) null else nowInstant(),
 )
 

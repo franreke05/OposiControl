@@ -6,9 +6,11 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.domain.model.Community
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamStatus
+import com.oposicontrol.admin.domain.model.ExamType
 import com.oposicontrol.admin.domain.model.isRafaga
 import com.oposicontrol.admin.domain.model.QuestionMoveDirection
 import com.oposicontrol.admin.domain.model.QuestionOption
@@ -17,6 +19,9 @@ import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
+import com.oposicontrol.admin.domain.usecase.communities.ObserveCommunitiesUseCase
+import com.oposicontrol.admin.domain.usecase.communities.RefreshCommunitiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCase
@@ -27,6 +32,9 @@ import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetRafagaQuestionsUseCase
+import com.oposicontrol.admin.domain.usecase.content.GetSpecialtyCapabilitiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.PublishExamUseCase
+import com.oposicontrol.admin.domain.usecase.content.UnpublishExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.ImportQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveRafagaQuestionUseCase
@@ -62,6 +70,11 @@ class ExamsViewModel(
     private val getExamResourceAuditUseCase: GetExamResourceAuditUseCase,
     private val upsertExamUseCase: UpsertExamUseCase,
     private val deleteExamUseCase: DeleteExamUseCase,
+    private val publishExamUseCase: PublishExamUseCase,
+    private val unpublishExamUseCase: UnpublishExamUseCase,
+    private val getSpecialtyCapabilitiesUseCase: GetSpecialtyCapabilitiesUseCase,
+    observeCommunitiesUseCase: ObserveCommunitiesUseCase,
+    private val refreshCommunitiesUseCase: RefreshCommunitiesUseCase,
     private val upsertRafagaUseCase: UpsertRafagaUseCase,
     private val deleteRafagaUseCase: DeleteRafagaUseCase,
     private val upsertQuestionUseCase: UpsertQuestionUseCase,
@@ -101,6 +114,14 @@ class ExamsViewModel(
                     specialties.firstOrNull { it.id == currentState().selectedContentSpecialtyId }
                         ?.let { selectContentSpecialty(it.id) }
                 }
+                // Primera carga: las especialidades llegan después de que el
+                // editor arrancara vacío, así que sus capacidades aún no se han
+                // pedido. `selectEditorSpecialty` es idempotente (mismo id), por
+                // eso es seguro no comprobar aquí si ya se había cargado antes.
+                val filledSpecialty = currentState().editorSpecialtyId
+                if (filledSpecialty.isNotBlank() && currentState().specialtyCapabilities is UiAsync.Idle) {
+                    selectEditorSpecialty(filledSpecialty)
+                }
                 publishExams()
             }
         }
@@ -111,6 +132,21 @@ class ExamsViewModel(
                 if (currentState().selectedExamId != null && exams.none { it.id == currentState().selectedExamId }) {
                     resetExamEditor()
                 }
+            }
+        }
+        scope.launch {
+            observeCommunitiesUseCase().collectLatest { communities ->
+                updateState { it.copy(communities = UiAsync.Success(communities)) }
+            }
+        }
+        scope.launch {
+            // Tolerante a fallo a propósito: `comunidad_autonoma` es una tabla
+            // reciente y, si su migración no está aplicada en este entorno, el
+            // backend devuelve error al consultarla. Eso debe apagar sólo el
+            // selector de CCAA, no el resto del formulario de examen.
+            when (val result = refreshCommunitiesUseCase()) {
+                is AppResult.Failure -> updateState { it.copy(communities = UiAsync.Error(result.error)) }
+                is AppResult.Success -> Unit // el Flow de arriba ya publica el valor.
             }
         }
         scope.launch {
@@ -142,12 +178,20 @@ class ExamsViewModel(
             ExamsIntent.DeleteSelectedRafaga -> deleteSelectedRafaga()
             ExamsIntent.DeleteSelectedRafagaQuestion -> deleteSelectedRafagaQuestion()
             ExamsIntent.DeleteSelectedSpecialty -> deleteSelectedSpecialty()
-            ExamsIntent.RequestDeleteSelectedExam -> requestDelete(PendingDeleteTarget.Exam, "Eliminar solucionario y sus preguntas/recursos?")
+            // El endpoint real archiva (`activo=false`); no borra la fila ni las
+            // preguntas asociadas. El mensaje anterior ("Eliminar solucionario y
+            // sus preguntas/recursos?") prometía algo que el backend no hace.
+            ExamsIntent.RequestDeleteSelectedExam -> requestDelete(
+                PendingDeleteTarget.Exam,
+                "Este examen dejará de estar disponible para los usuarios. Las preguntas asociadas no se eliminan.",
+            )
             ExamsIntent.RequestDeleteSelectedQuestion -> requestDelete(PendingDeleteTarget.Question, "Eliminar esta pregunta y sus recursos?")
             ExamsIntent.RequestDeleteSelectedRafaga -> requestDelete(PendingDeleteTarget.Rafaga, "Eliminar esta rafaga y sus preguntas?")
             ExamsIntent.RequestDeleteSelectedRafagaQuestion -> requestDelete(PendingDeleteTarget.RafagaQuestion, "Eliminar esta pregunta de rafaga?")
             ExamsIntent.RequestDeleteSelectedSpecialty -> requestDelete(PendingDeleteTarget.Specialty, "Eliminar esta especialidad?")
             ExamsIntent.RequestClearExamCover -> requestDelete(PendingDeleteTarget.ExamCover, "Quitar portada guardada y borrar su archivo?")
+            ExamsIntent.PublishExam -> publishExam()
+            ExamsIntent.UnpublishExam -> unpublishExam()
             ExamsIntent.ConfirmPendingDelete -> confirmPendingDelete()
             ExamsIntent.DismissPendingDelete -> updateState { it.copy(pendingDeleteTarget = null, pendingDeleteMessage = "") }
             ExamsIntent.RefreshAll -> refreshAll()
@@ -173,6 +217,9 @@ class ExamsViewModel(
             is ExamsIntent.SelectRafagaQuestion -> selectRafagaQuestion(intent.id)
             is ExamsIntent.ToggleSpecialtyActive -> updateState { it.copy(specialtyEditorIsActive = intent.value) }
             is ExamsIntent.UpdateDescription -> updateState { it.copy(editorDescription = intent.value) }
+            is ExamsIntent.UpdateCode -> updateState { it.copy(editorCode = intent.value) }
+            is ExamsIntent.UpdateCommunityId -> updateState { it.copy(editorCommunityId = intent.value) }
+            is ExamsIntent.UpdateTypeExam -> updateState { it.copy(editorTypeExam = intent.value) }
             is ExamsIntent.UpdateExamStatus -> updateState { it.copy(editorStatus = intent.value) }
             is ExamsIntent.UpdateTypeAccess -> updateState { it.copy(editorTypeAccess = intent.value) }
             is ExamsIntent.UpdateYear -> updateState { it.copy(editorYear = intent.value.filter { c -> c.isDigit() }.take(4)) }
@@ -214,7 +261,7 @@ class ExamsViewModel(
                 publishExams()
             }
 
-            is ExamsIntent.UpdateSpecialtyId -> updateState { it.copy(editorSpecialtyId = intent.value) }
+            is ExamsIntent.UpdateSpecialtyId -> selectEditorSpecialty(intent.value)
             is ExamsIntent.UpdateStatusFilter -> {
                 updateState { it.copy(statusFilter = intent.value) }
                 publishExams()
@@ -355,6 +402,41 @@ class ExamsViewModel(
         updateState { it.copy(exams = if (filtered.isEmpty()) UiAsync.Empty else UiAsync.Success(filtered)) }
     }
 
+    /**
+     * Cambia la especialidad del editor y recarga sus capacidades.
+     *
+     * Es el único punto de entrada para tocar `editorSpecialtyId`: si se hiciera
+     * con un `updateState` suelto (como antes), el selector de Tipo de examen
+     * seguiría mostrando los modos de la especialidad anterior hasta la próxima
+     * acción del usuario — permitiendo, por ejemplo, guardar un examen Inmersivo
+     * en una especialidad que sólo tiene Ráfaga habilitada.
+     */
+    private suspend fun selectEditorSpecialty(specialtyId: String) {
+        updateState { it.copy(editorSpecialtyId = specialtyId, specialtyCapabilities = UiAsync.Loading) }
+        if (specialtyId.isBlank()) {
+            updateState { it.copy(specialtyCapabilities = UiAsync.Idle) }
+            return
+        }
+        when (val result = getSpecialtyCapabilitiesUseCase(specialtyId)) {
+            is AppResult.Failure -> updateState { it.copy(specialtyCapabilities = UiAsync.Error(result.error)) }
+            is AppResult.Success -> updateState { state ->
+                val capabilities = result.value
+                // Si el tipo elegido deja de estar permitido al cambiar de
+                // especialidad, se cae al primer modo que sí lo esté — nunca se
+                // deja seleccionado en silencio un tipo que el Guardar rechazará.
+                val allowedType = if (capabilities.allows(state.editorTypeExam)) {
+                    state.editorTypeExam
+                } else {
+                    capabilities.firstAllowedType() ?: state.editorTypeExam
+                }
+                state.copy(
+                    specialtyCapabilities = UiAsync.Success(capabilities),
+                    editorTypeExam = allowedType,
+                )
+            }
+        }
+    }
+
     private suspend fun selectExam(id: String) {
         val exam = allExams.firstOrNull { it.id == id } ?: return
         updateState {
@@ -364,8 +446,10 @@ class ExamsViewModel(
                 editorMode = ExamEditorMode.Solucionario,
                 editorTitle = exam.title,
                 editorDescription = exam.description,
+                editorCode = exam.code,
                 editorPriceTickets = exam.priceTickets.toString(),
-                editorSpecialtyId = exam.specialtyId,
+                editorCommunityId = exam.communityId,
+                editorTypeExam = exam.typeExam,
                 editorStatus = exam.status.name.lowercase(),
                 editorPublishFrom = exam.publishFrom?.toString().orEmpty(),
                 editorTypeAccess = exam.typeAccess,
@@ -391,6 +475,7 @@ class ExamsViewModel(
                 actionState = UiAsync.Idle,
             )
         }
+        selectEditorSpecialty(exam.specialtyId)
         if (exam.isRafaga) {
             loadQuestions(exam.id)
         } else {
@@ -485,11 +570,11 @@ class ExamsViewModel(
         }
     }
 
-    private fun resetExamEditor() = resetEditor(ExamEditorMode.Solucionario)
+    private suspend fun resetExamEditor() = resetEditor(ExamEditorMode.Solucionario)
 
-    private fun resetRafagaEditor() = resetEditor(ExamEditorMode.Rafaga)
+    private suspend fun resetRafagaEditor() = resetEditor(ExamEditorMode.Rafaga)
 
-    private fun resetEditor(mode: ExamEditorMode) {
+    private suspend fun resetEditor(mode: ExamEditorMode) {
         if (mode == ExamEditorMode.Solucionario) currentQuestions = emptyList()
         else currentRafagaQuestions = emptyList()
         updateState {
@@ -499,8 +584,10 @@ class ExamsViewModel(
                 selectedRafagaId = null,
                 editorTitle = "",
                 editorDescription = "",
+                editorCode = "",
                 editorPriceTickets = "0",
-                editorSpecialtyId = allSpecialties.firstOrNull()?.id.orEmpty(),
+                editorCommunityId = null,
+                editorTypeExam = "rafaga",
                 editorStatus = "draft",
                 editorPublishFrom = "",
                 editorTypeAccess = "gratuito",
@@ -531,6 +618,7 @@ class ExamsViewModel(
                 actionState = UiAsync.Idle,
             )
         }
+        selectEditorSpecialty(allSpecialties.firstOrNull()?.id.orEmpty())
     }
 
     private suspend fun saveExam() {
@@ -567,14 +655,43 @@ class ExamsViewModel(
                     it.copy(actionState = UiAsync.Error(AppError.Validation("publicar_desde debe tener formato ISO, por ejemplo 2026-04-15T09:00:00Z.")))
                 }
         }
+        val typeExam = ExamType.fromExternal(currentState().editorTypeExam)?.wireValue
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("El tipo de examen no es válido.")))
+            }
+        // Antes, si specialtyCapabilities no era Success (fallo de red, o
+        // todavía Loading), el `capabilities != null &&` de abajo se saltaba
+        // por completo la comprobación y dejaba guardar cualquier tipo sin
+        // verificar — justo el hueco de seguridad que no queremos: no se
+        // guarda un tipo cuya validez no podemos comprobar.
+        when (val capabilitiesState = currentState().specialtyCapabilities) {
+            is UiAsync.Success -> if (!capabilitiesState.value.allows(typeExam)) {
+                return updateState {
+                    it.copy(actionState = UiAsync.Error(AppError.Validation("Esta especialidad no permite el tipo de examen elegido.")))
+                }
+            }
+            else -> return updateState {
+                it.copy(
+                    actionState = UiAsync.Error(
+                        AppError.Validation("No se pudieron comprobar los modos permitidos por la especialidad. Reintenta antes de guardar."),
+                    ),
+                )
+            }
+        }
         updateState { it.copy(actionState = UiAsync.Loading) }
         val status = currentState().editorStatus.toExamStatus()
         val exam = Exam(
             id = existing?.id.orEmpty(),
+            // El código se preserva si el editor lo deja en blanco: antes se
+            // enviaba "" a la primera edición y borraba el código real que el
+            // servidor había autogenerado al crear el examen.
+            code = currentState().editorCode.trim().ifBlank { existing?.code.orEmpty() },
             specialtyId = specialty.id,
             specialtyName = specialty.name,
+            communityId = currentState().editorCommunityId,
             title = currentState().editorTitle.trim(),
             description = currentState().editorDescription.trim(),
+            typeExam = typeExam,
             typeAccess = currentState().editorTypeAccess.ifBlank { "gratuito" },
             priceTickets = priceTickets,
             status = status,
@@ -614,6 +731,53 @@ class ExamsViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * Publica el examen mediante el endpoint real (`POST .../publicar`), no
+     * mediante el guardado genérico. El backend audita esta acción y fija
+     * `publicado_en` con su propio reloj — no hay publicación programada: elegir
+     * una fecha futura en el formulario no la retrasa.
+     */
+    private suspend fun publishExam() {
+        val examId = currentState().selectedExamId
+            ?: return updateState { it.copy(lifecycleActionState = UiAsync.Error(AppError.Validation("Guarda el examen antes de publicarlo."))) }
+        updateState { it.copy(lifecycleActionState = UiAsync.Loading) }
+        when (val result = publishExamUseCase(examId)) {
+            is AppResult.Failure -> updateState { it.copy(lifecycleActionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("exam_publish", mapOf("exam_id" to examId))
+                applyLifecycleResult(result.value)
+                updateState { it.copy(lifecycleActionState = UiAsync.Success(Unit)) }
+            }
+        }
+    }
+
+    private suspend fun unpublishExam() {
+        val examId = currentState().selectedExamId
+            ?: return updateState { it.copy(lifecycleActionState = UiAsync.Error(AppError.Validation("Selecciona un examen para despublicarlo."))) }
+        updateState { it.copy(lifecycleActionState = UiAsync.Loading) }
+        when (val result = unpublishExamUseCase(examId)) {
+            is AppResult.Failure -> updateState { it.copy(lifecycleActionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("exam_unpublish", mapOf("exam_id" to examId))
+                applyLifecycleResult(result.value)
+                updateState { it.copy(lifecycleActionState = UiAsync.Success(Unit)) }
+            }
+        }
+    }
+
+    /**
+     * Refleja en memoria el examen que acaba de devolver publicar/despublicar,
+     * sin esperar a que el `Flow` de `observeExamsUseCase` —que vive en su propia
+     * corrutina— se propague. `selectExam` lee de `allExams`, así que sin esto
+     * el editor podría releerse con el estado anterior a la acción.
+     */
+    private suspend fun applyLifecycleResult(exam: Exam) {
+        allExams = allExams.map { if (it.id == exam.id) exam else it }
+        publishExams()
+        selectExam(exam.id)
+        refreshExamsUseCase()
     }
 
     private suspend fun deleteSelectedExam() {

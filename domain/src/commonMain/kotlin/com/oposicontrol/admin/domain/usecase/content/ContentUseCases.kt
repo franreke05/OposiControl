@@ -137,6 +137,28 @@ class DeleteExamUseCase(
     suspend operator fun invoke(examId: String) = repository.deleteExam(examId)
 }
 
+class PublishExamUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(examId: String): AppResult<Exam> {
+        if (examId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Guarda el examen antes de publicarlo."))
+        }
+        return repository.publishExam(examId)
+    }
+}
+
+class UnpublishExamUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(examId: String): AppResult<Exam> {
+        if (examId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Guarda el examen antes de despublicarlo."))
+        }
+        return repository.unpublishExam(examId)
+    }
+}
+
 class UpsertRafagaUseCase(
     private val repository: ContentRepository,
 ) {

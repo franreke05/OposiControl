@@ -1,12 +1,14 @@
 package com.oposicontrol.admin.features.exams.presentation
 
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.domain.model.Community
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamResourceAudit
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 
 data class ExamsState(
     val specialties: UiAsync<List<Specialty>> = UiAsync.Loading,
@@ -31,14 +33,32 @@ data class ExamsState(
     val selectedRafagaId: String? = null,
     val editorTitle: String = "",
     val editorDescription: String = "",
+    val editorCode: String = "",
     val editorPriceTickets: String = "0",
     val editorSpecialtyId: String = "",
+    val editorCommunityId: String? = null,
+    /** Vocabulario canónico: rafaga | razonado | inmersivo. Restringido por [specialtyCapabilities]. */
+    val editorTypeExam: String = "rafaga",
     val editorStatus: String = "draft",
     val editorPublishFrom: String = "",
     val editorTypeAccess: String = "gratuito",
     val editorYear: String = "",
     val editorIsOfficial: Boolean = false,
     val editorDurationMinutes: String = "",
+    /**
+     * Modos permitidos por la especialidad elegida en el editor. Se recarga cada
+     * vez que cambia [editorSpecialtyId]. `Idle` mientras no hay especialidad
+     * seleccionada todavía.
+     */
+    val specialtyCapabilities: UiAsync<SpecialtyCapabilities> = UiAsync.Idle,
+    /**
+     * Catálogo de comunidades autónomas para el selector de CCAA. Puede quedar en
+     * `Error` sin bloquear el resto del formulario: la tabla que lo respalda es
+     * una migración reciente que podría no estar aplicada en todos los entornos.
+     */
+    val communities: UiAsync<List<Community>> = UiAsync.Idle,
+    /** Acción de publicar/despublicar en curso — distinta de [actionState], que es la del guardado general. */
+    val lifecycleActionState: UiAsync<Unit> = UiAsync.Idle,
     val editorCoverUrl: String = "",
     val editorCoverStoragePath: String = "",
     val editorCoverMimeType: String = "",

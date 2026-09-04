@@ -369,6 +369,15 @@ class SupabaseContentRepositoryImpl(
         return result
     }
 
+    // Tabla legacy `examen` (id numérico), previa a `/admin/v1/examenes/{id}/
+    // publicar|despublicar`. No está cableado en DI (ver DataModule.kt): nada
+    // llega a ejecutar esto en producción.
+    override suspend fun publishExam(examId: String): AppResult<Exam> =
+        AppResult.Failure(AppError.Unknown("Publicar examen no está soportado en este repositorio legacy."))
+
+    override suspend fun unpublishExam(examId: String): AppResult<Exam> =
+        AppResult.Failure(AppError.Unknown("Despublicar examen no está soportado en este repositorio legacy."))
+
     override suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga> {
         val accessToken = requireAccessToken("guardar rafagas") ?: return authFailure("guardar rafagas")
         ensureConfigured()?.let { return AppResult.Failure(it) }

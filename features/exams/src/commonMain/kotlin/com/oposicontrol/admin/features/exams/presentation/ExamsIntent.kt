@@ -24,6 +24,8 @@ sealed interface ExamsIntent {
     data object RequestDeleteSelectedQuestion : ExamsIntent
     data object RequestDeleteSelectedRafagaQuestion : ExamsIntent
     data object RequestClearExamCover : ExamsIntent
+    data object PublishExam : ExamsIntent
+    data object UnpublishExam : ExamsIntent
     data object ConfirmPendingDelete : ExamsIntent
     data object DismissPendingDelete : ExamsIntent
     data class SelectExam(val id: String) : ExamsIntent
@@ -45,8 +47,11 @@ sealed interface ExamsIntent {
     data class ToggleSpecialtyActive(val value: Boolean) : ExamsIntent
     data class UpdateTitle(val value: String) : ExamsIntent
     data class UpdateDescription(val value: String) : ExamsIntent
+    data class UpdateCode(val value: String) : ExamsIntent
     data class UpdatePriceTickets(val value: String) : ExamsIntent
     data class UpdateSpecialtyId(val value: String) : ExamsIntent
+    data class UpdateCommunityId(val value: String?) : ExamsIntent
+    data class UpdateTypeExam(val value: String) : ExamsIntent
     data class UpdateExamStatus(val value: String) : ExamsIntent
     data class UpdatePublishFrom(val value: String) : ExamsIntent
     data class UpdateTypeAccess(val value: String) : ExamsIntent

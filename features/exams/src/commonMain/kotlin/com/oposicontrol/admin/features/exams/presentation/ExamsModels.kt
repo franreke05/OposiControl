@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.exams.presentation
 import com.oposicontrol.admin.core.common.id.randomUuid
 import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 
 data class QuestionOptionDraft(
     val id: String,
@@ -107,6 +108,44 @@ internal fun blankResourceDraft(): QuestionResourceDraft {
         sortOrder = 0,
     )
 }
+
+/**
+ * Si esta especialidad permite el tipo de examen dado (§capacidades_especialidad).
+ *
+ * La restricción es sólo de UI: el backend de `updateExamen`/`createExamen` no
+ * valida `tipoExamen` contra las capacidades de la especialidad server-side, así
+ * que esto es lo único que impide guardar un examen Inmersivo en una
+ * especialidad que sólo tiene Ráfaga habilitada.
+ */
+internal fun SpecialtyCapabilities.allows(typeExam: String): Boolean = when (typeExam.trim().lowercase()) {
+    "rafaga" -> permiteRafagas
+    "razonado", "guiado" -> permiteRazonados
+    "inmersivo" -> permiteInmersivos
+    else -> false
+}
+
+/** El primer modo habilitado, en el orden habitual de presentación. Null si la especialidad no permite ninguno. */
+internal fun SpecialtyCapabilities.firstAllowedType(): String? = when {
+    permiteRafagas -> "rafaga"
+    permiteRazonados -> "razonado"
+    permiteInmersivos -> "inmersivo"
+    else -> null
+}
+
+/**
+ * Si tiene sentido ofrecer la compra individual con OposiTickets para este
+ * `tipo_acceso`.
+ *
+ * Auditoría real (no una regla inventada): `SupabaseV1Gateway.kt` sirve las
+ * preguntas de un examen ráfaga sin ninguna comprobación de compra en cuanto
+ * `tipo_acceso == "gratuito"` — el examen ya está abierto para cualquiera. No
+ * hay ningún endpoint de "comprar examen" en este backend que consulte
+ * `precio_tickets`, así que un precio en un examen gratuito no desbloquea nada
+ * que no estuviera ya desbloqueado: es dato inerte, no una función real.
+ * `premium` sí es el único punto real de esta pantalla donde OT tiene efecto,
+ * a falta de un sistema de planes por examen.
+ */
+internal fun String.allowsOposiTicketsPurchase(): Boolean = trim().lowercase() != "gratuito"
 
 internal fun String.toExamStatus(): ExamStatus {
     return when (lowercase()) {

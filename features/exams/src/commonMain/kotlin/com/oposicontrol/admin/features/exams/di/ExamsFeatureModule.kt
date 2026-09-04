@@ -1,5 +1,7 @@
 package com.oposicontrol.admin.features.exams.di
 
+import com.oposicontrol.admin.domain.usecase.communities.ObserveCommunitiesUseCase
+import com.oposicontrol.admin.domain.usecase.communities.RefreshCommunitiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCase
@@ -16,6 +18,9 @@ import com.oposicontrol.admin.domain.usecase.content.UploadPdfToStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetRafagaQuestionsUseCase
+import com.oposicontrol.admin.domain.usecase.content.GetSpecialtyCapabilitiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.PublishExamUseCase
+import com.oposicontrol.admin.domain.usecase.content.UnpublishExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.ImportQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveRafagaQuestionUseCase
@@ -50,6 +55,11 @@ val examsFeatureModule = module {
     factory { GetExamResourceAuditUseCase(get()) }
     factory { UpsertExamUseCase(get()) }
     factory { DeleteExamUseCase(get()) }
+    factory { PublishExamUseCase(get()) }
+    factory { UnpublishExamUseCase(get()) }
+    factory { GetSpecialtyCapabilitiesUseCase(get()) }
+    factory { ObserveCommunitiesUseCase(get()) }
+    factory { RefreshCommunitiesUseCase(get()) }
     factory { UpsertRafagaUseCase(get()) }
     factory { DeleteRafagaUseCase(get()) }
     factory { UpsertQuestionUseCase(get()) }
@@ -85,6 +95,11 @@ val examsFeatureModule = module {
             getExamResourceAuditUseCase = get(),
             upsertExamUseCase = get(),
             deleteExamUseCase = get(),
+            publishExamUseCase = get(),
+            unpublishExamUseCase = get(),
+            getSpecialtyCapabilitiesUseCase = get(),
+            observeCommunitiesUseCase = get(),
+            refreshCommunitiesUseCase = get(),
             upsertRafagaUseCase = get(),
             deleteRafagaUseCase = get(),
             upsertQuestionUseCase = get(),

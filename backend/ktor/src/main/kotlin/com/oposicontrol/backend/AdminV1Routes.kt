@@ -795,6 +795,16 @@ data class AdminExamenDto(
     val portadaUrl: String? = null,
     val portadaStoragePath: String? = null,
     val portadaMimeType: String? = null,
+    /**
+     * Metadatos de sólo lectura. La columna ya existe en `examenes` — el listado
+     * ordena por `creado_en.desc` — simplemente no se exponía en este DTO. Nunca
+     * se envían en escritura: `encodeDefaults=false` (comportamiento por defecto
+     * de kotlinx.serialization en este proyecto) omite un valor igual a su
+     * default, así que dejarlos en null en un `Exam` de escritura los omite del
+     * JSON en vez de mandar `null` y borrar la fecha real.
+     */
+    val creadoEn: String? = null,
+    val actualizadoEn: String? = null,
 )
 
 @Serializable
@@ -817,6 +827,8 @@ private data class AdminExamenRow(
     @SerialName("portada_url") val portadaUrl: String? = null,
     @SerialName("portada_storage_path") val portadaStoragePath: String? = null,
     @SerialName("portada_mime_type") val portadaMimeType: String? = null,
+    @SerialName("creado_en") val creadoEn: String? = null,
+    @SerialName("actualizado_en") val actualizadoEn: String? = null,
 )
 
 private fun AdminExamenRow.toDto() = AdminExamenDto(
@@ -838,6 +850,8 @@ private fun AdminExamenRow.toDto() = AdminExamenDto(
     portadaUrl = portadaUrl,
     portadaStoragePath = portadaStoragePath,
     portadaMimeType = portadaMimeType,
+    creadoEn = creadoEn,
+    actualizadoEn = actualizadoEn,
 )
 
 private fun AdminExamenDto.toRow(forcedId: String? = null) = AdminExamenRow(
