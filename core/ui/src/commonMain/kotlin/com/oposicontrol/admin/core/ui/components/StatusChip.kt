@@ -3,11 +3,15 @@ package com.oposicontrol.admin.core.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.Radius
 
 /**
  * Significado de un estado, independiente de la palabra concreta.
@@ -94,6 +99,64 @@ fun StatusChip(
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
             color = animatedForeground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * Chip de estado en formato píldora, para ir SOBRE cristal.
+ *
+ * Se separa de [StatusChip] porque el sitio donde vive es distinto y las
+ * restricciones también: [StatusChip] se dibuja sobre superficie opaca y puede
+ * teñir su propio fondo con el color de estado al 12%; aquí el fondo es
+ * translúcido y ese mismo tinte se sumaría al degradado que hay detrás, dando un
+ * color distinto en cada punto de la pantalla. Por eso el relleno es blanco
+ * translúcido —siempre el mismo— y el color del estado se concentra en el punto.
+ *
+ * El punto NO es el único portador del significado: la etiqueta dice «Ktor
+ * operativo», así que quien no distingue verde de ámbar lee exactamente la misma
+ * información. Es la misma garantía que en [StatusChip] da el icono.
+ */
+@Composable
+fun StatusDotChip(
+    label: String,
+    modifier: Modifier = Modifier,
+    tone: StatusTone = statusToneFor(label),
+) {
+    val tokens = GlassTheme.tokens
+    val dot = when (tone) {
+        StatusTone.POSITIVE -> tokens.success
+        StatusTone.ATTENTION -> tokens.warning
+        StatusTone.NEGATIVE -> tokens.danger
+        StatusTone.UNKNOWN -> tokens.textSecondary
+        StatusTone.NEUTRAL -> tokens.info
+    }
+    val animatedDot by animateColorAsState(targetValue = dot, animationSpec = tween(180))
+
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = 26.dp)
+            .clip(Radius.pill)
+            .background(tokens.glassFillStrong)
+            .border(1.dp, tokens.sectionGlassStroke, Radius.pill)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .semantics { contentDescription = "Estado: $label" },
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(7.dp)
+                .clip(Radius.pill)
+                .background(animatedDot),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = tokens.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

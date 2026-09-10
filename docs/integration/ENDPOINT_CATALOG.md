@@ -230,6 +230,54 @@ dialog opens and held for the whole operation, so retries and double clicks reus
 it. A key generated per attempt would satisfy the endpoint and still allow a
 double grant.
 
+## Dashboard V2 — contrato agregado (2026-09-10)
+
+Bajo `authenticate("gateway-auth")`, sólo lectura. Implementado en
+`AdminDashboardOverview.kt` con gateway propio de superficie mínima, siguiendo el
+precedente de `AdminAnalytics`/`AdminRankings` y no `AdminV1Gateway`.
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `ADM-DASH-001` | GET | `/api/v1/admin/dashboard/overview[?sections=]` | `SOURCE_VERIFIED` / `TEST_VERIFIED`; `LIVE_VERIFIED: NO` |
+
+Forma del contrato:
+
+- Seis franjas: `system`, `attention`, `pulse`, `content`, `activity`, `economy`.
+- `?sections=` es CSV opcional, case-insensitive. Omitido = todas. Una sección
+  desconocida responde **400** nombrando las válidas, no la ignora en silencio.
+- **Franja ausente ≠ franja fallida.** Ausente = no se pidió; fallida = se pidió y
+  Ktor no pudo componerla, y entonces aparece nombrada en `failedBlocks`. Nunca
+  hay 500 porque una franja se rompa.
+- `system.health` incluye `supabaseLatencyMs: Long?` — milisegundos de la sonda a
+  Supabase, presente **sólo si la sonda se completó**. No es la latencia general
+  de la API, que sigue declarada en `notInstrumented` como `apiLatencyMs`.
+- `activity` incluye `droppedEntries: Int` — filas de `auditoria_log` leídas y no
+  entregadas por `creado_en` ilegible o `id` vacío. Existe para que «no pude leer
+  nada» no se lea como «no ha pasado nada». Una entrada exige id no vacío y fecha
+  interpretable; sin ambas, se descarta y se cuenta.
+- `ACTIVITY_LIMIT = 8` es deliberado y está protegido por test: cubre las 5 filas
+  que pinta el panel más holgura para descartes, que ocurren **después** del
+  `limit` de PostgREST.
+- Los campos numéricos no llevan valor por defecto y el `Json` del servidor usa
+  `explicitNulls = false`, así que **un campo ausente no significa cero**: la
+  autoridad es siempre `unavailableMetrics`, nunca la presencia del campo.
+- `grossRevenueCents` y `ticketsInCirculation` viajan siempre `NOT_INSTRUMENTED`
+  con la vista concreta que haría falta (requieren `SUM`).
+
+Métrica nueva de producto: `subscriptionsExpiring7d` (`suscripciones`,
+`estado=eq.activa` y `fin_en` acotado por los dos extremos), distinta del
+horizonte de contexto `subscriptionsExpiring30d` que ya existía en analítica.
+
+Cambio de consumidor: `GET /api/v1/admin/estado-sistema` pasa de
+`AVAILABLE_NOT_USED` a **consumido** por la pantalla de Estado del sistema
+(`KtorSystemStatusRepositoryImpl`). `GET /api/v1/admin/dashboard` no se retira:
+sigue alimentando el Home móvil.
+
+Protección de contrato: las 17 claves de métrica y los 6 nombres de franja están
+duplicados entre `:domain` y `:backend:ktor` —el backend no depende del dominio a
+propósito— y se fijan con **dos tests espejo de literales escritos a mano**,
+verificados por mutación en ambos lados.
+
 ## Knowledge-loss check
 
 | Family | Result |

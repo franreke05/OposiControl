@@ -88,6 +88,7 @@ fun DesktopShell(
     showPageHeader: Boolean = true,
     primaryActionLabel: String? = null,
     onPrimaryAction: (() -> Unit)? = null,
+    primaryActionIcon: AppIcon? = null,
     canGoBack: Boolean = false,
     onBack: (() -> Unit)? = null,
     globalSearch: @Composable () -> Unit = {},
@@ -123,6 +124,7 @@ fun DesktopShell(
                             breadcrumbs = if (showBreadcrumbs) breadcrumbs else emptyList(),
                             primaryActionLabel = primaryActionLabel,
                             onPrimaryAction = onPrimaryAction,
+                            primaryActionIcon = primaryActionIcon,
                             canGoBack = canGoBack,
                             onBack = onBack,
                             breakpoint = breakpoint,
@@ -466,6 +468,7 @@ fun DesktopPageHeader(
     breadcrumbs: List<String> = emptyList(),
     primaryActionLabel: String? = null,
     onPrimaryAction: (() -> Unit)? = null,
+    primaryActionIcon: AppIcon? = null,
     canGoBack: Boolean = false,
     onBack: (() -> Unit)? = null,
     breakpoint: DesktopBreakpoint = DesktopWindow.breakpoint,
@@ -536,7 +539,11 @@ fun DesktopPageHeader(
             ) {
                 actions()
                 if (primaryActionLabel != null && onPrimaryAction != null) {
-                    PrimaryButton(text = primaryActionLabel, onClick = onPrimaryAction)
+                    PrimaryButton(
+                        text = primaryActionLabel,
+                        onClick = onPrimaryAction,
+                        icon = primaryActionIcon?.let { { AppIconImage(it, size = 15.dp) } },
+                    )
                 }
             }
         }

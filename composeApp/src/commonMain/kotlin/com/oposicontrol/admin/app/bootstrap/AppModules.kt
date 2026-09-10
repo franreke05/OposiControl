@@ -11,9 +11,11 @@ import com.oposicontrol.admin.features.dashboard.di.dashboardFeatureModule
 import com.oposicontrol.admin.features.examaccess.di.examAccessFeatureModule
 import com.oposicontrol.admin.features.exams.di.examsFeatureModule
 import com.oposicontrol.admin.features.forum.di.forumFeatureModule
+import com.oposicontrol.admin.features.imports.di.importFeatureModule
 import com.oposicontrol.admin.features.moderation.di.moderationFeatureModule
 import com.oposicontrol.admin.features.opositester.di.opositesterFeatureModule
 import com.oposicontrol.admin.features.news.di.newsFeatureModule
+import com.oposicontrol.admin.features.questions.di.questionsFeatureModule
 import com.oposicontrol.admin.features.newstypes.di.newsTypesFeatureModule
 import com.oposicontrol.admin.features.reports.di.reportsFeatureModule
 import com.oposicontrol.admin.features.roles.di.rolesFeatureModule
@@ -47,6 +49,8 @@ fun appModules(
         newsFeatureModule,
         examsFeatureModule,
         examAccessFeatureModule,
+        questionsFeatureModule,
+        importFeatureModule,
         analyticsFeatureModule,
         rankingsFeatureModule,
         storeFeatureModule,

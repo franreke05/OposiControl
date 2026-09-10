@@ -70,6 +70,15 @@ fun AppShell(
     showScreenHeader: Boolean = true,
     primaryActionLabel: String? = null,
     onPrimaryAction: (() -> Unit)? = null,
+    /**
+     * Icono de la acción primaria. Sólo escritorio.
+     *
+     * En móvil la acción primaria se dibuja dentro de [ScreenHeader], que es una
+     * cabecera compacta donde el icono competiría con el título; y las 13
+     * pantallas que hoy pasan `primaryActionLabel` no piden ninguno. Por eso
+     * llega hasta [DesktopPageHeader] y ahí se queda.
+     */
+    primaryActionIcon: AppIcon? = null,
     canGoBack: Boolean = false,
     onBack: (() -> Unit)? = null,
     // Solo afecta al layout compacto (el de escritorio usa un sidebar, no una
@@ -104,6 +113,7 @@ fun AppShell(
                 showPageHeader = showScreenHeader,
                 primaryActionLabel = primaryActionLabel,
                 onPrimaryAction = onPrimaryAction,
+                primaryActionIcon = primaryActionIcon,
                 canGoBack = canGoBack,
                 onBack = onBack,
                 globalSearch = globalSearch,

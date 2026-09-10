@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.core.ui.theme
 
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -54,6 +55,16 @@ class DesignTokensTest {
             assertEquals(0f, valor.value % 4f, "$valor no es múltiplo de 4")
         }
         assertEquals(escala.sortedBy { it.value }, escala, "la escala debe ser creciente")
+    }
+
+    @Test
+    fun `el radio de tarjeta de dato tiene token propio`() {
+        // El 12dp de SummaryCard, GlassSurface-escritorio y ErrorStateCard estaba
+        // escrito a mano en tres sitios porque la escala saltaba de 10 a 14.
+        // Ahora tiene nombre, y queda entre los dos.
+        assertEquals(RoundedCornerShape(12.dp), Radius.card)
+        assertEquals(RoundedCornerShape(10.dp), Radius.md, "md no debe moverse: es aditivo")
+        assertEquals(RoundedCornerShape(14.dp), Radius.lg, "lg no debe moverse: es aditivo")
     }
 
     @Test

@@ -45,12 +45,37 @@ fun desktopTypography(manrope: FontFamily): Typography {
     return Typography(
         // H1 — título de pantalla.
         displayLarge = style(30, FontWeight.SemiBold, lineHeight = 1.25f, letterSpacing = -0.4f),
+        /*
+         * CIFRA de una tarjeta de dato — KPI, tarjeta de atención.
+         *
+         * Es el peldaño que faltaba, y faltaba de una forma concreta: la escala
+         * saltaba de 23sp (`headlineSmall`) a 30sp (`displayLarge`), así que una
+         * cifra sólo podía elegir entre quedarse a 23 —el mismo cuerpo que un
+         * título de sección, con lo que no dominaba su propia tarjeta— o subir a
+         * 30 y pesar tanto como el título de la pantalla entera.
+         *
+         * 27sp resuelve las dos cosas: manda con claridad dentro de la tarjeta y
+         * sigue por debajo del H1. `lineHeight` 1,15 porque una cifra es una sola
+         * línea y el interlineado de párrafo sólo le añadiría hueco muerto.
+         */
+        headlineMedium = style(27, FontWeight.SemiBold, lineHeight = 1.15f, letterSpacing = -0.4f),
         // H2 — título de sección mayor / valor destacado.
         headlineSmall = style(23, FontWeight.SemiBold, lineHeight = 1.3f, letterSpacing = -0.2f),
         // H3 — cabecera de card o bloque.
         titleLarge = style(19, FontWeight.SemiBold, lineHeight = 1.35f),
         // Subtítulo / etiqueta fuerte dentro de una sección.
         titleMedium = style(15, FontWeight.SemiBold, lineHeight = 1.4f),
+        /*
+         * Nombre de una tarjeta de dato y cifra de una fila de lista.
+         *
+         * Estaba en uso —el panel lo pide en dos sitios, y otras nueve pantallas
+         * más— pero NO estaba definido, así que Material lo resolvía con su
+         * default: `FontFamily.Default` a 14sp Medium. En pantalla eso es la
+         * fuente del sistema, no Manrope, con otra métrica y otro peso justo al
+         * lado de texto que sí es Manrope. Definirlo no es un cambio de escala,
+         * es cerrar un agujero por el que se colaba otra tipografía.
+         */
+        titleSmall = style(14, FontWeight.SemiBold, lineHeight = 1.35f),
         // Cuerpo principal.
         bodyLarge = style(15, FontWeight.Normal),
         // Cuerpo secundario y celdas de tabla.

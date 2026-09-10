@@ -244,8 +244,14 @@ data class MarketingAnalyticsDto(
  * Agrupa las dos listas de disponibilidad para que construir una métrica sea
  * siempre la misma llamada y nadie pueda "olvidar" mirar la lista en una de las
  * cuarenta métricas.
+ *
+ * Es `internal` y no privado de este fichero porque el Dashboard V2
+ * ([KtorDashboardOverviewRepositoryImpl]) mapea exactamente el mismo contrato de
+ * disponibilidad. Copiarlo allí sería tener dos veces la única regla que impide
+ * que un número de relleno llegue a pantalla, que es justo el defecto que este
+ * fichero existe para cerrar.
  */
-private class AnalyticsMapping(
+internal class AnalyticsMapping(
     unavailable: List<String>,
     notInstrumented: List<AnalyticsGapPayload>,
 ) {

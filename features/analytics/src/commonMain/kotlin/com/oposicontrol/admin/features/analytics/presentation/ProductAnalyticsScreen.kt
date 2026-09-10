@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -48,8 +49,22 @@ import com.oposicontrol.admin.domain.model.AnalyticsTable
  * es un dato, si no se pudo leer, o si nadie lo ha instrumentado todavía.
  */
 @Composable
-fun ProductAnalyticsScreen(viewModel: ProductAnalyticsViewModel) {
+fun ProductAnalyticsScreen(
+    viewModel: ProductAnalyticsViewModel,
+    /**
+     * Sección con la que abrir. La fijan las entradas de menú antiguas de
+     * Estudio y Eventos, que ahora apuntan a esta misma pantalla — antes caían
+     * al adaptador legacy de Dashboard, que no tenía nada que ver.
+     */
+    initialSection: AnalyticsSection? = null,
+) {
     val state by viewModel.state.collectAsState()
+
+    LaunchedEffect(initialSection) {
+        if (initialSection != null && initialSection != state.section) {
+            viewModel.dispatch(ProductAnalyticsIntent.SelectSection(initialSection))
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),

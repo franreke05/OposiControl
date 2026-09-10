@@ -139,4 +139,113 @@ class NavigationInformationArchitectureTest {
             assertEquals(item.metadata.id, metadata.id)
         }
     }
+
+    // --- Consolidación de navegación (2026-09-04): de 31 a 14 -----------------
+    // El sidebar pasó de 31 entradas a 14. Estas pruebas fijan el número exacto
+    // y que cada ruta que salió del menú (a) sigue registrada, (b) sigue
+    // resolviendo metadata sin reventar, y (c) sigue accesible por ruta directa
+    // — que es justo lo que "reorganizar sin borrar funcionalidad" significa.
+
+    @Test
+    fun theSidebarHasExactlyTheFourteenTargetEntries() {
+        val sidebarTitles = appNavigationGroups.flatMap { it.sidebarItems }.map { it.metadata.title }
+
+        assertEquals(14, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 14: $sidebarTitles")
+        assertEquals(
+            listOf(
+                "Dashboard",
+                "Exámenes", "Preguntas", "Importación",
+                "Usuarios",
+                "Catálogo", "OposiMarket", "OposiTickets",
+                "OposiRed", "Moderación", "Soporte",
+                "Analytics",
+                "Noticias",
+                "Sistema",
+            ),
+            sidebarTitles,
+        )
+    }
+
+    @Test
+    fun examsKeepsItsOwnSidebarEntryUnmergedWithAnyHub() {
+        // El requisito explícito de esta fase: Exámenes no se fusiona con
+        // Preguntas, Especialidades ni ningún hub.
+        val exams = allItems.single { it.route == AppRoute.Content.Exams }
+        assertTrue(exams.metadata.showInSidebar, "Exámenes debe seguir en el sidebar")
+        assertEquals("Exámenes", exams.metadata.title)
+        assertEquals(NavigationGroupId.CONTENT, exams.metadata.group)
+    }
+
+    @Test
+    fun theSeventeenRemovedRoutesAreHiddenNotDeleted() {
+        // Las cuatro rutas de Sistema (Roles/Settings/Diagnostics/Audit) suman
+        // sólo tres aquí: Settings es la que se dejó visible como "Sistema" —
+        // ver systemSettingsIsTheOneVisibleSystemEntryRelabeledSistema.
+        val hiddenRoutes = listOf(
+            AppRoute.Content.Taxonomy,
+            AppRoute.Content.Resources,
+            AppRoute.Rankings,
+            AppRoute.Commercial.Subscriptions,
+            AppRoute.Commercial.Plans,
+            AppRoute.Commercial.Consumables,
+            AppRoute.Commercial.Promotions,
+            AppRoute.Commercial.PopupRules,
+            AppRoute.Reports.List,
+            AppRoute.OposiTester.List,
+            AppRoute.Analytics.Performance,
+            AppRoute.Analytics.Events,
+            AppRoute.Publication.NewsTypes,
+            AppRoute.Publication.Assets,
+            AppRoute.System.Roles,
+            AppRoute.System.Diagnostics,
+            AppRoute.System.Audit,
+        )
+
+        hiddenRoutes.forEach { route ->
+            val item = allItems.singleOrNull { it.route == route }
+            assertTrue(item != null, "$route ya no está registrada en el catálogo — no debería haberse borrado")
+            assertTrue(!item.metadata.showInSidebar, "$route debería estar oculta del sidebar, no lo está")
+            // No revienta: metadata() sigue resolviendo para breadcrumbs/título.
+            route.metadata()
+        }
+    }
+
+    @Test
+    fun systemSettingsIsTheOneVisibleSystemEntryRelabeledSistema() {
+        // De las cuatro rutas de Sistema, Settings es la que se dejó visible
+        // (abre el hub en su pestaña "Preferencias") — las otras tres
+        // (Roles/Diagnostics/Audit) están ocultas, cubiertas por
+        // theSeventeenRemovedRoutesAreHiddenNotDeleted.
+        val settings = allItems.single { it.route == AppRoute.System.Settings }
+        assertTrue(settings.metadata.showInSidebar)
+        assertEquals("Sistema", settings.metadata.title)
+    }
+
+    @Test
+    fun supportMovedFromOperationsToCommunity() {
+        val support = allItems.single { it.route == AppRoute.Support.Inbox }
+        assertEquals(NavigationGroupId.COMMUNITY, support.metadata.group)
+        assertTrue(support.metadata.showInSidebar)
+    }
+
+    @Test
+    fun subscriptionsMovedFromEconomyToUsers() {
+        val subscriptions = allItems.single { it.route == AppRoute.Commercial.Subscriptions }
+        assertEquals(NavigationGroupId.USERS, subscriptions.metadata.group)
+    }
+
+    @Test
+    fun auditMovedFromOperationsToSystem() {
+        val audit = allItems.single { it.route == AppRoute.System.Audit }
+        assertEquals(NavigationGroupId.SYSTEM, audit.metadata.group)
+    }
+
+    @Test
+    fun reportsIconIsTheRealRegistryKeyNotASwappedArgument() {
+        // Bug preexistente: id/icon estaban intercambiados posicionalmente para
+        // esta única fila. Ver el comentario en AppNavigationCatalog.kt.
+        val reports = allItems.single { it.route == AppRoute.Reports.List }
+        assertEquals("reports", reports.metadata.id)
+        assertEquals(com.oposicontrol.admin.core.ui.components.AppIcon.REPORTS.key, reports.icon)
+    }
 }

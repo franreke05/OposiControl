@@ -292,6 +292,242 @@ Rutas nuevas verificadas en ejecución (registradas y protegidas con 401):
 rankings/*, analytics/*, market/*, comercial/*, especialidades/{id}/capacidades,
 usuarios/{id}/detalle}`.
 
+## Preguntas + Importación — desktop redesign (2026-09-04)
+
+UI/UX-only pass (Admin UI Hashira lens), uncommitted working tree, no branch created. `CONFIRMED_PRODUCT_DECISION` from the requesting session: both screens get dedicated desktop modules, isolated from `features:exams` and from `ContentRepository`/`ExamQuestion`, mirroring each other.
+
+**Preguntas**: new `features:questions` module (`QuestionsScreen`/`QuestionsViewModel`/`KtorQuestionsRepositoryImpl`) renders on desktop (`!compactLayout`) instead of the legacy `QuestionsResourcesScreen` (`features:exams`, left in place, unreferenced). New domain types `QuestionListItem`/`QuestionDetail`/`QuestionDraft`/`QuestionExamLink*` (`domain/model/QuestionBank.kt`) and a `QuestionsRepository` interface — additive, `ExamQuestion` and `ContentRepository` are `0`-diff. Base-field edits (enunciado/tipo/fuente/explicación/activa) and exam association write for real through the existing `PATCH /api/v1/admin/preguntas/{id}`; create and option/correct-answer edits still fail live (`admin_create_question`/`admin_replace_question_options` RPC absent, per prior audit) — represented as honest backend errors, never simulated success. No reverse pregunta→exámenes query exists, so "Exámenes asociados" only shows relations known from context/this session, by design (`CONFIRMED_PRODUCT_DECISION`, no fan-out). No Tema field in schema — shown disabled/honest.
+
+**Importación**: new `features:imports` module (`ImportScreen`/`ImportWizardScreen`/`ImportViewModel`) renders on desktop only; `!compactLayout` is the only new branch in `AppRoot.kt`'s `CONTENT_UPLOAD` target, `compactLayout` still renders the untouched `ContentUploadScreen` (`features:exams`). No new repository/RPC: reuses the exact `domain.usecase.content.*` use cases the legacy screen already called (`ListContentImportBatchesUseCase`, `UploadPdfToStagingUseCase`, `UpdateContentImportStagingUseCase`, `PublishContentImportBatchUseCase`, etc.) against the existing `ContentImportRepository`. One real new capability: a working JVM `JFileChooser` PDF picker (`ImportFilePicker.jvm.kt`) — `features/exams`'s `ContentFilePicker` JVM `actual` is a no-op stub today and was left untouched. Publish stays real but non-atomic (same `content_import_atomicity_candidate_v1/002`, `APPLY_PENDING_APPROVAL` gap as before) — the new screen states this next to the Publish button instead of hiding it. `PDF_FORMAT_CONTRACT` is still `docs/product/domains/PDF_IMPORT.md`'s territory (`WAITING_CLIENT_INPUT` there as of this write); this session's type-selection UI (Ráfaga/Razonado/Inmersivo, `ContentExamType`) and codes panel (`ID_GLOBAL`/`ID_EXAMEN`/`TEMA`/`ID_AUDIO`/`ID_VIDEO`/`ID_IMAGEN`) reflect the format a parallel session was asked to specify for the backend/parser side; no template file exists to serve, so "Descargar plantilla" renders honestly disabled.
+
+Tests: `:features:questions:jvmTest` 13/13, `:features:imports:jvmTest` 10/10, `:domain:jvmTest`, `:data:jvmTest`, `:composeApp:jvmTest` all green; `:composeApp:compileKotlinJvm` and `:composeApp:compileDevDebugKotlinAndroid` green. `git diff --stat` confirms `features/exams/`, `domain/repository/ContentRepository.kt` and `data/repository/KtorAdminV1ContentRepositoryImpl.kt` at `0` lines changed throughout.
+
+Runtime: live JVM window (real backend at `localhost:8080`, session pre-authenticated), screenshots captured for both screens' home/list states and the Preguntas editor's populated sections. `NOT_VERIFIED` in this pass: the Import wizard/review/staging-editor/publish screens at runtime (unit-tested only — opening them needs a real PDF through a native file dialog, deliberately not automated after an earlier incident this session where a mistimed scroll landed on the operator's own foreground browser tab instead of the app window); 1366/1920 breakpoints; Razonada/Inmersiva conditional sections at runtime for Preguntas.
+
+`DATABASE_CHANGES: NONE`. `MAIN_WRITES: NONE` (all live calls made were reads or the operator's own prior writes through existing endpoints).
+
+### Content backend — live read-only audit (2026-09-04, same session)
+
+First audit of Exámenes/Preguntas/Importación performed **against the live database by
+direct PostgREST introspection**, not inherited from a prior report. Environment confirmed
+by the operator as **the real database with user data**, so: zero writes, zero migrations
+applied. `DATABASE_APPLY_APPROVAL_REQUIRED: YES`.
+
+`LIVE_VERIFIED` findings:
+
+- Ktor `GET /health` `200`; `/health/ready` → `{"ktor":"up","supabase":"up"}`.
+- Auth gate real: `/api/v1/admin/{especialidades,examenes,preguntas}` → `401` without JWT.
+- Reads with the loopback dev token: especialidades `200` (3), examenes `200` (5),
+  preguntas `200` (**0 active**).
+- **`admin_create_question`, `admin_replace_question_options` and `admin_import_lote_preguntas`
+  do NOT exist** in the database. Only `admin_grant_tickets` plus stats/roles/access RPCs are
+  exposed. Question creation and option/solution replacement therefore fail live today; base-field
+  edits do not, because `updatePregunta` PATCHes `preguntas` directly.
+- **No Tema/topic table or relation exists** (0 of 90 exposed relations match `tema|topic`):
+  `TOPIC_TABLE_EXISTS: NO`, `TOPIC_CODE_EXISTS: NO`, `QUESTION_TOPIC_RELATION_EXISTS: NO` —
+  `SCHEMA_GAP` confirmed live, so the desktop UI's disabled/honest Tema block is correct.
+- `preguntas` carries real `creado_en`/`actualizado_en`, and `lotes_importacion_preguntas`
+  carries `creado_en`; **the Ktor row DTOs drop all three**, which is why the desktop UI shows
+  "No disponible". Fixable in Kotlin, no migration needed.
+- `recursos_pregunta.codigo_recurso` (NOT NULL) exists — human resource codes are modelled but
+  not exposed by `AdminRecursoDto`.
+- `preguntas_examen` has `numero_en_examen` NOT NULL; Kotlin's `upsertPreguntaExamen` does not
+  send it, while `content_import_atomicity_candidate_v1/002` does. If the column has no DEFAULT,
+  every exam association insert fails live. `NOT_VERIFIED` — needs one authorized write.
+- `preguntas`: 1 row total, 0 active — the session's test question `TCAE-TEST-RAF-P001` exists
+  but is archived (`activa=false`). Not hard-deleted; restoring it is a one-column update, not
+  performed (write).
+- `lotes_importacion_preguntas` and `preguntas_parseadas_staging`: **0 rows** — the import
+  pipeline has never run against this database, so the CHECK values of `estado`/`estado_parseo`
+  remain unobservable and must not be invented.
+
+#### Live write verification (2026-09-04, authorized bounded fixtures)
+
+The operator authorized bounded writes in production with clearly-marked fixtures.
+Fixture `EX-TEST-20260904-01` was created, exercised and archived. The five pre-existing
+exams were re-read afterwards and remain `activo=true`, untouched. `REAL_DATA_MODIFIED: NO`.
+
+**Exámenes — `LIVE_VERIFIED` end to end**, each write followed by a verification read:
+
+| Operación | Ruta | HTTP | Verificación |
+|---|---|---|---|
+| CREATE | `POST /api/v1/admin/examenes` | `201` | aparece en la lista |
+| UPDATE | `PATCH /api/v1/admin/examenes/{id}` | `200` | título releído = editado |
+| PUBLISH | `POST .../{id}/publicar` | `200` | `publicado_en` con timestamp real |
+| UNPUBLISH | `POST .../{id}/despublicar` | `200` | `publicado_en` vuelve a vacío |
+| ARCHIVE | `DELETE /api/v1/admin/examenes/{id}` | `200` | `activo=false`, fila conservada (no hard delete) |
+
+**Preguntas — `LIVE_VERIFIED: BLOQUEADO`.** Un intento real de alta devolvió `500` con
+`PGRST202: Searched for the function public.admin_create_question ... not found`, y el conteo
+de `preguntas` permaneció en 1: el fallo es limpio, no deja estado parcial. El resto de la
+cadena (detalle, opciones, correcta, solución, relación, posición, archivado) no puede
+ejercitarse hasta que exista la RPC.
+
+**Canal de migración: no disponible para este agente.** El único conector Supabase accesible
+pertenece a otra cuenta (ve `RequenaDesk` y `AgendNotes`); contra `ndiooyyqtaeysnedywer`
+responde `You do not have permission to perform this action`. Por tanto
+`MIGRATION_001_APPLIED: NO` por falta de canal, no por decisión.
+
+Cambios Kotlin acompañantes, `TEST_VERIFIED` (compilan, 280 tests backend verdes) pero **no**
+`LIVE_VERIFIED` porque el servidor en marcha sigue sirviendo el binario anterior y la RPC no
+existe: contrato de `admin_create_question`/`admin_replace_question_options` reescrito para
+coincidir con la firma del candidato (la RPC genera los ids y devuelve el uuid; `razonamiento`
+vacío ya no borra la explicación existente), y `upsertPreguntaExamen` ahora envía
+`numero_en_examen` calculando el siguiente número real del examen.
+
+Prepared, not applied: `supabase/canonical/admin_question_write_candidate_v1/`
+(`001_admin_question_write_rpcs.sql` + README) — transactional `admin_create_question` and
+`admin_replace_question_options`, `security definer`, `search_path = ''`, `service_role`-only,
+with preflight and commented rollback, written against the columns verified above. It requires a
+companion Kotlin change: the current `AdminCreateQuestionRpc` body shape does not match the new
+parameter names.
+
+## Dashboard V2 — escritorio (2026-09-10)
+
+Rediseño completo del Dashboard de escritorio, en árbol de trabajo sin commit.
+Coordinador + dos Hashira implementadores (Backend/Data y Admin UI/UX) + revisor
+independiente, con dos rondas de revisión cruzada y una tercera de corrección.
+`HUMAN_GATE: APPROVED` para las cuatro decisiones de arquitectura (D1–D4).
+
+### Qué sustituye
+
+`ContentDashboardRepositoryImpl` orquestaba **cinco repositorios desde el
+cliente**, con dos dependencias bloqueantes —un fallo leyendo especialidades o
+exámenes vaciaba la pantalla entera— y **una llamada HTTP por examen** para
+auditar recursos, un coste que crecía con el catálogo. Derivaba además datos que
+no eran lo que decían: `latestImportLabel` mostraba la fecha del último examen
+bajo la etiqueta «importaciones», y los tres «eventos recientes» llevaban
+`Clock.System.now()`, así que decían haber ocurrido a la vez y se rejuvenecían
+solos cada cinco minutos.
+
+**No se retira**: sigue alimentando el Home móvil (`MobileDashboardScreen`), que
+conserva su contrato hasta que tenga uno propio. El camino compacto está a
+0 líneas de diferencia, verificado.
+
+### Contrato nuevo
+
+`GET /api/v1/admin/dashboard/overview?sections=` bajo `authenticate("gateway-auth")`.
+Seis franjas (`system`, `attention`, `pulse`, `content`, `activity`, `economy`)
+con degradación independiente vía `failedBlocks`; `?sections=` permite refrescar
+una sola franja. Una sección desconocida responde **400** nombrando las válidas.
+La cronología viaja **dentro** del agregado: Ktor consulta `auditoria_log` y el
+cliente no llama a `/auditoria` por su cuenta.
+
+Coste real contado sobre el código, no estimado: **17 conteos exactos más la
+sonda de Supabase y una lectura de auditoría, 19 peticiones upstream** por
+refresco completo, para 15 cifras publicadas. Tres conteos están duplicados
+entre franjas a propósito: compartirlos acoplaría el fallo de una a otra, que es
+lo que la degradación por franja evita.
+
+### Garantías con evidencia
+
+| Garantía | Cómo está probada |
+|---|---|
+| Ningún fallo de lectura llega como `0` | Recorrido de tres métricas de punta a punta por el revisor; `AnalyticsMetricPolicy` falla cerrado; cero `?: 0`/`orEmpty()`/`getOrDefault` en el camino nuevo |
+| Los filtros PostgREST son los reales | Los 12 conteos de filtro fijo afirman la **ruta completa**, no un `contains`. **Verificado por mutación**: alterar el filtro de `reportes_contenido` y la ventana de 30 días pone 2 tests en rojo |
+| Las claves del cable no pueden derivar | Dos tests espejo con literales a mano en `:domain` y `:backend:ktor`. **Verificado por mutación** por el coordinador: renombrar una constante pone el espejo en rojo |
+| Los timestamps son reales | `occurredAt` es `auditoria_log.creado_en`; fila sin fecha o sin id se descarta **y se cuenta** en `droppedActivityEntries`, para que «no pude leer» no se lea como «no ha pasado nada» |
+| El vocabulario de auditoría existe | Test de **conjunto** contra las 24 acciones extraídas del código, no de predicado. Detectó y eliminó 5 traducciones inventadas |
+| El contraste se mide, no se estima | `ContrastTest` compone el cristal al 55% sobre el extremo oscuro del degradado y **falla si `accentInk` sube de 4,5:1** |
+
+### Decisión de producto aplicada
+
+De la referencia visual se implementó la composición y **no** los datos que no
+existen: sin sparklines (no hay serie temporal), sin deltas de comparación (no
+hay periodo anterior en ningún endpoint), sin selector de ventana (las ventanas
+están cocidas en cada query), y sin `Ingresos`/`Nuevas suscripciones`/`Conversión
+a premium`. `grossRevenueCents` y `ticketsInCirculation` **viajan en el contrato**
+como `NOT_INSTRUMENTED` con la vista concreta que haría falta, y
+`DashboardBlockReport.renderable` las excluye del panel: `NO_DATA` sí ocupa sitio
+(reintentar puede servir), `NOT_INSTRUMENTED` no.
+
+Ventana de vencimientos partida por utilidad: `subscriptionsExpiring7d` es alerta
+operativa en «Necesita tu atención»; `subscriptionsExpiring30d` es contexto en
+Economía.
+
+### Cerrado de paso
+
+`features/settings` deja de inyectar `NotConnectedSystemStatusRepository` y
+consume el endpoint real `GET /api/v1/admin/estado-sistema`, que existía y
+funcionaba sin cliente desde 2026-09-02. `NotConnectedSystemStatusRepository` se
+conserva: sigue siendo la respuesta correcta sin backend.
+
+### Capacidad nueva del repositorio
+
+`:features:dashboard` es el **primer módulo con tests de Compose UI**
+(`jvmTest`, `compose.uiTest` + `compose.desktop.currentOs`). Validados por
+mutación: el primer intento medía sólo el ancho y **pasaba con el defecto
+puesto**, porque un `Row` desbordado no deja el hijo a cero — lo mide a tamaño
+natural y lo dibuja fuera. Miden ahora ancho y posición.
+
+### Pasada de fidelidad visual (2026-09-10, misma fecha)
+
+El panel se rehízo visualmente contra una referencia de diseño. Conserva íntegros
+el contrato agregado, la degradación por franja, la actividad real y la
+navegación por `AppRoute`.
+
+Lo que cambió, y por qué importa cada cosa:
+
+- **Buscador retirado del Dashboard.** `KtorTagSearchRepositoryImpl` devuelve
+  listas vacías incondicionalmente, así que el campo respondía «Sin resultados»
+  escribieras lo que escribieras. Se condiciona por destino, **no se borra**: la
+  infraestructura sigue montada para el resto de pantallas y hay test que falla
+  si alguien la elimina en lugar de condicionarla.
+- **Acción primaria «Actualizar»**, que faltaba: `primaryActionLabel` sólo se
+  rellenaba para `LEGACY_SECTION` y el panel tiene destino propio.
+- **Cristal en dos niveles**: `GlassSectionSurface` (nuevo, genérico) para los
+  contenedores de sección; las superficies con cifra siguen opacas. **No se
+  revoca** la decisión de `GlassSurface` de retirar el cristal en escritorio: se
+  complementa.
+- **Color semántico por función** (`SemanticRole`, `SemanticIconContainer`,
+  tokens `insight` y `commerce`), en lugar de un coral único para todo.
+- **Defecto tipográfico preexistente corregido**: `titleSmall` estaba **en uso y
+  sin definir** en `desktopTypography`, así que Material lo resolvía con
+  `FontFamily.Default` — la fuente del sistema en vez de Manrope — en el Dashboard
+  y en otras nueve pantallas.
+
+**Decisión de marca del propietario del producto**: durante la pasada se oscureció
+`accentInk` de `#C2521F` a `#B04A1B` para dar holgura de contraste al enlace, y
+**se revirtió**. Ese token es el relleno del botón primario de toda la
+aplicación, móvil incluido, y el rediseño de una pantalla no lo justifica. La
+consecuencia se conserva medida: sobre cristal el coral se queda en ~4,2:1, así
+que el texto de los enlaces de sección va en `textPrimary` y el coral queda para
+el chevron. Fijado en `ContrastTest`.
+
+`1366_KPI_BELOW_FOLD: ACCEPTABLE_RESPONSIVE_DRIFT` — decisión explícita del
+propietario. A 1366×768 la cabecera de «Pulso del producto» queda por encima del
+corte y la primera línea de KPI no. Recuperar esos ~57 px exigía encoger
+tarjetas, iconos, tipografía o paddings, y **no se sacrifica legibilidad para que
+todo quepa en 768 px**: el panel tiene scroll y eso es correcto.
+
+`TESTS: 675, 0 fallos` (`--rerun-tasks`, 622/622 tareas ejecutadas; un
+`BUILD SUCCESSFUL` de caché no cuenta como evidencia).
+`DATABASE_CHANGES: NONE`. `MAIN_WRITES: NONE`.
+
+### Estado de verificación — leer con cuidado
+
+| Eje | Estado |
+|---|---|
+| `VISUAL_RENDER` | **VERIFIED** — capturas a 1920/1600/1366/1080 más el caso real de ceros, revisadas por un revisor independiente que midió luminancia y contraste sobre los píxeles |
+| `AUTOMATED_CONTRACT` | **VERIFIED** — 675 pruebas, con mutación demostrada en filtros PostgREST, claves de contrato y test de UI |
+| `LIVE_DATA_RUNTIME` | **NOT_VERIFIED** |
+
+**`LIVE_DATA_RUNTIME` no debe convertirse en `LIVE_VERIFIED` por acumulación de
+las otras dos.** El equipo del propietario no puede sostener Ktor y la app de
+escritorio a la vez sin saturar la máquina, así que el backend **no se arrancó**.
+Las capturas salen de un harness de fixtures deterministas alojado en
+`features/dashboard/src/jvmTest/`, elegido ahí porque las fuentes de test no se
+empaquetan y por tanto **no pueden alcanzar producción por construcción**. Ese
+harness valida cristal, fondo, jerarquía, tamaños, color, iconografía, densidad y
+responsive; **no valida ni un solo dato**. El panel real sigue mostrando su estado
+de error si Ktor no está levantado, que es el comportamiento correcto.
+
+Sin observar contra datos reales: un `droppedActivityEntries` distinto de 0, los
+sufijos reales de `feedback_*`/`lote_*`/`reporte_*` en `auditoria_log`, y el
+autorefresco de 60 s. La cobertura de tests de UI alcanza la franja de sistema;
+las tarjetas de atención, la rejilla de KPIs y los tres paneles inferiores siguen
+probados una capa por debajo del píxel.
+
 ## Preserved boundaries
 
 OposiBot, public.usuario, /v1/auth/*, Opositeca, OposiRed, PDF/import, exam-resources, news-assets and POST_OPOSIBOT_LEGACY_CLEANUP remain protected. The deferred cleanup has not executed.

@@ -41,6 +41,20 @@ object Spacing {
 object Radius {
     val sm: Shape = RoundedCornerShape(8.dp)
     val md: Shape = RoundedCornerShape(10.dp)
+
+    /**
+     * Radio de tarjeta de dato: KPI, tarjeta de atención, bloque de lista.
+     *
+     * Existe porque el 12dp ya estaba escrito a mano en tres sitios —`SummaryCard`,
+     * `GlassSurface` en su rama de escritorio y `ErrorStateCard`— y la escala
+     * saltaba de 10 a 14, así que cualquier superficie nueva tenía que elegir
+     * entre desalinearse 2dp de las tarjetas del propio sistema o copiar el
+     * número una cuarta vez.
+     *
+     * Es puramente aditivo: no cambia [md] ni [lg], y los tres sitios que ya
+     * llevan el 12dp a mano se alinean en un paso posterior.
+     */
+    val card: Shape = RoundedCornerShape(12.dp)
     val lg: Shape = RoundedCornerShape(14.dp)
     val xl: Shape = RoundedCornerShape(18.dp)
     val pill: Shape = RoundedCornerShape(999.dp)

@@ -959,6 +959,16 @@ private data class AdminPreguntaExamenRow(
     @SerialName("examen_id") val examenId: String,
     @SerialName("pregunta_id") val preguntaId: String,
     val posicion: Int,
+    // NOT NULL en el esquema real; sin este campo la inserción falla si la
+    // columna no tiene DEFAULT. Nullable aquí sólo para poder DESERIALIZAR filas
+    // en consultas que no lo seleccionan; en escritura siempre se envía.
+    @SerialName("numero_en_examen") val numeroEnExamen: Int? = null,
+)
+
+/** Proyección mínima para calcular el siguiente `numero_en_examen` de un examen. */
+@Serializable
+private data class AdminPreguntaExamenNumeroRow(
+    @SerialName("numero_en_examen") val numeroEnExamen: Int,
 )
 
 @Serializable
@@ -1589,18 +1599,42 @@ private data class AdminGrantTicketsResult(
 
 @Serializable
 private data class AdminCreateQuestionRpc(
-    @SerialName("p_question") val question: AdminPreguntaRow,
-    @SerialName("p_options") val options: List<AdminOpcionRow>,
-    @SerialName("p_solution") val solution: AdminSolucionRow,
-    @SerialName("p_exam_id") val examId: String? = null,
-    @SerialName("p_position") val position: Int? = null,
+    @SerialName("p_codigo_pregunta") val codigoPregunta: String,
+    @SerialName("p_especialidad_id") val especialidadId: String,
+    @SerialName("p_tipo_pregunta") val tipoPregunta: String,
+    @SerialName("p_titulo") val titulo: String,
+    @SerialName("p_opciones") val opciones: List<AdminRpcOpcionInput>,
+    @SerialName("p_razonamiento") val razonamiento: String = "",
+    @SerialName("p_fuente_texto") val fuenteTexto: String = "",
+    @SerialName("p_dificultad") val dificultad: String = "media",
+    @SerialName("p_activa") val activa: Boolean = true,
+    @SerialName("p_examen_id") val examenId: String? = null,
+    @SerialName("p_posicion") val posicion: Int? = null,
+)
+
+/**
+ * Opción tal y como la espera la RPC (`p_opciones jsonb`).
+ *
+ * No reutiliza `AdminOpcionRow` a propósito: esa clase modela la FILA de
+ * `opciones_pregunta` (con `id`/`pregunta_id`, sin corrección), mientras que la
+ * RPC recibe una descripción de entrada donde la corrección viaja con la opción
+ * y los identificadores los genera la propia función dentro de la transacción.
+ */
+@Serializable
+private data class AdminRpcOpcionInput(
+    val letra: String,
+    val texto: String,
+    val posicion: Int,
+    @SerialName("es_correcta") val esCorrecta: Boolean,
 )
 
 @Serializable
 private data class AdminReplaceQuestionOptionsRpc(
-    @SerialName("p_question_id") val questionId: String,
-    @SerialName("p_options") val options: List<AdminOpcionRow>,
-    @SerialName("p_solution") val solution: AdminSolucionRow,
+    @SerialName("p_pregunta_id") val preguntaId: String,
+    @SerialName("p_opciones") val opciones: List<AdminRpcOpcionInput>,
+    // null = conservar el razonamiento existente. Enviar "" lo BORRARÍA, así que
+    // el llamante manda null cuando no hay explicación nueva que guardar.
+    @SerialName("p_razonamiento") val razonamiento: String? = null,
 )
 
 // ScoreRow / UsuarioIdRow / EsCorrectaRow / IniciadoEnRow existían sólo para leer
@@ -2010,44 +2044,37 @@ class AdminV1Gateway private constructor(
         require(input.opciones.isNotEmpty()) { "La pregunta necesita opciones." }
         require(input.opciones.count { it.esCorrecta } == 1) { "Marca exactamente una opcion correcta." }
 
-        val preguntaId = input.id.ifBlank { UUID.randomUUID().toString() }
-        val opcionRows = input.opciones.mapIndexed { i, o ->
-            AdminOpcionRow(
-                id = UUID.randomUUID().toString(),
-                preguntaId = preguntaId,
+        // Los identificadores (pregunta, opciones, solución) los genera la RPC
+        // dentro de su transacción y devuelve el uuid de la pregunta creada: si
+        // se generaran aquí y la función abortara, este proceso creería conocer
+        // un id que no existe en la base.
+        val opciones = input.opciones.mapIndexed { i, o ->
+            AdminRpcOpcionInput(
                 letra = o.letra,
-                textoOpcion = o.texto,
+                texto = o.texto,
                 posicion = if (o.posicion > 0) o.posicion else i + 1,
+                esCorrecta = o.esCorrecta,
             )
         }
-        val correctaId = opcionRows[input.opciones.indexOfFirst { it.esCorrecta }].id!!
-        request(
+        val body = request(
             "POST", "/rest/v1/rpc/admin_create_question",
             sbJson.encodeToString(
                 AdminCreateQuestionRpc(
-                    question = AdminPreguntaRow(
-                        id = preguntaId,
-                        codigoPregunta = input.codigoPregunta.ifBlank { "P-" + shortId() },
-                        especialidadId = input.especialidadId,
-                        tipoPregunta = input.tipoPregunta,
-                        titulo = input.titulo,
-                        fuenteTexto = input.fuenteTexto,
-                        dificultad = input.dificultad,
-                        activa = input.activa,
-                    ),
-                    options = opcionRows,
-                    solution = AdminSolucionRow(
-                        id = UUID.randomUUID().toString(),
-                        preguntaId = preguntaId,
-                        opcionCorrectaId = correctaId,
-                        razonamiento = input.razonamiento,
-                    ),
-                    examId = input.examenId?.takeIf { it.isNotBlank() },
-                    position = input.posicion,
+                    codigoPregunta = input.codigoPregunta.ifBlank { "P-" + shortId() },
+                    especialidadId = input.especialidadId,
+                    tipoPregunta = input.tipoPregunta,
+                    titulo = input.titulo,
+                    opciones = opciones,
+                    razonamiento = input.razonamiento,
+                    fuenteTexto = input.fuenteTexto,
+                    dificultad = input.dificultad,
+                    activa = input.activa,
+                    examenId = input.examenId?.takeIf { it.isNotBlank() },
+                    posicion = input.posicion,
                 ),
             ),
-            prefer = "return=minimal",
         )
+        val preguntaId = sbJson.decodeFromString<String>(body.trim())
         registrarAuditoria("pregunta_creada", "preguntas", preguntaId)
         return getPregunta(preguntaId) ?: error("No se pudo leer la pregunta creada.")
     }
@@ -2202,28 +2229,23 @@ class AdminV1Gateway private constructor(
     private fun replaceOpcionesAndSolucion(preguntaId: String, opciones: List<AdminOpcionDto>, razonamiento: String) {
         require(opciones.count { it.esCorrecta } == 1) { "Marca exactamente una opcion correcta." }
         val opcionRows = opciones.mapIndexed { i, o ->
-            AdminOpcionRow(
-                id = UUID.randomUUID().toString(),
-                preguntaId = preguntaId,
+            AdminRpcOpcionInput(
                 letra = o.letra.ifBlank { ('A' + i).toString() },
-                textoOpcion = o.texto,
+                texto = o.texto,
                 posicion = if (o.posicion > 0) o.posicion else i + 1,
+                esCorrecta = o.esCorrecta,
             )
         }
-        val correctaIndex = opciones.indexOfFirst { it.esCorrecta }.coerceAtLeast(0)
         request(
             "POST",
             "/rest/v1/rpc/admin_replace_question_options",
             sbJson.encodeToString(
                 AdminReplaceQuestionOptionsRpc(
-                    questionId = preguntaId,
-                    options = opcionRows,
-                    solution = AdminSolucionRow(
-                        id = UUID.randomUUID().toString(),
-                        preguntaId = preguntaId,
-                        opcionCorrectaId = opcionRows[correctaIndex].id!!,
-                        razonamiento = razonamiento,
-                    ),
+                    preguntaId = preguntaId,
+                    opciones = opcionRows,
+                    // Vacío significa «no hay explicación nueva», no «bórrala»: la
+                    // RPC conserva la existente cuando recibe null.
+                    razonamiento = razonamiento.takeIf { it.isNotBlank() },
                 ),
             ),
             prefer = "return=minimal",
@@ -2237,11 +2259,30 @@ class AdminV1Gateway private constructor(
             null,
         ).decodeList<AdminPreguntaExamenRow>().firstOrNull()
         if (existing == null) {
+            // `numero_en_examen` es NOT NULL en el esquema real (verificado por
+            // introspección el 2026-09-04) y esta inserción NO lo enviaba: si la
+            // columna no tiene DEFAULT, toda asociación fallaba. Se calcula el
+            // siguiente número del examen en vez de reutilizar `posicion`, porque
+            // dos preguntas pueden compartir posición pero el número dentro del
+            // examen identifica la pregunta y podría estar bajo restricción única.
+            val siguienteNumero = request(
+                "GET",
+                "/rest/v1/preguntas_examen?select=numero_en_examen&examen_id=eq.$examenId&order=numero_en_examen.desc&limit=1",
+                null,
+            ).decodeList<AdminPreguntaExamenNumeroRow>().firstOrNull()?.numeroEnExamen?.plus(1) ?: 1
+
             request(
                 "POST",
                 "/rest/v1/preguntas_examen",
                 sbJson.encodeToString(
-                    listOf(AdminPreguntaExamenRow(examenId = examenId, preguntaId = preguntaId, posicion = if (posicion > 0) posicion else 1)),
+                    listOf(
+                        AdminPreguntaExamenRow(
+                            examenId = examenId,
+                            preguntaId = preguntaId,
+                            posicion = if (posicion > 0) posicion else 1,
+                            numeroEnExamen = siguienteNumero,
+                        ),
+                    ),
                 ),
                 prefer = "return=minimal",
             )

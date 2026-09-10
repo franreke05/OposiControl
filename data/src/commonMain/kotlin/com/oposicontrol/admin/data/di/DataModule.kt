@@ -27,8 +27,10 @@ import com.oposicontrol.admin.data.repository.AuthRepositoryImpl
 import com.oposicontrol.admin.data.repository.ContentDashboardRepositoryImpl
 
 import com.oposicontrol.admin.data.repository.KtorAdminOperationsRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorDashboardOverviewRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorAdminV1ContentRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorCommunitiesRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorQuestionsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorConnectionDiagnosticsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorForumRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorTesterRepositoryImpl
@@ -57,11 +59,13 @@ import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.repository.ContentImportRepository
+import com.oposicontrol.admin.domain.repository.DashboardOverviewRepository
 import com.oposicontrol.admin.domain.repository.DashboardRepository
 import com.oposicontrol.admin.domain.repository.ForumRepository
 import com.oposicontrol.admin.domain.repository.TesterRepository
 import com.oposicontrol.admin.domain.repository.ModerationRepository
 import com.oposicontrol.admin.domain.repository.NewsRepository
+import com.oposicontrol.admin.domain.repository.QuestionsRepository
 import com.oposicontrol.admin.domain.repository.RolesRepository
 import com.oposicontrol.admin.domain.repository.SettingsRepository
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
@@ -103,6 +107,17 @@ val dataModule = module {
     }
     single<ContentImportRepository> { get<ContentRepository>() as ContentImportRepository }
 
+    // Banco global de preguntas (pantalla Preguntas) — adapter propio,
+    // deliberadamente separado de ContentRepository/KtorAdminV1ContentRepositoryImpl.
+    single<QuestionsRepository> {
+        KtorQuestionsRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
     single<CommerceRepository> {
         KtorCommerceRepositoryImpl(
             client = get(),
@@ -115,6 +130,18 @@ val dataModule = module {
     // Analitica de producto. Solo lectura y agregada en Ktor.
     single<ProductAnalyticsRepository> {
         KtorProductAnalyticsRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
+    // Dashboard V2: UN contrato agregado en Ktor. Sustituye a la orquestacion de
+    // cinco repositorios (mas una llamada por examen) que hacia el cliente.
+    // DashboardRepository sigue vivo: alimenta el Home movil.
+    single<DashboardOverviewRepository> {
+        KtorDashboardOverviewRepositoryImpl(
             client = get(),
             appConfig = get(),
             sessionLocalDataSource = get(),

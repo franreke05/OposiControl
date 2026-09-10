@@ -1,15 +1,110 @@
 package com.oposicontrol.admin.app.root
 
 import com.oposicontrol.admin.app.navigation.AppRoute
+import com.oposicontrol.admin.features.dashboard.presentation.DashboardV2Destination
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class AppRootContentTargetTest {
+
+    // --- Inicio: panel nuevo en escritorio, camino móvil intacto -------------
+
     @Test
-    fun desktopReachesReportsListWithoutCompactLayout() {
+    fun desktopHomeOpensTheNewDashboard() {
+        assertEquals(
+            AppContentTarget.DESKTOP_DASHBOARD,
+            resolveContentTarget(AppRoute.Home, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
+        )
+    }
+
+    @Test
+    fun compactHomeKeepsTheLegacyMobileDashboard() {
+        // La rama que NO puede cambiar: en compacto, Inicio sigue cayendo al
+        // adaptador de AdminSection.DASHBOARD, que pinta MobileDashboardScreen
+        // sobre el DashboardViewModel actual. El panel de escritorio es una
+        // pantalla densa de cinco franjas y no cabe en un móvil.
+        assertEquals(
+            AppContentTarget.LEGACY_SECTION,
+            resolveContentTarget(AppRoute.Home, compactLayout = true, showTabPager = false, hasLegacyRoute = true),
+        )
+    }
+
+    @Test
+    fun theMobileTabPagerStillWinsOverTheDesktopDashboard() {
+        // La navegación principal de móvil no puede quedar secuestrada por una
+        // pantalla de escritorio.
+        assertEquals(
+            AppContentTarget.TAB_PAGER,
+            resolveContentTarget(AppRoute.Home, compactLayout = true, showTabPager = true, hasLegacyRoute = true),
+        )
+    }
+
+    // --- Destinos del panel: todos AppRoute, ninguno inventado ---------------
+
+    @Test
+    fun everyDashboardShortcutResolvesToItsVerifiedRoute() {
+        assertEquals(AppRoute.System.Diagnostics, DashboardV2Destination.SYSTEM_DIAGNOSTICS.toAppRoute())
+        assertEquals(AppRoute.Moderation.Queue, DashboardV2Destination.MODERATION_QUEUE.toAppRoute())
+        assertEquals(AppRoute.OposiTester.List, DashboardV2Destination.OPOSITESTER_LIST.toAppRoute())
+        assertEquals(AppRoute.Content.Exams, DashboardV2Destination.EXAMS.toAppRoute())
+        assertEquals(AppRoute.Content.Questions, DashboardV2Destination.QUESTIONS.toAppRoute())
+        assertEquals(AppRoute.Content.Imports, DashboardV2Destination.IMPORTS.toAppRoute())
+        assertEquals(AppRoute.Users.List, DashboardV2Destination.USERS.toAppRoute())
+        assertEquals(AppRoute.Analytics.Home, DashboardV2Destination.ANALYTICS.toAppRoute())
+        assertEquals(AppRoute.Commercial.Subscriptions, DashboardV2Destination.SUBSCRIPTIONS.toAppRoute())
+        assertEquals(AppRoute.System.Audit, DashboardV2Destination.AUDIT.toAppRoute())
+    }
+
+    @Test
+    fun theSystemStatusShortcutAvoidsTheMobileOnlyRoute() {
+        // AppRoute.System.Status está marcada MOBILE_ONLY en el catálogo: usarla
+        // desde el panel de escritorio abriría una pantalla que allí no existe
+        // como destino de menú.
+        assertNotEquals(AppRoute.System.Status, DashboardV2Destination.SYSTEM_DIAGNOSTICS.toAppRoute())
+    }
+
+    @Test
+    fun everyDashboardShortcutLandsOnAReachableDesktopTarget() {
+        // Un atajo que aterrizara en LEGACY_PLACEHOLDER sería un enlace a una
+        // pantalla en blanco. `hasLegacyRoute = true` porque varias de estas
+        // rutas conservan mapeo legacy para su versión móvil.
+        DashboardV2Destination.entries.forEach { destination ->
+            val target = resolveContentTarget(
+                destination.toAppRoute(),
+                compactLayout = false,
+                showTabPager = false,
+                hasLegacyRoute = true,
+            )
+            assertNotEquals(
+                AppContentTarget.LEGACY_PLACEHOLDER,
+                target,
+                "El atajo $destination no llega a ninguna pantalla real.",
+            )
+        }
+    }
+    @Test
+    fun desktopOpensReportsListInsideTheModerationHub() {
+        // Antes REPORTS_LIST (pantalla propia); ahora Reportes es una pestaña
+        // del hub de Moderación en escritorio (§11) — sigue siendo destino
+        // propio de la barra inferior en móvil, ver mobileReportsListStaysItsOwnTarget.
+        assertEquals(
+            AppContentTarget.MODERATION_HUB,
+            resolveContentTarget(AppRoute.Reports.List, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
+        )
+    }
+
+    @Test
+    fun mobileReportsListStaysItsOwnTarget() {
+        // En compacto, fuera del pager (showTabPager=false: p.ej. alcanzado por
+        // push en vez de por selectPrimaryTab), Reportes sigue resolviendo a su
+        // propia pantalla, no al hub de escritorio.
         assertEquals(
             AppContentTarget.REPORTS_LIST,
-            resolveContentTarget(AppRoute.Reports.List, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
+            resolveContentTarget(AppRoute.Reports.List, compactLayout = true, showTabPager = false, hasLegacyRoute = false),
         )
     }
 
@@ -38,11 +133,42 @@ class AppRootContentTargetTest {
     }
 
     @Test
-    fun desktopReachesOpositesterListWithoutCompactLayout() {
+    fun desktopOpensOpositesterListInsideTheModerationHub() {
         assertEquals(
-            AppContentTarget.OPOSITESTER_LIST,
+            AppContentTarget.MODERATION_HUB,
             resolveContentTarget(AppRoute.OposiTester.List, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
         )
+    }
+
+    @Test
+    fun mobileOpositesterListStaysItsOwnTarget() {
+        assertEquals(
+            AppContentTarget.OPOSITESTER_LIST,
+            resolveContentTarget(AppRoute.OposiTester.List, compactLayout = true, showTabPager = false, hasLegacyRoute = false),
+        )
+    }
+
+    @Test
+    fun desktopOpensModerationQueueInsideItsOwnHub() {
+        assertEquals(
+            AppContentTarget.MODERATION_HUB,
+            resolveContentTarget(AppRoute.Moderation.Queue, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
+        )
+    }
+
+    @Test
+    fun reportsListOpensTheReportsTabOfTheModerationHub() {
+        assertEquals(ModerationHubTab.REPORTS, moderationTabFor(AppRoute.Reports.List))
+    }
+
+    @Test
+    fun opositesterListOpensTheOpositesterTabOfTheModerationHub() {
+        assertEquals(ModerationHubTab.OPOSITESTER, moderationTabFor(AppRoute.OposiTester.List))
+    }
+
+    @Test
+    fun moderationQueueLeavesTheHubOnItsDefaultTab() {
+        assertEquals(null, moderationTabFor(AppRoute.Moderation.Queue))
     }
 
     @Test
@@ -86,25 +212,64 @@ class AppRootContentTargetTest {
     }
 
     @Test
-    fun desktopFallsBackToTheLegacySectionWhenOneIsMapped() {
+    fun desktopReachesTheUsersHub() {
+        // Antes caía al adaptador legacy — ahora Usuarios es un hub propio con
+        // Competición y Accesos como pestañas.
         assertEquals(
-            AppContentTarget.LEGACY_SECTION,
+            AppContentTarget.USERS_HUB,
             resolveContentTarget(AppRoute.Users.List, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
         )
     }
 
     @Test
-    fun unmappedRouteWithoutALegacySectionShowsThePlaceholder() {
+    fun compactLayoutKeepsTheLegacyUsersSectionInsteadOfTheHub() {
         assertEquals(
-            AppContentTarget.LEGACY_PLACEHOLDER,
-            resolveContentTarget(AppRoute.System.Diagnostics, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
+            AppContentTarget.LEGACY_SECTION,
+            resolveContentTarget(AppRoute.Users.List, compactLayout = true, showTabPager = false, hasLegacyRoute = true),
         )
     }
 
     @Test
-    fun desktopReachesTheCommercialCatalog() {
+    fun rankingsAndSubscriptionsOpenTheUsersHubTooNotTheirOwnScreen() {
+        // Antes Rankings tenía su propio AppContentTarget.RANKINGS; ahora abre
+        // el mismo hub que Usuarios, en la pestaña Competición.
         assertEquals(
-            AppContentTarget.COMMERCIAL_CATALOG,
+            AppContentTarget.USERS_HUB,
+            resolveContentTarget(AppRoute.Rankings, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
+        )
+        assertEquals(
+            AppContentTarget.USERS_HUB,
+            resolveContentTarget(AppRoute.Commercial.Subscriptions, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
+        )
+    }
+
+    @Test
+    fun desktopReachesTheSystemHub() {
+        // Estado (System.Diagnostics) no tenía ningún destino de contenido antes
+        // de la consolidación y caía al marcador de posición. Ahora abre el hub
+        // de Sistema en su pestaña real.
+        assertEquals(
+            AppContentTarget.SYSTEM_HUB,
+            resolveContentTarget(AppRoute.System.Diagnostics, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
+        )
+        assertEquals(
+            AppContentTarget.SYSTEM_HUB,
+            resolveContentTarget(AppRoute.System.Settings, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
+        )
+        assertEquals(
+            AppContentTarget.SYSTEM_HUB,
+            resolveContentTarget(AppRoute.System.Roles, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
+        )
+        assertEquals(
+            AppContentTarget.SYSTEM_HUB,
+            resolveContentTarget(AppRoute.System.Audit, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
+        )
+    }
+
+    @Test
+    fun desktopReachesTheCatalogHub() {
+        assertEquals(
+            AppContentTarget.CATALOG_HUB,
             resolveContentTarget(
                 AppRoute.Commercial.Catalog,
                 compactLayout = false,
@@ -114,6 +279,12 @@ class AppRootContentTargetTest {
                 // pantalla de tienda antigua.
                 hasLegacyRoute = true,
             ),
+        )
+        // Planes abre el mismo hub, en su pestaña — antes caía al adaptador
+        // legacy y era una pantalla distinta a Catálogo.
+        assertEquals(
+            AppContentTarget.CATALOG_HUB,
+            resolveContentTarget(AppRoute.Commercial.Plans, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
         )
     }
 
@@ -133,7 +304,7 @@ class AppRootContentTargetTest {
     }
 
     @Test
-    fun theTabPagerStillWinsOverTheCommercialCatalog() {
+    fun theTabPagerStillWinsOverTheCatalogHub() {
         // La navegación principal de móvil no puede quedar secuestrada por una
         // pantalla de escritorio.
         assertEquals(
@@ -144,6 +315,38 @@ class AppRootContentTargetTest {
                 showTabPager = true,
                 hasLegacyRoute = true,
             ),
+        )
+    }
+
+    @Test
+    fun desktopReachesTheNewsHub() {
+        assertEquals(
+            AppContentTarget.NEWS_HUB,
+            resolveContentTarget(AppRoute.Publication.News, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
+        )
+        // Tipos de noticia y Assets abren el mismo hub — antes eran pantallas
+        // sueltas sin destino de contenido propio.
+        assertEquals(
+            AppContentTarget.NEWS_HUB,
+            resolveContentTarget(AppRoute.Publication.NewsTypes, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
+        )
+        assertEquals(
+            AppContentTarget.NEWS_HUB,
+            resolveContentTarget(AppRoute.Publication.Assets, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
+        )
+    }
+
+    @Test
+    fun analyticsPerformanceAndEventsOpenProductAnalyticsInsteadOfFallingToDashboard() {
+        // Antes Estudio y Eventos caían al adaptador legacy de
+        // AdminSection.DASHBOARD, que no tenía nada que ver con analítica.
+        assertEquals(
+            AppContentTarget.PRODUCT_ANALYTICS,
+            resolveContentTarget(AppRoute.Analytics.Performance, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
+        )
+        assertEquals(
+            AppContentTarget.PRODUCT_ANALYTICS,
+            resolveContentTarget(AppRoute.Analytics.Events, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
         )
     }
 
@@ -173,5 +376,160 @@ class AppRootContentTargetTest {
                 hasLegacyRoute = false,
             ),
         )
+    }
+
+    // --- Qué pestaña exacta abre cada ruta legacy dentro de su hub nuevo -----
+    // resolveContentTarget sólo dice "abre el hub de Usuarios"; estas prueban
+    // la parte que de verdad importa para el §21: CON QUÉ PESTAÑA.
+
+    @Test
+    fun rankingsOpensTheCompetitionTabOfTheUsersHub() {
+        assertEquals(UsersHubTab.COMPETITION, usersTabFor(AppRoute.Rankings))
+    }
+
+    @Test
+    fun subscriptionsOpensTheAccessTabOfTheUsersHub() {
+        assertEquals(UsersHubTab.ACCESS, usersTabFor(AppRoute.Commercial.Subscriptions))
+    }
+
+    @Test
+    fun usersListLeavesTheHubOnItsDefaultTab() {
+        assertEquals(null, usersTabFor(AppRoute.Users.List))
+    }
+
+    @Test
+    fun rolesOpensTheSecurityTabOfTheSystemHub() {
+        assertEquals(SystemHubTab.SECURITY, systemTabFor(AppRoute.System.Roles))
+    }
+
+    @Test
+    fun diagnosticsOpensTheStatusTabOfTheSystemHub() {
+        assertEquals(SystemHubTab.STATUS, systemTabFor(AppRoute.System.Diagnostics))
+    }
+
+    @Test
+    fun auditOpensTheAuditTabOfTheSystemHub() {
+        assertEquals(SystemHubTab.AUDIT, systemTabFor(AppRoute.System.Audit))
+    }
+
+    @Test
+    fun plansOpensThePlansTabOfTheCatalogHub() {
+        assertEquals(CatalogHubTab.PLANS, catalogTabFor(AppRoute.Commercial.Plans))
+    }
+
+    @Test
+    fun newsTypesOpensTheTypesTabOfTheNewsHub() {
+        assertEquals(NewsHubTab.TYPES, newsTabFor(AppRoute.Publication.NewsTypes))
+    }
+
+    @Test
+    fun assetsLeavesTheNewsHubOnItsDefaultNewsTab() {
+        // No tiene pantalla propia: aterriza en Noticias, igual que antes.
+        assertEquals(null, newsTabFor(AppRoute.Publication.Assets))
+    }
+
+    @Test
+    fun performanceMapsToTheEstudioAnalyticsSection() {
+        assertEquals(com.oposicontrol.admin.domain.model.AnalyticsSection.ESTUDIO, analyticsSectionFor(AppRoute.Analytics.Performance))
+    }
+
+    @Test
+    fun eventsMapsToTheProductoAnalyticsSection() {
+        assertEquals(com.oposicontrol.admin.domain.model.AnalyticsSection.PRODUCTO, analyticsSectionFor(AppRoute.Analytics.Events))
+    }
+
+    // --- Cabecera del panel de escritorio ------------------------------------
+
+    @Test
+    fun elPanelDeEscritorioNoDibujaLaBusquedaGlobal() {
+        // El defecto que cierra: `globalSearch` se pasaba a `AppShell` con la
+        // única condición de que la ruta tuviera sección legacy, e Inicio la
+        // tiene. Como el repositorio de búsqueda devuelve `emptyList()` de forma
+        // incondicional, el panel arrancaba con un buscador que jamás encuentra
+        // nada por encima de «Estado del sistema».
+        assertFalse(
+            showsGlobalSearch(
+                target = AppContentTarget.DESKTOP_DASHBOARD,
+                compactLayout = false,
+                hasLegacySection = true,
+            ),
+        )
+    }
+
+    @Test
+    fun elRestoDeSeccionesDeEscritorioLaConservan() {
+        // La retirada es quirúrgica: si se hubiera borrado el componente o el
+        // repositorio, esto también daría false y nadie se enteraría hasta que
+        // alguien arreglase la búsqueda y no apareciera por ningún lado.
+        assertTrue(
+            showsGlobalSearch(
+                target = AppContentTarget.LEGACY_SECTION,
+                compactLayout = false,
+                hasLegacySection = true,
+            ),
+        )
+        assertTrue(
+            showsGlobalSearch(
+                target = AppContentTarget.USERS_HUB,
+                compactLayout = false,
+                hasLegacySection = true,
+            ),
+        )
+    }
+
+    @Test
+    fun enCompactoNoHayBusquedaGlobalEnNingunaPantalla() {
+        AppContentTarget.entries.forEach { target ->
+            assertFalse(
+                showsGlobalSearch(target = target, compactLayout = true, hasLegacySection = true),
+                "«$target» dibujaría la búsqueda global en móvil.",
+            )
+        }
+    }
+
+    @Test
+    fun elPanelDeEscritorioTieneSuPropiaAccionPrimaria() {
+        // Antes sólo se rellenaba para LEGACY_SECTION, así que el panel nuevo se
+        // quedaba sin acción primaria: recargar existía únicamente por franja y
+        // escondido dentro del estado de error de cada una.
+        assertEquals(
+            "Actualizar",
+            primaryActionLabelFor(AppContentTarget.DESKTOP_DASHBOARD, legacyLabel = null),
+        )
+    }
+
+    @Test
+    fun laAccionPrimariaDelPanelNoLaPuedePisarElAdaptadorLegacy() {
+        // Inicio tiene `legacySection` no nulo por su versión móvil. Si esta
+        // función mirase primero al adaptador, el botón del panel diría lo que
+        // diga el dashboard heredado y dispararía sobre su ViewModel.
+        assertEquals(
+            "Actualizar",
+            primaryActionLabelFor(AppContentTarget.DESKTOP_DASHBOARD, legacyLabel = "Refrescar"),
+        )
+    }
+
+    @Test
+    fun unHubSinAccionUnicaSigueSinBotonPrimario() {
+        listOf(
+            AppContentTarget.USERS_HUB,
+            AppContentTarget.SYSTEM_HUB,
+            AppContentTarget.MODERATION_HUB,
+            AppContentTarget.CATALOG_HUB,
+        ).forEach { target ->
+            assertNull(
+                primaryActionLabelFor(target, legacyLabel = "Crear"),
+                "«$target» ofrecería la acción primaria de un adaptador que no pinta.",
+            )
+        }
+    }
+
+    @Test
+    fun unaSeccionLegacyConserva_laSuya() {
+        assertEquals(
+            "Crear usuario",
+            primaryActionLabelFor(AppContentTarget.LEGACY_SECTION, legacyLabel = "Crear usuario"),
+        )
+        assertNull(primaryActionLabelFor(AppContentTarget.LEGACY_SECTION, legacyLabel = null))
     }
 }
