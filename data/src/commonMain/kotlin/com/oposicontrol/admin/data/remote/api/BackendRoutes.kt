@@ -60,6 +60,13 @@ object BackendRoutes {
 
     fun adminV1ExamenPreguntasOrden(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/preguntas/orden"
 
+    /**
+     * Desvincular una pregunta de UN examen. No confundir con
+     * [adminV1Pregunta], cuyo DELETE archiva la pregunta en todos los exámenes.
+     */
+    fun adminV1ExamenPregunta(examenId: String, preguntaId: String): String =
+        "$ADMIN_V1_EXAMENES/$examenId/preguntas/$preguntaId"
+
     fun adminV1Pregunta(preguntaId: String): String = "$ADMIN_V1_PREGUNTAS/$preguntaId"
 
     fun adminV1PreguntaRecursos(preguntaId: String): String = "$ADMIN_V1_PREGUNTAS/$preguntaId/recursos"
@@ -67,9 +74,23 @@ object BackendRoutes {
     fun adminV1PreguntaRecurso(preguntaId: String, recursoId: String): String =
         "$ADMIN_V1_PREGUNTAS/$preguntaId/recursos/$recursoId"
 
+    /** La ÚNICA puerta para ver y crear vínculos pregunta ↔ examen (K3-4, KQ3-1, D-03). */
+    fun adminV1PreguntaExamenes(preguntaId: String): String = "$ADMIN_V1_PREGUNTAS/$preguntaId/examenes"
+
+    fun adminV1PreguntaExamen(preguntaId: String, examenId: String): String =
+        "$ADMIN_V1_PREGUNTAS/$preguntaId/examenes/$examenId"
+
     fun adminV1ExamenPublicar(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/publicar"
 
     fun adminV1ExamenDespublicar(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/despublicar"
+
+    /**
+     * ARCHIVAR (`activo=false`). Ruta propia desde que
+     * `DELETE $ADMIN_V1_EXAMENES/{id}` borra la fila de verdad: antes archivar era
+     * lo que hacía ese DELETE, y quien quisiera archivar y quien quisiera borrar
+     * llamaban a lo mismo.
+     */
+    fun adminV1ExamenArchivar(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/archivar"
 
     fun adminV1ExamenPortada(examenId: String): String = "$ADMIN_V1_EXAMENES/$examenId/portada"
 

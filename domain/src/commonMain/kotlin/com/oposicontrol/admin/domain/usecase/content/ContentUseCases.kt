@@ -75,6 +75,25 @@ class DeleteSpecialtyUseCase(
     suspend operator fun invoke(specialtyId: String) = repository.deleteSpecialty(specialtyId)
 }
 
+/**
+ * Fuente única de la vertical de Exámenes: todos los tipos, sin reparto previo.
+ *
+ * [ObserveExamsUseCase] y [ObserveRafagasUseCase] siguen sirviendo al camino
+ * móvil, pero una lista construida sobre ellos vuelve a arriesgarse a perder un
+ * tipo. Cualquier pantalla nueva usa éste.
+ */
+class ObserveAllExamsUseCase(
+    private val repository: ContentRepository,
+) {
+    operator fun invoke() = repository.observeAllExams()
+}
+
+class RefreshAllExamsUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke() = repository.refreshAllExams()
+}
+
 class ObserveExamsUseCase(
     private val repository: ContentRepository,
 ) {
@@ -125,16 +144,41 @@ class UpsertExamUseCase(
             return AppResult.Failure(AppError.Validation("El examen necesita una especialidad."))
         }
         if (exam.title.isBlank()) {
-            return AppResult.Failure(AppError.Validation("El examen necesita titulo."))
+            return AppResult.Failure(AppError.Validation("El examen necesita título."))
         }
         return repository.upsertExam(exam)
     }
 }
 
+/**
+ * **Borra el examen para siempre.** Ver `ContentRepository.deleteExam`: el
+ * servidor lo bloquea con un 409 si tiene datos de usuarios.
+ *
+ * Valida el identificador por la misma razón que [PublishExamUseCase]: un examen
+ * sin guardar no tiene id, y un `DELETE .../examenes/` sin id es una petición a
+ * la colección.
+ */
 class DeleteExamUseCase(
     private val repository: ContentRepository,
 ) {
-    suspend operator fun invoke(examId: String) = repository.deleteExam(examId)
+    suspend operator fun invoke(examId: String): AppResult<Unit> {
+        if (examId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Este examen no está guardado: no hay nada que borrar."))
+        }
+        return repository.deleteExam(examId)
+    }
+}
+
+/** Archiva el examen (reversible). Ver `ContentRepository.archiveExam`. */
+class ArchiveExamUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(examId: String): AppResult<Exam> {
+        if (examId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Guarda el examen antes de archivarlo."))
+        }
+        return repository.archiveExam(examId)
+    }
 }
 
 class PublishExamUseCase(
@@ -248,10 +292,39 @@ class ImportQuestionsUseCase(
     }
 }
 
-class DeleteQuestionUseCase(
+/**
+ * Quita la pregunta de este examen. La pregunta sigue en el banco.
+ *
+ * Es lo que debe ejecutar «Quitar del examen».
+ */
+class UnlinkQuestionFromExamUseCase(
     private val repository: ContentRepository,
 ) {
-    suspend operator fun invoke(examId: String, questionId: String) = repository.deleteQuestion(examId, questionId)
+    suspend operator fun invoke(examId: String, questionId: String): AppResult<Unit> {
+        if (examId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona un examen."))
+        }
+        if (questionId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona una pregunta."))
+        }
+        return repository.unlinkQuestionFromExam(examId, questionId)
+    }
+}
+
+/**
+ * Archiva la pregunta en el banco: desaparece de **todos** los exámenes.
+ *
+ * Quien lo invoque desde la UI debe advertirlo antes de ejecutarlo.
+ */
+class ArchiveQuestionUseCase(
+    private val repository: ContentRepository,
+) {
+    suspend operator fun invoke(questionId: String): AppResult<Unit> {
+        if (questionId.isBlank()) {
+            return AppResult.Failure(AppError.Validation("Selecciona una pregunta."))
+        }
+        return repository.archiveQuestion(questionId)
+    }
 }
 
 class MoveQuestionUseCase(

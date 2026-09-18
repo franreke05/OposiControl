@@ -14,7 +14,7 @@ class ContentImportUseCasesTest {
         override suspend fun getImportBatch(batchId: String) = AppResult.Success(sampleBatch())
         override suspend fun uploadPdfToStaging(examId: String, examType: String, fileUri: String, fileName: String) = AppResult.Success(sampleBatch())
         override suspend fun updateStaging(item: ContentImportStagingItem) = AppResult.Success(item)
-        override suspend fun publishImportBatch(batchId: String) = AppResult.Success(sampleBatch())
+        override suspend fun publishImportBatch(batchId: String, confirmExamPublished: Boolean) = AppResult.Success(sampleBatch())
     }
 
     @Test

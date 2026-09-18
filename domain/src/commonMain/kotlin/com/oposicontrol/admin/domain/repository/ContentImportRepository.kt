@@ -14,5 +14,14 @@ interface ContentImportRepository {
         fileName: String,
     ): AppResult<ContentImportBatch>
     suspend fun updateStaging(item: ContentImportStagingItem): AppResult<ContentImportStagingItem>
-    suspend fun publishImportBatch(batchId: String): AppResult<ContentImportBatch>
+
+    /**
+     * Publica el lote con UNA llamada (KI3-1) y devuelve el lote releído.
+     *
+     * [confirmExamPublished] es la respuesta del administrador al aviso
+     * `IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED` («el examen está publicado: las
+     * preguntas se verán al instante»). Viaja `true` sólo tras confirmarlo en un
+     * diálogo; por defecto se pregunta.
+     */
+    suspend fun publishImportBatch(batchId: String, confirmExamPublished: Boolean = false): AppResult<ContentImportBatch>
 }

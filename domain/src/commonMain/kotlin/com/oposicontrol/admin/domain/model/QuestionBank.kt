@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.domain.model
 
+import com.oposicontrol.admin.domain.repository.QuestionActiveFilter
 import kotlinx.datetime.Instant
 
 /**
@@ -19,9 +20,44 @@ data class QuestionListItem(
     val type: QuestionType?,
     val statement: String,
     val active: Boolean,
-    /** Solo presentes cuando la fila viene de [QuestionsRepository.listQuestionsForExam]. */
+    /** Solo presentes cuando la consulta es la de un examen ([QuestionListQuery.examId]). */
     val examId: String? = null,
     val position: Int? = null,
+)
+
+/** El orden del banco, con el valor exacto que entiende `GET /preguntas?orden=` (KQ0-4). */
+enum class QuestionListSort(val wireValue: String) {
+    MOST_RECENT("recientes"),
+    BY_CODE("codigo"),
+}
+
+/**
+ * Qué página del banco se pide (KQ0-4, QN-07).
+ *
+ * Todo se resuelve EN EL SERVIDOR: búsqueda, tipo, especialidad, estado, examen,
+ * orden y paginación. Antes el cliente descargaba el banco entero —sin cota— y
+ * filtraba lo cargado, y el filtro «Inactivas» filtraba un conjunto del que las
+ * inactivas ya se habían ido.
+ *
+ * Con [examId] la lista es la de ese examen, en su orden (posición); [sort] no aplica.
+ */
+data class QuestionListQuery(
+    val search: String = "",
+    val type: QuestionType? = null,
+    val specialtyId: String? = null,
+    val active: QuestionActiveFilter = QuestionActiveFilter.ACTIVE,
+    val examId: String? = null,
+    val sort: QuestionListSort = QuestionListSort.MOST_RECENT,
+    val offset: Int = 0,
+    val limit: Int = 25,
+)
+
+/** Una página del banco con el TOTAL exacto de la consulta, no sólo lo que trae. */
+data class QuestionPage(
+    val items: List<QuestionListItem>,
+    val total: Int,
+    val offset: Int,
+    val limit: Int,
 )
 
 /** Detalle completo — opciones, solución y recursos, para el editor. */
@@ -38,8 +74,9 @@ data class QuestionDetail(
     val active: Boolean,
     /**
      * `dificultad` del contrato — no editable desde esta pantalla (no está en
-     * el diseño aprobado), pero hay que reenviarlo tal cual en cada guardado:
-     * el backend no conserva el valor existente si no llega en el PATCH.
+     * el diseño aprobado); se reenvía tal cual en cada guardado. `""` es «sin
+     * definir» (columna NULL) y nunca un `"media"` inventado (KQ0-2): el servidor
+     * lee un vacío como «no la toques».
      */
     val difficulty: String,
     val resources: List<QuestionResource>,
@@ -50,6 +87,12 @@ data class QuestionDetail(
      */
     val createdAt: Instant? = null,
     val updatedAt: Instant? = null,
+    /**
+     * `especialidad_id` de la pregunta (KQ0-5). Sirve para ofrecer al vincular sólo
+     * exámenes de SU especialidad: la base rechaza los demás
+     * (`QUESTION_EXAM_SPECIALTY_MISMATCH`). `null` si el servidor no lo manda.
+     */
+    val specialtyId: String? = null,
 )
 
 /** Campos editables — lo que viaja en un alta o una actualización. */
@@ -63,16 +106,22 @@ data class QuestionDraft(
     val difficulty: String,
 )
 
-/** Relación pregunta↔examen conocida (código/título humanos, para pintar la tabla sin pedir UUID). */
+/**
+ * Un examen al que está vinculada una pregunta, tal y como lo responde
+ * `GET /preguntas/{id}/examenes` (KQ3-2): la lista REAL, no la inferida de la sesión.
+ *
+ * [status] es `borrador`, `publicado` o `archivado`: el diálogo de archivar y el de
+ * quitar avisan cuando el examen está publicado, porque ahí el cambio se ve al
+ * instante. [examType] es el vocabulario de examen (`rafaga`, `razonado`,
+ * `inmersivo`) y decide si el tipo de la pregunta se puede cambiar (KQ3-3).
+ */
 data class QuestionExamLink(
     val examId: String,
     val examCode: String,
     val examTitle: String,
     val position: Int,
-)
-
-/** Petición de asociación al guardar: examen destino + posición dentro de él. */
-data class QuestionExamLinkRequest(
-    val examId: String,
-    val position: Int,
-)
+    val examType: String = "",
+    val status: String = "",
+) {
+    val isPublished: Boolean get() = status.equals("publicado", ignoreCase = true)
+}

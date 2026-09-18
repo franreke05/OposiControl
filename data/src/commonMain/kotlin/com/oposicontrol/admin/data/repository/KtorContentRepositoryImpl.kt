@@ -237,13 +237,6 @@ class KtorContentRepositoryImpl(
         return AppResult.Success(saved)
     }
 
-    override suspend fun deleteQuestion(examId: String, questionId: String) = adapter.safeCall {
-        client.delete("${contentUrl()}/solucionarios/$examId/preguntas/$questionId") { backendHeaders() }
-            .requireBackendSuccess("/content/solucionarios/$examId/preguntas/$questionId")
-        refreshExams()
-        Unit
-    }
-
     override suspend fun moveQuestion(
         examId: String,
         questionId: String,

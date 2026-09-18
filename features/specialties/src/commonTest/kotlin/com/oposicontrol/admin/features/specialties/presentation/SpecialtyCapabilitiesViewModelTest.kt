@@ -225,7 +225,6 @@ private class FakeCapabilitiesRepository(
         examId: String,
         questions: List<com.oposicontrol.admin.domain.model.ExamQuestion>,
     ) = outOfScope()
-    override suspend fun deleteQuestion(examId: String, questionId: String) = outOfScope()
     override suspend fun moveQuestion(
         examId: String,
         questionId: String,

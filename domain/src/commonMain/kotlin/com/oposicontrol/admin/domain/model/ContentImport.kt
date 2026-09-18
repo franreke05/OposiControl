@@ -9,6 +9,23 @@ data class ContentImportBatch(
     val detectedCount: Int,
     val importedCount: Int,
     val staging: List<ContentImportStagingItem> = emptyList(),
+    /**
+     * `false` cuando la detección de duplicados NO se pudo ejecutar (falta IM3): la
+     * pantalla lo dice tal cual. Sin este dato, un lote sin comprobar se vería igual
+     * que uno comprobado y limpio, y el revisor publicaría repetidas.
+     */
+    val duplicatesChecked: Boolean = true,
+)
+
+/**
+ * Una coincidencia detectada para una fila (KI3-2). [origin] es `banco` (ya existe
+ * publicada: se puede vincular) o `lote` (el PDF la trae dos veces: hay que omitir una).
+ */
+data class ContentImportDuplicate(
+    val origin: String,
+    val questionId: String? = null,
+    val questionCode: String = "",
+    val stagingOriginalId: String? = null,
 )
 
 data class ContentImportStagingItem(
@@ -27,6 +44,10 @@ data class ContentImportStagingItem(
     val parseStatus: String,
     val parseError: String? = null,
     val questionId: String? = null,
+    /** La pregunta existente con la que el revisor decide vincular esta fila (IM2). `null` = crear. */
+    val linkQuestionId: String? = null,
+    /** Lectura: la coincidencia detectada, o `null`. */
+    val duplicate: ContentImportDuplicate? = null,
 )
 
 enum class ContentExamType(val apiValue: String, val questionApiValue: String, val label: String) {

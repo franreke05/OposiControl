@@ -53,9 +53,10 @@ class UpdateContentImportStagingUseCase(private val repository: ContentImportRep
 }
 
 class PublishContentImportBatchUseCase(private val repository: ContentImportRepository) {
-    suspend operator fun invoke(batchId: String): AppResult<ContentImportBatch> {
+    /** [confirmExamPublished]: la respuesta al aviso de examen publicado (KI3-3); por defecto se pregunta. */
+    suspend operator fun invoke(batchId: String, confirmExamPublished: Boolean = false): AppResult<ContentImportBatch> {
         if (batchId.isBlank()) return AppResult.Failure(AppError.Validation("Selecciona un lote."))
-        return repository.publishImportBatch(batchId)
+        return repository.publishImportBatch(batchId, confirmExamPublished)
     }
 }
 

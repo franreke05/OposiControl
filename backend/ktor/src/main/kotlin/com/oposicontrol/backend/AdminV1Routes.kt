@@ -1,9 +1,12 @@
 package com.oposicontrol.backend
 
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.Parameters
 import io.ktor.server.application.call
 import io.ktor.server.auth.UserIdPrincipal
 import io.ktor.server.auth.principal
+import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.request.contentLength
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
@@ -16,20 +19,29 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.http.content.PartData
 import io.ktor.http.content.forEachPart
-import io.ktor.http.content.streamProvider
+import io.ktor.utils.io.readRemaining
+import kotlinx.coroutines.CancellationException
+import kotlinx.io.readByteArray
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import java.net.URI
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
 import java.net.URLEncoder
 import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.LocalDate
@@ -108,6 +120,130 @@ internal fun decodeFeedbackCursor(cursor: String): Pair<String, String> {
  * evita mandar publicaciones enteras (potencialmente largas) por cada fila de una
  * lista paginada de alto volumen — el cliente igual aplica maxLines/ellipsis,
  * pero el payload de red ya llega pequeño y predecible. */
+/**
+ * `?activa=` de `GET /preguntas`: `true` (activas) · `false` (inactivas) ·
+ * `todas`. Devuelve `null` para «todas», que es lo que el gateway entiende como
+ * «sin filtro».
+ *
+ * ### El defecto que cierra (Q-04 / Q-2)
+ *
+ * `listPreguntas` filtraba `activa=eq.true` INCONDICIONALMENTE, así que el
+ * filtro «Inactivas» del banco no podía devolver nada nunca: filtra un conjunto
+ * del que las inactivas ya se habían ido en el servidor. Y «Todos los estados»
+ * era idéntico a «Activas».
+ *
+ * Lo que lo hace grave es que archivar SÍ funciona (`DELETE /preguntas/{id}` →
+ * `activa=false`): un administrador desactivaba una pregunta y **desaparecía del
+ * banco sin forma de volver a encontrarla desde esa pantalla**. Reversible en la
+ * base, irreversible en la interfaz.
+ *
+ * ### Por qué el default es `true` y no «todas»
+ *
+ * El contrato de la fase propone «ausente = TODAS». Aquí el default preserva el
+ * comportamiento actual a propósito: el cliente de escritorio llama a este
+ * endpoint SIN parámetro y pinta el resultado como «el banco». Cambiar el
+ * significado de una llamada que ya existe metería preguntas archivadas en una
+ * pantalla que nadie ha pedido que las muestre, y lo haría en silencio. La
+ * capacidad nueva se PIDE; no se impone a quien no la conoce.
+ *
+ * Es una divergencia deliberada del contrato y está declarada como tal en el
+ * informe de la fase.
+ *
+ * ### Nada del cliente se interpola
+ *
+ * Los tres valores mapean a literales fijos. La cadena del cliente no llega a la
+ * consulta de PostgREST ni codificada: o es uno de los tres, o es un 400.
+ */
+private fun parseActivaFilter(raw: String?): Boolean? = when (raw?.trim()?.lowercase()) {
+    null, "", "true" -> true
+    "false" -> false
+    "todas", "all" -> null
+    else -> throw IllegalArgumentException("activa debe ser uno de: true, false, todas.")
+}
+
+/** Orden del listado del banco (KQ0-3). Cada valor es un literal de PostgREST fijo. */
+internal enum class PreguntaListOrden(val wire: String, val postgrest: String) {
+    RECIENTES("recientes", "creado_en.desc,id.desc"),
+    CODIGO("codigo", "codigo_pregunta.asc,id.asc"),
+}
+
+/**
+ * La consulta del listado del banco, ya validada (KQ0-3). Nada de aquí es texto
+ * del cliente sin neutralizar: identificadores canónicos, literales de un
+ * vocabulario cerrado, números acotados y la búsqueda que sanea
+ * [preguntaSearchFilter].
+ */
+internal data class AdminPreguntaListQuery(
+    val texto: String? = null,
+    val tipo: String? = null,
+    val especialidadId: String? = null,
+    val activa: Boolean? = true,
+    val examenId: String? = null,
+    val orden: PreguntaListOrden = PreguntaListOrden.RECIENTES,
+    val limit: Int = PREGUNTA_LIST_DEFAULT_LIMIT,
+    val offset: Int = 0,
+)
+
+private const val PREGUNTA_LIST_DEFAULT_LIMIT = 25
+private const val PREGUNTA_LIST_MAX_LIMIT = 100
+private const val PREGUNTA_LIST_MAX_OFFSET = 100_000
+private const val PREGUNTA_SEARCH_MAX_LENGTH = 100
+private val PREGUNTA_LIST_TYPES: Set<String> = setOf("rafaga", "razonada", "inmersiva")
+
+/**
+ * `GET /preguntas` → [AdminPreguntaListQuery], o 400 (`IllegalArgumentException`)
+ * ANTES de ninguna petición.
+ *
+ * Límites: `limit` 1..100 (25 por defecto), `offset` 0..100 000, `q` como mucho
+ * 100 caracteres. Un `offset` enorme no es un ataque, pero sí una lectura que
+ * PostgREST tiene que recorrer entera para devolver cero filas.
+ */
+internal fun Parameters.toPreguntaListQuery(): AdminPreguntaListQuery {
+    val texto = this["q"]?.trim()?.takeIf { it.isNotEmpty() }
+    require(texto == null || texto.length <= PREGUNTA_SEARCH_MAX_LENGTH) {
+        "La búsqueda admite como mucho $PREGUNTA_SEARCH_MAX_LENGTH caracteres."
+    }
+    val tipo = this["tipo"]?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+    require(tipo == null || tipo in PREGUNTA_LIST_TYPES) { "Tipo de pregunta no válido." }
+    val limit = this["limit"]?.let { it.trim().toIntOrNull() ?: throw IllegalArgumentException("limit no es un número.") }
+        ?: PREGUNTA_LIST_DEFAULT_LIMIT
+    val offset = this["offset"]?.let { it.trim().toIntOrNull() ?: throw IllegalArgumentException("offset no es un número.") }
+        ?: 0
+    require(limit in 1..PREGUNTA_LIST_MAX_LIMIT) { "limit tiene que estar entre 1 y $PREGUNTA_LIST_MAX_LIMIT." }
+    require(offset in 0..PREGUNTA_LIST_MAX_OFFSET) { "offset fuera de rango." }
+    val orden = when (this["orden"]?.trim()?.lowercase()) {
+        null, "", PreguntaListOrden.RECIENTES.wire -> PreguntaListOrden.RECIENTES
+        PreguntaListOrden.CODIGO.wire -> PreguntaListOrden.CODIGO
+        else -> throw IllegalArgumentException("Orden no válido.")
+    }
+    return AdminPreguntaListQuery(
+        texto = texto,
+        tipo = tipo,
+        especialidadId = this["especialidadId"]?.takeIf { it.isNotBlank() }?.validatedUuid("especialidadId"),
+        activa = parseActivaFilter(this["activa"]),
+        examenId = this["examenId"]?.takeIf { it.isNotBlank() }?.validatedUuid("examenId"),
+        orden = orden,
+        limit = limit,
+        offset = offset,
+    )
+}
+
+/**
+ * La búsqueda por código o enunciado como filtro `or` de PostgREST, o `null` si no
+ * queda nada que buscar.
+ *
+ * Mismo saneado que [perfilSearchFilter]: fuera los separadores de la sintaxis de
+ * PostgREST (paréntesis, coma, asterisco, comillas y barra invertida), que dentro
+ * de un `or=(…)` cambiarían la estructura del filtro, y después URL-encode, que
+ * impide que `#` trunque la consulta o que `&` añada parámetros.
+ */
+internal fun preguntaSearchFilter(termino: String): String? {
+    val saneado = termino.replace(Regex("[(),*\"\\\\]"), " ").replace(Regex("\\s+"), " ").trim()
+    if (saneado.isEmpty()) return null
+    val codificado = URLEncoder.encode("*$saneado*", StandardCharsets.UTF_8).replace("+", "%20")
+    return "codigo_pregunta.ilike.$codificado,titulo.ilike.$codificado"
+}
+
 internal fun String.toForoSnippet(maxLength: Int = 240): String {
     val trimmed = trim()
     if (trimmed.length <= maxLength) return trimmed
@@ -116,47 +252,108 @@ internal fun String.toForoSnippet(maxLength: Int = 240): String {
 
 fun Route.adminV1Routes(gateway: AdminV1Gateway) {
     route("/api/v1/admin") {
+        // F-10: todas las llamadas al gateway, en `withUpstreamIo` (el porqué, en el
+        // bloque de comentario de `/examenes`, justo debajo). F-06: los `{id}` que
+        // acaban en `?id=eq.$id` se validan ANTES de salir: sin validar, un espacio
+        // hacía que `URI.create` fallara con la URL del proyecto en el mensaje, y un
+        // `#` dejaba el PATCH de archivar sin filtro.
         route("/especialidades") {
             get {
-                call.respond(AdminEspecialidadesResponse(gateway.listEspecialidades()))
+                call.respond(AdminEspecialidadesResponse(withUpstreamIo { gateway.listEspecialidades() }))
             }
             post {
-                val saved = gateway.createEspecialidad(call.receive())
+                val body = call.receive<AdminEspecialidadDto>()
+                val saved = withUpstreamIo { gateway.createEspecialidad(body) }
                 call.respond(HttpStatusCode.Created, AdminEspecialidadResponse(saved))
             }
             patch("/{id}") {
-                val saved = gateway.updateEspecialidad(call.requiredPath("id"), call.receive())
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<AdminEspecialidadDto>()
+                val saved = withUpstreamIo { gateway.updateEspecialidad(id, body) }
                 call.respond(AdminEspecialidadResponse(saved))
             }
             delete("/{id}") {
-                val saved = gateway.archiveEspecialidad(call.requiredPath("id"))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val saved = withUpstreamIo { gateway.archiveEspecialidad(id) }
                 call.respond(AdminEspecialidadResponse(saved))
             }
             // Modos disponibles por especialidad (§ especialidades como configuración
             // de producto). PUT y no PATCH: el cuerpo es el estado completo de los
             // flags, así que enviar uno parcial no debe dejar el resto a medias.
             get("/{id}/capacidades") {
+                val id = call.requiredPath("id")
                 call.respond(
                     AdminEspecialidadCapacidadesResponse(
-                        gateway.getCapacidadesEspecialidad(call.requiredPath("id")),
+                        withUpstreamIo { gateway.getCapacidadesEspecialidad(id) },
                     ),
                 )
             }
             put("/{id}/capacidades") {
-                val saved = gateway.upsertCapacidadesEspecialidad(call.requiredPath("id"), call.receive())
+                val id = call.requiredPath("id")
+                val body = call.receive<AdminEspecialidadCapacidadesDto>()
+                val saved = withUpstreamIo { gateway.upsertCapacidadesEspecialidad(id, body) }
                 call.respond(AdminEspecialidadCapacidadesResponse(saved))
             }
         }
+        // ---------------------------------------------------------------
+        // `withUpstreamIo { ... }` en los handlers de las cuatro verticales
+        // de esta fase.
+        //
+        // Los gateways llaman `client.send(...)`, que BLOQUEA. Las rutas de
+        // Ktor corren sobre el dispatcher de Netty, cuyo pool está
+        // dimensionado para trabajo no bloqueante. Cada llamada upstream
+        // secuestra un hilo de ese pool hasta 20 s (el timeout de request).
+        //
+        // El riesgo no es la lentitud: es la INANICIÓN del pool. Con
+        // suficientes peticiones lentas a la vez, Ktor deja de aceptar
+        // peticiones nuevas — `/health/ready` incluida, así que el servicio se
+        // declara caído por culpa de una pantalla de administración.
+        //
+        // Envolver aquí, y no convertir los gateways a `suspend`, es el cambio
+        // más pequeño que resuelve el problema real: el hilo de Netty queda
+        // libre de inmediato, el bloqueo pasa al pool `IO` (que está hecho
+        // para eso y crece hasta 64 hilos), no cambia ni el orden, ni los
+        // errores, ni los timeouts. Convertir 13 gateways a `suspend` son
+        // ~200 firmas y una ganancia cercana a cero: el cuello de botella no
+        // es el hilo del gateway.
+        //
+        // Es `withUpstreamIo` (Observability.kt) y NUNCA un salto al
+        // dispatcher de IO escrito a mano: el cambio de hilo suelto
+        // pierde el MDC, y con él el `request_id` de todo `ADMIN_ACTION` que
+        // `registrarAuditoria` emite desde dentro del bloque — justo el
+        // identificador que la respuesta 500 le da al cliente para
+        // correlacionar. La costura reinstala ese MDC al otro lado.
+        //
+        // Corolario que el compilador impone y conviene leer una vez: el
+        // bloque NO es `suspend`, así que `call.receive()` y
+        // `call.receiveMultipart()` van FUERA. Leer el cuerpo de la petición
+        // pertenece al contexto de la petición, no al pool de IO.
+        // ---------------------------------------------------------------
         route("/examenes") {
             get {
-                call.respond(AdminExamenesResponse(gateway.listExamenes()))
+                call.respond(AdminExamenesResponse(withUpstreamIo { gateway.listExamenes() }))
             }
             post {
-                val saved = gateway.createExamen(call.receive())
+                val body = call.receive<AdminExamenDto>()
+                // F-07: los dos ids del CUERPO acaban en columnas uuid del INSERT.
+                // Sin validar, un valor que no es UUID llegaba a Postgres, volvía
+                // como 22P02 y salía como 500. Ahora es un 400 que nombra el campo
+                // y no sale ninguna petición a Supabase. (`comunidadId` ausente o
+                // `null` es "Nacional" y no se valida.)
+                if (body.especialidadId.isNotBlank()) body.especialidadId.validatedUuid("especialidadId")
+                body.comunidadId?.validatedUuid("comunidadId")
+                val saved = withUpstreamIo { gateway.createExamen(body) }
                 call.respond(HttpStatusCode.Created, AdminExamenResponse(saved))
             }
+            // Todas las rutas `/{id}` de esta vertical validan el identificador.
+            // `?id=eq.$id` lo lleva en PRIMERA posición del filtro y estas rutas
+            // escriben: un `#` en `DELETE /examenes/{id}` deja el PATCH
+            // `{"activo":false}` SIN filtro y archiva el catálogo entero; el de
+            // `publicar` publicaría todos los exámenes de golpe. Es la misma
+            // regla del comentario de `desvincular`, aplicada donde toca.
             get("/{id}") {
-                val examen = gateway.getExamen(call.requiredPath("id"))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val examen = withUpstreamIo { gateway.getExamen(id) }
                 if (examen == null) {
                     call.respond(HttpStatusCode.NotFound, ErrorDto(error = "not_found", message = "Examen no encontrado."))
                 } else {
@@ -164,44 +361,244 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 }
             }
             get("/{id}/preguntas") {
-                call.respond(AdminPreguntasResponse(gateway.listPreguntasExamen(call.requiredPath("id"))))
+                // Esta ruta es ADMIN y NO filtra publicación: ver los borradores
+                // es el caso de uso central del editor de exámenes. Su gemela
+                // pública `GET /v1/examenes/{id}/preguntas` sí los descarta
+                // (EXAM-009). Las dos no se mezclan a propósito.
+                val id = call.requiredPath("id").validatedUuid("id")
+                call.respond(AdminPreguntasResponse(withUpstreamIo { gateway.listPreguntasExamen(id) }))
             }
+            // Se recibe el JSON CRUDO y no el DTO: sólo así se distingue una clave
+            // AUSENTE (no se toca, en todas las columnas: contrato C-01) de una clave
+            // con `null` (se borra, sólo en las tres anulables). Ver
+            // `AdminV1Gateway.updateExamen(id, raw)` y `PATCHABLE_EXAMEN_COLUMNS`.
             patch("/{id}") {
-                val saved = gateway.updateExamen(call.requiredPath("id"), call.receive())
+                val id = call.requiredPath("id").validatedUuid("id")
+                val raw = call.receive<JsonObject>()
+                // Cuarta ruta de la misma familia: un id que no existe es un 404
+                // con el MISMO `ErrorDto` que `GET /examenes/{id}`, no un 500.
+                val saved = withUpstreamIo { gateway.updateExamen(id, raw) }
+                    ?: return@patch call.respond(
+                        HttpStatusCode.NotFound,
+                        ErrorDto(error = "not_found", message = "Examen no encontrado."),
+                    )
                 call.respond(AdminExamenResponse(saved))
             }
+            // Mismo vector de truncado que el DELETE de abajo, y por eso la misma
+            // red: `reordenarPreguntasExamen` compone
+            // `?examen_id=eq.$examenId&pregunta_id=eq.$preguntaId`, con el
+            // identificador del cliente en PRIMERA posición. Un `#` en `id`
+            // borra el filtro `pregunta_id` y el bucle escribe `posicion` sobre
+            // TODAS las filas del examen, una vez por cada id del cuerpo: el
+            // examen acaba con todas sus preguntas en la misma posición.
+            //
+            // Los ids del CUERPO también se validan: van en segunda posición,
+            // así que no truncan, pero son la otra mitad del mismo filtro y
+            // validarlos cuesta una línea.
             patch("/{id}/preguntas/orden") {
-                call.respond(AdminPreguntasResponse(gateway.reordenarPreguntasExamen(call.requiredPath("id"), call.receive())))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val orden = call.receive<AdminPreguntaOrdenRequest>()
+                    .let { body -> AdminPreguntaOrdenRequest(body.ids.map { it.validatedUuid("ids") }) }
+                call.respond(
+                    AdminPreguntasResponse(withUpstreamIo { gateway.reordenarPreguntasExamen(id, orden) }),
+                )
             }
+            // Desvincular ≠ archivar. `DELETE /preguntas/{id}` pone `activa=false`
+            // en la tabla global y, siendo `preguntas_examen` una M:N, hace
+            // desaparecer la pregunta de TODOS los exámenes que la comparten.
+            // Esta ruta borra únicamente la fila de asociación de ESTE examen y
+            // deja la pregunta intacta en el banco.
+            delete("/{id}/preguntas/{preguntaId}") {
+                // Los DOS identificadores se validan como UUID, y aquí no es
+                // higiene: el identificador del cliente va en PRIMERA posición
+                // de un filtro compuesto de PostgREST, y ahí un `#` borra todo
+                // lo que viene detrás.
+                //
+                // LA REGLA, que es lo único que hay que recordar de aquí:
+                //
+                //   Todo VALOR del cliente que acabe en una PETICIÓN a PostgREST
+                //   se neutraliza antes de entrar. Da igual por dónde llegue
+                //   —PATH, CUERPO, QUERY o un campo de MULTIPART—, da igual si
+                //   está inventariado en algún comentario o no, y da igual si
+                //   acaba en la CONSULTA o en el CUERPO.
+                //
+                // Neutralizar es una cosa distinta según DÓNDE acabe el valor y
+                // según QUÉ sea, y confundirlas ha sido el agujero cuarto y el
+                // quinto:
+                //
+                //   · En la CONSULTA, si es un IDENTIFICADOR, `validatedUuid`.
+                //     Un no-uuid es un 400 y nunca viaja.
+                //   · En la CONSULTA, si es TEXTO LIBRE de un vocabulario que
+                //     este backend no posee —`estado` de feedback es el caso—, no
+                //     hay uuid que valga: se CODIFICA (`urlEncode`), que es lo que
+                //     impide que `#` trunque la consulta y que `&` añada
+                //     parámetros.
+                //   · En el CUERPO, SIEMPRE el serializador y NUNCA una plantilla
+                //     de cadena. `sbJson.encodeToString(valor)` escapa comillas y
+                //     control; `"""{"x":"$valor"}"""` no escapa nada.
+                //
+                // La quinta versión de este comentario decía «dentro de una
+                // consulta de PostgREST», y el cuerpo de una escritura no es la
+                // consulta: por esa rendija se coló el `mimeType` del cliente,
+                // concatenado crudo en el JSON del PATCH de `examenes`
+                // (`uploadExamenPortada`). La redacción anterior no acotaba de
+                // menos el INVENTARIO, que era el error de las tres primeras;
+                // acotaba de menos la CLASE DE DESTINO, que es peor porque suena
+                // completa.
+                //
+                // No hay lista cerrada, y este comentario ya ha tenido que
+                // corregirse TRES veces por intentar tenerla:
+                //
+                //   1.ª versión: afirmaba que ésta era «la única ruta de las
+                //      cuatro verticales» con esta forma. Falso: había tres más
+                //      por el path.
+                //   2.ª versión: enumeró esas tres y dijo que se validaba «en la
+                //      RUTA y no en el gateway para que no se pueda saltar
+                //      añadiendo otro llamador del gateway». También falso: el
+                //      otro llamador YA EXISTÍA y era anterior al arreglo
+                //      (`PATCH /preguntas/{id}` → `updatePregunta`), y entraba
+                //      por una puerta que la enumeración ni miraba: el CUERPO.
+                //      Dos identificadores de cuerpo —`examenId` y
+                //      `recursos[].id`— llegaban crudos a un filtro.
+                //   3.ª versión: decía «PATH o CUERPO», y la vertical de
+                //      IMPORTACIONES entera no la cumplía: cuatro rutas
+                //      (`GET /importaciones/preguntas/{loteId}`,
+                //      `PATCH /importaciones/staging/{id}`,
+                //      `POST /importaciones/{loteId}/importar` y el `examenId`
+                //      de MULTIPART de `/importaciones/preguntas/pdf`). Y el
+                //      `estado` de `GET /feedback/preguntas` entraba por la
+                //      QUERY, que no miraba ninguna de las dos redes — un `#`
+                //      ahí se llevaba el `limit` de una tabla de alto volumen.
+                //
+                // Una red de seguridad descrita más amplia de lo que es resulta
+                // peor que ninguna: quien lea el inventario deja de buscar. Por
+                // eso aquí ya no hay inventario, hay regla.
+                //
+                // El vector concreto: `URI.create("$supabaseUrl$path")` parsea
+                // `#` como inicio de fragmento, y el fragmento NO viaja en el
+                // request-target. Un `#` dentro de `examenId` trunca todo lo
+                // que va detrás, así que
+                //   DELETE /preguntas_examen?examen_id=eq.<uuid>#&pregunta_id=eq.<X>
+                // llega al upstream como
+                //   DELETE /preguntas_examen?examen_id=eq.<uuid>
+                // El filtro `pregunta_id` desaparece y **el DELETE borra todas
+                // las asociaciones del examen**. Una ruta que promete "quita
+                // una pregunta sin tocarla en el banco" vaciaría el examen
+                // entero. El mismo truncado afecta al PATCH de recompactación
+                // que hace esta misma función después de borrar, dejando todas
+                // las filas con la misma `posicion`.
+                //
+                // Se valida en la RUTA porque aquí es donde el valor deja de ser
+                // del cliente. Eso NO basta por sí solo —un segundo llamador del
+                // gateway se la salta, y eso fue exactamente lo que pasó— así que
+                // la regla se aplica en TODAS las rutas que reciben el valor, por
+                // el path o por el cuerpo, y no sólo en ésta.
+                val examenId = call.requiredPath("id").validatedUuid("id")
+                val preguntaId = call.requiredPath("preguntaId").validatedUuid("preguntaId")
+                call.respond(
+                    AdminPreguntasResponse(
+                        withUpstreamIo {
+                            gateway.desvincularPreguntaExamen(examenId, preguntaId)
+                        },
+                    ),
+                )
+            }
+            // Las tres capacidades de ciclo de vida: un id que no existe es un
+            // 404, no un 500.
+            //
+            // Antes las tres hacían `.firstOrNull() ?: error("…")`, y un
+            // `IllegalStateException` sale por el handler de upstream: 500
+            // redactado, «Error al consultar el servicio de datos. Referencia:
+            // …». Eso dice «el servidor está roto» cuando lo que pasa es que el
+            // examen no existe, y además lo hace indistinguible de un fallo real
+            // de Supabase, que es exactamente el caso que esa referencia existe
+            // para poder investigar. Ahora el gateway devuelve `null` y la ruta
+            // responde con el MISMO `ErrorDto` que `GET /examenes/{id}`.
             post("/{id}/publicar") {
-                call.respond(AdminExamenResponse(gateway.publicarExamen(call.requiredPath("id"))))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val saved = withUpstreamIo { gateway.publicarExamen(id) }
+                    ?: return@post call.respond(
+                        HttpStatusCode.NotFound,
+                        ErrorDto(error = "not_found", message = "Examen no encontrado."),
+                    )
+                call.respond(AdminExamenResponse(saved))
             }
             post("/{id}/despublicar") {
-                call.respond(AdminExamenResponse(gateway.despublicarExamen(call.requiredPath("id"))))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val saved = withUpstreamIo { gateway.despublicarExamen(id) }
+                    ?: return@post call.respond(
+                        HttpStatusCode.NotFound,
+                        ErrorDto(error = "not_found", message = "Examen no encontrado."),
+                    )
+                call.respond(AdminExamenResponse(saved))
             }
+            // Cuarta capacidad de ciclo de vida, y la que faltaba: ARCHIVAR con
+            // ruta propia.
+            //
+            // Antes archivar era lo que hacía `DELETE /{id}`, así que la consola
+            // ofrecía «Eliminar» sobre una operación que no eliminaba: el examen
+            // seguía en la base con `activo=false` y no había forma de quitar del
+            // catálogo real un examen de prueba. Ahora el DELETE borra (ver
+            // abajo) y archivar vive aquí, con la misma forma que sus hermanas
+            // `publicar`/`despublicar` —POST, 404 si el id no existe, el examen
+            // guardado en la respuesta—.
+            post("/{id}/archivar") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                val saved = withUpstreamIo { gateway.archiveExamen(id) }
+                    ?: return@post call.respond(
+                        HttpStatusCode.NotFound,
+                        ErrorDto(error = "not_found", message = "Examen no encontrado."),
+                    )
+                call.respond(AdminExamenResponse(saved))
+            }
+            // BORRADO REAL, con guarda. Ver `AdminV1Gateway.deleteExamen` para
+            // por qué hay guarda, cómo se cuenta y en qué orden se borra.
+            //
+            // `false` = el examen no existe, y se traduce al MISMO 404 que
+            // `GET /examenes/{id}`. Un examen con datos de usuario NO sale por
+            // aquí: el gateway lanza `BackendDomainException` y el handler de
+            // `Application.kt` la convierte en el 409 con su código de dominio.
+            //
+            // 204 y no la fila borrada: lo que había ya no existe, y devolver su
+            // último retrato invitaría al cliente a re-sembrar un editor con un
+            // examen que acaba de desaparecer.
             delete("/{id}") {
-                call.respond(AdminExamenResponse(gateway.archiveExamen(call.requiredPath("id"))))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val deleted = withUpstreamIo { gateway.deleteExamen(id) }
+                if (!deleted) {
+                    call.respond(
+                        HttpStatusCode.NotFound,
+                        ErrorDto(error = "not_found", message = "Examen no encontrado."),
+                    )
+                } else {
+                    call.respond(HttpStatusCode.NoContent)
+                }
             }
             post("/{id}/portada") {
-                val id = call.requiredPath("id")
+                val id = call.requiredPath("id").validatedUuid("id")
                 val multipart = call.receiveMultipart()
                 var fileBytes: ByteArray? = null
-                var fileName = "portada.jpg"
-                var mimeType = "image/jpeg"
+                var mimeType = ""
                 multipart.forEachPart { part ->
                     try {
                         if (part is PartData.FileItem && part.name == "file") {
-                            val stream = part.streamProvider()
-                            val maxBytes = 10 * 1024 * 1024
-                            val limited = stream.readNBytes(maxBytes + 1)
-                            require(limited.size <= maxBytes) { "El archivo supera el limite de 10 MB." }
-                            val partMime = part.contentType?.toString().orEmpty()
-                            require(partMime.isBlank() || partMime.startsWith("image/")) {
-                                "Tipo de archivo no permitido: $partMime. La portada debe ser una imagen."
-                            }
+                            // K5: el TIPO se decide antes de leer un solo byte, contra los tres
+                            // formatos de portada (422 `EXAM_COVER_TYPE_INVALID`). Un tipo
+                            // ausente también se rechaza: ya no hay un «image/jpeg» por defecto
+                            // que etiquete como imagen lo que no lo es. F-09: el mensaje es una
+                            // constante y no repite lo que mandó el cliente.
+                            val partMime = part.contentType
+                                ?.let { "${it.contentType}/${it.contentSubtype}" }
+                                ?.lowercase()
+                                .orEmpty()
+                            if (partMime !in EXAM_COVER_EXTENSIONS) throw examCoverTypeInvalidException()
+                            // F-13: `readRemaining` suspende en vez de bloquear el hilo de la
+                            // petición, y el `+ 1` distingue «justo el límite» de «lo supera».
+                            val limited = part.provider().readRemaining(EXAM_COVER_MAX_BYTES + 1L).readByteArray()
+                            require(limited.size <= EXAM_COVER_MAX_BYTES) { "El archivo supera el limite de 10 MB." }
                             fileBytes = limited
-                            fileName = part.originalFileName ?: fileName
-                            mimeType = partMime.ifBlank { mimeType }
+                            mimeType = partMime
+                            // `originalFileName` ya no se usa: el objeto se nombra con un uuid.
                         }
                     } finally {
                         part.dispose()
@@ -209,53 +606,285 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 }
                 val bytes = fileBytes
                     ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("no_file", "No se recibió archivo."))
-                call.respond(AdminExamenResponse(gateway.uploadExamenPortada(id, bytes, fileName, mimeType)))
+                // Sólo la llamada al gateway va al pool IO: el `return@post` de
+                // arriba tiene que seguir siendo un retorno del handler.
+                val saved = withUpstreamIo { gateway.uploadExamenPortada(id, bytes, mimeType) }
+                    ?: return@post call.respond(
+                        HttpStatusCode.NotFound,
+                        ErrorDto(error = "not_found", message = "Examen no encontrado."),
+                    )
+                call.respond(AdminExamenResponse(saved))
             }
             delete("/{id}/portada") {
-                call.respond(AdminExamenResponse(gateway.clearExamenPortada(call.requiredPath("id"))))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val saved = withUpstreamIo { gateway.clearExamenPortada(id) }
+                    ?: return@delete call.respond(
+                        HttpStatusCode.NotFound,
+                        ErrorDto(error = "not_found", message = "Examen no encontrado."),
+                    )
+                call.respond(AdminExamenResponse(saved))
             }
         }
         route("/preguntas") {
+            // KQ0-3: una PÁGINA del banco con su total, filtrada y ordenada EN EL
+            // SERVIDOR. `?q=&tipo=&especialidadId=&activa=&examenId=&orden=&limit=&offset=`
+            // → `{data, total, limit, offset}`. `activa` ausente sigue siendo `true`
+            // (ver [parseActivaFilter] para por qué el default NO es «todas»).
+            //
+            // Todo el parseo va FUERA de `withUpstreamIo` y antes de la primera
+            // petición: un valor inválido es un 400 y no sale ni una consulta.
             get {
-                call.respond(AdminPreguntasResponse(gateway.listPreguntas()))
+                val query = call.request.queryParameters.toPreguntaListQuery()
+                call.respond(withUpstreamIo { gateway.listPreguntasPagina(query) })
             }
+            // KQ2-1: alta por `admin_create_question`, idempotente por `id`.
+            //
+            // El código de estado distingue las dos cosas que el cliente necesita
+            // saber tras un reintento: **201** = esta llamada creó la pregunta;
+            // **200** = ya existía con el mismo contenido (el primer intento sí
+            // llegó, aunque su respuesta se perdiera). Un 201 en el reintento
+            // haría creer al banco que hay dos preguntas donde hay una.
             post {
-                call.respond(HttpStatusCode.Created, AdminPreguntaResponse(gateway.createPregunta(call.receive())))
+                // F-07: mismos ids de cuerpo que el PATCH de abajo, y además
+                // `especialidadId`, que acaba en una columna uuid. Sin validar, un
+                // valor que no es UUID volvía de Postgres como 22P02 (500) y un `#`
+                // en `examenId` truncaba el filtro. Se rechaza con 400 antes de
+                // llamar a Supabase.
+                val body = call.receive<AdminPreguntaDto>().withValidatedIdentifiers()
+                if (body.especialidadId.isBlank()) {
+                    return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        ErrorDto(error = "bad_request", message = "La pregunta necesita especialidad."),
+                    )
+                }
+                body.especialidadId.validatedUuid("especialidadId")
+                // Q2-4: el autor es el `sub` del JWT verificado, o nadie. Un id
+                // inexistente en `auth.users` era un 23503 con el texto del borrado.
+                val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+                val saved = withUpstreamIo { gateway.createPregunta(body, actorId = actorId) }
+                call.respond(
+                    if (saved.creada) HttpStatusCode.Created else HttpStatusCode.OK,
+                    AdminPreguntaResponse(saved.pregunta),
+                )
             }
             get("/{id}") {
-                val pregunta = gateway.getPregunta(call.requiredPath("id"))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val pregunta = withUpstreamIo { gateway.getPregunta(id) }
                 if (pregunta == null) {
                     call.respond(HttpStatusCode.NotFound, ErrorDto(error = "not_found", message = "Pregunta no encontrada."))
                 } else {
                     call.respond(AdminPreguntaResponse(pregunta))
                 }
             }
-            patch("/{id}") {
-                call.respond(AdminPreguntaResponse(gateway.updatePregunta(call.requiredPath("id"), call.receive())))
+            // KQ3-1 / D-03: la ÚNICA puerta para ver, crear y quitar el vínculo
+            // pregunta ↔ examen. Antes esto no existía en ninguna forma: los
+            // vínculos se INFERÍAN de la sesión (sólo veías uno si habías llegado
+            // filtrando por ese examen), «Quitar» estaba bloqueado desde Preguntas,
+            // y vincular era un efecto secundario del PATCH de la pregunta que
+            // reenviaba el borrador entero y guardaba ediciones sin confirmar.
+            //
+            // Las tres responden la lista COMPLETA de vínculos ya releída, no un
+            // 204: quien vincula o quita quiere pintar el resultado, y hacerle
+            // pedir la lista otra vez abre una ventana en la que la pantalla
+            // enseña un estado que ya no es.
+            get("/{id}/examenes") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                call.respond(
+                    AdminPreguntaExamenesResponse(withUpstreamIo { gateway.listExamenesDePregunta(id) }),
+                )
             }
+            post("/{id}/examenes") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<AdminVincularPreguntaRequest>()
+                val examenId = body.examenId.validatedUuid("examenId")
+                // La RPC también lo rechaza (`EXAM_QUESTION_POSITION_INVALID`), pero
+                // un 0 o un negativo no necesita viajar para saberse mal.
+                require(body.posicion == null || body.posicion >= 1) { "La posición tiene que ser 1 o mayor." }
+                val vinculos = withUpstreamIo {
+                    gateway.vincularPreguntaExamen(examenId = examenId, preguntaId = id, posicion = body.posicion)
+                    gateway.registrarAuditoria("pregunta_vinculada", "preguntas_examen", examenId)
+                    gateway.listExamenesDePregunta(id)
+                }
+                call.respond(AdminPreguntaExamenesResponse(vinculos))
+            }
+            delete("/{id}/examenes/{examenId}") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                val examenId = call.requiredPath("examenId").validatedUuid("examenId")
+                val vinculos = withUpstreamIo {
+                    gateway.quitarVinculoPreguntaExamen(examenId = examenId, preguntaId = id)
+                    gateway.listExamenesDePregunta(id)
+                }
+                call.respond(AdminPreguntaExamenesResponse(vinculos))
+            }
+            // Aquí entraban TRES identificadores de cliente que acababan en un
+            // filtro de PostgREST; desde KQ0-8 y D-03 queda UNO, el del path:
+            // `recursos[]` se ignora entero y `examenId` ya no vincula. Los del
+            // cuerpo fueron el agujero real (D-3, C-1/C-2): la validación se había
+            // puesto sólo en las rutas hermanas, y `updatePregunta` era un segundo
+            // llamador del mismo gateway.
+            //
+            //   · `{id}` (path)        → `PATCH /preguntas?id=eq.$id`. Con un `#`
+            //     el filtro entero desaparece y el PATCH reescribe TODAS las
+            //     preguntas del banco. (Hoy el PATCH es una RPC con el id como
+            //     argumento `uuid`, así que ya no hay filtro que truncar; el id se
+            //     sigue validando porque un no-uuid sería un 22P02 → 500.)
+            //   · `examenId` (cuerpo)  → `upsertPreguntaExamen`, que leía
+            //     `?examen_id=eq.$examenId&pregunta_id=eq.$preguntaId` y escribía
+            //     `{"posicion":N}` con el mismo filtro. Truncado: la lectura pasaba
+            //     a ser «la primera fila cualquiera del examen» —con lo que casi
+            //     siempre entraba por la rama de PATCH— y la escritura ponía la
+            //     misma `posicion` en todas las preguntas del examen. CERRADO por
+            //     partida doble: ese helper ya no existe y este PATCH no vincula.
+            //   · `recursos[].id` (cuerpo) → `updateRecurso`, que compone
+            //     `?id=eq.$recursoId&pregunta_id=eq.$preguntaId`. El filtro que
+            //     se pierde es el de PERTENENCIA, y `updateRecurso` reescribe la
+            //     fila entera **incluido `pregunta_id`**: el recurso cambia de
+            //     dueño y el cliente recibe un 200. CERRADO por KQ0-8: el PATCH
+            //     de pregunta ya no toca recursos; tienen sus propias rutas.
+            //
+            // KQ2-2: el cuerpo se recibe como JSON CRUDO y no como `AdminPreguntaDto`.
+            // Con el DTO no hay forma de distinguir «no mandes el título» de «pon el
+            // título por defecto», porque un campo ausente y uno con su default se
+            // decodifican igual; y `admin_update_question` escribe SÓLO las claves
+            // presentes. Con el objeto crudo, ausente es ausente.
+            //
+            // `examenId` y `posicion` se IGNORAN aquí (D-03/D-04): vincular tiene una
+            // única puerta, `POST /preguntas/{id}/examenes`.
+            patch("/{id}") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<JsonObject>()
+                call.respond(AdminPreguntaResponse(withUpstreamIo { gateway.updatePregunta(id, body) }))
+            }
+            // `archivePregunta` compone `PATCH /preguntas?id=eq.$id` con
+            // `{"activa":false}`: un `#` aquí archiva el banco entero.
             delete("/{id}") {
-                call.respond(AdminPreguntaResponse(gateway.archivePregunta(call.requiredPath("id"))))
+                val id = call.requiredPath("id").validatedUuid("id")
+                call.respond(AdminPreguntaResponse(withUpstreamIo { gateway.archivePregunta(id) }))
             }
             get("/{id}/recursos") {
-                call.respond(AdminRecursosResponse(gateway.listRecursos(call.requiredPath("id"))))
+                val id = call.requiredPath("id").validatedUuid("id")
+                call.respond(AdminRecursosResponse(withUpstreamIo { gateway.listRecursos(id) }))
             }
+            // «Sólo INMERSIVA admite recursos» se impone AQUÍ DENTRO, en el
+            // gateway, y no en este handler: un gateway puede tener más llamadores
+            // que una ruta —`PATCH /preguntas/{id}` con `recursos[]` lo fue hasta
+            // KQ0-8— y ésa es exactamente la lección que ya costó dos correcciones
+            // en la regla de filtros de más arriba. Ver `AdminV1Gateway.addRecurso`.
             post("/{id}/recursos") {
-                call.respond(HttpStatusCode.Created, AdminRecursoResponse(gateway.addRecurso(call.requiredPath("id"), call.receive())))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<AdminRecursoDto>()
+                val saved = withUpstreamIo { gateway.addRecurso(id, body) }
+                call.respond(HttpStatusCode.Created, AdminRecursoResponse(saved))
             }
+            // KQ4-2: el ARCHIVO de un recurso (imagen, audio, vídeo o PDF).
+            //
+            // La regla «sólo inmersiva» se comprueba ANTES de leer el cuerpo: si la
+            // pregunta no existe o no admite material, el administrador recibe su 404 o
+            // su 422 sin que 50 MB hayan cruzado la red ni tocado Storage.
+            post("/{id}/recursos/archivo") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                withUpstreamIo { gateway.requireQuestionAcceptsResources(id) }
+                var fileBytes: ByteArray? = null
+                var mimeType = ""
+                var tipoRecurso = ""
+                var titulo: String? = null
+                var descripcion: String? = null
+                var posicion: Int? = null
+                var recursoId = ""
+                call.receiveMultipart().forEachPart { part ->
+                    try {
+                        when (part) {
+                            is PartData.FormItem -> when (part.name) {
+                                "tipoRecurso" -> tipoRecurso = part.value
+                                "titulo" -> titulo = part.value
+                                "descripcion" -> descripcion = part.value
+                                "posicion" -> posicion = part.value.toIntOrNull()
+                                "recursoId" -> recursoId = part.value
+                                else -> Unit
+                            }
+                            is PartData.FileItem -> if (part.name == "file") {
+                                // El MIME sale de la PARTE, sin parámetros (`; charset=…`), y
+                                // nunca del nombre del fichero: la extensión del objeto la
+                                // decide el mapa del servidor.
+                                mimeType = part.contentType
+                                    ?.let { "${it.contentType}/${it.contentSubtype}" }
+                                    ?.lowercase()
+                                    .orEmpty()
+                                // F-13: `readRemaining` suspende en vez de bloquear el hilo de
+                                // la petición; el `+ 1` distingue «justo el límite» de «lo supera».
+                                val limited = part.provider()
+                                    .readRemaining(QUESTION_RESOURCE_MAX_BYTES + 1L)
+                                    .readByteArray()
+                                if (limited.size > QUESTION_RESOURCE_MAX_BYTES) throw domainError("QUESTION_RESOURCE_TOO_LARGE")
+                                fileBytes = limited
+                            }
+                            else -> Unit
+                        }
+                    } finally {
+                        part.dispose()
+                    }
+                }
+                val bytes = fileBytes ?: throw domainError("QUESTION_RESOURCE_FILE_REQUIRED")
+                // El id es la clave de idempotencia del reintento: si el cliente lo manda,
+                // se respeta; si no, esta llamada es necesariamente un primer intento.
+                val resourceId = recursoId.takeIf { it.isNotBlank() }?.validatedUuid("recursoId")
+                    ?: UUID.randomUUID().toString()
+                val saved = withUpstreamIo {
+                    gateway.addRecursoArchivo(
+                        preguntaId = id,
+                        recursoId = resourceId,
+                        tipoRecurso = tipoRecurso,
+                        titulo = titulo,
+                        descripcion = descripcion,
+                        posicion = posicion,
+                        mimeType = mimeType,
+                        bytes = bytes,
+                    )
+                }
+                call.respond(HttpStatusCode.Created, AdminRecursoResponse(saved))
+            }
+            // `recursoId` va en PRIMERA posición del filtro que componen
+            // `updateRecurso`/`archiveRecurso`
+            // (`?id=eq.$recursoId&pregunta_id=eq.$preguntaId`), así que un `#`
+            // ahí no sólo trunca: el filtro que desaparece es justamente el de
+            // PERTENENCIA. El recurso se sobrescribiría —o se archivaría— sin
+            // comprobar de qué pregunta es. Se validan los dos, por el mismo
+            // motivo que en el DELETE de desvincular.
+            //
+            // El daño era mayor cuando este comentario se escribió:
+            // `updateRecurso` reescribía la fila entera e incluía `pregunta_id`,
+            // así que el recurso además cambiaba de dueño. Hoy el PATCH sólo
+            // manda los campos editables, pero **eso no hace innecesaria la
+            // validación**: sin ella el título y el contenido de un recurso
+            // ajeno se sobrescriben igual.
             patch("/{id}/recursos/{recursoId}") {
-                call.respond(AdminRecursoResponse(gateway.updateRecurso(call.requiredPath("id"), call.requiredPath("recursoId"), call.receive())))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val recursoId = call.requiredPath("recursoId").validatedUuid("recursoId")
+                val body = call.receive<AdminRecursoDto>()
+                call.respond(
+                    AdminRecursoResponse(withUpstreamIo { gateway.updateRecurso(id, recursoId, body) }),
+                )
             }
             delete("/{id}/recursos/{recursoId}") {
-                call.respond(AdminRecursoResponse(gateway.archiveRecurso(call.requiredPath("id"), call.requiredPath("recursoId"))))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val recursoId = call.requiredPath("recursoId").validatedUuid("recursoId")
+                call.respond(
+                    AdminRecursoResponse(withUpstreamIo { gateway.archiveRecurso(id, recursoId) }),
+                )
             }
         }
         route("/importaciones") {
             route("/preguntas") {
                 get {
-                    call.respond(AdminLotesResponse(gateway.listLotes()))
+                    call.respond(AdminLotesResponse(withUpstreamIo { gateway.listLotes() }))
                 }
                 post {
-                    call.respond(HttpStatusCode.Created, AdminLoteResponse(gateway.crearLote(call.receive())))
+                    val body = call.receive<CrearLoteRequest>()
+                    // D-11: el lote tiene autor. `subido_por` no se escribía nunca, así
+                    // que el historial no podía decir quién subió qué.
+                    val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+                    val lote = withUpstreamIo { gateway.crearLote(body, actorId) }
+                    call.respond(HttpStatusCode.Created, AdminLoteResponse(lote))
                 }
                 post("/pdf") {
                     var examenId = ""
@@ -271,7 +900,8 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                                 }
                                 is PartData.FileItem -> if (part.name == "file") {
                                     nombreArchivo = part.originalFileName ?: nombreArchivo
-                                    val bytes = part.streamProvider().readNBytes(20 * 1024 * 1024 + 1)
+                                    // F-13: lectura que suspende, no que bloquea el hilo de la petición.
+                                    val bytes = part.provider().readRemaining(20L * 1024 * 1024 + 1).readByteArray()
                                     require(bytes.size <= 20 * 1024 * 1024) { "El PDF supera el límite de 20 MB." }
                                     pdfBytes = bytes
                                 }
@@ -284,20 +914,91 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     if (examenId.isBlank()) {
                         return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad_request", "examenId es obligatorio"))
                     }
+                    // CUARTA ruta de esta vertical con el mismo hueco, y la que
+                    // el inventario de residuos no contaba: `crearLoteDesdePdf`
+                    // arranca leyendo `examenes?select=*&id=eq.` con este valor.
+                    // Llega por un campo de MULTIPART, que no es ni el path ni un
+                    // cuerpo JSON — otra puerta mas por la que la regla se
+                    // esquivaba sola.
+                    examenId.validatedUuid("examenId")
                     val bytes = pdfBytes
                         ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad_request", "Campo 'file' con el PDF es obligatorio"))
-                    val lote = runCatching {
-                        gateway.crearLoteDesdePdf(examenId, tipoExamen, nombreArchivo, bytes)
-                    }.getOrElse { error ->
+                    val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+                    // El flujo canónico hereda los eventos de la ruta retirada
+                    // (DEC-IMP-05): el observatorio de importaciones dejaría de ver
+                    // nada si se hubiesen ido con ella.
+                    logStrategicEvent(
+                        StrategicEvent.IMPORT_STARTED,
+                        operation = "import_pdf",
+                        entityType = "examenes",
+                        entityId = examenId,
+                    )
+                    // El parseo del PDF, además de bloqueante en red, es
+                    // bloqueante en CPU (PDFBox). Motivo de más para no hacerlo
+                    // en un hilo del pool de Netty.
+                    //
+                    // `try/catch` con re-lanzado explícito y NO `runCatching`:
+                    // `runCatching` captura `Throwable`, cancelación incluida.
+                    // Mientras esto envolvía una llamada síncrona no podía
+                    // llegar una `CancellationException`; envolviendo un salto
+                    // de contexto sí. Si el admin cierra la pestaña a mitad de
+                    // una subida de 18 MB, tragársela convertiría una
+                    // cancelación en un 422 de negocio sobre una llamada ya
+                    // cancelada — ese `respond` vuelve a lanzar y acaba en el
+                    // catch-all como `UNCAUGHT_EXCEPTION`, ensuciando la
+                    // taxonomía de eventos con un error que no es ningún error.
+                    // Relanzarla es lo que mantiene la concurrencia
+                    // estructurada: la cancelación es del llamante, no un fallo
+                    // del PDF.
+                    //
+                    // F-05: sólo un RECHAZO DEL PDF ([PdfImportRejectedException]) es
+                    // un 422, con el mensaje que escribió el gateway para el
+                    // administrador. Todo lo demás —Supabase, red, un error de dominio—
+                    // sigue hasta StatusPages, que lo redacta con referencia. Capturar
+                    // `Throwable` aquí devolvía `error.message` tal cual, y ese mensaje
+                    // podía ser el cuerpo crudo de PostgREST.
+                    val lote = try {
+                        withUpstreamIo {
+                            gateway.crearLoteDesdePdf(examenId, tipoExamen, nombreArchivo, bytes, actorId)
+                        }
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (rejected: PdfImportRejectedException) {
+                        logStrategicEvent(
+                            StrategicEvent.IMPORT_VALIDATION_FAILED,
+                            operation = "import_pdf",
+                            result = "rejected",
+                            entityType = "examenes",
+                            entityId = examenId,
+                        )
                         return@post call.respond(
                             HttpStatusCode.UnprocessableEntity,
-                            ErrorDto("pdf_unprocessable", error.message ?: "No se pudo procesar el PDF."),
+                            ErrorDto("pdf_unprocessable", rejected.message ?: "No se pudo procesar el PDF."),
+                        )
+                    }
+                    // `count` = cuántas filas necesitan a un humano, NUNCA su contenido:
+                    // ese texto sale del PDF y no puede acabar en un evento.
+                    val revisables = lote.staging.count { it.estadoParseo == "error" }
+                    if (revisables > 0) {
+                        logStrategicEvent(
+                            StrategicEvent.IMPORT_VALIDATION_FAILED,
+                            operation = "import_pdf",
+                            result = "validation_failed",
+                            entityType = "examenes",
+                            entityId = examenId,
+                            count = revisables,
                         )
                     }
                     call.respond(HttpStatusCode.Created, AdminLoteResponse(lote))
                 }
+                // `getLote` compone DOS filtros con este identificador
+                // (`lotes_importacion_preguntas?id=eq.` y
+                // `preguntas_parseadas_staging?lote_id=eq.`), y el segundo lleva
+                // detrás un `order`. Es la MISMA regla del `delete` de
+                // desvincular, aplicada donde faltaba.
                 get("/{loteId}") {
-                    val lote = gateway.getLote(call.requiredPath("loteId"))
+                    val loteId = call.requiredPath("loteId").validatedUuid("loteId")
+                    val lote = withUpstreamIo { gateway.getLote(loteId) }
                     if (lote == null) {
                         call.respond(HttpStatusCode.NotFound, ErrorDto(error = "not_found", message = "Lote no encontrado."))
                     } else {
@@ -305,97 +1006,46 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     }
                 }
             }
+            // `updateStaging` compone `PATCH /preguntas_parseadas_staging?id=eq.`
+            // con el identificador en ULTIMA posicion de la consulta. Ahi el `#`
+            // no borra ningun filtro, pero el `&` es peor: el cliente ESCRIBE
+            // parametros de PostgREST sobre una ruta de escritura que responde
+            // `return=representation`. Un `select` embebido devolveria filas de
+            // otras tablas desde un PATCH.
             patch("/staging/{id}") {
-                call.respond(AdminStagingResponse(gateway.updateStaging(call.requiredPath("id"), call.receive())))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<AdminStagingItemDto>()
+                call.respond(AdminStagingResponse(withUpstreamIo { gateway.updateStaging(id, body) }))
             }
+            // La operación más cara de la vertical —crea preguntas reales, una por
+            // fila de staging— y su identificador entraba crudo en dos filtros.
+            //
+            // El cuerpo es OPCIONAL: `{"confirmarExamenPublicado":true}` es la
+            // respuesta del administrador al diálogo «el examen está publicado, las
+            // preguntas se verán al instante». Sin cuerpo se asume `false`, que es el
+            // lado que pregunta en vez del que publica.
             post("/{loteId}/importar") {
-                call.respond(AdminLoteResponse(gateway.importarLote(call.requiredPath("loteId"))))
-            }
-        }
-        route("/rafagas") {
-            post("/import") {
-                val especialidadId = call.request.queryParameters["especialidadId"]
-                    ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad_request", "especialidadId es obligatorio"))
-                especialidadId.validatedUuid("especialidadId")
-                val examenId = call.request.queryParameters["examenId"]
-                    ?.takeIf { it.isNotBlank() }
-                    ?.also { it.validatedUuid("examenId") }
-                logStrategicEvent(
-                    StrategicEvent.IMPORT_STARTED,
-                    operation = "rafaga_import",
-                    entityType = "especialidades",
-                    entityId = especialidadId,
-                )
-
-                var pdfBytes: ByteArray? = null
-                call.receiveMultipart().forEachPart { part ->
-                    try {
-                        if (part is PartData.FileItem && part.name == "file") {
-                            val limited = part.streamProvider().readNBytes(20 * 1024 * 1024 + 1)
-                            require(limited.size <= 20 * 1024 * 1024) { "El PDF supera el límite de 20 MB." }
-                            pdfBytes = limited
-                        }
-                    } finally {
-                        part.dispose()
-                    }
+                val loteId = call.requiredPath("loteId").validatedUuid("loteId")
+                val req: AdminImportarLoteRequest = if (call.request.contentLength().let { it == null || it == 0L }) {
+                    AdminImportarLoteRequest()
+                } else {
+                    call.receive<AdminImportarLoteRequest>()
                 }
-
-                val bytes = pdfBytes
-                    ?: return@post call.respond(HttpStatusCode.BadRequest, ErrorDto("bad_request", "Campo 'file' con el PDF es obligatorio"))
-
-                val rawText = extractTextFromPdf(bytes)
-                val (preguntas, errores) = parseRafagaText(rawText)
-
-                if (errores.isNotEmpty()) {
-                    // count = numero de errores, nunca su contenido (podria
-                    // llevar fragmentos del PDF -- ver redaction, prohibido).
+                val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+                val respuesta = withUpstreamIo {
+                    gateway.importarLote(loteId, req.confirmarExamenPublicado, actorId)
+                }
+                if (respuesta.resultado.ejecutado) {
                     logStrategicEvent(
-                        StrategicEvent.IMPORT_VALIDATION_FAILED,
-                        operation = "rafaga_import",
-                        result = "validation_failed",
-                        entityType = "especialidades",
-                        entityId = especialidadId,
-                        count = errores.size,
-                    )
-                    return@post call.respond(
-                        HttpStatusCode.UnprocessableEntity,
-                        RafagaImportErrorResponse(errores.map { RafagaParseErrorDto(it.numero, it.campo, it.detalle) }),
+                        StrategicEvent.IMPORT_PUBLISHED,
+                        operation = "import_publish",
+                        result = "success",
+                        entityType = "lotes_importacion_preguntas",
+                        entityId = loteId,
+                        count = respuesta.resultado.nuevas + respuesta.resultado.vinculadas,
                     )
                 }
-
-                var importadas = 0
-                preguntas.forEachIndexed { index, q ->
-                    val dto = AdminPreguntaDto(
-                        especialidadId = especialidadId,
-                        titulo = q.titulo,
-                        fuenteTexto = q.fuente,
-                        razonamiento = q.razonamiento,
-                        opciones = q.opciones.map { (letra, texto) ->
-                            AdminOpcionDto(letra = letra, texto = texto, esCorrecta = letra == q.respuesta)
-                        },
-                        examenId = examenId,
-                        posicion = if (examenId != null) index + 1 else null,
-                    )
-                    val created = gateway.createPregunta(dto)
-                    if (q.etiquetas.isNotEmpty()) {
-                        // ponytail: etiquetas stored as text resource; reindex via TagSearchGateway associates to entity_tag.
-                        gateway.addRecurso(
-                            created.id,
-                            AdminRecursoDto(tipoRecurso = "etiquetas", contenidoTexto = q.etiquetas.joinToString(","), posicion = 999),
-                        )
-                    }
-                    importadas++
-                }
-
-                logStrategicEvent(
-                    StrategicEvent.IMPORT_PUBLISHED,
-                    operation = "rafaga_import",
-                    result = "success",
-                    entityType = "especialidades",
-                    entityId = especialidadId,
-                    count = importadas,
-                )
-                call.respond(HttpStatusCode.Created, RafagaImportResponse(importadas))
+                call.respond(respuesta)
             }
         }
         route("/feedback/preguntas") {
@@ -413,13 +1063,37 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 )
             }
             get("/{id}") {
-                val detail = gateway.getFeedbackDetail(call.requiredPath("id"))
+                val detail = gateway.getFeedbackDetail(call.requiredPath("id").validatedUuid("id"))
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Incidencia no encontrada."))
                 call.respond(AdminFeedbackDetailResponse(detail))
             }
+            // El cuerpo se recibe SIN red: un cuerpo inválido tiene que dar 400.
+            //
+            // Antes era
+            //   runCatching { call.receive<…>() }.getOrDefault(ResolverFeedbackRequest())
+            // y eso era fail-open sobre una ESCRITURA, que es la peor forma de
+            // fail-open. `ResolverFeedbackRequest.estado` vale `"resuelto"` por
+            // defecto, así que un cuerpo malformado, ausente o abortado a mitad
+            // no daba 400: caía al default, escribía `{"estado":"resuelto"}` en
+            // `feedback_pregunta`, registraba `feedback_resuelto` en auditoría y
+            // emitía `FEEDBACK_RESOLVED`. Un error benigno del cliente se
+            // convertía en un cambio de estado de negocio MÁS un rastro de
+            // auditoría afirmando que un administrador resolvió la incidencia.
+            // Una pista de auditoría que no se puede creer no sirve de nada.
+            //
+            // Además `call.receive()` es `suspend` sobre el contexto de la
+            // petición: si el admin cierra la pestaña a mitad del envío, el
+            // `runCatching` se tragaba también la `CancellationException` y la
+            // convertía en una resolución. Sin `runCatching` la cancelación se
+            // propaga, que es lo correcto: es del llamante, no un fallo nuestro.
+            //
+            // Un cuerpo mal formado sale por `BadRequestException` (400 con
+            // mensaje genérico, sin filtrar el DTO esperado) y un `estado` fuera
+            // del vocabulario por el `require` de `resolverFeedback` (400).
             post("/{id}/resolver") {
-                val req = runCatching { call.receive<ResolverFeedbackRequest>() }.getOrDefault(ResolverFeedbackRequest())
-                call.respond(AdminFeedbackResponse(gateway.resolverFeedback(call.requiredPath("id"), req)))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val req = call.receive<ResolverFeedbackRequest>()
+                call.respond(AdminFeedbackResponse(gateway.resolverFeedback(id, req)))
             }
         }
         get("/auditoria") {
@@ -456,7 +1130,29 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             post("/{id}/roles") {
                 @kotlinx.serialization.Serializable data class RolesBody(val roleIds: List<String>)
                 val body = call.receive<RolesBody>()
-                gateway.syncRoles(call.requiredPath("id"), body.roleIds)
+                // Cuerpo Y path se validan como UUID. No es cosmético, y el
+                // motivo histórico importa: `mapSupabaseDomainError` buscaba sus
+                // códigos como subcadena DENTRO del cuerpo que devuelve Supabase,
+                // así que cualquier cadena del cliente que
+                // Postgres echara de vuelta en «invalid input syntax for type uuid»
+                // se traducía a su error de dominio. Un
+                // `POST /usuarios/ROLE_SYNC_LAST_SUPERADMIN/roles` devolvía un 409
+                // con el mensaje de la guarda sin que la guarda llegara a
+                // ejecutarse: el 409 dejaba de ser prueba de que la invariante
+                // saltó. Validar sólo el cuerpo tapaba la mitad del vector, y la
+                // primera versión de este comentario afirmaba que estaba cerrado.
+                //
+                // Hoy el vector está cerrado por DOS capas independientes: esta
+                // validación, y un `mapSupabaseDomainError` que sólo traduce
+                // respuestas >= 400 y exige que el código ENCABECE el campo
+                // `message`. Se mantienen las dos a propósito: que el 409 siga
+                // significando «la invariante saltó» no debe depender de una sola.
+                // `AdminV1UserIdValidationOrderTest` fija que no sale ni una
+                // petición cuando el identificador no es un UUID.
+                gateway.syncRoles(
+                    call.requiredPath("id"),
+                    body.roleIds.map { it.validatedUuid("roleIds") },
+                )
                 call.respond(OkDto())
             }
             post("/{id}/tickets") {
@@ -539,11 +1235,17 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Hilo no encontrado."))
                 call.respond(hilo)
             }
+            // `hiloId` va ANTES de `&order` y `&limit` en la consulta que compone
+            // `getForoHiloRespuestas`, así que un `#` no estrecha la lectura: la
+            // deja SIN cota. `comentarios_oposired` es una tabla de alto volumen
+            // y el `limit` es lo único que la acota. No corrompe nada (es un GET)
+            // pero es amplificación de lectura a una petición de distancia.
             get("/hilos/{id}/respuestas") {
+                val hiloId = call.requiredPath("id").validatedUuid("id")
                 val params = call.request.queryParameters
                 val limit = params["limit"]?.toIntOrNull()?.coerceIn(1, 50) ?: 20
                 val cursor = params["cursor"]?.takeIf { it.isNotBlank() }
-                call.respond(gateway.getForoHiloRespuestas(call.requiredPath("id"), limit = limit, cursor = cursor))
+                call.respond(gateway.getForoHiloRespuestas(hiloId, limit = limit, cursor = cursor))
             }
         }
         get("/settings") { call.respond(gateway.settings()) }
@@ -563,25 +1265,34 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 call.respond(OkDto())
             }
         }
+        // F-10/F-06: mismas reglas que `/especialidades`. Gateway en `withUpstreamIo`
+        // y `{id}` validado antes de componer `?id=eq.$id`: un `#` en el DELETE
+        // borraba sin filtro la tabla entera de comunidades.
         route("/comunidades-autonomas") {
-            get { call.respond(AdminComunidadesResponse(gateway.listComunidades())) }
+            get { call.respond(AdminComunidadesResponse(withUpstreamIo { gateway.listComunidades() })) }
             post {
-                val saved = gateway.createComunidad(call.receive())
+                val body = call.receive<AdminComunidadDto>()
+                val saved = withUpstreamIo { gateway.createComunidad(body) }
                 call.respond(HttpStatusCode.Created, AdminComunidadResponse(saved))
             }
             patch("/{id}") {
-                val saved = gateway.updateComunidad(call.requiredPath("id"), call.receive())
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<AdminComunidadDto>()
+                val saved = withUpstreamIo { gateway.updateComunidad(id, body) }
                 call.respond(AdminComunidadResponse(saved))
             }
             delete("/{id}") {
-                gateway.deleteComunidad(call.requiredPath("id"))
+                val id = call.requiredPath("id").validatedUuid("id")
+                withUpstreamIo { gateway.deleteComunidad(id) }
                 call.respond(OkDto())
             }
         }
         // Estado agregado de los servicios. El panel consume esto, nunca logs.
-        get("/estado-sistema") { call.respond(AdminSystemStatusResponse(gateway.getSystemStatus())) }
+        get("/estado-sistema") {
+            call.respond(AdminSystemStatusResponse(withUpstreamIo { gateway.getSystemStatus() }))
+        }
         get("/dashboard") {
-            call.respond(gateway.getDashboardMetrics())
+            call.respond(withUpstreamIo { gateway.getDashboardMetrics() })
         }
         // Catálogo comercial data-driven: planes, packs de OT y sus precios.
         // Es lo que consume `/v1/comercial/catalogo` en OposiBot, así que editar
@@ -774,8 +1485,39 @@ data class AdminEspecialidadDto(
     val posicion: Int = 0,
 )
 
+/** `encodeDefaults` para que un `false` o un `0` explícitos no se caigan del cuerpo. */
+private val especialidadPatchJson = Json {
+    encodeDefaults = true
+    explicitNulls = false
+}
+
+/**
+ * Cuerpo del PATCH de una especialidad, sin pisar lo que el cliente no edita.
+ *
+ * El panel no tiene campo `codigo` —el modelo de dominio `Specialty` tampoco lo
+ * lleva—, así que la peticion llega con `codigo = ""`, el default del DTO. Con
+ * `encodeDefaults = true` ese `""` viajaba a PostgREST y **sobrescribía el código
+ * real en cada edición**; en los datos vivos ya hay una especialidad con el código
+ * en blanco por este camino.
+ *
+ * Un `codigo` vacío significa «este cliente no gestiona el código», no «ponlo en
+ * blanco», así que se omite la clave y PostgREST deja la columna intacta. Si algún
+ * cliente sí manda uno, se escribe con normalidad.
+ *
+ * Se serializa y luego se filtra, en vez de construir el objeto campo a campo, para
+ * que añadir una columna al DTO no la deje fuera del PATCH en silencio.
+ */
+internal fun especialidadPatchPayload(row: AdminEspecialidadDto): String {
+    val encoded = especialidadPatchJson
+        .encodeToJsonElement(AdminEspecialidadDto.serializer(), row)
+        .jsonObject
+    val safe = if (row.codigo.isBlank()) encoded.filterKeys { it != "codigo" } else encoded
+    return JsonObject(safe).toString()
+}
+
 // Examen: API en camelCase; la fila Supabase (snake_case) es AdminExamenRow.
 @Serializable
+@OptIn(ExperimentalSerializationApi::class)
 data class AdminExamenDto(
     val id: String = "",
     val codigoExamen: String = "",
@@ -783,15 +1525,29 @@ data class AdminExamenDto(
     val comunidadId: String? = null,
     val titulo: String,
     val descripcion: String = "",
-    val tipoExamen: String = "rafaga",
-    val tipoAcceso: String = "gratuito",
+    @EncodeDefault val tipoExamen: String = "rafaga",
+    @EncodeDefault val tipoAcceso: String = "gratuito",
     val anio: Int? = null,
-    val esOficial: Boolean = false,
-    val activo: Boolean = true,
+    @EncodeDefault val esOficial: Boolean = false,
+    @EncodeDefault val activo: Boolean = true,
     val publicadoEn: String? = null,
-    val precioTickets: Int = 0,
-    val totalPreguntas: Int = 0,
+    @EncodeDefault val precioTickets: Int = 0,
+    /**
+     * Número de preguntas ACTIVAS vinculadas al examen. **Sólo lectura.**
+     *
+     * La mantiene la base (M1, `exams_total_preguntas_maintained`): triggers al
+     * vincular, desvincular o archivar preguntas, 0 al crear y una guarda que
+     * neutraliza cualquier otra escritura. Este backend nunca la escribe —ni el
+     * POST ni el PATCH la llevan, se mande lo que se mande en el cuerpo (C-05)—, y
+     * por eso la cifra servida es un dato y no una estimación.
+     */
+    val totalPreguntas: Int? = null,
     val duracionMinutos: Int? = null,
+    /**
+     * URL FIRMADA y efímera (1 h) de la portada. Se calcula en cada lectura a partir
+     * de [portadaStoragePath]; nunca se persiste ni se acepta en escritura (K5). Puede
+     * venir `null` con una ruta guardada si Storage no pudo firmarla en ese momento.
+     */
     val portadaUrl: String? = null,
     val portadaStoragePath: String? = null,
     val portadaMimeType: String? = null,
@@ -805,6 +1561,213 @@ data class AdminExamenDto(
      */
     val creadoEn: String? = null,
     val actualizadoEn: String? = null,
+)
+
+/**
+ * Contrato del PATCH de examen (C-01, K-C01): **sólo se escribe lo que viene en el
+ * cuerpo.** Clave ausente = columna intacta. Única lista blanca, clave de la API →
+ * columna: lo que no está aquí no se escribe nunca por PATCH.
+ *
+ * ### Por qué «ausente = intacta» para TODAS las claves
+ *
+ * El PATCH anterior decodificaba el cuerpo a [AdminExamenDto] y escribía la fila
+ * entera, así que una clave ausente se escribía con el DEFAULT del DTO:
+ * `codigo_examen = ''`, `es_oficial = false`, `tipo_examen = 'rafaga'`,
+ * `tipo_acceso = 'gratuito'`, `precio_tickets = 0`. El escritorio funcionaba sólo
+ * porque omitía los defaults y el servidor los reescribía; el guardado de ráfaga
+ * del móvil, que no conoce el código, lo vaciaba y chocaba con 409. Ahora el
+ * cliente manda sus claves explícitas (K-C01a/b) y el servidor no inventa ninguna.
+ *
+ * ### Lo que nunca escribe un PATCH (E-1, C-05, portada)
+ *
+ * - **Visibilidad** (`activo`, `publicadoEn`): sólo `publicar`, `despublicar` y
+ *   `archivar`. Guardar no es publicar: antes un cuerpo sin `activo` decodificaba
+ *   al default `true` y desarchivaba el examen en silencio.
+ * - **`totalPreguntas`**: la mantiene la base (M1).
+ * - **Portada** (`portadaUrl`, `portadaStoragePath`, `portadaMimeType`): su ruta.
+ * - Metadatos (`id`, `creadoEn`, `actualizadoEn`) y cualquier clave desconocida.
+ */
+private val PATCHABLE_EXAMEN_COLUMNS: Map<String, String> = linkedMapOf(
+    "codigoExamen" to "codigo_examen",
+    "especialidadId" to "especialidad_id",
+    "comunidadId" to "comunidad_id",
+    "titulo" to "titulo",
+    "descripcion" to "descripcion",
+    "tipoExamen" to "tipo_examen",
+    "tipoAcceso" to "tipo_acceso",
+    "anio" to "anio",
+    "esOficial" to "es_oficial",
+    "precioTickets" to "precio_tickets",
+    "duracionMinutos" to "duracion_minutos",
+)
+
+/**
+ * Las únicas claves que aceptan `null`, que significa «borrar» (merge-patch, RFC
+ * 7396): volver a Nacional, dejar el año o la duración en blanco. En cualquier otra
+ * clave admitida un `null` es un 400: no hay columna NOT NULL que se pueda vaciar
+ * por accidente.
+ */
+private val CLEARABLE_EXAMEN_KEYS: Set<String> = setOf("comunidadId", "anio", "duracionMinutos")
+
+/** Mismo 400 y mismo mensaje que daba `call.receive<AdminExamenDto>()`, sin nombres de campo. */
+private fun badExamBody(): Nothing = throw BadRequestException("El cuerpo de la petición no es válido.")
+
+private fun JsonPrimitive.textOrBad(): String = if (isString) content else badExamBody()
+
+/**
+ * El parche que se manda a PostgREST: sólo las claves presentes, validadas y
+ * normalizadas. Un objeto vacío significa «no hay nada que escribir».
+ *
+ * La validación ocurre ENTERA antes de la primera petición: un 400/422 de aquí no
+ * deja ninguna escritura a medias.
+ */
+internal fun examenPatchFrom(raw: JsonObject): JsonObject = buildJsonObject {
+    PATCHABLE_EXAMEN_COLUMNS.forEach { (key, column) ->
+        val value = raw[key] ?: return@forEach
+        if (value is JsonNull) {
+            if (key in CLEARABLE_EXAMEN_KEYS) put(column, JsonNull) else badExamBody()
+            return@forEach
+        }
+        val primitive = value as? JsonPrimitive ?: badExamBody()
+        val normalized: JsonPrimitive = when (key) {
+            "codigoExamen" -> JsonPrimitive(primitive.textOrBad().trim().ifBlank { throw examCodeRequiredException() })
+            "especialidadId", "comunidadId" -> JsonPrimitive(primitive.textOrBad().validatedUuid(key))
+            "titulo" -> JsonPrimitive(
+                primitive.textOrBad().trim().ifBlank { throw BadRequestException("El examen necesita titulo.") },
+            )
+            "descripcion" -> JsonPrimitive(primitive.textOrBad())
+            "tipoExamen" -> JsonPrimitive(canonicalExamTypeOrReject(primitive.textOrBad()))
+            "tipoAcceso" -> JsonPrimitive(canonicalExamAccessTypeOrReject(primitive.textOrBad()))
+            "anio", "precioTickets", "duracionMinutos" ->
+                JsonPrimitive(primitive.takeUnless { it.isString }?.intOrNull ?: badExamBody())
+            "esOficial" -> JsonPrimitive(primitive.takeUnless { it.isString }?.booleanOrNull ?: badExamBody())
+            else -> badExamBody()
+        }
+        put(column, normalized)
+    }
+}
+
+/**
+ * Las SEIS tablas de datos de usuario que apuntan a `examenes`, con la etiqueta
+ * humana que las nombra en el mensaje del 409.
+ *
+ * La columna es `examen_id` en las seis. Verificado en el repositorio para
+ * cuatro: `intentos_examen` (`AppV1Routes` filtra por ella),
+ * `contenido_desbloqueado_usuario` (`listDesbloqueos`), y
+ * `feedback_examen` + `eventos_conversion_premium`
+ * (`supabase/migrations/20260803101711_add_missing_fk_indexes.sql`, que indexa
+ * `examen_id` en las dos). En `respuestas_intento` y `abandonos_examen` el
+ * NOMBRE de la columna no está verificado: las dos aparecen en el esquema vivo
+ * como referencias a `examenes` y toda la base usa `examen_id`, pero esa
+ * migración no las indexa (ya lo estarían) y ningún fichero del repo las filtra.
+ *
+ * Si en alguna el nombre fuera otro, PostgREST responde 42703 a la lectura, la
+ * guarda falla CERRADA —[examDeleteGuardUnavailableException]— y no se borra
+ * nada. Ése es el modo de fallo elegido: un nombre de columna equivocado impide
+ * borrar, nunca borra de más.
+ *
+ * Las etiquetas son lo que lee el administrador y por eso no llevan nombres de
+ * tabla: van derechas al mensaje del 409.
+ */
+private val EXAMEN_USER_DATA_TABLES: List<Pair<String, String>> = listOf(
+    "intentos_examen" to "intentos de usuarios",
+    "respuestas_intento" to "respuestas contestadas",
+    "abandonos_examen" to "abandonos registrados",
+    "feedback_examen" to "opiniones de usuarios",
+    "contenido_desbloqueado_usuario" to "compras o desbloqueos de contenido",
+    "eventos_conversion_premium" to "eventos de conversión a premium",
+)
+
+// Vocabulario canónico de `examenes.tipo_examen` — lo único que se ESCRIBE.
+// NO se declara aquí: `CANONICAL_EXAM_TYPES` ya existe como `internal` en
+// `AdminMarket.kt:181` y `AdminAnalyticsSupportTest` fija su contenido. Una
+// segunda copia en este paquete no sólo no compila (choca por resolución de
+// nombre aunque sea `private`): dejaría dos listas del mismo vocabulario que
+// pueden divergir en silencio, que es exactamente el defecto que esta
+// validación existe para impedir. Se reutiliza la que hay.
+
+/**
+ * Alias legacy que se ACEPTAN en la entrada y se normalizan. Nunca se escriben.
+ *
+ * Quien manda `guiado` no está equivocado, está desactualizado: se le acepta el
+ * valor y se guarda el canónico. Lo que no se hace jamás es devolverlo a la
+ * columna, que dejaría la base con dos vocabularios a la vez.
+ */
+private val LEGACY_EXAM_TYPE_ALIASES: Map<String, String> = mapOf("guiado" to "razonado")
+
+/** Vocabulario canónico de `examenes.tipo_acceso`. Conjunto cerrado. */
+private val CANONICAL_EXAM_ACCESS_TYPES: Set<String> = setOf("gratuito", "premium")
+
+/**
+ * Normaliza `tipo_examen` al vocabulario canónico o RECHAZA con 422.
+ *
+ * ### Por qué el servidor y no sólo el ViewModel
+ *
+ * Hasta ahora la única validación de este vocabulario vivía en el cliente de
+ * escritorio (`ExamsViewModel`), y el backend pasaba el valor crudo a la
+ * columna. Una validación que vive sólo en el único cliente que existe hoy no
+ * es una garantía: es una costumbre.
+ *
+ * ### Un desconocido se RECHAZA; jamás se convierte en `rafaga`
+ *
+ * El repositorio del cliente tiene una función que hace justo lo contrario
+ * (`canonicalExamType`, con su `else -> RAFAGA`). Eso es correcto **sólo** en el
+ * camino de importación, donde no hay un valor previo que perder. Aquí hay uno,
+ * y reetiquetar en silencio un examen como Ráfaga destruye un dato sin decirlo.
+ *
+ * El mensaje nombra los tres valores válidos y **no** el valor recibido: nada
+ * del cliente vuelve en un mensaje de error (EXAM-004).
+ *
+ * ### Precondición de esquema — `LIVE_READ_REQUIRED`
+ *
+ * Escribir el canónico `razonado` depende de que el CHECK vivo de
+ * `examenes.tipo_examen` ya admita el vocabulario nuevo. El fixture de dry-run
+ * declara el ANTERIOR (`rafaga`,`guiado`,`inmersivo`). Si MAIN conserva ése, un
+ * examen Razonado se rechaza con `23514` — que desde este cambio llega como 422
+ * legible y no como 500 opaco, pero se rechaza igual. La migración de
+ * vocabulario es prerrequisito, y NO se arregla escribiendo `guiado`.
+ */
+private fun canonicalExamTypeOrReject(raw: String): String {
+    val normalized = raw.trim().lowercase()
+    LEGACY_EXAM_TYPE_ALIASES[normalized]?.let { return it }
+    if (normalized in CANONICAL_EXAM_TYPES) return normalized
+    throw BackendDomainException(
+        "EXAM_TYPE_UNKNOWN",
+        HttpStatusCode.UnprocessableEntity,
+        "El tipo de examen no es válido. Los valores admitidos son: rafaga, razonado, inmersivo.",
+    )
+}
+
+/**
+ * Normaliza `tipo_acceso` al conjunto cerrado o RECHAZA con 422.
+ *
+ * No hay alias legacy aquí. Y la combinación tipo↔acceso (`rafaga⇒gratuito`,
+ * `inmersivo⇒premium`) **no se pre-impone**: sólo aparece en un CHECK del
+ * fixture cuyo estado vivo es desconocido, y convertir una restricción
+ * posiblemente inexistente en una restricción real desde el backend la volvería
+ * invisible para quien administre la base. Si la base la rechaza, se traduce su
+ * `23514`; no se adelanta.
+ */
+private fun canonicalExamAccessTypeOrReject(raw: String): String {
+    val normalized = raw.trim().lowercase()
+    if (normalized in CANONICAL_EXAM_ACCESS_TYPES) return normalized
+    throw BackendDomainException(
+        "EXAM_ACCESS_TYPE_UNKNOWN",
+        HttpStatusCode.UnprocessableEntity,
+        "El tipo de acceso no es válido. Los valores admitidos son: gratuito, premium.",
+    )
+}
+
+/**
+ * Aplica el vocabulario canónico a los dos campos que lo tienen.
+ *
+ * Se hace sobre el DTO y no sobre la fila para que el valor que se escribe y el
+ * que se devuelve al cliente sean el mismo: si se normalizara sólo al serializar,
+ * la respuesta diría `guiado` y la columna `razonado`.
+ */
+private fun AdminExamenDto.withCanonicalVocabulary(): AdminExamenDto = copy(
+    tipoExamen = canonicalExamTypeOrReject(tipoExamen),
+    tipoAcceso = canonicalExamAccessTypeOrReject(tipoAcceso),
 )
 
 @Serializable
@@ -822,14 +1785,42 @@ private data class AdminExamenRow(
     val activo: Boolean = true,
     @SerialName("publicado_en") val publicadoEn: String? = null,
     @SerialName("precio_tickets") val precioTickets: Int? = null,
-    @SerialName("total_preguntas") val totalPreguntas: Int = 0,
+    // Sólo lectura: la mantiene la base (M1). En escritura queda a null y
+    // `sbJson` (explicitNulls=false) la omite. Ver `AdminExamenDto.totalPreguntas`.
+    @SerialName("total_preguntas") val totalPreguntas: Int? = null,
     @SerialName("duracion_minutos") val duracionMinutos: Int? = null,
-    @SerialName("portada_url") val portadaUrl: String? = null,
+    // Sin `portada_url`: la columna no existe (M6 sólo añade ruta y tipo) y la URL
+    // se firma en cada lectura (K5). Ver `AdminExamenDto.portadaUrl`.
     @SerialName("portada_storage_path") val portadaStoragePath: String? = null,
     @SerialName("portada_mime_type") val portadaMimeType: String? = null,
     @SerialName("creado_en") val creadoEn: String? = null,
     @SerialName("actualizado_en") val actualizadoEn: String? = null,
 )
+
+/** Lo mínimo para subir o quitar una portada: la fila existe y qué objeto tenía. */
+@Serializable
+private data class AdminExamenPortadaRow(
+    val id: String,
+    @SerialName("portada_storage_path") val portadaStoragePath: String? = null,
+)
+
+/**
+ * Formatos de portada (K5): tipo MIME → extensión del objeto. Son los tres que
+ * promete la pantalla (`EXAM_COVER_FORMATS`) y un subconjunto de los que admite el
+ * CHECK de M6. Cualquier otro tipo es 422 `EXAM_COVER_TYPE_INVALID` antes de leer
+ * un solo byte.
+ */
+private val EXAM_COVER_EXTENSIONS: Map<String, String> =
+    mapOf("image/jpeg" to "jpg", "image/png" to "png", "image/webp" to "webp")
+
+/** Vida de una URL firmada de portada: una hora, de sobra para una sesión de edición. */
+private const val EXAM_COVER_URL_TTL_SECONDS = 3600
+
+/** Tamaño máximo de una portada. El bucket `exam-resources` admite 10 MB. */
+private const val EXAM_COVER_MAX_BYTES = 10 * 1024 * 1024
+
+/** Fallos de firma y de limpieza de portadas: al log con el `request_id` del MDC. */
+private val ExamCoverLogger: org.slf4j.Logger = org.slf4j.LoggerFactory.getLogger("OC-KTOR-EXAM-COVER")
 
 private fun AdminExamenRow.toDto() = AdminExamenDto(
     id = id.orEmpty(),
@@ -845,9 +1836,13 @@ private fun AdminExamenRow.toDto() = AdminExamenDto(
     activo = activo,
     publicadoEn = publicadoEn,
     precioTickets = precioTickets ?: 0,
-    totalPreguntas = if (totalPreguntas > 0) totalPreguntas else 1,
+    // Sin coerción: un examen con 0 preguntas se lee como 0. El `else 1` anterior
+    // convertía todo examen vacío en "1 pregunta" y hacía imposible detectar los
+    // exámenes sin preguntas desde el panel.
+    totalPreguntas = totalPreguntas,
     duracionMinutos = duracionMinutos,
-    portadaUrl = portadaUrl,
+    // Nunca de la fila: la firma el gateway en la lectura (`withSignedCovers`).
+    portadaUrl = null,
     portadaStoragePath = portadaStoragePath,
     portadaMimeType = portadaMimeType,
     creadoEn = creadoEn,
@@ -868,7 +1863,9 @@ private fun AdminExamenDto.toRow(forcedId: String? = null) = AdminExamenRow(
     activo = activo,
     publicadoEn = publicadoEn,
     precioTickets = precioTickets,
-    totalPreguntas = if (totalPreguntas > 0) totalPreguntas else 1,
+    // `totalPreguntas` NO se copia (K2): la fila de escritura nunca lleva la
+    // columna. Queda a `null` y `sbJson` (`explicitNulls = false`) la omite. La
+    // mantiene la base (M1).
     duracionMinutos = duracionMinutos,
 )
 
@@ -876,6 +1873,25 @@ private fun AdminExamenDto.toRow(forcedId: String? = null) = AdminExamenRow(
 
 @Serializable
 data class AdminPreguntasResponse(val data: List<AdminPreguntaDto>)
+
+/** Una página del banco (KQ0-3): las filas, el total exacto y la ventana pedida. */
+@Serializable
+data class AdminPreguntasPageResponse(
+    val data: List<AdminPreguntaDto>,
+    val total: Int,
+    val limit: Int,
+    val offset: Int,
+)
+
+/** Fila de `preguntas_examen` con su pregunta embebida (`preguntas!inner`), para el listado por examen. */
+@Serializable
+private data class AdminPreguntaExamenListRow(
+    val posicion: Int,
+    val preguntas: AdminPreguntaRow,
+)
+
+/** Las columnas del listado del banco: las que pinta la fila, ni una más. */
+private const val PREGUNTA_LIST_COLUMNS = "id,codigo_pregunta,especialidad_id,tipo_pregunta,titulo,fuente_texto,dificultad,activa"
 
 @Serializable
 data class AdminPreguntaResponse(val data: AdminPreguntaDto)
@@ -895,18 +1911,36 @@ data class AdminOpcionDto(
     val esCorrecta: Boolean = false,
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminPreguntaDto(
     val id: String = "",
+    /**
+     * Sólo lectura (KQ1). Lo genera la base (`PREG-000001`, Q1) y es inmutable: se
+     * ignora en escritura, ni el alta ni el PATCH lo mandan a Supabase.
+     */
     val codigoPregunta: String = "",
     val especialidadId: String,
-    val tipoPregunta: String = "rafaga",
+    @EncodeDefault val tipoPregunta: String = "rafaga",
     val titulo: String,
-    val fuenteTexto: String = "",
-    val dificultad: String = "media",
-    val activa: Boolean = true,
+    /**
+     * En la RESPUESTA siempre es texto (vacío si la columna es NULL). En el PATCH,
+     * `null` o ausente significa **«no lo cambies»** (QN-17): el editor de Exámenes
+     * no edita la fuente y no puede vaciarla ni reescribirla con el enunciado. Quien
+     * sí la edita (el banco de Preguntas) la manda siempre, vacía incluida.
+     */
+    val fuenteTexto: String? = null,
+    /** Vacío = sin dificultad. Nunca un `"media"` inventado (KQ0-2, QN-24). */
+    val dificultad: String = "",
+    @EncodeDefault val activa: Boolean = true,
     val razonamiento: String = "",
     val opciones: List<AdminOpcionDto> = emptyList(),
+    /**
+     * Sólo lectura (KQ0-8). Los recursos se gestionan ÚNICAMENTE por sus rutas
+     * (`/preguntas/{id}/recursos…`): el PATCH de pregunta ignora esta lista, así
+     * que ni la regla «sólo inmersiva» ni un identificador de recurso pueden
+     * colarse por el cuerpo de la pregunta.
+     */
     val recursos: List<AdminRecursoDto> = emptyList(),
     // Asociacion opcional a un examen al crear.
     val examenId: String? = null,
@@ -920,11 +1954,62 @@ data class AdminRecursoDto(
     val tipoRecurso: String,
     val titulo: String = "",
     val descripcion: String = "",
+    /**
+     * Enlace EXTERNO (`https://…`) de un recurso de tipo `enlace`. Nunca una ruta
+     * local del disco del administrador, que es lo que llegaba aquí antes de KQ4 y
+     * no existía para nadie más que para él.
+     */
     val urlExterna: String? = null,
     val contenidoTexto: String? = null,
     val posicion: Int = 0,
+    /** Sólo LECTURA: dónde vive el archivo dentro del bucket privado. No se acepta en escritura. */
+    val rutaStorage: String? = null,
+    /** Sólo LECTURA: el MIME con el que se subió, para que la pantalla sepa qué reproductor usar. */
+    val mimeType: String? = null,
+    /**
+     * Sólo LECTURA: URL FIRMADA y con caducidad (una hora) para abrir el archivo, o el
+     * enlace externo si el recurso es de ese tipo.
+     *
+     * No se persiste jamás: guardarla haría que el material dejara de verse cuando
+     * expira, que es exactamente el defecto que tenía el editor de Exámenes.
+     */
+    val urlAcceso: String? = null,
 )
 
+/**
+ * Valida los identificadores que este DTO trae **en el cuerpo** y devuelve una
+ * copia con ellos normalizados.
+ *
+ * Existe porque la validación por path no cubría este camino: el alta recibe
+ * `examenId` por el cuerpo y acababa dentro de un filtro de PostgREST sin pasar
+ * por ninguna red. Ver el comentario de `patch("/preguntas/{id}")` para el daño.
+ *
+ * `id` se valida desde KQ2-1: el cliente lo genera y lo reenvía en cada
+ * reintento del alta, y viaja como argumento `uuid` de `admin_create_question`.
+ * Un valor que no es UUID volvía de Postgres como 22P02 (un 500 redactado)
+ * cuando lo honesto es un 400 que dice qué campo está mal.
+ *
+ * Devuelve una copia en vez de sólo comprobar: así el valor que sigue viaje es
+ * la forma canónica de [java.util.UUID], no la cadena del cliente.
+ *
+ * `recursos[].id` YA NO se valida, y no es un olvido (KQ0-8): el PATCH de pregunta
+ * ignora `recursos[]` entero, así que ningún id de esa lista llega a un filtro.
+ * Además se VACÍA la lista, para que ningún camino posterior pueda leerla.
+ */
+internal fun AdminPreguntaDto.withValidatedIdentifiers(): AdminPreguntaDto = copy(
+    id = id.takeIf { it.isNotBlank() }?.validatedUuid("id").orEmpty(),
+    examenId = examenId?.takeIf { it.isNotBlank() }?.validatedUuid("examenId"),
+    recursos = emptyList(),
+)
+
+/**
+ * Fila de `preguntas` para LEER.
+ *
+ * `fuente_texto` y `dificultad` son NULL-ables en la base (KQ0-2, QN-12): con
+ * `String` y default, un NULL real —el que escriben Q2 o una importación— hacía
+ * fallar la decodificación y el listado entero salía como 5xx, porque el `Json`
+ * del gateway no coacciona nulos. Nullable aquí y `.orEmpty()` al pasar al DTO.
+ */
 @Serializable
 private data class AdminPreguntaRow(
     val id: String? = null,
@@ -932,10 +2017,59 @@ private data class AdminPreguntaRow(
     @SerialName("especialidad_id") val especialidadId: String,
     @SerialName("tipo_pregunta") val tipoPregunta: String = "rafaga",
     val titulo: String,
-    @SerialName("fuente_texto") val fuenteTexto: String = "",
-    val dificultad: String = "media",
+    @SerialName("fuente_texto") val fuenteTexto: String? = null,
+    val dificultad: String? = null,
     val activa: Boolean = true,
 )
+
+/**
+ * Proyección mínima para conocer el tipo de una pregunta sin traerse la fila.
+ *
+ * La usa la regla «sólo INMERSIVA admite recursos»: es una lectura de una
+ * columna, no un `select=*`.
+ */
+@Serializable
+private data class AdminPreguntaTipoRow(
+    @SerialName("tipo_pregunta") val tipoPregunta: String = "",
+)
+
+/**
+ * El ÚNICO valor de `preguntas.tipo_pregunta` que admite recursos.
+ *
+ * Es el vocabulario de PREGUNTA (`rafaga` · `razonada` · `inmersiva`), no el de
+ * examen (`rafaga` · `razonado` · `inmersivo`). No se aceptan alias: la
+ * canonización de entrada de preguntas no está cerrada (el tipo del cuerpo se
+ * escribe crudo en el PATCH) y aceptar aquí «inmersivo» abriría la puerta a que
+ * la regla dependa de qué vocabulario usó el cliente.
+ */
+private const val QUESTION_TYPE_WITH_RESOURCES = "inmersiva"
+
+/** Bucket PRIVADO del material de preguntas (Q3). Privado: se lee con URL firmada, nunca pública. */
+private const val QUESTION_RESOURCES_BUCKET = "recursos-pregunta"
+
+/** 50 MB. Una clase de audio larga cabe; un vídeo de media hora no, y tiene que fallar ANTES de subirse. */
+private const val QUESTION_RESOURCE_MAX_BYTES = 50 * 1024 * 1024
+
+/** Una hora: suficiente para abrir el material desde la consola y lo bastante corto para que un enlace filtrado caduque. */
+private const val QUESTION_RESOURCE_URL_TTL_SECONDS = 3600
+
+/**
+ * `tipo_recurso` → (MIME admitido → extensión del objeto).
+ *
+ * Es la intersección del CHECK de `tipo_recurso` con los MIME que acepta el bucket, y
+ * decide DOS cosas de una vez: si el archivo se admite y con qué extensión se guarda.
+ * La extensión no sale nunca del nombre del fichero del cliente — el CHECK de ruta de
+ * Q3 sólo admite unas pocas, y un `.php` en el nombre no puede acabar en el bucket.
+ */
+private val QUESTION_RESOURCE_MIME: Map<String, Map<String, String>> = mapOf(
+    "imagen" to mapOf("image/png" to "png", "image/jpeg" to "jpg", "image/webp" to "webp", "image/gif" to "gif"),
+    "audio" to mapOf("audio/mpeg" to "mp3", "audio/mp4" to "m4a", "audio/wav" to "wav"),
+    "video" to mapOf("video/mp4" to "mp4"),
+    "pdf" to mapOf("application/pdf" to "pdf"),
+)
+
+/** Los tipos que EXIGEN archivo: por JSON no se pueden crear (no habría nada que reproducir). */
+private val QUESTION_RESOURCE_FILE_TYPES: Set<String> = QUESTION_RESOURCE_MIME.keys
 
 @Serializable
 private data class AdminOpcionRow(
@@ -954,47 +2088,181 @@ private data class AdminSolucionRow(
     val razonamiento: String,
 )
 
+/**
+ * Fila de `preguntas_examen` **sólo para LEER** (K3-2/K3-3): quien escribe en esta
+ * tabla son las RPC de M4, que mantienen `posicion` y `numero_en_examen` bajo el
+ * cerrojo del examen. `numero_en_examen` es NOT NULL en la base y aquí es nullable
+ * únicamente para poder decodificar consultas que no lo seleccionan.
+ */
 @Serializable
 private data class AdminPreguntaExamenRow(
     @SerialName("examen_id") val examenId: String,
     @SerialName("pregunta_id") val preguntaId: String,
     val posicion: Int,
-    // NOT NULL en el esquema real; sin este campo la inserción falla si la
-    // columna no tiene DEFAULT. Nullable aquí sólo para poder DESERIALIZAR filas
-    // en consultas que no lo seleccionan; en escritura siempre se envía.
     @SerialName("numero_en_examen") val numeroEnExamen: Int? = null,
-)
-
-/** Proyección mínima para calcular el siguiente `numero_en_examen` de un examen. */
-@Serializable
-private data class AdminPreguntaExamenNumeroRow(
-    @SerialName("numero_en_examen") val numeroEnExamen: Int,
 )
 
 @Serializable
 data class AdminPreguntaOrdenRequest(val ids: List<String> = emptyList())
 
+/** Resultado de un alta: la pregunta leída y si esta llamada la creó o era un reintento (KQ2-1). */
+data class AdminPreguntaCreada(val pregunta: AdminPreguntaDto, val creada: Boolean)
+
+/** Cuerpo de `POST /preguntas/{id}/examenes`: la única puerta para vincular (D-03/D-04). `posicion` ausente = al final. */
+@Serializable
+data class AdminVincularPreguntaRequest(val examenId: String, val posicion: Int? = null)
+
+/**
+ * Un examen al que está vinculada una pregunta (K3-4, lectura inversa M:N).
+ *
+ * [estado] usa la misma derivación que el catálogo (`borrador|publicado|archivado`) y
+ * [totalPreguntas] es el recuento mantenido por la base (M1): con los dos, el diálogo de
+ * archivar o quitar puede avisar ANTES de que un examen publicado se quede vacío (KQ5, Q4).
+ */
+@Serializable
+data class AdminPreguntaExamenVinculoDto(
+    val examenId: String,
+    val codigoExamen: String = "",
+    val titulo: String = "",
+    val tipoExamen: String = "",
+    val estado: String = "borrador",
+    val posicion: Int = 0,
+    val totalPreguntas: Int = 0,
+)
+
+@Serializable
+data class AdminPreguntaExamenesResponse(val data: List<AdminPreguntaExamenVinculoDto>)
+
+@Serializable
+private data class AdminPreguntaExamenVinculoRow(
+    val posicion: Int = 0,
+    val examenes: AdminPreguntaExamenEmbed? = null,
+)
+
+@Serializable
+private data class AdminPreguntaExamenEmbed(
+    val id: String,
+    @SerialName("codigo_examen") val codigoExamen: String? = null,
+    val titulo: String? = null,
+    @SerialName("tipo_examen") val tipoExamen: String? = null,
+    val activo: Boolean = true,
+    @SerialName("publicado_en") val publicadoEn: String? = null,
+    @SerialName("total_preguntas") val totalPreguntas: Int? = null,
+)
+
+private fun AdminPreguntaExamenVinculoRow.toDto(): AdminPreguntaExamenVinculoDto? {
+    val examen = examenes ?: return null
+    return AdminPreguntaExamenVinculoDto(
+        examenId = examen.id,
+        codigoExamen = examen.codigoExamen.orEmpty(),
+        titulo = examen.titulo.orEmpty(),
+        tipoExamen = examen.tipoExamen.orEmpty(),
+        estado = when {
+            !examen.activo -> "archivado"
+            examen.publicadoEn != null -> "publicado"
+            else -> "borrador"
+        },
+        posicion = posicion,
+        totalPreguntas = examen.totalPreguntas ?: 0,
+    )
+}
+
+/**
+ * Clave del cuerpo HTTP del PATCH de pregunta → clave de `p_cambios` de
+ * `admin_update_question` (KQ2-2). Todo lo demás del cuerpo se IGNORA: `id`,
+ * `codigoPregunta` (Q1), `especialidadId` (la RPC no la cambia), `recursos` (KQ0-8) y
+ * `examenId`/`posicion` (D-03: el PATCH ya no vincula; la única puerta es
+ * `POST /preguntas/{id}/examenes`).
+ */
+private val PREGUNTA_PATCH_KEYS: Map<String, String> = linkedMapOf(
+    "titulo" to "titulo",
+    "tipoPregunta" to "tipo_pregunta",
+    "fuenteTexto" to "fuente_texto",
+    "dificultad" to "dificultad",
+    "activa" to "activa",
+    "razonamiento" to "razonamiento",
+)
+
+/**
+ * `p_cambios` a partir del cuerpo crudo: sólo las claves PRESENTES, con su valor tal
+ * cual (un `null` presente también viaja: «vacía la fuente»). La validación de tipos
+ * la hace la RPC (`QUESTION_PATCH_INVALID`, `QUESTION_STATEMENT_REQUIRED`…), dentro de
+ * la misma transacción que escribe.
+ *
+ * `opciones`: `[]` es «no toco las opciones» (compatibilidad con los clientes que la
+ * mandaban vacía); una lista con elementos viaja con `letra`, `texto` y `es_correcta`;
+ * otra cosa es un 400 antes de llamar a nadie.
+ */
+internal fun preguntaCambiosFrom(raw: JsonObject): JsonObject = buildJsonObject {
+    PREGUNTA_PATCH_KEYS.forEach { (http, sql) -> raw[http]?.let { put(sql, it) } }
+    when (val opciones = raw["opciones"]) {
+        null, JsonNull -> Unit
+        is JsonArray -> if (opciones.isNotEmpty()) {
+            put(
+                "opciones",
+                JsonArray(
+                    opciones.map { opcion ->
+                        val obj = opcion as? JsonObject
+                            ?: throw IllegalArgumentException("Cada opción tiene que ser un objeto.")
+                        buildJsonObject {
+                            put("letra", obj["letra"] ?: JsonNull)
+                            put("texto", obj["texto"] ?: JsonNull)
+                            put("es_correcta", obj["esCorrecta"] ?: JsonNull)
+                        }
+                    },
+                ),
+            )
+        }
+        else -> throw IllegalArgumentException("opciones tiene que ser una lista.")
+    }
+}
+
+/**
+ * Fila de `recursos_pregunta`. `titulo` y `descripcion` son NULL-ables en la base
+ * (KQ0-2): nullable aquí, `.orEmpty()` en el DTO. `bucket_storage` y `ruta_storage`
+ * se leen ya para que la subida real (KQ4) no tenga que tocar la forma de la fila.
+ */
 @Serializable
 private data class AdminRecursoRow(
     val id: String? = null,
     @SerialName("pregunta_id") val preguntaId: String,
     @SerialName("codigo_recurso") val codigoRecurso: String,
     @SerialName("tipo_recurso") val tipoRecurso: String,
-    val titulo: String = "",
-    val descripcion: String = "",
+    val titulo: String? = null,
+    val descripcion: String? = null,
     @SerialName("url_externa") val urlExterna: String? = null,
     @SerialName("contenido_texto") val contenidoTexto: String? = null,
+    @SerialName("bucket_storage") val bucketStorage: String? = null,
+    @SerialName("ruta_storage") val rutaStorage: String? = null,
     val posicion: Int = 0,
     val activo: Boolean = true,
     val metadatos: JsonObject = JsonObject(emptyMap()),
+)
+
+/**
+ * Lo que un PATCH de recurso escribe, que NO es la fila entera.
+ *
+ * Existe porque `sbJson` tiene `encodeDefaults = true`: serializar
+ * [AdminRecursoRow] para editar mandaba siempre `activo`, `codigo_recurso`,
+ * `pregunta_id` y `metadatos`, ninguno de los cuales el cliente está editando, y
+ * el primero de ellos resucitaba recursos archivados. Un tipo aparte es la única
+ * forma de que «lo que se escribe» no dependa de acordarse de pasar el valor
+ * correcto a cada campo del row. Ver `updateRecurso`.
+ */
+@Serializable
+private data class AdminRecursoPatch(
+    val titulo: String = "",
+    val descripcion: String = "",
+    @SerialName("contenido_texto") val contenidoTexto: String? = null,
+    val posicion: Int = 0,
 )
 
 private fun AdminRecursoRow.toDto() = AdminRecursoDto(
     id = id.orEmpty(),
     preguntaId = preguntaId,
     tipoRecurso = tipoRecurso,
-    titulo = titulo,
-    descripcion = descripcion,
+    titulo = titulo.orEmpty(),
+    descripcion = descripcion.orEmpty(),
     urlExterna = urlExterna,
     contenidoTexto = contenidoTexto,
     posicion = posicion,
@@ -1011,6 +2279,7 @@ data class AdminLoteResponse(val data: AdminLoteDto)
 @Serializable
 data class AdminStagingResponse(val data: AdminStagingItemDto)
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminStagingItemDto(
     val id: String = "",
@@ -1025,22 +2294,82 @@ data class AdminStagingItemDto(
     val fuenteTexto: String = "",
     val etiquetaTexto: String = "",
     val bloqueOriginal: String = "",
-    val estadoParseo: String = "ok",
+    @EncodeDefault val estadoParseo: String = "ok",
     val errorParseo: String? = null,
     val preguntaId: String? = null,
+    /**
+     * La pregunta YA EXISTENTE con la que el revisor decide vincular esta fila en vez
+     * de crear una nueva (IM2, KI2). `null` = crear.
+     *
+     * Sólo tiene sentido con `estadoParseo = "aprobada"`: una fila omitida no vincula
+     * nada. Si la pregunta elegida se borra, IM2 pasa la fila a `advertencia` y lo
+     * explica en `errorParseo`, en vez de dejar un puntero a la nada.
+     */
+    val vincularPreguntaId: String? = null,
+    /** Lectura: la coincidencia detectada para esta fila, o `null` si no hay (KI3-2). */
+    val duplicado: AdminImportDuplicadoDto? = null,
 )
 
+/**
+ * Una coincidencia detectada para una fila de staging (`admin_import_lote_duplicados`).
+ *
+ * [origen] distingue las dos cosas que el revisor resuelve de forma distinta:
+ * `banco` = la pregunta ya existe publicada (se puede vincular), `lote` = el propio
+ * PDF trae la misma pregunta dos veces (hay que omitir una).
+ */
+@Serializable
+data class AdminImportDuplicadoDto(
+    val origen: String,
+    val preguntaId: String? = null,
+    val codigoPregunta: String = "",
+    val stagingOriginalId: String? = null,
+)
+
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminLoteDto(
     val id: String = "",
     val examenId: String,
     val nombreArchivo: String = "",
-    val tipoExamen: String = "rafaga",
-    val estado: String = "parseado",
+    @EncodeDefault val tipoExamen: String = "rafaga",
+    @EncodeDefault val estado: String = "parseado",
     val totalDetectadas: Int = 0,
-    val totalImportadas: Int = 0,
+    @EncodeDefault val totalImportadas: Int = 0,
     val staging: List<AdminStagingItemDto> = emptyList(),
+    /**
+     * `false` cuando la detección de duplicados NO se pudo ejecutar (falta IM3).
+     *
+     * La pantalla lo dice tal cual. La alternativa —responder la lista sin
+     * `duplicado` en ninguna fila— se leería como «no hay duplicados», que es una
+     * afirmación que este backend no puede hacer, y el revisor publicaría repetidas.
+     */
+    @EncodeDefault val duplicadosComprobados: Boolean = true,
 )
+
+/** Cuerpo (opcional) de `POST /importaciones/preguntas/{loteId}/importar`. */
+@Serializable
+data class AdminImportarLoteRequest(val confirmarExamenPublicado: Boolean = false)
+
+/**
+ * El recuento de lo que hizo la publicación, separado del lote.
+ *
+ * [ejecutado] `false` = el lote ya estaba publicado y esta llamada no escribió nada
+ * (un reintento tras un timeout, o dos clics). Sin este campo, el cliente no puede
+ * distinguir «he publicado 120» de «ya estaban», y las dos respuestas tienen los
+ * mismos totales.
+ */
+@Serializable
+data class AdminImportResultadoDto(
+    val ejecutado: Boolean,
+    val nuevas: Int,
+    val vinculadas: Int,
+    val omitidas: Int,
+    val totalImportadas: Int,
+)
+
+/** `data` conserva la forma de [AdminLoteResponse]: un cliente que sólo lea `data` no se rompe. */
+@Serializable
+data class AdminLoteImportResponse(val data: AdminLoteDto, val resultado: AdminImportResultadoDto)
 
 @Serializable
 data class CrearLoteRequest(
@@ -1051,6 +2380,106 @@ data class CrearLoteRequest(
     val preguntas: List<AdminStagingItemDto> = emptyList(),
 )
 
+/**
+ * El vocabulario de `preguntas_parseadas_staging.estado_parseo` (verificado en MAIN
+ * el 2026-09-17, más los dos valores que añade IM1).
+ *
+ * `advertencia` lo escribe el parser (una Ráfaga con explicación o fuente, que se
+ * descartarán al publicar) y lo escribe IM2 cuando la pregunta elegida para
+ * vincular desaparece. `aprobada` y `omitida` son las dos decisiones del revisor y
+ * **todavía no las admite el CHECK vivo**: llegan aquí, viajan, y la base las
+ * rechaza con un 23514 que [mapSupabaseDomainError] traduce a
+ * `IMPORT_REVIEW_STATE_UNAVAILABLE`. Se deja así a propósito: el día que IM1 esté
+ * aplicada funcionan sin tocar una línea, y mientras tanto el administrador lee
+ * «revisar todavía no está disponible» en vez de un error de restricción.
+ *
+ * `importada` NO está: lo escribe únicamente la RPC de publicación (KI0-4). Que un
+ * cliente pudiera marcar una fila como publicada sin publicarla convertía la
+ * revisión en decorado.
+ */
+private val STAGING_PARSE_STATES: Set<String> = setOf("ok", "advertencia", "error", "aprobada", "omitida")
+
+/**
+ * Valida contra [STAGING_PARSE_STATES] y devuelve el valor normalizado.
+ *
+ * `importada` tiene mensaje propio: es el único valor que un cliente puede intentar
+ * de buena fe y que aquí es siempre un error de concepto.
+ */
+private fun requireKnownStagingState(value: String): String {
+    val normalized = value.trim().lowercase()
+    require(normalized != "importada") {
+        "El estado «importada» sólo lo escribe la publicación del lote."
+    }
+    require(normalized in STAGING_PARSE_STATES) {
+        "estado_parseo debe ser uno de: ${STAGING_PARSE_STATES.joinToString(", ")}."
+    }
+    return normalized
+}
+
+/**
+ * Las cuatro letras que el contrato de Ráfaga exige en una pregunta.
+ *
+ * La tabla de staging tiene exactamente cuatro columnas de opción y el único
+ * importador que existe hoy es el de Ráfaga, cuyo parser marca el bloque en
+ * cuanto le falta una de las cuatro. Si algún día entra un tipo con otro juego
+ * de opciones, éste es el sitio donde se decide, y tendrá que decidirse por
+ * TIPO y no por columna.
+ */
+private val RAFAGA_OPTION_LETTERS: List<String> = listOf("A", "B", "C", "D")
+
+/**
+ * Un PDF que este importador RECHAZA, con un mensaje escrito para el administrador (F-05).
+ *
+ * Es el único error que `POST /importaciones/preguntas/pdf` traduce a 422. La ruta
+ * capturaba `Throwable` y respondía 422 con `error.message`, y eso publicaba lo que
+ * fuera: el cuerpo de PostgREST de un `IllegalStateException` del transporte
+ * (`"code"`, `"details":"Failing row contains (…)"`, `"hint"`), el texto de un fallo
+ * de red con la ruta de Supabase, o las tripas de PDFBox. Ahora un rechazo del PDF
+ * lleva su propio tipo y todo lo demás llega a StatusPages, que lo redacta con
+ * referencia.
+ *
+ * `RuntimeException` a secas a propósito: si extendiera `IllegalArgumentException`
+ * o `IllegalStateException`, un olvido en otra ruta la publicaría o la redactaría
+ * por accidente en vez de fallar donde se ve.
+ */
+internal class PdfImportRejectedException(message: String) : RuntimeException(message)
+
+/** Detalle técnico de la importación: al log (con el `request_id` del MDC), nunca al cliente. */
+private val PdfImportLogger: org.slf4j.Logger = org.slf4j.LoggerFactory.getLogger("OC-KTOR-IMPORT")
+
+/** Fallos al escribir `auditoria_log` (F-12b): al log con el `request_id` del MDC. */
+private val AuditLogger: org.slf4j.Logger = org.slf4j.LoggerFactory.getLogger("OC-KTOR-AUDIT")
+
+/**
+ * ¿Este fallo dice que la RPC de escritura de preguntas NO EXISTE en la base?
+ *
+ * PGRST202 es el código de PostgREST para «no encuentro la función». Es un fallo
+ * de INFRAESTRUCTURA —falta una migración— y no de contenido, y confundirlos es
+ * el defecto que se cierra abajo en `importarLote`.
+ *
+ * ### Se mira `code`, no el mensaje — la lección de E-4, aplicada aquí
+ *
+ * Esto era `message.contains("PGRST202")`, y el `message` de
+ * `SupabaseRequestTransport.failOnError` arrastra **300 caracteres del cuerpo de
+ * PostgREST**. En un `23514` ese cuerpo lleva el `Failing row contains (…)` de
+ * Postgres con el contenido de la fila dentro, y el contenido de la fila lo
+ * escribe el administrador con `updateStaging`: una fila cuyo título contuviera
+ * `PGRST202` y violara un CHECK abortaba el lote entero diciendo «no está
+ * aprovisionada». Es el mismo oráculo que `mapRaisedDomainCode` ya había cerrado
+ * en `BackendErrors`, con la misma frase: el `code` lo pone el servidor.
+ *
+ * [supabaseErrorCode] devuelve la PRIMERA aparición de `"code"` en el texto, y
+ * PostgREST emite sus claves en orden alfabético (`code`, `details`, `hint`,
+ * `message`), así que el eco del cliente —que vive en `details` o en `message`—
+ * llega siempre después del código real y no puede ganarle.
+ *
+ * Degradación declarada: si algún día PostgREST cambiara ese formato, esto deja
+ * de reconocer la falta de la RPC y el fallo vuelve a salir como «fallo por
+ * fila», que es el comportamiento anterior — ruidoso, pero no peor.
+ */
+private fun Throwable.saysWriteRpcIsMissing(): Boolean =
+    supabaseErrorCode(message.orEmpty()) == "PGRST202"
+
 @Serializable
 private data class LoteRow(
     val id: String? = null,
@@ -1060,6 +2489,8 @@ private data class LoteRow(
     val estado: String,
     @SerialName("total_detectadas") val totalDetectadas: Int,
     @SerialName("total_importadas") val totalImportadas: Int = 0,
+    /** Quién subió el PDF (D-11). Nunca se escribía, así que ningún lote tenía autor. */
+    @SerialName("subido_por") val subidoPor: String? = null,
     val metadatos: JsonObject = JsonObject(emptyMap()),
 )
 
@@ -1081,22 +2512,52 @@ private data class StagingRow(
     @SerialName("etiqueta_texto") val etiquetaTexto: String? = null,
     @SerialName("estado_parseo") val estadoParseo: String,
     @SerialName("error_parseo") val errorParseo: String? = null,
+    @SerialName("vincular_pregunta_id") val vincularPreguntaId: String? = null,
     val metadatos: JsonObject = JsonObject(emptyMap()),
 )
 
-@Serializable
+/**
+ * Lo que una revisión escribe en una fila de staging, serializado con claves
+ * EXPLÍCITAS ([toJson]) y no con `sbJson`.
+ *
+ * El motivo es un null que tiene que viajar: al aprobar u omitir una fila hay que
+ * BORRAR el diagnóstico del parser (`error_parseo = null`), y `sbJson`
+ * (`explicitNulls = false`) omite los nulos, así que el diagnóstico se quedaba
+ * pegado para siempre a una fila ya corregida. Lo mismo con `vincular_pregunta_id`:
+ * un `null` es «deshaz el vínculo elegido», no «no lo toques».
+ *
+ * Por eso cada campo es un [JsonElement] opcional: `null` en Kotlin = clave ausente
+ * = no se toca; `JsonNull` = se escribe NULL.
+ */
 private data class StagingPatch(
     val titulo: String? = null,
-    @SerialName("opcion_a") val opcionA: String? = null,
-    @SerialName("opcion_b") val opcionB: String? = null,
-    @SerialName("opcion_c") val opcionC: String? = null,
-    @SerialName("opcion_d") val opcionD: String? = null,
-    @SerialName("respuesta_correcta") val respuestaCorrecta: String? = null,
+    val opcionA: String? = null,
+    val opcionB: String? = null,
+    val opcionC: String? = null,
+    val opcionD: String? = null,
+    val respuestaCorrecta: JsonElement? = null,
     val razonamiento: String? = null,
-    @SerialName("fuente_texto") val fuenteTexto: String? = null,
-    @SerialName("etiqueta_texto") val etiquetaTexto: String? = null,
-    @SerialName("estado_parseo") val estadoParseo: String? = null,
-)
+    val fuenteTexto: String? = null,
+    val etiquetaTexto: String? = null,
+    val estadoParseo: String? = null,
+    val errorParseo: JsonElement? = null,
+    val vincularPreguntaId: JsonElement? = null,
+) {
+    fun toJson(): JsonObject = buildJsonObject {
+        titulo?.let { put("titulo", JsonPrimitive(it)) }
+        opcionA?.let { put("opcion_a", JsonPrimitive(it)) }
+        opcionB?.let { put("opcion_b", JsonPrimitive(it)) }
+        opcionC?.let { put("opcion_c", JsonPrimitive(it)) }
+        opcionD?.let { put("opcion_d", JsonPrimitive(it)) }
+        respuestaCorrecta?.let { put("respuesta_correcta", it) }
+        razonamiento?.let { put("razonamiento", JsonPrimitive(it)) }
+        fuenteTexto?.let { put("fuente_texto", JsonPrimitive(it)) }
+        etiquetaTexto?.let { put("etiqueta_texto", JsonPrimitive(it)) }
+        estadoParseo?.let { put("estado_parseo", JsonPrimitive(it)) }
+        errorParseo?.let { put("error_parseo", it) }
+        vincularPreguntaId?.let { put("vincular_pregunta_id", it) }
+    }
+}
 
 private fun StagingRow.toDto() = AdminStagingItemDto(
     id = id.orEmpty(),
@@ -1114,6 +2575,7 @@ private fun StagingRow.toDto() = AdminStagingItemDto(
     estadoParseo = estadoParseo,
     errorParseo = errorParseo,
     preguntaId = preguntaId,
+    vincularPreguntaId = vincularPreguntaId,
 )
 
 // ----- Feedback de preguntas + Auditoria -----
@@ -1401,9 +2863,12 @@ data class AdminV1PermissionDto(val key: String, val label: String)
 @Serializable data class AdminUserResponse(val data: AdminV1UserDto)
 @Serializable data class AdminRolesV1Response(val data: List<AdminV1RoleDto>)
 @Serializable data class OkDto(val ok: Boolean = true)
-@Serializable data class RafagaImportResponse(val importadas: Int)
-@Serializable data class RafagaParseErrorDto(val pregunta: Int, val campo: String, val detalle: String)
-@Serializable data class RafagaImportErrorResponse(val errores: List<RafagaParseErrorDto>)
+// `RafagaImportResponse`, `RafagaParseErrorDto` y `RafagaImportErrorResponse` se
+// retiraron con `POST /rafagas/import` (DEC-IMP-05). Aquella ruta creaba preguntas
+// SIN staging ni revisión —saltándose el único punto donde un humano mira lo que va
+// a publicarse—, parseaba el PDF en el hilo de la petición y guardaba las etiquetas
+// como recurso, que la base rechaza siempre. No tenía consumidor. El flujo canónico
+// (subir PDF → staging → revisar → importar) hace lo mismo y sí es revisable.
 @Serializable data class WarnUserRequest(
     @SerialName("targetUserId") val targetUserId: String,
     @SerialName("actionType") val actionType: String = "advertencia",
@@ -1597,44 +3062,106 @@ private data class AdminGrantTicketsResult(
     @SerialName("saldo_resultante") val saldoResultante: Int,
 )
 
+/**
+ * Argumentos de `public.admin_create_question` (Q2, firma leída de MAIN: 13
+ * parámetros con nombre, los ocho últimos con default).
+ *
+ * - [preguntaId] es la CLAVE DE IDEMPOTENCIA (KQ2-1, P1 de C): la genera el cliente
+ *   UNA vez por alta y la repite en cada reintento. La RPC hace `on conflict (id)
+ *   do nothing` y compara el contenido: mismo contenido = `creada:false` sin
+ *   escribir; otro contenido = `QUESTION_ID_CONFLICT`. Sin él, un reintento tras una
+ *   respuesta perdida creaba la pregunta dos veces.
+ * - Sin `p_codigo_pregunta` (KQ1): el código lo genera la base (`PREG-000001`, Q1).
+ * - `sbJson` omite los `null` (`explicitNulls = false`): la RPC aplica sus defaults.
+ *   Eso sólo es correcto en el ALTA; la edición va por `p_cambios` con claves presentes.
+ */
 @Serializable
 private data class AdminCreateQuestionRpc(
-    @SerialName("p_codigo_pregunta") val codigoPregunta: String,
+    @SerialName("p_pregunta_id") val preguntaId: String,
     @SerialName("p_especialidad_id") val especialidadId: String,
     @SerialName("p_tipo_pregunta") val tipoPregunta: String,
     @SerialName("p_titulo") val titulo: String,
     @SerialName("p_opciones") val opciones: List<AdminRpcOpcionInput>,
-    @SerialName("p_razonamiento") val razonamiento: String = "",
-    @SerialName("p_fuente_texto") val fuenteTexto: String = "",
-    @SerialName("p_dificultad") val dificultad: String = "media",
+    @SerialName("p_razonamiento") val razonamiento: String? = null,
+    @SerialName("p_fuente_texto") val fuenteTexto: String? = null,
+    // `null` se omite: sin dificultad, nunca un «media» inventado (QN-24).
+    @SerialName("p_dificultad") val dificultad: String? = null,
     @SerialName("p_activa") val activa: Boolean = true,
+    /** Vínculo inicial en la MISMA transacción (M4). `null` = pregunta suelta en el banco. */
     @SerialName("p_examen_id") val examenId: String? = null,
+    /** `null` = al final del examen (Q-14). Las importaciones siempre lo mandan `null`. */
     @SerialName("p_posicion") val posicion: Int? = null,
+    @SerialName("p_lote_importacion_id") val loteImportacionId: String? = null,
+    /**
+     * El `sub` del administrador autenticado (Q2-4). Sólo un id que existe en
+     * `auth.users` —el del JWT verificado—, nunca uno fabricado: con el token estático
+     * no hay persona y va `null` (se omite), que la base guarda como autor
+     * desconocido en vez de fallar con 23503.
+     */
+    @SerialName("p_creado_por") val creadoPor: String? = null,
 )
 
 /**
- * Opción tal y como la espera la RPC (`p_opciones jsonb`).
- *
- * No reutiliza `AdminOpcionRow` a propósito: esa clase modela la FILA de
- * `opciones_pregunta` (con `id`/`pregunta_id`, sin corrección), mientras que la
- * RPC recibe una descripción de entrada donde la corrección viaja con la opción
- * y los identificadores los genera la propia función dentro de la transacción.
+ * Opción tal y como la valida `private.validar_opciones_pregunta`: `letra`, `texto` y
+ * `es_correcta` (booleano). Sin `posicion`: la deriva la base de la letra (A=1…D=4).
  */
 @Serializable
 private data class AdminRpcOpcionInput(
     val letra: String,
     val texto: String,
-    val posicion: Int,
     @SerialName("es_correcta") val esCorrecta: Boolean,
 )
 
+/** Respuesta jsonb de `admin_create_question`: el id, el código `PREG-n`, si se creó y la posición del vínculo. */
 @Serializable
-private data class AdminReplaceQuestionOptionsRpc(
-    @SerialName("p_pregunta_id") val preguntaId: String,
-    @SerialName("p_opciones") val opciones: List<AdminRpcOpcionInput>,
-    // null = conservar el razonamiento existente. Enviar "" lo BORRARÍA, así que
-    // el llamante manda null cuando no hay explicación nueva que guardar.
-    @SerialName("p_razonamiento") val razonamiento: String? = null,
+private data class AdminCreateQuestionResult(
+    @SerialName("pregunta_id") val preguntaId: String,
+    @SerialName("codigo_pregunta") val codigoPregunta: String = "",
+    val creada: Boolean,
+    @SerialName("posicion_asignada") val posicionAsignada: Int? = null,
+)
+
+// `admin_link_question_to_exam` devuelve una fila (posicion_asignada, numero_asignado,
+// ya_vinculada) que NO se decodifica: la ruta responde la lista de vínculos ya releída,
+// que es lo único que la pantalla pinta. Un DTO que nadie lee sólo sería otra forma más
+// de que el contrato y el código se separen sin que ningún test lo note.
+
+/** Argumentos de `admin_import_lote_preguntas` (IM3, KI3-1). */
+@Serializable
+private data class AdminImportLoteRpc(
+    @SerialName("p_lote_id") val loteId: String,
+    @SerialName("p_confirmar_examen_publicado") val confirmarExamenPublicado: Boolean,
+    @SerialName("p_actor_id") val actorId: String? = null,
+)
+
+/**
+ * Respuesta jsonb de `admin_import_lote_preguntas`: los totales del lote más lo que
+ * hizo ESTA llamada.
+ *
+ * Los defaults no son laxitud: `omitidas` y `vinculadas` valen 0 en un lote sin
+ * duplicados, y decodificar a la fuerza una clave ausente convertiría una
+ * publicación correcta en un 500.
+ */
+@Serializable
+private data class AdminImportLoteResultRow(
+    @SerialName("lote_id") val loteId: String = "",
+    val ejecutado: Boolean = false,
+    val estado: String = "",
+    @SerialName("total_detectadas") val totalDetectadas: Int = 0,
+    @SerialName("total_importadas") val totalImportadas: Int = 0,
+    val nuevas: Int = 0,
+    val vinculadas: Int = 0,
+    val omitidas: Int = 0,
+)
+
+/** Una fila de `admin_import_lote_duplicados` (IM3, KI3-2). */
+@Serializable
+private data class AdminImportDuplicadoRow(
+    @SerialName("staging_id") val stagingId: String,
+    val origen: String = "banco",
+    @SerialName("pregunta_id") val preguntaId: String? = null,
+    @SerialName("codigo_pregunta") val codigoPregunta: String? = null,
+    @SerialName("staging_original_id") val stagingOriginalId: String? = null,
 )
 
 // ScoreRow / UsuarioIdRow / EsCorrectaRow / IniciadoEnRow existían sólo para leer
@@ -1793,12 +3320,28 @@ private fun TransaccionCarteraRow.toDto() = AdminTicketTransactionDto(
 // ---------- Gateway Supabase (esquema real) ----------
 
 class AdminV1Gateway private constructor(
-    private val supabaseUrl: String,
-    private val serviceRoleKey: String,
+    supabaseUrl: String,
+    serviceRoleKey: String,
     private val json: Json,
-    private val client: HttpClient = newUpstreamHttpClient(),
+    client: HttpClient = sharedUpstreamHttpClient,
 ) {
-    @Volatile private var storageBucketChecked = false
+    /**
+     * Migrado a [SupabaseRequestTransport] (FASE 1).
+     *
+     * Este gateway tenía **seis** funciones de transporte propias y las dos
+     * únicas llamadas `DELETE` de Storage escritas a mano en el backend. Es,
+     * además, las cuatro verticales de esta fase —Exámenes, Preguntas,
+     * Importaciones y los dos endpoints legacy de Dashboard—, así que migrarlo
+     * es el grueso del beneficio.
+     *
+     * El memo de buckets ya no vive aquí: lo lleva el transporte, que es donde
+     * la existencia de un bucket es un hecho y no un dato de negocio.
+     */
+    private val transport = SupabaseRequestTransport(
+        baseUrl = supabaseUrl,
+        auth = SupabaseRequestAuthPolicy(serviceRoleKey),
+        client = client,
+    )
 
     // Para ESCRIBIR en Supabase: encodeDefaults=true (envia tipo_examen="rafaga" aunque
     // sea el default) + explicitNulls=false (omite nulls para que apliquen defaults de BD).
@@ -1806,6 +3349,18 @@ class AdminV1Gateway private constructor(
         ignoreUnknownKeys = true
         encodeDefaults = true
         explicitNulls = false
+    }
+
+    // Para inserciones EN BLOQUE (varias filas en un único POST de array): PostgREST exige
+    // que todos los objetos del array tengan exactamente las mismas claves (PGRST102 "All
+    // object keys must match"). `sbJson` omite los null por fila, así que dos filas con
+    // distinto patrón de nulos (habitual: una fila de staging con error_parseo y otra sin
+    // él) generan claves distintas y PostgREST rechaza el lote entero. explicitNulls=true
+    // fuerza la misma clave en todas las filas, aunque el valor sea null.
+    private val sbJsonBulk = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = true
+        explicitNulls = true
     }
 
     // ESPECIALIDADES
@@ -1902,7 +3457,9 @@ class AdminV1Gateway private constructor(
         return request(
             "PATCH",
             "/rest/v1/especialidades?id=eq.$id",
-            sbJson.encodeToString(row),
+            // `especialidadPatchPayload` y no `sbJson.encodeToString`: omite el
+            // `codigo` en blanco para no borrar el real. Ver su KDoc.
+            especialidadPatchPayload(row),
             prefer = "return=representation",
         ).decodeList<AdminEspecialidadDto>().firstOrNull()
             ?: error("Especialidad no encontrada para actualizar: $id")
@@ -1921,23 +3478,85 @@ class AdminV1Gateway private constructor(
     }
 
     // EXAMENES
+    /** El catálogo, con TODAS sus portadas firmadas en una sola petición a Storage (K5). */
     fun listExamenes(): List<AdminExamenDto> =
         request("GET", "/rest/v1/examenes?select=*&order=creado_en.desc", null)
             .decodeList<AdminExamenRow>()
             .map { it.toDto() }
+            .withSignedCovers()
 
     fun getExamen(id: String): AdminExamenDto? =
         request("GET", "/rest/v1/examenes?select=*&id=eq.$id&limit=1", null)
             .decodeList<AdminExamenRow>()
             .firstOrNull()
             ?.toDto()
+            .withSignedCover()
+
+    /**
+     * La URL de cada portada se FIRMA en la lectura y nunca se guarda (K5, PW-8
+     * opción A): el bucket es privado, así que una URL pública daría 404, y una
+     * firmada caduca en [EXAM_COVER_URL_TTL_SECONDS]. UNA petición a Storage para
+     * todo el listado, no una por examen.
+     *
+     * Un fallo al firmar nunca rompe la lectura: el examen sale sin `portadaUrl` —
+     * el cliente conserva la ruta y enseña «Portada guardada»— y el fallo va al log.
+     */
+    private fun List<AdminExamenDto>.withSignedCovers(): List<AdminExamenDto> {
+        val paths = mapNotNull { it.portadaStoragePath?.takeIf(String::isNotBlank) }.distinct()
+        if (paths.isEmpty()) return this
+        val signed = try {
+            transport.storageSignedUrls(examResourcesBucket(), paths, EXAM_COVER_URL_TTL_SECONDS)
+        } catch (error: Exception) {
+            ExamCoverLogger.warn("firma de portadas fallida: {}", error.redactedMessage("Fallo al firmar portadas", 160))
+            emptyMap()
+        }
+        return map { dto -> dto.copy(portadaUrl = dto.portadaStoragePath?.let { signed[it] }) }
+    }
+
+    private fun AdminExamenDto?.withSignedCover(): AdminExamenDto? = this?.let { listOf(it).withSignedCovers().first() }
 
     fun createExamen(input: AdminExamenDto): AdminExamenDto {
         require(input.titulo.isNotBlank()) { "El examen necesita titulo." }
         require(input.especialidadId.isNotBlank()) { "El examen necesita especialidad." }
-        val row = input.toRow().let {
-            if (it.codigoExamen.isBlank()) it.copy(codigoExamen = "EX-" + shortId()) else it
-        }
+        // Vocabulario canónico ANTES de construir la fila: ver
+        // [canonicalExamTypeOrReject]. Un valor desconocido es un 422, nunca un
+        // `rafaga` silencioso.
+        val row = input.withCanonicalVocabulary().toRow()
+            .let { if (it.codigoExamen.isBlank()) it.copy(codigoExamen = "EX-" + shortId()) else it }
+            // `total_preguntas` NO viaja (K2, tras M1). La mantiene la base:
+            // `trg_examenes_total_preguntas_insert` la fija a 0 al insertar —un
+            // borrador vacío dice la verdad desde PW-2, que admite `>= 0`— y la
+            // guarda `trg_examenes_total_preguntas_guard` neutraliza cualquier otra
+            // escritura (C-05). `toRow()` ya no la copia, así que tampoco se cuela
+            // un `totalPreguntas` que venga en el cuerpo del POST.
+            //
+            // UN EXAMEN NACE EN BORRADOR Y ACTIVO. Siempre, diga lo que diga el
+            // cuerpo.
+            //
+            // `updateExamen` nunca escribe la visibilidad (su lista blanca,
+            // [PATCHABLE_EXAMEN_COLUMNS], no la contiene), pero
+            // `createExamen` no filtraba nada: construía la fila con `toRow()` y
+            // la mandaba entera. Un `POST` con
+            // `"publicadoEn":"2020-01-01T00:00:00Z"` insertaba `activo=true` +
+            // `publicado_en` no nulo, que es EXACTAMENTE la condición con la que
+            // `SupabaseV1Gateway.listExamenes` sirve un examen a los usuarios de
+            // la app. La regla de E-1 —«la visibilidad se cambia sólo por
+            // publicar, despublicar y archivar»— tenía una puerta abierta.
+            //
+            // Lo que lo convierte en defecto y no en decisión de producto es la
+            // AUDITORÍA: `createExamen` registra `examen_creado` y nada más;
+            // `publicarExamen` registra `examen_publicado`. Por esta puerta un
+            // examen se volvía visible para usuarios finales sin una sola línea
+            // que dijera que alguien lo publicó. Una pista de auditoría que se
+            // puede esquivar no sirve para lo único que sirve.
+            //
+            // `publicadoEn = null` se OMITE del JSON (`explicitNulls = false`),
+            // así que la columna queda con su default de base. `activo = true`
+            // sí viaja (`encodeDefaults = true`) y es lo correcto: nacer
+            // archivado sería un examen que el propio panel no lista.
+            //
+            // Para publicar hay una ruta, y es `POST /examenes/{id}/publicar`.
+            .copy(activo = true, publicadoEn = null)
         val saved = request(
             "POST",
             "/rest/v1/examenes",
@@ -1948,70 +3567,301 @@ class AdminV1Gateway private constructor(
         return saved
     }
 
-    fun updateExamen(id: String, input: AdminExamenDto): AdminExamenDto {
-        require(input.titulo.isNotBlank()) { "El examen necesita titulo." }
+    /**
+     * PATCH de examen con el contrato C-01: **sólo las claves presentes en el
+     * cuerpo** se escriben. Ver [PATCHABLE_EXAMEN_COLUMNS] y [examenPatchFrom].
+     *
+     * `null` = el examen no existe, y eso lo traduce la ruta a 404 — igual que
+     * `publicar`, `despublicar` y `archivar`. El `null` no se confunde con
+     * «falló»: `failOnError` ya convirtió cualquier respuesta de error del
+     * upstream en excepción antes de llegar aquí, así que una lista vacía con 200
+     * sólo puede significar que `id=eq.` no casó.
+     *
+     * Un cuerpo sin ninguna clave admitida no sale como PATCH: se responde el
+     * examen tal como está. Un PATCH vacío no es una escritura y no tiene por qué
+     * parecerlo.
+     */
+    fun updateExamen(id: String, raw: JsonObject): AdminExamenDto? {
+        val patch = examenPatchFrom(raw)
+        if (patch.isEmpty()) return getExamen(id)
         return request(
             "PATCH",
             "/rest/v1/examenes?id=eq.$id",
-            sbJson.encodeToString(input.toRow(forcedId = id)),
+            sbJson.encodeToString(JsonObject.serializer(), patch),
             prefer = "return=representation",
-        ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
-            ?: error("Examen no encontrado para actualizar: $id")
+        ).decodeList<AdminExamenRow>().firstOrNull()?.toDto().withSignedCover()
     }
 
-    fun publicarExamen(id: String): AdminExamenDto {
+    /**
+     * Publica. `null` = el examen no existe, y eso lo traduce la ruta a 404.
+     *
+     * ### DEC-EX-01 = A: un examen sin preguntas no se publica (K-DEC01)
+     *
+     * La regla va DENTRO de la sentencia que publica —`total_preguntas=gt.0` en el
+     * filtro del PATCH— y no en una lectura previa: entre leer «tiene preguntas» y
+     * publicar, otro administrador podría archivar la última. La cifra es fiable
+     * porque la mantiene la base (M1).
+     *
+     * Cero filas actualizadas significa una de dos cosas, y se distinguen con una
+     * lectura mínima que sólo paga el camino del rechazo: el examen no existe
+     * (`null` → 404) o existe y está vacío (422 `EXAM_PUBLISH_REQUIRES_QUESTIONS`).
+     *
+     * Lo que NO se bloquea, y es deliberado: desvincular o archivar la última
+     * pregunta de un examen ya publicado. Bloquearlo impediría archivar preguntas
+     * del banco; lo decide DEC-Q-04 (Q4), no esta función.
+     */
+    fun publicarExamen(id: String): AdminExamenDto? {
         val saved = request(
             "PATCH",
-            "/rest/v1/examenes?id=eq.$id",
+            "/rest/v1/examenes?id=eq.$id&total_preguntas=gt.0",
             """{"publicado_en":"${Instant.now()}","activo":true}""",
             prefer = "return=representation",
         ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
-            ?: error("Examen no encontrado para publicar.")
+        if (saved == null) {
+            val existe = request("GET", "/rest/v1/examenes?select=id&id=eq.$id&limit=1", null)
+                .decodeList<JsonObject>()
+                .isNotEmpty()
+            if (!existe) return null
+            throw examPublishRequiresQuestionsException()
+        }
         registrarAuditoria("examen_publicado", "examenes", id)
-        return saved
+        return saved.withSignedCover()
     }
 
-    fun despublicarExamen(id: String): AdminExamenDto {
+    /**
+     * Despublica. `null` = no existe → 404 en la ruta.
+     *
+     * **NO toca `activo`, y eso es deliberado.** Despublicar un examen archivado
+     * lo dejaría publicado-pero-inactivo, un estado que ninguna lectura de la app
+     * entiende. Queda escrito para que nadie lo «arregle» añadiendo
+     * `"activo":true`.
+     */
+    fun despublicarExamen(id: String): AdminExamenDto? {
         val saved = request(
             "PATCH",
             "/rest/v1/examenes?id=eq.$id",
             """{"publicado_en":null}""",
             prefer = "return=representation",
         ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
-            ?: error("Examen no encontrado para despublicar.")
+            ?: return null
         registrarAuditoria("examen_despublicado", "examenes", id)
-        return saved
+        return saved.withSignedCover()
     }
 
-    fun archiveExamen(id: String): AdminExamenDto {
+    /**
+     * Archiva. `null` = no existe → 404 en la ruta.
+     *
+     * Tiene ruta propia (`POST /examenes/{id}/archivar`) desde que
+     * `DELETE /examenes/{id}` pasó a [deleteExamen] y borra de verdad. Antes era
+     * lo que hacía el DELETE, y por eso la consola ofrecía «Eliminar» sobre una
+     * operación que no eliminaba nada.
+     */
+    fun archiveExamen(id: String): AdminExamenDto? {
         val saved = request(
             "PATCH",
             "/rest/v1/examenes?id=eq.$id",
             """{"activo":false,"publicado_en":null}""",
             prefer = "return=representation",
         ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
-            ?: error("Examen no encontrado para archivar.")
+            ?: return null
         registrarAuditoria("examen_archivado", "examenes", id)
-        return saved
+        return saved.withSignedCover()
     }
 
-    // PREGUNTAS (+ opciones + solucion + recursos + asociacion a examen)
-    fun listPreguntas(): List<AdminPreguntaDto> =
-        request("GET", "/rest/v1/preguntas?select=*&activa=eq.true&order=creado_en.desc", null)
-            .decodeList<AdminPreguntaRow>()
-            .map { it.toDtoSinDetalle() }
+    /**
+     * **Borra el examen de verdad**, con una guarda delante. `false` = no existe →
+     * 404 en la ruta.
+     *
+     * ### Por qué hay guarda
+     *
+     * Ocho tablas apuntan a `examenes` (leído del esquema vivo). Dos son enlaces
+     * que el examen posee —las asociaciones de preguntas y los lotes de
+     * importación que lo alimentaron, que cascadean con él— y las otras seis son
+     * **historial de usuarios**: intentos, respuestas, abandonos, opiniones,
+     * desbloqueos de contenido (compras) y eventos de conversión.
+     *
+     * El comportamiento `on delete` de esas seis claves ajenas **NO está
+     * verificado en la base viva**, y las dos posibilidades son malas sin guarda:
+     * si cascadean, borrar un examen destruye en silencio el historial de gente
+     * que pagó por él; si no, el borrado falla con un 23503 que sin mapeo era un
+     * 500. Así que no se delega la decisión en la base: se cuenta antes, y si hay
+     * algo NO se borra nada y se responde 409 con
+     * [examHasUserDataException] —que dice qué hay colgando y que lo que se
+     * quiere es archivar—.
+     *
+     * ### Cómo se cuenta
+     *
+     * Una lectura por tabla, `select=id&limit=1`, y sólo importa si vuelve vacía.
+     * No se usa `Prefer: count=exact` a propósito: el número exacto no cambia
+     * ninguna decisión —uno solo ya bloquea— y `transport.count` LANZA si la
+     * respuesta no trae `Content-Range` utilizable, así que costaría lo mismo y
+     * añadiría un modo de fallo. Se consultan las seis aunque la primera ya
+     * bloquee, porque el mensaje enumera TODAS las categorías que cuelgan y «hay
+     * intentos» cuando además hay compras informa de menos.
+     *
+     * Si una de esas lecturas falla, **no se borra**: sale
+     * [examDeleteGuardUnavailableException]. Un fallo de la comprobación no puede
+     * volverse un borrado «por si acaso».
+     *
+     * ### El borrado: UNA sentencia (EX-19)
+     *
+     * Un solo `DELETE /examenes?id=eq.<id>`. Las dos tablas que el examen posee
+     * —`preguntas_examen` (la asociación, no las preguntas) y
+     * `lotes_importacion_preguntas`— hacen `ON DELETE CASCADE`, verificado en la base
+     * viva por la revisión de C. Antes se borraban a mano y en tres peticiones, y eso
+     * tenía dos defectos: no era atómico (un fallo a mitad dejaba el examen sin
+     * preguntas y en pie) y, con la guarda Q4 —«un examen publicado no puede quedarse
+     * sin preguntas activas»—, borrar primero las asociaciones de un examen publicado
+     * fallaría siempre. En una sola sentencia la base borra el examen y lo que cuelga
+     * de él a la vez.
+     *
+     * **Lo que este método NO borra, y es deliberado**: las `preguntas` en sí.
+     * `preguntas_examen` es una M:N, así que la pregunta puede estar en otros
+     * exámenes y en el banco; borrar la asociación es exactamente lo que hace
+     * `desvincularPreguntaExamen` y lo correcto aquí. Igual que la portada, que
+     * sigue en Storage — ver el comentario de `clearExamenPortada`.
+     */
+    fun deleteExamen(id: String): Boolean {
+        val existe = request("GET", "/rest/v1/examenes?select=id&id=eq.$id&limit=1", null)
+            .decodeList<JsonObject>()
+            .isNotEmpty()
+        if (!existe) return false
 
+        val conDatos = examenUserDataCategories(id)
+        if (conDatos.isNotEmpty()) throw examHasUserDataException(conDatos)
+
+        request("DELETE", "/rest/v1/examenes?id=eq.$id", null)
+        registrarAuditoria("examen_eliminado", "examenes", id)
+        return true
+    }
+
+    /**
+     * Las categorías de datos de usuario que cuelgan del examen, en etiquetas
+     * HUMANAS y en el orden del inventario. Vacía = el examen se puede borrar.
+     *
+     * Devuelve etiquetas y no nombres de tabla porque lo que devuelve acaba en el
+     * mensaje del 409: la regla de `BackendErrors.kt` —ni esquema, ni columnas, ni
+     * identificadores— se cumple aquí, en el origen, y no confiando en que el
+     * consumidor recorte.
+     */
+    private fun examenUserDataCategories(id: String): List<String> = EXAMEN_USER_DATA_TABLES
+        .filter { (tabla, _) ->
+            val respuesta = runCatching {
+                request("GET", "/rest/v1/$tabla?select=id&examen_id=eq.$id&limit=1", null)
+            }.getOrElse { throw examDeleteGuardUnavailableException() }
+            runCatching { respuesta.decodeList<JsonObject>() }
+                .getOrElse { throw examDeleteGuardUnavailableException() }
+                .isNotEmpty()
+        }
+        .map { (_, etiqueta) -> etiqueta }
+
+    // PREGUNTAS (+ opciones + solucion + recursos + asociacion a examen)
+    /**
+     * Una PÁGINA del banco y su total exacto, en UNA petición (KQ0-3, QN-07).
+     *
+     * Antes era `select=*` sin cota y todo lo demás —buscar, filtrar por tipo o
+     * estado, ordenar, paginar— se hacía en el cliente sobre lo cargado, que además
+     * eran sólo las activas: el filtro «Inactivas» del banco no podía encontrar
+     * nada. Ahora el servidor filtra, ordena y corta, y el total sale de
+     * `Content-Range`.
+     *
+     * - Sin examen: raíz `preguntas`, sólo las columnas del listado.
+     * - Con examen: raíz `preguntas_examen` con `preguntas!inner(…)`; los filtros de
+     *   la pregunta van como `preguntas.<filtro>` y el orden es la posición. El total
+     *   cuenta los vínculos que cumplen los filtros.
+     *
+     * Todo lo que entra en la URL ya viene neutralizado por
+     * [toPreguntaListQuery]: literales, UUID canónicos y la búsqueda saneada.
+     */
+    internal fun listPreguntasPagina(q: AdminPreguntaListQuery): AdminPreguntasPageResponse {
+        val filtros = buildList {
+            q.activa?.let { add("activa=eq.$it") }
+            q.tipo?.let { add("tipo_pregunta=eq.$it") }
+            q.especialidadId?.let { add("especialidad_id=eq.$it") }
+            q.texto?.let(::preguntaSearchFilter)?.let { add("or=($it)") }
+        }
+        val rango = "&limit=${q.limit}&offset=${q.offset}"
+        return if (q.examenId == null) {
+            val page = transport.getPage(
+                "/rest/v1/preguntas?select=$PREGUNTA_LIST_COLUMNS" + filtros.joinToString("") { "&$it" } +
+                    "&order=${q.orden.postgrest}$rango",
+            )
+            AdminPreguntasPageResponse(
+                data = page.body.decodeList<AdminPreguntaRow>().map { it.toDtoSinDetalle() },
+                total = page.total,
+                limit = q.limit,
+                offset = q.offset,
+            )
+        } else {
+            val page = transport.getPage(
+                "/rest/v1/preguntas_examen?select=posicion,preguntas!inner($PREGUNTA_LIST_COLUMNS)" +
+                    "&examen_id=eq.${q.examenId}" + filtros.joinToString("") { "&preguntas.$it" } +
+                    "&order=posicion.asc$rango",
+            )
+            AdminPreguntasPageResponse(
+                data = page.body.decodeList<AdminPreguntaExamenListRow>().map {
+                    it.preguntas.toDtoSinDetalle().copy(examenId = q.examenId, posicion = it.posicion)
+                },
+                total = page.total,
+                limit = q.limit,
+                offset = q.offset,
+            )
+        }
+    }
+
+    /**
+     * Preguntas de un examen, con opciones, solución y recursos, en **coste
+     * constante**.
+     *
+     * Antes esto llamaba a [getPregunta] dentro de un bucle y cada vuelta
+     * disparaba 4 peticiones a Supabase (pregunta, opciones, solución,
+     * recursos): un examen de 120 preguntas costaba 1 + 4×120 = **481**
+     * peticiones, 120 de ellas sólo de recursos. Ahora son **5 como máximo**,
+     * sea cual sea el número de preguntas, agrupando por `id=in.(...)` — el
+     * mismo patrón que ya usaba [SupabaseV1Gateway.getPreguntasExamenRafaga].
+     *
+     * El filtro `activa=eq.true` sustituye al `takeIf { it.activa }` posterior:
+     * una pregunta archivada que conserve su fila en `preguntas_examen` no debe
+     * viajar, y descartarla en el servidor evita traérsela para tirarla.
+     */
     fun listPreguntasExamen(examenId: String): List<AdminPreguntaDto> {
         val links = request(
             "GET",
             "/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId&order=posicion.asc",
             null,
         ).decodeList<AdminPreguntaExamenRow>()
+        if (links.isEmpty()) return emptyList()
+
+        val idsFilter = links.map { it.preguntaId }.distinct().joinToString(",")
+
+        val preguntasById = request("GET", "/rest/v1/preguntas?select=*&id=in.($idsFilter)&activa=eq.true", null)
+            .decodeList<AdminPreguntaRow>()
+            .associateBy { it.id.orEmpty() }
+        val opcionesByPregunta = request(
+            "GET",
+            "/rest/v1/opciones_pregunta?select=*&pregunta_id=in.($idsFilter)&order=posicion.asc",
+            null,
+        ).decodeList<AdminOpcionRow>().groupBy { it.preguntaId }
+        val solucionByPregunta = request(
+            "GET",
+            "/rest/v1/soluciones_pregunta?select=*&pregunta_id=in.($idsFilter)",
+            null,
+        ).decodeList<AdminSolucionRow>().associateBy { it.preguntaId }
+        // Se firma UNA vez para el examen entero y después se agrupa: firmar por
+        // pregunta serían N peticiones a Storage en una pantalla que ya carga 120.
+        val recursosByPregunta = request(
+            "GET",
+            "/rest/v1/recursos_pregunta?select=*&pregunta_id=in.($idsFilter)&activo=eq.true&order=posicion.asc",
+            null,
+        ).decodeList<AdminRecursoRow>().firmados().groupBy { it.preguntaId }
+
         return links.mapNotNull { link ->
-            getPregunta(link.preguntaId)?.takeIf { it.activa }?.copy(
-                examenId = examenId,
-                posicion = link.posicion,
-            )
+            val pregunta = preguntasById[link.preguntaId] ?: return@mapNotNull null
+            pregunta.ensamblar(
+                opciones = opcionesByPregunta[link.preguntaId].orEmpty(),
+                solucion = solucionByPregunta[link.preguntaId],
+                recursos = recursosByPregunta[link.preguntaId].orEmpty(),
+            ).copy(examenId = examenId, posicion = link.posicion)
         }.sortedBy { it.posicion ?: Int.MAX_VALUE }
     }
 
@@ -2022,8 +3872,23 @@ class AdminV1Gateway private constructor(
             .decodeList<AdminOpcionRow>()
         val solucion = request("GET", "/rest/v1/soluciones_pregunta?select=*&pregunta_id=eq.$id&limit=1", null)
             .decodeList<AdminSolucionRow>().firstOrNull()
+        return pregunta.ensamblar(opciones, solucion, listRecursos(id))
+    }
+
+    /**
+     * Une las cuatro piezas de una pregunta en su DTO.
+     *
+     * Existe para que la lectura de una sola pregunta y la del examen entero no
+     * puedan divergir: si sólo una de las dos supiera marcar la opción correcta,
+     * el editor y el listado mostrarían cosas distintas de la misma fila.
+     */
+    private fun AdminPreguntaRow.ensamblar(
+        opciones: List<AdminOpcionRow>,
+        solucion: AdminSolucionRow?,
+        recursos: List<AdminRecursoDto>,
+    ): AdminPreguntaDto {
         val correctaId = solucion?.opcionCorrectaId
-        return pregunta.toDtoSinDetalle().copy(
+        return toDtoSinDetalle().copy(
             razonamiento = solucion?.razonamiento.orEmpty(),
             opciones = opciones.map {
                 AdminOpcionDto(
@@ -2034,92 +3899,106 @@ class AdminV1Gateway private constructor(
                     esCorrecta = it.id == correctaId,
                 )
             },
-            recursos = listRecursos(id),
+            // Llegan ya FIRMADOS: sin la URL firmada, el material de una pregunta
+            // inmersiva viajaría con la ruta de un bucket privado y nada que abrir.
+            recursos = recursos,
         )
     }
 
-    fun createPregunta(input: AdminPreguntaDto): AdminPreguntaDto {
-        require(input.titulo.isNotBlank()) { "La pregunta necesita titulo." }
-        require(input.especialidadId.isNotBlank()) { "La pregunta necesita especialidad." }
-        require(input.opciones.isNotEmpty()) { "La pregunta necesita opciones." }
-        require(input.opciones.count { it.esCorrecta } == 1) { "Marca exactamente una opcion correcta." }
-
-        // Los identificadores (pregunta, opciones, solución) los genera la RPC
-        // dentro de su transacción y devuelve el uuid de la pregunta creada: si
-        // se generaran aquí y la función abortara, este proceso creería conocer
-        // un id que no existe en la base.
-        val opciones = input.opciones.mapIndexed { i, o ->
-            AdminRpcOpcionInput(
-                letra = o.letra,
-                texto = o.texto,
-                posicion = if (o.posicion > 0) o.posicion else i + 1,
-                esCorrecta = o.esCorrecta,
-            )
-        }
+    /**
+     * Da de alta una pregunta con `admin_create_question` (Q2, KQ2-1) y la devuelve
+     * leída entera, diciendo si ESTA llamada la creó.
+     *
+     * - **Idempotente por id.** El id lo genera el cliente una vez por alta y lo
+     *   conserva en los reintentos ([AdminPreguntaDto.id]). Un reintento con el mismo
+     *   contenido responde `creada:false` sin escribir ni auditar; con otro contenido,
+     *   `QUESTION_ID_CONFLICT`. Si el cliente no manda id (un llamador interno), se
+     *   genera aquí: sin reintento posible, no hay nada que proteger.
+     * - **Todo o nada.** La RPC valida (enunciado, 4 opciones, 1 correcta, tipo,
+     *   dificultad, especialidad y, si hay examen, el vínculo) ANTES de escribir, e
+     *   inserta pregunta, opciones, solución y vínculo en una transacción. Ya no hay
+     *   `require` aquí: las reglas y sus códigos son de la base, y duplicarlas en
+     *   Kotlin sólo las haría divergir.
+     * - **Sin `onCreated`.** Existía para que el bucle de importación anotara el id
+     *   antes de las lecturas posteriores; la importación publica ahora con UNA RPC
+     *   (KI3-1) y `/rafagas/import` se retiró (DEC-IMP-05), así que no queda llamador.
+     */
+    fun createPregunta(
+        input: AdminPreguntaDto,
+        actorId: String? = null,
+        loteImportacionId: String? = null,
+    ): AdminPreguntaCreada {
+        val preguntaId = input.id.takeIf { it.isNotBlank() }?.validatedUuid("id") ?: UUID.randomUUID().toString()
         val body = request(
             "POST", "/rest/v1/rpc/admin_create_question",
             sbJson.encodeToString(
                 AdminCreateQuestionRpc(
-                    codigoPregunta = input.codigoPregunta.ifBlank { "P-" + shortId() },
+                    preguntaId = preguntaId,
                     especialidadId = input.especialidadId,
                     tipoPregunta = input.tipoPregunta,
                     titulo = input.titulo,
-                    opciones = opciones,
-                    razonamiento = input.razonamiento,
-                    fuenteTexto = input.fuenteTexto,
-                    dificultad = input.dificultad,
+                    opciones = input.opciones.map { AdminRpcOpcionInput(it.letra, it.texto, it.esCorrecta) },
+                    razonamiento = input.razonamiento.takeIf { it.isNotEmpty() },
+                    fuenteTexto = input.fuenteTexto?.takeIf { it.isNotBlank() },
+                    dificultad = input.dificultad.takeIf { it.isNotBlank() },
                     activa = input.activa,
                     examenId = input.examenId?.takeIf { it.isNotBlank() },
                     posicion = input.posicion,
+                    loteImportacionId = loteImportacionId,
+                    creadoPor = actorId,
                 ),
             ),
         )
-        val preguntaId = sbJson.decodeFromString<String>(body.trim())
-        registrarAuditoria("pregunta_creada", "preguntas", preguntaId)
-        return getPregunta(preguntaId) ?: error("No se pudo leer la pregunta creada.")
+        val resultado = json.decodeFromString<AdminCreateQuestionResult>(body)
+        // Un reintento que no escribió nada no es otra alta: sin auditoría.
+        if (resultado.creada) registrarAuditoria("pregunta_creada", "preguntas", resultado.preguntaId)
+        val leida = getPregunta(resultado.preguntaId) ?: error("No se pudo leer la pregunta creada.")
+        return AdminPreguntaCreada(leida, resultado.creada)
     }
 
-    fun updatePregunta(id: String, input: AdminPreguntaDto): AdminPreguntaDto {
-        val existing = getPregunta(id) ?: error("Pregunta no encontrada.")
-        require(input.titulo.isNotBlank()) { "La pregunta necesita titulo." }
+    /**
+     * Edita una pregunta con `admin_update_question` (Q2, KQ2-2): sólo las claves
+     * PRESENTES en el cuerpo ([preguntaCambiosFrom]), en una transacción, con las
+     * guardas de tipo (`QUESTION_TYPE_LOCKED_BY_*`) bajo el cerrojo de la pregunta.
+     *
+     * Lo que ya NO hace, y por qué:
+     * - Leer antes: una pregunta que no existe la rechaza la RPC (`QUESTION_NOT_FOUND`).
+     * - Escribir la fila, las opciones y la solución en tres peticiones: una edición a
+     *   medias dejaba el tipo cambiado y la explicación sin guardar.
+     * - Vincular (D-03/D-04): `examenId`/`posicion` del cuerpo se IGNORAN. La única
+     *   puerta para vincular es `POST /preguntas/{id}/examenes`, y el editor de
+     *   Exámenes vincula al CREAR (misma transacción que el alta).
+     * - Tocar `recursos[]` (KQ0-8), el código (Q1) o la especialidad.
+     */
+    fun updatePregunta(id: String, raw: JsonObject): AdminPreguntaDto {
+        val cambios = preguntaCambiosFrom(raw)
         request(
-            "PATCH", "/rest/v1/preguntas?id=eq.$id",
-            sbJson.encodeToString(
-                AdminPreguntaRow(
-                    id = id,
-                    codigoPregunta = input.codigoPregunta.ifBlank { existing.codigoPregunta },
-                    especialidadId = input.especialidadId.ifBlank { existing.especialidadId },
-                    tipoPregunta = input.tipoPregunta,
-                    titulo = input.titulo,
-                    fuenteTexto = input.fuenteTexto,
-                    dificultad = input.dificultad,
-                    activa = input.activa,
-                ),
-            ),
-            prefer = "return=minimal",
+            "POST",
+            "/rest/v1/rpc/admin_update_question",
+            // Serializado a mano y NO con `sbJson`: un `null` presente en `p_cambios`
+            // tiene que viajar («vacía la fuente»), y `explicitNulls = false` lo borraría.
+            buildJsonObject {
+                put("p_pregunta_id", JsonPrimitive(id))
+                put("p_cambios", cambios)
+            }.toString(),
         )
-        if (input.opciones.isNotEmpty()) {
-            replaceOpcionesAndSolucion(id, input.opciones, input.razonamiento)
-        } else if (input.razonamiento.isNotBlank()) {
-            request(
-                "PATCH", "/rest/v1/soluciones_pregunta?pregunta_id=eq.$id",
-                """{"razonamiento":${sbJson.encodeToString(input.razonamiento)}}""",
-                prefer = "return=minimal",
-            )
-        }
-        input.examenId?.takeIf { it.isNotBlank() }?.let { examenId ->
-            upsertPreguntaExamen(examenId = examenId, preguntaId = id, posicion = input.posicion ?: 1)
-        }
-        input.recursos.forEach { recurso ->
-            if (recurso.id.isBlank()) {
-                addRecurso(id, recurso)
-            } else {
-                updateRecurso(id, recurso.id, recurso)
-            }
-        }
-        return getPregunta(id) ?: error("No se pudo leer la pregunta actualizada.")
+        registrarAuditoria("pregunta_actualizada", "preguntas", id)
+        return getPregunta(id) ?: throw domainError("QUESTION_NOT_FOUND")
     }
 
+    /**
+     * Archiva una pregunta. Una que no existe es un 404, no un 500.
+     *
+     * Misma corrección que E-2 hizo en las cuatro rutas de examen, por el mismo
+     * motivo: un `IllegalStateException` sale por el handler de upstream como
+     * «Error al consultar el servicio de datos. Referencia: …», que dice «el
+     * servidor está roto» cuando lo que pasa es que otro administrador archivó
+     * esa pregunta antes, y lo hace indistinguible de un Supabase caído — que es
+     * exactamente el caso que esa referencia existe para poder investigar.
+     *
+     * Y el `$id` sale del texto de la excepción: apoyarse en que el handler lo
+     * redacte es peor que no ponerlo, según decía ya el KDoc de `updateExamen`.
+     */
     fun archivePregunta(id: String): AdminPreguntaDto {
         val saved = request(
             "PATCH",
@@ -2127,34 +4006,343 @@ class AdminV1Gateway private constructor(
             """{"activa":false}""",
             prefer = "return=representation",
         ).decodeList<AdminPreguntaRow>().firstOrNull()
-            ?: error("Pregunta no encontrada para archivar: $id")
+            ?: throw domainError("QUESTION_NOT_FOUND")
         registrarAuditoria("pregunta_archivada", "preguntas", id)
         // Return full DTO with opciones/solucion/recursos for consistency with other handlers.
         return getPregunta(id) ?: saved.toDtoSinDetalle()
     }
 
-    fun reordenarPreguntasExamen(examenId: String, input: AdminPreguntaOrdenRequest): List<AdminPreguntaDto> {
-        input.ids.forEachIndexed { index, preguntaId ->
-            request(
-                "PATCH",
-                "/rest/v1/preguntas_examen?examen_id=eq.$examenId&pregunta_id=eq.$preguntaId",
-                """{"posicion":${index + 1}}""",
-                prefer = "return=minimal",
-            )
+    /**
+     * Llama a una RPC de ESCRITURA que puede no existir todavía en la base y
+     * convierte ese caso —y sólo ése— en un error de dominio legible.
+     *
+     * Sin esto, la falta de una migración sale como `IllegalStateException` → 500
+     * redactado («el servidor está roto»), que es a la vez falso y un callejón:
+     * el administrador reintenta, y reintentar no puede arreglar una función que
+     * no existe. Con [codigoNoDisponible] la consola dice qué falta y que no ha
+     * cambiado nada.
+     *
+     * Se mira `code == PGRST202` ([saysWriteRpcIsMissing]) y NO el texto: el
+     * mensaje del transporte arrastra 300 caracteres del cuerpo de PostgREST, que
+     * pueden llevar contenido escrito por el administrador.
+     *
+     * Cualquier otro fallo —incluidos los `BackendDomainException` que la propia
+     * RPC levanta con `raise`— sale intacto: aquí no se traduce nada más.
+     */
+    private fun rpcOrUnavailable(funcion: String, body: String, codigoNoDisponible: String): String =
+        try {
+            request("POST", "/rest/v1/rpc/$funcion", body)
+        } catch (error: Exception) {
+            if (error.saysWriteRpcIsMissing()) throw domainError(codigoNoDisponible)
+            throw error
         }
+
+    /**
+     * Reordena las preguntas de un examen con UNA sentencia (M4, K3-1).
+     *
+     * Era un bucle de PATCH, uno por pregunta: un intercambio de dos posiciones
+     * chocaba contra el índice único a mitad del bucle y dejaba el examen con el
+     * orden a medias, y el conjunto no se validaba contra nada. La RPC valida
+     * bajo cerrojo del examen (`EXAM_REORDER_SET_MISMATCH` si la lista no es
+     * exactamente la del examen) y escribe con la restricción diferida.
+     */
+    fun reordenarPreguntasExamen(examenId: String, input: AdminPreguntaOrdenRequest): List<AdminPreguntaDto> {
+        rpcOrUnavailable(
+            "admin_reorder_exam_questions",
+            buildJsonObject {
+                put("p_examen_id", JsonPrimitive(examenId))
+                put("p_pregunta_ids", JsonArray(input.ids.map { JsonPrimitive(it) }))
+            }.toString(),
+            "EXAM_QUESTION_REORDER_UNAVAILABLE",
+        )
         registrarAuditoria("preguntas_examen_reordenadas", "preguntas_examen", examenId)
         return listPreguntasExamen(examenId)
     }
 
+    /**
+     * Vincula (M:N) de forma atómica e idempotente con `admin_link_question_to_exam`
+     * (M4, K3-3). `posicion == null` = al final; ya vinculada = no se mueve.
+     *
+     * Sustituye a `upsertPreguntaExamen`, que leía `max(numero_en_examen)+1` y
+     * escribía después: sin cerrojo, dos altas simultáneas se daban el mismo
+     * número, y `posicion ?: 1` chocaba con la pregunta que ya ocupaba la 1 en un
+     * examen no vacío. La RPC valida especialidad, tipo, archivado y límite ANTES
+     * de insertar, y recoloca el resto en la misma transacción.
+     */
+    internal fun vincularPreguntaExamen(examenId: String, preguntaId: String, posicion: Int?) {
+        rpcOrUnavailable(
+            "admin_link_question_to_exam",
+            buildJsonObject {
+                put("p_examen_id", JsonPrimitive(examenId))
+                put("p_pregunta_id", JsonPrimitive(preguntaId))
+                put("p_posicion", posicion?.let { JsonPrimitive(it) } ?: JsonNull)
+            }.toString(),
+            "QUESTION_EXAM_LINK_UNAVAILABLE",
+        )
+    }
+
+    /**
+     * Quita una pregunta de un examen **sin tocarla en el banco** y recompacta
+     * `posicion` en la misma transacción (M4, K3-2).
+     *
+     * `DELETE /preguntas/{id}` archiva (`activa=false`) la fila global, y como
+     * `preguntas_examen` es M:N eso la saca de todos los exámenes que la
+     * compartan. Aquí sólo desaparece la asociación con ESTE examen.
+     *
+     * Era un DELETE + una lectura + un PATCH por fila restante. Entre el DELETE y
+     * la recompactación cabía cualquier otra escritura, y un fallo a mitad dejaba
+     * el examen con huecos (1,2,4,5) que descolocaban la numeración mostrada. Si
+     * la pregunta no estaba vinculada, la RPC levanta `QUESTION_NOT_LINKED_TO_EXAM`
+     * (404 de dominio) en vez de responder éxito sobre cero filas.
+     */
+    fun quitarVinculoPreguntaExamen(examenId: String, preguntaId: String) {
+        rpcOrUnavailable(
+            "admin_unlink_question_from_exam",
+            buildJsonObject {
+                put("p_examen_id", JsonPrimitive(examenId))
+                put("p_pregunta_id", JsonPrimitive(preguntaId))
+            }.toString(),
+            "QUESTION_EXAM_UNLINK_UNAVAILABLE",
+        )
+        registrarAuditoria("pregunta_desvinculada", "preguntas_examen", examenId)
+    }
+
+    /** La misma operación vista desde el examen: quita el vínculo y devuelve las preguntas que quedan. */
+    fun desvincularPreguntaExamen(examenId: String, preguntaId: String): List<AdminPreguntaDto> {
+        quitarVinculoPreguntaExamen(examenId = examenId, preguntaId = preguntaId)
+        return listPreguntasExamen(examenId)
+    }
+
+    /**
+     * Los exámenes a los que está vinculada una pregunta (M:N), en UNA petición
+     * embebida (K3-4).
+     *
+     * Es la consulta que no existía: el banco de Preguntas infería los vínculos de
+     * la sesión —sólo veías uno si habías llegado filtrando por ese examen— y por
+     * eso «Desvincular» estaba bloqueado y el diálogo de archivar no podía avisar
+     * de un examen publicado.
+     *
+     * `mapNotNull`: una fila cuyo examen no venga embebido (borrado concurrente) se
+     * omite en vez de inventar un examen vacío.
+     */
+    fun listExamenesDePregunta(preguntaId: String): List<AdminPreguntaExamenVinculoDto> =
+        request(
+            "GET",
+            "/rest/v1/preguntas_examen?select=posicion,examenes(id,codigo_examen,titulo,tipo_examen,activo,publicado_en,total_preguntas)" +
+                "&pregunta_id=eq.$preguntaId&order=examen_id.asc",
+            null,
+        ).decodeList<AdminPreguntaExamenVinculoRow>().mapNotNull { it.toDto() }
+
+    /**
+     * La misma regla, pública, para imponerla ANTES de leer el cuerpo de una subida.
+     *
+     * Con 50 MB de margen, comprobar después de recibir el archivo significa gastar la
+     * red del administrador para responderle que no se podía.
+     */
+    fun requireQuestionAcceptsResources(preguntaId: String) = requireStoredQuestionAcceptsResources(preguntaId)
+
+    /**
+     * Impone la regla contra el tipo GUARDADO de la pregunta, leyéndolo.
+     *
+     * Una pregunta que no existe es un 404 y no un 201 sobre la nada: antes esta
+     * ruta insertaba una fila en `recursos_pregunta` con un `pregunta_id`
+     * inventado sin comprobar nada, y la clave ajena era la única red.
+     */
+    private fun requireStoredQuestionAcceptsResources(preguntaId: String) {
+        val tipo = request(
+            "GET",
+            "/rest/v1/preguntas?select=tipo_pregunta&id=eq.$preguntaId&limit=1",
+            null,
+        ).decodeList<AdminPreguntaTipoRow>().firstOrNull()?.tipoPregunta
+            ?: throw domainError("QUESTION_NOT_FOUND")
+        requireTypeAcceptsResources(tipo)
+    }
+
+    /**
+     * La regla, sobre un tipo que ya se conoce.
+     *
+     * El mensaje es una CONSTANTE: no devuelve el tipo que mandó el cliente ni el
+     * que tiene la fila.
+     */
+    private fun requireTypeAcceptsResources(tipoPregunta: String) {
+        if (!tipoPregunta.trim().equals(QUESTION_TYPE_WITH_RESOURCES, ignoreCase = true)) {
+            throw BackendDomainException(
+                "QUESTION_TYPE_REJECTS_RESOURCES",
+                HttpStatusCode.UnprocessableEntity,
+                "Sólo las preguntas inmersivas admiten recursos. Cambia el tipo de la pregunta " +
+                    "a inmersiva antes de adjuntar material.",
+            )
+        }
+    }
+
     fun listRecursos(preguntaId: String): List<AdminRecursoDto> =
+        listRecursosRows(preguntaId).firmados()
+
+    private fun listRecursosRows(preguntaId: String): List<AdminRecursoRow> =
         request(
             "GET",
             "/rest/v1/recursos_pregunta?select=*&pregunta_id=eq.$preguntaId&activo=eq.true&order=posicion.asc",
             null,
-        ).decodeList<AdminRecursoRow>().map { it.toDto() }
+        ).decodeList()
 
+    /**
+     * Sube el ARCHIVO de un recurso y crea su fila (KQ4-2/KQ4-3).
+     *
+     * Es la única forma honesta de adjuntar material: hasta ahora el cliente mandaba
+     * `urlExterna` con una ruta LOCAL de su disco (`C:\…\audio.mp3`), que se guardaba
+     * tal cual y no existía para nadie más. El archivo viaja al bucket PRIVADO
+     * `recursos-pregunta` y la app lo lee con una URL firmada que caduca.
+     *
+     * ### El orden importa, y el fallo también
+     *
+     * 1. El id del recurso lo trae el cliente (o se genera): es la clave de
+     *    idempotencia. Si ya hay fila con ese id, se devuelve esa y NO se vuelve a
+     *    subir — un reintento tras un timeout no duplica ni el objeto ni la fila.
+     * 2. La ruta es `preguntas/<pregunta>/<recurso>.<ext>`, que el CHECK de Q3 exige.
+     *    Como incluye el id del recurso, ningún otro recurso puede apuntar ahí, y por
+     *    eso `x-upsert` es seguro: sólo puede pisar un intento anterior de ESTE mismo.
+     * 3. Si la fila falla después de subir, **se borra el objeto**. Sin esto cada
+     *    intento fallido dejaría un archivo pagando almacenamiento y sin dueño.
+     *
+     * El MIME lo decide la parte multipart y se valida contra [QUESTION_RESOURCE_MIME]:
+     * la extensión sale de ahí y nunca del nombre del fichero del cliente.
+     */
+    fun addRecursoArchivo(
+        preguntaId: String,
+        recursoId: String,
+        tipoRecurso: String,
+        titulo: String?,
+        descripcion: String?,
+        posicion: Int?,
+        mimeType: String,
+        bytes: ByteArray,
+    ): AdminRecursoDto {
+        val tipo = tipoRecurso.trim().lowercase()
+        val mime = mimeType.substringBefore(';').trim().lowercase()
+        val extension = QUESTION_RESOURCE_MIME[tipo]?.get(mime)
+            ?: throw domainError("QUESTION_RESOURCE_TYPE_INVALID")
+        requireStoredQuestionAcceptsResources(preguntaId)
+        findRecursoRow(preguntaId, recursoId)?.let { return listOf(it).firmados().first() }
+        val objectPath = "preguntas/$preguntaId/$recursoId.$extension"
+        transport.storagePut(QUESTION_RESOURCES_BUCKET, objectPath, bytes, mime, upsert = true)
+        val saved = try {
+            request(
+                "POST", "/rest/v1/recursos_pregunta",
+                buildJsonObject {
+                    put("id", JsonPrimitive(recursoId))
+                    put("pregunta_id", JsonPrimitive(preguntaId))
+                    put("codigo_recurso", JsonPrimitive("R-" + shortId()))
+                    put("tipo_recurso", JsonPrimitive(tipo))
+                    put("titulo", titulo?.trim()?.ifEmpty { null }?.let { JsonPrimitive(it) } ?: JsonNull)
+                    put("descripcion", descripcion?.trim()?.ifEmpty { null }?.let { JsonPrimitive(it) } ?: JsonNull)
+                    put("bucket_storage", JsonPrimitive(QUESTION_RESOURCES_BUCKET))
+                    put("ruta_storage", JsonPrimitive(objectPath))
+                    // CHECK recursos_pregunta posicion > 0.
+                    put("posicion", JsonPrimitive(posicion?.takeIf { it > 0 } ?: 1))
+                    put(
+                        "metadatos",
+                        buildJsonObject {
+                            put("mime", JsonPrimitive(mime))
+                            put("bytes", JsonPrimitive(bytes.size))
+                        },
+                    )
+                }.toString(),
+                prefer = "return=representation",
+            ).decodeList<AdminRecursoRow>().first()
+        } catch (error: Exception) {
+            // Un reintento simultáneo con el mismo id pudo confirmar la fila que apunta
+            // a ESTE objeto: entonces el objeto tiene dueño y no se borra.
+            runCatching { findRecursoRow(preguntaId, recursoId) }.getOrNull()
+                ?.let { return listOf(it).firmados().first() }
+            runCatching { transport.storageDelete(QUESTION_RESOURCES_BUCKET, objectPath) }
+                .onFailure { PdfImportLogger.warn("Recurso huérfano sin limpiar {}: {}", objectPath, it::class.simpleName) }
+            throw error
+        }
+        registrarAuditoria("recurso_pregunta_creado", "recursos_pregunta", saved.id)
+        return listOf(saved).firmados().first()
+    }
+
+    private fun findRecursoRow(preguntaId: String, recursoId: String): AdminRecursoRow? =
+        request(
+            "GET",
+            "/rest/v1/recursos_pregunta?select=*&id=eq.$recursoId&pregunta_id=eq.$preguntaId&limit=1",
+            null,
+        ).decodeList<AdminRecursoRow>().firstOrNull()
+
+    /**
+     * Firma las rutas de Storage de estos recursos: UNA petición de firma por lote.
+     *
+     * Un fallo al firmar NO rompe la lectura: `urlAcceso` queda a `null` (o al enlace
+     * externo, si lo hay) y la pantalla enseña el recurso sin poder reproducirlo. La
+     * alternativa —propagar— convertiría un problema de Storage en un 500 del detalle
+     * de la pregunta, que es una pantalla entera por un icono.
+     */
+    private fun List<AdminRecursoRow>.firmados(): List<AdminRecursoDto> {
+        val paths = mapNotNull { it.rutaStorage?.takeIf(String::isNotBlank) }.distinct()
+        val firmas = if (paths.isEmpty()) {
+            emptyMap()
+        } else {
+            runCatching {
+                transport.storageSignedUrls(QUESTION_RESOURCES_BUCKET, paths, QUESTION_RESOURCE_URL_TTL_SECONDS)
+            }.getOrElse { error ->
+                PdfImportLogger.warn("Firma de recursos fallida: {}", error::class.simpleName)
+                emptyMap()
+            }
+        }
+        return map { row ->
+            row.toDto().copy(
+                rutaStorage = row.rutaStorage,
+                mimeType = (row.metadatos["mime"] as? JsonPrimitive)?.contentOrNull,
+                urlAcceso = row.rutaStorage?.let { firmas[it] } ?: row.urlExterna,
+            )
+        }
+    }
+
+    /**
+     * Adjunta un recurso a una pregunta.
+     *
+     * ### La regla, y por qué vive en el servidor
+     *
+     * **Sólo una pregunta INMERSIVA puede tener recursos.** Hasta ahora esa regla
+     * vivía únicamente en el cliente, y como decisión de PINTADO
+     * (`questionShowsResources(type) = type == INMERSIVA`), que no es una
+     * defensa: esta función no miraba el tipo de la pregunta —de hecho no leía la
+     * pregunta en absoluto— así que cualquier llamada directa adjuntaba un audio
+     * a una Ráfaga y el servidor respondía 201.
+     *
+     * Importa por dos motivos, y el segundo es el que cuesta dinero: el flujo de
+     * Ráfaga de la app no tiene dónde pintar un recurso, así que se pagaría el
+     * almacenamiento de un material que ningún opositor llega a ver.
+     *
+     * ### La regla ya NO tiene excepción (DEC-IMP-05)
+     *
+     * Existía un parámetro `enforceImmersiveOnly` para un único llamador:
+     * `POST /rafagas/import` guardaba las etiquetas de cada pregunta como un
+     * «recurso» de tipo `etiquetas` —un índice de búsqueda disfrazado de recurso—
+     * sobre preguntas de Ráfaga. Esa ruta está retirada, así que la excepción se
+     * retira con ella: una puerta abierta que nadie cruza sólo espera a que
+     * alguien la cruce por error.
+     *
+     * ### Coste
+     *
+     * Una lectura extra de UNA columna. Desde KQ0-8 ésta es la ÚNICA puerta por la
+     * que una pregunta gana un recurso: `updatePregunta` ya no recorre `recursos[]`,
+     * así que la regla se comprueba siempre contra el tipo GUARDADO y no contra el
+     * que traiga un parche.
+     */
     fun addRecurso(preguntaId: String, input: AdminRecursoDto): AdminRecursoDto {
         require(input.tipoRecurso.isNotBlank()) { "El recurso necesita tipo." }
+        val tipo = input.tipoRecurso.trim().lowercase()
+        // Un `imagen` sin archivo es una fila que la app no puede pintar: lo que llegaba
+        // por aquí era la RUTA LOCAL del disco del administrador metida en `url_externa`.
+        if (tipo in QUESTION_RESOURCE_FILE_TYPES) throw domainError("QUESTION_RESOURCE_UPLOAD_REQUIRED")
+        if (tipo == "enlace") {
+            val url = input.urlExterna?.trim().orEmpty()
+            if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                throw domainError("QUESTION_RESOURCE_URL_INVALID")
+            }
+        }
+        requireStoredQuestionAcceptsResources(preguntaId)
         val saved = request(
             "POST", "/rest/v1/recursos_pregunta",
             sbJson.encodeToString(
@@ -2174,33 +4362,74 @@ class AdminV1Gateway private constructor(
                 ),
             ),
             prefer = "return=representation",
-        ).decodeList<AdminRecursoRow>().first().toDto()
+        ).decodeList<AdminRecursoRow>().let { listOf(it.first()).firmados().first() }
         registrarAuditoria("recurso_pregunta_creado", "recursos_pregunta", saved.id)
         return saved
     }
 
+    /**
+     * Edita un recurso. **Editar no es desarchivar, y no es reasignar.**
+     *
+     * ### El agujero que esto cierra
+     *
+     * Esto reconstruía la fila ENTERA con `AdminRecursoRow`, y `sbJson` tiene
+     * `encodeDefaults = true`, así que cada edición mandaba `activo = true` sin
+     * condición. Como `listRecursos` sólo lee `activo=eq.true`, archivar es lo
+     * que hace desaparecer un recurso de una pregunta; y entonces, sobre una
+     * pregunta de RÁFAGA: (1) el administrador archiva el recurso y deja de
+     * verse; (2) cualquier PATCH posterior que incluya ese `id` en `recursos[]`
+     * lo pone `activo = true` otra vez. **La pregunta no inmersiva ha ganado un
+     * recurso visible**, que es exactamente lo que la regla de `updatePregunta`
+     * dice que no puede pasar — y por la puerta que esa regla deja abierta a
+     * propósito para poder editar los huérfanos.
+     *
+     * La línea de la regla era defendible; lo que la contradecía era esta
+     * función. Se cierra aquí y no bloqueando la edición, porque bloquearla
+     * dejaría los huérfanos sin arreglo posible.
+     *
+     * ### Qué viaja ahora
+     *
+     * Sólo los campos que [AdminRecursoDto] puede expresar, es decir lo que el
+     * cliente puede editar de verdad. Lo demás se queda fuera a propósito:
+     *
+     *  · `activo` — el ciclo de archivado es de `archiveRecurso`, no de un PATCH
+     *    de contenido. **Consecuencia declarada: hoy no hay forma de desarchivar
+     *    un recurso.** Antes la había, pero era accidental y se saltaba la regla;
+     *    si hace falta, es una capacidad propia con su ruta y su comprobación de
+     *    tipo, no un efecto colateral de guardar un título.
+     *  · `codigo_recurso` — se fabricaba como `"R-" + recursoId.take(8)` y
+     *    SOBRESCRIBÍA el código real que la fila tuviera desde su alta, en cada
+     *    edición, sin que nadie lo pidiera.
+     *  · `pregunta_id` — ya va en el filtro; reescribirlo es lo que convertía un
+     *    filtro truncado en un cambio de dueño, que es el daño que describe el
+     *    comentario de `patch("/preguntas/{id}/recursos/{recursoId}")`.
+     *  · `metadatos` — el default es `{}` y se estaba VACIANDO en cada edición.
+     *  · `tipo_recurso`, `url_externa` y `ruta_storage` (KQ4-2) — el CHECK de Q3 ata
+     *    el tipo a la UBICACIÓN del archivo: cambiar el tipo de un `audio` ya subido
+     *    a `imagen` dejaría la fila apuntando a un `.mp3` que la app intentaría pintar.
+     *    Para cambiar el archivo se sube otro; para cambiar el tipo, otro recurso.
+     *
+     * Un recurso que no existe, o que no es de esa pregunta, es un 404 y no un
+     * 500 (misma corrección que E-2 en los exámenes).
+     */
     fun updateRecurso(preguntaId: String, recursoId: String, input: AdminRecursoDto): AdminRecursoDto {
-        require(input.tipoRecurso.isNotBlank()) { "El recurso necesita tipo." }
+        val actual = findRecursoRow(preguntaId, recursoId) ?: throw domainError("QUESTION_RESOURCE_NOT_FOUND")
         return request(
             "PATCH",
             "/rest/v1/recursos_pregunta?id=eq.$recursoId&pregunta_id=eq.$preguntaId",
             sbJson.encodeToString(
-                AdminRecursoRow(
-                    id = recursoId,
-                    preguntaId = preguntaId,
-                    codigoRecurso = "R-" + recursoId.take(8),
-                    tipoRecurso = input.tipoRecurso,
+                AdminRecursoPatch(
                     titulo = input.titulo,
                     descripcion = input.descripcion,
-                    urlExterna = input.urlExterna,
-                    contenidoTexto = input.contenidoTexto,
+                    // El texto sólo lo edita el recurso que ES texto: en los demás, la
+                    // fuente del contenido es el archivo del bucket.
+                    contenidoTexto = input.contenidoTexto?.takeIf { actual.tipoRecurso.equals("texto", ignoreCase = true) },
                     posicion = if (input.posicion > 0) input.posicion else 1,
-                    activo = true,
                 ),
             ),
             prefer = "return=representation",
-        ).decodeList<AdminRecursoRow>().firstOrNull()?.toDto()
-            ?: error("Recurso no encontrado.")
+        ).decodeList<AdminRecursoRow>().firstOrNull()?.let { listOf(it).firmados().first() }
+            ?: throw domainError("QUESTION_RESOURCE_NOT_FOUND")
     }
 
     fun archiveRecurso(preguntaId: String, recursoId: String): AdminRecursoDto {
@@ -2209,8 +4438,8 @@ class AdminV1Gateway private constructor(
             "/rest/v1/recursos_pregunta?id=eq.$recursoId&pregunta_id=eq.$preguntaId",
             """{"activo":false}""",
             prefer = "return=representation",
-        ).decodeList<AdminRecursoRow>().firstOrNull()?.toDto()
-            ?: error("Recurso no encontrado.")
+        ).decodeList<AdminRecursoRow>().firstOrNull()?.let { listOf(it).firmados().first() }
+            ?: throw domainError("QUESTION_RESOURCE_NOT_FOUND")
         registrarAuditoria("recurso_pregunta_archivado", "recursos_pregunta", recursoId)
         return saved
     }
@@ -2221,80 +4450,12 @@ class AdminV1Gateway private constructor(
         especialidadId = especialidadId,
         tipoPregunta = tipoPregunta,
         titulo = titulo,
-        fuenteTexto = fuenteTexto,
-        dificultad = dificultad,
+        // NULL en la base → texto vacío en la respuesta (KQ0-2): el contrato de
+        // lectura no cambia de forma, y un NULL ya no tumba el listado.
+        fuenteTexto = fuenteTexto.orEmpty(),
+        dificultad = dificultad.orEmpty(),
         activa = activa,
     )
-
-    private fun replaceOpcionesAndSolucion(preguntaId: String, opciones: List<AdminOpcionDto>, razonamiento: String) {
-        require(opciones.count { it.esCorrecta } == 1) { "Marca exactamente una opcion correcta." }
-        val opcionRows = opciones.mapIndexed { i, o ->
-            AdminRpcOpcionInput(
-                letra = o.letra.ifBlank { ('A' + i).toString() },
-                texto = o.texto,
-                posicion = if (o.posicion > 0) o.posicion else i + 1,
-                esCorrecta = o.esCorrecta,
-            )
-        }
-        request(
-            "POST",
-            "/rest/v1/rpc/admin_replace_question_options",
-            sbJson.encodeToString(
-                AdminReplaceQuestionOptionsRpc(
-                    preguntaId = preguntaId,
-                    opciones = opcionRows,
-                    // Vacío significa «no hay explicación nueva», no «bórrala»: la
-                    // RPC conserva la existente cuando recibe null.
-                    razonamiento = razonamiento.takeIf { it.isNotBlank() },
-                ),
-            ),
-            prefer = "return=minimal",
-        )
-    }
-
-    private fun upsertPreguntaExamen(examenId: String, preguntaId: String, posicion: Int) {
-        val existing = request(
-            "GET",
-            "/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId&pregunta_id=eq.$preguntaId&limit=1",
-            null,
-        ).decodeList<AdminPreguntaExamenRow>().firstOrNull()
-        if (existing == null) {
-            // `numero_en_examen` es NOT NULL en el esquema real (verificado por
-            // introspección el 2026-09-04) y esta inserción NO lo enviaba: si la
-            // columna no tiene DEFAULT, toda asociación fallaba. Se calcula el
-            // siguiente número del examen en vez de reutilizar `posicion`, porque
-            // dos preguntas pueden compartir posición pero el número dentro del
-            // examen identifica la pregunta y podría estar bajo restricción única.
-            val siguienteNumero = request(
-                "GET",
-                "/rest/v1/preguntas_examen?select=numero_en_examen&examen_id=eq.$examenId&order=numero_en_examen.desc&limit=1",
-                null,
-            ).decodeList<AdminPreguntaExamenNumeroRow>().firstOrNull()?.numeroEnExamen?.plus(1) ?: 1
-
-            request(
-                "POST",
-                "/rest/v1/preguntas_examen",
-                sbJson.encodeToString(
-                    listOf(
-                        AdminPreguntaExamenRow(
-                            examenId = examenId,
-                            preguntaId = preguntaId,
-                            posicion = if (posicion > 0) posicion else 1,
-                            numeroEnExamen = siguienteNumero,
-                        ),
-                    ),
-                ),
-                prefer = "return=minimal",
-            )
-        } else {
-            request(
-                "PATCH",
-                "/rest/v1/preguntas_examen?examen_id=eq.$examenId&pregunta_id=eq.$preguntaId",
-                """{"posicion":${if (posicion > 0) posicion else 1}}""",
-                prefer = "return=minimal",
-            )
-        }
-    }
 
     // IMPORTACIONES (lote + staging -> importar)
     fun listLotes(): List<AdminLoteDto> =
@@ -2302,16 +4463,101 @@ class AdminV1Gateway private constructor(
             .decodeList<LoteRow>()
             .map { it.toDto(emptyList()) }
 
+    /**
+     * El lote con sus filas y, si todavía no está publicado, los duplicados
+     * detectados (KI3-2).
+     *
+     * La detección corre en la base (`admin_import_lote_duplicados`) porque compara
+     * cada fila contra el banco entero y contra el resto del lote: traerse eso a
+     * Kotlin serían dos consultas sin índice y una comparación de texto por fila.
+     *
+     * Si la RPC no está aprovisionada, [AdminLoteDto.duplicadosComprobados] viaja
+     * `false` y las filas van SIN `duplicado`. La pantalla dice «no se ha podido
+     * comprobar». Lo que no puede pasar es que un lote sin comprobar se vea igual
+     * que un lote comprobado y limpio: el revisor publicaría repetidas creyendo que
+     * alguien lo miró.
+     */
     fun getLote(loteId: String): AdminLoteDto? {
         val lote = request("GET", "/rest/v1/lotes_importacion_preguntas?select=*&id=eq.$loteId&limit=1", null)
             .decodeList<LoteRow>().firstOrNull() ?: return null
         val staging = request("GET", "/rest/v1/preguntas_parseadas_staging?select=*&lote_id=eq.$loteId&order=posicion.asc", null)
             .decodeList<StagingRow>()
-        return lote.toDto(staging.map { it.toDto() })
+        val duplicados: Map<String, AdminImportDuplicadoDto>? =
+            if (lote.estado == "importado") emptyMap() else duplicadosDeLote(loteId)
+        return lote.toDto(
+            staging = staging.map { row -> row.toDto().copy(duplicado = duplicados?.get(row.id.orEmpty())) },
+            duplicadosComprobados = lote.estado == "importado" || duplicados != null,
+        )
     }
 
-    fun crearLote(req: CrearLoteRequest): AdminLoteDto {
+    /**
+     * Duplicados por `staging_id`, o `null` si la RPC todavía no existe.
+     *
+     * `null` y mapa vacío significan cosas distintas —«no se ha mirado» y «no
+     * hay»— y por eso el tipo es anulable: colapsarlos es exactamente el error
+     * que [getLote] evita.
+     */
+    private fun duplicadosDeLote(loteId: String): Map<String, AdminImportDuplicadoDto>? {
+        val body = try {
+            request(
+                "POST",
+                "/rest/v1/rpc/admin_import_lote_duplicados",
+                buildJsonObject { put("p_lote_id", JsonPrimitive(loteId)) }.toString(),
+            )
+        } catch (error: Exception) {
+            if (error.saysWriteRpcIsMissing()) return null
+            throw error
+        }
+        // Una fila de staging puede casar con varias: se queda la PRIMERA, que es la
+        // que la RPC ordena como mejor candidata. Enseñar varias no ayuda a decidir.
+        return body.decodeList<AdminImportDuplicadoRow>()
+            .groupBy { it.stagingId }
+            .mapValues { (_, filas) ->
+                val fila = filas.first()
+                AdminImportDuplicadoDto(
+                    origen = fila.origen,
+                    preguntaId = fila.preguntaId,
+                    codigoPregunta = fila.codigoPregunta.orEmpty(),
+                    stagingOriginalId = fila.stagingOriginalId,
+                )
+            }
+    }
+
+    /**
+     * Crea el lote y sus filas de staging, con el tipo del EXAMEN y compensando si la
+     * segunda escritura falla (KI0-3).
+     *
+     * Tres cosas que antes no hacía, y las tres dejaban basura o trabajo perdido:
+     *
+     * - **El tipo lo decide el examen.** El cliente mandaba `tipoExamen` y se escribía
+     *   tal cual, así que un lote podía declararse `razonado` sobre un examen de
+     *   ráfaga; la publicación fallaría mucho después, con el PDF ya subido y revisado.
+     *   Ahora, si no coinciden, es un 422 antes de escribir nada.
+     * - **`respuesta_correcta` se sanea.** El CHECK vivo exige A–D o NULL, y el parser
+     *   deja `""` (o una letra inventada) justo en el bloque con error, que es el caso
+     *   más común. Ese INSERT fallaba DESPUÉS del lote y dejaba un lote huérfano con
+     *   `total_detectadas = N` y cero filas: el error más frecuente del PDF rompía
+     *   precisamente la revisión que existe para arreglarlo.
+     * - **Se compensa.** Si el INSERT de staging falla igualmente, se borra el lote
+     *   (las filas caen por FK). Un lote vacío en el historial no se puede publicar ni
+     *   corregir, sólo confundir.
+     *
+     * [actorId] es el `sub` del administrador (D-11): `subido_por` no se escribía nunca
+     * y ningún lote tenía autor.
+     */
+    fun crearLote(req: CrearLoteRequest, actorId: String? = null): AdminLoteDto {
         require(req.examenId.isNotBlank()) { "El lote necesita examen." }
+        // Quinto identificador de cliente de esta vertical. Este NO compone hoy
+        // ningún filtro —va como valor a la columna `examen_id` del INSERT— así
+        // que no entra por la regla de arriba; se valida porque es una clave
+        // ajena que luego SÍ acaba en filtros y porque un lote con un `examen_id`
+        // que no es un uuid es una fila que nadie podrá importar nunca.
+        val examenId = req.examenId.validatedUuid("examenId")
+        val examen = getExamen(examenId) ?: throw domainError("IMPORT_EXAM_NOT_FOUND")
+        val tipo = canonicalExamType(examen.tipoExamen)
+        if (req.tipoExamen.isNotBlank() && canonicalExamType(req.tipoExamen) != tipo) {
+            throw domainError("IMPORT_TYPE_MISMATCH")
+        }
         val loteId = UUID.randomUUID().toString()
         request(
             "POST", "/rest/v1/lotes_importacion_preguntas",
@@ -2319,11 +4565,12 @@ class AdminV1Gateway private constructor(
                 listOf(
                     LoteRow(
                         id = loteId,
-                        examenId = req.examenId,
+                        examenId = examenId,
                         nombreArchivoOriginal = req.nombreArchivo.ifBlank { "importacion.pdf" },
-                        tipoExamen = req.tipoExamen,
+                        tipoExamen = tipo,
                         estado = "parseado",
                         totalDetectadas = req.preguntas.size,
+                        subidoPor = actorId,
                     ),
                 ),
             ),
@@ -2341,14 +4588,28 @@ class AdminV1Gateway private constructor(
                     opcionB = p.opcionB,
                     opcionC = p.opcionC,
                     opcionD = p.opcionD,
-                    respuestaCorrecta = p.respuestaCorrecta,
+                    // NULL si no es una de las cuatro letras: el CHECK vivo sólo admite
+                    // A–D o NULL, y la fila que trae una respuesta ilegible es justo la
+                    // que tiene que llegar a revisión.
+                    respuestaCorrecta = p.respuestaCorrecta.trim().uppercase().takeIf { it in RAFAGA_OPTION_LETTERS },
                     razonamiento = p.razonamiento,
                     fuenteTexto = p.fuenteTexto,
                     etiquetaTexto = p.etiquetaTexto,
-                    estadoParseo = "ok",
+                    // Ya no es siempre `"ok"`: `crearLoteDesdePdf` manda ahora
+                    // filas en `"error"` o `"advertencia"` para que exista la etapa
+                    // de revisión. Un estado en blanco sigue significando `"ok"`.
+                    estadoParseo = requireKnownStagingState(p.estadoParseo.ifBlank { "ok" }),
+                    errorParseo = p.errorParseo?.takeIf { it.isNotBlank() },
                 )
             }
-            request("POST", "/rest/v1/preguntas_parseadas_staging", sbJson.encodeToString(rows), prefer = "return=minimal")
+            try {
+                request("POST", "/rest/v1/preguntas_parseadas_staging", sbJsonBulk.encodeToString(rows), prefer = "return=minimal")
+            } catch (error: Exception) {
+                runCatching {
+                    request("DELETE", "/rest/v1/lotes_importacion_preguntas?id=eq.$loteId", null, prefer = "return=minimal")
+                }.onFailure { PdfImportLogger.warn("Lote huérfano sin compensar {}: {}", loteId, it::class.simpleName) }
+                throw error
+            }
         }
         return getLote(loteId) ?: error("No se pudo leer el lote creado.")
     }
@@ -2358,116 +4619,229 @@ class AdminV1Gateway private constructor(
         tipoExamen: String,
         nombreArchivo: String,
         pdfBytes: ByteArray,
+        actorId: String? = null,
     ): AdminLoteDto {
-        val examen = getExamen(examenId) ?: error("El examen del lote ya no existe.")
-        val canonicalType = canonicalExamType(tipoExamen).takeIf { it == canonicalExamType(examen.tipoExamen) }
-            ?: canonicalExamType(examen.tipoExamen)
-        val rawText = extractTextFromPdf(pdfBytes)
-        if (rawText.isBlank()) error("El PDF no contiene texto seleccionable. No se admite OCR en este flujo.")
-        val (preguntas, errores) = parseRafagaText(rawText)
-        if (errores.isNotEmpty()) {
-            error(errores.joinToString(" ") { "Pregunta ${it.numero}: ${it.detalle}." })
+        // F-05: los rechazos DEL PDF son `PdfImportRejectedException`, con un
+        // mensaje escrito aquí para el administrador. Cualquier otra cosa —un
+        // fallo de Supabase, de red— sigue su camino normal hasta StatusPages y
+        // se redacta. Antes todo era `error(...)` y la ruta respondía 422 con el
+        // `message` de lo que fuera, incluido el cuerpo crudo de PostgREST.
+        val examen = getExamen(examenId) ?: throw PdfImportRejectedException("El examen del lote ya no existe.")
+        val rawText = try {
+            extractTextFromPdf(pdfBytes)
+        } catch (unreadable: Exception) {
+            // Aquí sólo corre PDFBox: cualquier excepción es "este PDF no se puede
+            // leer" (normalmente `IOException`, pero un PDF dañado también saca
+            // `RuntimeException`s de sus parsers). Su texto —"Header doesn't
+            // contain versioninfo", offsets…— va al log con el request_id del MDC,
+            // no al administrador.
+            PdfImportLogger.warn(
+                "PDF ilegible al importar ({}): {}",
+                unreadable::class.simpleName,
+                unreadable.redactedMessage("PDF ilegible", 200),
+            )
+            throw PdfImportRejectedException("No se pudo leer el PDF. Comprueba que el archivo es un PDF válido y no está dañado.")
         }
+        if (rawText.isBlank()) {
+            throw PdfImportRejectedException("El PDF no contiene texto seleccionable. No se admite OCR en este flujo.")
+        }
+        // UNA ERRATA EN LA PREGUNTA 297 NO PUEDE TIRAR LAS OTRAS 299.
+        //
+        // Esto era `if (errores.isNotEmpty()) error(...)`, y esa línea sola
+        // vaciaba de sentido la vertical entera: si a staging no llega nunca una
+        // fila mala, todas nacen `ok` y **la etapa de revisión que la pantalla
+        // promete no puede existir**. El administrador tenía dos salidas —editar
+        // el PDF a ciegas y volver a subirlo, o rendirse— y la primera crea un
+        // lote duplicado.
+        //
+        // Ahora las filas con error llegan MARCADAS (`estado_parseo = "error"`,
+        // con `error_parseo` explicando qué le falta), que es justamente lo que
+        // hace falta para que haya algo que corregir. `updateStaging` ya existe
+        // para corregirlas y para pasarlas a `aprobada`.
+        //
+        // Vocabulario: se usa `error`, que el backend YA escribe en esta columna.
+        // No se inventa ningún valor nuevo a propósito — el CHECK real de
+        // `estado_parseo` es desconocido (0 filas en MAIN) y un valor inventado
+        // rompería la inserción del lote entero, que es peor que el defecto.
+        val parsed = parseQuestionBlocks(rawText, canonicalQuestionType(examen.tipoExamen))
+        if (parsed.preguntas.isEmpty() && parsed.bloquesConError.isEmpty()) {
+            // Lo único que sigue siendo un rechazo total: no se reconoció NI UN
+            // bloque. Un lote de cero filas no es revisable, es un PDF que no
+            // tiene el formato de este importador.
+            throw PdfImportRejectedException(
+                "El PDF no contiene ningun bloque de pregunta reconocible. Revisa el separador de preguntas.",
+            )
+        }
+        val filas = (
+            parsed.preguntas.map { p ->
+                AdminStagingItemDto(
+                    posicion = p.numero,
+                    // El bloque CRUDO, no una copia del título. Sin esto la
+                    // revisión humana no puede comparar con lo que decía el PDF.
+                    bloqueOriginal = p.bloqueOriginal.ifBlank { p.titulo },
+                    titulo = p.titulo,
+                    opcionA = p.opciones.getOrNull(0)?.second.orEmpty(),
+                    opcionB = p.opciones.getOrNull(1)?.second.orEmpty(),
+                    opcionC = p.opciones.getOrNull(2)?.second.orEmpty(),
+                    opcionD = p.opciones.getOrNull(3)?.second.orEmpty(),
+                    respuestaCorrecta = p.respuesta,
+                    razonamiento = p.razonamiento,
+                    fuenteTexto = p.fuente,
+                    etiquetaTexto = p.etiquetas.joinToString(","),
+                    // Una advertencia NO bloquea la publicación, pero la fila tiene que
+                    // verse distinta de una limpia: es lo único que avisa de que la
+                    // explicación de una Ráfaga no se va a publicar.
+                    estadoParseo = if (p.advertencia != null) "advertencia" else "ok",
+                    errorParseo = p.advertencia,
+                )
+            } + parsed.bloquesConError.map { b ->
+                AdminStagingItemDto(
+                    posicion = b.numero,
+                    bloqueOriginal = b.bloqueOriginal,
+                    titulo = b.titulo,
+                    opcionA = b.opcionA,
+                    opcionB = b.opcionB,
+                    opcionC = b.opcionC,
+                    opcionD = b.opcionD,
+                    respuestaCorrecta = b.respuesta,
+                    razonamiento = b.razonamiento,
+                    fuenteTexto = b.fuente,
+                    etiquetaTexto = b.etiquetas,
+                    estadoParseo = "error",
+                    errorParseo = b.detalle,
+                )
+            }
+            ).sortedBy { it.posicion }
         return crearLote(
             CrearLoteRequest(
                 examenId = examenId,
                 nombreArchivo = nombreArchivo,
-                tipoExamen = canonicalType,
-                preguntas = preguntas.map { p ->
-                    AdminStagingItemDto(
-                        posicion = p.numero,
-                        bloqueOriginal = p.titulo,
-                        titulo = p.titulo,
-                        opcionA = p.opciones.getOrNull(0)?.second.orEmpty(),
-                        opcionB = p.opciones.getOrNull(1)?.second.orEmpty(),
-                        opcionC = p.opciones.getOrNull(2)?.second.orEmpty(),
-                        opcionD = p.opciones.getOrNull(3)?.second.orEmpty(),
-                        respuestaCorrecta = p.respuesta,
-                        razonamiento = p.razonamiento,
-                        fuenteTexto = p.fuente,
-                        etiquetaTexto = p.etiquetas.joinToString(","),
-                    )
-                },
+                // El tipo lo decide `crearLote` leyendo el examen; aquí se manda el que
+                // llegó para que, si no coincide, salga el 422 y no un lote mal tipado.
+                tipoExamen = tipoExamen,
+                preguntas = filas,
             ),
+            actorId = actorId,
         )
     }
 
+    /**
+     * Guarda la revisión humana de una fila de staging (KI0-4, KI2).
+     *
+     * ### Aprobar u omitir BORRA el diagnóstico
+     *
+     * `error_parseo` no estaba en el parche, así que una fila que el administrador
+     * acababa de corregir seguía enseñando «falta la opción D» para siempre, y la
+     * lista de revisión no distinguía lo arreglado de lo pendiente. Se manda
+     * explícitamente a `null` al aprobar u omitir — el único momento en que ese texto
+     * deja de ser cierto— y en cualquier otro estado no se toca.
+     *
+     * ### `vincularPreguntaId` exige `aprobada`
+     *
+     * Vincular es una forma de aprobar la fila («esta pregunta ya existe, usa ésa»).
+     * Con cualquier otro estado el puntero quedaría guardado sin que nadie lo use, y
+     * una fila omitida con destino de vínculo es una contradicción que la RPC tendría
+     * que resolver adivinando.
+     */
     fun updateStaging(id: String, item: AdminStagingItemDto): AdminStagingItemDto {
+        // Dos de los estados los elige el CLIENTE (`aprobada`, `omitida`) y esto los
+        // pasaba sin mirar: cualquier cadena acababa en la columna. El conjunto válido
+        // vive ahora en el servidor, que es de quien tiene que ser.
+        val estado = requireKnownStagingState(item.estadoParseo.ifBlank { "ok" })
+        val decidida = estado == "aprobada" || estado == "omitida"
+        val respuesta = item.respuestaCorrecta.trim().uppercase()
+        require(respuesta.isEmpty() || respuesta in RAFAGA_OPTION_LETTERS) {
+            "La respuesta correcta tiene que ser A, B, C o D."
+        }
+        val vincular = item.vincularPreguntaId?.takeIf { it.isNotBlank() }?.validatedUuid("vincularPreguntaId")
+        require(vincular == null || estado == "aprobada") {
+            "Para vincular con una pregunta existente, la fila tiene que quedar aprobada."
+        }
         val patch = StagingPatch(
             titulo = item.titulo,
             opcionA = item.opcionA,
             opcionB = item.opcionB,
             opcionC = item.opcionC,
             opcionD = item.opcionD,
-            respuestaCorrecta = item.respuestaCorrecta,
+            // Vacía = NULL, no `""`: el CHECK vivo exige A–D o NULL.
+            respuestaCorrecta = respuesta.takeIf { it.isNotEmpty() }?.let { JsonPrimitive(it) } ?: JsonNull,
             razonamiento = item.razonamiento,
             fuenteTexto = item.fuenteTexto,
             etiquetaTexto = item.etiquetaTexto,
-            estadoParseo = item.estadoParseo.ifBlank { "ok" },
+            estadoParseo = estado,
+            errorParseo = if (decidida) JsonNull else null,
+            // Ausente = no se toca; `null` explícito = deshacer el vínculo elegido.
+            vincularPreguntaId = when {
+                vincular != null -> JsonPrimitive(vincular)
+                estado == "aprobada" -> JsonNull
+                else -> null
+            },
         )
         return request(
             "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.$id",
-            sbJson.encodeToString(patch),
+            patch.toJson().toString(),
             prefer = "return=representation",
         ).decodeList<StagingRow>().firstOrNull()?.toDto()
-            ?: error("Item de staging no encontrado: $id")
+            ?: throw domainError("IMPORT_STAGING_NOT_FOUND")
     }
 
-    fun importarLote(loteId: String): AdminLoteDto {
-        val lote = getLote(loteId) ?: error("Lote no encontrado.")
-        val examen = getExamen(lote.examenId) ?: error("El examen del lote ya no existe.")
-        val tipoPregunta = canonicalQuestionType(examen.tipoExamen)
-        var importadas = 0
-        var errores = 0
-        val omitidas = lote.staging.count { it.estadoParseo == "omitida" }
-        for (s in lote.staging) {
-            if (s.preguntaId != null || s.estadoParseo !in setOf("ok", "aprobada")) continue
-            try {
-                val opciones = listOf("A" to s.opcionA, "B" to s.opcionB, "C" to s.opcionC, "D" to s.opcionD)
-                    .filter { it.second.isNotBlank() }
-                    .map { (letra, texto) ->
-                        AdminOpcionDto(letra = letra, texto = texto, esCorrecta = letra.equals(s.respuestaCorrecta.trim(), ignoreCase = true))
-                    }
-                val pregunta = createPregunta(
-                    AdminPreguntaDto(
-                        especialidadId = examen.especialidadId,
-                        titulo = s.titulo,
-                        tipoPregunta = tipoPregunta,
-                        fuenteTexto = s.fuenteTexto,
-                        razonamiento = s.razonamiento,
-                        opciones = opciones,
-                        examenId = lote.examenId,
-                        posicion = s.posicion,
-                    ),
-                )
-                request(
-                    "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.${s.id}",
-                    """{"pregunta_id":"${pregunta.id}","estado_parseo":"importada"}""",
-                    prefer = "return=minimal",
-                )
-                importadas++
-            } catch (error: Exception) {
-                errores++
-                val msg = (error.message ?: "error").replace("\"", "'").take(300)
-                request(
-                    "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.${s.id}",
-                    """{"estado_parseo":"error","error_parseo":${sbJson.encodeToString(msg)}}""",
-                    prefer = "return=minimal",
-                )
-            }
-        }
-        val estadoFinal = when {
-            errores > 0 || omitidas > 0 -> "parcial"
-            importadas > 0 -> "importado"
-            else -> "revisar"
-        }
-        request(
-            "PATCH", "/rest/v1/lotes_importacion_preguntas?id=eq.$loteId",
-            """{"estado":"$estadoFinal","total_importadas":$importadas}""",
-            prefer = "return=minimal",
+    /**
+     * Publica un lote entero con UNA llamada a `admin_import_lote_preguntas` (IM3, KI3-1).
+     *
+     * ### Lo que esto sustituye, que no era un detalle de eficiencia
+     *
+     * Era un bucle por fila: leer el lote, crear cada pregunta por HTTP, marcar la
+     * fila, y al final calcular un estado de lote en Kotlin. Todos sus problemas
+     * venían de lo mismo —publicar no era una operación, eran N—:
+     *
+     * - **Duplicaba.** No tomaba posesión del lote, así que dos clics en «Importar»
+     *   creaban todas las preguntas dos veces; el propio KDoc anterior lo admitía.
+     * - **Dejaba el lote a medias.** Un fallo en la fila 150 dejaba 149 preguntas
+     *   publicadas y el lote en un estado (`parcial`) que el CHECK de la base ni
+     *   siquiera admite.
+     * - **Mentía sobre la causa.** Un fallo de infraestructura marcaba las 300 filas
+     *   como `error` con el cuerpo crudo de PostgREST dentro, y mandaba al
+     *   administrador a revisar 300 filas correctas.
+     * - **No cabía en el tiempo.** ~7 peticiones por fila contra un
+     *   `statement_timeout` de 8 s por sentencia y un cliente esperando 300 s.
+     *
+     * Ahora la transacción es de la base: o el lote queda `importado` con sus
+     * preguntas creadas y vinculadas, o no cambia NADA. Kotlin ya no escribe en
+     * `preguntas_parseadas_staging` ni en `lotes_importacion_preguntas`.
+     *
+     * ### Idempotencia
+     *
+     * La RPC toma posesión del lote (`estado`), así que una segunda llamada
+     * responde `ejecutado = false` sin escribir. Sólo se audita cuando de verdad se
+     * ejecutó: un apunte «lote importado» por cada reintento haría inútil la pista.
+     *
+     * [confirmarExamenPublicado] es la respuesta del administrador a
+     * `IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED` (las preguntas se verían al
+     * instante), y viaja sólo porque él lo confirmó en un diálogo.
+     */
+    fun importarLote(
+        loteId: String,
+        confirmarExamenPublicado: Boolean = false,
+        actorId: String? = null,
+    ): AdminLoteImportResponse {
+        val body = rpcOrUnavailable(
+            "admin_import_lote_preguntas",
+            sbJson.encodeToString(AdminImportLoteRpc(loteId, confirmarExamenPublicado, actorId)),
+            "IMPORT_WRITE_RPC_NOT_PROVISIONED",
         )
-        registrarAuditoria("lote_$estadoFinal", "lotes_importacion_preguntas", loteId)
-        return getLote(loteId) ?: error("No se pudo leer el lote importado.")
+        val resultado = json.decodeFromString<AdminImportLoteResultRow>(body)
+        if (resultado.ejecutado) registrarAuditoria("lote_importado", "lotes_importacion_preguntas", loteId)
+        val lote = getLote(loteId) ?: throw domainError("IMPORT_LOTE_NOT_FOUND")
+        return AdminLoteImportResponse(
+            data = lote,
+            resultado = AdminImportResultadoDto(
+                ejecutado = resultado.ejecutado,
+                nuevas = resultado.nuevas,
+                vinculadas = resultado.vinculadas,
+                omitidas = resultado.omitidas,
+                totalImportadas = resultado.totalImportadas,
+            ),
+        )
     }
 
     private fun canonicalExamType(value: String): String = when (value.lowercase()) {
@@ -2482,7 +4856,10 @@ class AdminV1Gateway private constructor(
         else -> "rafaga"
     }
 
-    private fun LoteRow.toDto(staging: List<AdminStagingItemDto>) = AdminLoteDto(
+    private fun LoteRow.toDto(
+        staging: List<AdminStagingItemDto>,
+        duplicadosComprobados: Boolean = true,
+    ) = AdminLoteDto(
         id = id.orEmpty(),
         examenId = examenId,
         nombreArchivo = nombreArchivoOriginal,
@@ -2491,6 +4868,7 @@ class AdminV1Gateway private constructor(
         totalDetectadas = totalDetectadas,
         totalImportadas = totalImportadas,
         staging = staging,
+        duplicadosComprobados = duplicadosComprobados,
     )
 
     // FEEDBACK + AUDITORIA
@@ -2505,7 +4883,22 @@ class AdminV1Gateway private constructor(
      * único batch (sin N+1).
      */
     fun listFeedback(estado: String?, tipoFeedback: String? = null, cursor: String? = null, limit: Int = 20): AdminFeedbacksResponse {
-        val filtro = if (estado.isNullOrBlank()) "" else "&estado=eq.$estado"
+        // `estado` es el UNICO de los tres parametros que entraba crudo:
+        // `tipoFeedback` ya pasaba por `urlEncode()` y el `cursor` lo valida
+        // `decodeFeedbackCursor` (exige un Instant y un UUID). Con
+        // `?estado=pendiente#` la peticion salia SIN `order` y sin `limit` —
+        // `URI.create` corta en el `#` y todo lo que va detras viaja como
+        // fragmento, que no llega al upstream—, es decir `feedback_pregunta`
+        // COMPLETA a una peticion de distancia y sin nada raro en el log.
+        //
+        // Se CODIFICA en vez de validar contra una lista cerrada a proposito: el
+        // vocabulario real de `feedback_pregunta.estado` no esta verificado
+        // contra MAIN (`resolverFeedback` conoce tres valores de ESCRITURA
+        // —resuelto, descartado, revisado— pero el cliente FILTRA ademas por
+        // `pendiente`, que nadie escribe desde aqui). Una lista blanca inventada
+        // aqui rechazaria filtros legitimos; codificar cierra el vector entero
+        // —`#`, `&`, `,`, parentesis— sin decidir un vocabulario que no es mio.
+        val filtro = if (estado.isNullOrBlank()) "" else "&estado=eq.${estado.urlEncode()}"
         val tipoFiltro = if (tipoFeedback.isNullOrBlank()) "" else "&tipo_feedback=eq.${tipoFeedback.urlEncode()}"
         val cursorFilter = cursor?.let { raw ->
             val (creadoEn, id) = decodeFeedbackCursor(raw)
@@ -2639,6 +5032,10 @@ class AdminV1Gateway private constructor(
     }
 
     fun getUsuario(usuarioId: String): AdminV1UserDto? {
+        // El identificador se interpola en la consulta de PostgREST: sin validar,
+        // un segmento con `&` inyecta parámetros propios (`select`, `order`,
+        // filtros). `requiredPath` sólo comprueba que no venga vacío.
+        usuarioId.validatedUuid("usuarioId")
         val perfil = request("GET", "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$usuarioId&limit=1", null)
             .decodeList<PerfilUsuarioRow>().firstOrNull() ?: return null
         val roleIds = request("GET", "/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId", null)
@@ -2654,6 +5051,9 @@ class AdminV1Gateway private constructor(
     }
 
     fun updateUsuario(usuarioId: String, input: AdminV1UserDto): AdminV1UserDto {
+        // Ver `getUsuario`: se interpola en la URL de PostgREST, y aquí además en
+        // un PATCH que escribe.
+        usuarioId.validatedUuid("usuarioId")
         request(
             "PATCH",
             "/rest/v1/perfiles_usuario?usuario_id=eq.$usuarioId",
@@ -2665,6 +5065,12 @@ class AdminV1Gateway private constructor(
     }
 
     fun syncRoles(usuarioId: String, roleIds: List<String>) {
+        // Misma apertura que `grantTickets`, `getUsuarioDetalle` y
+        // `grantTicketsAdmin`: el identificador se valida ANTES de interpolarse
+        // en ninguna URL ni de bajar a la RPC. Sin esto, el segmento del path
+        // llegaba crudo a PostgREST y su eco de error se convertía en un 409 de
+        // dominio falsificado desde el cliente.
+        usuarioId.validatedUuid("usuarioId")
         request(
             "POST",
             "/rest/v1/rpc/admin_sync_roles",
@@ -3120,12 +5526,20 @@ class AdminV1Gateway private constructor(
             }
     }
 
-    fun listTicketTransactions(usuarioId: String): List<AdminTicketTransactionDto> =
-        request(
+    fun listTicketTransactions(usuarioId: String): List<AdminTicketTransactionDto> {
+        // Misma apertura que `getUsuario`, `updateUsuario`, `syncRoles`,
+        // `getUsuarioDetalle` y `grantTickets`: el identificador se valida ANTES
+        // de interpolarse en la consulta. Era el último identificador de usuario
+        // que llegaba crudo a PostgREST; un segmento con `&` añadía parámetros
+        // propios (`select`, `order`, filtros) a una petición hecha con la clave
+        // elevada. `requiredPath` sólo comprueba que no venga vacío.
+        usuarioId.validatedUuid("usuarioId")
+        return request(
             "GET",
             "/rest/v1/transacciones_cartera?select=*&usuario_id=eq.$usuarioId&order=creado_en.desc&limit=100",
             null,
         ).decodeList<TransaccionCarteraRow>().map { it.toDto() }
+    }
 
     fun appendTicketAdjustment(usuarioId: String, input: AdminTicketAdjustmentDto): AdminTicketTransactionDto {
         val amount = input.amount.toInt()
@@ -3968,7 +6382,23 @@ class AdminV1Gateway private constructor(
                 prefer = "return=minimal",
             )
         } catch (error: Exception) {
-            System.err.println("[ktor] auditoria fallida ($accion): ${error.message?.take(160)}")
+            // F-12b: `System.err.println` no llevaba `request_id` ni evento, así
+            // que una auditoría perdida era invisible para quien buscara la
+            // referencia de la petición. El logger sale con el MDC (`%mdc`) y el
+            // evento estratégico hace que la pérdida se pueda contar.
+            AuditLogger.warn(
+                "auditoria fallida ({}): {}",
+                accion,
+                error.redactedMessage("Fallo al escribir auditoria", 160),
+            )
+            logStrategicEvent(
+                StrategicEvent.SUPABASE_REQUEST_FAILED,
+                operation = "auditoria_$accion",
+                result = "audit_write_failed",
+                entityType = tabla,
+                entityId = registroId,
+                errorType = error::class.simpleName,
+            )
         }
     }
 
@@ -4041,111 +6471,118 @@ class AdminV1Gateway private constructor(
             ?: throw IllegalArgumentException("No se encontro examen real para '$query'.")
     }
 
-    fun uploadExamenPortada(examId: String, bytes: ByteArray, fileName: String, mimeType: String): AdminExamenDto {
-        require(mimeType.startsWith("image/")) { "La portada debe ser una imagen." }
-        // Validate exam exists BEFORE touching Storage to avoid orphaned objects.
+    /**
+     * Sube una portada y devuelve el examen con su URL firmada (K5, PW-8 opción A).
+     * `null` = el examen no existe (404 en la ruta), y entonces Storage no se toca.
+     *
+     * ### El nombre del objeto
+     *
+     * `exam-covers/<id>/<uuid>.<ext>`, en minúsculas, **único por subida** (C-13,
+     * `upsert = false`): una re-subida nunca sobrescribe la portada vigente, así que
+     * si algo falla a mitad la fila sigue apuntando a un objeto que existe. Es además
+     * la forma EXACTA que exige el CHECK de M6 (`examenes_portada_coherente_chk`,
+     * con expresión regular): por eso el id sale de la FILA leída —el texto
+     * canónico con el que compara el CHECK— y no del path de la petición.
+     *
+     * ### Orden y limpieza
+     *
+     * 1. Tipo antes que nada: sólo JPG, PNG o WEBP (422 sin tocar la base ni Storage).
+     * 2. El examen existe (lectura mínima) antes de subir: sin huérfanos por un id malo.
+     * 3. Subida → PATCH de la fila. Si el PATCH falla, se borra el objeto NUEVO: nadie
+     *    apunta a él.
+     * 4. Si el PATCH va bien, se borra el ANTERIOR (best-effort: un fallo deja un
+     *    huérfano privado y una línea de log, nunca una fila apuntando a nada).
+     */
+    fun uploadExamenPortada(examId: String, bytes: ByteArray, mimeType: String): AdminExamenDto? {
+        val mime = mimeType.substringBefore(';').trim().lowercase()
+        val extension = EXAM_COVER_EXTENSIONS[mime] ?: throw examCoverTypeInvalidException()
         val existing = request("GET", "/rest/v1/examenes?select=id,portada_storage_path&id=eq.$examId&limit=1", null)
-            .decodeList<AdminExamenRow>().firstOrNull()
-            ?: error("Examen no encontrado: $examId")
-        val bucket = (System.getenv("SUPABASE_BUCKET_EXAM_RESOURCES") ?: "exam-resources").toStorageBucketId()
+            .decodeList<AdminExamenPortadaRow>().firstOrNull() ?: return null
+        val bucket = examResourcesBucket()
         ensureStorageBucketExists(bucket)
-        val sanitized = fileName.sanitizeStorageSegment()
-        val objectPath = "exam-covers/$examId/$sanitized"
-        val encodedPath = objectPath.split('/').joinToString("/") { it.urlEncode() }
-        requestBinary("POST", "$supabaseUrl/storage/v1/object/$bucket/$encodedPath", bytes, mimeType, upsert = true)
-        val publicUrl = "$supabaseUrl/storage/v1/object/public/$bucket/$encodedPath"
+        val objectPath = "exam-covers/${existing.id.lowercase()}/${UUID.randomUUID().toString().lowercase()}.$extension"
+        transport.storagePut(bucket, objectPath, bytes, mime, upsert = false)
         val saved = try {
+            // Concurrencia (Nuclear Review Finding 1): el PATCH sólo se aplica si la
+            // portada sigue siendo la que se leyó arriba. Si otra escritura ganó la
+            // carrera entre medias, `decodeList` viene vacío en vez de pisarla en
+            // silencio, y el catch de abajo limpia el objeto que nadie va a referenciar.
+            val condicion = existing.portadaStoragePath
+                ?.let { "portada_storage_path=eq.${it.urlEncode()}" }
+                ?: "portada_storage_path=is.null"
+            // Por el serializador, nunca por plantilla: ver la regla del comentario
+            // de `delete("/{id}/preguntas/{preguntaId}")`.
             request(
-                "PATCH", "/rest/v1/examenes?id=eq.$examId",
-                """{"portada_url":"$publicUrl","portada_storage_path":"$objectPath","portada_mime_type":"$mimeType"}""",
+                "PATCH", "/rest/v1/examenes?id=eq.$examId&$condicion",
+                buildJsonObject {
+                    put("portada_storage_path", JsonPrimitive(objectPath))
+                    put("portada_mime_type", JsonPrimitive(mime))
+                }.toString(),
                 prefer = "return=representation",
             ).decodeList<AdminExamenRow>().firstOrNull()
-                ?: error("Examen desaparecio durante la actualizacion de portada: $examId")
-        } catch (e: Exception) {
-            // DB write failed after Storage upload — delete the orphaned object best-effort.
-            runCatching {
-                val req = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/object/$bucket/$encodedPath"))
-                    .timeout(UPSTREAM_REQUEST_TIMEOUT)
-                    .header("apikey", serviceRoleKey)
-                    .header("Authorization", "Bearer $serviceRoleKey")
-                    .DELETE().build()
-                client.send(req, HttpResponse.BodyHandlers.ofString())
-            }.onFailure { System.err.println("[ktor] portada orphan cleanup failed: ${it.message?.take(160)}") }
-            throw e
+                ?: throw domainError("EXAM_COVER_CHANGED_CONCURRENTLY")
+        } catch (error: Exception) {
+            // Nadie apunta al objeto nuevo: se borra. Su fallo no puede tapar `error`,
+            // que es el que el administrador tiene que ver.
+            runCatching { transport.storageDelete(bucket, objectPath) }
+                .onFailure { ExamCoverLogger.warn("limpieza de portada huérfana fallida: {}", it.redactedMessage("Fallo al borrar", 160)) }
+            throw error
         }
-        // Delete previous cover if it was a different storage object.
-        existing.portadaStoragePath
-            ?.takeIf { it.isNotBlank() && it != objectPath }
-            ?.let { prev ->
-                val prevEncoded = prev.split('/').joinToString("/") { it.urlEncode() }
-                runCatching {
-                    val req = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/object/$bucket/$prevEncoded"))
-                        .timeout(UPSTREAM_REQUEST_TIMEOUT)
-                        .header("apikey", serviceRoleKey)
-                        .header("Authorization", "Bearer $serviceRoleKey")
-                        .DELETE().build()
-                    client.send(req, HttpResponse.BodyHandlers.ofString())
-                }.onFailure { System.err.println("[ktor] portada anterior cleanup failed: ${it.message?.take(160)}") }
-            }
+        existing.portadaStoragePath?.takeIf { it.isNotBlank() && it != objectPath }?.let { previous ->
+            runCatching { transport.storageDelete(bucket, previous) }
+                .onFailure { ExamCoverLogger.warn("borrado de portada anterior fallido: {}", it.redactedMessage("Fallo al borrar", 160)) }
+        }
+        return saved.toDto().withSignedCover()
+    }
+
+    /**
+     * Quita la portada: primero la fila, DESPUÉS el objeto (K5). `null` = el examen
+     * no existe (404 en la ruta).
+     *
+     * El orden es la garantía: si el borrado del objeto falla, queda un huérfano
+     * privado que nadie referencia; al revés, quedaría una fila apuntando a nada y
+     * una portada rota en la app.
+     */
+    fun clearExamenPortada(examId: String): AdminExamenDto? {
+        val existing = request("GET", "/rest/v1/examenes?select=id,portada_storage_path&id=eq.$examId&limit=1", null)
+            .decodeList<AdminExamenPortadaRow>().firstOrNull() ?: return null
+        // Concurrencia (Nuclear Review Finding 1): mismo condicional que en la subida.
+        // El examen YA existía en la lectura de arriba, así que una lista vacía aquí
+        // sólo puede ser una escritura rival que ganó la carrera, nunca "no existe".
+        val condicion = existing.portadaStoragePath
+            ?.let { "portada_storage_path=eq.${it.urlEncode()}" }
+            ?: "portada_storage_path=is.null"
+        val saved = request(
+            "PATCH", "/rest/v1/examenes?id=eq.$examId&$condicion",
+            """{"portada_storage_path":null,"portada_mime_type":null}""",
+            prefer = "return=representation",
+        ).decodeList<AdminExamenRow>().firstOrNull()
+            ?: throw domainError("EXAM_COVER_CHANGED_CONCURRENTLY")
+        existing.portadaStoragePath?.takeIf { it.isNotBlank() }?.let { previous ->
+            runCatching { transport.storageDelete(examResourcesBucket(), previous) }
+                .onFailure { ExamCoverLogger.warn("borrado de portada quitada fallido: {}", it.redactedMessage("Fallo al borrar", 160)) }
+        }
         return saved.toDto()
     }
 
-    fun clearExamenPortada(examId: String): AdminExamenDto {
-        return request(
-            "PATCH", "/rest/v1/examenes?id=eq.$examId",
-            """{"portada_url":null,"portada_storage_path":null,"portada_mime_type":null}""",
-            prefer = "return=representation",
-        ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
-            ?: error("Examen no encontrado para borrar portada: $examId")
-    }
+    /**
+     * El bucket de recursos se crea **PRIVADO**.
+     *
+     * Esto era `public = true`, y en MAIN no rompía nada por accidente: el bucket ya
+     * existe y Storage responde 409 a la creación. La bomba estaba en un entorno
+     * nuevo —una preproducción, una restauración—: ahí la primera subida CREARÍA
+     * `exam-resources` público, sin que nadie lo viera.
+     *
+     * La portada ya no depende de que el bucket sea público: se guarda la ruta del
+     * objeto y la URL se FIRMA en cada lectura (K5, [withSignedCovers]).
+     */
+    private fun ensureStorageBucketExists(bucket: String) = transport.storageEnsureBucket(bucket, public = false)
 
-    private fun ensureStorageBucketExists(bucket: String) {
-        if (storageBucketChecked) return
-        val body = """{"id":"$bucket","name":"$bucket","public":true}"""
-        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/bucket"))
-            .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
-            .header("Content-Type", "application/json")
-        val response = try {
-            client.send(builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
-        } catch (e: Exception) {
-            throw IllegalStateException("Supabase Storage bucket check error: ${e::class.simpleName}: ${e.message}", e)
-        }
-        if (response.statusCode() in 200..299 || response.statusCode() == 409) {
-            storageBucketChecked = true
-            return
-        }
-        throw IllegalStateException("Supabase Storage bucket check -> ${response.statusCode()}: ${response.body().take(300)}")
-    }
+    /** Bucket de portadas: `SUPABASE_BUCKET_EXAM_RESOURCES` o `exam-resources`. */
+    private fun examResourcesBucket(): String =
+        (System.getenv("SUPABASE_BUCKET_EXAM_RESOURCES") ?: "exam-resources").toStorageBucketId()
 
     private fun shortId(): String = UUID.randomUUID().toString().take(8)
-
-    private fun requestBinary(method: String, url: String, bytes: ByteArray, contentType: String, upsert: Boolean = false): String {
-        val builder = HttpRequest.newBuilder(URI.create(url))
-            .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
-            .header("Content-Type", contentType)
-        if (upsert) builder.header("x-upsert", "true")
-        val response = try {
-            client.send(builder.method(method, HttpRequest.BodyPublishers.ofByteArray(bytes)).build(), HttpResponse.BodyHandlers.ofString())
-        } catch (e: Exception) {
-            // Punto unico de subida a Storage (ver KDoc de requestBinary): un
-            // solo sitio cubre cualquier upload futuro sin tocar cada llamador.
-            logStrategicEvent(StrategicEvent.STORAGE_UPLOAD_FAILED, operation = method, errorType = e::class.simpleName)
-            throw IllegalStateException("Supabase storage error: ${e.message}", e)
-        }
-        if (response.statusCode() !in 200..299) {
-            logStrategicEvent(
-                StrategicEvent.STORAGE_UPLOAD_FAILED,
-                operation = method,
-                result = response.statusCode().toString(),
-            )
-            throw IllegalStateException("Supabase storage $method -> ${response.statusCode()}: ${response.body().take(200)}")
-        }
-        return response.body()
-    }
 
     /**
      * Conteo exacto sin traer filas.
@@ -4157,64 +6594,19 @@ class AdminV1Gateway private constructor(
      * Lanza si la respuesta no trae un total utilizable: quien llama decide si eso
      * significa "métrica no disponible", pero nunca puede confundirse con un cero.
      */
-    private fun exactCount(path: String): Int {
-        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
-            .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
-            .header("Content-Type", "application/json")
-            .header("Prefer", "count=exact")
-            .header("Range-Unit", "items")
-            .header("Range", "0-0")
-        val response = try {
-            client.send(builder.GET().build(), HttpResponse.BodyHandlers.ofString())
-        } catch (error: Exception) {
-            throw IllegalStateException(
-                "Supabase network error on COUNT ${path.substringBefore('?')}: ${error::class.simpleName}: ${error.message}",
-                error,
-            )
-        }
-        // 206 Partial Content es la respuesta normal a un Range acotado.
-        if (response.statusCode() !in 200..299) {
-            throw IllegalStateException(
-                "Supabase COUNT ${path.substringBefore('?')} -> ${response.statusCode()}: ${response.body().take(200)}",
-            )
-        }
-        return parseContentRangeTotal(response.headers().firstValue("content-range").orElse(null))
-            ?: throw IllegalStateException("Supabase COUNT ${path.substringBefore('?')} no devolvió Content-Range utilizable.")
-    }
+    private fun exactCount(path: String): Int = transport.count(path)
 
-    private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
-        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
-            .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
-            .header("Content-Type", "application/json")
-        if (prefer != null) builder.header("Prefer", prefer)
-        val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
-        val response = try {
-            client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
-        } catch (error: Exception) {
-            throw IllegalStateException("Supabase network error on $method ${path.substringBefore('?')}: ${error::class.simpleName}: ${error.message}", error)
-        }
-        if (response.statusCode() !in 200..299) {
-            mapSupabaseDomainError(response.statusCode(), response.body())?.let { throw it }
-            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.statusCode()}: ${response.body().take(300)}")
-        }
-        return response.body()
-    }
+    /**
+     * Se conserva como envoltorio de una línea para no tocar los ~150
+     * llamadores: el transporte cambia, el contrato interno no.
+     */
+    private fun request(method: String, path: String, body: String?, prefer: String? = null): String =
+        transport.send(method = method, path = path, body = body, prefer = prefer)
 
     private inline fun <reified T> String.decodeList(): List<T> = json.decodeFromString(this)
 
     private fun String.toSlug(): String =
         lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-').ifBlank { "item" }
-
-    private fun String.sanitizeStorageSegment(): String {
-        return trim()
-            .replace(Regex("[^A-Za-z0-9._-]+"), "-")
-            .trim('-', '.', '_')
-            .ifBlank { "portada.jpg" }
-    }
 
     private fun String.toStorageBucketId(): String {
         return trim()
@@ -4229,8 +6621,26 @@ class AdminV1Gateway private constructor(
     companion object {
         fun fromEnvironment(json: Json): AdminV1Gateway? {
             val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
-            return if (url.isBlank() || serviceRoleKey.isBlank()) null else AdminV1Gateway(url, serviceRoleKey, json)
+            // Misma firma y mismo contrato de `null`: `Application.kt` no cambia.
+            // Lo único que cambia es QUÉ variable se lee, y eso lo decide un
+            // solo sitio (`SUPABASE_SECRET_KEY`, con la legacy como fallback).
+            val secretKey = SupabaseRequestAuthPolicy.secretFromEnvironment()
+            return if (url.isBlank() || secretKey.isBlank()) null else AdminV1Gateway(url, secretKey, json)
         }
+
+        /**
+         * Sólo para tests: inyecta el `HttpClient` para poder observar lo que
+         * sale hacia el upstream.
+         *
+         * El constructor es privado para que producción no pueda saltarse
+         * [fromEnvironment]; el coste de las peticiones —cuántas y a qué tablas—
+         * es parte del contrato y necesita quedar bajo prueba.
+         */
+        internal fun forTesting(
+            supabaseUrl: String,
+            serviceRoleKey: String,
+            json: Json,
+            client: HttpClient,
+        ): AdminV1Gateway = AdminV1Gateway(supabaseUrl, serviceRoleKey, json, client)
     }
 }

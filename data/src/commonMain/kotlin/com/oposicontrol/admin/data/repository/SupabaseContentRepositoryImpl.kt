@@ -521,26 +521,6 @@ class SupabaseContentRepositoryImpl(
         return result
     }
 
-    override suspend fun deleteQuestion(examId: String, questionId: String): AppResult<Unit> {
-        val accessToken = requireAccessToken("borrar preguntas") ?: return authFailure("borrar preguntas")
-        ensureConfigured()?.let { return AppResult.Failure(it) }
-        val result = adapter.safeCall {
-            val numericQuestionId = questionId.toIntId()
-            client.delete("${appConfig.supabaseUrl}/rest/v1/recurso_pregunta?pregunta_id=eq.$numericQuestionId") {
-                supabaseHeaders(accessToken)
-            }
-            client.delete("${appConfig.supabaseUrl}/rest/v1/opcion_pregunta?pregunta_id=eq.$numericQuestionId") {
-                supabaseHeaders(accessToken)
-            }
-            client.delete("${appConfig.supabaseUrl}/rest/v1/pregunta?id=eq.$numericQuestionId&examen_id=eq.${examId.toIntId()}") {
-                supabaseHeaders(accessToken)
-            }
-            Unit
-        }
-        if (result is AppResult.Success) refreshExams()
-        return result
-    }
-
     override suspend fun moveQuestion(
         examId: String,
         questionId: String,
