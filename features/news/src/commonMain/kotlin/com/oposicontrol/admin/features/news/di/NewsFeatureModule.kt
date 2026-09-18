@@ -23,5 +23,5 @@ val newsFeatureModule = module {
     factory { ScheduleNewsUseCase(get(), get()) }
     factory { UploadNewsAssetUseCase(get()) }
     factory { ArchiveNewsUseCase(get()) }
-    single { NewsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    single { NewsViewModel(get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
 }

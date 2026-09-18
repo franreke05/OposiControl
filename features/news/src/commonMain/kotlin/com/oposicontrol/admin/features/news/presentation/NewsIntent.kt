@@ -8,6 +8,7 @@ sealed interface NewsIntent {
     data object Publish : NewsIntent
     data class PublishFor(val id: String) : NewsIntent
     data object Schedule : NewsIntent
+    data class ScheduleAt(val isoUtc: String) : NewsIntent
     data object Archive : NewsIntent
     data class ArchiveFor(val id: String) : NewsIntent
     data object ValidateDraft : NewsIntent

@@ -93,6 +93,8 @@ class NewsViewModel(
     private val archiveNewsUseCase: ArchiveNewsUseCase,
     private val analyticsTracker: AnalyticsTracker,
     private val draftLocalDataSource: NewsEditorDraftLocalDataSource,
+    private val contentRepository: com.oposicontrol.admin.domain.repository.ContentRepository? = null,
+    private val operationsRepository: com.oposicontrol.admin.domain.repository.AdminOperationsRepository? = null,
 ) : MviViewModel<NewsState, NewsIntent>(
     initialState = NewsState(),
     dispatcherProvider = dispatcherProvider,
@@ -112,7 +114,8 @@ class NewsViewModel(
                 if (currentState().selectedId == null && !isEditingLocalDraft) allNews.firstOrNull()?.let { select(it.id) }
             }
         }
-        scope.launch { refreshNewsUseCase() }
+        scope.launch { refreshLibrary() }
+        scope.launch { refreshCatalogs() }
         analyticsTracker.trackScreen("news")
     }
 
@@ -144,8 +147,9 @@ class NewsViewModel(
     }
 
     override suspend fun handleIntent(intent: NewsIntent) {
+        if (currentState().actionState is UiAsync.Loading && intent != NewsIntent.Refresh) return
         when (intent) {
-            NewsIntent.Refresh -> refreshNewsUseCase()
+            NewsIntent.Refresh -> { refreshLibrary(); refreshCatalogs() }
             NewsIntent.CreateNew -> createNew()
             NewsIntent.SaveDraft -> saveDraft()
             is NewsIntent.SaveDraftFor -> {
@@ -158,6 +162,10 @@ class NewsViewModel(
                 publishCurrent()
             }
             NewsIntent.Schedule -> scheduleCurrent()
+            is NewsIntent.ScheduleAt -> {
+                updateAndValidate { it.copy(editorPublishFrom = intent.isoUtc) }
+                scheduleCurrent()
+            }
             NewsIntent.Archive -> archiveCurrent()
             is NewsIntent.ArchiveFor -> {
                 select(intent.id)
@@ -165,7 +173,7 @@ class NewsViewModel(
             }
             NewsIntent.ValidateDraft -> validateCurrentDraft()
             NewsIntent.DeleteSelected -> deleteSelected()
-            NewsIntent.SelectBackground -> updateAndValidate { it.copy(selectedTarget = NewsEditorSelection.BACKGROUND, selectedLayerId = null) }
+            NewsIntent.SelectBackground -> updateState { it.copy(selectedTarget = NewsEditorSelection.BACKGROUND, selectedLayerId = null) }
             NewsIntent.AddTitleLayer -> addTitleLayer()
             NewsIntent.AddLayer -> addLayer()
             is NewsIntent.AddLayerWithImage -> addLayerWithImage(intent.uri)
@@ -203,7 +211,8 @@ class NewsViewModel(
                     editorLayers = nextLayers,
                 )
             }
-            is NewsIntent.UpdateImagePath -> updateAndValidate { it.copy(editorImagePath = intent.value) }
+            is NewsIntent.UpdateImagePath -> updateAndValidate { state -> state.copy(editorImagePath = intent.value,
+                editorLayers = if (intent.value.isBlank()) state.editorLayers.filterNot { it.kind.toLayerKind() == NewsLayerKind.IMAGE && it.content == state.editorImagePath } else state.editorLayers) }
             is NewsIntent.RemoveLayer -> removeLayer(intent.id)
             is NewsIntent.MoveLayerDown -> moveLayer(intent.id, -1)
             is NewsIntent.MoveLayerUp -> moveLayer(intent.id, 1)
@@ -267,6 +276,31 @@ class NewsViewModel(
         }
     }
 
+    private suspend fun refreshLibrary() {
+        updateState { it.copy(libraryState = UiAsync.Loading) }
+        when (val result = refreshNewsUseCase()) {
+            is AppResult.Failure -> updateState { it.copy(libraryState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> updateState { it.copy(libraryState = UiAsync.Success(Unit)) }
+        }
+    }
+
+    private suspend fun refreshCatalogs() {
+        val unavailable = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("Catálogo no disponible."))
+        updateState { it.copy(specialties = UiAsync.Loading, newsTypes = UiAsync.Loading) }
+        val specialties = when (val result = contentRepository?.refreshSpecialties()) {
+            is AppResult.Success -> UiAsync.Success(result.value.map { NewsCatalogOption(it.id, it.name, it.isActive) })
+            is AppResult.Failure -> UiAsync.Error(result.error)
+            null -> unavailable
+        }
+        updateState { it.copy(specialties = specialties) }
+        val types = when (val result = operationsRepository?.getNewsTypes()) {
+            is AppResult.Success -> UiAsync.Success(result.value.map { NewsCatalogOption(it.id, it.name, it.isActive) })
+            is AppResult.Failure -> UiAsync.Error(result.error)
+            null -> unavailable
+        }
+        updateState { it.copy(newsTypes = types) }
+    }
+
     private fun createNew() {
         val localId = "local-${randomUuid()}"
         updateState { state ->
@@ -275,8 +309,8 @@ class NewsViewModel(
                 editorTitle = "",
                 editorBackgroundType = "SKY",
                 editorBackgroundPath = "",
-                editorSpecialty = "1",
-                editorType = "1",
+                editorSpecialty = "",
+                editorType = "",
                 editorText = "",
                 editorImagePath = "",
                 editorStatus = "draft",
@@ -289,6 +323,7 @@ class NewsViewModel(
                 selectedTarget = NewsEditorSelection.ARTICLE,
                 selectedLayerId = null,
                 actionState = UiAsync.Idle,
+                isDirty = false,
             )
         }
         rememberCurrentDraft()
@@ -320,6 +355,7 @@ class NewsViewModel(
                 selectedTarget = NewsEditorSelection.ARTICLE,
                 selectedLayerId = null,
                 actionState = UiAsync.Idle,
+                isDirty = false,
             )
         }
         validateCurrentDraft()
@@ -356,13 +392,14 @@ class NewsViewModel(
             updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("Añade al menos un título para guardar."))) }
             return
         }
-        rememberCurrentDraft()
+        if (!rememberCurrentDraft()) return
         val draftId = currentState().selectedId.orEmpty()
         analyticsTracker.trackAction("news_save_draft", mapOf("news_id" to draftId, "layers" to currentState().editorLayers.size.toString()))
-        updateState { it.copy(actionState = UiAsync.Success(Unit), isDirty = false) }
+        updateState { it.copy(actionState = UiAsync.Success(Unit), isDirty = false, actionMessage = "Borrador guardado en este equipo") }
     }
 
     private suspend fun publishCurrent() {
+        updateState { it.copy(editorPublishFrom = "") }
         persistWithEditorialAction("news_publish") { article, draft -> publishNewsUseCase(article, draft) }
     }
 
@@ -388,15 +425,16 @@ class NewsViewModel(
             updateState { it.copy(actionState = UiAsync.Success(Unit)) }
             return
         }
-        val article = currentState().toNewsItem().toDomain()
+        val article = remoteNews.firstOrNull { it.id == previousId }?.toDomain() ?: return
         updateState { it.copy(actionState = UiAsync.Loading) }
         when (val result = archiveNewsUseCase(article)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("news_archive", mapOf("news_id" to result.value.id))
                 previousId?.takeIf { it.startsWith("local-") }?.let { localDrafts.remove(it) }
-                rememberSavedArticle(currentState().toNewsItem().copy(id = result.value.id, status = result.value.status))
-                updateState { it.copy(selectedId = result.value.id, editorStatus = result.value.status, actionState = UiAsync.Success(Unit)) }
+                rememberSavedArticle(result.value.toUi())
+                select(result.value.id)
+                updateState { it.copy(actionState = UiAsync.Success(Unit), actionMessage = "Versión del servidor archivada") }
             }
         }
     }
@@ -422,7 +460,7 @@ class NewsViewModel(
                 analyticsTracker.trackAction(actionName, mapOf("news_id" to result.value.id, "layers" to result.value.layers.size.toString()))
                 previousId?.takeIf { it.startsWith("local-") }?.let { localDrafts.remove(it) }
                 rememberSavedArticle(currentState().toNewsItem().copy(id = result.value.id, status = result.value.status))
-                updateState { it.copy(selectedId = result.value.id, editorStatus = result.value.status, actionState = UiAsync.Success(Unit), isDirty = false) }
+                updateState { it.copy(selectedId = result.value.id, editorStatus = result.value.status, actionState = UiAsync.Success(Unit), isDirty = false, actionMessage = "Versión enviada al servidor") }
             }
         }
     }
@@ -485,7 +523,7 @@ class NewsViewModel(
     }
 
     private fun removeLayer(id: String) {
-        updateState { state ->
+        updateAndValidate { state ->
             val layers = state.editorLayers.filterNot { it.id == id }.normalizedLayerOrder()
             state.copy(editorLayers = layers, selectedLayerId = if (state.selectedLayerId == id) layers.firstOrNull()?.id else state.selectedLayerId)
         }
@@ -571,7 +609,7 @@ class NewsViewModel(
     private fun updateAndValidate(transform: (NewsState) -> NewsState) {
         val next = transform(currentState()).withClampedLayers()
         val report = validateNewsDraftUseCase(next.toDesignDraft())
-        updateState { next.copy(validationReport = report, isDirty = true) }
+        updateState { next.copy(validationReport = report, isDirty = true, actionState = UiAsync.Idle) }
         rememberCurrentDraft(next.copy(validationReport = report))
     }
 
@@ -591,7 +629,7 @@ class NewsViewModel(
         }
     }
 
-    private fun rememberCurrentDraft(state: NewsState = currentState()) {
+    private fun rememberCurrentDraft(state: NewsState = currentState()): Boolean {
         val localId = state.selectedId?.ifBlank { null } ?: "local-${randomUuid()}"
         val item = state.copy(selectedId = localId).toNewsItem().copy(isLocalDraft = true)
         if (state.selectedId.isNullOrBlank()) updateState { it.copy(selectedId = localId) }
@@ -599,7 +637,7 @@ class NewsViewModel(
         isEditingLocalDraft = true
         rebuildNewsFromLocalAndRemote()
         publish()
-        runCatching {
+        val saved = runCatching {
             draftLocalDataSource.saveDraft(
                 NewsEditorDraftSnapshot(
                     newsId = localId,
@@ -617,6 +655,8 @@ class NewsViewModel(
                 )
             )
         }
+        if (saved.isFailure) updateState { it.copy(actionState = UiAsync.Error(com.oposicontrol.admin.core.common.result.AppError.Validation("No se pudo conservar el borrador en este equipo."))) }
+        return saved.isSuccess
     }
 
     private fun rememberSavedArticle(item: NewsItem) {
