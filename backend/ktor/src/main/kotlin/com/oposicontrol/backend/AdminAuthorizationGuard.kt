@@ -6,6 +6,7 @@ import io.ktor.server.auth.UserIdPrincipal
 import io.ktor.server.auth.principal
 import io.ktor.server.plugins.origin
 import io.ktor.server.request.path
+import kotlinx.coroutines.CancellationException
 
 /**
  * Aplica [adminAuthorizationFailure] a cada llamada ya autenticada.
@@ -20,6 +21,10 @@ import io.ktor.server.request.path
  * Lanzar aquí permite además conservar la distinción del contrato: 401 cuando la
  * credencial no vale para esa superficie y 403 cuando la identidad es válida pero
  * no tiene rol admin.
+ *
+ * La consulta de rol corre en el pool IO ([authorizeAdminCall], F-03): este hook
+ * se ejecuta ANTES de cada handler administrativo, y un fallo de caché son
+ * lecturas bloqueantes a Supabase.
  */
 internal val AdminAuthorizationPlugin = createRouteScopedPlugin(
     name = "AdminAuthorization",
@@ -34,7 +39,7 @@ internal val AdminAuthorizationPlugin = createRouteScopedPlugin(
         // pasar cada llamada autenticada al handler sin error y sin traza.
         val principal = call.principal<UserIdPrincipal>()
             ?: throw AppUnauthorized("Principal no reconocido para la superficie de administración.")
-        adminAuthorizationFailure(
+        authorizeAdminCall(
             principalName = principal.name,
             path = call.request.path(),
             // remoteAddress, no remoteHost: el segundo hace DNS inverso sobre el peer
@@ -111,6 +116,79 @@ internal fun adminAuthorizationFailure(
         AppForbidden("No tienes permisos para acceder al panel de administración.")
     }
 }
+
+/**
+ * [adminAuthorizationFailure] con la lectura de rol FUERA del hilo de la petición (F-03).
+ *
+ * `hasAdminRole` de producción ([AppV1Gateway.hasAdminRole]) hace lecturas
+ * bloqueantes a Supabase en cada fallo de caché, y este código corre en el hook
+ * `AuthenticationChecked`, delante de CADA handler administrativo: en el hilo de
+ * Netty era exactamente la inanición del pool que [withUpstreamIo] vino a cerrar,
+ * pagada antes de que el handler llegara a saltar al pool IO.
+ *
+ * Dos reglas que no cambian respecto a la decisión pura:
+ *
+ * - El token estático no es una persona: su rol **no se consulta**, ni aquí ni
+ *   dentro de la decisión. No hay salto de hilo que pagar para él.
+ * - Una lectura de rol que FALLA propaga su excepción. Convertirla en `false`
+ *   devolvería 403 —"no eres admin"— por un Supabase caído, que es mentir sobre
+ *   el permiso; la excepción llega a StatusPages como 500 con referencia.
+ *
+ * La firma de [adminAuthorizationFailure] se conserva: la usan sus propias pruebas
+ * y las de sincronización de roles.
+ */
+internal suspend fun authorizeAdminCall(
+    principalName: String,
+    path: String,
+    remoteAddress: String,
+    appEnv: String,
+    hasAdminRole: (String) -> Boolean,
+    isLocalPeer: (String, String) -> Boolean = ::isLocalDevelopmentPeer,
+): Exception? {
+    if (principalName == STATIC_TOKEN_PRINCIPAL) {
+        return adminAuthorizationFailure(
+            principalName = principalName,
+            path = path,
+            remoteAddress = remoteAddress,
+            appEnv = appEnv,
+            hasAdminRole = { error("El rol del token estático no se consulta.") },
+            isLocalPeer = isLocalPeer,
+        )
+    }
+    val hasRole = withUpstreamIo { hasAdminRole(principalName) }
+    return adminAuthorizationFailure(
+        principalName = principalName,
+        path = path,
+        remoteAddress = remoteAddress,
+        appEnv = appEnv,
+        hasAdminRole = { hasRole },
+        isLocalPeer = isLocalPeer,
+    )
+}
+
+/**
+ * El principal de un JWT verificado, o `null` si no verifica (→ 401).
+ *
+ * La verificación va al pool IO (F-03): la primera vez, con un `kid` nuevo o tras
+ * una rotación, [SupabaseJwtVerifier.subFrom] descarga el JWKS con una petición
+ * bloqueante, y el bloque `authenticate {}` corre en el hilo de la petición.
+ *
+ * Cualquier fallo de verificación —firma, emisor, `kid` desconocido, JWKS caído—
+ * es "credencial no válida" y acaba en 401, como hasta ahora. La cancelación NO
+ * es un fallo de verificación: se relanza, porque tragársela convertiría "el
+ * cliente se fue" en un 401 y dejaría la corrutina sin cancelar.
+ */
+internal suspend fun verifiedJwtPrincipalOrNull(
+    token: String,
+    verify: (String) -> String,
+): UserIdPrincipal? =
+    try {
+        UserIdPrincipal(withUpstreamIo { verify(token) })
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
 
 /** Nombre del principal que representa al token estático, no a una persona. */
 internal const val STATIC_TOKEN_PRINCIPAL = "oposicontrol-admin"

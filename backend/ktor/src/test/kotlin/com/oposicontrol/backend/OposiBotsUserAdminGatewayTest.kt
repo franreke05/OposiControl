@@ -41,7 +41,10 @@ class OposiBotsUserAdminGatewayTest {
         assertEquals("0", requests.single().url.parameters["offset"])
         assertEquals("created_at.desc", requests.single().url.parameters["order"])
         assertEquals("service-role-key", requests.single().headers["apikey"])
-        assertEquals("Bearer service-role-key", requests.single().headers[HttpHeaders.Authorization])
+        // F-02: la credencial la decide `SupabaseRequestAuthPolicy`. "service-role-key"
+        // no tiene forma de JWT, así que NO viaja como `Bearer` (la matriz completa,
+        // con clave JWT legacy incluida, vive en `SupabaseEnvironmentWiringTest`).
+        assertEquals(null, requests.single().headers[HttpHeaders.Authorization])
         assertEquals(1, result.size)
         assertEquals("ada", result.single().username)
     }

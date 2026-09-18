@@ -12,6 +12,15 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.util.AttributeKey
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ThreadContextElement
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
@@ -175,6 +184,28 @@ fun newUpstreamHttpClient(): HttpClient =
         .connectTimeout(Duration.ofMillis(ObservabilityConfig.upstreamConnectTimeoutMs))
         .build()
 
+/**
+ * La UNICA instancia de `HttpClient` hacia Supabase.
+ *
+ * [newUpstreamHttpClient] resolvia el timeout pero no la multiplicidad: al ser
+ * una FUNCION y llamarse desde el default de constructor de cada gateway,
+ * hoy viven 11 instancias distintas contra el MISMO host, cada una con su
+ * propio pool de conexiones y su propio executor. Eso no es un fallo de
+ * correccion, pero multiplica por once los pools y los hilos sin ninguna
+ * ganancia: un `HttpClient` de la JDK ya es thread-safe y esta pensado para
+ * compartirse.
+ *
+ * `by lazy` y no un `val` directo a proposito: [ObservabilityConfig] lee
+ * `System.getenv` durante su inicializacion, y `ObservabilityTest` depende de
+ * CUANDO ocurre esa lectura. Diferirla hasta el primer uso real conserva ese
+ * comportamiento.
+ *
+ * La fabrica [newUpstreamHttpClient] SE CONSERVA: los tests la usan para
+ * obtener un cliente propio, y los gateways con costura de test siguen
+ * pudiendo inyectar el suyo.
+ */
+val sharedUpstreamHttpClient: HttpClient by lazy { newUpstreamHttpClient() }
+
 // ---------------------------------------------------------------------
 // Taxonomia de eventos estrategicos
 // ---------------------------------------------------------------------
@@ -328,13 +359,20 @@ private val RequestStartKey = AttributeKey<TimeSource.Monotonic.ValueTimeMark>("
  * la duracion total y emite [StrategicEvent.SLOW_REQUEST] por encima del
  * umbral configurado -- nunca loguea cada request como evento de negocio.
  *
- * Caveat documentado: MDC es ThreadLocal. Mientras las gateways sigan
- * siendo llamadas de forma sincrona desde el mismo hilo del handler (como
- * hoy), el MDC se propaga correctamente. Si en el futuro se introduce
- * `withContext(Dispatchers.IO)` u otro cambio de hilo entre el handler y la
- * gateway, hara falta `kotlinx-coroutines-slf4j` (`MDCContext`) para seguir
- * propagando -- no aplica hoy, se documenta para no sorprender a quien lo
- * toque despues.
+ * ### MDC y corrutinas (F-12a)
+ *
+ * MDC es un `ThreadLocal` y no viaja con la corrutina. [withUpstreamIo] copia el
+ * MDC del hilo en el que se le llama, pero eso sólo es correcto si ese hilo
+ * todavia lo tiene: un handler que se suspende ANTES del salto —`call.receive`,
+ * `call.receiveMultipart`— puede reanudar en otro hilo de Netty sin MDC, y la
+ * copia sale vacia (`ADMIN_ACTION ... request_id=-`).
+ *
+ * Por eso el resto del pipeline corre dentro de [RequestMdcContext]: un
+ * elemento de contexto que vuelve a poner el `request_id` en el MDC CADA VEZ
+ * que la corrutina reanuda en un hilo, y lo retira al salir. Es lo mismo que
+ * hace `MDCContext` de `kotlinx-coroutines-slf4j`, sin añadir la dependencia, y
+ * cubre tambien los saltos de hilo escritos a mano, que [withUpstreamIo] no
+ * puede ver.
  */
 fun Application.installRequestCorrelation() {
     intercept(ApplicationCallPipeline.Setup) {
@@ -343,9 +381,17 @@ fun Application.installRequestCorrelation() {
         call.attributes.put(RequestIdKey, requestId)
         call.attributes.put(RequestStartKey, TimeSource.Monotonic.markNow())
         call.response.header(REQUEST_ID_HEADER, requestId)
-        MDC.put(MDC_REQUEST_ID, requestId)
+        // El id lo pone ÚNICAMENTE [RequestMdcContext], en cada reanudación de la
+        // corrutina. Aquí había además un `MDC.put` directo sobre el hilo de la
+        // petición, y sobraba de una forma peligrosa: el MDC de logback vive en un
+        // `ThreadLocal` HEREDABLE, así que un hilo creado desde éste —un worker nuevo
+        // del pool IO, por ejemplo— nacía con el id ya puesto. El efecto secundario
+        // tapaba el fallo que este mecanismo existe para evitar: quitando el
+        // `withContext` de abajo, los logs seguían saliendo correlacionados en las
+        // pruebas y dejaban de estarlo en producción, donde los hilos del pool ya
+        // existen desde hace rato y no heredan nada.
         try {
-            proceed()
+            withContext(RequestMdcContext(requestId)) { proceed() }
         } finally {
             val elapsedMs = call.attributes.getOrNull(RequestStartKey)?.elapsedNow()?.inWholeMilliseconds
             if (elapsedMs != null && elapsedMs >= ObservabilityConfig.slowRequestThresholdMs) {
@@ -357,8 +403,38 @@ fun Application.installRequestCorrelation() {
                     durationMs = elapsedMs,
                 )
             }
-            MDC.remove(MDC_REQUEST_ID)
+            // Sin `MDC.remove`: ya no hay nada que quitar aquí. `RequestMdcContext`
+            // restaura el hilo exactamente como estaba al salir, incluido el id de otra
+            // petición si lo tenía; borrarlo a mano se lo llevaría por delante.
         }
+    }
+}
+
+/**
+ * El `request_id` de la peticion, reinstalado en el MDC en cada reanudacion.
+ *
+ * `updateThreadContext` corre justo antes de que la corrutina reanude en un
+ * hilo, y `restoreThreadContext` justo despues de que lo suelte: el hilo queda
+ * exactamente como estaba, con el id de otra peticion si lo tenia o sin ninguno.
+ * Es la misma garantia de limpieza que [runWithMdcContext], aplicada a cada
+ * suspension en vez de a un unico bloque.
+ *
+ * Lo heredan las corrutinas hijas y los `withContext` del handler, asi que un
+ * salto a `Dispatchers.IO` escrito a mano tambien lleva el id.
+ */
+internal class RequestMdcContext(
+    private val requestId: String,
+) : ThreadContextElement<String?>, AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<RequestMdcContext>
+
+    override fun updateThreadContext(context: CoroutineContext): String? {
+        val previous = MDC.get(MDC_REQUEST_ID)
+        MDC.put(MDC_REQUEST_ID, requestId)
+        return previous
+    }
+
+    override fun restoreThreadContext(context: CoroutineContext, oldState: String?) {
+        if (oldState == null) MDC.remove(MDC_REQUEST_ID) else MDC.put(MDC_REQUEST_ID, oldState)
     }
 }
 
@@ -368,6 +444,125 @@ fun Application.installRequestCorrelation() {
 fun ApplicationCall.elapsedMsOrNull(): Long? = attributes.getOrNull(RequestStartKey)?.elapsedNow()?.inWholeMilliseconds
 
 fun ApplicationCall.requestIdOrNull(): String? = attributes.getOrNull(RequestIdKey)
+
+// ---------------------------------------------------------------------
+// Salto al pool IO conservando la correlacion
+// ---------------------------------------------------------------------
+
+/**
+ * Ejecuta [block] con [contextMap] instalado en el MDC del hilo actual y deja
+ * el MDC exactamente como estaba antes.
+ *
+ * Los dos extremos importan y por eso estan los dos:
+ *
+ * - **Instalar**: sin esto, el codigo que corre en un hilo del pool IO no ve
+ *   el `request_id` que [installRequestCorrelation] dejo en el hilo de la
+ *   request, y todo `ADMIN_ACTION` sale con `request_id=-`.
+ * - **Restaurar**: los hilos del pool IO se REUTILIZAN. Dejar el mapa puesto
+ *   al salir haria que la siguiente tarea que caiga en ese mismo hilo herede
+ *   el id de una request ajena. Un id equivocado es peor que ninguno: `-` se
+ *   ve, una correlacion falsa no.
+ *
+ * `contextMap == null` significa "el llamante no tenia MDC", y entonces el
+ * bloque debe ver el MDC VACIO, no los restos de quien uso antes ese hilo.
+ */
+internal fun <T> runWithMdcContext(contextMap: Map<String, String>?, block: () -> T): T {
+    val previous = MDC.getCopyOfContextMap()
+    if (contextMap == null) MDC.clear() else MDC.setContextMap(contextMap)
+    return try {
+        block()
+    } finally {
+        if (previous == null) MDC.clear() else MDC.setContextMap(previous)
+    }
+}
+
+/**
+ * **La unica forma de mover trabajo bloqueante de upstream al pool IO.**
+ *
+ * Sustituye a los `withContext(Dispatchers.IO)` sueltos. Motivo de que tenga
+ * nombre propio en vez de repetirse la expresion: el contrato es greppable y
+ * testeable en un solo sitio.
+ *
+ * `grep -rn "withContext(Dispatchers.IO)" backend/ktor/src/main` da hoy
+ * **exactamente una** coincidencia de codigo fuera de esta funcion:
+ * `OposiBotsAuthRateLimiter`, que pertenece a OposiBot — fuera del alcance de
+ * esta foundation y con su PROPIO mecanismo de request id
+ * (`OposiBotsAuthRoutes`), asi que no depende de este MDC. Cualquier
+ * coincidencia NUEVA en el resto del backend es un defecto: reabre el agujero
+ * de correlacion en silencio.
+ *
+ * Hace dos cosas:
+ *
+ * 1. Libera el hilo de Netty: los gateways llaman `client.send(...)`, que
+ *    BLOQUEA hasta 20 s (`UPSTREAM_REQUEST_TIMEOUT`). El pool de Netty esta
+ *    dimensionado para trabajo no bloqueante, y agotarlo deja a Ktor sin
+ *    aceptar peticiones nuevas -- `/health/ready` incluida.
+ * 2. Conserva la correlacion de la request al otro lado del cambio de hilo
+ *    (ver [runWithMdcContext]).
+ *
+ * ### Por que [block] NO es `suspend`, y es una restriccion de diseño
+ *
+ * El MDC se instala UNA vez, al entrar en el hilo de IO. Eso solo es correcto
+ * si el bloque no se suspende por dentro: una suspension puede reanudar en
+ * otro hilo del pool, donde el mapa que acabamos de poner ya no esta, y
+ * volveriamos al defecto que esta funcion existe para cerrar. Con un bloque
+ * puramente bloqueante, "poner una vez" es correcto por construccion.
+ *
+ * **Consecuencia practica**: `call.receive()`, `call.receiveMultipart()` y
+ * cualquier otra suspension del contexto de la peticion van FUERA. Leer el
+ * cuerpo de la peticion pertenece al hilo de la peticion, no al pool de IO; el
+ * compilador lo obliga y aqui queda escrito el motivo.
+ */
+suspend fun <T> withUpstreamIo(block: () -> T): T {
+    val correlation = MDC.getCopyOfContextMap()
+    return withContext(Dispatchers.IO) { runWithMdcContext(correlation, block) }
+}
+
+/**
+ * Version concurrente de [withUpstreamIo]: varias llamadas bloqueantes
+ * INDEPENDIENTES a la vez, cada una en el pool IO y cada una con la
+ * correlacion de la request puesta.
+ *
+ * El MDC se copia UNA vez aqui -- todavia en el hilo del llamante, antes de
+ * que `coroutineScope` reparta nada -- porque capturarlo dentro de cada rama
+ * lo leeria ya desde un hilo que puede no tenerlo.
+ *
+ * Que sea `coroutineScope` y no un scope propio es parte del contrato: las
+ * ramas son hijas de la peticion, asi que no pueden sobrevivirla. Si el cliente
+ * se va, el scope se cancela con el y ninguna rama nueva llega a arrancar.
+ *
+ * ### Que la cancelacion NO hace, y hay que decirlo
+ *
+ * Una version anterior de este KDoc afirmaba que cancelar "deja de consumir
+ * hilos de IO". **Es falso para bloques bloqueantes**, y se corrige aqui porque
+ * en esta base de codigo una afirmacion mas ancha que la realidad ya ha
+ * escondido un defecto tres veces:
+ *
+ * - `Dispatchers.IO` **no interrumpe** un hilo que ya esta dentro de
+ *   `client.send(...)`. Interrumpirlo requeriria `runInterruptible`, que no se
+ *   usa aqui. La rama sigue bloqueada hasta su propio timeout de 20 s.
+ * - `coroutineScope` **espera** a sus hijas antes de propagar la cancelacion,
+ *   asi que la peticion tampoco termina antes.
+ *
+ * Lo unico que se ahorra al cancelar es el trabajo de las ramas que **todavia
+ * no habian arrancado**. Es una mejora real y es toda la mejora que hay.
+ */
+suspend fun <T> withUpstreamIoParallel(block: suspend UpstreamIoScope.() -> T): T {
+    val correlation = MDC.getCopyOfContextMap()
+    return coroutineScope { UpstreamIoScope(this, correlation).block() }
+}
+
+/** Receptor de [withUpstreamIoParallel]. No se construye desde fuera a proposito:
+ * la unica forma de obtener uno es entrar en el scope, y asi no puede existir un
+ * [asyncUpstreamIo] huerfano cuyo fallo no espere nadie. */
+class UpstreamIoScope internal constructor(
+    private val scope: CoroutineScope,
+    private val correlation: Map<String, String>?,
+) {
+    /** Lanza [block] en el pool IO. Mismas reglas que [withUpstreamIo]: bloque NO suspendido. */
+    fun <T> asyncUpstreamIo(block: () -> T): Deferred<T> =
+        scope.async(Dispatchers.IO) { runWithMdcContext(correlation, block) }
+}
 
 // ---------------------------------------------------------------------
 // Health / readiness
@@ -400,28 +595,66 @@ private val readinessHttpClient: HttpClient = HttpClient.newBuilder()
     .build()
 
 /**
- * Comprueba que Supabase es alcanzable y que la apikey autentica, SIN
- * ejecutar ninguna query de negocio: GET a la raiz de PostgREST
- * (`/rest/v1/`) con la service role key -- responde rapido con su OpenAPI
- * spec, no toca ninguna tabla, no hace INSERT. [url]/[apiKey] por defecto
- * leen las mismas env vars que ya usan el resto de gateways
- * (SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY) -- no introduce una fuente de
- * config nueva; son parametros (en vez de leer env directamente) solo para
- * que ObservabilityTest pueda apuntar a un servidor local de prueba.
+ * Comprueba que Supabase es alcanzable y que la credencial de servidor
+ * autentica, SIN ejecutar ninguna query de negocio: GET a la raiz de PostgREST
+ * (`/rest/v1/`) -- responde rapido con su OpenAPI spec, no toca ninguna tabla,
+ * no hace INSERT. [url]/[apiKey] por defecto leen la misma configuracion que
+ * usan el resto de gateways -- no introduce una fuente de config nueva; son
+ * parametros (en vez de leer env directamente) solo para que ObservabilityTest
+ * pueda apuntar a un servidor local de prueba.
+ *
+ * ### La sonda manda EXACTAMENTE las cabeceras del trafico real
+ *
+ * Las cabeceras no se componen aqui: salen de
+ * [SupabaseRequestAuthPolicy.elevatedHeaders], que es la misma funcion que
+ * firma las peticiones de los gateways. Con la clave legacy eso son
+ * `apikey` + `Authorization: Bearer`; con una `sb_secret_...`, solo `apikey`.
+ *
+ * Esto no es simetria estetica: es la **precondicion** del rango estrecho de
+ * abajo. Una sonda que mandara una combinacion de cabeceras que ningun camino
+ * de negocio usa estaria midiendo una credencial que nadie ejerce, y un 401 de
+ * esa combinacion concreta sacaria de rotacion TODAS las replicas con el
+ * backend perfectamente sano -- un fallo correlacionado, inmediato tras el
+ * despliegue y apuntando a una dependencia que esta bien.
  */
 internal fun checkSupabaseReachable(
     url: String? = System.getenv("SUPABASE_URL")?.trimEnd('/'),
-    apiKey: String? = System.getenv("SUPABASE_SERVICE_ROLE_KEY"),
+    // La clave la resuelve el UNICO sitio que decide precedencia
+    // (`SUPABASE_SECRET_KEY`, y si falta `SUPABASE_SERVICE_ROLE_KEY`). Si la
+    // sonda leyera otra variable distinta de la que usan los gateways,
+    // comprobaria una credencial que nadie usa: "ready" con la clave real
+    // rechazada. Hoy, sin `SUPABASE_SECRET_KEY` en el entorno, resuelve
+    // exactamente el mismo valor que antes.
+    apiKey: String? = SupabaseRequestAuthPolicy.secretFromEnvironment(),
 ): String {
     if (url.isNullOrBlank() || apiKey.isNullOrBlank()) return "unknown"
     return try {
-        val request = HttpRequest.newBuilder(URI.create("$url/rest/v1/"))
-            .header("apikey", apiKey)
+        val builder = HttpRequest.newBuilder(URI.create("$url/rest/v1/"))
             .timeout(READINESS_TIMEOUT)
             .GET()
-            .build()
-        val response = readinessHttpClient.send(request, HttpResponse.BodyHandlers.discarding())
-        if (response.statusCode() in 200..499) "up" else "down"
+        // `setHeader` y no `header`: `header` ACUMULA, y dos `Authorization` en
+        // una peticion no es "gana el ultimo". Misma regla que el transporte.
+        SupabaseRequestAuthPolicy(apiKey).elevatedHeaders().forEach { (name, value) ->
+            builder.setHeader(name, value)
+        }
+        val response = readinessHttpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding())
+        // 2xx y SOLO 2xx es "up", y el rango estrecho SOLO es legitimo porque la
+        // peticion de arriba ejerce la credencial real (ver KDoc).
+        //
+        // Antes el rango era `200..499`, y eso anulaba la sonda justo en el fallo
+        // mas probable: un 401 -- la credencial rechazada -- contaba como sano.
+        // Es decir, `/health/ready` decia "ready" con Supabase alcanzable pero
+        // sin credencial valida, que para este backend es indistinguible de
+        // estar caido: ninguna query de negocio funcionaria. Con una migracion
+        // de claves en curso (SUPABASE_SERVICE_ROLE_KEY -> SUPABASE_SECRET_KEY)
+        // ese es EL modo de fallo que la sonda tiene que ver, no el que tiene
+        // que esconder. Un 4xx de credencial no es "el servicio responde": es
+        // "el servicio no me deja entrar".
+        //
+        // El rango y las cabeceras se mueven JUNTOS. Si alguna vez la sonda deja
+        // de mandar lo que manda el trafico real, este rango vuelve a ser una
+        // apuesta sobre una combinacion que nadie ejerce y hay que ensancharlo.
+        if (response.statusCode() in 200..299) "up" else "down"
     } catch (error: Exception) {
         if (error.looksLikeUpstreamTimeout()) {
             logStrategicEvent(StrategicEvent.UPSTREAM_TIMEOUT, operation = "health_ready_supabase_check", errorType = error::class.simpleName)
@@ -429,6 +662,19 @@ internal fun checkSupabaseReachable(
         "down"
     }
 }
+
+/**
+ * Los checks de `/health/ready`, con la sonda FUERA del hilo de la peticion.
+ *
+ * F-15: la sonda bloquea hasta 5 s ([READINESS_TIMEOUT]). En el hilo de Netty eso
+ * es justo lo que no puede pasar en la ruta que el balanceador consulta para
+ * decidir si esta replica sigue viva: con varias sondas lentas a la vez, el pool
+ * se agota y la replica deja de contestar tambien a `/health/live`. Vive en una
+ * funcion propia para poder probar el salto de hilo sin el arnes de
+ * `testApplication`, que no cambia de hilo (ver `UpstreamIoSeamTest`).
+ */
+internal suspend fun readinessChecks(supabaseCheck: () -> String): Map<String, String> =
+    mapOf("ktor" to "up", "supabase" to withUpstreamIo(supabaseCheck))
 
 /**
  * `/health/live`: el proceso esta vivo y sirviendo. Nunca depende de
@@ -445,8 +691,7 @@ fun Route.observabilityHealthRoutes(supabaseCheck: () -> String = ::checkSupabas
         call.respond(mapOf("status" to "ok"))
     }
     get("/health/ready") {
-        val supabaseStatus = supabaseCheck()
-        val checks = mapOf("ktor" to "up", "supabase" to supabaseStatus)
+        val checks = readinessChecks(supabaseCheck)
         val ready = checks.values.all { it == "up" }
         call.respond(
             if (ready) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,

@@ -265,8 +265,8 @@ class SupabaseOposiBotsUserAdminGateway(
         val response = try {
             client.request("$supabaseUrl$path") {
                 this.method = method
-                header("apikey", serviceRoleKey)
-                header(HttpHeaders.Authorization, "Bearer $serviceRoleKey")
+                // F-02: la credencial la decide la política (`Bearer` sólo con clave JWT).
+                SupabaseRequestAuthPolicy(serviceRoleKey).elevatedHeaders().forEach { (name, value) -> header(name, value) }
                 header(HttpHeaders.Accept, ContentType.Application.Json)
                 prefer?.let { header("Prefer", it) }
                 body?.let {
@@ -295,9 +295,14 @@ class SupabaseOposiBotsUserAdminGateway(
         if (isBlank()) emptyList() else json.decodeFromString(this)
 
     companion object {
-        fun fromEnvironment(json: Json): OposiBotsUserAdminGateway? {
-            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+        /**
+         * F-01: la clave la resuelve [SupabaseRequestAuthPolicy.secretFromEnvironment]
+         * (`SUPABASE_SECRET_KEY`, con la legacy como fallback). Leía sólo la legacy y,
+         * con la configuración canónica, `Application.module()` no arrancaba.
+         */
+        fun fromEnvironment(json: Json, environment: (String) -> String? = System::getenv): OposiBotsUserAdminGateway? {
+            val url = environment("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            val serviceRoleKey = SupabaseRequestAuthPolicy.secretFromEnvironment(environment)
             return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseOposiBotsUserAdminGateway(url, serviceRoleKey, json)
         }
     }

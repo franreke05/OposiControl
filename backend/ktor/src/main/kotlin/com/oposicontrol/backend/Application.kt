@@ -1,5 +1,6 @@
 package com.oposicontrol.backend
 
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.PartData
 import io.ktor.serialization.kotlinx.json.json
@@ -23,6 +24,7 @@ import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
 import io.ktor.server.request.host
 import io.ktor.server.request.path
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
@@ -30,6 +32,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -61,59 +64,67 @@ fun main() {
     embeddedServer(Netty, host = host, port = port, module = Application::module).start(wait = true)
 }
 
-fun Application.module() {
-    val json = Json {
-        ignoreUnknownKeys = true
-        explicitNulls = false
-        prettyPrint = false
-    }
-    val serverProfile = System.getenv("SERVER_PROFILE").orEmpty().ifBlank { "combined" }
-    val consumerOnly = serverProfile.equals("consumer", ignoreCase = true)
-    val authRuntime = OposiBotsAuthRuntime.fromEnvironment(json, required = consumerOnly)
-    if (consumerOnly) {
-        configureConsumerAuthOnly(authRuntime ?: error("Auth consumer no configurado."))
-        return
-    }
-    val gateway = SupabaseContentGateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir contenido desde Ktor.")
-    val newsGateway = SupabaseNewsGateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir noticias desde Ktor.")
-    val tagSearchGateway = SupabaseTagSearchGateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir busqueda desde Ktor.")
-    val adminGateway = SupabaseAdminGateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir admin desde Ktor.")
-    val adminAnalyticsGateway = AdminAnalyticsGateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir analitica desde Ktor.")
-    val adminRankingsGateway = AdminRankingsGateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir rankings desde Ktor.")
-    val adminDashboardOverviewGateway = AdminDashboardOverviewGateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir el dashboard agregado desde Ktor.")
-    val v1Gateway = SupabaseV1Gateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir API V1 desde Ktor.")
-    val adminV1Gateway = AdminV1Gateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir admin API V1 desde Ktor.")
-    val oposiBotsUserAdminGateway = SupabaseOposiBotsUserAdminGateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir la administracion de usuarios de OposiBots.")
-    val appV1Gateway = AppV1Gateway.fromEnvironment(json)
-        ?: error("SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios para servir app API V1 desde Ktor.")
-    val supabaseUrl = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-    val jwtVerifier = SupabaseJwtVerifier(supabaseUrl, json)
-    val appEnv = System.getenv("APP_ENV").orEmpty()
-    val allowDevUser = allowsDevBypass(
-        appEnv,
-        System.getenv("OPOSICONTROL_ALLOW_DEV_USER")?.toBooleanStrictOrNull() ?: false,
+/**
+ * Mensaje de arranque cuando un gateway no encuentra su configuración (F-01).
+ *
+ * Los once mensajes decían "SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son
+ * obligatorios", y con la configuración canónica —sólo `SUPABASE_SECRET_KEY`—
+ * mandaban a quien despliega a definir la variable deprecada. Nombra la canónica
+ * y la legacy, y nunca un valor.
+ */
+internal fun missingSupabaseConfigurationMessage(purpose: String): String =
+    "SUPABASE_URL y SUPABASE_SECRET_KEY (o la legacy SUPABASE_SERVICE_ROLE_KEY) son obligatorios para $purpose."
+
+/**
+ * Los gateways que NO se pueden construir con [environment] (F-01).
+ *
+ * Existe para poder probar el arranque con un entorno inyectado —sólo
+ * `SUPABASE_SECRET_KEY`, por ejemplo— sin tocar el entorno del proceso: llama a
+ * los MISMOS `fromEnvironment` que usa [module]. Una lista vacía significa que
+ * [module] no se detendría por la configuración de estos gateways.
+ *
+ * `SupabaseV1Gateway` y `AdminV1Gateway` no aparecen porque su `fromEnvironment`
+ * no admite entorno inyectado (sus ficheros no son de esta fase); los dos
+ * resuelven ya la clave con [SupabaseRequestAuthPolicy.secretFromEnvironment], y
+ * `SupabaseEnvironmentWiringTest` vigila en las fuentes que ningún fichero vuelva
+ * a leer la variable legacy por su cuenta.
+ */
+internal fun unconfiguredSupabaseGateways(json: Json, environment: (String) -> String?): List<String> =
+    listOfNotNull(
+        "SupabaseContentGateway".takeIf { SupabaseContentGateway.fromEnvironment(json, environment) == null },
+        "SupabaseNewsGateway".takeIf { SupabaseNewsGateway.fromEnvironment(json, environment) == null },
+        "SupabaseTagSearchGateway".takeIf { SupabaseTagSearchGateway.fromEnvironment(json, environment) == null },
+        "SupabaseAdminGateway".takeIf { SupabaseAdminGateway.fromEnvironment(json, environment) == null },
+        "AdminAnalyticsGateway".takeIf { AdminAnalyticsGateway.fromEnvironment(json, environment) == null },
+        "AdminRankingsGateway".takeIf { AdminRankingsGateway.fromEnvironment(json, environment) == null },
+        "AdminDashboardOverviewGateway".takeIf {
+            AdminDashboardOverviewGateway.fromEnvironment(json, environment) == null
+        },
+        "SupabaseOposiBotsUserAdminGateway".takeIf {
+            SupabaseOposiBotsUserAdminGateway.fromEnvironment(json, environment) == null
+        },
+        "AppV1Gateway".takeIf { AppV1Gateway.fromEnvironment(json, environment) == null },
     )
-    install(ContentNegotiation) {
-        json(json)
-    }
-    // Observability foundation (Observability.kt): request correlation, logs
-    // estrategicos, health/readiness. No toca OposiBot -- ver KDoc del archivo.
-    installRequestCorrelation()
+
+/**
+ * Traducción de excepciones a respuestas HTTP de todo el backend (OposiBot maneja
+ * las suyas).
+ *
+ * Vive fuera de [module] para que las pruebas monten EXACTAMENTE esta
+ * configuración y no una copia (`BackendStatusPagesTest`): la redacción, los
+ * códigos y las cabeceras son contrato, y una copia en el test puede seguir verde
+ * con el original roto.
+ *
+ * Centralizado (punto 7 de la tarea de observabilidad): cada handler emite como
+ * mucho UN evento estratégico, con request_id/duration ya disponibles vía
+ * [installRequestCorrelation]; nunca se duplica el mismo error en logs sueltos.
+ *
+ * Precedencia: `StatusPages` elige el handler de la clase MÁS CERCANA a la de la
+ * excepción, no el primero registrado. Por eso `SerializationException`, que
+ * extiende `IllegalArgumentException`, tiene su propio handler y no cae en el 400.
+ */
+internal fun Application.installBackendStatusPages() {
     install(StatusPages) {
-        // Centralizado (punto 7 de la tarea de observabilidad): cada handler
-        // de aqui abajo emite UN evento estrategico, con request_id/duration
-        // ya disponibles via installRequestCorrelation -- nunca se duplica el
-        // mismo error en logs sueltos ademas de aqui.
         exception<AppUnauthorized> { call, cause ->
             logStrategicEvent(
                 StrategicEvent.AUTH_LOGIN_FAILED,
@@ -149,6 +160,21 @@ fun Application.module() {
             )
         }
         exception<BackendDomainException> { call, cause ->
+            // Un rechazo TRANSITORIO de la base de datos (bloqueo, deadlock,
+            // statement timeout) lleva `Retry-After`: dice al cliente que reintentar
+            // tiene sentido y cuándo. Es un problema de infraestructura, no una regla
+            // de negocio, y por eso —sólo éste— deja evento en el log.
+            cause.retryAfterSeconds?.let { seconds ->
+                logStrategicEvent(
+                    StrategicEvent.SUPABASE_REQUEST_FAILED,
+                    requestId = call.requestIdOrNull(),
+                    operation = call.request.path(),
+                    result = cause.status.value.toString(),
+                    durationMs = call.elapsedMsOrNull(),
+                    errorType = cause.errorCode,
+                )
+                call.response.header(HttpHeaders.RetryAfter, seconds.toString())
+            }
             call.respond(
                 cause.status,
                 ErrorDto(error = cause.errorCode.lowercase(), message = cause.message),
@@ -162,6 +188,40 @@ fun Application.module() {
             call.respond(
                 HttpStatusCode.BadRequest,
                 ErrorDto(error = "bad_request", message = "El cuerpo de la petición no es válido."),
+            )
+        }
+        // F-08. `SerializationException` extiende `IllegalArgumentException`, así que
+        // una respuesta de Supabase que no casaba con el DTO —columna renombrada,
+        // tipo inesperado— salía como 400 "petición inválida" con el mensaje de
+        // kotlinx dentro: nombres de clase, de campos y un fragmento del JSON del
+        // upstream. No es un error del cliente sino del contrato con el servicio de
+        // datos: 502, redactado y con referencia, como cualquier otro fallo upstream.
+        // Los cuerpos de PETICIÓN mal formados no pasan por aquí: Ktor los convierte
+        // en `BadRequestException` (handler de arriba).
+        exception<SerializationException> { call, cause ->
+            val requestId = call.requestIdOrNull()
+            logStrategicEvent(
+                StrategicEvent.SUPABASE_REQUEST_FAILED,
+                requestId = requestId,
+                operation = call.request.path(),
+                result = "contract_error",
+                durationMs = call.elapsedMsOrNull(),
+                errorType = cause::class.simpleName,
+            )
+            UpstreamFailureLogger.warn(
+                "upstream contract failure on {} (requestId={}): {}",
+                call.request.path(),
+                requestId,
+                cause.redactedMessage("Upstream contract error"),
+            )
+            call.respond(
+                HttpStatusCode.BadGateway,
+                ErrorDto(
+                    error = "backend_contract_error",
+                    message = requestId
+                        ?.let { "No se pudo interpretar la respuesta del servicio de datos. Referencia: $it" }
+                        ?: "No se pudo interpretar la respuesta del servicio de datos.",
+                ),
             )
         }
         exception<IllegalArgumentException> { call, cause ->
@@ -203,41 +263,93 @@ fun Application.module() {
             )
         }
         exception<Throwable> { call, cause ->
-            val message = "${cause::class.simpleName}: ${cause.redactedMessage("Unexpected backend error", 200)}"
+            val requestId = call.requestIdOrNull()
             logStrategicEvent(
                 StrategicEvent.UNCAUGHT_EXCEPTION,
-                requestId = call.requestIdOrNull(),
+                requestId = requestId,
                 operation = call.request.path(),
                 result = "error",
                 durationMs = call.elapsedMsOrNull(),
                 errorType = cause::class.simpleName,
             )
+            // El detalle va al log, nunca al cuerpo. Antes se respondía
+            // "${'$'}{cause::class.simpleName}: ..." y eso publicaba nombres de clase
+            // Kotlin/Java a cualquiera capaz de provocar un 500: el mismo oráculo
+            // que el handler de arriba ya había cerrado para los fallos upstream,
+            // abierto aquí para todo lo demás. El request id es lo que permite
+            // correlacionar con el log sin filtrar nada.
+            UpstreamFailureLogger.warn(
+                "uncaught exception on {} (requestId={}): {}: {}",
+                call.request.path(),
+                requestId,
+                cause::class.simpleName,
+                cause.redactedMessage("Unexpected backend error", 200),
+            )
             call.respond(
                 HttpStatusCode.InternalServerError,
-                ErrorDto(error = "backend_internal_error", message = message),
+                ErrorDto(
+                    error = "backend_internal_error",
+                    message = requestId
+                        ?.let { "Error interno del servidor. Referencia: $it" }
+                        ?: "Error interno del servidor.",
+                ),
             )
         }
     }
+}
+
+fun Application.module() {
+    val json = Json {
+        ignoreUnknownKeys = true
+        explicitNulls = false
+        prettyPrint = false
+    }
+    val serverProfile = System.getenv("SERVER_PROFILE").orEmpty().ifBlank { "combined" }
+    val consumerOnly = serverProfile.equals("consumer", ignoreCase = true)
+    val authRuntime = OposiBotsAuthRuntime.fromEnvironment(json, required = consumerOnly)
+    if (consumerOnly) {
+        configureConsumerAuthOnly(authRuntime ?: error("Auth consumer no configurado."))
+        return
+    }
+    val gateway = SupabaseContentGateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir contenido desde Ktor"))
+    val newsGateway = SupabaseNewsGateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir noticias desde Ktor"))
+    val tagSearchGateway = SupabaseTagSearchGateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir busqueda desde Ktor"))
+    val adminGateway = SupabaseAdminGateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir admin desde Ktor"))
+    val adminAnalyticsGateway = AdminAnalyticsGateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir analitica desde Ktor"))
+    val adminRankingsGateway = AdminRankingsGateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir rankings desde Ktor"))
+    val adminDashboardOverviewGateway = AdminDashboardOverviewGateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir el dashboard agregado desde Ktor"))
+    val v1Gateway = SupabaseV1Gateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir API V1 desde Ktor"))
+    val adminV1Gateway = AdminV1Gateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir admin API V1 desde Ktor"))
+    val oposiBotsUserAdminGateway = SupabaseOposiBotsUserAdminGateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir la administracion de usuarios de OposiBots"))
+    val appV1Gateway = AppV1Gateway.fromEnvironment(json)
+        ?: error(missingSupabaseConfigurationMessage("servir app API V1 desde Ktor"))
+    val supabaseUrl = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
+    val jwtVerifier = SupabaseJwtVerifier(supabaseUrl, json)
+    val appEnv = System.getenv("APP_ENV").orEmpty()
+    val allowDevUser = allowsDevBypass(
+        appEnv,
+        System.getenv("OPOSICONTROL_ALLOW_DEV_USER")?.toBooleanStrictOrNull() ?: false,
+    )
+    install(ContentNegotiation) {
+        json(json)
+    }
+    // Observability foundation (Observability.kt): request correlation, logs
+    // estrategicos, health/readiness. No toca OposiBot -- ver KDoc del archivo.
+    installRequestCorrelation()
+    installBackendStatusPages()
     install(Authentication) {
         bearer("gateway-auth") {
-            authenticate { credentials ->
-                val expected = System.getenv("OPOSICONTROL_BACKEND_TOKEN").orEmpty()
-                val allowDevToken = allowsDevBypass(
-                    appEnv,
-                    System.getenv("OPOSICONTROL_ALLOW_DEV_TOKEN")?.toBooleanStrictOrNull() ?: false,
-                )
-                val staticTokenAccepted = expected.isNotBlank() &&
-                    (credentials.token == expected || (allowDevToken && credentials.token == "dev-local"))
-
-                // Este bloque sólo establece identidad. La autorización (confinar el
-                // token estático y exigir rol admin) se aplica en AdminAuthorizationPlugin,
-                // que corre en el hook AuthenticationChecked y puede distinguir 401 de 403.
-                if (staticTokenAccepted) return@authenticate UserIdPrincipal(STATIC_TOKEN_PRINCIPAL)
-
-                runCatching { jwtVerifier.subFrom(credentials.token) }
-                    .getOrNull()
-                    ?.let(::UserIdPrincipal)
-            }
+            authenticate { credentials -> gatewayAuthPrincipal(credentials.token, appEnv, jwtVerifier::subFrom) }
         }
     }
     routing {
@@ -563,6 +675,42 @@ internal fun allowsDevBypass(appEnv: String, enabled: Boolean): Boolean {
 }
 
 /**
+ * La IDENTIDAD de una llamada a `gateway-auth`: el token estático, un JWT verificado,
+ * o nadie.
+ *
+ * Sólo establece identidad. La autorización —confinar el token estático a las
+ * superficies legacy locales y exigir rol admin— vive en `AdminAuthorizationPlugin`,
+ * que corre en `AuthenticationChecked` y sí puede distinguir un 401 de un 403.
+ *
+ * ### Por qué es una función y no la lambda que era (P1-1)
+ *
+ * Estaba escrita dentro de `authenticate { … }` en `module()`, y ahí no hay forma de
+ * probarla: `module()` exige el entorno entero de Supabase para llegar a construirse.
+ * Lo que hay que poder probar es concretamente que la verificación del JWT ocurre
+ * FUERA del hilo de la petición ([verifiedJwtPrincipalOrNull]): la primera vez, con un
+ * `kid` nuevo o tras una rotación, descarga el JWKS con una petición bloqueante, y
+ * esto corre en el pipeline de CADA llamada autenticada.
+ *
+ * Los dos valores de entorno se leen en cada llamada, como antes: son parámetros con
+ * default, y un default se evalúa en la llamada, no al cargar la clase.
+ */
+internal suspend fun gatewayAuthPrincipal(
+    token: String,
+    appEnv: String,
+    verify: (String) -> String,
+    expectedStaticToken: String = System.getenv("OPOSICONTROL_BACKEND_TOKEN").orEmpty(),
+    allowDevToken: Boolean = allowsDevBypass(
+        appEnv,
+        System.getenv("OPOSICONTROL_ALLOW_DEV_TOKEN")?.toBooleanStrictOrNull() ?: false,
+    ),
+): UserIdPrincipal? {
+    val staticTokenAccepted = expectedStaticToken.isNotBlank() &&
+        (token == expectedStaticToken || (allowDevToken && token == "dev-local"))
+    if (staticTokenAccepted) return UserIdPrincipal(STATIC_TOKEN_PRINCIPAL)
+    return verifiedJwtPrincipalOrNull(token, verify)
+}
+
+/**
  * ¿La llamada viene de la propia máquina, en un entorno de desarrollo?
  *
  * Es la única barrera de red del token estático, así que se decide **sólo con la
@@ -785,7 +933,10 @@ private suspend fun ApplicationCall.receiveSingleFile(
                 require(bytes.size <= maxBytes) { "El archivo supera el limite permitido." }
                 val mimeType = part.contentType?.toString().orEmpty().ifBlank { "application/octet-stream" }
                 if (requiredMimePrefix != null) {
-                    require(mimeType.startsWith(requiredMimePrefix)) { "Tipo de archivo no permitido: $mimeType." }
+                    // P2-9: el mensaje NO repite el MIME que mandó el cliente. Ese texto
+                    // lo controla quien sube el archivo, y un 400 que lo devuelve tal
+                    // cual es un eco a un cuerpo que se publica.
+                    require(mimeType.startsWith(requiredMimePrefix)) { "Tipo de archivo no permitido." }
                 }
                 uploaded = BackendUploadedFile(
                     fileName = part.originalFileName?.sanitizeStorageSegment()?.ifBlank { null } ?: defaultFileName,
@@ -1054,69 +1205,31 @@ private class SupabaseContentGateway private constructor(
         return saved.toDto(questionCount = 0)
     }
 
-    fun uploadPortada(solucionarioId: String, file: BackendUploadedFile): SolucionarioDto {
-        require(file.mimeType.startsWith("image/")) { "La portada debe ser una imagen." }
-        val examId = solucionarioId.toIntId()
-        val previous = request(
-            "GET",
-            "/rest/v1/examen?select=portada_storage_path&id=eq.$examId&limit=1",
-            null,
-        ).decodeList<ExamenCoverPathRow>().firstOrNull()
-        val objectPath = "exam-covers/$examId/${file.fileName.sanitizeStorageSegment()}"
-        storageUpload(objectPath, file.mimeType, file.bytes)
-        val publicUrl = storagePublicUrl(objectPath)
-        val saved = try {
-            request(
-                "PATCH",
-                "/rest/v1/examen?id=eq.$examId",
-                json.encodeToString(
-                    mapOf(
-                        "portada_url" to publicUrl,
-                        "portada_storage_path" to objectPath,
-                        "portada_mime_type" to file.mimeType,
-                    ),
-                ),
-                prefer = "return=representation",
-            ).decodeList<ExamenRow>().firstOrNull()
-                ?: throw IllegalArgumentException("No existe el solucionario $solucionarioId.")
-        } catch (error: IllegalStateException) {
-            if (error.isMissingCoverColumnError()) {
-                throw IllegalArgumentException(
-                    "Faltan columnas de portada en public.examen. Ejecuta docs/supabase/20260507_exam_cover_resource_uploads.sql en Supabase.",
-                )
-            }
-            throw error
-        }
-        previous?.portadaStoragePath
-            ?.takeIf { it.isNotBlank() && it != objectPath }
-            ?.let(::storageDelete)
-        return saved.toDto("", 0)
-    }
+    /**
+     * Portada legacy: RETIRADA (M6).
+     *
+     * Estas dos funciones escribían `portada_url` en `public.examen`, y esa columna ya
+     * no existe: M6 dejó la portada en `portada_storage_path` + `portada_mime_type`,
+     * con un CHECK que además exige la ruta `exam-covers/<examen_id>/<uuid>.<ext>` —que
+     * esto tampoco componía—. Tal cual estaban, la subida **primero escribía el objeto
+     * en Storage** y después fallaba el PATCH por columna inexistente: un 500 y un
+     * fichero huérfano pagando almacenamiento, en cada intento.
+     *
+     * No se «arregla» apuntándolas a las columnas nuevas porque no hay a quién servir:
+     * la portada de escritorio va por `POST /api/v1/admin/examenes/{id}/portada`
+     * (K5, tabla `examenes`) y estas rutas de `/content` no tienen consumidor. Un error
+     * de dominio constante dice exactamente eso, y no toca ni Storage ni la base.
+     */
+    fun uploadPortada(solucionarioId: String, file: BackendUploadedFile): SolucionarioDto =
+        throw legacyCoverRetired()
 
-    fun clearPortada(solucionarioId: String): SolucionarioDto {
-        val examId = solucionarioId.toIntId()
-        val previous = request(
-            "GET",
-            "/rest/v1/examen?select=portada_storage_path&id=eq.$examId&limit=1",
-            null,
-        ).decodeList<ExamenCoverPathRow>().firstOrNull()
-            ?: throw IllegalArgumentException("No existe el solucionario $solucionarioId.")
-        val saved = request(
-            "PATCH",
-            "/rest/v1/examen?id=eq.$examId",
-            json.encodeToString(
-                mapOf(
-                    "portada_url" to null,
-                    "portada_storage_path" to null,
-                    "portada_mime_type" to null,
-                ),
-            ),
-            prefer = "return=representation",
-        ).decodeList<ExamenRow>().firstOrNull()
-            ?: throw IllegalArgumentException("No existe el solucionario $solucionarioId.")
-        previous.portadaStoragePath?.takeIf { it.isNotBlank() }?.let(::storageDelete)
-        return saved.toDto("", 0)
-    }
+    fun clearPortada(solucionarioId: String): SolucionarioDto = throw legacyCoverRetired()
+
+    private fun legacyCoverRetired() = BackendDomainException(
+        "LEGACY_EXAM_COVER_RETIRED",
+        HttpStatusCode.Gone,
+        "La portada de este catálogo antiguo ya no se gestiona por aquí. Usa la pantalla de Exámenes.",
+    )
 
     fun deleteSolucionario(solucionarioId: String) {
         val examId = solucionarioId.toIntId()
@@ -1404,8 +1517,7 @@ private class SupabaseContentGateway private constructor(
         val path = "/storage/v1/object/$examResourcesBucket/$encodedPath"
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", mimeType)
             .header("x-upsert", "true")
         val response = try {
@@ -1427,8 +1539,7 @@ private class SupabaseContentGateway private constructor(
         val path = "/storage/v1/object/$examResourcesBucket/$encodedPath"
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
         val response = try {
             client.send(builder.DELETE().build(), HttpResponse.BodyHandlers.ofString())
         } catch (e: Exception) {
@@ -1439,14 +1550,29 @@ private class SupabaseContentGateway private constructor(
         }
     }
 
+    /**
+     * Crea el bucket de recursos si no existe. **PRIVADO**, y eso no es un detalle.
+     *
+     * Este es el SEGUNDO camino que puede crear `exam-resources`: el otro vive en
+     * `SupabaseRequestTransport.storageEnsureBucket`, y allí ya se corrigió. Si
+     * sólo se arregla uno, en un entorno nuevo gana el que llegue primero y el
+     * material de las preguntas inmersivas —audio, vídeo, imágenes— puede nacer
+     * servido públicamente a cualquiera con la URL. Hoy no explota porque el
+     * bucket ya existe en el entorno vivo y Storage responde 409 sin tocar nada;
+     * la bomba es de despliegue, no de ejecución.
+     *
+     * Ojo a la consecuencia que esto NO arregla: `storagePublicUrl` compone
+     * `/object/public/…`, que sobre un bucket privado da 404. La portada de
+     * examen sigue dependiendo de que su bucket sea público. Servir recursos
+     * privados necesita URL firmada, que aún no existe (EXAM-008).
+     */
     private fun ensureStorageBucketExists() {
         if (storageBucketChecked) return
         val bucketId = examResourcesBucket.toStorageBucketId()
-        val body = """{"id":"$bucketId","name":"$bucketId","public":true}"""
+        val body = """{"id":"$bucketId","name":"$bucketId","public":false}"""
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/bucket"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", "application/json")
         val response = try {
             client.send(builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
@@ -1468,8 +1594,7 @@ private class SupabaseContentGateway private constructor(
     private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", "application/json")
         if (prefer != null) builder.header("Prefer", prefer)
         val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
@@ -1501,10 +1626,17 @@ private class SupabaseContentGateway private constructor(
     private inline fun <reified T> String.decodeList(): List<T> = json.decodeFromString(this)
 
     companion object {
-        fun fromEnvironment(json: Json): SupabaseContentGateway? {
-            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
-            val bucket = System.getenv("SUPABASE_BUCKET_EXAM_RESOURCES").orEmpty().ifBlank { "exam-resources" }
+        /**
+         * F-01/F-02: la clave la resuelve [SupabaseRequestAuthPolicy.secretFromEnvironment]
+         * (`SUPABASE_SECRET_KEY`, con la legacy como fallback) y las cabeceras las
+         * pone [supabaseElevatedAuth]: `Bearer` sólo si la clave tiene forma de JWT.
+         * Leía sólo `SUPABASE_SERVICE_ROLE_KEY` y firmaba `Bearer` sin condición, así
+         * que con la configuración canónica el backend entero no arrancaba.
+         */
+        fun fromEnvironment(json: Json, environment: (String) -> String? = System::getenv): SupabaseContentGateway? {
+            val url = environment("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            val serviceRoleKey = SupabaseRequestAuthPolicy.secretFromEnvironment(environment)
+            val bucket = environment("SUPABASE_BUCKET_EXAM_RESOURCES").orEmpty().ifBlank { "exam-resources" }
             return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseContentGateway(url, serviceRoleKey, bucket, json)
         }
     }
@@ -1844,16 +1976,10 @@ private fun String.toStorageBucketId(): String {
     return this
 }
 
-private fun Throwable.isMissingCoverColumnError(): Boolean {
-    val message = message.orEmpty()
-    val coverColumn = listOf("portada_url", "portada_storage_path", "portada_mime_type").any {
-        message.contains(it, ignoreCase = true)
-    }
-    val missingColumn = listOf("PGRST204", "PGRST205", "42703", "column").any {
-        message.contains(it, ignoreCase = true)
-    }
-    return coverColumn && missingColumn
-}
+// `isMissingCoverColumnError` se retiró con la portada legacy: existía para convertir
+// «falta la columna portada_url» en un mensaje que pedía ejecutar un SQL, y esa columna
+// ya no va a volver (M6). Un detector de esquema ausente sólo tiene sentido mientras
+// alguien espera que el esquema aparezca.
 
 private fun String.sanitizeStorageSegment(): String {
     return lowercase()

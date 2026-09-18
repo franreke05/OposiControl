@@ -503,8 +503,7 @@ class SupabaseAdminGateway internal constructor(
     private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", "application/json")
         if (prefer != null) builder.header("Prefer", prefer)
         val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
@@ -573,9 +572,15 @@ class SupabaseAdminGateway internal constructor(
             "internal_note",
         )
 
-        fun fromEnvironment(json: Json): SupabaseAdminGateway? {
-            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+        /**
+         * F-01/F-02: clave por [SupabaseRequestAuthPolicy.secretFromEnvironment] y
+         * cabeceras por [supabaseElevatedAuth]. Leía sólo `SUPABASE_SERVICE_ROLE_KEY`
+         * (con la configuración canónica el backend no arrancaba) y firmaba `Bearer`
+         * sin mirar la forma de la clave.
+         */
+        fun fromEnvironment(json: Json, environment: (String) -> String? = System::getenv): SupabaseAdminGateway? {
+            val url = environment("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            val serviceRoleKey = SupabaseRequestAuthPolicy.secretFromEnvironment(environment)
             return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseAdminGateway(url, serviceRoleKey, json)
         }
     }

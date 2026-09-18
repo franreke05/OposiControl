@@ -153,8 +153,7 @@ class SupabaseNewsGateway private constructor(
         val path = "/storage/v1/object/$newsAssetsBucket/$encodedPath"
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", mimeType)
             .header("x-upsert", "true")
         val response = try {
@@ -173,8 +172,7 @@ class SupabaseNewsGateway private constructor(
         val body = """{"id":"$bucketId","name":"$bucketId","public":true}"""
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl/storage/v1/bucket"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", "application/json")
         val response = try {
             client.send(builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(), HttpResponse.BodyHandlers.ofString())
@@ -201,8 +199,7 @@ class SupabaseNewsGateway private constructor(
     ): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", "application/json")
         if (prefer != null) builder.header("Prefer", prefer)
         val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
@@ -254,10 +251,16 @@ class SupabaseNewsGateway private constructor(
     }
 
     companion object {
-        fun fromEnvironment(json: Json): SupabaseNewsGateway? {
-            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
-            val bucket = System.getenv("SUPABASE_BUCKET_NEWS_ASSETS").orEmpty().ifBlank { "news-assets" }
+        /**
+         * F-01/F-02: clave por [SupabaseRequestAuthPolicy.secretFromEnvironment] y
+         * cabeceras por [supabaseElevatedAuth]. Leía sólo `SUPABASE_SERVICE_ROLE_KEY`
+         * (con la configuración canónica el backend no arrancaba) y firmaba `Bearer`
+         * sin mirar la forma de la clave.
+         */
+        fun fromEnvironment(json: Json, environment: (String) -> String? = System::getenv): SupabaseNewsGateway? {
+            val url = environment("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            val serviceRoleKey = SupabaseRequestAuthPolicy.secretFromEnvironment(environment)
+            val bucket = environment("SUPABASE_BUCKET_NEWS_ASSETS").orEmpty().ifBlank { "news-assets" }
             return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseNewsGateway(url, serviceRoleKey, bucket, json)
         }
     }

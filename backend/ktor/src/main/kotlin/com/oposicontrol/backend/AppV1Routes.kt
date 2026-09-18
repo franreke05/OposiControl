@@ -2,6 +2,7 @@ package com.oposicontrol.backend
 
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.request.receive
@@ -117,10 +118,19 @@ private fun ApplicationCall.usuarioId(verifier: SupabaseJwtVerifier, allowDevUse
 
 // ---------- Verificador JWT (ES256 contra el JWKS publico de Supabase) ----------
 
+/**
+ * Verifica la firma ES256 contra el JWKS público y devuelve el `sub`.
+ *
+ * [subFrom] BLOQUEA cuando tiene que descargar el JWKS (arranque, `kid` nuevo o
+ * rotación): en el pipeline se llama dentro de [withUpstreamIo] vía
+ * [verifiedJwtPrincipalOrNull] (F-03), nunca en el hilo de Netty. Usa el cliente
+ * compartido: un `HttpClient` propio era un pool y un executor más contra el
+ * mismo host sin ninguna ganancia.
+ */
 class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
     private val issuer = "$supabaseUrl/auth/v1"
     private val jwksUrl = "$issuer/.well-known/jwks.json"
-    private val client = newUpstreamHttpClient()
+    private val client = sharedUpstreamHttpClient
 
     @Volatile private var keys: Map<String, ECPublicKey> = emptyMap()
     @Volatile private var fetchedAt = 0L
@@ -278,11 +288,38 @@ data class CommercialSubscriptionDto(
 // ---------- Gateway Supabase (service role; SIEMPRE filtra por usuarioId) ----------
 
 class AppV1Gateway private constructor(
-    private val supabaseUrl: String,
-    private val serviceRoleKey: String,
+    supabaseUrl: String,
+    serviceRoleKey: String,
     private val json: Json,
-    private val client: HttpClient = newUpstreamHttpClient(),
+    client: HttpClient = sharedUpstreamHttpClient,
+    /**
+     * Reloj de la caché de rol. Parámetro y no `System.currentTimeMillis()` directo
+     * sólo para poder probar el TTL sin dormir: "acierta a los 45 s y vuelve a
+     * preguntar pasado el TTL" es contrato (F-17), no un detalle de implementación.
+     */
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
+    /**
+     * Migrado a [SupabaseRequestTransport] (F-02).
+     *
+     * Este gateway firmaba a mano `apikey` + `Authorization: Bearer <clave>` sin
+     * mirar la forma de la clave, con un `HttpClient` propio y sin capturar los
+     * fallos de red. Y no es un gateway cualquiera: su [hasAdminRole] decide CADA
+     * petición a `/api/v1/admin/…`, así que las cuatro verticales ya migradas
+     * seguían autorizándose por el camino legacy. Con una `sb_secret_...` eso era
+     * mandarla como `Bearer`, y un `IOException` de red salía como 500
+     * `UNCAUGHT_EXCEPTION` en vez de como fallo del servicio de datos.
+     *
+     * Ahora la credencial la decide [SupabaseRequestAuthPolicy], el cliente es el
+     * compartido y cualquier fallo —de red o de PostgREST— pasa por el mismo
+     * `failOnError` que el resto del backend.
+     */
+    private val transport = SupabaseRequestTransport(
+        baseUrl = supabaseUrl,
+        auth = SupabaseRequestAuthPolicy(serviceRoleKey),
+        client = client,
+    )
+
     /** Caché de decisiones de rol admin. Concurrente: la consultan varias peticiones a la vez. */
     private val adminRoleCache = java.util.concurrent.ConcurrentHashMap<String, CachedRoleDecision>()
 
@@ -298,10 +335,14 @@ class AppV1Gateway private constructor(
      * la siguiente sesión. Sólo se cachea el resultado positivo o negativo ya
      * calculado; un fallo de lectura no se cachea, para que un Supabase caído no
      * deje congelada una respuesta equivocada.
+     *
+     * Bloquea (lectura upstream en caso de fallo de caché): quien lo llame desde
+     * el pipeline tiene que hacerlo dentro de [withUpstreamIo], como hace
+     * [authorizeAdminCall] (F-03).
      */
     fun hasAdminRole(usuarioId: String): Boolean {
         usuarioId.validatedUuid("usuarioId")
-        val now = System.currentTimeMillis()
+        val now = clock()
         adminRoleCache[usuarioId]?.let { cached ->
             if (now < cached.expiresAtMillis) return cached.hasRole
         }
@@ -321,14 +362,31 @@ class AppV1Gateway private constructor(
 
     private data class CachedRoleDecision(val hasRole: Boolean, val expiresAtMillis: Long)
 
+    /**
+     * ¿Tiene el usuario alguno de [roleCodes]? UNA lectura (F-17), no dos.
+     *
+     * Antes eran dos viajes secuenciales —`roles_usuario` y después `roles_app`—
+     * por cada fallo de caché. Ahora es un embed de la FK
+     * `roles_usuario_rol_id_fkey → roles_app(id)`, verificada en vivo.
+     *
+     * **`!inner` es la regla, no un detalle de sintaxis.** Sin él, PostgREST
+     * aplica el filtro `roles_app.codigo=in.(…)` sólo al recurso EMBEBIDO: devuelve
+     * igualmente la fila de `roles_usuario` con `"roles_app": null`, y una lista no
+     * vacía se leería como "es admin" para cualquier usuario con cualquier rol. Por
+     * eso, además, la decisión se toma leyendo el `codigo` que viene en la fila y no
+     * sólo "¿hay filas?": si alguien quitara el `!inner`, la respuesta seguiría
+     * siendo la correcta.
+     */
     private fun hasAnyCanonicalRole(usuarioId: String, roleCodes: Set<String>): Boolean {
-        val roleIds = get("/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId")
-            .mapNotNull { it.str("rol_id") }
-            .distinct()
-        if (roleIds.isEmpty()) return false
         val roleFilter = roleCodes.joinToString(",")
-        val idFilter = roleIds.joinToString(",")
-        return get("/rest/v1/roles_app?select=id&codigo=in.($roleFilter)&id=in.($idFilter)&limit=1").isNotEmpty()
+        val rows = get(
+            "/rest/v1/roles_usuario?select=rol_id,roles_app!inner(codigo)" +
+                "&usuario_id=eq.$usuarioId&roles_app.codigo=in.($roleFilter)&limit=1",
+        )
+        return rows.any { row ->
+            val codigo = (row["roles_app"] as? JsonObject)?.str("codigo")?.trim()?.lowercase()
+            codigo != null && codigo in roleCodes
+        }
     }
 
     fun home(usuarioId: String): AppHomeResponse {
@@ -368,19 +426,84 @@ class AppV1Gateway private constructor(
         return AppExamenDetalleResponse(examen.toExamenDto(), preguntas)
     }
 
+    /**
+     * Abre un intento y lo dimensiona CONTANDO las preguntas que la app va a
+     * servir, no leyendo `examenes.total_preguntas`.
+     *
+     * ### Por qué se dejó de leer esa columna (EXAM-002)
+     *
+     * Cuando se escribió esto, `examenes.total_preguntas` **no tenía escritor**:
+     * la cifra que se leía aquí era, para casi cualquier examen, falsa, y este era
+     * el único lector que la convertía en daño real —un intento nace con esa cifra,
+     * y es la fila de un usuario final—.
+     *
+     * Desde M1 (`exams_total_preguntas_maintained`) la mantiene la base con triggers
+     * y significa exactamente lo mismo que este recuento (preguntas ACTIVAS
+     * vinculadas). Se sigue contando en vivo igualmente: son las mismas dos
+     * consultas que sirven las preguntas, así que no pueden discrepar de la entrega
+     * aunque un trigger fallara o se desactivara.
+     *
+     * ### Por qué se cuenta con ESTAS dos consultas y no con otras
+     *
+     * Son exactamente las que usa [examenDetalle] para servir las preguntas del
+     * examen, incluido el filtro `activa=eq.true`. Esa igualdad es el punto: si
+     * el recuento usara otra definición —por ejemplo contar `preguntas_examen` a
+     * secas—, un examen con preguntas archivadas crearía intentos que esperan más
+     * preguntas de las que la app va a entregar, y el intento no podría
+     * completarse nunca. El recuento tiene que significar lo mismo que la
+     * entrega, y la única forma de garantizarlo es preguntarlo igual.
+     *
+     * Coste: +1 petición por `iniciar`. Es lo que vale no dimensionar el examen
+     * de alguien con una columna que nadie mantiene.
+     *
+     * ### Lo que M1 cerró después
+     *
+     * Los DOS catálogos que exponen la columna (`AppV1Routes` y el público de
+     * `SupabaseV1Gateway`) la servían podrida. M1 la mantiene con triggers sobre
+     * `preguntas_examen` **y** sobre `preguntas.activa` —archivar una pregunta
+     * cambia el recuento sin tocar la tabla de pertenencia—, así que esos catálogos
+     * ya dicen la verdad sin tocar su código.
+     *
+     * Techo conocido y heredado: `id=in.(…)` crece con el número de preguntas y
+     * un examen muy largo puede topar con el límite de longitud de URL. Es el
+     * mismo techo que ya tiene [examenDetalle]; no se introduce aquí.
+     */
     fun iniciar(usuarioId: String, examenId: String): AppIntentoDto {
         usuarioId.validatedUuid("usuarioId")
         examenId.validatedUuid("examenId")
-        val examen = get("/rest/v1/examenes?select=total_preguntas&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1").firstOrNull()
-            ?: error("Examen no encontrado.")
+        // Precondición: el examen existe, está activo y está publicado. Sólo se
+        // pide el `id` porque lo único que se necesita saber es si la fila está.
+        val existe = get(
+            "/rest/v1/examenes?select=id&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1",
+        ).isNotEmpty()
+        // K0-6 (EX-15): 404 y no 500. `error(...)` salía como `IllegalStateException`,
+        // es decir, un 500 redactado indistinguible de un Supabase caído. Mismo
+        // mensaje para «no existe» y «existe pero es un borrador»: la app no puede
+        // saber qué borradores hay (EXAM-009).
+        if (!existe) throw BackendDomainException("EXAM_NOT_FOUND", HttpStatusCode.NotFound, "Examen no encontrado.")
         val body = buildJsonObject {
             put("usuario_id", usuarioId)
             put("examen_id", examenId)
             put("estado", "en_progreso")
             put("iniciado_en", Instant.now().toString())
-            put("total_preguntas", examen.int("total_preguntas") ?: 0)
+            put("total_preguntas", contarPreguntasServibles(examenId))
         }
         return post("/rest/v1/intentos_examen", body).first().toIntentoDto()
+    }
+
+    /**
+     * Cuántas preguntas va a entregar la app para este examen. Ver [iniciar].
+     *
+     * Devuelve 0 sólo cuando el examen de verdad no tiene ninguna pregunta
+     * servible: un fallo de lectura lanza y `iniciar` no llega a crear el
+     * intento, que es lo correcto — un intento mal dimensionado es peor que un
+     * intento que no se abre.
+     */
+    private fun contarPreguntasServibles(examenId: String): Int {
+        val preguntaIds = get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId")
+            .mapNotNull { it.str("pregunta_id") }
+        if (preguntaIds.isEmpty()) return 0
+        return get("/rest/v1/preguntas?select=id&id=in.(${preguntaIds.joinToString(",")})&activa=eq.true").size
     }
 
     fun responder(usuarioId: String, intentoId: String, req: ResponderRequest): ResponderResponse {
@@ -398,7 +521,7 @@ class AppV1Gateway private constructor(
         require(
             get("/rest/v1/opciones_pregunta?select=id&id=eq.${req.opcionSeleccionadaId}&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
         ) { "La opcion no pertenece a la pregunta." }
-        val result = rpc("/rest/v1/rpc/record_answer", buildJsonObject {
+        val result = rpc("record_answer", buildJsonObject {
             put("p_usuario_id", usuarioId)
             put("p_intento_id", intentoId)
             put("p_pregunta_id", req.preguntaId)
@@ -499,7 +622,7 @@ class AppV1Gateway private constructor(
             if (req.preguntaId != null) put("p_pregunta_id", req.preguntaId)
             put("p_idempotency_key", req.idempotencyKey.trim())
         }
-        return rpc("/rest/v1/rpc/record_event", body).firstOrNull()?.str("event_id")
+        return rpc("record_event", body).firstOrNull()?.str("event_id")
             ?: error("El evento no fue registrado.")
     }
 
@@ -636,43 +759,83 @@ class AppV1Gateway private constructor(
     )
 
     // --- helpers REST ---
-    private fun get(path: String): List<JsonObject> = request("GET", path, null)
-    private fun rpc(path: String, body: JsonObject): List<JsonObject> =
-        request("POST", path, json.encodeToString(body))
+    // Todo sale por [transport]: credencial por la política, cliente compartido y
+    // un único `failOnError` (dominio → [BackendDomainException]; el resto,
+    // incluidos los fallos de red, → `IllegalStateException` que StatusPages redacta).
+    private fun get(path: String): List<JsonObject> = transport.get(path).toJsonObjects()
+    private fun rpc(function: String, body: JsonObject): List<JsonObject> =
+        transport.rpc(function, json.encodeToString(body)).toJsonObjects()
     private fun post(path: String, body: JsonObject): List<JsonObject> =
-        request("POST", path, json.encodeToString(buildJsonArray { add(body) }), prefer = "return=representation")
+        transport.send(
+            method = "POST",
+            path = path,
+            body = json.encodeToString(buildJsonArray { add(body) }),
+            prefer = "return=representation",
+        ).toJsonObjects()
     private fun patch(path: String, body: JsonObject): List<JsonObject> =
-        request("PATCH", path, json.encodeToString(body), prefer = "return=representation")
+        transport.send(
+            method = "PATCH",
+            path = path,
+            body = json.encodeToString(body),
+            prefer = "return=representation",
+        ).toJsonObjects()
 
-    private fun request(method: String, path: String, body: String?, prefer: String? = null): List<JsonObject> {
-        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
-            .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
-            .header("Content-Type", "application/json")
-        if (prefer != null) builder.header("Prefer", prefer)
-        val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
-        val response = client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
-        if (response.statusCode() !in 200..299) {
-            mapSupabaseDomainError(response.statusCode(), response.body())?.let { throw it }
-            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.statusCode()}: ${response.body().take(300)}")
-        }
-        val text = response.body()
-        if (text.isBlank()) return emptyList()
-        val element = json.parseToJsonElement(text)
+    /**
+     * Objeto o array, porque PostgREST devuelve las dos formas: `record_event`
+     * responde un objeto y `record_answer` un array. Un cuerpo vacío (un 201 sin
+     * representación) es una lista vacía, no un error.
+     */
+    private fun String.toJsonObjects(): List<JsonObject> {
+        if (isBlank()) return emptyList()
+        val element = json.parseToJsonElement(this)
         return if (element is kotlinx.serialization.json.JsonArray) element.map { it.jsonObject } else listOf(element.jsonObject)
     }
 
     companion object {
-        /** Corto a propósito: revocar un rol debe surtir efecto en segundos. */
-        private const val ADMIN_ROLE_CACHE_TTL_MILLIS = 30_000L
+        /**
+         * Revocar un rol debe surtir efecto en segundos, no en la siguiente sesión.
+         *
+         * 90 s y no 30 s (F-17): el panel refresca la franja SYSTEM cada 60 s, y con
+         * un TTL menor que ese refresco CADA refresco pagaba la lectura de rol. Con
+         * 90 s, un administrador con el panel abierto cuesta como mucho una lectura
+         * cada dos refrescos, y una revocación sigue tardando minuto y medio como
+         * máximo en aplicarse.
+         */
+        internal const val ADMIN_ROLE_CACHE_TTL_MILLIS = 90_000L
         private const val ADMIN_ROLE_CACHE_MAX_ENTRIES = 1_000
 
-        fun fromEnvironment(json: Json): AppV1Gateway? {
-            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val key = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+        /**
+         * `null` si falta `SUPABASE_URL` o la clave de servidor.
+         *
+         * La clave la resuelve [SupabaseRequestAuthPolicy.secretFromEnvironment]
+         * (F-01): leía SÓLO `SUPABASE_SERVICE_ROLE_KEY`, así que con la
+         * configuración canónica —sólo `SUPABASE_SECRET_KEY`— devolvía `null` y
+         * `Application.module()` no arrancaba. [environment] existe para poder
+         * probarlo sin tocar el entorno del proceso.
+         */
+        fun fromEnvironment(json: Json, environment: (String) -> String? = System::getenv): AppV1Gateway? {
+            val url = environment("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            val key = SupabaseRequestAuthPolicy.secretFromEnvironment(environment)
             return if (url.isBlank() || key.isBlank()) null else AppV1Gateway(url, key, json)
         }
+
+        /**
+         * Sólo para tests: inyecta el `HttpClient` para poder observar lo que
+         * sale de verdad hacia el upstream.
+         *
+         * Mismo patrón y mismo motivo que en `AdminV1Gateway.forTesting`. Se
+         * añade ahora porque `iniciar` dimensiona la fila de un usuario final y
+         * **qué consulta usa para contar** es parte del contrato, no un detalle:
+         * sin esta costura no hay forma de fijar que el recuento significa lo
+         * mismo que la entrega.
+         */
+        internal fun forTesting(
+            supabaseUrl: String,
+            serviceRoleKey: String,
+            json: Json,
+            client: HttpClient,
+            clock: () -> Long = System::currentTimeMillis,
+        ): AppV1Gateway = AppV1Gateway(supabaseUrl, serviceRoleKey, json, client, clock)
     }
 }
 
