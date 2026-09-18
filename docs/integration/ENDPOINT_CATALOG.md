@@ -81,7 +81,7 @@ Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `Ad
 | `ADMIN-011A` | POST multipart | `/api/v1/admin/importaciones/preguntas/pdf` | `SOURCE_VERIFIED` — digital/selectable-text PDF to staging; 20 MB limit; no OCR |
 | `ADMIN-012` | PATCH | `/api/v1/admin/importaciones/staging/{id}` | `SOURCE_VERIFIED` |
 | `ADMIN-013` | POST | `/api/v1/admin/importaciones/{loteId}/importar` | `SOURCE_VERIFIED` |
-| `ADMIN-014` | POST | `/api/v1/admin/rafagas/import` | `SOURCE_VERIFIED` |
+| `ADMIN-014` | POST | `/api/v1/admin/rafagas/import` | `RETIRED` (DEC-IMP-05: publicaba sin staging ni revisión; el flujo canónico es ADMIN-011A + ADMIN-013) |
 | `ADMIN-015` | GET | `/api/v1/admin/feedback/preguntas` | `SOURCE_VERIFIED` |
 | `ADMIN-016` | POST | `/api/v1/admin/feedback/preguntas/{id}/resolver` | `SOURCE_VERIFIED` |
 | `ADMIN-017` | GET | `/api/v1/admin/auditoria` | `SOURCE_VERIFIED` |
@@ -312,3 +312,17 @@ Analítica devuelve, además de los valores, `unavailableMetrics` (la unión de 
 disponible) y `notInstrumented` (el subconjunto que nombra el read model concreto
 que falta). Los campos numéricos no llevan default: una métrica no disponible
 viaja como `null` explícito.
+
+## Exámenes V2 — Información básica (2026-09-11)
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `ADMIN-039` | DELETE | `/api/v1/admin/examenes/{id}/preguntas/{preguntaId}` | `SOURCE_VERIFIED` — desvincula la pregunta del examen; **no** la archiva (archivar es `DELETE /api/v1/admin/preguntas/{id}`) |
+
+Changed behaviour:
+
+| Endpoint | Change |
+|---|---|
+| `PATCH /api/v1/admin/examenes/{id}` (`ADMIN-002`) | Merge-patch (RFC 7396) **sólo** en `comunidad_id`, `anio` y `duracion_minutos` (lista cerrada `CLEARABLE_EXAMEN_COLUMNS`, `AdminV1Routes.kt`). Si la clave llega con `null`, la columna pasa a NULL; si la clave no llega, la columna no se toca. Antes, un `null` se omitía al reenviar a PostgREST y la columna no cambiaba: pasar un examen a Nacional, o vaciar el año o la duración, no se guardaba. El resto de columnas conserva el comportamiento anterior. `total_preguntas`, `portada_*` y `publicado_en` no se tocan aunque lleguen con `null`. Un cuerpo inválido devuelve el mismo `400` genérico. El único cliente que envía siempre las tres claves es el PATCH del editor de examen. El guardado de ráfaga no las envía, así que no las borra (ver EXAM-001 en `../registry/RISKS.md`). |
+
+El merge-patch está cubierto por `AdminV1ExamQuestionsTest`, con mutación. Ninguna de las dos rutas se ha ejercitado contra un Ktor en marcha: `LIVE_DATA_RUNTIME: NOT_VERIFIED`.
