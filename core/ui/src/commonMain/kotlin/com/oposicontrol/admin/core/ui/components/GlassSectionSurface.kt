@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import androidx.compose.ui.unit.dp
@@ -69,6 +70,7 @@ fun GlassSectionSurface(
 ) {
     val tokens = GlassTheme.tokens
     val highlight = tokens.glassHighlight
+    val sheen = sectionSheen(tokens)
     // El rim va de blanco arriba a azul pálido abajo. Un borde de un solo color
     // no cierra la forma sobre este fondo: arriba el panel es más claro que lo
     // que tiene detrás y necesita un filo blanco; abajo es más oscuro y necesita
@@ -85,12 +87,13 @@ fun GlassSectionSurface(
             .drawWithContent {
                 // Brillo superior, confinado al primer tercio: en un panel alto un
                 // degradado a toda altura deja de leerse como brillo y se lee como
-                // fondo sucio.
+                // fondo sucio. Sus colores salen de [sectionSheen]: ver por qué ya
+                // no son los de `glassHighlight`.
                 drawRect(
                     Brush.verticalGradient(
                         colors = listOf(
-                            highlight.copy(alpha = 0.30f),
-                            highlight.copy(alpha = 0.06f),
+                            sheen.top,
+                            sheen.fade,
                             Color.Transparent,
                         ),
                         startY = 0f,
@@ -106,3 +109,26 @@ fun GlassSectionSurface(
         content = content,
     )
 }
+
+/** Los dos colores del brillo superior: en el borde y a un sexto del alto. */
+internal data class SectionSheen(val top: Color, val fade: Color)
+
+/**
+ * El brillo superior sale del PROPIO cristal, no de `glassHighlight`.
+ *
+ * Es «más capa del mismo cristal» en el tercio de arriba. En el tema claro no
+ * cambia nada: `sectionGlass` y `glassHighlight` son el mismo blanco, y un blanco
+ * al 30 % es un blanco al 30 %. En el oscuro sí, y es la corrección: el brillo
+ * pintaba `glassHighlight` —un azul pálido `#A9C6E8`— al 30 % encima del cristal,
+ * y sobre el halo de arriba a la izquierda eso llevaba el marco de un panel navy
+ * a `#657488` (medido en la cabecera del catálogo). Ahí el contador «5» en
+ * `textPrimary` daba 3,31:1 y la etiqueta de una pestaña inactiva 2,94:1. No era
+ * brillo: era un foco, y el objetivo del tema dice sin glow.
+ *
+ * El FILO del contenedor sigue siendo `glassHighlight`: es una línea de 1dp que no
+ * lleva texto encima y que es lo que cierra la forma por arriba.
+ */
+internal fun sectionSheen(tokens: GlassTokens): SectionSheen = SectionSheen(
+    top = tokens.sectionGlass.copy(alpha = 0.30f),
+    fade = tokens.sectionGlass.copy(alpha = 0.06f),
+)

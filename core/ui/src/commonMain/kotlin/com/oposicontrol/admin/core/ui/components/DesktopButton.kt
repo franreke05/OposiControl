@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.contentOn
+import com.oposicontrol.admin.core.ui.theme.shade
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
 
@@ -56,6 +58,20 @@ enum class ButtonVariant {
 
     /** Destructiva. Rojo, y sólo aquí. */
     DANGER,
+
+    /**
+     * Destructiva SECUNDARIA: contorno rojo sobre superficie clara.
+     *
+     * Para cuando la acción destructiva convive con la acción primaria de la
+     * pantalla y no debe ganarle. «Archivar» junto a «Guardar cambios» es el caso
+     * exacto: relleno, el rojo se lleva la mirada por delante del botón que la
+     * gente pulsa cien veces al día; con contorno sigue avisando de lo que es sin
+     * disputarle la jerarquía.
+     *
+     * No es un [SECONDARY] teñido: conserva el rojo en el texto y en el borde,
+     * que es lo que hace que se lea como destructiva antes del clic.
+     */
+    DANGER_OUTLINE,
 
     /** Confirmación positiva explícita (aprobar, publicar, resolver). */
     SUCCESS,
@@ -214,6 +230,18 @@ fun DangerButton(
     icon: (@Composable () -> Unit)? = null,
 ) = DesktopButton(text, onClick, modifier, ButtonVariant.DANGER, size, enabled, loading, icon)
 
+/** Destructiva secundaria: contorno rojo. Ver [ButtonVariant.DANGER_OUTLINE]. */
+@Composable
+fun DangerOutlineButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: ButtonSize = ButtonSize.NORMAL,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    icon: (@Composable () -> Unit)? = null,
+) = DesktopButton(text, onClick, modifier, ButtonVariant.DANGER_OUTLINE, size, enabled, loading, icon)
+
 @Composable
 fun SuccessButton(
     text: String,
@@ -300,7 +328,10 @@ fun DesktopIconButton(
     }
 }
 
-private data class ButtonPalette(
+// `internal` y no `private` para que `ContrastTest` mida lo que pinta cada
+// variante: el texto de un botón fantasma no tiene relleno propio y se lee sobre
+// lo que haya detrás, que en escritorio suele ser cristal.
+internal data class ButtonPalette(
     val container: Color,
     val containerHover: Color,
     val containerPressed: Color,
@@ -312,67 +343,87 @@ private data class ButtonPalette(
     val borderDisabled: Color,
 )
 
-private fun buttonPalette(
+internal fun buttonPalette(
     variant: ButtonVariant,
     tokens: GlassTokens,
 ): ButtonPalette = when (variant) {
     ButtonVariant.PRIMARY -> ButtonPalette(
         // accentInk, no accent: el coral de marca no sostiene texto blanco a un
         // contraste accesible (2,32:1 medido). Ver GlassTokens.accentInk.
+        //
+        // El texto ya no dice `Color.White` a mano: lo elige `contentOn`. En el
+        // tema claro sigue resolviendo a blanco —el relleno es un coral profundo—
+        // y en el oscuro, donde ese mismo rol es un coral CLARO, resuelve a la
+        // tinta navy. Un blanco escrito aquí daría 2,0:1 en oscuro, y el sitio
+        // donde se vería es el botón primario de toda la aplicación.
         container = tokens.accentInk,
-        containerHover = Color(0xFFAC4819),
-        containerPressed = Color(0xFF963E15),
+        containerHover = tokens.shade(tokens.accentInk, 0.10f),
+        containerPressed = tokens.shade(tokens.accentInk, 0.20f),
         // Deshabilitado opaco, no translúcido: el blanco al 53% del botón
         // anterior dejaba el texto gris flotando sobre lo que hubiera detrás.
-        containerDisabled = Color(0xFFEDEFF2),
-        content = Color.White,
-        contentDisabled = Color(0xFF6B7684),
+        containerDisabled = tokens.surfaceDisabled,
+        content = tokens.contentOn(tokens.accentInk),
+        contentDisabled = tokens.textDisabled,
         border = Color.Transparent,
         borderHover = Color.Transparent,
-        borderDisabled = Color(0xFFE2E6EB),
+        borderDisabled = tokens.borderDisabled,
     )
     ButtonVariant.SECONDARY -> ButtonPalette(
         container = tokens.surfaceSolid,
         containerHover = tokens.surfaceHover,
-        containerPressed = Color(0xFFDFE7F1),
-        containerDisabled = Color(0xFFF4F6F9),
+        containerPressed = tokens.shade(tokens.surfaceHover, 0.06f),
+        containerDisabled = tokens.surfaceDisabled,
         content = tokens.textPrimary,
-        contentDisabled = Color(0xFF6B7684),
+        contentDisabled = tokens.textDisabled,
         border = tokens.border,
         borderHover = tokens.borderStrong,
-        borderDisabled = Color(0xFFE9EDF2),
+        borderDisabled = tokens.borderDisabled,
     )
     ButtonVariant.GHOST -> ButtonPalette(
         container = Color.Transparent,
         containerHover = tokens.surfaceHover,
-        containerPressed = Color(0xFFDFE7F1),
+        containerPressed = tokens.shade(tokens.surfaceHover, 0.06f),
         containerDisabled = Color.Transparent,
         content = tokens.textSecondary,
-        contentDisabled = Color(0xFF9AA5B1),
+        contentDisabled = tokens.textDisabled,
         border = Color.Transparent,
         borderHover = Color.Transparent,
         borderDisabled = Color.Transparent,
     )
     ButtonVariant.DANGER -> ButtonPalette(
         container = tokens.danger,
-        containerHover = Color(0xFFA93226),
-        containerPressed = Color(0xFF922B21),
-        containerDisabled = Color(0xFFEDEFF2),
-        content = Color.White,
-        contentDisabled = Color(0xFF6B7684),
+        containerHover = tokens.shade(tokens.danger, 0.10f),
+        containerPressed = tokens.shade(tokens.danger, 0.20f),
+        containerDisabled = tokens.surfaceDisabled,
+        content = tokens.contentOn(tokens.danger),
+        contentDisabled = tokens.textDisabled,
         border = Color.Transparent,
         borderHover = Color.Transparent,
-        borderDisabled = Color(0xFFE2E6EB),
+        borderDisabled = tokens.borderDisabled,
+    )
+    ButtonVariant.DANGER_OUTLINE -> ButtonPalette(
+        container = tokens.surfaceSolid,
+        // El hover tiñe muy poco: al 8% sobre blanco sigue siendo casi blanco y
+        // no se confunde con el relleno de [DANGER].
+        containerHover = tokens.danger.copy(alpha = 0.08f),
+        containerPressed = tokens.danger.copy(alpha = 0.14f),
+        containerDisabled = tokens.surfaceDisabled,
+        // `danger` sobre superficie sólida da 5,6:1: aguanta texto de botón.
+        content = tokens.danger,
+        contentDisabled = tokens.textDisabled,
+        border = tokens.danger.copy(alpha = 0.45f),
+        borderHover = tokens.danger,
+        borderDisabled = tokens.borderDisabled,
     )
     ButtonVariant.SUCCESS -> ButtonPalette(
         container = tokens.success,
-        containerHover = Color(0xFF27885B),
-        containerPressed = Color(0xFF20744D),
-        containerDisabled = Color(0xFFEDEFF2),
-        content = Color.White,
-        contentDisabled = Color(0xFF6B7684),
+        containerHover = tokens.shade(tokens.success, 0.10f),
+        containerPressed = tokens.shade(tokens.success, 0.20f),
+        containerDisabled = tokens.surfaceDisabled,
+        content = tokens.contentOn(tokens.success),
+        contentDisabled = tokens.textDisabled,
         border = Color.Transparent,
         borderHover = Color.Transparent,
-        borderDisabled = Color(0xFFE2E6EB),
+        borderDisabled = tokens.borderDisabled,
     )
 }

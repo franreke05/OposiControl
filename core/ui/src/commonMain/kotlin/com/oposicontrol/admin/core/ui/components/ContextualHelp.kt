@@ -120,19 +120,35 @@ fun InfoTooltip(
     }
 }
 
+/**
+ * Superficie INVERTIDA respecto a la pantalla, en los dos temas.
+ *
+ * Un tooltip flota sobre contenido cualquiera, así que lo único que garantiza
+ * que se lea es que no comparta valor con nada de lo que tiene debajo. Antes eran
+ * dos literales —navy oscuro y casi blanco— que acertaban en el tema claro por
+ * pura coincidencia de que la pantalla es clara; en oscuro habrían pintado un
+ * navy sobre navy y el globo de ayuda habría desaparecido.
+ *
+ * `textPrimary` como fondo y `surfaceSolid` como texto invierten la pantalla sin
+ * necesidad de un token nuevo: en claro dan el mismo navy sobre blanco de antes,
+ * y en oscuro un globo claro sobre la interfaz oscura. El contraste está
+ * garantizado por construcción, porque los dos roles ya se miden el uno contra el
+ * otro en `ContrastTest`.
+ */
 @Composable
 private fun TooltipSurface(text: String) {
+    val tokens = GlassTheme.tokens
     Box(
         modifier = Modifier
             .widthIn(max = Sizing.tooltipMaxWidth)
             .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF1B2733))
+            .background(tokens.textPrimary)
             .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodySmall,
-            color = Color(0xFFF2F6FA),
+            color = tokens.surfaceSolid,
         )
     }
 }

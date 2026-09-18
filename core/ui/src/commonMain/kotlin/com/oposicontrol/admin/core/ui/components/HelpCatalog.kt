@@ -169,7 +169,13 @@ object Help {
 
     val codigoExamen = HelpTopic(
         title = "Código del examen",
-        body = "Identificador interno para reconocer el examen de un vistazo. " +
+        // Decía «Identificador interno», que es EXACTAMENTE lo contrario de lo que
+        // este campo es. El identificador interno es `id`, un UUID que no se
+        // enseña en ninguna pantalla; esto es el código humano, el que se dicta por
+        // teléfono y se busca en el catálogo. Llamarlo interno invitaba a no
+        // tocarlo por miedo a romper algo.
+        body = "Código humano para reconocer el examen de un vistazo: es el que se busca y se " +
+            "menciona. No es el identificador interno del sistema, que nunca se muestra. " +
             "Si lo dejas en blanco al crear el examen, se genera uno automáticamente.",
     )
 
@@ -179,23 +185,58 @@ object Help {
             "vale para toda España.",
     )
 
+    /**
+     * Las tres descripciones están atadas a un comportamiento verificado y no a
+     * una idea de producto: ráfaga es el único tipo con acceso sin sesión,
+     * razonado es el que guarda el razonamiento de la respuesta e inmersivo es
+     * el que se apoya en recursos.
+     *
+     * Los recursos cuelgan de la PREGUNTA, no del examen, pero SÍ hay regla que los
+     * ata al tipo (K0-8, verificado en la base): los disparadores `validar_recurso_*`
+     * sólo admiten recursos en preguntas inmersivas, y `validar_pregunta_examen`
+     * sólo vincula preguntas inmersivas a exámenes inmersivos. Una versión anterior
+     * de este comentario decía que ninguna regla los ataba, y no era cierto.
+     */
     val tipoExamen = HelpTopic(
         title = "Tipo de examen",
-        body = "Ráfaga son preguntas sueltas con la opción correcta marcada. Razonado añade una " +
-            "explicación escrita. Inmersivo es el único que admite recursos multimedia. " +
-            "Sólo se pueden elegir los modos que la especialidad tenga habilitados.",
+        body = "Ráfaga son preguntas tipo test encadenadas; es el único tipo que puede servirse " +
+            "gratis sin sesión. Razonado añade a cada pregunta la explicación de la respuesta " +
+            "correcta. Inmersivo permite que las preguntas se apoyen en recursos. Sólo se " +
+            "eligen los modos que la especialidad tenga habilitados.",
+    )
+
+    /**
+     * Existe porque una vista de recursos de un examen enseña algo que NO le
+     * pertenece: no hay ninguna relación entre un examen y un recurso, sólo
+     * entre una pregunta y sus recursos. Sin decirlo, la pestaña parecería el
+     * sitio donde se añaden.
+     */
+    val recursosExamen = HelpTopic(
+        title = "Recursos de un examen",
+        body = "Los recursos cuelgan de cada pregunta, no del examen. Aquí se ven juntos los de " +
+            "todas sus preguntas vinculadas, para revisarlos de una vez; para añadir o cambiar " +
+            "uno hay que ir a la pregunta.",
     )
 
     val numeroPreguntas = HelpTopic(
         title = "Número de preguntas",
-        body = "Se calcula solo a partir de las preguntas realmente asociadas al examen. " +
-            "Añade o quita preguntas en la pestaña Preguntas para cambiarlo.",
+        // K2-2: desde M1 `total_preguntas` lo mantiene la base al vincular, quitar o
+        // archivar preguntas, con la misma definición que la lista del examen
+        // (preguntas activas vinculadas). La ayuda anterior decía que la consola lo
+        // contaba al abrir el examen porque entonces ningún escritor lo mantenía.
+        body = "Es el número de preguntas activas vinculadas al examen. Lo mantiene la base de datos " +
+            "al vincular, quitar o archivar preguntas. Para cambiarlo, vincula o quita preguntas " +
+            "desde el banco de Preguntas.",
     )
 
+    /**
+     * Neutra a propósito (DEBT-034). Decía «Minutos de los que dispone el usuario»
+     * y «poner límite de tiempo»: una afirmación de comportamiento que nada
+     * respalda —ninguna ruta aplica la duración como límite y la app no la recibe—.
+     */
     val duracionExamen = HelpTopic(
         title = "Duración",
-        body = "Minutos de los que dispone el usuario para completar el examen. " +
-            "Déjalo en blanco si no quieres poner límite de tiempo.",
+        body = "Duración del examen en minutos. Déjala vacía si no quieres fijar una duración.",
     )
 
     val examenOficial = HelpTopic(
@@ -204,16 +245,30 @@ object Help {
             "en vez de a un simulacro o material de práctica.",
     )
 
+    /**
+     * Decía que premium «hace falta comprarlo con OposiTickets o tener una
+     * suscripción activa». Ninguna de las dos cosas la sostiene el contrato: no hay
+     * compra de examen suelto y la consola no evalúa suscripciones contra exámenes.
+     * Lo único verificado es que sólo una ráfaga gratuita Y PUBLICADA se sirve sin
+     * sesión (K0-8, EX-18): la ruta pública no sirve borradores.
+     */
     val tipoAcceso = HelpTopic(
         title = "Tipo de acceso",
-        body = "Gratuito: cualquier usuario puede abrirlo. Premium: hace falta comprarlo con " +
-            "OposiTickets o tener una suscripción activa.",
+        body = "Gratuito o premium. Es un dato del examen: esta consola no calcula qué usuario " +
+            "puede abrirlo. Sólo un examen Ráfaga gratuito y publicado se sirve también sin iniciar sesión.",
     )
 
+    /**
+     * El cuerpo dice explícitamente que hoy no desbloquea nada porque hoy no lo
+     * desbloquea: `precio_tickets` es una columna real que ningún camino de
+     * compra consulta. Callarlo dejaría creer que poner un precio pone un examen
+     * a la venta. Tampoco lo compara con «una suscripción»: eso insinuaba que una
+     * suscripción desbloquea exámenes, y el contrato no lo dice.
+     */
     val precioExamen = HelpTopic(
         title = "Precio en OposiTickets",
-        body = "Lo que cuesta desbloquear este examen si un usuario lo compra suelto, " +
-            "sin pasar por una suscripción.",
+        body = "Lo que costaría este examen comprado suelto. Hoy es sólo un dato guardado: " +
+            "todavía no existe ninguna compra de examen individual que lo consulte.",
     )
 
     val demoEspecialidad = HelpTopic(
@@ -222,10 +277,17 @@ object Help {
             "toda la especialidad, no examen a examen — se configura en Especialidades.",
     )
 
+    /**
+     * VISIBILIDAD ≠ ACCESO. Decía «Publicado: visible para los usuarios con
+     * acceso», que mezclaba las dos cosas, y «Borrador: sólo lo ves tú», cuando lo
+     * ve cualquier administrador. El catálogo de la app exige examen activo y con
+     * fecha de publicación: eso es lo que distingue los tres estados.
+     */
     val estadoExamen = HelpTopic(
         title = "Estado",
-        body = "Borrador: sólo lo ves tú. Publicado: visible para los usuarios con acceso. " +
-            "Archivado: deja de estar disponible sin borrar las preguntas.",
+        body = "Borrador: no aparece en el catálogo de la app. Publicado: aparece en el catálogo; " +
+            "quién puede abrirlo lo decide el tipo de acceso. Archivado: retirado del catálogo, " +
+            "sin borrar sus preguntas.",
         example = "Publicar y despublicar quedan registrados en el historial del examen.",
     )
 

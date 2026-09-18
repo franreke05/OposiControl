@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Radius
 
 /**
@@ -67,20 +68,21 @@ fun StatusChip(
     tone: StatusTone = statusToneFor(status),
 ) {
     val tokens = GlassTheme.tokens
-    val (foreground, icon) = when (tone) {
-        StatusTone.POSITIVE -> tokens.success to AppIcon.CHECK
-        StatusTone.ATTENTION -> tokens.warning to AppIcon.CLOCK
-        StatusTone.NEGATIVE -> tokens.danger to AppIcon.BLOCKED
-        StatusTone.UNKNOWN -> tokens.textSecondary to AppIcon.HELP
-        StatusTone.NEUTRAL -> tokens.info to AppIcon.INFO
+    val icon = when (tone) {
+        StatusTone.POSITIVE -> AppIcon.CHECK
+        StatusTone.ATTENTION -> AppIcon.CLOCK
+        StatusTone.NEGATIVE -> AppIcon.BLOCKED
+        StatusTone.UNKNOWN -> AppIcon.HELP
+        StatusTone.NEUTRAL -> AppIcon.INFO
     }
+    val colors = statusChipColors(tokens, tone)
 
     val animatedBackground by animateColorAsState(
-        targetValue = foreground.copy(alpha = 0.12f),
+        targetValue = colors.fill,
         animationSpec = tween(180),
     )
     val animatedForeground by animateColorAsState(
-        targetValue = foreground,
+        targetValue = colors.content,
         animationSpec = tween(180),
     )
 
@@ -126,20 +128,14 @@ fun StatusDotChip(
     tone: StatusTone = statusToneFor(label),
 ) {
     val tokens = GlassTheme.tokens
-    val dot = when (tone) {
-        StatusTone.POSITIVE -> tokens.success
-        StatusTone.ATTENTION -> tokens.warning
-        StatusTone.NEGATIVE -> tokens.danger
-        StatusTone.UNKNOWN -> tokens.textSecondary
-        StatusTone.NEUTRAL -> tokens.info
-    }
-    val animatedDot by animateColorAsState(targetValue = dot, animationSpec = tween(180))
+    val colors = statusDotChipColors(tokens, tone)
+    val animatedDot by animateColorAsState(targetValue = colors.dot, animationSpec = tween(180))
 
     Row(
         modifier = modifier
             .defaultMinSize(minHeight = 26.dp)
             .clip(Radius.pill)
-            .background(tokens.glassFillStrong)
+            .background(colors.fill)
             .border(1.dp, tokens.sectionGlassStroke, Radius.pill)
             .padding(horizontal = 10.dp, vertical = 4.dp)
             .semantics { contentDescription = "Estado: $label" },
@@ -156,12 +152,71 @@ fun StatusDotChip(
             text = label,
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.SemiBold,
-            color = tokens.textPrimary,
+            color = colors.label,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
 }
+
+// ---------------------------------------------------------------------------
+// Qué color pinta cada chip.
+//
+// Funciones y no un `when` dentro del composable para que `ContrastTest` mida lo
+// que se pinta. El chip de estado se medía como ELEMENTO de interfaz —3:1, el tono
+// contra la superficie, sin su propio tinte—, y es TEXTO de 13sp sobre ese tinte:
+// en el tema oscuro «Archivado» daba 3,92:1 sobre superficie sólida y «Sin
+// guardar» 3,42:1 sobre el cristal de la cabecera, con el test en verde.
+// ---------------------------------------------------------------------------
+
+/** El color de un tono de estado: el del texto y el icono de [StatusChip] y el del punto de [StatusDotChip]. */
+internal fun statusToneColor(tokens: GlassTokens, tone: StatusTone): Color = when (tone) {
+    StatusTone.POSITIVE -> tokens.success
+    StatusTone.ATTENTION -> tokens.warning
+    StatusTone.NEGATIVE -> tokens.danger
+    StatusTone.UNKNOWN -> tokens.textSecondary
+    StatusTone.NEUTRAL -> tokens.info
+}
+
+/**
+ * El CONTENIDO de un chip —su texto y su icono— para cada tono: la TINTA de la
+ * familia, no su tono.
+ *
+ * El tono es el que identifica la familia en un punto, un borde o el tinte del
+ * propio chip, y ahí basta 3:1. El texto pide 4,5:1 sobre ese tinte, y en el
+ * tema claro el tono no llegaba: verde 2,92:1, ámbar 3,79:1, rojo 4,47:1 y azul
+ * 3,77:1 sobre superficie sólida. La tinta es la misma familia con la luz justa
+ * para leerse. En oscuro tinta y tono son el mismo color.
+ */
+internal fun statusToneInk(tokens: GlassTokens, tone: StatusTone): Color = when (tone) {
+    StatusTone.POSITIVE -> tokens.successInk
+    StatusTone.ATTENTION -> tokens.warningInk
+    StatusTone.NEGATIVE -> tokens.dangerInk
+    StatusTone.UNKNOWN -> tokens.textSecondary
+    StatusTone.NEUTRAL -> tokens.infoInk
+}
+
+/** Texto e icono, y relleno, de un [StatusChip]. */
+internal data class StatusChipColors(val content: Color, val fill: Color)
+
+/** La tinta en el texto y en el icono; el TONO de la familia al 12 % de relleno. */
+internal fun statusChipColors(tokens: GlassTokens, tone: StatusTone): StatusChipColors = StatusChipColors(
+    content = statusToneInk(tokens, tone),
+    fill = statusToneColor(tokens, tone).copy(alpha = 0.12f),
+)
+
+/** Punto, etiqueta y relleno de un [StatusDotChip]. */
+internal data class StatusDotChipColors(val dot: Color, val label: Color, val fill: Color)
+
+/**
+ * El color del estado sólo en el punto; la etiqueta en `textPrimary` sobre un
+ * relleno translúcido que es siempre el mismo, sea cual sea el estado.
+ */
+internal fun statusDotChipColors(tokens: GlassTokens, tone: StatusTone): StatusDotChipColors = StatusDotChipColors(
+    dot = statusToneColor(tokens, tone),
+    label = tokens.textPrimary,
+    fill = tokens.glassFillStrong,
+)
 
 /**
  * Deduce el tono a partir del texto del estado.

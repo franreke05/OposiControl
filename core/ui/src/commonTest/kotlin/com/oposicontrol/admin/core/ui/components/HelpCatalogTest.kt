@@ -20,7 +20,32 @@ class HelpCatalogTest {
         Help.reglasPopup, Help.atribucion, Help.conversion, Help.importacion, Help.duplicados,
         Help.publicacionAtomica, Help.capacidadesEspecialidad, Help.recursosInmersiva,
         Help.estadoSistema, Help.entorno,
+        // Las cuatro de Exámenes que el workspace reescribió para no afirmar
+        // comportamientos sin verificar (DEBT-034, acceso y estado): entran en la
+        // misma regla que el resto para que un texto nuevo no se cuele sin ella.
+        Help.duracionExamen, Help.tipoAcceso, Help.precioExamen, Help.estadoExamen,
+        // Reescrita en la ronda 3a (K2-2): entra en la misma regla.
+        Help.numeroPreguntas,
     )
+
+    /**
+     * K2-2: desde M1 el número de preguntas lo mantiene la base. La ayuda no puede
+     * seguir diciendo que la consola lo cuenta al abrir el examen, ni dejar de decir
+     * qué preguntas cuentan (las activas vinculadas).
+     */
+    @Test
+    fun `el numero de preguntas dice quien lo mantiene y que preguntas cuenta`() {
+        val body = Help.numeroPreguntas.body
+        assertTrue(body.contains("preguntas activas vinculadas"), body)
+        assertTrue(body.contains("Lo mantiene la base de datos"), body)
+        assertTrue(!body.contains("lo cuenta cada vez"), body)
+    }
+
+    /** K0-8 (EX-18): sin sesión sólo se sirve un Ráfaga gratuito YA publicado. */
+    @Test
+    fun `el acceso sin sesion exige que el examen este publicado`() {
+        assertTrue(Help.tipoAcceso.body.contains("gratuito y publicado"), Help.tipoAcceso.body)
+    }
 
     @Test
     fun `ninguna ayuda usa jerga tecnica`() {

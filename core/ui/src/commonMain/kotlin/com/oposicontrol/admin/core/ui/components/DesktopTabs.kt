@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Spacing
 
 /**
@@ -66,12 +67,41 @@ data class DesktopTab(
  * pastilla. Una fila de pestañas rellenas compite con el contenido que hay
  * debajo, que es lo que en realidad se ha venido a leer.
  */
+/**
+ * Cuánto peso tiene la fila de pestañas.
+ *
+ * No es un tema alternativo: son dos papeles distintos para el mismo componente.
+ */
+enum class DesktopTabsVariant {
+    /**
+     * Sobrio. Subrayado coral y peso del texto, sin fondo.
+     *
+     * El de los hubs, donde las pestañas son un índice sobre una pantalla que ya
+     * tiene su propio contenido.
+     */
+    PLAIN,
+
+    /**
+     * Integrada en la cabecera de un workspace.
+     *
+     * La pestaña activa se tiñe muy suavemente y su ICONO pasa a coral, además
+     * del subrayado. Existe porque en un workspace las pestañas SON la
+     * estructura de la pantalla, no un índice al margen: con el tratamiento
+     * sobrio se leían como navegación secundaria suelta encima del formulario.
+     *
+     * El texto no pasa a coral: sobre el tinte de la pestaña activa, `accentInk`
+     * no llega en el tema claro al 4,5:1 de un texto de 14sp. Ver [tabLabelColor].
+     */
+    WORKSPACE,
+}
+
 @Composable
 fun DesktopTabs(
     tabs: List<DesktopTab>,
     selectedId: String,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
+    variant: DesktopTabsVariant = DesktopTabsVariant.PLAIN,
 ) {
     val tokens = GlassTheme.tokens
     val scrollState = rememberScrollState()
@@ -90,6 +120,7 @@ fun DesktopTabs(
             TabItem(
                 tab = tab,
                 selected = tab.id == selectedId,
+                variant = variant,
                 onClick = { onSelect(tab.id) },
             )
         }
@@ -100,18 +131,23 @@ fun DesktopTabs(
 private fun TabItem(
     tab: DesktopTab,
     selected: Boolean,
+    variant: DesktopTabsVariant,
     onClick: () -> Unit,
 ) {
     val tokens = GlassTheme.tokens
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
 
-    val contentColor by animateColorAsState(
-        targetValue = when {
-            selected -> tokens.textPrimary
-            hovered -> tokens.textPrimary
-            else -> tokens.textSecondary
-        },
+    // Etiqueta e icono se animan por separado porque ya no comparten color: en
+    // la pestaña activa de un workspace el icono es coral y el texto no. Los
+    // colores salen de funciones y no de un `when` aquí dentro para que
+    // `ContrastTest` mida exactamente lo que se pinta.
+    val labelColor by animateColorAsState(
+        targetValue = tabLabelColor(tokens, selected, hovered, variant),
+        animationSpec = tween(120),
+    )
+    val iconTint by animateColorAsState(
+        targetValue = tabIconTint(tokens, selected, hovered, variant),
         animationSpec = tween(120),
     )
     val indicator by animateColorAsState(
@@ -122,10 +158,15 @@ private fun TabItem(
         },
         animationSpec = tween(120),
     )
+    val background by animateColorAsState(
+        targetValue = tabBackground(tokens, selected, variant),
+        animationSpec = tween(120),
+    )
 
     Column(
         modifier = Modifier
             .clip(RoundedCornerShape(topStart = 7.dp, topEnd = 7.dp))
+            .background(background)
             .hoverable(interactionSource)
             .pointerHoverIcon(PointerIcon.Hand)
             .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
@@ -140,26 +181,27 @@ private fun TabItem(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            tab.icon?.let { AppIconImage(it, size = 15.dp, tint = contentColor) }
+            tab.icon?.let { AppIconImage(it, size = 15.dp, tint = iconTint) }
             Text(
                 text = tab.label,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = contentColor,
+                color = labelColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             tab.badge?.let { badge ->
+                val badgeColors = tabBadgeColors(tokens)
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(5.dp))
-                        .background(tokens.accent.copy(alpha = 0.15f))
+                        .background(badgeColors.fill)
                         .padding(horizontal = 5.dp, vertical = 1.dp),
                 ) {
                     Text(
                         text = badge,
                         style = MaterialTheme.typography.labelSmall,
-                        color = tokens.accent,
+                        color = badgeColors.content,
                     )
                 }
             }
@@ -171,6 +213,100 @@ private fun TabItem(
                 .background(indicator),
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// Qué color elige cada parte de la pestaña.
+//
+// Son funciones y no un `when` dentro del composable por una razón medida:
+// `ContrastTest` compara PARES DE TOKENS, y un par de tokens no sabe qué color
+// ha elegido un componente. Si alguien vuelve a poner el número del contador en
+// `accent`, ningún par cambia y un test de tokens sigue en verde. Con la
+// decisión aquí, el composable y el test llaman a la MISMA función con la paleta
+// viva de los dos temas, y esa mutación pone el test en rojo.
+// ---------------------------------------------------------------------------
+
+/** Relleno y número de la píldora del contador de una pestaña. */
+internal data class TabBadgeColors(val fill: Color, val content: Color)
+
+/**
+ * La píldora del contador: relleno coral suave y número en tinta de texto.
+ *
+ * El relleno coral se queda: es lo que dice que eso es un contador y no texto
+ * suelto. El NÚMERO va en `textPrimary`. En `accent` sobre su propio relleno
+ * medía entre 1,8 y 2,0:1 en el tema claro —ni el 3:1 que se pide a un elemento
+ * de interfaz, y es un texto—; en `textPrimary` da entre 12,7 y 14,0:1 en claro
+ * y entre 8,3 y 9,5:1 en oscuro, según sobre qué quede la pestaña.
+ */
+internal fun tabBadgeColors(tokens: GlassTokens): TabBadgeColors = TabBadgeColors(
+    fill = tokens.accent.copy(alpha = 0.15f),
+    content = tokens.textPrimary,
+)
+
+/**
+ * El texto de la pestaña.
+ *
+ * En NINGUNA variante se tiñe de coral. En la pestaña activa de un workspace
+ * se pintaba en `accentInk` sobre `surfaceSelected`, y eso da 4,21:1 en el tema
+ * claro: por debajo del 4,5:1 de un texto de 14sp —el SemiBold no lo convierte
+ * en texto grande—. No tiene arreglo por el lado del fondo: oscurecer el relleno
+ * lo empeora, y aclararlo topa en 4,65:1 con blanco puro, con la pestaña ya
+ * indistinguible del resto de la fila. Y `accentInk` es la marca: no se mueve.
+ * En `textPrimary` da 14,62:1 en claro y 12,28:1 en oscuro.
+ *
+ * El `when` sobre la variante es exhaustivo a propósito: quien añada una
+ * variante tiene que decidir aquí el color de su etiqueta, y el test la medirá
+ * sin que nadie se acuerde de añadirla.
+ */
+internal fun tabLabelColor(
+    tokens: GlassTokens,
+    selected: Boolean,
+    hovered: Boolean,
+    variant: DesktopTabsVariant,
+): Color = when {
+    selected -> when (variant) {
+        DesktopTabsVariant.PLAIN,
+        DesktopTabsVariant.WORKSPACE,
+        -> tokens.textPrimary
+    }
+    hovered -> tokens.textPrimary
+    else -> tokens.textSecondary
+}
+
+/**
+ * El icono de la pestaña.
+ *
+ * Aquí sí se queda el coral en la pestaña activa de un workspace: un icono es un
+ * elemento de interfaz y pide 3:1, y `accentInk` sobre `surfaceSelected` da
+ * 4,21:1 en claro y 7,03:1 en oscuro. Junto con el subrayado y el relleno, es lo
+ * que hace que la fila se lea como parte del workspace. En el resto de casos el
+ * icono acompaña al texto.
+ */
+internal fun tabIconTint(
+    tokens: GlassTokens,
+    selected: Boolean,
+    hovered: Boolean,
+    variant: DesktopTabsVariant,
+): Color = when {
+    selected && variant == DesktopTabsVariant.WORKSPACE -> tokens.accentInk
+    else -> tabLabelColor(tokens, selected, hovered, variant)
+}
+
+/**
+ * El fondo de la pestaña.
+ *
+ * Tinte muy bajo y sólo en la activa de un workspace: confirma cuál está abierta
+ * sin convertir la fila en una hilera de pastillas rellenas, que competiría con
+ * el formulario de debajo. Transparente en todos los demás casos: la pestaña
+ * queda sobre lo que tenga detrás.
+ */
+internal fun tabBackground(
+    tokens: GlassTokens,
+    selected: Boolean,
+    variant: DesktopTabsVariant,
+): Color = when {
+    selected && variant == DesktopTabsVariant.WORKSPACE -> tokens.surfaceSelected
+    else -> Color.Transparent
 }
 
 /** Línea de 1dp bajo la fila de pestañas, contra la que se alinea el subrayado activo. */

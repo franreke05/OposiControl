@@ -31,6 +31,8 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.contentOn
+import com.oposicontrol.admin.core.ui.theme.shade
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.size
@@ -173,7 +175,9 @@ fun GlassActionButton(
     // accentInk: este boton pinta texto blanco encima, y el coral de marca no
     // llega al contraste minimo con blanco. Ver GlassTokens.accentInk.
     tint: Color = GlassTheme.tokens.accentInk,
-    textColor: Color = Color.White,
+    // Lo elige el tema, no el componente: en oscuro este relleno es un coral
+    // CLARO y el blanco encima daría 2,0:1. Ver GlassTokens.contentOn.
+    textColor: Color = GlassTheme.tokens.contentOn(tint),
     onClick: () -> Unit,
 ) {
     val tokens = GlassTheme.tokens
@@ -192,18 +196,18 @@ fun GlassActionButton(
 
     val container by animateColorAsState(
         targetValue = when {
-            !enabled -> Color(0xFFEDEFF2)
+            !enabled -> tokens.surfaceDisabled
             pressed -> tint.darken(0.14f)
             hovered -> tint.darken(0.06f)
             else -> tint
         },
         animationSpec = tween(120),
     )
-    val content = if (enabled) textColor else Color(0xFF6B7684)
+    val content = if (enabled) textColor else tokens.textDisabled
     val stroke by animateColorAsState(
         targetValue = when {
             focused && interactive -> tokens.focusRing
-            !enabled -> Color(0xFFE2E6EB)
+            !enabled -> tokens.borderDisabled
             else -> container
         },
         animationSpec = tween(120),

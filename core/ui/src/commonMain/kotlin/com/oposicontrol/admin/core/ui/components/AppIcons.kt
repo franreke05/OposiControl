@@ -36,6 +36,7 @@ import oposicontrol.core.ui.generated.resources.ic_info
 import oposicontrol.core.ui.generated.resources.ic_key
 import oposicontrol.core.ui.generated.resources.ic_layers
 import oposicontrol.core.ui.generated.resources.ic_list
+import oposicontrol.core.ui.generated.resources.ic_map_pin
 import oposicontrol.core.ui.generated.resources.ic_more
 import oposicontrol.core.ui.generated.resources.ic_news
 import oposicontrol.core.ui.generated.resources.ic_package
@@ -53,6 +54,7 @@ import oposicontrol.core.ui.generated.resources.ic_sort
 import oposicontrol.core.ui.generated.resources.ic_store
 import oposicontrol.core.ui.generated.resources.ic_support
 import oposicontrol.core.ui.generated.resources.ic_tester
+import oposicontrol.core.ui.generated.resources.ic_theme
 import oposicontrol.core.ui.generated.resources.ic_ticket
 import oposicontrol.core.ui.generated.resources.ic_trash
 import oposicontrol.core.ui.generated.resources.ic_trending_up
@@ -108,6 +110,9 @@ enum class AppIcon(val key: String) {
     // Acciones y estados
     INFO("info"),
     HELP("help"),
+
+    /** Cambiar entre tema claro y oscuro. Sol y luna a la vez: es el control, no el estado. */
+    THEME("theme"),
     SEARCH("search"),
     FILTER("filter"),
     REFRESH("refresh"),
@@ -129,6 +134,9 @@ enum class AppIcon(val key: String) {
     SORT("sort"),
     CLOCK("clock"),
     BLOCKED("blocked"),
+
+    /** Dónde vive algo: ámbito geográfico, comunidad, sede. */
+    LOCATION("location"),
     ;
 
     companion object {
@@ -170,6 +178,7 @@ private val AppIcon.drawable: DrawableResource
         AppIcon.STATUS -> Res.drawable.ic_pulse
         AppIcon.INFO -> Res.drawable.ic_info
         AppIcon.HELP -> Res.drawable.ic_help_circle
+        AppIcon.THEME -> Res.drawable.ic_theme
         AppIcon.SEARCH -> Res.drawable.ic_search
         AppIcon.FILTER -> Res.drawable.ic_filter
         AppIcon.REFRESH -> Res.drawable.ic_refresh
@@ -191,6 +200,7 @@ private val AppIcon.drawable: DrawableResource
         AppIcon.SORT -> Res.drawable.ic_sort
         AppIcon.CLOCK -> Res.drawable.ic_clock
         AppIcon.BLOCKED -> Res.drawable.ic_ban
+        AppIcon.LOCATION -> Res.drawable.ic_map_pin
     }
 
 /**

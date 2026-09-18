@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Radius
 
 /**
@@ -64,18 +65,54 @@ enum class SemanticRole {
 
 /** El color pleno del rol. Es el que va en el icono, en el punto o en el borde. */
 @Composable
-fun SemanticRole.color(): Color {
-    val tokens = GlassTheme.tokens
-    return when (this) {
-        SemanticRole.NEUTRAL -> tokens.textSecondary
-        SemanticRole.SUCCESS -> tokens.success
-        SemanticRole.WARNING -> tokens.warning
-        SemanticRole.DANGER -> tokens.danger
-        SemanticRole.INFO -> tokens.info
-        SemanticRole.INSIGHT -> tokens.insight
-        SemanticRole.BRAND -> tokens.accentInk
-        SemanticRole.COMMERCE -> tokens.commerce
-    }
+fun SemanticRole.color(): Color = semanticRoleColor(GlassTheme.tokens, this)
+
+/**
+ * El color pleno de un rol, sin composición de por medio.
+ *
+ * Es lo mismo que [SemanticRole.color], pero como función pura: así `ContrastTest`
+ * lo mide con la paleta viva de los dos temas.
+ */
+internal fun semanticRoleColor(tokens: GlassTokens, role: SemanticRole): Color = when (role) {
+    SemanticRole.NEUTRAL -> tokens.textSecondary
+    SemanticRole.SUCCESS -> tokens.success
+    SemanticRole.WARNING -> tokens.warning
+    SemanticRole.DANGER -> tokens.danger
+    SemanticRole.INFO -> tokens.info
+    SemanticRole.INSIGHT -> tokens.insight
+    SemanticRole.BRAND -> tokens.accentInk
+    SemanticRole.COMMERCE -> tokens.commerce
+}
+
+/** Icono y relleno de un [SemanticIconContainer]. */
+internal data class SemanticIconColors(val icon: Color, val fill: Color)
+
+/**
+ * Lo que pinta un [SemanticIconContainer]: el icono y su tinte al 12 %.
+ *
+ * Es una función para que `ContrastTest` mida el icono —un elemento no textual,
+ * 3:1— sobre su propio tinte, que es exactamente donde se pinta.
+ */
+internal fun semanticIconContainerColors(tokens: GlassTokens, role: SemanticRole): SemanticIconColors =
+    SemanticIconColors(
+        icon = semanticIconTint(tokens, role),
+        fill = semanticRoleColor(tokens, role).copy(alpha = 0.12f),
+    )
+
+/**
+ * El icono: el color del rol, salvo donde ese color no llega a 3:1 sobre su
+ * propio tinte.
+ *
+ * Medido en `ContrastTest`, sólo se queda corto el verde de éxito del tema claro:
+ * 2,65–2,94:1 sobre superficie sólida y sobre cristal. Ahí el icono lleva la
+ * TINTA de su familia —la misma que el texto de un chip positivo— y el tinte del
+ * contenedor sigue siendo el verde. El resto de roles pasa de 3:1 en los dos temas
+ * y conserva su color; en oscuro la tinta de éxito es el propio verde, así que no
+ * cambia nada.
+ */
+internal fun semanticIconTint(tokens: GlassTokens, role: SemanticRole): Color = when (role) {
+    SemanticRole.SUCCESS -> tokens.successInk
+    else -> semanticRoleColor(tokens, role)
 }
 
 /**
@@ -111,17 +148,18 @@ fun SemanticIconContainer(
     shape: Shape = Radius.md,
     contentDescription: String? = null,
 ) {
+    val colors = semanticIconContainerColors(GlassTheme.tokens, role)
     Box(
         modifier = modifier
             .size(size)
             .clip(shape)
-            .background(role.tint()),
+            .background(colors.fill),
         contentAlignment = Alignment.Center,
     ) {
         AppIconImage(
             icon = icon,
             size = iconSize,
-            tint = role.color(),
+            tint = colors.icon,
             contentDescription = contentDescription,
         )
     }

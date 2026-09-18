@@ -4,6 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -51,6 +52,7 @@ import com.oposicontrol.admin.core.ui.layout.DesktopBreakpoint
 import com.oposicontrol.admin.core.ui.layout.DesktopWindow
 import com.oposicontrol.admin.core.ui.layout.screenPadding
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
 
@@ -409,6 +411,7 @@ private fun DesktopTopBar(
             overflow = TextOverflow.Ellipsis,
         )
         EnvironmentChip(environmentLabel)
+        ThemeToggleButton()
         InfoTooltip(text = "Ayuda del panel") {
             DesktopIconButton(
                 label = "Ayuda del panel",
@@ -418,6 +421,51 @@ private fun DesktopTopBar(
             ) {
                 AppIconImage(AppIcon.HELP, size = 17.dp)
             }
+        }
+    }
+}
+
+/**
+ * El control de tema del panel, en la barra superior.
+ *
+ * Vive aquí y no en una pantalla porque el tema es de la aplicación entera: el
+ * Dashboard, Exámenes y el resto comparten el mismo estado, que se decide en la
+ * raíz (`App.kt`) y llega por `CompositionLocal` para no atravesar con un
+ * booleano las firmas de `AppShell`, `DesktopShell` y todo lo que hay en medio.
+ *
+ * Pulsarlo fija una elección EXPLÍCITA (claro u oscuro). Quien no lo toca sigue
+ * con el tema del sistema, que es el comportamiento que había antes. La elección
+ * **dura lo que dura la sesión**: no existe almacenamiento de preferencias en la
+ * aplicación y montarlo entero para esto sería desproporcionado.
+ */
+@Composable
+private fun ThemeToggleButton() {
+    val controller = com.oposicontrol.admin.core.ui.theme.LocalThemeController.current
+    val isDark = when (controller.mode) {
+        com.oposicontrol.admin.core.ui.theme.ThemeMode.LIGHT -> false
+        com.oposicontrol.admin.core.ui.theme.ThemeMode.DARK -> true
+        com.oposicontrol.admin.core.ui.theme.ThemeMode.SYSTEM -> isSystemInDarkTheme()
+    }
+    val target = if (isDark) "claro" else "oscuro"
+    InfoTooltip(text = "Cambiar a tema $target") {
+        DesktopIconButton(
+            label = "Cambiar a tema $target",
+            onClick = {
+                controller.onSelect(
+                    if (isDark) {
+                        com.oposicontrol.admin.core.ui.theme.ThemeMode.LIGHT
+                    } else {
+                        com.oposicontrol.admin.core.ui.theme.ThemeMode.DARK
+                    },
+                )
+            },
+            size = 32.dp,
+        ) {
+            // Sol y luna a la vez: el icono representa el CONTROL, no el estado.
+            // Uno que cambiara entre sol y luna obliga a saber si muestra el tema
+            // actual o al que se va, que es ambiguo en todas las aplicaciones que
+            // lo hacen. Lo que se va a hacer lo dicen la etiqueta y el tooltip.
+            AppIconImage(AppIcon.THEME, size = 17.dp)
         }
     }
 }
@@ -474,7 +522,7 @@ fun DesktopPageHeader(
     breakpoint: DesktopBreakpoint = DesktopWindow.breakpoint,
     actions: @Composable () -> Unit = {},
 ) {
-    val tokens = GlassTheme.tokens
+    val colors = pageHeaderColors(GlassTheme.tokens)
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -498,12 +546,12 @@ fun DesktopPageHeader(
                 }
                 breadcrumbs.forEachIndexed { index, crumb ->
                     if (index > 0) {
-                        AppIconImage(AppIcon.CHEVRON_RIGHT, size = 13.dp, tint = tokens.textSecondary)
+                        AppIconImage(AppIcon.CHEVRON_RIGHT, size = 13.dp, tint = colors.crumb)
                     }
                     Text(
                         text = crumb,
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (index == breadcrumbs.lastIndex) tokens.textPrimary else tokens.textSecondary,
+                        color = if (index == breadcrumbs.lastIndex) colors.currentCrumb else colors.crumb,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -519,7 +567,7 @@ fun DesktopPageHeader(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.displayLarge,
-                    color = tokens.textPrimary,
+                    color = colors.title,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -527,7 +575,7 @@ fun DesktopPageHeader(
                     Text(
                         text = description,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = tokens.textSecondary,
+                        color = colors.description,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -549,6 +597,31 @@ fun DesktopPageHeader(
         }
     }
 }
+
+/** Los colores del encabezado de página. */
+internal data class PageHeaderColors(
+    val crumb: Color,
+    val currentCrumb: Color,
+    val title: Color,
+    val description: Color,
+)
+
+/**
+ * Qué color pinta el encabezado de página.
+ *
+ * Es el único texto de escritorio que va DIRECTAMENTE sobre el fondo atmosférico,
+ * sin un panel debajo, y cae justo donde está el halo claro: arriba a la
+ * izquierda. Es una función para que `ContrastTest` lo mida contra los dos
+ * extremos reales del fondo con la misma decisión que toma el composable. Medido
+ * en el render oscuro antes de esta corrección: migas 4,04:1 y descripción
+ * 4,29:1, con un test que sólo miraba la parada más profunda.
+ */
+internal fun pageHeaderColors(tokens: GlassTokens): PageHeaderColors = PageHeaderColors(
+    crumb = tokens.textSecondary,
+    currentCrumb = tokens.textPrimary,
+    title = tokens.textPrimary,
+    description = tokens.textSecondary,
+)
 
 // ---------------------------------------------------------------------------
 // Ayuda global
