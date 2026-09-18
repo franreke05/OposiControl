@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -22,10 +23,13 @@ import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.DesktopTab
 import com.oposicontrol.admin.core.ui.components.DesktopTabs
-import com.oposicontrol.admin.core.ui.components.Help
-import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.components.FormSection
+import com.oposicontrol.admin.core.ui.components.Help
+import com.oposicontrol.admin.core.ui.components.SemanticRole
 import com.oposicontrol.admin.core.ui.components.StatusChip
+import com.oposicontrol.admin.core.ui.components.StatusTone
+import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.UserDetail
 import com.oposicontrol.admin.domain.model.UserDetailSection
 import kotlin.math.roundToInt
@@ -97,14 +101,40 @@ private fun UserProfileSection(detail: UserDetail) {
     FormSection(
         title = "Perfil",
         description = "Identidad y datos de onboarding.",
+        icon = AppIcon.USERS,
+        iconRole = SemanticRole.INFO,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Field("Usuario", detail.profile.displayName ?: detail.profile.username)
-            Field("ID", detail.profile.userId)
+            Field("Nombre", detail.profile.displayName)
+            Field(USER_ACCOUNT_FIELD_LABEL, detail.profile.username)
             Field("Alta", detail.profile.createdAt)
+
+            // Aquí había un `Field("ID", detail.profile.userId)`. Era el UUID de
+            // Supabase presentado como identidad principal del usuario: no
+            // identifica a nadie para quien administra, no se puede buscar por él
+            // y expone la clave interna en cualquier captura de pantalla.
+            //
+            // El correo real tampoco está: vive en `auth.users` y esta pantalla no
+            // lo consulta. Se dice en vez de dejar el hueco.
+            Text(
+                text = USER_EMAIL_UNAVAILABLE_NOTE,
+                style = MaterialTheme.typography.bodySmall,
+                color = GlassTheme.tokens.textSecondary,
+            )
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatusChip(if (detail.profile.isGuest) "invitado" else "registrado")
-                StatusChip(if (detail.profile.onboardingCompleted) "onboarding-ok" else "onboarding-pendiente")
+                // Tono explícito: «invitado» y «registrado» no están en el
+                // vocabulario de `statusToneFor`, y por defecto caerían las dos en
+                // UNKNOWN. Ninguna de las dos es un problema, así que ninguna se
+                // pinta como tal.
+                StatusChip(
+                    status = if (detail.profile.isGuest) "Invitado" else "Registrado",
+                    tone = if (detail.profile.isGuest) StatusTone.NEUTRAL else StatusTone.POSITIVE,
+                )
+                StatusChip(
+                    status = if (detail.profile.onboardingCompleted) "Onboarding completo" else "Onboarding pendiente",
+                    tone = if (detail.profile.onboardingCompleted) StatusTone.POSITIVE else StatusTone.ATTENTION,
+                )
             }
 
             val extended = detail.extendedProfile
@@ -135,6 +165,8 @@ private fun UserPerformanceSection(detail: UserDetail) {
         title = "Rendimiento",
         description = "Actividad acumulada de estudio.",
         help = Help.notaMedia,
+        icon = AppIcon.PERFORMANCE,
+        iconRole = SemanticRole.INSIGHT,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val performance = detail.performance
@@ -174,6 +206,8 @@ private fun UserCompetitiveSection(detail: UserDetail) {
         // De las tres, «evolución» es la que más se malinterpreta: no es la nota,
         // es la diferencia contra la referencia anterior.
         help = Help.evolucion,
+        icon = AppIcon.RANKINGS,
+        iconRole = SemanticRole.INSIGHT,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val competitive = detail.competitive
@@ -208,7 +242,7 @@ private fun UserCompetitiveSection(detail: UserDetail) {
                             text = "Indicador comparativo interno frente a otros usuarios. " +
                                 "No es una probabilidad oficial de obtener plaza.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = GlassTheme.tokens.textSecondary,
                         )
                     }
                 }
@@ -223,6 +257,8 @@ private fun UserEconomySection(detail: UserDetail) {
         title = "Economía",
         description = "Saldo, plan y suscripciones.",
         help = Help.saldo,
+        icon = AppIcon.TICKETS,
+        iconRole = SemanticRole.COMMERCE,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val economy = detail.economy
@@ -244,6 +280,11 @@ private fun UserEconomySection(detail: UserDetail) {
             } else if (detail.subscriptions.isNotEmpty()) {
                 Text("Historial de suscripciones", style = MaterialTheme.typography.labelMedium)
                 AdminTable(
+                    // Alto acotado a propósito: `AdminTable` monta un `LazyColumn`
+                    // y la columna de detalle desplaza. Un hijo perezoso sin techo
+                    // dentro de un padre desplazable se mide con altura infinita y
+                    // revienta en tiempo de medición.
+                    modifier = Modifier.heightIn(max = TABLE_MAX_HEIGHT),
                     columns = listOf(
                         AdminTableColumn("Producto", 1.0f),
                         AdminTableColumn("Estado", 0.7f),
@@ -269,7 +310,12 @@ private fun UserEconomySection(detail: UserDetail) {
 
 @Composable
 private fun UserCommunitySection(detail: UserDetail) {
-    FormSection(title = "Comunidad", description = "Aportaciones como OposiTester.") {
+    FormSection(
+        title = "Comunidad",
+        description = "Aportaciones como OposiTester.",
+        icon = AppIcon.TESTER,
+        iconRole = SemanticRole.INSIGHT,
+    ) {
         val tester = detail.testerState
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             when {
@@ -291,16 +337,20 @@ private fun UserWeaknessSection(detail: UserDetail) {
     FormSection(
         title = "Debilidades por etiqueta",
         description = "Peor porcentaje de acierto primero.",
+        icon = AppIcon.ANALYTICS,
+        iconRole = SemanticRole.INSIGHT,
     ) {
         when {
             detail.isUnavailable(UserDetailSection.WEAKNESSES) -> Unavailable()
             detail.weaknesses.isEmpty() -> NoData("Sin práctica suficiente por etiqueta.")
             else -> AdminTable(
+                // Ver la nota de «Historial de suscripciones»: mismo motivo.
+                modifier = Modifier.heightIn(max = TABLE_MAX_HEIGHT),
                 columns = listOf(
                     AdminTableColumn("Etiqueta", 1.2f),
-                    AdminTableColumn("Respondidas", 0.7f),
-                    AdminTableColumn("Fallos", 0.6f),
-                    AdminTableColumn("Acierto", 0.6f),
+                    AdminTableColumn("Respondidas", 0.7f, numeric = true),
+                    AdminTableColumn("Fallos", 0.6f, numeric = true),
+                    AdminTableColumn("Acierto", 0.6f, numeric = true),
                     AdminTableColumn("Dominio", 0.7f),
                 ),
                 rows = detail.weaknesses.map { weakness ->
@@ -329,7 +379,7 @@ private fun Field(label: String, value: String?) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = GlassTheme.tokens.textSecondary,
             modifier = Modifier.width(190.dp),
         )
         Text(
@@ -337,6 +387,7 @@ private fun Field(label: String, value: String?) {
             // un valor legítimamente vacío.
             text = value?.takeIf { it.isNotBlank() } ?: NO_DATA_TEXT,
             style = MaterialTheme.typography.bodySmall,
+            color = GlassTheme.tokens.textPrimary,
             fontWeight = if (value.isNullOrBlank()) FontWeight.Normal else FontWeight.Medium,
         )
     }
@@ -347,7 +398,7 @@ private fun NoData(reason: String) {
     Text(
         text = "$NO_DATA_TEXT — $reason",
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = GlassTheme.tokens.textSecondary,
     )
 }
 
@@ -356,12 +407,21 @@ private fun Unavailable() {
     Text(
         text = "$NOT_AVAILABLE_TEXT — no se pudo leer esta sección.",
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.error,
+        color = GlassTheme.tokens.danger,
     )
 }
 
 private const val NO_DATA_TEXT = "NO_DATA"
 private const val NOT_AVAILABLE_TEXT = "NO_DISPONIBLE"
+
+/**
+ * Techo de las tablas de la ficha.
+ *
+ * Son listas cortas —suscripciones de un usuario, sus etiquetas peor dominadas—,
+ * así que el tope rara vez se alcanza; existe para que el `LazyColumn` interno
+ * tenga una altura finita dentro de la columna que desplaza.
+ */
+private val TABLE_MAX_HEIGHT = 320.dp
 
 /** Nota sobre 10 con un decimal, como se presenta al usuario final. */
 internal fun formatScore(score: Double): String {

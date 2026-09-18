@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.Flow
 class UsersRepositoryImpl(
     private val remote: UsersDataSource,
 ) : UsersRepository {
-    override fun observeUsers(): Flow<List<User>> = remote.observeUsers()
+    override fun observeUsers(): Flow<AppResult<List<User>>> = remote.observeUsers()
 
     override suspend fun getUser(userId: String) = remote.getUser(userId)
 

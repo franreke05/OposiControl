@@ -9,6 +9,7 @@ fun RoleDto.toDomain(): Role {
     return Role(
         id = id,
         name = name,
+        code = code,
         permissions = permissions.map { it.toDomain() },
     )
 }
@@ -24,6 +25,7 @@ fun Role.toDto(): RoleDto {
     return RoleDto(
         id = id,
         name = name,
+        code = code,
         permissions = permissions.map { it.toDto() },
     )
 }

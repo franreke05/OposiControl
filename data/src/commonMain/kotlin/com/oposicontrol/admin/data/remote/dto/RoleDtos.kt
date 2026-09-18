@@ -6,6 +6,8 @@ import kotlinx.serialization.Serializable
 data class RoleDto(
     val id: String,
     val name: String,
+    /** Código canónico (`admin`, `superadmin`…). Ver `Role.code`. */
+    val code: String = "",
     val permissions: List<PermissionDto>,
 )
 

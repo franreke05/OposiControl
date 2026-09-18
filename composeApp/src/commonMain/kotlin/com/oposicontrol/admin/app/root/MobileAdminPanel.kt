@@ -34,7 +34,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.domain.model.ForumReport
-import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.GlassChip
 import com.oposicontrol.admin.core.ui.components.GlassChipGroup
@@ -43,6 +42,7 @@ import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.LoadingStateCard
 import com.oposicontrol.admin.core.ui.components.StatusChip
+import com.oposicontrol.admin.core.ui.components.StatusTone
 import com.oposicontrol.admin.core.ui.layout.UiSpacing
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessIntent
@@ -62,8 +62,15 @@ import com.oposicontrol.admin.features.support.presentation.SupportIntent
 import com.oposicontrol.admin.features.support.presentation.SupportViewModel
 import com.oposicontrol.admin.features.tickets.presentation.TicketsIntent
 import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
+import com.oposicontrol.admin.features.users.presentation.USER_ACCOUNT_FIELD_LABEL
+import com.oposicontrol.admin.features.users.presentation.USER_EMAIL_UNAVAILABLE_NOTE
+import com.oposicontrol.admin.features.users.presentation.UserAccountKind
 import com.oposicontrol.admin.features.users.presentation.UsersIntent
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
+import com.oposicontrol.admin.features.users.presentation.userAccountKind
+import com.oposicontrol.admin.features.users.presentation.userAccountKindLabel
+import com.oposicontrol.admin.features.users.presentation.userAccountName
+import com.oposicontrol.admin.features.users.presentation.userRoleSummary
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -377,23 +384,16 @@ private fun AdminUsersSection(
     onIntent: (UsersIntent) -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    val showEditor = usersState.selectedUserId != null ||
-        usersState.editorName.isNotBlank() ||
-        usersState.editorEmail.isNotBlank()
+    val showEditor = usersState.selectedUserId != null || usersState.editorName.isNotBlank()
 
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         when (val users = usersState.users) {
             is UiAsync.Loading -> LoadingStateCard()
+            // Sin acción de crear: el alta se hace en el sistema de autenticación,
+            // no desde el panel, y el cliente cortaba la llamada con un error.
             is UiAsync.Empty -> EmptyStateCard(
                 title = "Sin usuarios",
-                message = "No hay usuarios registrados.",
-                action = {
-                    MobileActionPill(
-                        icon = MobileIcon.Plus,
-                        label = "Nuevo",
-                        onClick = { onIntent(UsersIntent.CreateNew) },
-                    )
-                },
+                message = "El sistema no ha devuelto ningún usuario.",
             )
             is UiAsync.Error -> EmptyStateCard(
                 title = "Error al cargar",
@@ -417,7 +417,6 @@ private fun AdminUsersSection(
                     filtered = filteredUsers.size,
                     query = query,
                     onQueryChange = { query = it },
-                    onCreate = { onIntent(UsersIntent.CreateNew) },
                 )
                 if (showEditor) {
                     UsersEditorCard(state = usersState, onIntent = onIntent)
@@ -425,7 +424,7 @@ private fun AdminUsersSection(
                 if (visibleUsers.isEmpty()) {
                     EmptyStateCard(
                         title = "Sin resultados",
-                        message = "Prueba con otro nombre o email.",
+                        message = "Prueba con otro nombre o nombre de usuario.",
                     )
                 }
                 visibleUsers.forEach { user ->
@@ -463,7 +462,9 @@ private fun AdminUsersSection(
                                 )
                                 if (user.roleIds.isNotEmpty()) {
                                     Text(
-                                        text = user.roleIds.joinToString(", "),
+                                        // Nombres de rol, no sus identificadores:
+                                        // aquí se pintaban los UUID del catálogo.
+                                        text = userRoleSummary(user, usersState.rolesById),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
@@ -485,7 +486,16 @@ private fun AdminUsersSection(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                StatusChip(status = if (user.isActive) "active" else "inactive")
+                                // `isActive` es `!es_invitado`: distingue invitado
+                                // de registrado, no activo de bloqueado.
+                                StatusChip(
+                                    status = userAccountKindLabel(userAccountKind(user)),
+                                    tone = if (userAccountKind(user) == UserAccountKind.REGISTRADO) {
+                                        StatusTone.POSITIVE
+                                    } else {
+                                        StatusTone.NEUTRAL
+                                    },
+                                )
                             }
                         }
                     }
@@ -507,7 +517,6 @@ private fun AdminUsersListToolbar(
     filtered: Int,
     query: String,
     onQueryChange: (String) -> Unit,
-    onCreate: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -536,16 +545,6 @@ private fun AdminUsersListToolbar(
                     color = GlassTheme.tokens.textSecondary,
                 )
             }
-            AdminUserActionButton(
-                icon = MobileIcon.Plus,
-                label = "Nuevo",
-                modifier = Modifier.width(112.dp),
-                enabled = true,
-                tint = GlassTheme.tokens.accent,
-                strokeColor = GlassTheme.tokens.accent.copy(alpha = 0.44f),
-                contentColor = Color.White,
-                onClick = onCreate,
-            )
         }
     }
 }
@@ -555,7 +554,6 @@ private fun UsersEditorCard(
     state: com.oposicontrol.admin.features.users.presentation.UsersState,
     onIntent: (UsersIntent) -> Unit,
 ) {
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
     var manualTickets by rememberSaveable { mutableStateOf("") }
 
     GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
@@ -566,21 +564,33 @@ private fun UsersEditorCard(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                text = if (state.selectedUserId != null) "Editar usuario" else "Nuevo usuario",
+                text = "Editar usuario",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
             )
             GlassTextField(
                 value = state.editorName,
                 onValueChange = { onIntent(UsersIntent.UpdateName(it)) },
-                placeholder = "Nombre completo",
+                placeholder = "Nombre",
                 modifier = Modifier.fillMaxWidth(),
             )
-            GlassTextField(
-                value = state.editorEmail,
-                onValueChange = { onIntent(UsersIntent.UpdateEmail(it)) },
-                placeholder = "Email",
-                modifier = Modifier.fillMaxWidth(),
+            // El campo que el backend llama `email` es en realidad `username`, y
+            // el guardado lo descarta. Editable hacía creer que se estaba
+            // corrigiendo el correo de alguien, así que pasa a sólo lectura.
+            Text(
+                text = USER_ACCOUNT_FIELD_LABEL,
+                style = MaterialTheme.typography.labelMedium,
+                color = GlassTheme.tokens.textSecondary,
+            )
+            Text(
+                text = state.selectedUser?.let { userAccountName(it) }.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = USER_EMAIL_UNAVAILABLE_NOTE,
+                style = MaterialTheme.typography.labelSmall,
+                color = GlassTheme.tokens.textSecondary,
             )
             if (state.availableRoles.isNotEmpty()) {
                 AdminUserRoleSelector(
@@ -590,10 +600,9 @@ private fun UsersEditorCard(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            AdminUserToggleRow(
-                checked = state.editorIsActive,
-                onCheckedChange = { onIntent(UsersIntent.ToggleActive(it)) },
-            )
+            // Aquí había un interruptor «Usuario activo». El `PATCH` de usuario
+            // sólo escribe `nombre_mostrar`, así que moverlo devolvía éxito sin
+            // cambiar nada. No existe bloqueo en el sistema.
             if (state.selectedUserId != null) {
                 Text("Dar opositickets", style = MaterialTheme.typography.labelMedium, color = GlassTheme.tokens.textSecondary)
                 Row(
@@ -639,23 +648,11 @@ private fun UsersEditorCard(
             AdminUsersActionRow(
                 actionState = state.actionState,
                 onSave = { onIntent(UsersIntent.Save) },
-                onDelete = if (state.selectedUserId != null) {
-                    { confirmDelete = true }
-                } else null,
+                // Eliminar estaba cortado en el cliente con un `error(...)`: el
+                // diálogo prometía una baja que nunca llegaba a ejecutarse.
+                onDelete = null,
             )
         }
-    }
-    if (confirmDelete) {
-        ConfirmDialog(
-            title = "Eliminar usuario",
-            message = "Esta acción quitará el usuario seleccionado. ¿Continuar?",
-            confirmLabel = "Eliminar",
-            onConfirm = {
-                confirmDelete = false
-                onIntent(UsersIntent.DeleteSelected)
-            },
-            onDismiss = { confirmDelete = false },
-        )
     }
 }
 
@@ -720,34 +717,10 @@ private fun AdminUserRoleChip(
     }
 }
 
-@Composable
-private fun AdminUserToggleRow(
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    GlassSurface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = AdminUserActionShape,
-        tint = GlassTheme.tokens.glassFillStrong.copy(alpha = 0.55f),
-        shadowElevation = 0.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(44.dp)
-                .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Activo", style = MaterialTheme.typography.labelLarge)
-            Switch(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-                colors = SwitchDefaults.colors(checkedThumbColor = GlassTheme.tokens.accent),
-            )
-        }
-    }
-}
+// Aquí vivía `AdminUserToggleRow`, el interruptor «Activo» de la ficha de usuario
+// en móvil. Se retira con su único punto de llamada: el `PATCH` de usuario sólo
+// escribe `nombre_mostrar`, así que moverlo devolvía éxito sin cambiar nada, y
+// `isActive` no significa acceso sino invitado/registrado.
 
 @Composable
 private fun AdminTicketPresetButton(

@@ -25,6 +25,9 @@ import kotlinx.serialization.Serializable
 private fun AdminRoleV1Dto.toDto() = RoleDto(
     id = id,
     name = name,
+    // El backend ya lo enviaba; este mapeo lo tiraba. Sin él, el cliente no puede
+    // distinguir un rol de administración de uno de usuario. Ver `Role.code`.
+    code = code,
     permissions = permissions.map { PermissionDto(it.key, it.label) },
 )
 

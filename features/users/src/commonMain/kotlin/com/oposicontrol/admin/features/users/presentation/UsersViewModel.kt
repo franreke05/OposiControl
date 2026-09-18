@@ -6,7 +6,6 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
-import com.oposicontrol.admin.domain.model.User
 import com.oposicontrol.admin.domain.repository.ModerationRepository
 import com.oposicontrol.admin.domain.repository.RolesRepository
 import com.oposicontrol.admin.domain.repository.UsersRepository
@@ -28,11 +27,23 @@ class UsersViewModel(
 ) {
     init {
         scope.launch {
-            usersRepository.observeUsers().collectLatest { users ->
-                updateState {
-                    it.copy(
-                        users = if (users.isEmpty()) UiAsync.Empty else UiAsync.Success(users),
-                    )
+            // Un fallo del backend ya NO se confunde con «no hay usuarios»: el
+            // origen devuelve el resultado y aquí se separan los dos casos. Antes
+            // se emitía una lista vacía ante cualquier error, así que una caída
+            // del servidor se pintaba como censo vacío —con su botón de crear— y
+            // nadie se enteraba de que el sistema estaba caído.
+            usersRepository.observeUsers().collectLatest { result ->
+                updateState { state ->
+                    when (result) {
+                        is AppResult.Failure -> state.copy(users = UiAsync.Error(result.error))
+                        is AppResult.Success -> state.copy(
+                            users = if (result.value.isEmpty()) {
+                                UiAsync.Empty
+                            } else {
+                                UiAsync.Success(result.value)
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -45,29 +56,39 @@ class UsersViewModel(
 
     override suspend fun handleIntent(intent: UsersIntent) {
         when (intent) {
-            UsersIntent.CreateNew -> updateState {
-                it.copy(
-                    selectedUserId = null,
-                    editorName = "",
-                    editorEmail = "",
-                    editorRoleIds = emptySet(),
-                    editorIsActive = true,
+            // El alta no se hace desde el panel. Se explica en vez de abrir un
+            // editor vacío que al guardar devolvería un error del cliente.
+            UsersIntent.CreateNew -> updateState { it.copy(createNoticeVisible = true) }
+            UsersIntent.DismissCreateNotice -> updateState { it.copy(createNoticeVisible = false) }
+
+            is UsersIntent.SelectUser -> requestSelectUser(intent.userId)
+            UsersIntent.ConfirmDiscardChanges -> {
+                val pending = currentState().pendingSelectionUserId ?: return
+                updateState { it.copy(pendingSelectionUserId = null) }
+                selectUser(pending)
+            }
+            UsersIntent.CancelPendingSelection -> updateState { it.copy(pendingSelectionUserId = null) }
+
+            is UsersIntent.UpdateName -> updateState { it.copy(editorName = intent.value) }
+            is UsersIntent.ToggleRole -> updateState {
+                val next = if (intent.roleId in it.editorRoleIds) {
+                    it.editorRoleIds - intent.roleId
+                } else {
+                    it.editorRoleIds + intent.roleId
+                }
+                it.copy(editorRoleIds = next, actionState = UiAsync.Idle)
+            }
+            UsersIntent.Save -> save()
+            UsersIntent.DiscardChanges -> updateState { state ->
+                val user = state.selectedUser ?: return@updateState state
+                state.copy(
+                    editorName = user.fullName,
+                    editorRoleIds = user.roleIds.toSet(),
                     actionState = UiAsync.Idle,
                 )
             }
 
-            UsersIntent.DeleteSelected -> deleteSelected()
-            UsersIntent.Save -> save()
             is UsersIntent.GrantTickets -> grantTickets(intent.amount)
-            is UsersIntent.SelectUser -> selectUser(intent.userId)
-            is UsersIntent.ToggleActive -> updateState { it.copy(editorIsActive = intent.value) }
-            is UsersIntent.UpdateEmail -> updateState { it.copy(editorEmail = intent.value) }
-            is UsersIntent.UpdateName -> updateState { it.copy(editorName = intent.value) }
-            is UsersIntent.ToggleRole -> updateState {
-                val next = if (intent.roleId in it.editorRoleIds) it.editorRoleIds - intent.roleId else it.editorRoleIds + intent.roleId
-                it.copy(editorRoleIds = next)
-            }
-            // Quick-action: tickets dialog
             UsersIntent.OpenTicketsDialog -> updateState {
                 it.copy(
                     ticketsDialogOpen = true,
@@ -87,36 +108,52 @@ class UsersViewModel(
                 updateState { it.copy(ticketsDialogOpen = false, ticketsInput = "") }
                 grantTickets(amount)
             }
-            // Quick-action: warning dialog
-            UsersIntent.OpenWarningDialog -> updateState { it.copy(warningDialogOpen = true, warningInput = "", actionState = UiAsync.Idle) }
-            UsersIntent.DismissWarningDialog -> updateState { it.copy(warningDialogOpen = false, warningInput = "") }
+
+            UsersIntent.OpenWarningDialog -> updateState {
+                it.copy(warningDialogOpen = true, warningInput = "", actionState = UiAsync.Idle)
+            }
+            UsersIntent.DismissWarningDialog -> updateState {
+                it.copy(warningDialogOpen = false, warningInput = "")
+            }
             is UsersIntent.UpdateWarningInput -> updateState { it.copy(warningInput = intent.value) }
             UsersIntent.ConfirmWarning -> sendWarning()
-            // Quick-action: block/unblock from list row
-            is UsersIntent.QuickToggleBlock -> quickToggleBlock(intent.userId)
+
             is UsersIntent.UpdateSearch -> updateState { it.copy(searchQuery = intent.value) }
         }
     }
 
-    private fun selectUser(userId: String) {
-        val user = (currentState().users as? UiAsync.Success)?.value?.firstOrNull { it.id == userId } ?: return
-        val alreadySelected = currentState().selectedUserId == user.id
+    /**
+     * Cambio de usuario desde la lista.
+     *
+     * Si hay cambios sin guardar la selección queda **en espera** y la pantalla
+     * pregunta. La versión anterior sobrescribía el formulario en silencio: un
+     * nombre a medio corregir desaparecía al pulsar otra fila sin ningún aviso.
+     */
+    private suspend fun requestSelectUser(userId: String) {
+        val state = currentState()
+        if (userId == state.selectedUserId) return
+        if (state.isDirty) {
+            updateState { it.copy(pendingSelectionUserId = userId) }
+            return
+        }
+        selectUser(userId)
+    }
+
+    private suspend fun selectUser(userId: String) {
+        val user = currentState().loadedUsers.firstOrNull { it.id == userId } ?: return
         updateState {
             it.copy(
                 selectedUserId = user.id,
                 editorName = user.fullName,
-                editorEmail = user.email,
                 editorRoleIds = user.roleIds.toSet(),
-                editorIsActive = user.isActive,
                 actionState = UiAsync.Idle,
+                createNoticeVisible = false,
             )
         }
         // La ficha se carga aparte del formulario de edición: es sólo lectura,
         // tiene su propio estado de carga y su propio error, y no debe impedir
         // editar nombre/roles si alguna de sus secciones falla.
-        if (!alreadySelected) {
-            scope.launch { loadUserDetail(user.id) }
-        }
+        loadUserDetail(user.id)
     }
 
     private suspend fun loadUserDetail(userId: String) {
@@ -127,11 +164,55 @@ class UsersViewModel(
         }
     }
 
+    /**
+     * Guarda nombre y roles del usuario seleccionado.
+     *
+     * Se parte de la fila existente con `copy` en vez de construir un `User`
+     * nuevo: así los campos que esta pantalla no edita —alta, saldo, tipo de
+     * cuenta— viajan tal cual en lugar de fabricarse. La versión anterior ponía
+     * `createdAt = Clock.System.now()` cuando no encontraba el usuario, es decir,
+     * inventaba una fecha de alta.
+     */
+    private suspend fun save() {
+        val existing = currentState().selectedUser ?: return
+        val blockers = currentState().saveBlockers
+        if (blockers.isNotEmpty()) {
+            updateState { it.copy(actionState = UiAsync.Error(AppError.Validation(blockers.first()))) }
+            return
+        }
+        updateState { it.copy(actionState = UiAsync.Loading) }
+        val user = existing.copy(
+            fullName = currentState().editorName.trim(),
+            roleIds = currentState().editorRoleIds.toList(),
+        )
+        when (val result = upsertUserUseCase(user)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("user_saved", mapOf("user_id" to user.id))
+                updateState { state ->
+                    // El flujo de la lista no vuelve a emitir tras un guardado, así
+                    // que la fila se refresca aquí; si no, la tabla seguiría
+                    // enseñando el nombre antiguo hasta recargar la pantalla.
+                    val updated = state.loadedUsers.map {
+                        if (it.id == result.value.id) result.value else it
+                    }
+                    state.copy(
+                        users = UiAsync.Success(updated),
+                        selectedUserId = result.value.id,
+                        editorName = result.value.fullName,
+                        editorRoleIds = result.value.roleIds.toSet(),
+                        actionState = UiAsync.Success(Unit),
+                    )
+                }
+            }
+        }
+    }
+
     private suspend fun grantTickets(amount: Int) {
         val userId = currentState().selectedUserId ?: return
         // La clave se fija al abrir el diálogo, no al pulsar: así un doble clic o
-        // un reintento reutilizan la misma y el backend devuelve el movimiento
-        // original en lugar de conceder los tickets otra vez.
+        // un reintento de red reutilizan la misma y el backend devuelve el
+        // movimiento original en lugar de conceder los tickets otra vez.
         val idempotencyKey = currentState().ticketsIdempotencyKey ?: return updateState {
             it.copy(
                 actionState = UiAsync.Error(
@@ -144,12 +225,12 @@ class UsersViewModel(
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("tickets_grant", mapOf("user_id" to userId, "amount" to amount.toString()))
-                updateState { st ->
-                    val updated = (st.users as? UiAsync.Success)?.value?.map { u ->
-                        if (u.id == userId) u.copy(ticketsBalance = result.value) else u
+                updateState { state ->
+                    val updated = state.loadedUsers.map { user ->
+                        if (user.id == userId) user.copy(ticketsBalance = result.value) else user
                     }
-                    st.copy(
-                        users = if (updated != null) UiAsync.Success(updated) else st.users,
+                    state.copy(
+                        users = if (updated.isEmpty()) state.users else UiAsync.Success(updated),
                         actionState = UiAsync.Success(Unit),
                     )
                 }
@@ -166,67 +247,6 @@ class UsersViewModel(
             is AppResult.Success -> {
                 analyticsTracker.trackAction("user_warned", mapOf("user_id" to userId))
                 updateState { it.copy(actionState = UiAsync.Success(Unit)) }
-            }
-        }
-    }
-
-    private suspend fun quickToggleBlock(userId: String) {
-        val user = (currentState().users as? UiAsync.Success)?.value?.firstOrNull { it.id == userId } ?: return
-        updateState { it.copy(actionState = UiAsync.Loading) }
-        val toggled = user.copy(isActive = !user.isActive)
-        when (val result = upsertUserUseCase(toggled)) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> {
-                analyticsTracker.trackAction(
-                    if (toggled.isActive) "user_unblocked" else "user_blocked",
-                    mapOf("user_id" to userId),
-                )
-                updateState { it.copy(actionState = UiAsync.Success(Unit)) }
-                // If this user is currently selected, sync the editor
-                if (currentState().selectedUserId == userId) {
-                    updateState { it.copy(editorIsActive = toggled.isActive) }
-                }
-            }
-        }
-    }
-
-    private suspend fun save() {
-        analyticsTracker.trackScreen("users")
-        updateState { it.copy(actionState = UiAsync.Loading) }
-        val existingUser = (currentState().users as? UiAsync.Success)?.value?.firstOrNull { it.id == currentState().selectedUserId }
-        val user = User(
-            id = existingUser?.id.orEmpty(),
-            fullName = currentState().editorName,
-            email = currentState().editorEmail,
-            roleIds = currentState().editorRoleIds.toList(),
-            isActive = currentState().editorIsActive,
-            createdAt = existingUser?.createdAt ?: Clock.System.now(),
-        )
-        when (val result = upsertUserUseCase(user)) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> updateState {
-                it.copy(
-                    selectedUserId = result.value.id,
-                    actionState = UiAsync.Success(Unit),
-                )
-            }
-        }
-    }
-
-    private suspend fun deleteSelected() {
-        val selectedUserId = currentState().selectedUserId ?: return
-        updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = usersRepository.deleteUser(selectedUserId)) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> updateState {
-                it.copy(
-                    selectedUserId = null,
-                    editorName = "",
-                    editorEmail = "",
-                    editorRoleIds = emptySet(),
-                    editorIsActive = true,
-                    actionState = UiAsync.Success(Unit),
-                )
             }
         }
     }

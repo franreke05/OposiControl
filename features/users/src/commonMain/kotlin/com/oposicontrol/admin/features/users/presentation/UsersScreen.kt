@@ -1,212 +1,157 @@
 package com.oposicontrol.admin.features.users.presentation
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import com.oposicontrol.admin.core.ui.components.AdminTable
-import com.oposicontrol.admin.core.ui.components.AdminTableColumn
-import com.oposicontrol.admin.core.ui.components.AdminTableRow
-import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.ButtonSize
 import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
-import com.oposicontrol.admin.core.ui.components.FilterBar
-import com.oposicontrol.admin.core.ui.components.FormFeedback
-import com.oposicontrol.admin.core.ui.components.FormSection
-import com.oposicontrol.admin.core.ui.components.GlassActionButton
-import com.oposicontrol.admin.core.ui.components.GlassChipGroup
+import com.oposicontrol.admin.core.ui.components.DesktopVerticalScrollbar
+import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.GlassTextField
-import com.oposicontrol.admin.core.ui.components.GlassToggleRow
+import com.oposicontrol.admin.core.ui.components.PrimaryButton
+import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.Spacing
 
+/**
+ * Pantalla de Usuarios.
+ *
+ * La firma se mantiene —`UsersScreen(viewModel)`— porque la componen dos sitios:
+ * el hub de Usuarios y el adaptador de sección legacy de `AppRoot`.
+ */
 @Composable
-fun UsersScreen(
-    viewModel: UsersViewModel,
-) {
+fun UsersScreen(viewModel: UsersViewModel) {
     val state by viewModel.state.collectAsState()
-    var confirmDelete by remember { mutableStateOf(false) }
-    var confirmToggleBlock by remember { mutableStateOf(false) }
-    val roleName = remember(state.availableRoles) {
-        state.availableRoles.associate { it.id to it.name }
-    }
-
-    CrudSplitLayout(
+    UsersContent(
+        state = state,
+        onIntent = viewModel::dispatch,
         modifier = Modifier.fillMaxSize(),
+    )
+}
+
+/**
+ * El cuerpo de la pantalla, sin ViewModel.
+ *
+ * Separado para que el banco de pruebas visual pueda renderizar la pantalla real
+ * contra estados fabricados sin levantar Koin ni Ktor.
+ */
+@Composable
+internal fun UsersContent(
+    state: UsersState,
+    onIntent: (UsersIntent) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    CrudSplitLayout(
+        modifier = modifier,
         listPane = {
             UsersListPane(
                 state = state,
-                roleName = roleName,
-                onSearch = { viewModel.dispatch(UsersIntent.UpdateSearch(it)) },
-                onSelect = { viewModel.dispatch(UsersIntent.SelectUser(it)) },
-                onCreate = { viewModel.dispatch(UsersIntent.CreateNew) },
+                onSearch = { onIntent(UsersIntent.UpdateSearch(it)) },
+                onSelect = { onIntent(UsersIntent.SelectUser(it)) },
             )
         },
         detailPane = {
-            FormSection(
-                title = if (state.selectedUserId == null) "Nuevo usuario" else "Editor de usuario",
-                description = "Usuarios reales, roles asignados y estado de acceso.",
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    FieldLabel("Nombre completo")
-                    GlassTextField(
-                        value = state.editorName,
-                        onValueChange = { viewModel.dispatch(UsersIntent.UpdateName(it)) },
-                        placeholder = "Ej. Ana García",
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-
-                    FieldLabel("Email")
-                    GlassTextField(
-                        value = state.editorEmail,
-                        onValueChange = { viewModel.dispatch(UsersIntent.UpdateEmail(it)) },
-                        placeholder = "persona@dominio.com",
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (!state.isEmailValid) {
-                        Text(
-                            text = "Formato de email no válido",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
+            if (state.selectedUser == null) {
+                EmptyStateCard(
+                    title = "Sin usuario seleccionado",
+                    message = "Elige a alguien del catálogo para ver su ficha y editar su nombre y sus roles.",
+                    icon = AppIcon.USERS,
+                )
+            } else {
+                // La columna de detalle desplaza. `CrudSplitLayout` no lo hace por
+                // sí mismo, y aquí hay editor + ficha por pestañas + el bloque de
+                // capacidades: en una pantalla de 1080 de alto, todo lo que queda
+                // por debajo del pliegue era sencillamente inalcanzable.
+                //
+                // A diferencia de Exámenes, aquí el scroll de página sí vale: no
+                // hay barra de guardar anclada al fondo que se perdería al bajar.
+                val detailScroll = rememberScrollState()
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier.fillMaxSize().verticalScroll(detailScroll),
+                        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+                    ) {
+                        UserEditorPane(state = state, onIntent = onIntent)
+                        // Ficha de solo lectura: rendimiento, liga, economía y
+                        // comunidad. Estado propio, así que su fallo no impide editar.
+                        UserDetailPanel(state)
+                        // Al final: lo que la pantalla no puede hacer es referencia,
+                        // no debe mandar sobre los datos de la persona.
+                        UserCapabilitiesNotice()
                     }
-
-                    FieldLabel("Roles")
-                    if (state.availableRoles.isEmpty()) {
-                        Text(
-                            text = "Cargando catálogo de roles…",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = GlassTheme.tokens.textSecondary,
-                        )
-                    } else {
-                        GlassChipGroup(
-                            options = state.availableRoles.map { it.id to it.name },
-                            selected = state.editorRoleIds,
-                            onToggle = { viewModel.dispatch(UsersIntent.ToggleRole(it)) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-
-                    GlassToggleRow(
-                        title = "Usuario activo",
-                        description = "Solo los usuarios activos pueden acceder al sistema.",
-                        checked = state.editorIsActive,
-                        onCheckedChange = { viewModel.dispatch(UsersIntent.ToggleActive(it)) },
+                    DesktopVerticalScrollbar(
+                        detailScroll,
+                        Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
                     )
-
-                    GlassActionButton(
-                        text = "Guardar",
-                        enabled = state.canSave,
-                        onClick = { viewModel.dispatch(UsersIntent.Save) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-
-                    if (state.selectedUserId != null) {
-                        FieldLabel("Acciones rápidas")
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            GlassActionButton(
-                                text = if (state.editorIsActive) "Bloquear" else "Desbloquear",
-                                tint = if (state.editorIsActive) MaterialTheme.colorScheme.error else GlassTheme.tokens.accent,
-                                onClick = { confirmToggleBlock = true },
-                                modifier = Modifier.weight(1f),
-                            )
-                            GlassActionButton(
-                                text = "Tickets",
-                                onClick = { viewModel.dispatch(UsersIntent.OpenTicketsDialog) },
-                                modifier = Modifier.weight(1f),
-                            )
-                            GlassActionButton(
-                                text = "Advertir",
-                                onClick = { viewModel.dispatch(UsersIntent.OpenWarningDialog) },
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-
-                        GlassActionButton(
-                            text = "Eliminar usuario",
-                            tint = MaterialTheme.colorScheme.error,
-                            onClick = { confirmDelete = true },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-
-                    FormFeedback(state.actionState, successText = "Operación completada.")
                 }
-            }
-
-            // Ficha de solo lectura debajo del editor: rendimiento, liga, economía
-            // y comunidad. Sólo tiene sentido con un usuario ya seleccionado.
-            if (state.selectedUserId != null) {
-                UserDetailPanel(state)
             }
         },
     )
 
-    if (confirmDelete) {
+    // El alta no se hace desde el panel. Antes este botón abría un editor vacío
+    // que al guardar moría con un error del cliente.
+    if (state.createNoticeVisible) {
         ConfirmDialog(
-            title = "Eliminar usuario",
-            message = "Se eliminará a ${state.editorName} (${state.editorEmail}). Esta acción no se puede deshacer. ¿Continuar?",
-            confirmLabel = "Eliminar",
-            onConfirm = {
-                confirmDelete = false
-                viewModel.dispatch(UsersIntent.DeleteSelected)
-            },
-            onDismiss = { confirmDelete = false },
+            title = "El alta no se hace desde el panel",
+            message = userCapability("Crear usuario")?.note
+                ?: "Las altas se gestionan desde el sistema de autenticación.",
+            confirmLabel = "Entendido",
+            dismissLabel = "Cerrar",
+            destructive = false,
+            onConfirm = { onIntent(UsersIntent.DismissCreateNotice) },
+            onDismiss = { onIntent(UsersIntent.DismissCreateNotice) },
         )
     }
 
-    if (confirmToggleBlock) {
+    // §32: saltar de usuario con cambios encima pregunta antes de perderlos.
+    if (state.pendingSelectionUserId != null) {
         ConfirmDialog(
-            title = if (state.editorIsActive) "Bloquear usuario" else "Desbloquear usuario",
-            message = if (state.editorIsActive)
-                "Se bloqueará a ${state.editorName}. No podrá acceder a la app. ¿Continuar?"
-            else
-                "Se desbloqueará a ${state.editorName}. ¿Continuar?",
-            confirmLabel = if (state.editorIsActive) "Bloquear" else "Desbloquear",
-            onConfirm = {
-                confirmToggleBlock = false
-                state.selectedUserId?.let { viewModel.dispatch(UsersIntent.QuickToggleBlock(it)) }
-            },
-            onDismiss = { confirmToggleBlock = false },
+            title = "Hay cambios sin guardar",
+            message = "Si cambias de usuario se perderán los cambios que no has guardado. ¿Continuar?",
+            confirmLabel = "Descartar y cambiar",
+            dismissLabel = "Seguir editando",
+            onConfirm = { onIntent(UsersIntent.ConfirmDiscardChanges) },
+            onDismiss = { onIntent(UsersIntent.CancelPendingSelection) },
         )
     }
 
     if (state.ticketsDialogOpen) {
         TicketsDialog(
             input = state.ticketsInput,
-            onInputChange = { viewModel.dispatch(UsersIntent.UpdateTicketsInput(it)) },
-            onConfirm = { viewModel.dispatch(UsersIntent.ConfirmTickets) },
-            onDismiss = { viewModel.dispatch(UsersIntent.DismissTicketsDialog) },
+            onInputChange = { onIntent(UsersIntent.UpdateTicketsInput(it)) },
+            onConfirm = { onIntent(UsersIntent.ConfirmTickets) },
+            onDismiss = { onIntent(UsersIntent.DismissTicketsDialog) },
         )
     }
 
     if (state.warningDialogOpen) {
         WarningDialog(
             input = state.warningInput,
-            onInputChange = { viewModel.dispatch(UsersIntent.UpdateWarningInput(it)) },
-            onConfirm = { viewModel.dispatch(UsersIntent.ConfirmWarning) },
-            onDismiss = { viewModel.dispatch(UsersIntent.DismissWarningDialog) },
+            onInputChange = { onIntent(UsersIntent.UpdateWarningInput(it)) },
+            onConfirm = { onIntent(UsersIntent.ConfirmWarning) },
+            onDismiss = { onIntent(UsersIntent.DismissWarningDialog) },
         )
     }
 }
@@ -227,17 +172,18 @@ private fun TicketsDialog(
             tint = tokens.glassFillStrong,
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(Spacing.xl),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
                 Text(
-                    text = "Ajustar tickets",
+                    text = "Conceder OposiTickets",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = tokens.textPrimary,
                 )
                 Text(
-                    text = "Número positivo para dar tickets, negativo para quitar.",
+                    text = "Número positivo para dar tickets, negativo para quitar. " +
+                        "El movimiento queda registrado en el histórico del usuario.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = tokens.textSecondary,
                 )
@@ -249,17 +195,22 @@ private fun TicketsDialog(
                 )
                 if (amount != null && amount < -100) {
                     Text(
-                        text = "⚠ Quitar más de 100 tickets — confirma que es correcto.",
-                        color = MaterialTheme.colorScheme.error,
+                        text = "Vas a retirar más de 100 OposiTickets. Confirma que es correcto.",
+                        color = tokens.dangerInk,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.xxs),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm, Alignment.End),
                 ) {
-                    GlassActionButton(text = "Cancelar", tint = tokens.glassFill, textColor = tokens.textPrimary, onClick = onDismiss)
-                    GlassActionButton(text = "Confirmar", enabled = amount != null && amount != 0, onClick = onConfirm)
+                    SecondaryButton(text = "Cancelar", onClick = onDismiss, size = ButtonSize.COMPACT)
+                    PrimaryButton(
+                        text = "Conceder",
+                        onClick = onConfirm,
+                        enabled = amount != null && amount != 0,
+                        size = ButtonSize.COMPACT,
+                    )
                 }
             }
         }
@@ -281,17 +232,20 @@ private fun WarningDialog(
             tint = tokens.glassFillStrong,
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(Spacing.xl),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
                 Text(
-                    text = "Enviar advertencia",
+                    text = "Registrar advertencia",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = tokens.textPrimary,
                 )
+                // El texto anterior decía «Quedará registrado como acción de
+                // moderación», que se leía como que al usuario le llegaba algo. No
+                // le llega: el backend sólo escribe una fila de auditoría.
                 Text(
-                    text = "Quedará registrado como acción de moderación.",
+                    text = userCapability("Advertir")?.note.orEmpty(),
                     style = MaterialTheme.typography.bodyMedium,
                     color = tokens.textSecondary,
                 )
@@ -301,24 +255,21 @@ private fun WarningDialog(
                     placeholder = "Motivo de la advertencia",
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = false,
+                    minLines = 3,
                 )
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.xxs),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm, Alignment.End),
                 ) {
-                    GlassActionButton(text = "Cancelar", tint = tokens.glassFill, textColor = tokens.textPrimary, onClick = onDismiss)
-                    GlassActionButton(text = "Enviar", enabled = input.isNotBlank(), onClick = onConfirm)
+                    SecondaryButton(text = "Cancelar", onClick = onDismiss, size = ButtonSize.COMPACT)
+                    PrimaryButton(
+                        text = "Registrar",
+                        onClick = onConfirm,
+                        enabled = input.isNotBlank(),
+                        size = ButtonSize.COMPACT,
+                    )
                 }
             }
         }
     }
-}
-
-@Composable
-private fun FieldLabel(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelMedium,
-        color = GlassTheme.tokens.textSecondary,
-    )
 }

@@ -23,5 +23,18 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
         }
+        // Test de UI SÓLO en jvmTest, no en commonTest: `compose.uiTest` en común
+        // arrastraría `ui-test-junit4` a la compilación de tests unitarios de
+        // Android, que necesita instrumentación o Robolectric. Aquí basta el
+        // runtime de escritorio, y el alcance se queda contenido.
+        //
+        // Misma configuración que `features/exams`, `features/dashboard`,
+        // `features/questions` y `features/imports`, y por el mismo motivo: el
+        // banco de pruebas visual vive ahí.
+        jvmTest.dependencies {
+            @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
+            implementation(compose.uiTest)
+            implementation(compose.desktop.currentOs)
+        }
     }
 }

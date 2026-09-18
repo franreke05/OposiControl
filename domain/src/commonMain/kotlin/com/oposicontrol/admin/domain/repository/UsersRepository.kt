@@ -6,7 +6,15 @@ import com.oposicontrol.admin.domain.model.UserDetail
 import kotlinx.coroutines.flow.Flow
 
 interface UsersRepository {
-    fun observeUsers(): Flow<List<User>>
+    /**
+     * Censo de usuarios.
+     *
+     * Emite [AppResult] y no una lista pelada porque `List<User>` no puede
+     * expresar un fallo: el origen convertía cualquier error en `emptyList()`, así
+     * que una caída del backend llegaba a la UI indistinguible de «no hay ningún
+     * usuario registrado». Es la invariante `0 != error`.
+     */
+    fun observeUsers(): Flow<AppResult<List<User>>>
     suspend fun getUser(userId: String): AppResult<User>
     suspend fun upsertUser(user: User): AppResult<User>
     suspend fun deleteUser(userId: String): AppResult<Unit>
