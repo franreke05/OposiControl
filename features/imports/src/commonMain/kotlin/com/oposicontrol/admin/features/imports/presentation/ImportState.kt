@@ -26,7 +26,10 @@ data class ImportState(
 
     val actionState: UiAsync<String> = UiAsync.Idle,
     val showHowItWorks: Boolean = false,
+    /** El servidor pidió confirmar: el examen está publicado y las preguntas se verán al instante. */
+    val showPublishConfirm: Boolean = false,
 ) {
+    /** Sobre la lista COMPLETA (ráfagas incluidas, KI0-1): filtrar antes dejaba el selector vacío para Ráfaga. */
     val examsForSelectedType: List<Exam>
         get() = (exams as? UiAsync.Success)?.value.orEmpty().filter { it.typeExam == selectedType.apiValue }
 }
@@ -45,8 +48,15 @@ fun ImportState.visibleStaging(): List<ContentImportStagingItem> {
         .sortedBy { it.position }
 }
 
+/**
+ * El tono de una fila, con el vocabulario VIVO de `estado_parseo` (KI3-5, IMP-18):
+ * `advertencia` es un aviso —la fila se publica igual— y no un error; una
+ * coincidencia detectada por la base es DUPLICADA aunque el estado diga `ok`.
+ */
 fun stagingTone(item: ContentImportStagingItem): ReviewFilter = when {
+    item.duplicate != null && item.linkQuestionId == null && !item.parseStatus.equals("omitida", ignoreCase = true) -> ReviewFilter.DUPLICADA
     item.parseStatus.equals("omitida", ignoreCase = true) -> ReviewFilter.ADVERTENCIA
+    item.parseStatus.equals("advertencia", ignoreCase = true) -> ReviewFilter.ADVERTENCIA
     item.parseStatus.equals("duplicada_candidata", ignoreCase = true) -> ReviewFilter.DUPLICADA
     !item.parseError.isNullOrBlank() -> ReviewFilter.ERROR
     item.parseStatus.equals("ok", ignoreCase = true) || item.parseStatus.equals("aprobada", ignoreCase = true) -> ReviewFilter.LISTA

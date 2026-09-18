@@ -8,9 +8,9 @@ import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.usecase.content.GetContentImportBatchUseCase
 import com.oposicontrol.admin.domain.usecase.content.ListContentImportBatchesUseCase
-import com.oposicontrol.admin.domain.usecase.content.ObserveExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.ObserveAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.PublishContentImportBatchUseCase
-import com.oposicontrol.admin.domain.usecase.content.RefreshExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.RefreshAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpdateContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadPdfToStagingUseCase
 import kotlinx.coroutines.flow.collectLatest
@@ -19,15 +19,18 @@ import kotlinx.coroutines.launch
 /**
  * ViewModel propio de Importación V2 (banco/wizard, JVM/Desktop).
  *
- * Reutiliza únicamente casos de uso YA existentes en `domain` (los mismos que
- * usa el `ContentUploadViewModel` legacy de `features/exams`) — no se creó
- * ningún endpoint, repositorio ni migración nuevos. `features/exams` queda
- * intacto: en compacto/mobile se sigue pintando `ContentUploadScreen`.
+ * Reutiliza casos de uso de `domain`. `features/exams` queda intacto: en
+ * compacto/mobile se sigue pintando `ContentUploadScreen`.
+ *
+ * **El selector observa TODOS los exámenes (KI0-1, IMP-01).** Observaba
+ * `observeExams()`, que excluye las ráfagas, y filtraba por el tipo elegido —que
+ * por defecto es Ráfaga—: la lista salía vacía SIEMPRE, y 6 de los 7 exámenes
+ * vivos son de ráfaga. Con `observeAllExams()` la ráfaga se puede importar.
  */
 class ImportViewModel(
     dispatcherProvider: DispatcherProvider,
-    observeExamsUseCase: ObserveExamsUseCase,
-    private val refreshExamsUseCase: RefreshExamsUseCase,
+    observeExamsUseCase: ObserveAllExamsUseCase,
+    private val refreshExamsUseCase: RefreshAllExamsUseCase,
     private val listBatchesUseCase: ListContentImportBatchesUseCase,
     private val getBatchUseCase: GetContentImportBatchUseCase,
     private val uploadPdfUseCase: UploadPdfToStagingUseCase,
@@ -79,7 +82,12 @@ class ImportViewModel(
             is ImportIntent.ApproveStaging -> updateStagingRow(intent.item.copy(parseStatus = "aprobada"), "Pregunta aprobada.")
             is ImportIntent.SkipStaging -> updateStagingRow(intent.item.copy(parseStatus = "omitida"), "Pregunta marcada para saltar; no se borró.")
 
-            ImportIntent.PublishBatch -> publishBatch()
+            ImportIntent.PublishBatch -> publishBatch(confirmExamPublished = false)
+            ImportIntent.ConfirmPublishOnPublishedExam -> {
+                updateState { it.copy(showPublishConfirm = false) }
+                publishBatch(confirmExamPublished = true)
+            }
+            ImportIntent.DismissPublishConfirm -> updateState { it.copy(showPublishConfirm = false, actionState = UiAsync.Idle) }
             ImportIntent.ToggleHowItWorks -> updateState { it.copy(showHowItWorks = !it.showHowItWorks) }
             ImportIntent.DismissAction -> updateState { it.copy(actionState = UiAsync.Idle) }
         }
@@ -148,25 +156,66 @@ class ImportViewModel(
         }
     }
 
-    private suspend fun publishBatch() {
-        // Misma guarda que el flujo legacy: la publicación todavía no es
-        // atómica (content_import_atomicity_candidate_v1 sigue sin aplicar),
-        // así que dos publicaciones solapadas podrían duplicar preguntas.
+    /**
+     * Publicar es UNA llamada atómica en el servidor (KI3-1): o el lote queda
+     * `importado` o no cambia nada.
+     *
+     * - Si el servidor pide confirmación porque el examen está publicado
+     *   (`IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED`), se abre el diálogo y la
+     *   segunda llamada viaja con `confirmExamPublished = true`.
+     * - Ante un fallo de red o timeout NO se reintenta a ciegas: primero se RELEE el
+     *   lote. Si ya está `importado`, el primer intento llegó y no hay nada que
+     *   repetir; el servidor tampoco lo repetiría (`ejecutado = false`), pero la
+     *   relectura evita incluso esa llamada y enseña el estado real.
+     */
+    private suspend fun publishBatch(confirmExamPublished: Boolean) {
         if (currentState().actionState is UiAsync.Loading) return
         val batchId = (currentState().activeBatch as? UiAsync.Success)?.value?.id
             ?: return updateState { it.copy(actionState = UiAsync.Error(AppError.Validation("Abre un lote antes de publicar."))) }
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = publishBatchUseCase(batchId)) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+        when (val result = publishBatchUseCase(batchId, confirmExamPublished)) {
+            is AppResult.Failure -> when {
+                result.error.isPublishedExamConfirmation() -> updateState { it.copy(showPublishConfirm = true, actionState = UiAsync.Idle) }
+                result.error is AppError.Network -> rereadAfterUncertainPublish(batchId, result.error)
+                else -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            }
             is AppResult.Success -> {
-                val message = if (result.value.status == "parcial") {
-                    "Importación parcial: ${result.value.importedCount}/${result.value.detectedCount}. Revisa los errores antes de reintentar."
+                val batch = result.value
+                val message = if (batch.status == "importado") {
+                    "Lote publicado: ${batch.importedCount} de ${batch.detectedCount} preguntas ya están en el examen."
                 } else {
-                    "Contenido aprobado persistido; el examen no se ha publicado automáticamente."
+                    "El lote no se ha publicado (estado: ${batch.status}). Revisa las filas antes de reintentar."
                 }
-                updateState { it.copy(activeBatch = UiAsync.Success(result.value), actionState = UiAsync.Success(message)) }
+                updateState { it.copy(activeBatch = UiAsync.Success(batch), actionState = UiAsync.Success(message)) }
                 refresh()
             }
         }
     }
+
+    /** Tras un corte de red, la verdad está en el servidor: se relee antes de decidir si hubo publicación. */
+    private suspend fun rereadAfterUncertainPublish(batchId: String, original: AppError) {
+        when (val reread = getBatchUseCase(batchId)) {
+            is AppResult.Success -> {
+                val batch = reread.value
+                if (batch.status == "importado") {
+                    updateState {
+                        it.copy(
+                            activeBatch = UiAsync.Success(batch),
+                            actionState = UiAsync.Success("La conexión se cortó, pero el lote ya estaba publicado: ${batch.importedCount} preguntas en el examen."),
+                        )
+                    }
+                    refresh()
+                } else {
+                    updateState { it.copy(activeBatch = UiAsync.Success(batch), actionState = UiAsync.Error(original)) }
+                }
+            }
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(original)) }
+        }
+    }
 }
+
+/** El código con el que el servidor pide confirmar que las preguntas se verán al instante (IM3). */
+internal const val IMPORT_EXAM_PUBLISHED_CONFIRMATION_CODE = "IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED"
+
+private fun AppError.isPublishedExamConfirmation(): Boolean =
+    this is AppError.Validation && code.equals(IMPORT_EXAM_PUBLISHED_CONFIRMATION_CODE, ignoreCase = true)

@@ -22,9 +22,9 @@ import com.oposicontrol.admin.domain.repository.ContentImportRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.usecase.content.GetContentImportBatchUseCase
 import com.oposicontrol.admin.domain.usecase.content.ListContentImportBatchesUseCase
-import com.oposicontrol.admin.domain.usecase.content.ObserveExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.ObserveAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.PublishContentImportBatchUseCase
-import com.oposicontrol.admin.domain.usecase.content.RefreshExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.RefreshAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpdateContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadPdfToStagingUseCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -67,8 +67,8 @@ class ImportViewModelTest {
         val contentRepo = FakeContentRepo(exams)
         return ImportViewModel(
             dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
-            observeExamsUseCase = ObserveExamsUseCase(contentRepo),
-            refreshExamsUseCase = RefreshExamsUseCase(contentRepo),
+            observeExamsUseCase = ObserveAllExamsUseCase(contentRepo),
+            refreshExamsUseCase = RefreshAllExamsUseCase(contentRepo),
             listBatchesUseCase = ListContentImportBatchesUseCase(importRepo),
             getBatchUseCase = GetContentImportBatchUseCase(importRepo),
             uploadPdfUseCase = UploadPdfToStagingUseCase(importRepo),
@@ -218,6 +218,74 @@ class ImportViewModelTest {
         assertIs<UiAsync.Error>(vm.state.value.actionState)
     }
 
+    /** KI0-1 (IMP-01): el selector observa TODOS los exámenes; con Ráfaga elegida, la ráfaga aparece. */
+    @Test
+    fun rafagaExamsAppearForTheRafagaType() = runTest {
+        val razonado = exam.copy(id = "ex-2", code = "EX-0013", typeExam = "razonado")
+        val vm = buildViewModel(FakeImportRepository(), exams = listOf(exam, razonado))
+        advanceUntilIdle()
+
+        assertEquals(ContentExamType.RAFAGA, vm.state.value.selectedType)
+        assertEquals(listOf("ex-1"), vm.state.value.examsForSelectedType.map { it.id })
+
+        vm.dispatch(ImportIntent.SelectType(ContentExamType.RAZONADO))
+        advanceUntilIdle()
+        assertEquals(listOf("ex-2"), vm.state.value.examsForSelectedType.map { it.id })
+    }
+
+    /** IM3: el servidor pide confirmar porque el examen está publicado; la segunda llamada lleva la respuesta. */
+    @Test
+    fun aPublishedExamAsksForConfirmationAndRetriesWithIt() = runTest {
+        val repo = FakeImportRepository(
+            getResult = AppResult.Success(batch()),
+            publishResponder = { confirmed ->
+                if (confirmed) {
+                    AppResult.Success(batch().copy(status = "importado", importedCount = 1))
+                } else {
+                    AppResult.Failure(AppError.Validation("El examen está publicado", code = IMPORT_EXAM_PUBLISHED_CONFIRMATION_CODE))
+                }
+            },
+        )
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.PublishBatch)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.showPublishConfirm, "sin confirmar no se publica: se pregunta")
+        assertEquals(listOf(false), repo.publishConfirmations)
+
+        vm.dispatch(ImportIntent.ConfirmPublishOnPublishedExam)
+        advanceUntilIdle()
+        assertEquals(listOf(false, true), repo.publishConfirmations)
+        assertEquals("importado", (vm.state.value.activeBatch as UiAsync.Success).value.status)
+        assertTrue((vm.state.value.actionState as UiAsync.Success).value.contains("publicado"))
+    }
+
+    /** Idempotencia ante timeout: tras un corte de red se RELEE el lote antes de dar nada por fallido. */
+    @Test
+    fun aNetworkCutRereadsTheBatchBeforeDeclaringFailure() = runTest {
+        val repo = FakeImportRepository(
+            getResults = listOf(
+                AppResult.Success(batch()),
+                AppResult.Success(batch().copy(status = "importado", importedCount = 1)),
+            ),
+            publishResult = AppResult.Failure(AppError.Network("timeout")),
+        )
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.PublishBatch)
+        advanceUntilIdle()
+
+        assertEquals(1, repo.publishConfirmations.size, "no se reintenta a ciegas")
+        assertEquals("importado", (vm.state.value.activeBatch as UiAsync.Success).value.status)
+        assertIs<UiAsync.Success<String>>(vm.state.value.actionState)
+    }
+
     @Test
     fun closingBatchResetsReviewState() = runTest {
         val repo = FakeImportRepository(getResult = AppResult.Success(batch()))
@@ -238,16 +306,25 @@ class ImportViewModelTest {
 private class FakeImportRepository(
     private val listResult: AppResult<List<ContentImportBatch>> = AppResult.Success(emptyList()),
     private val getResult: AppResult<ContentImportBatch>? = null,
+    /** Una respuesta por lectura, en orden; la última se repite. Para «relee y encuentra el lote ya publicado». */
+    private val getResults: List<AppResult<ContentImportBatch>> = emptyList(),
     private val uploadResult: AppResult<ContentImportBatch>? = null,
     private val updateResult: ((ContentImportStagingItem) -> AppResult<ContentImportStagingItem>)? = null,
     private val publishResult: AppResult<ContentImportBatch>? = null,
+    private val publishResponder: ((confirmed: Boolean) -> AppResult<ContentImportBatch>)? = null,
 ) : ContentImportRepository {
     var uploadCallCount = 0
         private set
+    private var getCalls = 0
+    /** El valor de `confirmExamPublished` de cada publicación, en orden. */
+    val publishConfirmations = mutableListOf<Boolean>()
 
     override suspend fun listImportBatches(): AppResult<List<ContentImportBatch>> = listResult
-    override suspend fun getImportBatch(batchId: String): AppResult<ContentImportBatch> =
-        getResult ?: AppResult.Failure(AppError.Validation("no batch configured"))
+    override suspend fun getImportBatch(batchId: String): AppResult<ContentImportBatch> {
+        val sequenced = getResults.getOrNull(getCalls) ?: getResults.lastOrNull()
+        getCalls += 1
+        return sequenced ?: getResult ?: AppResult.Failure(AppError.Validation("no batch configured"))
+    }
 
     override suspend fun uploadPdfToStaging(examId: String, examType: String, fileUri: String, fileName: String): AppResult<ContentImportBatch> {
         uploadCallCount += 1
@@ -257,8 +334,12 @@ private class FakeImportRepository(
     override suspend fun updateStaging(item: ContentImportStagingItem): AppResult<ContentImportStagingItem> =
         updateResult?.invoke(item) ?: AppResult.Success(item)
 
-    override suspend fun publishImportBatch(batchId: String): AppResult<ContentImportBatch> =
-        publishResult ?: AppResult.Failure(AppError.Validation("no publish configured"))
+    override suspend fun publishImportBatch(batchId: String, confirmExamPublished: Boolean): AppResult<ContentImportBatch> {
+        publishConfirmations += confirmExamPublished
+        return publishResponder?.invoke(confirmExamPublished)
+            ?: publishResult
+            ?: AppResult.Failure(AppError.Validation("no publish configured"))
+    }
 }
 
 private class FakeContentRepo(private val exams: List<Exam>) : ContentRepository {
@@ -283,7 +364,6 @@ private class FakeContentRepo(private val exams: List<Exam>) : ContentRepository
     override suspend fun deleteRafaga(rafagaId: String) = AppResult.Success(Unit)
     override suspend fun upsertQuestion(question: ExamQuestion) = AppResult.Success(question)
     override suspend fun importQuestions(examId: String, questions: List<ExamQuestion>) = AppResult.Success(questions)
-    override suspend fun deleteQuestion(examId: String, questionId: String) = AppResult.Success(Unit)
     override suspend fun moveQuestion(examId: String, questionId: String, direction: QuestionMoveDirection) =
         AppResult.Success(emptyList<ExamQuestion>())
     override suspend fun upsertRafagaQuestion(question: RafagaQuestion) = AppResult.Success(question)

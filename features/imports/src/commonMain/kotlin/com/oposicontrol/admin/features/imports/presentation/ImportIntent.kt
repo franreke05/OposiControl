@@ -22,6 +22,9 @@ sealed interface ImportIntent {
     data class SkipStaging(val item: ContentImportStagingItem) : ImportIntent
 
     data object PublishBatch : ImportIntent
+    /** El administrador confirma que el examen está publicado y las preguntas se verán al instante (IM3). */
+    data object ConfirmPublishOnPublishedExam : ImportIntent
+    data object DismissPublishConfirm : ImportIntent
     data object ToggleHowItWorks : ImportIntent
     data object DismissAction : ImportIntent
 }
