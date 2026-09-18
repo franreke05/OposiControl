@@ -251,6 +251,47 @@ class QuestionsPresentationTest {
         assertFalse(examAcceptsQuestionType(exam().copy(typeExam = "mixto"), QuestionType.RAFAGA))
     }
 
+    /**
+     * Bug real (2026-09-18): el diálogo «Vincular a examen» enseñaba el mismo
+     * selector vacío si el catálogo estaba cargando, si había fallado, o si
+     * genuinamente no había ningún examen compatible — tres hechos distintos que
+     * la pantalla trataba como uno. `questionLinkableExamsView` es la única
+     * fuente de esa decisión; sin ella `QuestionLinkExamDialog` no puede volver
+     * a confundirlos porque no tiene otro sitio donde mirar.
+     */
+    @Test
+    fun `el dialogo de vincular distingue cargando, caido y sin candidatos reales`() {
+        val compatible = exam(id = "raf-1").copy(typeExam = "rafaga", specialtyId = "esp-1", status = ExamStatus.DRAFT)
+
+        assertEquals(
+            QuestionLinkableExamsView.Loading,
+            questionLinkableExamsView(UiAsync.Loading, QuestionType.RAFAGA, "esp-1"),
+        )
+        assertEquals(
+            QuestionLinkableExamsView.Loading,
+            questionLinkableExamsView(UiAsync.Idle, QuestionType.RAFAGA, "esp-1"),
+        )
+        assertEquals(
+            QuestionLinkableExamsView.Unavailable,
+            questionLinkableExamsView(UiAsync.Error(AppError.Validation("caido")), QuestionType.RAFAGA, "esp-1"),
+        )
+        // Catálogo real y sano, pero esta especialidad no tiene ningún examen: es
+        // el caso que reportó el propietario (PREG-000001, especialidad sin
+        // exámenes) y no puede confundirse con un fallo.
+        assertEquals(
+            QuestionLinkableExamsView.NoCandidates,
+            questionLinkableExamsView(UiAsync.Success(listOf(compatible)), QuestionType.RAFAGA, "esp-2"),
+        )
+        assertEquals(
+            QuestionLinkableExamsView.NoCandidates,
+            questionLinkableExamsView(UiAsync.Success(emptyList()), QuestionType.RAFAGA, "esp-1"),
+        )
+        // Con un candidato real, sea Ráfaga o el tipo que sea, se enseña el selector.
+        val withOptions = questionLinkableExamsView(UiAsync.Success(listOf(compatible)), QuestionType.RAFAGA, "esp-1")
+        assertTrue(withOptions is QuestionLinkableExamsView.Options)
+        assertEquals(listOf("raf-1"), (withOptions as QuestionLinkableExamsView.Options).options.map { it.value })
+    }
+
     /** KQ0-7: archivar dice lo que hace — sale de sus exámenes y del recuento — y cómo volver. */
     @Test
     fun `el aviso de archivar dice que sale de sus examenes y del recuento`() {

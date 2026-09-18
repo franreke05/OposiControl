@@ -172,6 +172,31 @@ fun questionLinkableExamOptions(
         .map { exam -> QuestionFilterOption(exam.id, "${examOptionLabel(exam)} · ${examStatusLabel(exam.status)}") }
 }
 
+/**
+ * Qué enseñar en el diálogo «Vincular a examen» — bug real corregido: los tres
+ * casos (catálogo cargando, catálogo caído, catálogo real sin candidatos) caían
+ * en el mismo selector vacío, indistinguible entre sí y de un fallo silencioso.
+ */
+sealed interface QuestionLinkableExamsView {
+    data object Loading : QuestionLinkableExamsView
+    data object Unavailable : QuestionLinkableExamsView
+    data object NoCandidates : QuestionLinkableExamsView
+    data class Options(val options: List<QuestionFilterOption<String>>) : QuestionLinkableExamsView
+}
+
+fun questionLinkableExamsView(
+    exams: UiAsync<List<Exam>>,
+    type: QuestionType?,
+    specialtyId: String?,
+): QuestionLinkableExamsView = when (exams) {
+    is UiAsync.Loading, UiAsync.Idle -> QuestionLinkableExamsView.Loading
+    is UiAsync.Error -> QuestionLinkableExamsView.Unavailable
+    is UiAsync.Success, UiAsync.Empty -> {
+        val options = questionLinkableExamOptions(exams, type, specialtyId)
+        if (options.isEmpty()) QuestionLinkableExamsView.NoCandidates else QuestionLinkableExamsView.Options(options)
+    }
+}
+
 /** Publicado o borrador, dicho junto al examen que se elige. */
 fun examStatusLabel(status: ExamStatus): String = when (status) {
     ExamStatus.PUBLISHED -> "Publicado"
@@ -404,6 +429,17 @@ const val QUESTION_LINKS_EMPTY_NOTE: String = "Esta pregunta no está en ningún
 /** Cuando la consulta de vínculos falla, no se enseña un vacío que parezca un dato. */
 const val QUESTION_LINKS_UNAVAILABLE_NOTE: String =
     "No se han podido consultar los exámenes de esta pregunta. Vuelve a intentarlo."
+
+/**
+ * Diálogo «Vincular a examen»: cero candidatos es un hecho real —esta
+ * especialidad/tipo no tiene examen todavía—, no un fallo. Se dice así en vez
+ * de enseñar un selector vacío que parece roto.
+ */
+const val QUESTION_LINKABLE_EXAMS_EMPTY_NOTE: String = "No hay exámenes compatibles disponibles."
+
+/** Igual que [QUESTION_LINKS_UNAVAILABLE_NOTE], para el catálogo de exámenes del selector. */
+const val QUESTION_LINKABLE_EXAMS_UNAVAILABLE_NOTE: String =
+    "No se han podido consultar los exámenes disponibles. Vuelve a intentarlo."
 
 /** Lo que pierde el examen si se quita la pregunta, dicho antes de confirmar. */
 const val QUESTION_UNLINK_WARNING: String =

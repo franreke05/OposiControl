@@ -150,16 +150,17 @@ internal fun QuestionsContent(
 }
 
 /**
- * Vincular a un examen: examen y posición, que es lo que el PATCH acepta.
- *
- * Sólo se ofrecen los exámenes que la base aceptaría para ESTA pregunta —su tipo
- * guardado y su especialidad— con su estado a la vista (KQ0-5).
+ * Vincular a un examen: sólo se ofrecen los exámenes que la base aceptaría para
+ * ESTA pregunta —su tipo guardado y su especialidad— con su estado a la vista
+ * (KQ0-5). Va por la puerta canónica (`POST /preguntas/{id}/examenes`, M4), nunca
+ * por el PATCH de la pregunta.
  */
 @Composable
 private fun QuestionLinkExamDialog(state: QuestionsState, onIntent: (QuestionsIntent) -> Unit) {
     val tokens = GlassTheme.tokens
     val saved = (state.detail as? UiAsync.Success)?.value
-    val linkable = questionLinkableExamOptions(state.exams, saved?.type, saved?.specialtyId)
+    val examsView = questionLinkableExamsView(state.exams, saved?.type, saved?.specialtyId)
+    val linkable = (examsView as? QuestionLinkableExamsView.Options)?.options.orEmpty()
     Dialog(onDismissRequest = { onIntent(QuestionsIntent.CancelAssociateDialog) }) {
         GlassSurface(
             modifier = Modifier.width(400.dp),
@@ -177,14 +178,35 @@ private fun QuestionLinkExamDialog(state: QuestionsState, onIntent: (QuestionsIn
                     fontWeight = FontWeight.SemiBold,
                     color = tokens.textPrimary,
                 )
-                QuestionSelect(
-                    selectedLabel = linkable.firstOrNull { it.value == state.associateExamId }?.label
-                        ?: "Elige un examen",
-                    options = linkable,
-                    onSelect = { onIntent(QuestionsIntent.UpdateAssociateExamId(it)) },
-                    accessibilityLabel = "Examen al que vincular",
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // «Todavía no hay catálogo» (cargando/fallo) y «no hay candidatos»
+                // (catálogo real, cero compatibles) son hechos distintos: antes los
+                // tres casos caían en el mismo selector vacío, indistinguible de un
+                // fallo silencioso.
+                when (examsView) {
+                    QuestionLinkableExamsView.Loading -> Text(
+                        text = "Cargando exámenes…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.textSecondary,
+                    )
+                    QuestionLinkableExamsView.Unavailable -> Text(
+                        text = QUESTION_LINKABLE_EXAMS_UNAVAILABLE_NOTE,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.dangerInk,
+                    )
+                    QuestionLinkableExamsView.NoCandidates -> Text(
+                        text = QUESTION_LINKABLE_EXAMS_EMPTY_NOTE,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.textPrimary,
+                    )
+                    is QuestionLinkableExamsView.Options -> QuestionSelect(
+                        selectedLabel = linkable.firstOrNull { it.value == state.associateExamId }?.label
+                            ?: "Elige un examen",
+                        options = linkable,
+                        onSelect = { onIntent(QuestionsIntent.UpdateAssociateExamId(it)) },
+                        accessibilityLabel = "Examen al que vincular",
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
                 QuestionTextField(
                     label = "Posición",
                     value = state.associatePosition,
@@ -212,6 +234,7 @@ private fun QuestionLinkExamDialog(state: QuestionsState, onIntent: (QuestionsIn
                     PrimaryButton(
                         text = "Vincular",
                         onClick = { onIntent(QuestionsIntent.ConfirmAssociateExam) },
+                        enabled = linkable.isNotEmpty(),
                         loading = state.saveState is UiAsync.Loading,
                     )
                 }
