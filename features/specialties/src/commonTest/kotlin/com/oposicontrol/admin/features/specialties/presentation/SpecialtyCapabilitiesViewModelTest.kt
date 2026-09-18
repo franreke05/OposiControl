@@ -9,7 +9,9 @@ import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetSpecialtyCapabilitiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.ObserveAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveSpecialtiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.RefreshAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.SaveSpecialtyCapabilitiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
@@ -65,7 +67,7 @@ class SpecialtyCapabilitiesViewModelTest {
         viewModel.dispatch(
             SpecialtiesIntent.ToggleCapability(SpecialtyCapabilityToggle.RAZONADOS, true),
         )
-        viewModel.dispatch(SpecialtiesIntent.SaveCapabilities)
+        viewModel.dispatch(SpecialtiesIntent.Save)
         advanceUntilIdle()
 
         val saved = repository.savedCapabilities.single()
@@ -84,7 +86,7 @@ class SpecialtyCapabilitiesViewModelTest {
         viewModel.dispatch(
             SpecialtiesIntent.ToggleCapability(SpecialtyCapabilityToggle.RAFAGAS, false),
         )
-        viewModel.dispatch(SpecialtiesIntent.SaveCapabilities)
+        viewModel.dispatch(SpecialtiesIntent.Save)
         advanceUntilIdle()
 
         // Dejar al usuario sin ningun examen y sin explicacion es justo el estado
@@ -105,7 +107,7 @@ class SpecialtyCapabilitiesViewModelTest {
         viewModel.dispatch(
             SpecialtiesIntent.UpdateLimitationMessage("Contenido en preparacion."),
         )
-        viewModel.dispatch(SpecialtiesIntent.SaveCapabilities)
+        viewModel.dispatch(SpecialtiesIntent.Save)
         advanceUntilIdle()
 
         val saved = repository.savedCapabilities.single()
@@ -135,7 +137,9 @@ class SpecialtyCapabilitiesViewModelTest {
     ) = SpecialtiesViewModel(
         dispatcherProvider = TestDispatcherProvider(dispatcher),
         observeSpecialtiesUseCase = ObserveSpecialtiesUseCase(repository),
+        observeAllExamsUseCase = ObserveAllExamsUseCase(repository),
         refreshSpecialtiesUseCase = RefreshSpecialtiesUseCase(repository),
+        refreshAllExamsUseCase = RefreshAllExamsUseCase(repository),
         upsertSpecialtyUseCase = UpsertSpecialtyUseCase(repository),
         deleteSpecialtyUseCase = DeleteSpecialtyUseCase(repository),
         getSpecialtyCapabilitiesUseCase = GetSpecialtyCapabilitiesUseCase(repository),
@@ -187,8 +191,17 @@ private class FakeCapabilitiesRepository(
         ),
     )
 
+    private val exams = kotlinx.coroutines.flow.MutableStateFlow(emptyList<com.oposicontrol.admin.domain.model.Exam>())
+
     override fun observeSpecialties() = specialties
     override suspend fun refreshSpecialties(): AppResult<List<Specialty>> = AppResult.Success(specialties.value)
+
+    // El workspace pide el catalogo completo de examenes para el desglose por
+    // tipo (ver SpecialtiesViewModel); esta pantalla no lo usa, así que basta
+    // con una lista vacía en vez de `outOfScope()`.
+    override fun observeExams() = exams
+    override suspend fun refreshExams(): AppResult<List<com.oposicontrol.admin.domain.model.Exam>> =
+        AppResult.Success(exams.value)
 
     override suspend fun getSpecialtyCapabilities(specialtyId: String): AppResult<SpecialtyCapabilities> =
         capabilitiesFailure?.let { AppResult.Failure(it) } ?: AppResult.Success(capabilities)
@@ -207,9 +220,7 @@ private class FakeCapabilitiesRepository(
     // --- fuera del alcance de esta pantalla ---
     private fun outOfScope(): Nothing = throw NotImplementedError("No usado por SpecialtiesViewModel")
 
-    override fun observeExams() = outOfScope()
     override fun observeRafagas() = outOfScope()
-    override suspend fun refreshExams() = outOfScope()
     override suspend fun refreshRafagas() = outOfScope()
     override suspend fun getExamQuestions(examId: String) = outOfScope()
     override suspend fun getRafagaQuestions(rafagaId: String) = outOfScope()
