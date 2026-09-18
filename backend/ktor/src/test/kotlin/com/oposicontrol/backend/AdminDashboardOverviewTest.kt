@@ -9,6 +9,7 @@ import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import java.net.Authenticator
 import java.net.CookieHandler
@@ -20,11 +21,10 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import java.util.Optional
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executor
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLParameters
@@ -93,15 +93,21 @@ class AdminDashboardOverviewTest {
         assertEquals(listOf("finanzas"), selection.values)
     }
 
+    /**
+     * PC-08 / F-09: el 400 nombra las franjas VÁLIDAS y NUNCA repite lo que mandó el
+     * cliente. Antes afirmaba lo contrario —que el cuerpo contuviera el nombre
+     * sobrante—, y eso era publicar entrada libre de la URL en la respuesta.
+     */
     @Test
-    fun anUnknownSectionAnswers400NamingTheValidOnes() = testApplication {
+    fun anUnknownSectionAnswers400NamingTheValidOnesWithoutEchoingTheInput() = testApplication {
         application { dashboardTestModule(gatewayWith { countResponse("*/0") }) }
 
-        val response = client.get("/api/v1/admin/dashboard/overview?sections=system,finanzas")
+        val response = client.get("/api/v1/admin/dashboard/overview?sections=system,finanzas-x-probe-c")
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
         val body = response.bodyAsText()
-        assertTrue(body.contains("finanzas"), "El 400 debe decir qué nombre sobra: $body")
+        assertFalse(body.contains("x-probe-c"), "El 400 repite la entrada del cliente: $body")
+        assertFalse(body.contains("finanzas"), "El 400 repite la entrada del cliente: $body")
         DashboardOverviewBlock.ALL.forEach { valid ->
             assertTrue(body.contains(valid), "El 400 debe nombrar la franja válida '$valid': $body")
         }
@@ -131,7 +137,7 @@ class AdminDashboardOverviewTest {
             if (uri.contains("auditoria_log")) StubResponse(503, "upstream down", null) else countResponse("0-0/4")
         }
 
-        val overview = gateway.overview()
+        val overview = gateway.overviewBlocking()
 
         assertEquals(listOf(DashboardOverviewBlock.ACTIVITY), overview.failedBlocks)
         assertNull(overview.activity, "Una franja fallida no viaja con contenido inventado.")
@@ -151,7 +157,7 @@ class AdminDashboardOverviewTest {
             if (uri.contains("auditoria_log")) StubResponse(503, "down", null) else countResponse("*/0")
         }
 
-        val overview = gateway.overview(setOf(DashboardOverviewBlock.CONTENT))
+        val overview = gateway.overviewBlocking(setOf(DashboardOverviewBlock.CONTENT))
 
         assertNull(overview.activity)
         assertTrue(
@@ -167,7 +173,7 @@ class AdminDashboardOverviewTest {
             if (uri.contains("auditoria_log")) StubResponse(200, "no-json", null) else countResponse("*/0")
         }
 
-        val overview = gateway.overview()
+        val overview = gateway.overviewBlocking()
 
         assertNull(
             overview.activity,
@@ -184,7 +190,7 @@ class AdminDashboardOverviewTest {
     fun aCompletedSupabaseProbePublishesItsMeasuredLatencyAsSuchAndNotAsApiLatency() {
         val gateway = gatewayWith { countResponse("0-0/1") }
 
-        val health = gateway.overview(setOf(DashboardOverviewBlock.SYSTEM)).system?.health
+        val health = gateway.overviewBlocking(setOf(DashboardOverviewBlock.SYSTEM)).system?.health
 
         assertNotNull(health)
         assertNotNull(
@@ -207,7 +213,7 @@ class AdminDashboardOverviewTest {
         // inventar un dato con forma de medición.
         val gateway = gatewayWith { StubResponse(503, "down", null) }
 
-        val health = gateway.overview(setOf(DashboardOverviewBlock.SYSTEM)).system?.health
+        val health = gateway.overviewBlocking(setOf(DashboardOverviewBlock.SYSTEM)).system?.health
 
         assertNotNull(health)
         assertNull(health.supabaseLatencyMs)
@@ -234,47 +240,60 @@ class AdminDashboardOverviewTest {
             }
         }
 
-        val attention = gateway.overview(setOf(DashboardOverviewBlock.ATTENTION)).attention
+        val attention = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ATTENTION)).attention
 
         assertEquals(0, attention?.reportsPending)
         assertFalse(DashboardOverviewMetricKey.REPORTS_PENDING in attention?.unavailableMetrics.orEmpty())
         assertNull(attention?.questionFeedbackPending)
         assertTrue(DashboardOverviewMetricKey.QUESTION_FEEDBACK_PENDING in attention?.unavailableMetrics.orEmpty())
+        // PC-04: la lectura fallida se nombra ADEMÁS como fallida; el cero real, en ninguna lista.
+        assertTrue(DashboardOverviewMetricKey.QUESTION_FEEDBACK_PENDING in attention?.failedMetrics.orEmpty())
+        assertFalse(DashboardOverviewMetricKey.REPORTS_PENDING in attention?.failedMetrics.orEmpty())
     }
 
+    /**
+     * PC-01. Borrador = activo Y sin publicar, contado con su propio filtro.
+     *
+     * Los conteos del doble son los de MAIN el día del contrato: 7 exámenes, 1
+     * publicado y 0 borradores de verdad (los otros 6 están archivados). La resta
+     * anterior —total menos publicados— daba 6 y llamaba «borradores» a los
+     * archivados. Si alguien vuelve a restar, este caso da 6 en vez de 0.
+     */
     @Test
-    fun draftExamsDisappearsWhenEitherOfItsTwoCountsCannotBeRead() {
-        val gateway = gatewayWith { uri ->
+    fun draftExamsCountsActiveUnpublishedExamsAndNeverTheArchivedOnes() {
+        val requests = CopyOnWriteArrayList<HttpRequest>()
+        val gateway = gatewayWith(record = requests::add) { uri ->
             when {
-                // El total de exámenes falla; los publicados se leen bien.
-                uri.contains("examenes") && uri.contains("publicado_en") -> countResponse("0-0/3")
-                uri.contains("examenes") -> StubResponse(503, "down", null)
+                uri.contains("examenes?select=id&activo=eq.true&publicado_en=is.null") -> countResponse("*/0")
+                uri.contains("examenes?select=id&publicado_en=not.is.null&activo=eq.true") -> countResponse("0-0/1")
+                uri.contains("examenes") -> countResponse("0-0/7")
                 else -> countResponse("*/0")
             }
         }
 
-        val attention = gateway.overview(setOf(DashboardOverviewBlock.ATTENTION)).attention
+        val attention = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ATTENTION)).attention
 
-        assertNull(
-            attention?.draftExams,
-            "Restar contra un total desconocido daría un número inventado, no una derivada.",
+        assertEquals(0, attention?.draftExams, "Los archivados no son borradores.")
+        assertFalse(DashboardOverviewMetricKey.DRAFT_EXAMS in attention?.unavailableMetrics.orEmpty())
+        val examReads = requests.filter { it.uri().rawPath == "/rest/v1/examenes" }.map { it.uri().rawQuery }
+        assertEquals(
+            listOf("select=id&activo=eq.true&publicado_en=is.null"),
+            examReads,
+            "ATTENTION hace UNA lectura de exámenes, con el filtro de borrador, y ninguna resta.",
         )
-        assertTrue(DashboardOverviewMetricKey.DRAFT_EXAMS in attention?.unavailableMetrics.orEmpty())
     }
 
     @Test
-    fun draftExamsIsTotalMinusPublishedWhenBothCountsAreReadable() {
+    fun draftExamsFailsInsteadOfBecomingZeroWhenItsCountCannotBeRead() {
         val gateway = gatewayWith { uri ->
-            when {
-                uri.contains("examenes") && uri.contains("publicado_en") -> countResponse("0-0/3")
-                uri.contains("examenes") -> countResponse("0-0/11")
-                else -> countResponse("*/0")
-            }
+            if (uri.contains("publicado_en=is.null")) StubResponse(503, "down", null) else countResponse("*/0")
         }
 
-        val attention = gateway.overview(setOf(DashboardOverviewBlock.ATTENTION)).attention
+        val attention = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ATTENTION)).attention
 
-        assertEquals(8, attention?.draftExams)
+        assertNull(attention?.draftExams, "Un conteo que no se pudo leer no es un cero.")
+        assertTrue(DashboardOverviewMetricKey.DRAFT_EXAMS in attention?.unavailableMetrics.orEmpty())
+        assertTrue(DashboardOverviewMetricKey.DRAFT_EXAMS in attention?.failedMetrics.orEmpty())
     }
 
     @Test
@@ -282,10 +301,10 @@ class AdminDashboardOverviewTest {
         // La alerta operativa (7d) y el contexto (30d) son dos consultas
         // distintas. Si alguien copiara la ventana de 30 días en ATTENTION, el
         // panel llamaría "vence esta semana" a algo que vence dentro de un mes.
-        val requests = mutableListOf<HttpRequest>()
+        val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { countResponse("*/0") }
 
-        gateway.overview(setOf(DashboardOverviewBlock.ATTENTION, DashboardOverviewBlock.ECONOMY))
+        gateway.overviewBlocking(setOf(DashboardOverviewBlock.ATTENTION, DashboardOverviewBlock.ECONOMY))
 
         val windows = requests
             .map { it.uri().toString() }
@@ -306,14 +325,17 @@ class AdminDashboardOverviewTest {
 
     @Test
     fun bothExpiryWindowsAreBoundedByTheirTwoEndsSoAnOldExpiryIsNotCountedAsImminent() {
-        val requests = mutableListOf<HttpRequest>()
+        val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { countResponse("*/0") }
 
-        gateway.overview(setOf(DashboardOverviewBlock.ATTENTION, DashboardOverviewBlock.ECONOMY))
+        gateway.overviewBlocking(setOf(DashboardOverviewBlock.ATTENTION, DashboardOverviewBlock.ECONOMY))
 
         requests
             .map { it.uri().toString() }
-            .filter { it.contains("suscripciones") && it.contains("fin_en") }
+            // `fin_en=` y no `fin_en`: la lectura de ACTIVAS (PC-03) también nombra
+            // `fin_en`, pero dentro de `or=(…)` y sin ventana, que es lo correcto
+            // para ella. Este caso es sobre las dos VENTANAS de vencimiento.
+            .filter { it.contains("suscripciones") && it.contains("fin_en=") }
             .forEach { uri ->
                 assertTrue(uri.contains("estado=eq.activa"), "Sólo cuentan las activas: $uri")
                 assertTrue(uri.contains("fin_en=gte."), "Sin el extremo inferior entrarían caducadas: $uri")
@@ -321,31 +343,261 @@ class AdminDashboardOverviewTest {
             }
     }
 
+    // -----------------------------------------------------------------
+    // PC-11 · Economía por RPC
+    // -----------------------------------------------------------------
+
+    /** La respuesta REAL de `admin_dashboard_economy_totals` en MAIN el día del contrato. */
+    private val economyTotalsLiveBody = """[{"gross_revenue_cents":0,"paid_purchases":0,"tickets_in_circulation":21475}]"""
+
+    private fun economyResponder(totals: StubResponse): (String) -> StubResponse = { uri ->
+        if (uri.contains("/rest/v1/rpc/admin_dashboard_economy_totals")) totals else countResponse("0-0/9")
+    }
+
     @Test
-    fun moneyMetricsAreDeclaredNotInstrumentedInsteadOfBeingApproximated() {
-        val gateway = gatewayWith { countResponse("0-0/9") }
+    fun theEconomyTotalsComeFromOneRpcCallAndArriveAsNumbersIncludingALegitimateZero() {
+        val requests = CopyOnWriteArrayList<HttpRequest>()
+        val gateway = gatewayWith(record = requests::add, responder = economyResponder(StubResponse(200, economyTotalsLiveBody, null)))
 
-        val economy = gateway.overview(setOf(DashboardOverviewBlock.ECONOMY)).economy
+        val economy = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.ECONOMY)).economy)
 
-        // Los conteos que sí se pueden hacer llegan...
-        assertEquals(9, economy?.subscriptionsActive)
-        // ...y ninguna suma de dinero se publica sin SUM real.
-        assertNull(economy?.grossRevenueCents)
-        assertNull(economy?.ticketsInCirculation)
+        assertEquals(0L, economy.grossRevenueCents, "Un 0 leído de la base es un dato, no un hueco.")
+        assertEquals(21475L, economy.ticketsInCirculation)
+        assertFalse(DashboardOverviewMetricKey.GROSS_REVENUE_CENTS in economy.unavailableMetrics)
+        assertFalse(DashboardOverviewMetricKey.TICKETS_IN_CIRCULATION in economy.unavailableMetrics)
+        assertTrue(economy.notInstrumented.isEmpty(), "Ya no son huecos declarados: ${economy.notInstrumented}")
+        val rpcCalls = requests.filter { it.uri().rawPath == "/rest/v1/rpc/admin_dashboard_economy_totals" }
+        assertEquals(1, rpcCalls.size, "Una llamada por franja, no una por métrica.")
+        assertEquals("POST", rpcCalls.single().method())
+        assertEquals("{}", readRequestBody(rpcCalls.single()))
+    }
 
-        val gaps = economy?.notInstrumented.orEmpty().associate { it.key to it.reason }
+    /**
+     * `gross_revenue_cents` llega `null` A PROPÓSITO cuando la base declara la suma
+     * incalculable. Eso es NO_DATA: ausente, en `unavailableMetrics` y **no** en
+     * `failedMetrics` —la lectura fue bien— ni en `notInstrumented`. Y nunca 0.
+     */
+    @Test
+    fun aNullRevenueIsNoDataAndNeitherZeroNorAFailedRead() {
+        val body = """[{"gross_revenue_cents":null,"paid_purchases":3,"tickets_in_circulation":50}]"""
+        val gateway = gatewayWith(responder = economyResponder(StubResponse(200, body, null)))
+
+        val economy = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.ECONOMY)).economy)
+
+        assertNull(economy.grossRevenueCents)
+        assertTrue(DashboardOverviewMetricKey.GROSS_REVENUE_CENTS in economy.unavailableMetrics)
+        assertFalse(DashboardOverviewMetricKey.GROSS_REVENUE_CENTS in economy.failedMetrics)
+        assertTrue(economy.notInstrumented.none { it.key == DashboardOverviewMetricKey.GROSS_REVENUE_CENTS })
+        assertEquals(50L, economy.ticketsInCirculation, "Los tickets de la misma fila siguen siendo un dato.")
+    }
+
+    /** Si la RPC falla —no existe, sin permiso, caída—, las DOS métricas son FAILED, nunca 0. */
+    @Test
+    fun aFailedEconomyRpcFailsBothMetricsWithoutFailingTheBlock() {
+        val pgrst202 = """{"code":"PGRST202","details":"Searched for the function public.admin_dashboard_economy_totals",""" +
+            """"hint":null,"message":"Could not find the function"}"""
+        val gateway = gatewayWith(responder = economyResponder(StubResponse(404, pgrst202, null)))
+
+        val overview = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ECONOMY))
+        val economy = assertNotNull(overview.economy, "Una RPC caída no tumba la franja.")
+
+        assertTrue(overview.failedBlocks.isEmpty())
+        assertEquals(9, economy.subscriptionsActive, "Los conteos de la franja siguen llegando.")
+        listOf(DashboardOverviewMetricKey.GROSS_REVENUE_CENTS, DashboardOverviewMetricKey.TICKETS_IN_CIRCULATION).forEach { key ->
+            assertTrue(key in economy.unavailableMetrics, "'$key' falló y no está en unavailableMetrics")
+            assertTrue(key in economy.failedMetrics, "'$key' falló y no está en failedMetrics")
+        }
+        assertNull(economy.grossRevenueCents)
+        assertNull(economy.ticketsInCirculation)
+    }
+
+    /**
+     * Una forma de respuesta que no es la del contrato —un objeto en vez de un array,
+     * cero filas, o una fila sin tickets— es un contrato roto y cuenta como fallo.
+     */
+    @Test
+    fun anUnexpectedEconomyShapeIsAFailedReadAndNotAGuess() {
         listOf(
-            DashboardOverviewMetricKey.GROSS_REVENUE_CENTS,
-            DashboardOverviewMetricKey.TICKETS_IN_CIRCULATION,
-        ).forEach { key ->
-            val reason = gaps[key]
-            assertNotNull(reason, "'$key' debe viajar declarada como hueco, no omitida.")
-            assertTrue(reason.length > 30, "'$key' debe decir qué vista o RPC hace falta: '$reason'")
+            """{"gross_revenue_cents":0,"paid_purchases":0,"tickets_in_circulation":21475}""",
+            "[]",
+            """[{"gross_revenue_cents":0,"paid_purchases":0}]""",
+        ).forEach { body ->
+            val gateway = gatewayWith(responder = economyResponder(StubResponse(200, body, null)))
+
+            val economy = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.ECONOMY)).economy)
+
+            assertTrue(DashboardOverviewMetricKey.TICKETS_IN_CIRCULATION in economy.failedMetrics, "cuerpo: $body")
+            assertTrue(DashboardOverviewMetricKey.GROSS_REVENUE_CENTS in economy.failedMetrics, "cuerpo: $body")
+            assertNull(economy.ticketsInCirculation, "cuerpo: $body")
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // PC-02 · Usuarios activos por RPC
+    // -----------------------------------------------------------------
+
+    private fun activeUsersResponder(response: StubResponse): (String) -> StubResponse = { uri ->
+        if (uri.contains("/rest/v1/rpc/admin_dashboard_active_users")) response else countResponse("*/0")
+    }
+
+    @Test
+    fun activeUsersIsTheScalarOfTheRpcCalledWithThirtyDays() {
+        val requests = CopyOnWriteArrayList<HttpRequest>()
+        val gateway = gatewayWith(record = requests::add, responder = activeUsersResponder(StubResponse(200, "12\n", null)))
+
+        val pulse = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.PULSE)).pulse)
+
+        assertEquals(12, pulse.activeUsers30d)
+        val call = requests.single { it.uri().rawPath == "/rest/v1/rpc/admin_dashboard_active_users" }
+        assertEquals("POST", call.method())
+        assertEquals("""{"p_days":30}""", readRequestBody(call), "La ventana viaja literal: 30 días.")
+        assertTrue(
+            requests.none { it.uri().rawPath.contains("rachas_usuario") },
+            "`rachas_usuario` no tiene escritor: leerla era publicar un cero estructural.",
+        )
+    }
+
+    @Test
+    fun aRealZeroActiveUsersIsADatumAndNotAGap() {
+        val gateway = gatewayWith(responder = activeUsersResponder(StubResponse(200, "0", null)))
+
+        val pulse = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.PULSE)).pulse)
+
+        assertEquals(0, pulse.activeUsers30d)
+        assertFalse(DashboardOverviewMetricKey.ACTIVE_USERS_30D in pulse.unavailableMetrics)
+    }
+
+    @Test
+    fun anyActiveUsersFailureOrWrongShapeIsAFailedReadAndNeverZero() {
+        listOf(
+            StubResponse(404, """{"code":"PGRST202","message":"Could not find the function"}""", null),
+            StubResponse(401, """{"code":"42501","message":"permission denied for function admin_dashboard_active_users"}""", null),
+            StubResponse(200, "[0]", null),
+            StubResponse(200, "\"12\"", null),
+            StubResponse(200, "null", null),
+        ).forEach { response ->
+            val gateway = gatewayWith(responder = activeUsersResponder(response))
+
+            val pulse = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.PULSE)).pulse)
+
+            assertNull(pulse.activeUsers30d, "respuesta ${response.status} ${response.body}")
+            assertTrue(DashboardOverviewMetricKey.ACTIVE_USERS_30D in pulse.unavailableMetrics, response.body)
+            assertTrue(DashboardOverviewMetricKey.ACTIVE_USERS_30D in pulse.failedMetrics, response.body)
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // PC-04 · Denominador cero ≠ lectura fallida
+    // -----------------------------------------------------------------
+
+    @Test
+    fun anErrorRateWithoutAnswersIsNoDataButNotAFailedRead() {
+        val gateway = gatewayWith { countResponse("*/0") }
+
+        val pulse = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.PULSE)).pulse)
+
+        assertNull(pulse.globalErrorRate, "0 % de cero respuestas sería inventar.")
+        assertTrue(DashboardOverviewMetricKey.GLOBAL_ERROR_RATE in pulse.unavailableMetrics)
+        assertFalse(
+            DashboardOverviewMetricKey.GLOBAL_ERROR_RATE in pulse.failedMetrics,
+            "Las dos lecturas fueron bien: no hay respuestas todavía, que no es un fallo.",
+        )
+    }
+
+    @Test
+    fun anErrorRateWithAnUnreadableCountIsAFailedRead() {
+        val gateway = gatewayWith { uri ->
+            if (uri.contains("es_correcta=eq.false")) StubResponse(500, "boom", null) else countResponse("0-0/40")
+        }
+
+        val pulse = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.PULSE)).pulse)
+
+        assertNull(pulse.globalErrorRate)
+        assertTrue(DashboardOverviewMetricKey.GLOBAL_ERROR_RATE in pulse.failedMetrics)
+    }
+
+    @Test
+    fun failedMetricsIsAlwaysASubsetOfUnavailableMetrics() {
+        val gateway = gatewayWith { StubResponse(503, "down", null) }
+
+        val overview = gateway.overviewBlocking()
+
+        listOf(
+            overview.attention?.let { it.failedMetrics to it.unavailableMetrics },
+            overview.pulse?.let { it.failedMetrics to it.unavailableMetrics },
+            overview.content?.let { it.failedMetrics to it.unavailableMetrics },
+            overview.economy?.let { it.failedMetrics to it.unavailableMetrics },
+        ).forEach { pair ->
+            val (failed, unavailable) = assertNotNull(pair)
+            assertTrue(failed.isNotEmpty(), "Con todo caído, cada franja declara lecturas fallidas.")
             assertTrue(
-                key in economy?.unavailableMetrics.orEmpty(),
-                "'$key' es un hueco pero no está en unavailableMetrics: un cliente pintaría su valor.",
+                unavailable.containsAll(failed),
+                "Un cliente que no conozca `failedMetrics` tiene que seguir viendo «sin dato»: $failed ⊄ $unavailable",
             )
         }
+    }
+
+    // -----------------------------------------------------------------
+    // PC-03 · Suscripciones activas = vigentes
+    // -----------------------------------------------------------------
+
+    @Test
+    fun activeSubscriptionsExcludeTheExpiredOnesWithAnEncodedInstant() {
+        val requests = CopyOnWriteArrayList<HttpRequest>()
+        val gateway = gatewayWith(record = requests::add) { countResponse("*/0") }
+
+        gateway.overviewBlocking(setOf(DashboardOverviewBlock.ECONOMY))
+
+        val active = requests
+            .map { it.uri().rawQuery.orEmpty() }
+            .single { it.startsWith("select=id&estado=eq.activa&or=") }
+        val match = Regex("""^select=id&estado=eq\.activa&or=\(fin_en\.is\.null,fin_en\.gt\.%22(.+)%22\)$""").find(active)
+        val instant = assertNotNull(match, "El filtro de activas no es el del contrato: $active").groupValues[1]
+        assertFalse(instant.contains("+"), "Un `+` sin codificar llega como espacio y PostgREST da 400: $instant")
+        assertTrue(instant.endsWith("Z"), "El instante va en UTC con `Z`: $instant")
+        Instant.parse(instant)
+    }
+
+    @Test
+    fun activeSubscriptionsFilterIsSharedWithTheAnalyticsEconomySection() {
+        val now = Instant.parse("2026-09-17T08:15:13.875Z")
+
+        assertEquals(
+            "estado=eq.activa&or=(fin_en.is.null,fin_en.gt.%222026-09-17T08:15:13Z%22)",
+            activeSubscriptionsFilter(now),
+        )
+    }
+
+    // -----------------------------------------------------------------
+    // PC-05 · Catálogo sin archivados · PC-06 · Columnas de la cronología
+    // -----------------------------------------------------------------
+
+    @Test
+    fun theCatalogCountsOnlyActiveExamsAndActiveQuestions() {
+        val requests = CopyOnWriteArrayList<HttpRequest>()
+        val gateway = gatewayWith(record = requests::add) { countResponse("*/0") }
+
+        gateway.overviewBlocking(setOf(DashboardOverviewBlock.CONTENT))
+
+        val queries = requests.associate { it.uri().rawPath to it.uri().rawQuery }
+        assertEquals("select=id&activo=eq.true", queries["/rest/v1/examenes"], "examenes se filtra por `activo`.")
+        assertEquals("select=id&activa=eq.true", queries["/rest/v1/preguntas"], "preguntas se filtra por `activa`.")
+    }
+
+    @Test
+    fun theTimelineAsksOnlyForTheColumnsItDelivers() {
+        val requests = CopyOnWriteArrayList<HttpRequest>()
+        val gateway = gatewayWith(record = requests::add) { uri ->
+            if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
+        }
+
+        gateway.overviewBlocking(setOf(DashboardOverviewBlock.ACTIVITY))
+
+        assertEquals(
+            "select=id,accion,tabla_afectada,registro_id,creado_en&order=creado_en.desc&limit=8",
+            requests.single { it.uri().rawPath == "/rest/v1/auditoria_log" }.uri().rawQuery,
+            "`select=*` traía antes/despues, ip, user_agent y usuario_id, que la franja no usa.",
+        )
     }
 
     @Test
@@ -362,67 +614,81 @@ class AdminDashboardOverviewTest {
         // borrado rompe el test aunque el nombre de la tabla siga apareciendo, y
         // `suscripciones?...&estado=eq.activa` no se confunde con la variante que
         // además lleva `fin_en`.
-        val requests = mutableListOf<HttpRequest>()
+        val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { uri ->
             if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
         }
 
-        gateway.overview()
+        gateway.overviewBlocking()
 
         val paths = requests.map { it.uri().toString().substringAfter("/rest/v1/") }.toSet()
         listOf(
             // ATTENTION
             "reportes_contenido?select=id&estado=eq.pendiente",
             "feedback_pregunta?select=id&estado=eq.pendiente",
-            "examenes?select=id",
-            "examenes?select=id&publicado_en=not.is.null&activo=eq.true",
+            // PC-01: borrador = activo y sin publicar, con su propio conteo.
+            "examenes?select=id&activo=eq.true&publicado_en=is.null",
             // PULSE
+            "examenes?select=id&publicado_en=not.is.null&activo=eq.true",
             "respuestas_intento?select=id",
             "respuestas_intento?select=id&es_correcta=eq.false",
-            // CONTENT
-            "preguntas?select=id",
+            // PC-02: usuarios activos por RPC.
+            "rpc/admin_dashboard_active_users",
+            // CONTENT · PC-05: sin archivados.
+            "examenes?select=id&activo=eq.true",
+            "preguntas?select=id&activa=eq.true",
             "recursos_pregunta?select=id&activo=eq.true",
             "lotes_importacion_preguntas?select=id",
-            // ECONOMY
-            "suscripciones?select=id&estado=eq.activa",
+            // ACTIVITY · PC-06: columnas explícitas.
+            "auditoria_log?select=id,accion,tabla_afectada,registro_id,creado_en&order=creado_en.desc&limit=8",
+            // ECONOMY · PC-11: totales por RPC.
             "productos_comerciales?select=id&activo=eq.true",
+            "rpc/admin_dashboard_economy_totals",
             // SYSTEM (sonda)
             "especialidades?select=id",
         ).forEach { expected ->
             assertTrue(
                 expected in paths,
-                "Ningún conteo pidió exactamente '$expected'. Si le has cambiado o quitado el " +
+                "Ninguna lectura pidió exactamente '$expected'. Si le has cambiado o quitado el " +
                     "filtro, el panel publicará un número que no es el que su etiqueta promete.\n" +
                     "Pedido realmente:\n" + paths.sorted().joinToString("\n"),
             )
         }
+        // Y lo que YA NO se pide, porque medía otra cosa que su etiqueta.
+        listOf(
+            "examenes?select=id", // total con archivados (PC-01 / PC-05)
+            "preguntas?select=id", // banco con archivadas (PC-05)
+            "suscripciones?select=id&estado=eq.activa", // activas vencidas (PC-03)
+        ).forEach { gone ->
+            assertFalse(gone in paths, "'$gone' volvió a pedirse.\n" + paths.sorted().joinToString("\n"))
+        }
+        assertTrue(paths.none { it.startsWith("rachas_usuario") }, "`rachas_usuario` no tiene escritor (PC-02).")
+        assertTrue(paths.none { it.startsWith("auditoria_log?select=*") }, "La cronología no pide `select=*` (PC-06).")
+        assertTrue(
+            paths.any { it.startsWith("suscripciones?select=id&estado=eq.activa&or=(fin_en.is.null,fin_en.gt.") },
+            "Las suscripciones activas son las vigentes (PC-03).\n" + paths.sorted().joinToString("\n"),
+        )
     }
 
     @Test
     fun theThirtyDayWindowsAreThirtyDaysAndNotSomeOtherNumber() {
-        // Las dos ventanas de PULSE se calculan con aritmética de fechas, así que
-        // no basta con afirmar que el filtro está: hay que afirmar el número.
-        // Cambiar `minusDays(29)` por `minusDays(6)` deja «Usuarios activos ·
-        // últimos 30 días» enseñando los de 7 días, con la etiqueta intacta.
-        val beforeCall = LocalDate.now(ZoneOffset.UTC)
-        val requests = mutableListOf<HttpRequest>()
+        // Las dos ventanas de PULSE se deciden aquí, así que no basta con afirmar
+        // que el filtro está: hay que afirmar el número. Cambiar la ventana deja
+        // «Usuarios activos · últimos 30 días» enseñando otra cosa con la etiqueta
+        // intacta.
+        val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { countResponse("*/0") }
 
-        gateway.overview(setOf(DashboardOverviewBlock.PULSE))
+        gateway.overviewBlocking(setOf(DashboardOverviewBlock.PULSE))
 
-        val afterCall = LocalDate.now(ZoneOffset.UTC)
         val paths = requests.map { it.uri().toString().substringAfter("/rest/v1/") }
 
-        // `rachas_usuario`: una fila por usuario, ventana por fecha UTC. 29 días
-        // atrás porque hoy cuenta: hoy + los 29 anteriores = 30 días.
-        val activeSince = LocalDate.parse(
-            paths.single { it.startsWith("rachas_usuario") }
-                .substringAfter("ultima_actividad_fecha=gte.").substringBefore('&'),
-        )
-        assertTrue(
-            activeSince in setOf(beforeCall.minusDays(29), afterCall.minusDays(29)),
-            "La ventana de usuarios activos debe abarcar 30 días (hoy menos 29), y pidió " +
-                "desde $activeSince con hoy = $afterCall.",
+        // Usuarios activos (PC-02): la ventana viaja como parámetro de la RPC. La
+        // función acota en silencio lo que esté fuera de 1..366, así que un error
+        // de este lado no se vería en la base: se fija el literal.
+        assertEquals(
+            """{"p_days":30}""",
+            readRequestBody(requests.single { it.uri().rawPath == "/rest/v1/rpc/admin_dashboard_active_users" }),
         )
 
         // `intentos_examen`: instante, 30 días exactos hacia atrás.
@@ -439,22 +705,35 @@ class AdminDashboardOverviewTest {
 
     @Test
     fun everyCountIsAskedToPostgrestAsAnExactCountWithoutTransferringRows() {
-        val requests = mutableListOf<HttpRequest>()
+        val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { uri ->
             if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
         }
 
-        gateway.overview()
+        gateway.overviewBlocking()
 
         assertTrue(requests.isNotEmpty())
         requests.forEach { request ->
-            assertEquals("GET", request.method(), "El dashboard agregado es sólo lectura: ${request.uri()}")
+            // Sólo lectura. Las dos RPC van por POST porque así las expone PostgREST,
+            // pero son funciones STABLE de sólo lectura; cualquier otro POST, PATCH o
+            // DELETE sería una escritura desde un panel de lectura.
+            val isReadOnlyRpc = request.uri().rawPath in setOf(
+                "/rest/v1/rpc/admin_dashboard_active_users",
+                "/rest/v1/rpc/admin_dashboard_economy_totals",
+            )
+            assertEquals(
+                if (isReadOnlyRpc) "POST" else "GET",
+                request.method(),
+                "El dashboard agregado es sólo lectura: ${request.uri()}",
+            )
             assertTrue(
                 request.timeout().isPresent,
                 "Toda petición al upstream necesita timeout o el hilo se queda colgado: ${request.uri()}",
             )
         }
-        requests.filterNot { it.uri().toString().contains("auditoria_log") }.forEach { request ->
+        requests.filterNot {
+            it.uri().toString().contains("auditoria_log") || it.uri().rawPath.startsWith("/rest/v1/rpc/")
+        }.forEach { request ->
             assertEquals(
                 "count=exact",
                 request.headers().firstValue("Prefer").orElse(null),
@@ -493,7 +772,7 @@ class AdminDashboardOverviewTest {
             }
         }
 
-        val entries = gateway.overview(setOf(DashboardOverviewBlock.ACTIVITY)).activity?.entries.orEmpty()
+        val entries = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ACTIVITY)).activity?.entries.orEmpty()
 
         assertEquals(
             listOf("a1", "a5"),
@@ -530,7 +809,7 @@ class AdminDashboardOverviewTest {
             }
         }
 
-        val activity = gateway.overview(setOf(DashboardOverviewBlock.ACTIVITY)).activity
+        val activity = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ACTIVITY)).activity
 
         assertEquals(listOf("a1"), activity?.entries?.map { it.id })
         assertEquals(3, activity?.droppedEntries)
@@ -558,7 +837,7 @@ class AdminDashboardOverviewTest {
             }
         }
 
-        val activity = gateway.overview(setOf(DashboardOverviewBlock.ACTIVITY)).activity
+        val activity = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ACTIVITY)).activity
 
         assertEquals(emptyList(), activity?.entries)
         assertEquals(
@@ -575,7 +854,7 @@ class AdminDashboardOverviewTest {
             if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
         }
 
-        val activity = gateway.overview(setOf(DashboardOverviewBlock.ACTIVITY)).activity
+        val activity = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ACTIVITY)).activity
 
         assertEquals(emptyList(), activity?.entries)
         assertEquals(0, activity?.droppedEntries, "Sin filas leídas no hay nada que descartar.")
@@ -595,12 +874,12 @@ class AdminDashboardOverviewTest {
 
     @Test
     fun theTimelineIsOrderedAndLimitedByPostgrestAndNotInKotlin() {
-        val requests = mutableListOf<HttpRequest>()
+        val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { uri ->
             if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
         }
 
-        gateway.overview(setOf(DashboardOverviewBlock.ACTIVITY))
+        gateway.overviewBlocking(setOf(DashboardOverviewBlock.ACTIVITY))
 
         val uri = requests.map { it.uri().toString() }.single { it.contains("auditoria_log") }
         assertTrue(uri.contains("order=creado_en.desc"), "El orden lo hace la base: $uri")
@@ -661,6 +940,19 @@ class AdminDashboardOverviewTest {
         routing { adminDashboardOverviewRoutes(gateway) }
     }
 
+    /**
+     * `overview` es `suspend` desde que las cinco franjas no-SYSTEM se componen
+     * en paralelo. Los casos de este fichero prueban el CONTENIDO del contrato
+     * —qué cifras salen, qué se marca NO_DATA, qué franja falla— y no la
+     * concurrencia, que tiene su propio fichero
+     * (`AdminDashboardOverviewConcurrencyTest`). Un `runBlocking` en un solo
+     * sitio los deja leyéndose igual que antes en vez de teñir 19 casos de
+     * andamiaje que no es lo que están probando.
+     */
+    private fun AdminDashboardOverviewGateway.overviewBlocking(
+        sections: Set<String> = DashboardOverviewBlock.ALL,
+    ): AdminDashboardOverviewDto = runBlocking { overview(sections) }
+
     private fun gatewayWith(
         record: (HttpRequest) -> Unit = {},
         responder: (String) -> StubResponse,
@@ -679,6 +971,13 @@ class AdminDashboardOverviewTest {
      * `HttpClient` mínimo de la JDK, igual que el de `AdminAnalyticsGatewayTest`.
      * Se escribe a mano porque lo que hay que observar es exactamente lo que sale
      * por el cable: método, cabeceras `Prefer`/`Range` y timeout.
+     *
+     * **Los casos que graban usan `CopyOnWriteArrayList` y no `mutableListOf`.**
+     * Desde que las cinco franjas no-SYSTEM se componen en paralelo, `record`
+     * lo llaman cinco hilos del pool IO a la vez, y `ArrayList.add` no es
+     * seguro ahí: perdería peticiones en silencio y los casos que cuentan
+     * cuántas salieron pasarían o fallarían según el día. Un test que mide
+     * concurrencia con una estructura que no la soporta mide su propia carrera.
      */
     private class StubHttpClient(
         private val record: (HttpRequest) -> Unit,

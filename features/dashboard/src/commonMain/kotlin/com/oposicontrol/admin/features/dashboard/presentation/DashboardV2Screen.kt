@@ -59,6 +59,7 @@ import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.ButtonSize
 import com.oposicontrol.admin.core.ui.components.GhostButton
 import com.oposicontrol.admin.core.ui.components.GlassSectionSurface
+import com.oposicontrol.admin.core.ui.components.InfoTooltip
 import com.oposicontrol.admin.core.ui.components.SemanticIconContainer
 import com.oposicontrol.admin.core.ui.components.SemanticRole
 import com.oposicontrol.admin.core.ui.components.StatusDotChip
@@ -199,6 +200,7 @@ internal fun DashboardV2Content(
         ) {
             SystemStrip(
                 state = state.block(DashboardBlock.SYSTEM),
+                stale = state.isStale(DashboardBlock.SYSTEM),
                 now = now,
                 stripWidth = contentWidth,
                 onRetry = { onRefreshBlock(DashboardBlock.SYSTEM) },
@@ -207,6 +209,7 @@ internal fun DashboardV2Content(
 
             AttentionSection(
                 state = state.block(DashboardBlock.ATTENTION),
+                stale = state.isStale(DashboardBlock.ATTENTION),
                 columnWidth = columnWidth(gridWidth, attentionColumns, DashboardV2Sizing.cardGap),
                 columns = attentionColumns,
                 showSubtitle = !shortViewport,
@@ -223,6 +226,7 @@ internal fun DashboardV2Content(
 
             PulseSection(
                 state = state.block(DashboardBlock.PULSE),
+                stale = state.isStale(DashboardBlock.PULSE),
                 gridWidth = gridWidth,
                 columns = kpiColumns,
                 showSubtitle = !shortViewport,
@@ -271,6 +275,8 @@ internal fun DashboardV2Content(
 @Composable
 private fun SystemStrip(
     state: UiAsync<DashboardBlockReport>,
+    /** PC-10: lo que se ve es de una petición anterior; la última falló. */
+    stale: Boolean,
     now: Instant,
     stripWidth: Dp,
     onRetry: () -> Unit,
@@ -329,7 +335,7 @@ private fun SystemStrip(
                     overflow = TextOverflow.Ellipsis,
                 )
                 when {
-                    health != null -> SystemHealthChips(health = health, now = now)
+                    health != null -> SystemHealthChips(health = health, stale = stale, now = now)
                     state is UiAsync.Error -> Text(
                         text = state.error.humanMessage(),
                         style = MaterialTheme.typography.bodySmall,
@@ -372,7 +378,7 @@ private fun SystemStrip(
  * contesta «¿está en pie?»— las que sobreviven.
  */
 @Composable
-private fun SystemHealthChips(health: DashboardHealth, now: Instant) {
+private fun SystemHealthChips(health: DashboardHealth, stale: Boolean, now: Instant) {
     val tokens = GlassTheme.tokens
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -380,6 +386,10 @@ private fun SystemHealthChips(health: DashboardHealth, now: Instant) {
     ) {
         StatusDotChip(label = "Ktor ${health.ktor.label()}", tone = health.ktor.tone())
         StatusDotChip(label = "Supabase ${health.supabase.label()}", tone = health.supabase.tone())
+        // PC-10: justo después de las píldoras y antes de latencia y reloj, que son
+        // los primeros en elidirse. Dos píldoras verdes de hace cinco minutos sobre
+        // un refresco fallido afirman un "todo bien" que ya no se sabe.
+        if (stale) StaleBadge()
         // Medición real: Ktor cronometra su lectura mínima contra Supabase y con
         // ella decide OPERATIVO o DEGRADADO. Se nombra por lo que es —el tiempo
         // que tarda Supabase en contestar a esa sonda— y NO como «latencia de la
@@ -425,6 +435,7 @@ private fun SystemHealthChips(health: DashboardHealth, now: Instant) {
 @Composable
 private fun AttentionSection(
     state: UiAsync<DashboardBlockReport>,
+    stale: Boolean,
     columnWidth: Dp,
     columns: Int,
     showSubtitle: Boolean,
@@ -437,6 +448,7 @@ private fun AttentionSection(
         title = "Necesita tu atención",
         subtitle = "Elementos que requieren revisión o acción",
         showSubtitle = showSubtitle,
+        stale = stale,
         action = {
             DashboardLink(
                 text = "Revisar todos",
@@ -604,7 +616,11 @@ private data class QuickAction(
  * escribe la lista lo sabe.
  */
 private val QUICK_ACTIONS = listOf(
-    QuickAction("Crear examen", AppIcon.EXAMS, SemanticRole.SUCCESS, DashboardV2Destination.EXAMS),
+    // PC-15: «Nuevo examen» y NEW_EXAM. El atajo se llamaba «Crear examen» y sólo
+    // abría el catálogo. Ahora abre el editor con un borrador en blanco, y se llama
+    // como el botón del workspace que hace exactamente eso: «Crear examen» es, allí,
+    // el botón que GUARDA, y abrir un borrador no guarda nada.
+    QuickAction(NEW_EXAM_QUICK_ACTION_LABEL, AppIcon.EXAMS, SemanticRole.SUCCESS, DashboardV2Destination.NEW_EXAM),
     QuickAction("Importar preguntas", AppIcon.IMPORT, SemanticRole.INFO, DashboardV2Destination.IMPORTS),
     QuickAction("Revisar reportes", AppIcon.REPORTS, SemanticRole.DANGER, DashboardV2Destination.MODERATION_QUEUE),
     // Ámbar y no violeta, por dos motivos que apuntan al mismo sitio: el violeta
@@ -678,6 +694,7 @@ private fun QuickActionTile(
 @Composable
 private fun PulseSection(
     state: UiAsync<DashboardBlockReport>,
+    stale: Boolean,
     gridWidth: Dp,
     columns: Int,
     showSubtitle: Boolean,
@@ -690,6 +707,7 @@ private fun PulseSection(
         title = "Pulso del producto",
         subtitle = "Métricas clave de los últimos 30 días",
         showSubtitle = showSubtitle,
+        stale = stale,
         action = {
             DashboardLink(
                 text = "Ver Analytics",
@@ -739,13 +757,10 @@ private fun PulseCard(metric: AnalyticsMetric) {
                 iconSize = DashboardV2Sizing.cardIconSize,
             )
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = copy.title,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = tokens.textSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                // PC-02: si la cifra tiene una definición que no se deduce del
+                // título («usuarios activos»), va en la ayuda contextual del propio
+                // título, con su icono de información al lado.
+                MetricTitle(title = copy.title, help = copy.help)
                 MetricValueText(cell = cell, muted = false)
                 if (copy.supporting.isNotBlank()) {
                     Text(
@@ -785,6 +800,7 @@ private fun BottomRow(
         when (index) {
             0 -> ContentStatusPanel(
                 state = state.block(DashboardBlock.CONTENT),
+                stale = state.isStale(DashboardBlock.CONTENT),
                 onRetry = { onRefreshBlock(DashboardBlock.CONTENT) },
                 minHeight = panelMinHeight,
                 showSubtitle = showSubtitle,
@@ -792,6 +808,7 @@ private fun BottomRow(
             )
             1 -> ActivityPanel(
                 state = state.block(DashboardBlock.ACTIVITY),
+                stale = state.isStale(DashboardBlock.ACTIVITY),
                 now = now,
                 onRetry = { onRefreshBlock(DashboardBlock.ACTIVITY) },
                 minHeight = panelMinHeight,
@@ -800,6 +817,7 @@ private fun BottomRow(
             )
             else -> EconomyPanel(
                 state = state.block(DashboardBlock.ECONOMY),
+                stale = state.isStale(DashboardBlock.ECONOMY),
                 onRetry = { onRefreshBlock(DashboardBlock.ECONOMY) },
                 onOpen = onOpen,
                 minHeight = panelMinHeight,
@@ -812,6 +830,7 @@ private fun BottomRow(
 @Composable
 private fun ContentStatusPanel(
     state: UiAsync<DashboardBlockReport>,
+    stale: Boolean,
     onRetry: () -> Unit,
     onOpen: (DashboardV2Destination) -> Unit,
     minHeight: Dp,
@@ -823,6 +842,7 @@ private fun ContentStatusPanel(
         title = "Estado de contenido",
         subtitle = "Volumen del catálogo",
         showSubtitle = showSubtitle,
+        stale = stale,
         dense = true,
         modifier = Modifier.heightIn(min = minHeight),
         // Era la única de las tres columnas sin enlace superior, y esa asimetría
@@ -849,13 +869,15 @@ private fun ContentStatusPanel(
                 report.renderable.forEachIndexed { index, metric ->
                     if (index > 0) Hairline()
                     val destination = dashboardContentDestination(metric.key)
+                    val copy = dashboardMetricCopy(metric.key)
                     StatRow(
                         icon = dashboardMetricIcon(metric.key),
                         role = dashboardMetricRole(metric.key),
-                        label = dashboardMetricCopy(metric.key).title,
+                        label = copy.title,
                         value = dashboardMetricText(metric) ?: SIN_DATO,
-                        muted = dashboardMetricCell(metric) is DashboardMetricCell.NoData,
+                        muted = dashboardMetricIsMuted(dashboardMetricCell(metric)),
                         onClick = destination?.let { { onOpen(it) } },
+                        help = copy.help,
                     )
                 }
             }
@@ -866,14 +888,17 @@ private fun ContentStatusPanel(
 /**
  * Economía con lo que hoy se puede contar de verdad.
  *
- * No hay ingresos, ni nuevas suscripciones del periodo, ni conversión a premium:
- * las tres exigen un `SUM` o una comparativa que PostgREST no expresa, y el
- * contrato las declara `NOT_INSTRUMENTED` precisamente para que el hueco tenga
- * nombre. `renderable` las deja fuera; no se pintan como «0 €».
+ * Desde PC-11 incluye los ingresos (compras pagadas en EUR, histórico) y los
+ * OposiTickets en circulación, que salen de una RPC con la suma hecha en la base.
+ * Siguen sin existir las nuevas suscripciones del periodo o la conversión a
+ * premium: no hay comparativa temporal en el contrato, y no se dibuja. Cuando la
+ * base declara los ingresos incalculables se pinta «Sin dato» —nunca «0 €»—, y la
+ * ayuda de la fila explica por qué.
  */
 @Composable
 private fun EconomyPanel(
     state: UiAsync<DashboardBlockReport>,
+    stale: Boolean,
     onRetry: () -> Unit,
     onOpen: (DashboardV2Destination) -> Unit,
     minHeight: Dp,
@@ -883,8 +908,9 @@ private fun EconomyPanel(
         icon = AppIcon.PLANS,
         role = SemanticRole.COMMERCE,
         title = "Economía",
-        subtitle = "Suscripciones y catálogo comercial",
+        subtitle = "Suscripciones, ingresos y OposiTickets",
         showSubtitle = showSubtitle,
+        stale = stale,
         dense = true,
         modifier = Modifier.heightIn(min = minHeight),
         action = {
@@ -905,13 +931,15 @@ private fun EconomyPanel(
             SolidList(minHeight = listMinHeight(minHeight)) {
                 report.renderable.forEachIndexed { index, metric ->
                     if (index > 0) Hairline()
+                    val copy = dashboardMetricCopy(metric.key)
                     StatRow(
                         icon = dashboardMetricIcon(metric.key),
                         role = dashboardMetricRole(metric.key),
-                        label = dashboardMetricCopy(metric.key).title,
+                        label = copy.title,
                         value = dashboardMetricText(metric) ?: SIN_DATO,
-                        muted = dashboardMetricCell(metric) is DashboardMetricCell.NoData,
+                        muted = dashboardMetricIsMuted(dashboardMetricCell(metric)),
                         onClick = null,
+                        help = copy.help,
                     )
                 }
             }
@@ -930,6 +958,7 @@ private fun EconomyPanel(
 @Composable
 private fun ActivityPanel(
     state: UiAsync<DashboardBlockReport>,
+    stale: Boolean,
     now: Instant,
     onRetry: () -> Unit,
     onOpen: (DashboardV2Destination) -> Unit,
@@ -942,6 +971,7 @@ private fun ActivityPanel(
         title = "Actividad reciente",
         subtitle = "Últimas acciones registradas",
         showSubtitle = showSubtitle,
+        stale = stale,
         dense = true,
         modifier = Modifier.heightIn(min = minHeight),
         action = {
@@ -1108,6 +1138,13 @@ private fun DashboardSection(
      * de alto no lo dibuja.
      */
     showSubtitle: Boolean = true,
+    /**
+     * PC-10: lo que se ve viene de una petición anterior porque la última FALLÓ.
+     * Conservar los datos es correcto —unos de hace un minuto sirven más que una
+     * pantalla de error—, pero conservarlos sin decirlo los hacía pasar por
+     * frescos. Se dice con una marca junto al título, sin mover nada de sitio.
+     */
+    stale: Boolean = false,
     dense: Boolean = false,
     action: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
@@ -1159,10 +1196,62 @@ private fun DashboardSection(
                         )
                     }
                 }
+                if (stale) StaleBadge()
             }
             action?.invoke()
         }
         content()
+    }
+}
+
+/** Marca de "estos datos son de antes de un refresco fallido" (PC-10). */
+@Composable
+private fun StaleBadge() {
+    StatusDotChip(
+        label = DASHBOARD_STALE_LABEL,
+        tone = StatusTone.ATTENTION,
+        modifier = Modifier.semantics { contentDescription = DASHBOARD_STALE_DESCRIPTION },
+    )
+}
+
+/**
+ * Título de una tarjeta de métrica, con su ayuda contextual cuando la tiene (PC-02).
+ *
+ * El icono de información va pegado al título y el tooltip cubre los dos: es la
+ * definición de ESA cifra, no una ayuda general de la franja.
+ */
+@Composable
+private fun MetricTitle(title: String, help: String?) {
+    val tokens = GlassTheme.tokens
+    if (help == null) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = tokens.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        return
+    }
+    InfoTooltip(text = help) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xxs),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium,
+                color = tokens.textSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            AppIconImage(
+                icon = AppIcon.INFO,
+                size = 12.dp,
+                tint = tokens.textSecondary,
+                contentDescription = help,
+            )
+        }
     }
 }
 
@@ -1318,6 +1407,8 @@ private fun StatRow(
     value: String,
     muted: Boolean,
     onClick: (() -> Unit)?,
+    /** Definición de la cifra, en la ayuda contextual de la etiqueta (PC-02/PC-11). */
+    help: String? = null,
 ) {
     val tokens = GlassTheme.tokens
     val interactionSource = remember { MutableInteractionSource() }
@@ -1359,14 +1450,39 @@ private fun StatRow(
             horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {
             AppIconImage(icon = icon, size = 16.dp, tint = role.color())
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = tokens.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(DashboardV2Sizing.statLabelWidth),
-            )
+            if (help == null) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.textPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.width(DashboardV2Sizing.statLabelWidth),
+                )
+            } else {
+                // Mismo ancho de etiqueta que las demás filas: el icono de ayuda
+                // vive DENTRO de él, para que las cifras sigan alineadas.
+                InfoTooltip(text = help, modifier = Modifier.width(DashboardV2Sizing.statLabelWidth)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.xxs),
+                    ) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = tokens.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        AppIconImage(
+                            icon = AppIcon.INFO,
+                            size = 12.dp,
+                            tint = tokens.textSecondary,
+                            contentDescription = help,
+                        )
+                    }
+                }
+            }
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1409,13 +1525,17 @@ private fun MetricValueText(cell: DashboardMetricCell, muted: Boolean) {
         is DashboardMetricCell.Number ->
             cell.text to if (muted) tokens.textSecondary else tokens.textPrimary
         DashboardMetricCell.NoData -> SIN_DATO to tokens.textSecondary
+        // PC-04: el mismo hueco y el mismo peso que «Sin dato», con otras palabras.
+        // No en rojo: una lectura fallida no es una alarma del negocio, y el
+        // reintento de la franja ya está a un clic.
+        DashboardMetricCell.Failed -> NO_SE_PUDO_LEER to tokens.textSecondary
         // `renderable` ya filtra las NOT_INSTRUMENTED antes de llegar aquí; esta
         // rama existe para que el `when` sea exhaustivo sin inventar un texto.
         DashboardMetricCell.Hidden -> return
     }
     Text(
         text = text,
-        style = if (cell is DashboardMetricCell.NoData) {
+        style = if (dashboardMetricIsMuted(cell)) {
             // «Sin dato» a 27sp ocupa el ancho de la tarjeta y grita más que
             // cualquier cifra real. Es una ausencia: se dice, no se proclama.
             MaterialTheme.typography.titleLarge

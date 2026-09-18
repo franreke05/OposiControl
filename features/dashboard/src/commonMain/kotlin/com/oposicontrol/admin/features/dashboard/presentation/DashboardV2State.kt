@@ -23,10 +23,22 @@ import com.oposicontrol.admin.domain.model.DashboardOverview
 data class DashboardV2State(
     val blocks: Map<DashboardBlock, UiAsync<DashboardBlockReport>> = emptyMap(),
     val refreshing: Set<DashboardBlock> = emptySet(),
+    /**
+     * Franjas que enseñan datos de una petición ANTERIOR porque la última falló (PC-10).
+     *
+     * [applyCallFailure] conserva los datos que ya se veían, y es lo correcto; pero
+     * conservarlos en silencio hacía que un panel de hace diez minutos, tras un
+     * refresco fallido, pareciera tan fresco como uno recién pedido. Una franja
+     * marcada aquí se pinta con su aviso. Se limpia en cuanto llega una respuesta
+     * para ella, sea con datos o con su error.
+     */
+    val stale: Set<DashboardBlock> = emptySet(),
 ) {
     fun block(block: DashboardBlock): UiAsync<DashboardBlockReport> = blocks[block] ?: UiAsync.Idle
 
     fun isRefreshing(block: DashboardBlock): Boolean = block in refreshing
+
+    fun isStale(block: DashboardBlock): Boolean = block in stale
 
     /** Hay alguna recarga en curso sobre datos ya visibles. */
     val anyRefreshing: Boolean get() = refreshing.isNotEmpty()
@@ -51,17 +63,20 @@ internal fun DashboardV2State.startLoading(requested: Set<DashboardBlock>): Dash
  *
  * Las franjas que ya tenían datos los conservan: unos datos de hace un minuto
  * son más útiles que una pantalla de error, y ésta es exactamente la garantía
- * «recargar no borra» que el panel anterior ya cumplía.
+ * «recargar no borra» que el panel anterior ya cumplía. Y se marcan como
+ * [DashboardV2State.stale] (PC-10): conservar no puede significar fingir que son
+ * de ahora.
  */
 internal fun DashboardV2State.applyCallFailure(
     requested: Set<DashboardBlock>,
     error: AppError,
 ): DashboardV2State {
+    val kept = requested.filterTo(mutableSetOf()) { block(it) is UiAsync.Success }
     val next = requested.associateWith { candidate ->
         val current = block(candidate)
         if (current is UiAsync.Success) current else UiAsync.Error(error)
     }
-    return copy(blocks = blocks + next, refreshing = refreshing - requested)
+    return copy(blocks = blocks + next, refreshing = refreshing - requested, stale = stale + kept)
 }
 
 /**
@@ -95,7 +110,9 @@ internal fun DashboardV2State.applyOverview(
             else -> block(candidate)
         }
     }
-    return copy(blocks = blocks + next, refreshing = refreshing - touched)
+    // Toda franja con respuesta deja de estar desactualizada: o trae datos nuevos,
+    // o trae su propio error, que ya se pinta como error y no como dato viejo.
+    return copy(blocks = blocks + next, refreshing = refreshing - touched, stale = stale - touched)
 }
 
 /** `Unknown` y no `Network`: la petición fue bien, lo que falló fue componer la franja. */

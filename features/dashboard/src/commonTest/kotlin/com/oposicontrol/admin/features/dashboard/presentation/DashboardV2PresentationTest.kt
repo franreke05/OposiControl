@@ -54,6 +54,36 @@ class DashboardMetricRenderingTest {
         )
     }
 
+    /**
+     * PC-04: «no se pudo leer» y «sin dato» son frases distintas. Las dos ocupan
+     * sitio y se pintan apagadas; sólo la primera invita a pensar en un fallo.
+     */
+    @Test
+    fun unaLecturaFallidaDiceQueNoSePudoLeerYNoSinDato() {
+        val fallida = AnalyticsMetric(
+            key = DashboardMetricKeys.ACTIVE_USERS_30D,
+            value = null,
+            status = AnalyticsMetricStatus.NO_DATA,
+            readFailed = true,
+        )
+
+        val cell = dashboardMetricCell(fallida)
+
+        assertEquals(DashboardMetricCell.Failed, cell)
+        assertEquals("No se pudo leer", dashboardMetricText(fallida))
+        assertTrue(dashboardMetricIsMuted(cell))
+        assertTrue(dashboardMetricIsMuted(DashboardMetricCell.NoData))
+        assertTrue(!dashboardMetricIsMuted(DashboardMetricCell.Number("0")), "un cero es un dato y no se apaga por serlo")
+    }
+
+    @Test
+    fun unaLecturaFallidaNoApagaLaTarjetaDeAtencion() {
+        // No saber cuántos reportes hay no es saber que no hay ninguno.
+        assertTrue(!dashboardAttentionIsCleared(DashboardMetricCell.Failed))
+        assertTrue(!dashboardAttentionIsCleared(DashboardMetricCell.NoData))
+        assertTrue(dashboardAttentionIsCleared(DashboardMetricCell.Number("0")))
+    }
+
     @Test
     fun unaMetricaSinInstrumentarNoSePinta() {
         val notInstrumented = metric(
@@ -520,9 +550,8 @@ class DashboardAttentionCopyTest {
             DashboardMetricKeys.SUBSCRIPTIONS_ACTIVE,
             DashboardMetricKeys.SUBSCRIPTIONS_EXPIRING_30D,
             DashboardMetricKeys.COMMERCIAL_PRODUCTS_ACTIVE,
-            // Hoy siempre NOT_INSTRUMENTED y filtradas por `renderable`; en cuanto
-            // exista `v_ingresos_brutos` o `v_opositickets_en_circulacion` pasan a
-            // AVAILABLE y salen a pantalla.
+            // Desde PC-11 llegan con número (RPC `admin_dashboard_economy_totals`)
+            // y salen a pantalla.
             DashboardMetricKeys.GROSS_REVENUE_CENTS,
             DashboardMetricKeys.TICKETS_IN_CIRCULATION,
         )
@@ -553,5 +582,40 @@ class DashboardAttentionCopyTest {
         )
         assertIs<DashboardMetricCell.Number>(tickets)
         assertEquals("9120", tickets.text)
+    }
+
+    /**
+     * PC-02: "usuarios activos" no se deduce del título, así que la definición viaja
+     * en la ayuda de la tarjeta, con las mismas palabras que la función del servidor:
+     * intento INICIADO o evento de app, ventana de 30 días, fecha del servidor.
+     */
+    @Test
+    fun usuariosActivosExplicaEnSuAyudaQueCuentaExactamente() {
+        val help = assertNotNull(dashboardMetricCopy(DashboardMetricKeys.ACTIVE_USERS_30D).help)
+
+        listOf("distintos", "intento", "evento", "30 días", "servidor").forEach { pieza ->
+            assertTrue(help.contains(pieza), "la ayuda de «Usuarios activos» no dice «$pieza»: $help")
+        }
+    }
+
+    /** PC-11: qué suma cada cifra económica, y qué significa que no haya número. */
+    @Test
+    fun lasCifrasEconomicasDicenQueSumanYSusLimites() {
+        val ingresos = dashboardMetricCopy(DashboardMetricKeys.GROSS_REVENUE_CENTS)
+        val ingresosAyuda = assertNotNull(ingresos.help)
+        listOf("pagada", "euros", "reembolsadas", "Sin dato").forEach { pieza ->
+            assertTrue(ingresosAyuda.contains(pieza), "la ayuda de ingresos no dice «$pieza»: $ingresosAyuda")
+        }
+        assertTrue(ingresos.supporting.contains("histórico"), "no es de un periodo: ${ingresos.supporting}")
+
+        val ticketsAyuda = assertNotNull(dashboardMetricCopy(DashboardMetricKeys.TICKETS_IN_CIRCULATION).help)
+        assertTrue(ticketsAyuda.contains("no un importe"), "los tickets no son dinero: $ticketsAyuda")
+    }
+
+    /** PC-05: el catálogo dice que cuenta lo activo, que es lo que lista la pantalla destino. */
+    @Test
+    fun elCatalogoDiceQueCuentaLoActivo() {
+        assertTrue(dashboardMetricCopy(DashboardMetricKeys.TOTAL_EXAMS).supporting.startsWith("Activos"))
+        assertTrue(dashboardMetricCopy(DashboardMetricKeys.TOTAL_QUESTIONS).supporting.startsWith("Activas"))
     }
 }

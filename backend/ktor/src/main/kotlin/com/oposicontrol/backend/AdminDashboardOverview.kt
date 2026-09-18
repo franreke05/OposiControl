@@ -6,18 +6,22 @@ import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.route
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import java.net.URI
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
+import org.slf4j.LoggerFactory
 import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.time.Instant
-import java.time.LocalDate
 import java.time.OffsetDateTime
-import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
+import java.util.concurrent.ConcurrentHashMap
+
+/** Fallos de lectura y de franja del panel (F-12b): con el `request_id` del MDC. */
+private val DashboardOverviewLogger = LoggerFactory.getLogger("OC-KTOR-DASHBOARD")
 
 /**
  * Dashboard V2: UN contrato agregado, compuesto en Ktor.
@@ -29,14 +33,18 @@ import java.time.temporal.ChronoUnit
  * el único sitio con `service_role`.
  *
  * Hereda entero el contrato de honestidad de [AdminAnalyticsGateway] y reutiliza
- * sus piezas ([AnalyticsAvailability], [analyticsRate], [analyticsRemainder],
+ * sus piezas ([AnalyticsAvailability], [analyticsRate], [activeSubscriptionsFilter],
  * [AnalyticsGapDto]) en vez de reescribirlas:
  *
- * 1. **Ninguna métrica se inventa.** Lo que no se pudo leer viaja como `null` con
- *    su clave en `unavailableMetrics`, nunca como `0`.
+ * 1. **Ninguna métrica se inventa.** Lo que no tiene número viaja como `null` con
+ *    su clave en `unavailableMetrics`, nunca como `0`. Si además la LECTURA FALLÓ,
+ *    la clave va también en `failedMetrics` (PC-04): "no se pudo leer" y "no hay
+ *    nada que medir" no pueden llegar iguales a la pantalla.
  * 2. **Contar se cuenta en el servidor**, con `Prefer: count=exact` y `Range: 0-0`.
- * 3. **Lo que PostgREST no sabe hacer, no se finge**: SUM no existe, así que
- *    dinero y tickets se declaran NOT_INSTRUMENTED con la vista que haría falta.
+ * 3. **Lo que PostgREST no sabe hacer, no se finge**: SUM no existe en PostgREST,
+ *    así que las dos sumas del panel (ingresos y tickets) y el recuento de usuarios
+ *    distintos se piden a RPC de sólo lectura (`admin_dashboard_economy_totals`,
+ *    `admin_dashboard_active_users`, sólo `service_role`) en vez de aproximarse.
  *
  * ### Lo que este fichero añade sobre el precedente: la franja como unidad de fallo
  *
@@ -165,6 +173,18 @@ internal fun parseDashboardSections(raw: String?): DashboardSectionsSelection {
  * `unavailableMetrics`, que es siempre la autoridad (el Json del servidor usa
  * `explicitNulls = false`, así que un `null` no llega al cable y la lista es la
  * única señal fiable).
+ *
+ * Los cuatro estados de una métrica en el cable (PC-04):
+ *
+ * | Estado            | campo    | unavailableMetrics | failedMetrics | notInstrumented |
+ * |-------------------|----------|--------------------|---------------|-----------------|
+ * | cero real / dato  | número   | no                 | no            | no              |
+ * | NO_DATA           | ausente  | sí                 | no            | no              |
+ * | FAILED            | ausente  | sí                 | sí            | no              |
+ * | NOT_INSTRUMENTED  | ausente  | sí                 | no            | sí, con motivo  |
+ *
+ * `failedMetrics` es siempre un SUBCONJUNTO de `unavailableMetrics`, a propósito:
+ * un cliente que todavía no conozca la lista nueva pinta "sin dato", nunca un cero.
  */
 
 @Serializable
@@ -230,6 +250,8 @@ data class AdminDashboardAttentionDto(
     val subscriptionsExpiring7d: Int?,
     val generatedAt: String,
     val unavailableMetrics: List<String>,
+    /** Claves cuya LECTURA falló. Subconjunto de [unavailableMetrics] (PC-04). */
+    val failedMetrics: List<String>,
     val notInstrumented: List<AnalyticsGapDto>,
 )
 
@@ -241,6 +263,8 @@ data class AdminDashboardPulseDto(
     val globalErrorRate: Double?,
     val generatedAt: String,
     val unavailableMetrics: List<String>,
+    /** Claves cuya LECTURA falló. Subconjunto de [unavailableMetrics] (PC-04). */
+    val failedMetrics: List<String>,
     val notInstrumented: List<AnalyticsGapDto>,
 )
 
@@ -252,6 +276,8 @@ data class AdminDashboardContentDto(
     val importBatches: Int?,
     val generatedAt: String,
     val unavailableMetrics: List<String>,
+    /** Claves cuya LECTURA falló. Subconjunto de [unavailableMetrics] (PC-04). */
+    val failedMetrics: List<String>,
     val notInstrumented: List<AnalyticsGapDto>,
 )
 
@@ -303,20 +329,39 @@ data class AdminDashboardEconomyDto(
     val subscriptionsExpiring30d: Int?,
     val commercialProductsActive: Int?,
     /**
-     * Céntimos enteros — nunca `Double`, que redondearía el dinero. Hoy siempre
-     * `null` y declarado en `notInstrumented`: sumar `precio_centimos` necesita
-     * SUM y PostgREST no lo expone.
+     * Céntimos enteros — nunca `Double`, que redondearía el dinero. Suma HISTÓRICA
+     * de compras en estado `pagada` en EUR, leída de `admin_dashboard_economy_totals`
+     * (PC-11). La RPC la devuelve `NULL` a propósito si alguna compra pagada no
+     * tiene precio o no es en EUR: esa suma se quedaría corta sin avisar, y aquí
+     * viaja como NO_DATA, nunca como `0`.
      */
     val grossRevenueCents: Long?,
+    /** Suma de `carteras_usuario.saldo_tickets`. Es un CONTEO de OposiTickets, no dinero. */
     val ticketsInCirculation: Long?,
     val generatedAt: String,
     val unavailableMetrics: List<String>,
+    /** Claves cuya LECTURA falló. Subconjunto de [unavailableMetrics] (PC-04). */
+    val failedMetrics: List<String>,
     val notInstrumented: List<AnalyticsGapDto>,
 )
 
 // ---------------------------------------------------------------------
 // Filas de entrada (Supabase -> backend)
 // ---------------------------------------------------------------------
+
+/**
+ * La fila de `admin_dashboard_economy_totals()` (PC-11).
+ *
+ * Sin valores por defecto a propósito: si falta una columna, decodificar FALLA y la
+ * métrica queda como lectura fallida, en vez de rellenarse con un default que
+ * parezca un dato. `grossRevenueCents` admite `null` porque la RPC lo devuelve así
+ * cuando la suma no es fiable; `paid_purchases` viaja pero el panel no lo usa.
+ */
+@Serializable
+internal data class DashboardEconomyTotalsRow(
+    @SerialName("gross_revenue_cents") val grossRevenueCents: Long?,
+    @SerialName("tickets_in_circulation") val ticketsInCirculation: Long,
+)
 
 @Serializable
 internal data class DashboardAuditoriaRow(
@@ -376,55 +421,183 @@ internal fun DashboardAuditoriaRow.toActivityEntryOrNull(): AdminDashboardActivi
 // ---------------------------------------------------------------------
 
 class AdminDashboardOverviewGateway internal constructor(
-    private val supabaseUrl: String,
-    private val serviceRoleKey: String,
+    supabaseUrl: String,
+    serviceRoleKey: String,
     private val json: Json,
     /**
      * `internal` sólo para poder sustituir el upstream en pruebas: sin esa
      * costura, "¿y si Supabase falla?" volvería a ser una regla escrita
      * únicamente en un comentario (misma decisión que en [AdminAnalyticsGateway]).
      */
-    private val client: HttpClient = newUpstreamHttpClient(),
+    client: HttpClient = sharedUpstreamHttpClient,
 ) {
+    /**
+     * Migrado a [SupabaseRequestTransport] (FASE 1).
+     *
+     * Sus dos funciones de transporte eran copia literal de las de otros seis
+     * ficheros, incluidas las dos líneas de credencial concatenadas a mano.
+     * Al pasar por el transporte, además, este gateway gana la traducción de
+     * errores de dominio que no llamaba desde ningún sitio.
+     */
+    private val transport = SupabaseRequestTransport(
+        baseUrl = supabaseUrl,
+        auth = SupabaseRequestAuthPolicy(serviceRoleKey),
+        client = client,
+    )
+
+    /**
+     * Decodificador PROPIO de las respuestas de RPC, con reglas fijas: ignora
+     * columnas nuevas (añadir una a la función no puede tumbar el panel) pero una
+     * columna AUSENTE falla la lectura en vez de leerse como `null`. No depende de
+     * la configuración del `json` que reciba el gateway, que en el servidor lleva
+     * `explicitNulls = false` y convertiría un campo desaparecido en un NO_DATA
+     * silencioso.
+     */
+    private val rpcJson = Json { ignoreUnknownKeys = true }
 
     /**
      * Compone las franjas pedidas, tolerando que alguna no se pueda armar.
      *
      * `sections` vacío significa todas. Cada franja se compone dentro de
      * [block]: un fallo la nombra en `failedBlocks` y deja intactas las demás.
+     *
+     * ### La garantía que ninguna optimización puede tocar
+     *
+     * **Cada franja degrada por separado.** Un `try/catch` por franja; si una
+     * lanza, se nombra en `failedBlocks` y **las otras cinco se sirven igual**.
+     * Nunca un 500 porque una franja falló. Esa garantía atraviesa las tres
+     * capas —`failedBlocks` sin default aquí, `AppResult.Failure` reservado al
+     * fallo de la petición entera en el repositorio, y un `UiAsync` POR FRANJA
+     * en la pantalla— y cualquier cambio que acople dos franjas la rompe, por
+     * rápido que sea.
+     *
+     * ### Qué se paraleliza, y qué NO, y por qué
+     *
+     * **Sí: las cinco franjas no-SYSTEM entre sí.** Son independientes por
+     * construcción —ningún valor de una entra en otra—, así que lanzarlas a la
+     * vez no cambia ni un campo del resultado. El peor caso teórico pasa de la
+     * suma de 19 peticiones (~380 s de hilo) al máximo de los cinco grupos
+     * (~100 s). Cada `try/catch` sigue aislando su franja exactamente igual.
+     *
+     * **No: SYSTEM. Se ejecuta SOLA, antes que las otras cinco.** Y no es
+     * prudencia, es que **su latencia medida es el dato que publica**
+     * ([AdminDashboardHealthDto.supabaseLatencyMs]). Lanzada junto a las otras
+     * 18 peticiones contra el mismo `HttpClient`, esa cifra deja de medir
+     * «cuánto tarda Supabase» y pasa a medir «cuánto tarda Supabase con 18
+     * peticiones encima» — una métrica que dice una cosa y mide otra es peor
+     * que no tenerla. Es una franja de UNA petición: serializarla no cuesta
+     * nada. (Es además cómo ya se ejecuta en el refresco de 60 s del panel,
+     * `?sections=system`.)
+     *
+     * **No: compartir lecturas entre franjas.** Si alguna vez dos franjas
+     * necesitan la misma cifra, se pide dos veces: compartir el resultado cuesta
+     * la garantía de arriba, porque en cuanto dos franjas comparten una petición
+     * el fallo de esa petición tumba las dos. (Hoy ya no hay repetidas: PC-01
+     * cuenta los borradores con su propio filtro y PC-05 filtra el catálogo por
+     * activos, así que las dos lecturas que antes se duplicaban dejaron de ser la
+     * misma consulta.)
+     *
+     * Fan-out de un refresco completo: **19** peticiones — SYSTEM 1, ATTENTION 4,
+     * PULSE 5 (una es la RPC de usuarios activos), CONTENT 4, ACTIVITY 1 y
+     * ECONOMY 4 (una es la RPC de totales). El número coincide con el de antes con
+     * otra composición, y por eso `IndependentDashboardFanoutContractTest` fija
+     * el conjunto de rutas y no sólo la cuenta.
+     *
+     * **No: cachear**, ni entre franjas ni entre peticiones. `generatedAt`
+     * significa «cuándo compuso Ktor este bloque», y de ahí cuelga toda la
+     * honestidad temporal del panel.
      */
-    fun overview(sections: Set<String> = DashboardOverviewBlock.ALL): AdminDashboardOverviewDto {
+    suspend fun overview(sections: Set<String> = DashboardOverviewBlock.ALL): AdminDashboardOverviewDto {
         val requested = sections.ifEmpty { DashboardOverviewBlock.ALL }
-        val failed = linkedSetOf<String>()
+        // Set concurrente: ahora hay cinco franjas escribiendo aquí a la vez.
+        // Un `linkedSetOf` compartido entre cinco corrutinas podría perder un
+        // nombre, y perder un nombre significa servir una franja nula que el
+        // cliente no sabe que falló — el silencio exacto que `failedBlocks`
+        // existe para eliminar. El orden no se pierde: se reordena por ALL.
+        val failed = ConcurrentHashMap.newKeySet<String>()
 
-        /** Compone una franja; si lanza, la marca y devuelve null en vez de tumbar la respuesta. */
+        /**
+         * Compone una franja; si lanza, la marca y devuelve null en vez de
+         * tumbar la respuesta.
+         *
+         * `try/catch` con re-lanzado explícito y NO `runCatching`:
+         * `runCatching` captura `Throwable`, cancelación incluida. Si el
+         * cliente se va a mitad del refresco, tragarse la `CancellationException`
+         * convertiría la cancelación en una franja «fallida» —falseando
+         * `failedBlocks`— y dejaría las otras cuatro corriendo contra una
+         * respuesta que ya no escucha nadie. La cancelación es del llamante, no
+         * un fallo de la franja.
+         */
         fun <T : Any> block(name: String, compose: () -> T): T? {
             if (name !in requested) return null
-            return runCatching(compose).getOrElse { error ->
-                System.err.println("[ktor] dashboard overview $name -> ${error.message?.take(160)}")
+            return try {
+                compose()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Throwable) {
+                // F-12b: logger + evento, no `System.err`. Esto corre dentro de
+                // `withUpstreamIo`/`asyncUpstreamIo`, así que el MDC ya lleva el
+                // `request_id` de la petición y la línea se puede correlacionar con
+                // la franja fallida que ve el operador.
+                DashboardOverviewLogger.warn(
+                    "dashboard overview block {} failed: {}",
+                    name,
+                    error.redactedMessage("Fallo al componer la franja", 160),
+                )
+                logStrategicEvent(
+                    StrategicEvent.SUPABASE_REQUEST_FAILED,
+                    operation = "dashboard_overview_$name",
+                    result = "block_failed",
+                    errorType = error::class.simpleName,
+                )
                 failed += name
                 null
             }
         }
 
-        val system = block(DashboardOverviewBlock.SYSTEM) { systemBlock() }
-        val attention = block(DashboardOverviewBlock.ATTENTION) { attentionBlock() }
-        val pulse = block(DashboardOverviewBlock.PULSE) { pulseBlock() }
-        val content = block(DashboardOverviewBlock.CONTENT) { contentBlock() }
-        val activity = block(DashboardOverviewBlock.ACTIVITY) { activityBlock() }
-        val economy = block(DashboardOverviewBlock.ECONOMY) { economyBlock() }
+        /** Una franja no pedida no se lanza: «no se pidió» y «falló» no pueden llegar iguales. */
+        fun <T : Any> UpstreamIoScope.franja(name: String, compose: () -> T): Deferred<T?>? =
+            if (name in requested) asyncUpstreamIo { block(name, compose) } else null
 
-        return AdminDashboardOverviewDto(
-            system = system,
-            attention = attention,
-            pulse = pulse,
-            content = content,
-            activity = activity,
-            economy = economy,
-            // Se ordena como ALL para que el orden no dependa de en qué franja falló primero.
-            failedBlocks = DashboardOverviewBlock.ALL.filter { it in failed },
-            generatedAt = Instant.now().toString(),
-        )
+        // SYSTEM, sola y antes que nadie. El `await` implícito de esta línea es
+        // lo que garantiza que su cronómetro no comparta el cliente HTTP con
+        // las 18 peticiones de las otras cinco franjas.
+        val system = if (DashboardOverviewBlock.SYSTEM in requested) {
+            withUpstreamIo { block(DashboardOverviewBlock.SYSTEM) { systemBlock() } }
+        } else {
+            null
+        }
+
+        return withUpstreamIoParallel {
+            val attention = franja(DashboardOverviewBlock.ATTENTION) { attentionBlock() }
+            val pulse = franja(DashboardOverviewBlock.PULSE) { pulseBlock() }
+            val content = franja(DashboardOverviewBlock.CONTENT) { contentBlock() }
+            val activity = franja(DashboardOverviewBlock.ACTIVITY) { activityBlock() }
+            val economy = franja(DashboardOverviewBlock.ECONOMY) { economyBlock() }
+
+            // Los `await` van a vals y no dentro del constructor: así no
+            // dependemos del orden de evaluación de los argumentos para que
+            // `failedBlocks` se lea DESPUÉS de que las cinco hayan terminado.
+            val attentionDto = attention?.await()
+            val pulseDto = pulse?.await()
+            val contentDto = content?.await()
+            val activityDto = activity?.await()
+            val economyDto = economy?.await()
+
+            AdminDashboardOverviewDto(
+                system = system,
+                attention = attentionDto,
+                pulse = pulseDto,
+                content = contentDto,
+                activity = activityDto,
+                economy = economyDto,
+                // Se ordena como ALL para que el orden no dependa de en qué franja falló primero
+                // — que ahora, además, sería no determinista.
+                failedBlocks = DashboardOverviewBlock.ALL.filter { it in failed },
+                // Se sella al final, cuando el bloque está compuesto de verdad.
+                generatedAt = Instant.now().toString(),
+            )
+        }
     }
 
     // -- SYSTEM --------------------------------------------------------
@@ -472,6 +645,14 @@ class AdminDashboardOverviewGateway internal constructor(
                     SystemStatusNotInstrumented.MEMORY,
                     SystemStatusNotInstrumented.API_LATENCY,
                     SystemStatusNotInstrumented.API_ERRORS,
+                    // PC-14 (sólo texto): la clave se llama `mobileCrashes24h`, pero
+                    // lo único que hoy existe para medirlo es `errores_app`, y eso NO
+                    // son crashes: son errores que la app decide reportar, con su
+                    // severidad. Si algún día se instrumenta, lo honesto es "errores
+                    // de app de severidad crítica en las últimas 24 h"
+                    // (`errores_app?severidad=eq.critica&creado_en=gte.<ahora-24h>`),
+                    // y la pantalla tendrá que llamarlo así, no "crashes". Mientras,
+                    // sigue declarada sin fuente y sin lectura.
                     SystemStatusNotInstrumented.MOBILE_CRASHES,
                     SystemStatusNotInstrumented.QUEUE_DEPTH,
                 ),
@@ -499,16 +680,15 @@ class AdminDashboardOverviewGateway internal constructor(
             countOrNull("feedback_pregunta", "id", "estado=eq.pendiente"),
         )
 
-        // Borradores = exámenes totales menos publicados, igual que
-        // `getDashboardMetrics`. Los dos conteos NO se publican aquí (viven en
-        // CONTENT y PULSE): son insumos. Si cualquiera falla, `analyticsRemainder`
-        // devuelve null y la métrica queda NO_DATA — una resta con un hueco no da
-        // un número, da una mentira.
-        val totalExams = countOrNull("examenes", "id")
-        val publishedExams = countOrNull("examenes", "id", "publicado_en=not.is.null&activo=eq.true")
+        // PC-01. Borrador = ACTIVO y SIN publicar, contado directamente. Se
+        // calculaba como "total menos publicados", y esa resta metía en
+        // "borradores" los ARCHIVADOS (`activo=false`, que es lo que escribe
+        // archivar): en MAIN la tarjeta decía 6 borradores y había 0 — los seis
+        // eran exámenes archivados. Misma definición que la pantalla de Exámenes
+        // (activo y sin `publicado_en`), y una sola lectura en vez de dos.
         val draftExams = availability.reading(
             DashboardOverviewMetricKey.DRAFT_EXAMS,
-            analyticsRemainder(totalExams, listOf(publishedExams)),
+            countOrNull("examenes", "id", "activo=eq.true&publicado_en=is.null"),
         )
 
         // Ventana de 7 días: la que cabe en una semana de trabajo y por tanto la
@@ -527,6 +707,7 @@ class AdminDashboardOverviewGateway internal constructor(
             subscriptionsExpiring7d = subscriptionsExpiring7d,
             generatedAt = Instant.now().toString(),
             unavailableMetrics = availability.unavailable(),
+            failedMetrics = availability.failed(),
             notInstrumented = availability.gaps(),
         )
     }
@@ -536,16 +717,17 @@ class AdminDashboardOverviewGateway internal constructor(
     /** Contexto de 30 días. Ninguna cifra de aquí es accionable por sí sola. */
     private fun pulseBlock(): AdminDashboardPulseDto {
         val availability = AnalyticsAvailability()
-        val today = LocalDate.now(ZoneOffset.UTC)
         val since30d = Instant.now().minus(30, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS).toString()
 
-        // Activos SIN DISTINCT: `rachas_usuario.usuario_id` es la PK, así que hay
-        // exactamente una fila por usuario y contar filas ya es contar usuarios.
-        // Es el mismo filtro de `/analytics/retencion` (ventana de 30 días =
-        // hoy incluido más los 29 anteriores).
+        // PC-02. Se contaba `rachas_usuario`, una tabla SIN ESCRITOR (ninguna
+        // función ni trigger la rellena): la cifra era un 0 estructural que no
+        // podía cambiar nunca, pintado como dato. Ahora la cuenta la RPC
+        // `admin_dashboard_active_users`: usuarios DISTINTOS con un intento de
+        // examen iniciado o un evento de app recibido en los últimos 30 días.
+        // Cualquier fallo de la llamada es FAILED, nunca 0.
         val activeUsers30d = availability.reading(
             DashboardOverviewMetricKey.ACTIVE_USERS_30D,
-            countOrNull("rachas_usuario", "usuario_id", "ultima_actividad_fecha=gte.${today.minusDays(29)}"),
+            activeUsers30dOrNull(),
         )
         val attemptsLast30d = availability.reading(
             DashboardOverviewMetricKey.ATTEMPTS_LAST_30D,
@@ -558,11 +740,17 @@ class AdminDashboardOverviewGateway internal constructor(
 
         // Tasa de error global: dos conteos exactos, no una muestra. Insumos, no
         // métricas publicadas de esta franja.
+        //
+        // PC-04: `rate` y no `reading(analyticsRate(...))`. Con cero respuestas
+        // la tasa no existe todavía (NO_DATA), y eso es distinto de que una de
+        // las dos lecturas haya fallado (FAILED). Antes las dos cosas llegaban
+        // iguales y la tarjeta no podía decir cuál de las dos pasaba.
         val totalAnswers = countOrNull("respuestas_intento", "id")
         val wrongAnswers = countOrNull("respuestas_intento", "id", "es_correcta=eq.false")
-        val globalErrorRate = availability.reading(
+        val globalErrorRate = availability.rate(
             DashboardOverviewMetricKey.GLOBAL_ERROR_RATE,
-            analyticsRate(wrongAnswers, totalAnswers),
+            numerator = wrongAnswers,
+            denominator = totalAnswers,
         )
 
         return AdminDashboardPulseDto(
@@ -572,8 +760,30 @@ class AdminDashboardOverviewGateway internal constructor(
             globalErrorRate = globalErrorRate,
             generatedAt = Instant.now().toString(),
             unavailableMetrics = availability.unavailable(),
+            failedMetrics = availability.failed(),
             notInstrumented = availability.gaps(),
         )
+    }
+
+    /**
+     * `admin_dashboard_active_users(30)`, o `null` si la llamada no devuelve un entero.
+     *
+     * La RPC devuelve un ESCALAR (`0`), no una fila ni un array: cualquier otra forma
+     * —un array, un texto, `null`— es un contrato roto y cuenta como fallo, igual que
+     * un error HTTP (función inexistente, sin permiso, timeout). `p_days` va fijo a
+     * 30: la función acota en silencio los valores fuera de 1..366, así que un
+     * error de este lado no se vería allí.
+     */
+    private fun activeUsers30dOrNull(): Int? = try {
+        val body = transport.rpc(ACTIVE_USERS_RPC, """{"p_days":$ACTIVE_USERS_WINDOW_DAYS}""")
+        val scalar = json.parseToJsonElement(body) as? JsonPrimitive
+        scalar?.takeUnless { it.isString }?.intOrNull
+            ?: error("$ACTIVE_USERS_RPC no devolvió un entero")
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (error: Exception) {
+        logReadFailure(ACTIVE_USERS_RPC, error)
+        null
     }
 
     // -- CONTENT -------------------------------------------------------
@@ -582,13 +792,21 @@ class AdminDashboardOverviewGateway internal constructor(
     private fun contentBlock(): AdminDashboardContentDto {
         val availability = AnalyticsAvailability()
 
+        // PC-05: el catálogo cuenta lo ACTIVO, como ya hacía `totalResources`.
+        // Sin filtro, "Exámenes · En el catálogo" decía 7 cuando 6 estaban
+        // archivados y no aparecen en la pantalla a la que lleva la fila. Ojo:
+        // `examenes` se filtra por `activo` y `preguntas` por `activa` — el
+        // nombre de la columna no es el mismo, y un filtro con el nombre
+        // equivocado da 400 y dejaría la cifra en "sin dato" para siempre.
+        // Los borradores (activos sin publicar) SÍ cuentan: están en el catálogo
+        // aunque todavía no los vea nadie.
         val totalExams = availability.reading(
             DashboardOverviewMetricKey.TOTAL_EXAMS,
-            countOrNull("examenes", "id"),
+            countOrNull("examenes", "id", "activo=eq.true"),
         )
         val totalQuestions = availability.reading(
             DashboardOverviewMetricKey.TOTAL_QUESTIONS,
-            countOrNull("preguntas", "id"),
+            countOrNull("preguntas", "id", "activa=eq.true"),
         )
         // `recursos_pregunta.activo` existe y es el borrado lógico real de la
         // tabla (`archiveRecurso` escribe `activo=false`, y la lectura del panel
@@ -610,6 +828,7 @@ class AdminDashboardOverviewGateway internal constructor(
             importBatches = importBatches,
             generatedAt = Instant.now().toString(),
             unavailableMetrics = availability.unavailable(),
+            failedMetrics = availability.failed(),
             notInstrumented = availability.gaps(),
         )
     }
@@ -624,8 +843,13 @@ class AdminDashboardOverviewGateway internal constructor(
      * que es una frase distinta de "no he podido mirar".
      */
     private fun activityBlock(): AdminDashboardActivityDto {
-        val rows = get("/rest/v1/auditoria_log?select=*&order=creado_en.desc&limit=$ACTIVITY_LIMIT")
-            .decodeList<DashboardAuditoriaRow>()
+        // PC-06: sólo las columnas que se entregan. `select=*` traía además
+        // `antes`/`despues` (jsonb con filas completas), `ip`, `user_agent` y
+        // `usuario_id`, que la franja no usa y que no tienen por qué salir de
+        // la base para pintar cinco líneas de cronología.
+        val rows = get(
+            "/rest/v1/auditoria_log?select=$ACTIVITY_COLUMNS&order=creado_en.desc&limit=$ACTIVITY_LIMIT",
+        ).decodeList<DashboardAuditoriaRow>()
         val entries = rows.mapNotNull { it.toActivityEntryOrNull() }
         return AdminDashboardActivityDto(
             entries = entries,
@@ -639,16 +863,20 @@ class AdminDashboardOverviewGateway internal constructor(
 
     // -- ECONOMY -------------------------------------------------------
 
-    /** Monetización: sólo lo que hoy se puede contar de verdad, y el hueco con nombre. */
+    /** Monetización: sólo lo que hoy se puede contar de verdad. */
     private fun economyBlock(): AdminDashboardEconomyDto {
         val availability = AnalyticsAvailability()
         val now = Instant.now().truncatedTo(ChronoUnit.SECONDS)
         val in30d = now.plus(30, ChronoUnit.DAYS)
 
         // Filtros idénticos a `/analytics/economia`.
+        //
+        // PC-03: "activas" = estado `activa` Y vigentes (sin fin o con fin futuro).
+        // Con sólo `estado=eq.activa`, la tarjeta contaba en MAIN una suscripción
+        // que venció hace 75 días y que nadie cerró.
         val subscriptionsActive = availability.reading(
             DashboardOverviewMetricKey.SUBSCRIPTIONS_ACTIVE,
-            countOrNull("suscripciones", "id", "estado=eq.activa"),
+            countOrNull("suscripciones", "id", activeSubscriptionsFilter(now)),
         )
         val subscriptionsExpiring30d = availability.reading(
             DashboardOverviewMetricKey.SUBSCRIPTIONS_EXPIRING_30D,
@@ -659,28 +887,61 @@ class AdminDashboardOverviewGateway internal constructor(
             countOrNull("productos_comerciales", "id", "activo=eq.true"),
         )
 
-        // Viajan en el contrato aunque el panel no las pinte: un hueco con nombre
-        // es deuda registrada; un hueco omitido es deuda olvidada.
-        availability.gap(
-            DashboardOverviewMetricKey.GROSS_REVENUE_CENTS,
-            "Necesita SUM(precio_centimos) sobre compras_usuario completadas: vista " +
-                "v_ingresos_brutos (periodo, total_centimos) o RPC que devuelva entero en céntimos.",
-        )
-        availability.gap(
+        // PC-11. Las dos sumas que eran huecos declarados salen ahora de UNA
+        // llamada a `admin_dashboard_economy_totals`. Tres salidas, y cada una
+        // con su estado:
+        //
+        //   · La llamada falla (función inexistente, permiso, red, forma
+        //     inesperada) → las DOS métricas FAILED. Nunca 0.
+        //   · `gross_revenue_cents` llega `null` → NO_DATA. La RPC lo devuelve
+        //     así A PROPÓSITO cuando alguna compra pagada no tiene precio o no es
+        //     en EUR: la suma existiría, pero se quedaría corta sin avisar.
+        //   · Llega un número → dato, incluido un 0 legítimo.
+        //
+        // Los tickets son un CONTEO de moneda interna, no dinero: el DTO los
+        // lleva en `Long` y el cliente los pinta como número, nunca con `€`.
+        val totals: DashboardEconomyTotalsRow? = economyTotalsOrNull()
+        val grossRevenueCents: Long? = if (totals == null) {
+            availability.reading<Long>(DashboardOverviewMetricKey.GROSS_REVENUE_CENTS, null)
+        } else {
+            val revenue: Long? = totals.grossRevenueCents
+            if (revenue == null) availability.noData(DashboardOverviewMetricKey.GROSS_REVENUE_CENTS)
+            revenue
+        }
+        val ticketsInCirculation: Long? = availability.reading(
             DashboardOverviewMetricKey.TICKETS_IN_CIRCULATION,
-            "Necesita SUM(saldo_tickets) sobre carteras_usuario: vista v_opositickets_en_circulacion.",
+            totals?.ticketsInCirculation,
         )
 
         return AdminDashboardEconomyDto(
             subscriptionsActive = subscriptionsActive,
             subscriptionsExpiring30d = subscriptionsExpiring30d,
             commercialProductsActive = commercialProductsActive,
-            grossRevenueCents = null,
-            ticketsInCirculation = null,
+            grossRevenueCents = grossRevenueCents,
+            ticketsInCirculation = ticketsInCirculation,
             generatedAt = Instant.now().toString(),
             unavailableMetrics = availability.unavailable(),
+            failedMetrics = availability.failed(),
             notInstrumented = availability.gaps(),
         )
+    }
+
+    /**
+     * La única fila de `admin_dashboard_economy_totals()`, o `null` si la llamada falla.
+     *
+     * La RPC es `RETURNS TABLE`, así que PostgREST responde un ARRAY de una fila. Cero
+     * filas, más de una, o una fila sin `tickets_in_circulation` no son "sin datos":
+     * son un contrato roto, y cuentan como fallo.
+     */
+    private fun economyTotalsOrNull(): DashboardEconomyTotalsRow? = try {
+        rpcJson.decodeFromString<List<DashboardEconomyTotalsRow>>(transport.rpc(ECONOMY_TOTALS_RPC, "{}"))
+            .singleOrNull()
+            ?: error("$ECONOMY_TOTALS_RPC no devolvió exactamente una fila")
+    } catch (cancellation: CancellationException) {
+        throw cancellation
+    } catch (error: Exception) {
+        logReadFailure(ECONOMY_TOTALS_RPC, error)
+        null
     }
 
     // -- Acceso HTTP ---------------------------------------------------
@@ -694,8 +955,27 @@ class AdminDashboardOverviewGateway internal constructor(
         val suffix = if (filter.isBlank()) "" else "&$filter"
         exactCount("/rest/v1/$table?select=$selectColumn$suffix")
     }.getOrElse { error ->
-        System.err.println("[ktor] dashboard count $table -> ${error.message?.take(160)}")
+        logReadFailure(table, error)
         null
+    }
+
+    /**
+     * F-12b: una lectura que falla deja rastro con el `request_id` (el MDC lo pone la
+     * costura de IO) y un evento contable, no una línea en `System.err`. El mensaje
+     * pasa por la redacción: el cuerpo de PostgREST puede traer `hint`s de esquema.
+     */
+    private fun logReadFailure(source: String, error: Throwable) {
+        DashboardOverviewLogger.warn(
+            "dashboard read {} failed: {}",
+            source,
+            error.redactedMessage("Fallo de lectura", 160),
+        )
+        logStrategicEvent(
+            StrategicEvent.SUPABASE_REQUEST_FAILED,
+            operation = "dashboard_read_$source",
+            result = "read_failed",
+            errorType = error::class.simpleName,
+        )
     }
 
     /**
@@ -704,65 +984,10 @@ class AdminDashboardOverviewGateway internal constructor(
      * depende del `max-rows` de PostgREST. El parser del encabezado se reutiliza
      * ([parseContentRangeTotal]) para no tener dos que puedan discrepar.
      */
-    private fun exactCount(path: String): Int {
-        val request = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
-            .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
-            .header("Content-Type", "application/json")
-            .header("Prefer", "count=exact")
-            .header("Range-Unit", "items")
-            .header("Range", "0-0")
-            .GET()
-            .build()
-        val response = try {
-            client.send(request, HttpResponse.BodyHandlers.ofString())
-        } catch (error: Exception) {
-            throw IllegalStateException(
-                "Supabase network error on COUNT ${path.substringBefore('?')}: " +
-                    "${error::class.simpleName}: ${error.message}",
-                error,
-            )
-        }
-        // 206 Partial Content es la respuesta normal a un Range acotado.
-        if (response.statusCode() !in 200..299) {
-            throw IllegalStateException(
-                "Supabase COUNT ${path.substringBefore('?')} -> ${response.statusCode()}: " +
-                    response.body().take(200),
-            )
-        }
-        return parseContentRangeTotal(response.headers().firstValue("content-range").orElse(null))
-            ?: throw IllegalStateException(
-                "Supabase COUNT ${path.substringBefore('?')} no devolvió Content-Range utilizable.",
-            )
-    }
+    private fun exactCount(path: String): Int = transport.count(path)
 
     /** GET de lectura acotada. La única de este fichero es la cronología, con `limit` del servidor. */
-    private fun get(path: String): String {
-        val request = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
-            .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
-            .header("Content-Type", "application/json")
-            .GET()
-            .build()
-        val response = try {
-            client.send(request, HttpResponse.BodyHandlers.ofString())
-        } catch (error: Exception) {
-            throw IllegalStateException(
-                "Supabase network error on GET ${path.substringBefore('?')}: " +
-                    "${error::class.simpleName}: ${error.message}",
-                error,
-            )
-        }
-        if (response.statusCode() !in 200..299) {
-            throw IllegalStateException(
-                "Supabase GET ${path.substringBefore('?')} -> ${response.statusCode()}: " +
-                    response.body().take(200),
-            )
-        }
-        return response.body()
-    }
+    private fun get(path: String): String = transport.get(path)
 
     private inline fun <reified T> String.decodeList(): List<T> = json.decodeFromString(this)
 
@@ -788,13 +1013,32 @@ class AdminDashboardOverviewGateway internal constructor(
          */
         internal const val ACTIVITY_LIMIT = 8
 
-        fun fromEnvironment(json: Json): AdminDashboardOverviewGateway? {
-            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
-            return if (url.isBlank() || serviceRoleKey.isBlank()) {
+        /** Columnas de la cronología (PC-06): exactamente las que se entregan. */
+        internal const val ACTIVITY_COLUMNS = "id,accion,tabla_afectada,registro_id,creado_en"
+
+        /** RPC de usuarios activos (PC-02). Sólo `service_role` puede ejecutarla. */
+        internal const val ACTIVE_USERS_RPC = "admin_dashboard_active_users"
+
+        /** Ventana de "usuarios activos". Coincide con la tarjeta: "Últimos 30 días". */
+        internal const val ACTIVE_USERS_WINDOW_DAYS = 30
+
+        /** RPC de totales económicos (PC-11). Sólo `service_role` puede ejecutarla. */
+        internal const val ECONOMY_TOTALS_RPC = "admin_dashboard_economy_totals"
+
+        /**
+         * [environment] existe para probar el arranque con un entorno inyectado
+         * (`unconfiguredSupabaseGateways`, F-01) sin tocar el del proceso.
+         */
+        fun fromEnvironment(json: Json, environment: (String) -> String? = System::getenv): AdminDashboardOverviewGateway? {
+            val url = environment("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            // Misma firma y mismo contrato de `null`: `Application.kt` no cambia.
+            // Lo único que cambia es QUÉ variable se lee, y eso lo decide un
+            // solo sitio (`SUPABASE_SECRET_KEY`, con la legacy como fallback).
+            val secretKey = SupabaseRequestAuthPolicy.secretFromEnvironment(environment)
+            return if (url.isBlank() || secretKey.isBlank()) {
                 null
             } else {
-                AdminDashboardOverviewGateway(url, serviceRoleKey, json)
+                AdminDashboardOverviewGateway(url, secretKey, json)
             }
         }
     }
@@ -817,15 +1061,34 @@ fun Route.adminDashboardOverviewRoutes(gateway: AdminDashboardOverviewGateway) {
     route("/api/v1/admin/dashboard") {
         get("/overview") {
             when (val selection = parseDashboardSections(call.request.queryParameters["sections"])) {
+                // PC-08 / F-09: el mensaje nombra las franjas VÁLIDAS y nunca repite
+                // lo que escribió el cliente. `?sections=` es texto libre de la URL y
+                // volvía entero en el cuerpo del 400.
                 is DashboardSectionsSelection.Unknown -> call.respond(
                     HttpStatusCode.BadRequest,
                     ErrorDto(
                         error = "unknown_dashboard_section",
-                        message = "Franja desconocida: ${selection.values.joinToString(", ")}. " +
-                            "Válidas: ${DashboardOverviewBlock.ALL.joinToString(", ")}.",
+                        message = "Franja desconocida. Válidas: ${DashboardOverviewBlock.ALL.joinToString(", ")}.",
                     ),
                 )
-                is DashboardSectionsSelection.Selected -> call.respond(gateway.overview(selection.blocks))
+                // El salto al pool IO ya NO se hace aquí: lo hace `overview`
+                // por dentro, con `withUpstreamIo` para la franja SYSTEM y
+                // `withUpstreamIoParallel` para las otras cinco.
+                //
+                // Un refresco completo hace 19 peticiones upstream BLOQUEANTES.
+                // Ejecutadas en el hilo de request de Netty —cuyo pool está
+                // dimensionado para trabajo no bloqueante— el peor caso teórico
+                // eran 19 × 20 s de hilo ocupado. El riesgo no es la lentitud:
+                // es la inanición del pool, que deja a Ktor sin aceptar
+                // peticiones nuevas, `/health/ready` incluida.
+                //
+                // Envolver aquí ya no valdría: un solo `withContext` no puede
+                // repartir las cinco franjas, y el reparto tiene que ocurrir
+                // donde se sabe qué franja es cuál. `overview` es la ÚNICA
+                // función `suspend` del gateway, y lo es exactamente por eso —
+                // no es el principio de convertir los 13 gateways a `suspend`.
+                is DashboardSectionsSelection.Selected ->
+                    call.respond(gateway.overview(selection.blocks))
             }
         }
     }

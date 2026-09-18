@@ -8,6 +8,7 @@ import io.ktor.server.routing.route
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import org.slf4j.LoggerFactory
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -62,6 +63,8 @@ import java.time.temporal.ChronoUnit
  * mismo paquete, `internal`): duplicar un parser ya probado sólo crearía dos
  * sitios donde equivocarse.
  */
+
+private val AnalyticsLogger = LoggerFactory.getLogger("OC-KTOR-ANALYTICS")
 
 // ---------------------------------------------------------------------
 // Claves estables de métrica
@@ -217,17 +220,59 @@ data class AnalyticsGapDto(
  *
  * No es un detalle de estilo: la versión "a mano" de esto es la que dejó pasar
  * `catch { 0 }` en el dashboard.
+ *
+ * ### Cuatro estados, no tres (PC-04)
+ *
+ * Una métrica sin número puede estar así por dos motivos que el operador tiene que
+ * poder distinguir: **la lectura FALLÓ** (reintentar puede servir) o **se leyó bien
+ * y no hay nada que medir** (una tasa sin respuestas todavía, unos ingresos que la
+ * propia base declara incalculables). Las dos van a [unavailable] —un cliente que
+ * sólo mire esa lista pinta "sin dato", nunca un cero—, y la primera además a
+ * [failed], que es lo que permite decir "no se pudo leer".
  */
 internal class AnalyticsAvailability {
-    private val noData = linkedSetOf<String>()
+    private val absent = linkedSetOf<String>()
+    private val failedReads = linkedSetOf<String>()
     private val structuralGaps = linkedMapOf<String, String>()
 
     /**
      * Registra la lectura de [key]. Devuelve [value] sin tocarlo; si es `null`
-     * marca la métrica como NO_DATA (fallo de lectura, reintentar puede servir).
+     * marca la métrica como no disponible Y como lectura fallida.
+     *
+     * `null` aquí significa "no se pudo leer", que es lo único que produce
+     * `countOrNull`. Un valor derivado cuyo `null` puede significar otra cosa
+     * —una tasa con denominador cero— se registra con [rate] o [noData], no aquí.
      */
     fun <T : Any> reading(key: String, value: T?): T? {
-        if (value == null) noData += key
+        if (value == null) {
+            absent += key
+            failedReads += key
+        }
+        return value
+    }
+
+    /**
+     * [key] se leyó bien pero no produce número (NO_DATA, no FAILED): no hay nada
+     * que medir todavía, o la fuente declara el valor incalculable a propósito.
+     */
+    fun noData(key: String) {
+        absent += key
+    }
+
+    /**
+     * Tasa honesta entre dos lecturas: la misma cuenta que [analyticsRate], pero
+     * diciendo POR QUÉ no hay número. Si falta cualquiera de las dos lecturas, la
+     * métrica FALLÓ; si las dos llegaron y el denominador es cero, NO HAY DATOS
+     * (`0 %` de algo que no ha pasado sería inventar).
+     */
+    fun rate(key: String, numerator: Int?, denominator: Int?): Double? {
+        if (numerator == null || denominator == null) {
+            absent += key
+            failedReads += key
+            return null
+        }
+        val value = analyticsRate(numerator, denominator)
+        if (value == null) absent += key
         return value
     }
 
@@ -239,8 +284,11 @@ internal class AnalyticsAvailability {
         structuralGaps[key] = reason
     }
 
-    /** Unión NO_DATA + NOT_INSTRUMENTED: "no pintes número para estas claves". */
-    fun unavailable(): List<String> = (noData + structuralGaps.keys).toList()
+    /** Unión NO_DATA + FAILED + NOT_INSTRUMENTED: "no pintes número para estas claves". */
+    fun unavailable(): List<String> = (absent + structuralGaps.keys).toList()
+
+    /** Sólo las que no se pudieron LEER. Siempre subconjunto de [unavailable]. */
+    fun failed(): List<String> = failedReads.toList()
 
     /** Sólo los huecos estructurales, con su razón. */
     fun gaps(): List<AnalyticsGapDto> = structuralGaps.map { (key, reason) -> AnalyticsGapDto(key, reason) }
@@ -276,6 +324,23 @@ internal fun analyticsRemainder(total: Int?, parts: List<Int?>): Int? {
     if (total == null || parts.any { it == null }) return null
     return (total - parts.sumOf { it!! }).coerceAtLeast(0)
 }
+
+/**
+ * Filtro PostgREST de "suscripción activa AHORA" (PC-03): estado `activa` y sin
+ * fin, o con fin posterior a [now].
+ *
+ * Compartido por el panel de Inicio y `/analytics/economia` para que las dos
+ * pantallas no puedan divergir. Dos detalles son contrato:
+ *
+ * - `gt` y no `gte`: una suscripción que termina justo ahora ya no está activa.
+ * - El instante va entre comillas codificadas (`%22`) y truncado a segundos con
+ *   `Instant.toString()`, que produce `…Z` y nunca `+00:00`. Un `+` sin codificar
+ *   llega a PostgREST como espacio, la consulta responde 400 y la métrica se
+ *   quedaría "sin dato" para siempre; las comillas protegen además los `:` del
+ *   valor dentro de la lista `or=(…)`.
+ */
+internal fun activeSubscriptionsFilter(now: Instant): String =
+    "estado=eq.activa&or=(fin_en.is.null,fin_en.gt.%22${now.truncatedTo(ChronoUnit.SECONDS)}%22)"
 
 // ---------------------------------------------------------------------
 // DTOs de respuesta
@@ -963,10 +1028,19 @@ class AdminAnalyticsGateway internal constructor(
         val purchases = availability.reading(AnalyticsMetricKey.PURCHASES, countOrNull("compras_usuario", "id"))
 
         val subscriptions = availability.reading(AnalyticsMetricKey.SUBSCRIPTIONS, countOrNull("suscripciones", "id"))
+        // PC-03: "activas" publicadas = estado `activa` Y todavía vigentes. Una fila
+        // `activa` con `fin_en` pasado es una suscripción vencida que nadie cerró
+        // (en MAIN, la única "activa" venció hace 75 días): contarla decía que hay
+        // un suscriptor que no hay. Mismo filtro que el panel de Inicio, para que la
+        // misma cifra no signifique dos cosas en dos pantallas.
         val subsActive = availability.reading(
             AnalyticsMetricKey.SUBSCRIPTIONS_ACTIVE,
-            countOrNull("suscripciones", "id", "estado=eq.activa"),
+            countOrNull("suscripciones", "id", activeSubscriptionsFilter(Instant.now())),
         )
+        // La PARTICIÓN por estado sigue contando por `estado`, sin vigencia: si
+        // "otros estados" restara las vigentes, cada `activa` vencida aparecería ahí
+        // como si tuviera un estado desconocido. Es un insumo, no se publica.
+        val subsActiveByState = countOrNull("suscripciones", "id", "estado=eq.activa")
         val subsTrial = availability.reading(
             AnalyticsMetricKey.SUBSCRIPTIONS_TRIAL,
             countOrNull("suscripciones", "id", "estado=eq.periodo_prueba"),
@@ -985,7 +1059,7 @@ class AdminAnalyticsGateway internal constructor(
         )
         val subsOther = availability.reading(
             AnalyticsMetricKey.SUBSCRIPTIONS_OTHER_STATE,
-            analyticsRemainder(subscriptions, listOf(subsActive, subsTrial, subsPaused, subsCancelled, subsExpired)),
+            analyticsRemainder(subscriptions, listOf(subsActiveByState, subsTrial, subsPaused, subsCancelled, subsExpired)),
         )
         // Renovaciones/caducidades inminentes: la ventana se acota por los dos
         // extremos para no contar como "vence pronto" lo que venció hace meses.
@@ -1127,8 +1201,28 @@ class AdminAnalyticsGateway internal constructor(
         val suffix = if (filter.isBlank()) "" else "&$filter"
         exactCount("/rest/v1/$table?select=$selectColumn$suffix")
     }.getOrElse { error ->
-        System.err.println("[ktor] analytics count $table -> ${error.message?.take(160)}")
+        logReadFailure(table, error)
         null
+    }
+
+    /**
+     * F-12b: una lectura que falla deja rastro con el `request_id` (el MDC lo pone la
+     * costura de IO) y un evento contable, no una línea en `System.err`. El mensaje
+     * pasa por la redacción: el cuerpo de PostgREST puede traer `hint`s de esquema.
+     * Mismo patrón que `AdminDashboardOverviewGateway.logReadFailure`.
+     */
+    private fun logReadFailure(source: String, error: Throwable) {
+        AnalyticsLogger.warn(
+            "analytics read {} failed: {}",
+            source,
+            error.redactedMessage("Fallo de lectura", 160),
+        )
+        logStrategicEvent(
+            StrategicEvent.SUPABASE_REQUEST_FAILED,
+            operation = "analytics_count_$source",
+            result = "read_failed",
+            errorType = error::class.simpleName,
+        )
     }
 
     /**
@@ -1146,8 +1240,7 @@ class AdminAnalyticsGateway internal constructor(
     private fun exactCount(path: String): Int {
         val request = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", "application/json")
             .header("Prefer", "count=exact")
             .header("Range-Unit", "items")
@@ -1180,8 +1273,7 @@ class AdminAnalyticsGateway internal constructor(
     private fun get(path: String): String {
         val request = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
             .timeout(UPSTREAM_REQUEST_TIMEOUT)
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", "application/json")
             .GET()
             .build()
@@ -1215,9 +1307,15 @@ class AdminAnalyticsGateway internal constructor(
          */
         private const val HARDEST_QUESTIONS_LIMIT = 10
 
-        fun fromEnvironment(json: Json): AdminAnalyticsGateway? {
-            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+        /**
+         * F-01/F-02: clave por [SupabaseRequestAuthPolicy.secretFromEnvironment] y
+         * cabeceras por [supabaseElevatedAuth]. Leía sólo `SUPABASE_SERVICE_ROLE_KEY`
+         * (con la configuración canónica el backend no arrancaba) y firmaba `Bearer`
+         * sin mirar la forma de la clave.
+         */
+        fun fromEnvironment(json: Json, environment: (String) -> String? = System::getenv): AdminAnalyticsGateway? {
+            val url = environment("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            val serviceRoleKey = SupabaseRequestAuthPolicy.secretFromEnvironment(environment)
             return if (url.isBlank() || serviceRoleKey.isBlank()) {
                 null
             } else {

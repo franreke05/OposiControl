@@ -26,12 +26,21 @@ enum class AnalyticsSection {
  * La diferencia entre los dos estados sin dato no es cosmética: con NO_DATA
  * reintentar puede servir (falló la lectura), con NOT_INSTRUMENTED no sirve
  * nunca (el agregado no existe y hay que construirlo).
+ *
+ * NO_DATA cubre dos casos que el backend ya distingue cuando puede (PC-04): la
+ * lectura FALLÓ ([AnalyticsMetric.readFailed]) o se leyó bien y no hay nada que
+ * medir. No es un quinto valor del enum a propósito: las pantallas hacen `when`
+ * exhaustivos sobre él, y un valor nuevo obligaría a tocarlas todas para seguir
+ * diciendo lo mismo; quien necesita la distinción la lee del flag.
  */
 enum class AnalyticsMetricStatus {
     /** Hay un número real, incluido un cero legítimo. */
     AVAILABLE,
 
-    /** El backend no pudo leerlo. Reintentar puede arreglarlo. */
+    /**
+     * No hay número: la lectura falló ([AnalyticsMetric.readFailed]) o no hay datos
+     * que medir (una tasa sin respuestas todavía). Nunca se pinta como cero.
+     */
     NO_DATA,
 
     /** No existe agregado que lo calcule. Necesita una vista o un RPC. */
@@ -64,6 +73,13 @@ data class AnalyticsMetric(
     val status: AnalyticsMetricStatus,
     /** Qué read model haría falta. Sólo para [AnalyticsMetricStatus.NOT_INSTRUMENTED]. */
     val reason: String? = null,
+    /**
+     * `true` sólo si el backend declaró que la LECTURA de esta métrica falló
+     * (`failedMetrics`, PC-04). Implica [AnalyticsMetricStatus.NO_DATA]; lo garantiza
+     * [AnalyticsMetricPolicy]. `false` con NO_DATA significa "se leyó y no hay nada
+     * que medir", que es una frase distinta de "no se pudo leer".
+     */
+    val readFailed: Boolean = false,
 )
 
 data class AnalyticsTableRow(
@@ -121,9 +137,15 @@ object AnalyticsMetricPolicy {
         value: AnalyticsValue?,
         unavailable: Set<String>,
         notInstrumented: Set<String>,
+        /**
+         * Claves cuya lectura falló. Una clave aquí nunca puede salir AVAILABLE,
+         * aunque el backend se hubiera olvidado de ponerla también en
+         * [unavailable]: el número de una lectura fallida no es un dato.
+         */
+        failed: Set<String> = emptySet(),
     ): AnalyticsMetricStatus = when {
         key in notInstrumented -> AnalyticsMetricStatus.NOT_INSTRUMENTED
-        key in unavailable -> AnalyticsMetricStatus.NO_DATA
+        key in unavailable || key in failed -> AnalyticsMetricStatus.NO_DATA
         value != null -> AnalyticsMetricStatus.AVAILABLE
         // Sin valor y sin explicación: se falla cerrado. Enseñar la tarjeta vacía
         // sin decir nada es la peor de las tres opciones.
@@ -135,13 +157,17 @@ object AnalyticsMetricPolicy {
         value: AnalyticsValue?,
         unavailable: Set<String>,
         notInstrumented: Map<String, String>,
+        failed: Set<String> = emptySet(),
     ): AnalyticsMetric {
-        val status = statusFor(key, value, unavailable, notInstrumented.keys)
+        val status = statusFor(key, value, unavailable, notInstrumented.keys, failed)
         return AnalyticsMetric(
             key = key,
             value = if (status == AnalyticsMetricStatus.AVAILABLE) value else null,
             status = status,
             reason = notInstrumented[key],
+            // Sólo tiene sentido sin número y sin hueco estructural: un hueco
+            // declarado no "falló", no existe.
+            readFailed = status == AnalyticsMetricStatus.NO_DATA && key in failed,
         )
     }
 }

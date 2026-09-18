@@ -68,13 +68,26 @@ class DashboardV2VisualHarness {
         // régimen COMPACT (sidebar plegada, 2 columnas de atención, 3 de
         // atajos, rejilla inferior apilada).
         listOf(
-            Capture("dashboard-1920.png", 1920, 1080),
-            Capture("dashboard-1600.png", 1600, 900),
-            Capture("dashboard-1366.png", 1366, 768),
-            Capture("dashboard-1080.png", 1080, 900),
+            Capture("dashboard-1920.png", 1920, 1080, dark = false),
+            Capture("dashboard-1600.png", 1600, 900, dark = false),
+            Capture("dashboard-1366.png", 1366, 768, dark = false),
+            Capture("dashboard-1080.png", 1080, 900, dark = false),
         ).forEach { capture ->
             render(capture, poblado())
         }
+    }
+
+    /**
+     * El panel en el tema OSCURO.
+     *
+     * El panel se certificó sólo en claro, cuando el oscuro no existía. Se captura
+     * la vista de 1920 y la página entera, que es la que enseña la rejilla
+     * inferior con sus filas de catálogo y economía.
+     */
+    @Test
+    fun capturaElPanelEnOscuro() {
+        render(Capture("dashboard-1920-dark.png", 1920, 1080, dark = true), poblado())
+        render(Capture("dashboard-1920-completo-dark.png", 1920, 1500, dark = true), poblado())
     }
 
     @Test
@@ -85,8 +98,8 @@ class DashboardV2VisualHarness {
         // decisión de densidad, no un defecto — pero deja la cronología, las
         // filas de catálogo y las de economía sin poder revisarse en una captura.
         // Ésta las enseña enteras, a la misma anchura de 1920.
-        render(Capture("dashboard-1920-completo.png", 1920, 1500), poblado())
-        render(Capture("dashboard-1920-completo-ceros.png", 1920, 1500), enCero())
+        render(Capture("dashboard-1920-completo.png", 1920, 1500, dark = false), poblado())
+        render(Capture("dashboard-1920-completo-ceros.png", 1920, 1500, dark = false), enCero())
     }
 
     @Test
@@ -95,15 +108,23 @@ class DashboardV2VisualHarness {
         // atención a cero y la tasa de error llega sin dato. Si el diseño sólo
         // se comprueba con la instalación llena, no se ha comprobado lo que el
         // usuario ve todos los días.
-        render(Capture("dashboard-1920-ceros.png", 1920, 1080), enCero())
-        render(Capture("dashboard-1366-ceros.png", 1366, 768), enCero())
+        render(Capture("dashboard-1920-ceros.png", 1920, 1080, dark = false), enCero())
+        render(Capture("dashboard-1366-ceros.png", 1366, 768, dark = false), enCero())
     }
 
     // -----------------------------------------------------------------------
     // Motor de captura
     // -----------------------------------------------------------------------
 
-    private data class Capture(val fileName: String, val width: Int, val height: Int)
+    /**
+     * Una captura y su tema, SIEMPRE explícito.
+     *
+     * `dark` no tiene valor por defecto a propósito. Con `AdminTheme` sin
+     * parámetro, el tema lo decidía `isSystemInDarkTheme()`: en una máquina con el
+     * sistema en oscuro, las capturas «certificadas en claro» salían oscuras sin
+     * que nada lo dijera, y el mismo test daba PNG distintos en dos portátiles.
+     */
+    private data class Capture(val fileName: String, val width: Int, val height: Int, val dark: Boolean)
 
     private fun render(capture: Capture, state: DashboardV2State) {
         runDesktopComposeUiTest(width = capture.width, height = capture.height) {
@@ -112,7 +133,7 @@ class DashboardV2VisualHarness {
                 // dice su nombre. Sin esto la captura dependería del escalado de
                 // la pantalla de quien la genere.
                 CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 1f)) {
-                    HarnessShell(state = state)
+                    HarnessShell(state = state, dark = capture.dark)
                 }
             }
             waitForIdle()
@@ -158,8 +179,8 @@ class DashboardV2VisualHarness {
      * pasada, la retirada del buscador y la acción primaria que faltaba.
      */
     @Composable
-    private fun HarnessShell(state: DashboardV2State) {
-        AdminTheme {
+    private fun HarnessShell(state: DashboardV2State, dark: Boolean) {
+        AdminTheme(darkTheme = dark) {
             DesktopShell(
                 currentRouteId = "home",
                 groups = HARNESS_SIDEBAR,

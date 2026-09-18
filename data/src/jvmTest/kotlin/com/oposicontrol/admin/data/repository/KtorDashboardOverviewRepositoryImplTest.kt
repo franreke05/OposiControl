@@ -18,6 +18,7 @@ import com.oposicontrol.admin.domain.model.SystemStatusLevel
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.plugins.HttpTimeoutCapability
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.HttpRequestData
 import io.ktor.http.HttpHeaders
@@ -325,6 +326,11 @@ class KtorDashboardOverviewRepositoryImplTest {
     // Huecos declarados y salud
     // -----------------------------------------------------------------
 
+    /**
+     * Un servidor que todavía DECLARA las sumas como huecos (anterior a PC-11) se sigue
+     * mapeando bien: huecos con motivo, fuera del panel. Es la compatibilidad hacia
+     * atrás del contrato, no el estado actual del backend.
+     */
     @Test
     fun moneyGapsTravelAsNotInstrumentedWithTheirReasonAndAreNotRendered() = runTest {
         val overview = overview(FULL_RESPONSE)
@@ -343,6 +349,126 @@ class KtorDashboardOverviewRepositoryImplTest {
         assertTrue(economy.renderable.none { it.key == DashboardMetricKeys.GROSS_REVENUE_CENTS })
         // Un NO_DATA sí se pinta: reintentar puede arreglarlo y el operador debe saber que le falta.
         assertEquals(3, economy.renderable.size)
+    }
+
+    // -----------------------------------------------------------------
+    // PC-11 · Economía con número · PC-04 · Leída sin dato ≠ lectura fallida
+    // -----------------------------------------------------------------
+
+    @Test
+    fun theEconomyTotalsArriveAsMoneyAndAsACountAndAreRendered() = runTest {
+        val overview = overview(
+            """
+            {
+              "economy": {
+                "subscriptionsActive": 0,
+                "subscriptionsExpiring30d": 0,
+                "commercialProductsActive": 4,
+                "grossRevenueCents": 0,
+                "ticketsInCirculation": 21475,
+                "generatedAt": "2026-09-17T08:15:13Z",
+                "unavailableMetrics": [],
+                "failedMetrics": [],
+                "notInstrumented": []
+              },
+              "failedBlocks": [],
+              "generatedAt": "2026-09-17T08:15:13Z"
+            }
+            """.trimIndent(),
+        )
+
+        val economy = overview.blocks.getValue(DashboardBlock.ECONOMY)
+        val revenue = economy.metric(DashboardMetricKeys.GROSS_REVENUE_CENTS)
+        assertEquals(AnalyticsMetricStatus.AVAILABLE, revenue?.status)
+        assertEquals(AnalyticsValue.MoneyCents(0), revenue?.value, "Un 0 € leído es un dato.")
+        assertEquals(
+            AnalyticsValue.Count(21475),
+            economy.metric(DashboardMetricKeys.TICKETS_IN_CIRCULATION)?.value,
+            "Los OposiTickets son un conteo: como dinero saldrían «214,75 €».",
+        )
+        assertEquals(5, economy.renderable.size, "Con número, las dos métricas ocupan su sitio en el panel.")
+    }
+
+    /**
+     * Las dos formas de no tener número, y la que no se puede confundir con un cero:
+     * `activeUsers30d` no se pudo LEER (va en `failedMetrics`) y `globalErrorRate` se
+     * leyó y no hay nada que medir. Las dos son NO_DATA; sólo la primera lleva
+     * `readFailed`, que es lo que le deja a la pantalla decir «no se pudo leer».
+     */
+    @Test
+    fun aFailedReadIsFlaggedAndANoDataReadIsNot() = runTest {
+        val overview = overview(
+            """
+            {
+              "pulse": {
+                "attemptsLast30d": 0,
+                "publishedExams": 1,
+                "generatedAt": "2026-09-17T08:15:13Z",
+                "unavailableMetrics": ["activeUsers30d", "globalErrorRate"],
+                "failedMetrics": ["activeUsers30d"],
+                "notInstrumented": []
+              },
+              "failedBlocks": [],
+              "generatedAt": "2026-09-17T08:15:13Z"
+            }
+            """.trimIndent(),
+        )
+
+        val pulse = overview.blocks.getValue(DashboardBlock.PULSE)
+        val activeUsers = pulse.metric(DashboardMetricKeys.ACTIVE_USERS_30D)
+        val errorRate = pulse.metric(DashboardMetricKeys.GLOBAL_ERROR_RATE)
+        assertEquals(AnalyticsMetricStatus.NO_DATA, activeUsers?.status)
+        assertEquals(true, activeUsers?.readFailed)
+        assertNull(activeUsers?.value)
+        assertEquals(AnalyticsMetricStatus.NO_DATA, errorRate?.status)
+        assertEquals(false, errorRate?.readFailed)
+    }
+
+    /** Una clave en `failedMetrics` nunca sale con número, aunque el servidor lo mandara. */
+    @Test
+    fun aNumberForAKeyDeclaredFailedIsDiscarded() = runTest {
+        val overview = overview(
+            """
+            {
+              "content": {
+                "totalExams": 42,
+                "generatedAt": "2026-09-17T08:15:13Z",
+                "unavailableMetrics": [],
+                "failedMetrics": ["totalExams"],
+                "notInstrumented": []
+              },
+              "failedBlocks": [],
+              "generatedAt": "2026-09-17T08:15:13Z"
+            }
+            """.trimIndent(),
+        )
+
+        val totalExams = overview.blocks.getValue(DashboardBlock.CONTENT).metric(DashboardMetricKeys.TOTAL_EXAMS)
+        assertEquals(AnalyticsMetricStatus.NO_DATA, totalExams?.status)
+        assertEquals(true, totalExams?.readFailed)
+        assertNull(totalExams?.value)
+    }
+
+    // -----------------------------------------------------------------
+    // PC-09 · Presupuesto de tiempo propio
+    // -----------------------------------------------------------------
+
+    /**
+     * El panel pide 25 s para SU petición. Con el presupuesto por defecto del cliente
+     * (antes 6 s) una franja lenta tumbaba la respuesta entera y la degradación por
+     * franja nunca llegaba a verse.
+     */
+    @Test
+    fun theOverviewRequestCarriesItsOwnTwentyFiveSecondBudget() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val repository = repository(FULL_RESPONSE, record = requests)
+
+        repository.getOverview()
+
+        assertEquals(
+            25_000L,
+            requests.single().getCapabilityOrNull(HttpTimeoutCapability)?.requestTimeoutMillis,
+        )
     }
 
     @Test

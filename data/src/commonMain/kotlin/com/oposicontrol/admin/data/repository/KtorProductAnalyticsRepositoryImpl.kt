@@ -254,25 +254,33 @@ data class MarketingAnalyticsDto(
 internal class AnalyticsMapping(
     unavailable: List<String>,
     notInstrumented: List<AnalyticsGapPayload>,
+    /**
+     * Claves cuya LECTURA falló (`failedMetrics`, PC-04). Por defecto vacía: las
+     * secciones de Analítica no la mandan todavía y siguen exactamente igual —sin
+     * número, "sin dato"—; el panel de Inicio sí, y con ella distingue "no se pudo
+     * leer" de "no hay datos".
+     */
+    failed: List<String> = emptyList(),
 ) {
     private val unavailableKeys = unavailable.toSet()
     private val gaps = notInstrumented.associate { it.key to it.reason }
+    private val failedKeys = failed.toSet()
 
     fun count(key: String, value: Int?): AnalyticsMetric =
-        AnalyticsMetricPolicy.metric(key, value?.let(AnalyticsValue::Count), unavailableKeys, gaps)
+        AnalyticsMetricPolicy.metric(key, value?.let(AnalyticsValue::Count), unavailableKeys, gaps, failedKeys)
 
     fun percentage(key: String, value: Double?): AnalyticsMetric =
-        AnalyticsMetricPolicy.metric(key, value?.let(AnalyticsValue::Percentage), unavailableKeys, gaps)
+        AnalyticsMetricPolicy.metric(key, value?.let(AnalyticsValue::Percentage), unavailableKeys, gaps, failedKeys)
 
     fun money(key: String, value: Long?): AnalyticsMetric =
-        AnalyticsMetricPolicy.metric(key, value?.let(AnalyticsValue::MoneyCents), unavailableKeys, gaps)
+        AnalyticsMetricPolicy.metric(key, value?.let(AnalyticsValue::MoneyCents), unavailableKeys, gaps, failedKeys)
 
     /**
      * Métrica que el backend sólo declara como hueco (no tiene campo propio en el
      * DTO porque no hay nada que transportar).
      */
     fun declared(key: String): AnalyticsMetric =
-        AnalyticsMetricPolicy.metric(key, null, unavailableKeys, gaps)
+        AnalyticsMetricPolicy.metric(key, null, unavailableKeys, gaps, failedKeys)
 
     /**
      * Toda clave declarada como hueco que no tenga ya su tarjeta.

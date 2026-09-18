@@ -42,8 +42,18 @@ enum class DashboardV2Destination {
     /** OposiTester → `AppRoute.OposiTester.List`. */
     OPOSITESTER_LIST,
 
-    /** Exámenes: crear uno nuevo y revisar borradores son la misma pantalla. */
+    /** Catálogo de exámenes y sus borradores → `AppRoute.Content.Exams`. */
     EXAMS,
+
+    /**
+     * Exámenes con un BORRADOR NUEVO abierto en el editor (PC-15).
+     *
+     * Es la misma pantalla que [EXAMS], pero no el mismo gesto: el atajo "Nuevo
+     * examen" abría el catálogo y dejaba al administrador buscando el botón de
+     * crear. Abrir el editor vacío no escribe nada en la base: el examen sólo
+     * existe cuando se guarda.
+     */
+    NEW_EXAM,
 
     /** Banco de preguntas → `AppRoute.Content.Questions`. */
     QUESTIONS,
@@ -71,16 +81,26 @@ enum class DashboardV2Destination {
 /**
  * Qué se pinta en el hueco de la cifra.
  *
- * Los tres casos existen porque las tres situaciones son distintas para quien
- * mira: hay número, no se pudo leer, o nadie lo mide todavía. El error que este
- * rediseño cierra era colapsar los tres en «0».
+ * Los cuatro casos existen porque las cuatro situaciones son distintas para quien
+ * mira: hay número, no hay nada que medir, no se pudo leer, o nadie lo mide
+ * todavía. El error que este rediseño cierra era colapsarlos en «0»; PC-04 cierra
+ * además el de colapsar "no se pudo leer" y "no hay datos" en el mismo «Sin dato».
  */
 sealed interface DashboardMetricCell {
     /** Hay dato. Un cero también es dato y llega aquí. */
     data class Number(val text: String) : DashboardMetricCell
 
-    /** No se pudo leer. Ocupa sitio y dice «Sin dato»: reintentar puede arreglarlo. */
+    /**
+     * Se leyó y no hay número: no hay nada que medir todavía (una tasa sin
+     * respuestas) o la fuente lo declara incalculable. Ocupa sitio y dice «Sin dato».
+     */
     data object NoData : DashboardMetricCell
+
+    /**
+     * La LECTURA falló (PC-04). Ocupa sitio y dice «No se pudo leer»: reintentar
+     * puede arreglarlo, y el operador no puede confundirlo con "no hay nada".
+     */
+    data object Failed : DashboardMetricCell
 
     /** No existe agregado que lo calcule. No se pinta. */
     data object Hidden : DashboardMetricCell
@@ -95,7 +115,8 @@ sealed interface DashboardMetricCell {
  */
 fun dashboardMetricCell(metric: AnalyticsMetric): DashboardMetricCell = when (metric.status) {
     AnalyticsMetricStatus.NOT_INSTRUMENTED -> DashboardMetricCell.Hidden
-    AnalyticsMetricStatus.NO_DATA -> DashboardMetricCell.NoData
+    AnalyticsMetricStatus.NO_DATA ->
+        if (metric.readFailed) DashboardMetricCell.Failed else DashboardMetricCell.NoData
     AnalyticsMetricStatus.AVAILABLE -> metric.value
         ?.let { DashboardMetricCell.Number(it.format()) }
         ?: DashboardMetricCell.NoData
@@ -105,10 +126,34 @@ fun dashboardMetricCell(metric: AnalyticsMetric): DashboardMetricCell = when (me
 fun dashboardMetricText(metric: AnalyticsMetric): String? = when (val cell = dashboardMetricCell(metric)) {
     is DashboardMetricCell.Number -> cell.text
     DashboardMetricCell.NoData -> SIN_DATO
+    DashboardMetricCell.Failed -> NO_SE_PUDO_LEER
     DashboardMetricCell.Hidden -> null
 }
 
+/** ¿Se pinta la cifra atenuada? Sólo cuando no hay número, sea por el motivo que sea. */
+fun dashboardMetricIsMuted(cell: DashboardMetricCell): Boolean =
+    cell is DashboardMetricCell.NoData || cell is DashboardMetricCell.Failed
+
 const val SIN_DATO: String = "Sin dato"
+
+/** PC-04: lo que dice la cifra cuando la LECTURA falló, distinto de «Sin dato». */
+const val NO_SE_PUDO_LEER: String = "No se pudo leer"
+
+/**
+ * PC-10: marca de una franja que enseña datos de una petición anterior porque la
+ * última falló. Corta a propósito: vive junto al título y no puede empujarlo.
+ */
+const val DASHBOARD_STALE_LABEL: String = "Sin actualizar"
+
+/** Lo mismo, dicho entero para quien usa lector de pantalla. */
+const val DASHBOARD_STALE_DESCRIPTION: String =
+    "Datos de una carga anterior: el último intento de actualizar esta franja falló."
+
+/**
+ * PC-15: el atajo que abre un borrador de examen EN BLANCO. Mismo nombre que el botón
+ * del workspace que hace lo mismo; «Crear examen» es allí el que guarda.
+ */
+const val NEW_EXAM_QUICK_ACTION_LABEL: String = "Nuevo examen"
 
 // ---------------------------------------------------------------------------
 // Textos de métrica
@@ -117,6 +162,14 @@ const val SIN_DATO: String = "Sin dato"
 data class DashboardMetricCopy(
     val title: String,
     val supporting: String,
+    /**
+     * Qué mide EXACTAMENTE la cifra, para la ayuda contextual de la tarjeta.
+     *
+     * `null` cuando el título y el apoyo ya lo dicen todo. Existe para las métricas
+     * cuya definición no es evidente y cambia la lectura: "usuarios activos" puede
+     * querer decir cinco cosas distintas, y el operador tiene que saber cuál.
+     */
+    val help: String? = null,
 )
 
 /**
@@ -140,8 +193,16 @@ fun dashboardMetricCopy(key: String): DashboardMetricCopy = when (key) {
     DashboardMetricKeys.SUBSCRIPTIONS_EXPIRING_7D ->
         DashboardMetricCopy("Suscripciones que vencen", "En los próximos 7 días")
 
+    // PC-02: la definición va en la ayuda porque "activo" no se deduce del título.
+    // Es la de la RPC `admin_dashboard_active_users`, palabra por palabra: un
+    // intento INICIADO (aunque se abandone) o un evento de app que el SERVIDOR
+    // recibió —la fecha la pone el servidor, no el reloj del móvil—.
     DashboardMetricKeys.ACTIVE_USERS_30D ->
-        DashboardMetricCopy("Usuarios activos", "Últimos 30 días")
+        DashboardMetricCopy(
+            title = "Usuarios activos",
+            supporting = "Últimos 30 días",
+            help = ACTIVE_USERS_HELP,
+        )
     /*
      * «Registrados» y NO «Completados».
      *
@@ -164,46 +225,68 @@ fun dashboardMetricCopy(key: String): DashboardMetricCopy = when (key) {
     DashboardMetricKeys.GLOBAL_ERROR_RATE ->
         DashboardMetricCopy("Tasa de error global", "Respuestas incorrectas")
 
+    // PC-05: "activos" porque desde entonces no cuentan los archivados, que es lo que
+    // lista la pantalla a la que lleva la fila. Los borradores sí cuentan.
     DashboardMetricKeys.TOTAL_EXAMS ->
-        DashboardMetricCopy("Exámenes", "En el catálogo")
+        DashboardMetricCopy("Exámenes", "Activos en el catálogo")
     DashboardMetricKeys.TOTAL_QUESTIONS ->
-        DashboardMetricCopy("Preguntas", "En el catálogo")
+        DashboardMetricCopy("Preguntas", "Activas en el banco")
     DashboardMetricKeys.TOTAL_RESOURCES ->
         DashboardMetricCopy("Recursos", "Adjuntos a preguntas")
     DashboardMetricKeys.IMPORT_BATCHES ->
         DashboardMetricCopy("Lotes de importación", "Registrados")
 
+    // PC-03: "vigentes" dice lo que ahora se cuenta: estado activa y sin vencer.
     DashboardMetricKeys.SUBSCRIPTIONS_ACTIVE ->
-        DashboardMetricCopy("Suscripciones activas", "Ahora mismo")
+        DashboardMetricCopy("Suscripciones activas", "Vigentes ahora mismo")
     DashboardMetricKeys.SUBSCRIPTIONS_EXPIRING_30D ->
         DashboardMetricCopy("Vencen en 30 días", "Horizonte de contexto")
     DashboardMetricKeys.COMMERCIAL_PRODUCTS_ACTIVE ->
         DashboardMetricCopy("Productos comerciales", "Activos en catálogo")
 
-    // Las dos que hoy llegan siempre NOT_INSTRUMENTED y que `renderable` filtra.
-    // Llevan copy igualmente porque son las dos con más probabilidad de pasar a
-    // AVAILABLE —en cuanto exista `v_ingresos_brutos` o
-    // `v_opositickets_en_circulacion`— y ese día aparecerían en pantalla con su
-    // clave cruda.
+    // PC-11: las dos llegan ya con número (`admin_dashboard_economy_totals`), así
+    // que el texto tiene que decir QUÉ suma cada una, ahora que se conoce:
     //
-    // `format()` las pintará bien en cuanto traigan número: `grossRevenueCents`
-    // como MoneyCents (euros, nunca céntimos crudos) y `ticketsInCirculation`
-    // como Count. Ojo: HOY el mapeador manda las dos por `mapping.money`
-    // (`KtorDashboardOverviewRepositoryImpl.kt:306`), así que los tickets saldrían
-    // como importe; A lo está corrigiendo a `count` en su lado. Cuando llegue,
-    // `lasDosMetricasDeDineroSePintaranBienElDiaQueTraiganNumero` lo comprueba.
-    //
-    // El texto de apoyo va vacío a propósito: el agregado que las calculará no
-    // existe, así que **no se sabe qué ventana temporal cubrirán**. Escribir
-    // «Últimos 30 días» aquí sería inventar hoy la respuesta a una pregunta que
-    // decidirá quien construya la vista.
+    //  - Ingresos: TODO el histórico —no un mes, no 30 días—, sólo compras en
+    //    estado `pagada` y sólo en EUR. No es "bruto" en el sentido contable: las
+    //    reembolsadas no están en `pagada` y no suman. «Sin dato» significa que la
+    //    base la declaró incalculable (una pagada sin precio o en otra moneda), no
+    //    que sea cero.
+    //  - Tickets: suma de saldos de todas las carteras. Es un conteo de moneda
+    //    interna y `format()` lo pinta como número, nunca con «€».
     DashboardMetricKeys.GROSS_REVENUE_CENTS ->
-        DashboardMetricCopy("Ingresos brutos", "")
+        DashboardMetricCopy(
+            title = "Ingresos",
+            supporting = "Compras pagadas en EUR · histórico",
+            help = GROSS_REVENUE_HELP,
+        )
     DashboardMetricKeys.TICKETS_IN_CIRCULATION ->
-        DashboardMetricCopy("OposiTickets en circulación", "")
+        DashboardMetricCopy(
+            title = "OposiTickets en circulación",
+            supporting = "Saldo total de las carteras",
+            help = TICKETS_IN_CIRCULATION_HELP,
+        )
 
     else -> DashboardMetricCopy(key, "")
 }
+
+/** Definición de "usuarios activos" (PC-02), la misma que aplica la RPC del servidor. */
+const val ACTIVE_USERS_HELP: String =
+    "Usuarios distintos que, en los últimos 30 días, iniciaron al menos un intento de " +
+        "examen (aunque no lo terminaran) o enviaron algún evento desde la app, según la " +
+        "fecha en que lo recibió el servidor."
+
+/** Qué suma "Ingresos" (PC-11) y qué significa que no haya número. */
+const val GROSS_REVENUE_HELP: String =
+    "Suma de todas las compras en estado pagada, en euros, desde el principio. Las " +
+        "reembolsadas o canceladas no cuentan. Si alguna compra pagada no tiene precio o " +
+        "está en otra moneda, la cifra no se calcula y verás «Sin dato»: una suma parcial " +
+        "parecería correcta y no lo sería."
+
+/** Qué cuenta "OposiTickets en circulación" (PC-11). */
+const val TICKETS_IN_CIRCULATION_HELP: String =
+    "Suma de los saldos de OposiTickets de todas las carteras de usuario en este momento. " +
+        "Es una cantidad de tickets, no un importe."
 
 // ---------------------------------------------------------------------------
 // Franja «Necesita tu atención»

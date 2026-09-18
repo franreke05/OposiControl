@@ -53,6 +53,49 @@ class ProductAnalyticsTest {
         assertNull(metric.value, "Un valor declarado inválido no puede sobrevivir hasta la pantalla.")
     }
 
+    /**
+     * PC-04: una lectura FALLIDA es NO_DATA marcada como fallida, y su número —si lo
+     * hubiera— se descarta aunque el backend no la haya puesto también en la lista
+     * general. Una ausencia sin fallo no lleva la marca.
+     */
+    @Test
+    fun aFailedReadIsNoDataFlaggedAsFailedAndNeverKeepsANumber() {
+        val failed = AnalyticsMetricPolicy.metric(
+            key = "activeUsers30d",
+            value = AnalyticsValue.Count(0),
+            unavailable = emptySet(),
+            notInstrumented = emptyMap(),
+            failed = setOf("activeUsers30d"),
+        )
+        val noData = AnalyticsMetricPolicy.metric(
+            key = "globalErrorRate",
+            value = null,
+            unavailable = setOf("globalErrorRate"),
+            notInstrumented = emptyMap(),
+            failed = setOf("activeUsers30d"),
+        )
+
+        assertEquals(AnalyticsMetricStatus.NO_DATA, failed.status)
+        assertNull(failed.value, "El 0 de una lectura fallida no es un cero.")
+        assertTrue(failed.readFailed)
+        assertEquals(AnalyticsMetricStatus.NO_DATA, noData.status)
+        assertEquals(false, noData.readFailed, "«No hay nada que medir» no es «no se pudo leer».")
+    }
+
+    /** Sin la lista nueva (Analítica, o un servidor antiguo) nada cambia: nadie sale marcado. */
+    @Test
+    fun withoutFailedKeysNothingIsFlagged() {
+        val metric = AnalyticsMetricPolicy.metric(
+            key = "totalExams",
+            value = null,
+            unavailable = setOf("totalExams"),
+            notInstrumented = emptyMap(),
+        )
+
+        assertEquals(AnalyticsMetricStatus.NO_DATA, metric.status)
+        assertEquals(false, metric.readFailed)
+    }
+
     @Test
     fun aNotInstrumentedKeyBeatsNoDataAndCarriesItsReason() {
         // La clave viene en las dos listas (notInstrumented es subconjunto de

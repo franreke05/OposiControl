@@ -92,7 +92,10 @@ object DashboardMetricKeys {
     /** Dudas de usuarios sobre preguntas, sin responder (OposiTester). */
     const val QUESTION_FEEDBACK_PENDING = "questionFeedbackPending"
 
-    /** Exámenes escritos y sin publicar. */
+    /**
+     * Exámenes ACTIVOS y sin publicar (PC-01). Los archivados no son borradores:
+     * antes se contaban como "total menos publicados" y los incluían.
+     */
     const val DRAFT_EXAMS = "draftExams"
 
     /**
@@ -106,6 +109,12 @@ object DashboardMetricKeys {
 
     // --- PULSE: contexto de 30 días ---
 
+    /**
+     * Usuarios DISTINTOS con un intento de examen iniciado o un evento de app
+     * recibido por el servidor en los últimos 30 días (PC-02, RPC
+     * `admin_dashboard_active_users`). La definición se enseña en la ayuda de la
+     * tarjeta: "activo" no significa lo mismo en todos los productos.
+     */
     const val ACTIVE_USERS_30D = "activeUsers30d"
     const val ATTEMPTS_LAST_30D = "attemptsLast30d"
     const val PUBLISHED_EXAMS = "publishedExams"
@@ -113,13 +122,17 @@ object DashboardMetricKeys {
 
     // --- CONTENT: volumen de catálogo ---
 
+    /** Exámenes activos del catálogo, borradores incluidos; sin los archivados (PC-05). */
     const val TOTAL_EXAMS = "totalExams"
+
+    /** Preguntas activas del banco; sin las archivadas (PC-05). */
     const val TOTAL_QUESTIONS = "totalQuestions"
     const val TOTAL_RESOURCES = "totalResources"
     const val IMPORT_BATCHES = "importBatches"
 
     // --- ECONOMY ---
 
+    /** Suscripciones en estado activa Y vigentes: sin fin o con fin futuro (PC-03). */
     const val SUBSCRIPTIONS_ACTIVE = "subscriptionsActive"
 
     /** Horizonte de contexto. La alerta operativa es [SUBSCRIPTIONS_EXPIRING_7D]. */
@@ -128,16 +141,21 @@ object DashboardMetricKeys {
     const val COMMERCIAL_PRODUCTS_ACTIVE = "commercialProductsActive"
 
     /**
-     * Ingreso bruto en céntimos.
+     * Ingresos en céntimos: suma HISTÓRICA de las compras en estado `pagada`, en EUR
+     * (PC-11, RPC `admin_dashboard_economy_totals`). No descuenta nada porque las
+     * reembolsadas o canceladas no están en `pagada`.
      *
-     * Viaja en el contrato y **siempre** como `NOT_INSTRUMENTED`: sumar
-     * `precio_centimos` necesita SUM, que PostgREST no expresa. Está declarada en
-     * vez de omitida para que el hueco tenga nombre y quede registrado como deuda;
-     * la UI del dashboard no la pinta (ver [DashboardBlockReport.renderable]).
+     * Llega NO_DATA —nunca 0— cuando la base declara la suma incalculable: alguna
+     * compra pagada sin precio o en otra moneda. Y NO_DATA con
+     * [AnalyticsMetric.readFailed] cuando la llamada falló. Hasta PC-11 viajaba
+     * siempre como `NOT_INSTRUMENTED`, porque PostgREST no expresa SUM.
      */
     const val GROSS_REVENUE_CENTS = "grossRevenueCents"
 
-    /** OposiTickets en circulación. `NOT_INSTRUMENTED` por el mismo motivo: requiere SUM. */
+    /**
+     * OposiTickets en circulación: suma de los saldos de todas las carteras (PC-11).
+     * Es un CONTEO de moneda interna, nunca dinero.
+     */
     const val TICKETS_IN_CIRCULATION = "ticketsInCirculation"
 }
 
@@ -169,9 +187,15 @@ data class DashboardActivityEntry(
  * Desconocido que ya usa la pantalla de Estado del sistema— para que un
  * componente no esté "operativo" en una pantalla y "ok" en otra.
  *
- * [notInstrumented] nombra lo que todavía no tiene fuente (worker, CPU, latencia,
- * crashes, cola). Se declara en vez de omitirse porque un panel que pinta todo en
- * verde por no saber nada es peor que uno que admite no saberlo.
+ * [notInstrumented] nombra lo que todavía no tiene fuente (worker, CPU, latencia
+ * general de la API, errores de la API, errores de app, cola). Se declara en vez de
+ * omitirse porque un panel que pinta todo en verde por no saber nada es peor que uno
+ * que admite no saberlo.
+ *
+ * PC-14: la clave `mobileCrashes24h` NO mide crashes. Lo único que existe para
+ * aproximarla es `errores_app` (errores que la propia app reporta, con severidad), y
+ * si algún día se pinta tiene que llamarse por lo que es: "errores críticos de app
+ * en 24 h", no "crashes".
  */
 data class DashboardHealth(
     val overall: SystemStatusLevel,

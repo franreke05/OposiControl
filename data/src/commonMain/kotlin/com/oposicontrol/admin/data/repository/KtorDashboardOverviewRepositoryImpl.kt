@@ -17,6 +17,7 @@ import com.oposicontrol.admin.domain.repository.DashboardOverviewRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.expectSuccess
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.bodyAsText
@@ -64,6 +65,11 @@ class KtorDashboardOverviewRepositoryImpl(
             adminAuthHeaders(appConfig, sessionLocalDataSource)
             if (sections != null) parameter("sections", sections)
             expectSuccess = false
+            // PC-09 / F-04: el panel completo son 19 lecturas en Ktor, y una franja
+            // lenta no puede tumbar la petición entera. Con los 6 s de antes, la
+            // degradación POR FRANJA —que es todo el diseño de este contrato— no
+            // llegaba a verse: el cliente se rendía antes de que Ktor respondiera.
+            timeout { requestTimeoutMillis = OVERVIEW_TIMEOUT_MILLIS }
         }
         if (!response.status.isSuccess()) {
             // Un fallo de la petición entera no se degrada a un panel vacío:
@@ -77,6 +83,9 @@ class KtorDashboardOverviewRepositoryImpl(
 
     companion object {
         val OVERVIEW = BackendRoutes.ADMIN_V1_DASHBOARD_OVERVIEW
+
+        /** Presupuesto de la petición agregada (PC-09): por encima del defecto de 30 s no. */
+        const val OVERVIEW_TIMEOUT_MILLIS: Long = 25_000
     }
 }
 
@@ -125,6 +134,8 @@ data class DashboardAttentionPayload(
     val subscriptionsExpiring7d: Int? = null,
     val generatedAt: String = "",
     val unavailableMetrics: List<String> = emptyList(),
+    /** PC-04: claves cuya LECTURA falló. Un servidor antiguo no la manda: se quedan en NO_DATA. */
+    val failedMetrics: List<String> = emptyList(),
     val notInstrumented: List<AnalyticsGapPayload> = emptyList(),
 )
 
@@ -136,6 +147,8 @@ data class DashboardPulsePayload(
     val globalErrorRate: Double? = null,
     val generatedAt: String = "",
     val unavailableMetrics: List<String> = emptyList(),
+    /** PC-04: claves cuya LECTURA falló. Un servidor antiguo no la manda: se quedan en NO_DATA. */
+    val failedMetrics: List<String> = emptyList(),
     val notInstrumented: List<AnalyticsGapPayload> = emptyList(),
 )
 
@@ -147,6 +160,8 @@ data class DashboardContentPayload(
     val importBatches: Int? = null,
     val generatedAt: String = "",
     val unavailableMetrics: List<String> = emptyList(),
+    /** PC-04: claves cuya LECTURA falló. Un servidor antiguo no la manda: se quedan en NO_DATA. */
+    val failedMetrics: List<String> = emptyList(),
     val notInstrumented: List<AnalyticsGapPayload> = emptyList(),
 )
 
@@ -182,6 +197,8 @@ data class DashboardEconomyPayload(
     val ticketsInCirculation: Long? = null,
     val generatedAt: String = "",
     val unavailableMetrics: List<String> = emptyList(),
+    /** PC-04: claves cuya LECTURA falló. Un servidor antiguo no la manda: se quedan en NO_DATA. */
+    val failedMetrics: List<String> = emptyList(),
     val notInstrumented: List<AnalyticsGapPayload> = emptyList(),
 )
 
@@ -226,7 +243,7 @@ private fun DashboardSystemPayload.toReport() = DashboardBlockReport(
 )
 
 private fun DashboardAttentionPayload.toReport(): DashboardBlockReport {
-    val mapping = AnalyticsMapping(unavailableMetrics, notInstrumented)
+    val mapping = AnalyticsMapping(unavailableMetrics, notInstrumented, failedMetrics)
     val metrics = listOf(
         mapping.count(DashboardMetricKeys.REPORTS_PENDING, reportsPending),
         mapping.count(DashboardMetricKeys.QUESTION_FEEDBACK_PENDING, questionFeedbackPending),
@@ -241,7 +258,7 @@ private fun DashboardAttentionPayload.toReport(): DashboardBlockReport {
 }
 
 private fun DashboardPulsePayload.toReport(): DashboardBlockReport {
-    val mapping = AnalyticsMapping(unavailableMetrics, notInstrumented)
+    val mapping = AnalyticsMapping(unavailableMetrics, notInstrumented, failedMetrics)
     val metrics = listOf(
         mapping.count(DashboardMetricKeys.ACTIVE_USERS_30D, activeUsers30d),
         mapping.count(DashboardMetricKeys.ATTEMPTS_LAST_30D, attemptsLast30d),
@@ -256,7 +273,7 @@ private fun DashboardPulsePayload.toReport(): DashboardBlockReport {
 }
 
 private fun DashboardContentPayload.toReport(): DashboardBlockReport {
-    val mapping = AnalyticsMapping(unavailableMetrics, notInstrumented)
+    val mapping = AnalyticsMapping(unavailableMetrics, notInstrumented, failedMetrics)
     val metrics = listOf(
         mapping.count(DashboardMetricKeys.TOTAL_EXAMS, totalExams),
         mapping.count(DashboardMetricKeys.TOTAL_QUESTIONS, totalQuestions),
@@ -297,7 +314,7 @@ private fun DashboardActivityPayload.toReport(): DashboardBlockReport {
 }
 
 private fun DashboardEconomyPayload.toReport(): DashboardBlockReport {
-    val mapping = AnalyticsMapping(unavailableMetrics, notInstrumented)
+    val mapping = AnalyticsMapping(unavailableMetrics, notInstrumented, failedMetrics)
     val metrics = listOf(
         mapping.count(DashboardMetricKeys.SUBSCRIPTIONS_ACTIVE, subscriptionsActive),
         mapping.count(DashboardMetricKeys.SUBSCRIPTIONS_EXPIRING_30D, subscriptionsExpiring30d),
@@ -305,10 +322,8 @@ private fun DashboardEconomyPayload.toReport(): DashboardBlockReport {
         mapping.money(DashboardMetricKeys.GROSS_REVENUE_CENTS, grossRevenueCents),
         // Conteo, NO dinero. Los OposiTickets son una moneda interna sin tipo de
         // cambio: pintarlos con `MoneyCents` los formatearía con `formatPriceCents`
-        // y 1.500 OT saldrían como «15,00 €». Hoy es inalcanzable —la métrica
-        // siempre llega NOT_INSTRUMENTED— pero el día que exista
-        // `v_opositickets_en_circulacion` pasaría a AVAILABLE y el error se
-        // pintaría solo.
+        // y 1.500 OT saldrían como «15,00 €». Ya no es hipotético: desde PC-11 la
+        // cifra llega de verdad (`admin_dashboard_economy_totals`, 21475 en MAIN).
         mapping.count(DashboardMetricKeys.TICKETS_IN_CIRCULATION, ticketsInCirculation?.toCountOrNull()),
     )
     return DashboardBlockReport(
