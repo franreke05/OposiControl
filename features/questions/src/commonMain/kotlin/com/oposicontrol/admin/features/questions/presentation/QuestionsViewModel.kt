@@ -1,16 +1,17 @@
 package com.oposicontrol.admin.features.questions.presentation
 
 import com.oposicontrol.admin.core.common.coroutine.DispatcherProvider
+import com.oposicontrol.admin.core.common.id.randomUuid
 import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.QuestionDraft
-import com.oposicontrol.admin.domain.model.QuestionExamLink
-import com.oposicontrol.admin.domain.model.QuestionExamLinkRequest
 import com.oposicontrol.admin.domain.model.QuestionType
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.repository.QuestionsRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
@@ -18,9 +19,14 @@ import kotlinx.coroutines.launch
  * ViewModel de Preguntas (banco global, JVM/Desktop).
  *
  * Depende de [QuestionsRepository] (propio, ver diseño aprobado) para todo lo
- * específico de preguntas, y de [ContentRepository] solo para el catálogo de
- * exámenes (`observeExams`) — lectura de una capacidad que ya existía y que
- * usan otras pantallas; no añade nada a ese contrato.
+ * específico de preguntas, y de [ContentRepository] sólo para los catálogos de
+ * exámenes y especialidades — capacidades que ya existían y que usan otras
+ * pantallas; no añade nada a ese contrato.
+ *
+ * **Los catálogos los pide esta pantalla (KQ0-5, QN-10).** Antes sólo observaba
+ * `observeExams()` —sin ráfagas— y nunca los refrescaba: si no se había abierto
+ * Exámenes antes, el selector de examen salía vacío y una pregunta de ráfaga no se
+ * podía vincular. Un fallo al pedirlos es un `Error`, nunca una lista vacía.
  */
 class QuestionsViewModel(
     dispatcherProvider: DispatcherProvider,
@@ -30,36 +36,121 @@ class QuestionsViewModel(
     initialState = QuestionsState(),
     dispatcherProvider = dispatcherProvider,
 ) {
+    /** La búsqueda que espera a que se deje de teclear ([QUESTION_SEARCH_DEBOUNCE_MILLIS]). */
+    private var searchJob: Job? = null
+
+    /**
+     * Número de la última carga pedida. Una respuesta de una carga anterior —la
+     * búsqueda de hace dos teclas— no puede pisar la de la consulta vigente.
+     */
+    private var loadGeneration = 0
+
+    /**
+     * Número de la última selección. Los vínculos se cargan en PARALELO al detalle
+     * (KQ3-2), así que los de una pregunta que ya no está seleccionada no pueden
+     * aterrizar sobre la siguiente.
+     */
+    private var selectionGeneration = 0
+
     init {
         scope.launch {
-            contentRepository.observeExams().collectLatest { exams ->
-                updateState { it.copy(exams = if (exams.isEmpty()) UiAsync.Empty else UiAsync.Success(exams)) }
+            contentRepository.observeAllExams().collectLatest { exams ->
+                updateState { it.copy(exams = seededCatalog(exams, it.exams)) }
             }
         }
+        scope.launch {
+            contentRepository.observeSpecialties().collectLatest { specialties ->
+                updateState { it.copy(specialties = seededCatalog(specialties, it.specialties)) }
+            }
+        }
+        scope.launch { refreshCatalogs() }
         scope.launch { loadQuestions() }
     }
 
     override suspend fun handleIntent(intent: QuestionsIntent) {
         when (intent) {
-            QuestionsIntent.Refresh -> loadQuestions()
+            QuestionsIntent.Refresh -> {
+                if (currentState().exams is UiAsync.Error || currentState().specialties is UiAsync.Error) {
+                    refreshCatalogs()
+                }
+                reloadQuestions()
+            }
 
-            is QuestionsIntent.Search -> updateState { it.copy(searchQuery = intent.query, pageIndex = 0) }
-            is QuestionsIntent.SetTypeFilter -> updateState { it.copy(typeFilter = intent.type, pageIndex = 0) }
-            is QuestionsIntent.SetActiveFilter -> updateState { it.copy(activeFilter = intent.active, pageIndex = 0) }
-            is QuestionsIntent.SetSort -> updateState { it.copy(sort = intent.sort, pageIndex = 0) }
-            is QuestionsIntent.SetPageIndex -> updateState { it.copy(pageIndex = intent.index) }
-            is QuestionsIntent.SetPageSize -> updateState { it.copy(pageSize = intent.size, pageIndex = 0) }
+            // La búsqueda espera a que se deje de escribir: cada tecla sería una
+            // consulta al servidor. El resto de filtros recarga al momento, y todos
+            // vuelven a la primera página: la página 7 de otra consulta no existe.
+            is QuestionsIntent.Search -> {
+                updateState { it.copy(searchQuery = intent.query, pageIndex = 0) }
+                searchJob?.cancel()
+                searchJob = scope.launch {
+                    delay(QUESTION_SEARCH_DEBOUNCE_MILLIS)
+                    loadQuestions()
+                }
+            }
+            is QuestionsIntent.SetTypeFilter -> {
+                updateState { it.copy(typeFilter = intent.type, pageIndex = 0) }
+                reloadQuestions()
+            }
+            is QuestionsIntent.SetSpecialtyFilter -> {
+                updateState { it.copy(specialtyFilter = intent.specialtyId?.takeIf { id -> id.isNotBlank() }, pageIndex = 0) }
+                reloadQuestions()
+            }
+            is QuestionsIntent.SetActiveFilter -> {
+                updateState { it.copy(activeFilter = intent.active, pageIndex = 0) }
+                reloadQuestions()
+            }
+            is QuestionsIntent.SetSort -> {
+                updateState { it.copy(sort = intent.sort, pageIndex = 0) }
+                reloadQuestions()
+            }
+            is QuestionsIntent.SetPageIndex -> {
+                updateState { it.copy(pageIndex = intent.index.coerceAtLeast(0)) }
+                reloadQuestions()
+            }
+            is QuestionsIntent.SetPageSize -> {
+                updateState { it.copy(pageSize = intent.size, pageIndex = 0) }
+                reloadQuestions()
+            }
             is QuestionsIntent.SetExamFilter -> {
                 updateState { it.copy(examFilter = intent.examId, pageIndex = 0) }
-                loadQuestions()
+                reloadQuestions()
             }
 
             is QuestionsIntent.SelectQuestion -> selectQuestion(intent.id)
             QuestionsIntent.StartCreate -> startCreate()
+            // Cambiar de especialidad suelta el examen inicial de otra: la base lo
+            // rechazaría (`QUESTION_EXAM_SPECIALTY_MISMATCH`) y el selector ya no lo ofrece.
+            is QuestionsIntent.UpdateCreateSpecialtyId -> updateState { state ->
+                val createExam = (state.exams as? UiAsync.Success)?.value?.firstOrNull { it.id == state.draftCreateExamId }
+                state.copy(
+                    draftSpecialtyId = intent.specialtyId,
+                    draftCreateExamId = if (createExam != null && createExam.specialtyId != intent.specialtyId) "" else state.draftCreateExamId,
+                )
+            }
             is QuestionsIntent.UpdateCreateExamId -> updateState { it.copy(draftCreateExamId = intent.examId) }
 
             is QuestionsIntent.UpdateStatement -> updateState { it.copy(draftStatement = intent.value, dirty = true) }
-            is QuestionsIntent.UpdateType -> updateState { it.copy(draftType = intent.type, dirty = true) }
+            // Cambiar el tipo de un alta suelta el examen inicial si ya no lo admite:
+            // la base lo rechazaría (`QUESTION_EXAM_TYPE_MISMATCH`), y el selector ya
+            // no lo ofrece, así que quedaría elegido algo invisible.
+            //
+            // Y en una pregunta guardada con vínculos o con recursos el tipo está
+            // BLOQUEADO (KQ3-3): la base lo rechaza (`QUESTION_TYPE_LOCKED_BY_*`) y
+            // la tarjeta no es seleccionable; si el intento llega igual, se ignora
+            // en vez de dejar un borrador que sólo puede fallar al guardar.
+            is QuestionsIntent.UpdateType -> updateState { state ->
+                if (!state.isCreating && questionTypeLockReason(state) != null && intent.type != state.draftType) return@updateState state
+                val createExam = (state.exams as? UiAsync.Success)?.value?.firstOrNull { it.id == state.draftCreateExamId }
+                state.copy(
+                    draftType = intent.type,
+                    dirty = true,
+                    draftCreateExamId = if (createExam != null && !examAcceptsQuestionType(createExam, intent.type)) {
+                        ""
+                    } else {
+                        state.draftCreateExamId
+                    },
+                )
+            }
             is QuestionsIntent.UpdateOptionContent -> updateState {
                 it.copy(
                     draftOptions = it.draftOptions.map { option ->
@@ -81,12 +172,16 @@ class QuestionsViewModel(
             is QuestionsIntent.SetActive -> updateState { it.copy(draftActive = intent.active, dirty = true) }
 
             QuestionsIntent.RequestAssociateExam -> updateState {
-                it.copy(showAssociateDialog = true, associateExamId = "", associatePosition = "1")
+                it.copy(showAssociateDialog = true, associateExamId = "", associatePosition = "", saveState = UiAsync.Idle)
             }
             is QuestionsIntent.UpdateAssociateExamId -> updateState { it.copy(associateExamId = intent.examId) }
             is QuestionsIntent.UpdateAssociatePosition -> updateState { it.copy(associatePosition = intent.value) }
             QuestionsIntent.CancelAssociateDialog -> updateState { it.copy(showAssociateDialog = false) }
             QuestionsIntent.ConfirmAssociateExam -> associateExam()
+
+            is QuestionsIntent.RequestUnlinkExam -> updateState { it.copy(unlinkExamId = intent.examId, saveState = UiAsync.Idle) }
+            QuestionsIntent.DismissUnlinkConfirm -> updateState { it.copy(unlinkExamId = null) }
+            QuestionsIntent.ConfirmUnlinkExam -> unlinkExam()
 
             QuestionsIntent.RequestCancel -> requestCancel()
             QuestionsIntent.ConfirmCancel -> confirmCancel()
@@ -100,23 +195,62 @@ class QuestionsViewModel(
         }
     }
 
+    /** Una recarga explícita manda sobre una búsqueda que todavía esperaba. */
+    private suspend fun reloadQuestions() {
+        searchJob?.cancel()
+        loadQuestions()
+    }
+
+    /**
+     * Pide al servidor la página que describen los filtros (KQ0-4).
+     *
+     * - Cero resultados SIN filtros es un banco vacío (`Empty`); con filtros es una
+     *   página vacía (`Success`), que la pantalla dice como «nada coincide».
+     * - Una página más allá del final —se archivó lo último de la última página— se
+     *   corrige a la última que existe en vez de enseñar un vacío falso.
+     */
     private suspend fun loadQuestions() {
-        val examFilter = currentState().examFilter
+        val generation = ++loadGeneration
+        val state = currentState()
+        val query = state.toListQuery()
         updateState { it.copy(questions = UiAsync.Loading) }
-        val result = if (examFilter.isNullOrBlank()) {
-            questionsRepository.listQuestions()
-        } else {
-            questionsRepository.listQuestionsForExam(examFilter)
-        }
+        val result = questionsRepository.listQuestions(query)
+        if (generation != loadGeneration) return
         when (result) {
             is AppResult.Failure -> updateState { it.copy(questions = UiAsync.Error(result.error)) }
-            is AppResult.Success -> updateState {
-                it.copy(questions = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value))
+            is AppResult.Success -> {
+                val page = result.value
+                if (page.items.isEmpty() && page.total > 0 && query.offset > 0) {
+                    val lastPage = (page.total - 1) / query.limit
+                    updateState { it.copy(pageIndex = lastPage) }
+                    return loadQuestions()
+                }
+                updateState {
+                    it.copy(
+                        questions = if (page.total == 0 && !state.hasBankFilters()) UiAsync.Empty else UiAsync.Success(page),
+                    )
+                }
             }
         }
     }
 
+    /**
+     * Pide los dos catálogos que usan los selectores (KQ0-5): exámenes primero,
+     * porque el repositorio cuenta los de cada especialidad con esa caché (K0-5).
+     */
+    private suspend fun refreshCatalogs() {
+        when (val exams = contentRepository.refreshAllExams()) {
+            is AppResult.Failure -> updateState { it.copy(exams = UiAsync.Error(exams.error)) }
+            is AppResult.Success -> updateState { it.copy(exams = loadedCatalog(exams.value)) }
+        }
+        when (val specialties = contentRepository.refreshSpecialties()) {
+            is AppResult.Failure -> updateState { it.copy(specialties = UiAsync.Error(specialties.error)) }
+            is AppResult.Success -> updateState { it.copy(specialties = loadedCatalog(specialties.value)) }
+        }
+    }
+
     private fun startCreate() {
+        selectionGeneration++
         updateState {
             it.copy(
                 selectedQuestionId = null,
@@ -128,17 +262,28 @@ class QuestionsViewModel(
                 draftExplanation = "",
                 draftSource = "",
                 draftActive = true,
-                draftDifficulty = "media",
+                // Sin definir (NULL): la pantalla no edita la dificultad y no la inventa (KQ0-2).
+                draftDifficulty = "",
+                // UNA vez por alta (KQ2-4): sobrevive a cada reintento hasta que la
+                // pregunta exista o el alta se cancele.
+                draftQuestionId = randomUuid(),
+                draftSpecialtyId = "",
                 draftCreateExamId = "",
                 optionsDirty = true, // alta siempre manda opciones
                 dirty = false,
-                examLinks = emptyList(),
+                examLinks = UiAsync.Idle,
                 saveState = UiAsync.Idle,
             )
         }
     }
 
+    /**
+     * Detalle y vínculos en PARALELO (KQ3-2): son dos consultas independientes y el
+     * panel de relaciones no tiene por qué esperar al editor. [selectionGeneration]
+     * descarta lo que llegue de una selección anterior.
+     */
     private suspend fun selectQuestion(id: String) {
+        val generation = ++selectionGeneration
         updateState {
             it.copy(
                 selectedQuestionId = id,
@@ -147,10 +292,14 @@ class QuestionsViewModel(
                 dirty = false,
                 optionsDirty = false,
                 saveState = UiAsync.Idle,
-                examLinks = knownExamLinksFor(it, id),
+                examLinks = UiAsync.Loading,
+                unlinkExamId = null,
             )
         }
-        when (val result = questionsRepository.getQuestionDetail(id)) {
+        scope.launch { loadExamLinks(id, generation) }
+        val result = questionsRepository.getQuestionDetail(id)
+        if (generation != selectionGeneration) return
+        when (result) {
             is AppResult.Failure -> updateState { it.copy(detail = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 val detail = result.value
@@ -176,18 +325,18 @@ class QuestionsViewModel(
         }
     }
 
-    /**
-     * Única fuente honesta de asociaciones sin fan-out: si la lista activa
-     * ahora mismo viene de un examen concreto (`examFilter`), esa fila trae
-     * `examId`/`position` reales — se resuelve el código/título desde el
-     * catálogo ya cargado. Si no, no se inventa nada: lista vacía.
-     */
-    private fun knownExamLinksFor(state: QuestionsState, questionId: String): List<QuestionExamLink> {
-        val examId = state.examFilter ?: return emptyList()
-        val row = (state.questions as? UiAsync.Success)?.value?.firstOrNull { it.id == questionId } ?: return emptyList()
-        val position = row.position ?: return emptyList()
-        val exam = (state.exams as? UiAsync.Success)?.value?.firstOrNull { it.id == examId } ?: return emptyList()
-        return listOf(QuestionExamLink(examId = exam.id, examCode = exam.code, examTitle = exam.title, position = position))
+    /** Los vínculos vienen del servidor, nunca de la sesión: vacío es «en ningún examen», y un fallo es un fallo. */
+    private suspend fun loadExamLinks(questionId: String, generation: Int) {
+        val result = questionsRepository.listQuestionExams(questionId)
+        if (generation != selectionGeneration) return
+        updateState {
+            it.copy(
+                examLinks = when (result) {
+                    is AppResult.Failure -> UiAsync.Error(result.error)
+                    is AppResult.Success -> UiAsync.Success(result.value)
+                },
+            )
+        }
     }
 
     private fun requestCancel() {
@@ -251,39 +400,63 @@ class QuestionsViewModel(
         }
     }
 
+    /**
+     * Vincular es una llamada PROPIA (`POST /preguntas/{id}/examenes`, KQ3-2) y no
+     * un PATCH con el borrador entero: antes «Vincular» guardaba en silencio las
+     * ediciones sin confirmar, o fallaba por ellas. La lista que vuelve del servidor
+     * SUSTITUYE a la conocida: es la real, con la posición que la base asignó.
+     */
     private suspend fun associateExam() {
         val state = currentState()
         val questionId = state.selectedQuestionId ?: return
         val examId = state.associateExamId
-        val position = state.associatePosition.toIntOrNull()
-        if (examId.isBlank() || position == null || position <= 0) {
-            return updateState { it.copy(saveState = UiAsync.Error(AppError.Validation("Elige un examen y una posición válida."))) }
+        val positionText = state.associatePosition.trim()
+        val position = positionText.toIntOrNull()
+        if (examId.isBlank() || (positionText.isNotEmpty() && (position == null || position <= 0))) {
+            return updateState { it.copy(saveState = UiAsync.Error(AppError.Validation("Elige un examen y, si quieres fijarla, una posición de 1 en adelante."))) }
         }
-        if (state.examLinks.any { it.examId == examId }) {
-            return updateState { it.copy(saveState = UiAsync.Error(AppError.Validation("Esta pregunta ya está asociada a ese examen."))) }
+        if (state.knownExamLinks().any { it.examId == examId }) {
+            return updateState { it.copy(saveState = UiAsync.Error(AppError.Validation("Esta pregunta ya está en ese examen."))) }
         }
         updateState { it.copy(saveState = UiAsync.Loading) }
-        val draft = state.toDraft()
-        when (val result = questionsRepository.updateQuestion(questionId, draft, optionsChanged = false, linkToExam = QuestionExamLinkRequest(examId, position))) {
+        when (val result = questionsRepository.linkQuestionToExam(questionId, examId, position)) {
             is AppResult.Failure -> updateState { it.copy(saveState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
-                val exam = (state.exams as? UiAsync.Success)?.value?.firstOrNull { it.id == examId }
                 updateState {
                     it.copy(
                         saveState = UiAsync.Success(Unit),
                         showAssociateDialog = false,
-                        examLinks = it.examLinks + QuestionExamLink(
-                            examId = examId,
-                            examCode = exam?.code.orEmpty(),
-                            examTitle = exam?.title ?: examId,
-                            position = position,
-                        ),
+                        examLinks = UiAsync.Success(result.value),
                     )
                 }
+                // La fila del banco puede llevar la posición del examen filtrado.
+                if (state.examFilter != null) loadQuestions()
             }
         }
     }
 
+    /** Quitar de un examen deja la pregunta intacta en el banco; la lista vuelve releída del servidor. */
+    private suspend fun unlinkExam() {
+        val state = currentState()
+        val questionId = state.selectedQuestionId ?: return updateState { it.copy(unlinkExamId = null) }
+        val examId = state.unlinkExamId ?: return
+        updateState { it.copy(saveState = UiAsync.Loading) }
+        when (val result = questionsRepository.unlinkQuestionFromExam(questionId, examId)) {
+            is AppResult.Failure -> updateState { it.copy(saveState = UiAsync.Error(result.error), unlinkExamId = null) }
+            is AppResult.Success -> {
+                updateState {
+                    it.copy(saveState = UiAsync.Success(Unit), unlinkExamId = null, examLinks = UiAsync.Success(result.value))
+                }
+                if (state.examFilter != null) loadQuestions()
+            }
+        }
+    }
+
+    /**
+     * Guardar. En un alta el id viaja desde [QuestionsState.draftQuestionId] y NO se
+     * regenera si falla: un timeout con la pregunta ya creada en el servidor tiene
+     * que poder reintentarse con el MISMO id, que es lo que impide duplicarla.
+     */
     private suspend fun save() {
         val state = currentState()
         if (!state.isDraftValid()) {
@@ -292,7 +465,12 @@ class QuestionsViewModel(
         updateState { it.copy(saveState = UiAsync.Loading) }
         val draft = state.toDraft()
         val result = if (state.isCreating) {
-            questionsRepository.createQuestion(draft, examId = state.draftCreateExamId, position = 1)
+            questionsRepository.createQuestion(
+                questionId = state.draftQuestionId,
+                specialtyId = state.draftSpecialtyId,
+                draft = draft,
+                examId = state.draftCreateExamId.takeIf { it.isNotBlank() },
+            )
         } else {
             val id = state.selectedQuestionId ?: return updateState { it.copy(saveState = UiAsync.Error(AppError.Validation("Selecciona una pregunta."))) }
             questionsRepository.updateQuestion(id, draft, optionsChanged = state.optionsDirty)
@@ -301,6 +479,7 @@ class QuestionsViewModel(
             is AppResult.Failure -> updateState { it.copy(saveState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 val detail = result.value
+                val wasCreating = state.isCreating
                 updateState {
                     it.copy(
                         saveState = UiAsync.Success(Unit),
@@ -309,13 +488,36 @@ class QuestionsViewModel(
                         detail = UiAsync.Success(detail),
                         dirty = false,
                         optionsDirty = false,
+                        draftQuestionId = "",
                     )
+                }
+                if (wasCreating) {
+                    // La pregunta ya existe: sus vínculos (el examen inicial, si lo hubo) son del servidor.
+                    val generation = ++selectionGeneration
+                    updateState { it.copy(examLinks = UiAsync.Loading) }
+                    scope.launch { loadExamLinks(detail.id, generation) }
                 }
                 loadQuestions()
             }
         }
     }
 }
+
+/**
+ * La emisión SEMILLA de un repositorio no resuelve un catálogo: sus `StateFlow`
+ * arrancan en `emptyList()`, que significa «todavía no se ha preguntado», no «no
+ * hay ninguno». Una lista vacía sólo pasa a `Empty` si ya había datos; el vacío
+ * confirmado lo decide el refresco ([loadedCatalog]).
+ */
+private fun <T> seededCatalog(values: List<T>, current: UiAsync<List<T>>): UiAsync<List<T>> = when {
+    values.isNotEmpty() -> UiAsync.Success(values)
+    current is UiAsync.Loading || current is UiAsync.Idle || current is UiAsync.Error -> current
+    else -> UiAsync.Empty
+}
+
+/** Una lista que viene de hablar con el servidor: vacía es `Empty`, no `Loading`. */
+private fun <T> loadedCatalog(values: List<T>): UiAsync<List<T>> =
+    if (values.isEmpty()) UiAsync.Empty else UiAsync.Success(values)
 
 private fun QuestionsState.toDraft() = QuestionDraft(
     statement = draftStatement.trim(),
@@ -333,7 +535,8 @@ private fun QuestionsState.toDraft() = QuestionDraft(
  */
 fun QuestionsState.isDraftValid(): Boolean {
     if (draftStatement.isBlank()) return false
-    if (isCreating && draftCreateExamId.isBlank()) return false
+    // KQ2-4: la especialidad se elige; el examen inicial es opcional.
+    if (isCreating && draftSpecialtyId.isBlank()) return false
     if (optionsDirty || isCreating) {
         if (draftOptions.size != 4) return false
         if (draftOptions.any { it.content.isBlank() }) return false
