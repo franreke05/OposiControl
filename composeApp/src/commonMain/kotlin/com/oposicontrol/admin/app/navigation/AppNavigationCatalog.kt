@@ -15,8 +15,12 @@ import com.oposicontrol.admin.core.ui.components.AppIcon
  * que los selecciona por ruta y no por grupo justamente para que reorganizar el
  * escritorio no toque la barra inferior del móvil.
  *
- * Consolidación de navegación (2026-09-04): de 31 entradas de sidebar a 14. Las
- * 17 que salieron del menú (Especialidades, Recursos, Rankings, Accesos, Planes,
+ * Consolidación de navegación (2026-09-04): de 31 entradas de sidebar a 14, y a
+ * 15 el 2026-09-14, cuando Especialidades recuperó su fila — había salido del
+ * menú sin quedar accesible por ningún otro camino, así que la única pantalla
+ * que da de alta especialidades y edita sus capacidades se quedó sin puerta.
+ *
+ * Las 16 que siguen fuera (Recursos, Rankings, Accesos, Planes,
  * Consumibles, Promociones, Pop-ups, Reportes, OposiTester, Estudio, Eventos,
  * Tipos de noticia, Assets, Roles, Configuración, Estado) NO se borraron: su
  * `AppRoute` sigue existiendo, sigue registrada aquí (con `showInSidebar =
@@ -100,15 +104,25 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         "Contenido",
         listOf(
             item(AppRoute.Content.Exams, "content.exams", "Exámenes", "Catálogo, preguntas y publicación de exámenes.", NavigationGroupId.CONTENT, AppIcon.EXAMS.key),
+            // Justo debajo de Exámenes, y no al final del grupo: es la
+            // configuración PREVIA a crear un examen —qué modos admite la
+            // oposición— y el editor no puede ofrecer un tipo que la
+            // especialidad no tenga abierto.
+            //
+            // Estuvo oculta entre el 2026-09-04 y el 2026-09-14. A diferencia de
+            // Recursos, que se absorbió en Preguntas, no quedó accesible por
+            // ningún otro camino: ni pestaña de hub, ni atajo del dashboard, ni
+            // la búsqueda global —que además necesita la tabla `search_index`,
+            // ausente en el proyecto Supabase apuntado—.
+            item(AppRoute.Content.Taxonomy, "content.taxonomy", "Especialidades", "Especialidades, comunidades, etiquetas y modos disponibles.", NavigationGroupId.CONTENT, AppIcon.LAYERS.key),
             item(AppRoute.Content.Questions, "content.questions", "Preguntas", "Revisión y edición de preguntas y sus recursos.", NavigationGroupId.CONTENT, AppIcon.QUESTIONS.key),
-            item(AppRoute.Content.Imports, "content.imports", "Importación", "Subida de PDF, revisión y publicación.", NavigationGroupId.CONTENT, AppIcon.IMPORT.key),
+            item(AppRoute.Content.Imports, "content.imports", "Importación", "Importa preguntas desde PDF, revisa el resultado y publícalo cuando esté listo.", NavigationGroupId.CONTENT, AppIcon.IMPORT.key),
             // Recursos ya vivía dentro de la misma pantalla que Preguntas
             // (QuestionsResourcesScreen) — toLegacySection() ya mapeaba ambas
             // rutas al mismo AdminSection.QUESTIONS_RESOURCES antes de esta
             // consolidación. No hacía falta tocar nada para que "la ruta antigua
             // de Recursos siga abriendo Preguntas": ya lo hacía.
             item(AppRoute.Content.Resources, "content.resources", "Recursos", "Recursos asociados al contenido inmersivo.", NavigationGroupId.CONTENT, AppIcon.RESOURCES.key, showInSidebar = false),
-            item(AppRoute.Content.Taxonomy, "content.taxonomy", "Especialidades", "Especialidades, comunidades, etiquetas y modos disponibles.", NavigationGroupId.CONTENT, AppIcon.LAYERS.key, showInSidebar = false),
         ),
     ),
     AppRouteMenuGroup(
@@ -168,7 +182,7 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         NavigationGroupId.OPERATIONS,
         "Publicación",
         listOf(
-            item(AppRoute.Publication.News, "publication.news", "Noticias", "Comunicación, tipos editoriales y assets.", NavigationGroupId.OPERATIONS, AppIcon.NEWS.key),
+            item(AppRoute.Publication.News, "publication.news", "Noticias", "Gestiona, prepara y publica las noticias que aparecen en OposiBot.", NavigationGroupId.OPERATIONS, AppIcon.NEWS.key),
             item(AppRoute.Publication.NewsTypes, "publication.news-types", "Tipos de noticia", "Catálogo editorial.", NavigationGroupId.OPERATIONS, AppIcon.NEWS_TYPES.key, showInSidebar = false),
             item(AppRoute.Publication.Assets, "publication.assets", "Assets", "Recursos visuales de publicación.", NavigationGroupId.OPERATIONS, AppIcon.ASSETS.key, showInSidebar = false),
         ),

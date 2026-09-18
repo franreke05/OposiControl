@@ -52,6 +52,7 @@ import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessIntent
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessScreen
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessViewModel
 import com.oposicontrol.admin.features.exams.presentation.ExamsIntent
+import com.oposicontrol.admin.features.exams.presentation.ExamWorkspaceScreen
 import com.oposicontrol.admin.features.exams.presentation.ExamsScreen
 import com.oposicontrol.admin.features.exams.presentation.ExamsViewModel
 import com.oposicontrol.admin.features.exams.presentation.ContentUploadScreen
@@ -113,6 +114,7 @@ import com.oposicontrol.admin.features.users.presentation.UsersIntent
 import com.oposicontrol.admin.features.users.presentation.UsersScreen
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
+import org.koin.compose.getKoin
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 
@@ -151,6 +153,15 @@ internal enum class AppContentTarget {
     CATALOG_HUB,
     NEWS_HUB,
     MODERATION_HUB,
+
+    /**
+     * Exámenes en escritorio: workspace de catálogo + examen + resumen.
+     *
+     * Mismo patrón que `DESKTOP_DASHBOARD`: la pantalla nueva se enruta sólo
+     * cuando NO es un layout compacto, y el camino móvil sigue cayendo en
+     * `MOBILE_CONTENT_ROOT` sin enterarse.
+     */
+    EXAM_WORKSPACE,
 }
 
 /**
@@ -173,6 +184,13 @@ internal fun resolveContentTarget(
     // pinta MobileDashboardScreen con el DashboardViewModel actual.
     route == AppRoute.Home && !compactLayout -> AppContentTarget.DESKTOP_DASHBOARD
     route == AppRoute.Content.Imports -> AppContentTarget.CONTENT_UPLOAD
+    // Exámenes en escritorio abre el workspace nuevo. `ExamDetail` entra por la
+    // misma puerta porque es el mismo examen abierto en la misma pantalla: en el
+    // workspace el detalle no es un destino aparte, es la columna central.
+    // En compacto NO cambia nada: cae en `MOBILE_CONTENT_ROOT` unas líneas más
+    // abajo, igual que hasta ahora.
+    (route == AppRoute.Content.Exams || route is AppRoute.Content.ExamDetail) &&
+        !compactLayout -> AppContentTarget.EXAM_WORKSPACE
     route == AppRoute.System.Status -> AppContentTarget.SYSTEM_STATUS
     route == AppRoute.Community.OposiRed -> AppContentTarget.FORUM
     route is AppRoute.Community.Thread -> AppContentTarget.THREAD_DETAIL
@@ -270,9 +288,12 @@ internal fun DashboardV2Destination.toAppRoute(): AppRoute = when (this) {
     DashboardV2Destination.SYSTEM_DIAGNOSTICS -> AppRoute.System.Diagnostics
     DashboardV2Destination.MODERATION_QUEUE -> AppRoute.Moderation.Queue
     DashboardV2Destination.OPOSITESTER_LIST -> AppRoute.OposiTester.List
-    // Crear examen y revisar borradores son la misma pantalla: los borradores
-    // son exámenes sin publicar, no una lista aparte.
+    // Revisar borradores es la pantalla de Exámenes: los borradores son exámenes
+    // sin publicar, no una lista aparte.
     DashboardV2Destination.EXAMS -> AppRoute.Content.Exams
+    // Misma ruta; lo que cambia es el gesto que se hace al llegar (ver
+    // [openDashboardDestination]).
+    DashboardV2Destination.NEW_EXAM -> AppRoute.Content.Exams
     DashboardV2Destination.QUESTIONS -> AppRoute.Content.Questions
     DashboardV2Destination.IMPORTS -> AppRoute.Content.Imports
     DashboardV2Destination.USERS -> AppRoute.Users.List
@@ -301,9 +322,30 @@ internal fun showsGlobalSearch(
     target: AppContentTarget,
     compactLayout: Boolean,
     hasLegacySection: Boolean,
+    /**
+     * Si la sección trae su propio buscador que SÍ encuentra cosas.
+     *
+     * Mismo criterio que el workspace de Exámenes, aplicado por sección en vez de
+     * por `target`: Preguntas cae en `LEGACY_SECTION` como otras quince pantallas,
+     * así que no se puede distinguir por ahí. Su banco tiene búsqueda real sobre
+     * código y enunciado; dejar encima la global —que contesta «Sin resultados»
+     * siempre— ponía dos cajas equivalentes una sobre otra.
+     */
+    sectionHasOwnSearch: Boolean = false,
 ): Boolean = !compactLayout &&
     hasLegacySection &&
-    target != AppContentTarget.DESKTOP_DASHBOARD
+    !sectionHasOwnSearch &&
+    target != AppContentTarget.DESKTOP_DASHBOARD &&
+    // Y tampoco en el workspace de Exámenes, por el mismo motivo y con un
+    // agravante: esa pantalla tiene su propio buscador local —«Buscar
+    // examen…»— que SÍ encuentra cosas. Dos campos de búsqueda uno encima de
+    // otro, y el de arriba contestando siempre «Sin resultados», enseñaría a
+    // desconfiar del que funciona.
+    target != AppContentTarget.EXAM_WORKSPACE &&
+    // Usuarios, igual: su catálogo busca de verdad por nombre y email sobre la
+    // lista cargada. La global quedaba justo encima contestando «Sin
+    // resultados» a cualquier cosa que se escribiera.
+    target != AppContentTarget.USERS_HUB
 
 /**
  * Etiqueta de la acción primaria de la cabecera.
@@ -320,11 +362,51 @@ internal fun showsGlobalSearch(
 internal fun primaryActionLabelFor(target: AppContentTarget, legacyLabel: String?): String? =
     when (target) {
         AppContentTarget.DESKTOP_DASHBOARD -> DASHBOARD_REFRESH_LABEL
+        // El workspace de Exámenes tampoco tiene adaptador legacy del que tomarla
+        // prestada. Su acción primaria abre un borrador EN BLANCO —no crea nada—,
+        // y por eso se llama «Nuevo examen» y no «Crear examen»: «Crear examen» es
+        // el botón de la barra de guardado de ese borrador, el que sí lo persiste.
+        // Dos botones coral con la misma etiqueta y efectos distintos en la misma
+        // pantalla garantizan que se pulse el que no era.
+        AppContentTarget.EXAM_WORKSPACE -> EXAM_NEW_LABEL
         AppContentTarget.LEGACY_SECTION -> legacyLabel
         else -> null
     }
 
+/**
+ * Si este destino del panel abre, además, un borrador de examen EN BLANCO (PC-15).
+ */
+internal fun DashboardV2Destination.opensBlankExamDraft(): Boolean =
+    this == DashboardV2Destination.NEW_EXAM
+
+/**
+ * Lo que hace el panel de escritorio al pulsar un atajo (PC-15).
+ *
+ * El atajo de crear examen navegaba a Exámenes y ahí se quedaba: el administrador
+ * aterrizaba en el catálogo, con el último examen abierto, y tenía que buscar el
+ * botón de crear. Ahora el destino [DashboardV2Destination.NEW_EXAM] pide además el
+ * borrador en blanco, con el MISMO intent que el botón «Nuevo examen» del propio
+ * workspace (`SwitchExam(null)`): si hay cambios sin guardar pregunta antes de
+ * tirarlos, y no escribe nada en la base — el examen sólo existe al guardarse.
+ *
+ * Está fuera del `@Composable` para poder probar que el borrador se pide y que la
+ * navegación ocurre igual, sin montar la aplicación.
+ */
+internal fun openDashboardDestination(
+    destination: DashboardV2Destination,
+    navigate: (AppRoute) -> Unit,
+    openBlankExamDraft: () -> Unit,
+) {
+    // Primero el borrador y después la navegación: `ExamsViewModel` es un `single`,
+    // así que el intent lo procesa la misma instancia que va a pintar la pantalla y
+    // ésta aparece ya con el editor vacío, sin un parpadeo del examen anterior.
+    if (destination.opensBlankExamDraft()) openBlankExamDraft()
+    navigate(destination.toAppRoute())
+}
+
 internal const val DASHBOARD_REFRESH_LABEL = "Actualizar"
+
+internal const val EXAM_NEW_LABEL = "Nuevo examen"
 
 @Composable
 fun AppRoot(
@@ -421,6 +503,12 @@ fun AppRoot(
             // otra ruta paga por instanciarlo.
             val dashboardV2ViewModel: DashboardV2ViewModel? =
                 if (contentTarget == AppContentTarget.DESKTOP_DASHBOARD) koinInject() else null
+            // Mismo motivo que arriba: la cabecera necesita el ViewModel para su
+            // acción primaria («Nuevo examen», que abre un borrador en blanco), así
+            // que se resuelve aquí y no dentro del slot de contenido. Ninguna otra
+            // ruta paga por él.
+            val examsViewModel: ExamsViewModel? =
+                if (contentTarget == AppContentTarget.EXAM_WORKSPACE) koinInject() else null
             AppShell(
                 currentRouteId = route.navigationId(),
                 groups = appNavigationGroups.toShellGroups(includeMobileOnly = compactLayout),
@@ -475,6 +563,12 @@ fun AppRoot(
                     AppContentTarget.DESKTOP_DASHBOARD -> dashboardV2ViewModel?.let { viewModel ->
                         { viewModel.dispatch(DashboardV2Intent.RefreshAll) }
                     }
+                    AppContentTarget.EXAM_WORKSPACE -> examsViewModel?.let { viewModel ->
+                        // SwitchExam y no CreateNew: en el workspace este botón
+                        // tira el examen que se esté editando, así que pasa por
+                        // la misma confirmación que el catálogo.
+                        { viewModel.dispatch(ExamsIntent.SwitchExam(null)) }
+                    }
                     AppContentTarget.LEGACY_SECTION -> legacyRoute?.onPrimaryAction
                     else -> null
                 },
@@ -488,7 +582,13 @@ fun AppRoot(
                 // de `DesktopShell` usa `spacedBy`, que sólo separa hijos que se
                 // han medido. Así «Estado del sistema» queda pegado a la cabecera.
                 globalSearch = {
-                    if (showsGlobalSearch(contentTarget, compactLayout, legacySection != null)) {
+                    if (showsGlobalSearch(
+                            target = contentTarget,
+                            compactLayout = compactLayout,
+                            hasLegacySection = legacySection != null,
+                            sectionHasOwnSearch = legacySection == AdminSection.QUESTIONS_RESOURCES,
+                        )
+                    ) {
                         GlobalTagSearch(
                             currentSection = requireNotNull(legacySection),
                             repository = tagSearchRepository,
@@ -499,6 +599,11 @@ fun AppRoot(
             ) {
                 when (contentTarget) {
                     AppContentTarget.DESKTOP_DASHBOARD -> {
+                        // PC-15: el `ExamsViewModel` se resuelve SÓLO al pulsar
+                        // «Nuevo examen», no al pintar el panel: inyectarlo aquí
+                        // cargaría el catálogo de exámenes cada vez que se abre
+                        // Inicio.
+                        val koin = getKoin()
                         // El mismo ViewModel que alimenta el botón «Actualizar»
                         // de la cabecera; en esta rama nunca es null.
                         DashboardV2Screen(
@@ -507,7 +612,15 @@ fun AppRoot(
                             // raíz, igual que hace la selección de sidebar. Con
                             // `push` cada atajo dejaría un nivel de vuelta atrás
                             // que en escritorio no se ve.
-                            onOpen = { destination -> navigator.reset(destination.toAppRoute()) },
+                            onOpen = { destination ->
+                                openDashboardDestination(
+                                    destination = destination,
+                                    navigate = { targetRoute -> navigator.reset(targetRoute) },
+                                    openBlankExamDraft = {
+                                        koin.get<ExamsViewModel>().dispatch(ExamsIntent.SwitchExam(null))
+                                    },
+                                )
+                            },
                         )
                     }
                     AppContentTarget.TAB_PAGER -> MobilePrimaryTabPager(
@@ -581,6 +694,16 @@ fun AppRoot(
                         val testerId = (route as AppRoute.OposiTester.Detail).testerId
                         TesterDetailScreen(viewModel = koinInject(parameters = { parametersOf(testerId) }))
                     }
+                    AppContentTarget.EXAM_WORKSPACE -> ExamWorkspaceScreen(
+                        // El mismo ViewModel que alimenta «Nuevo examen» en la
+                        // cabecera; en esta rama nunca es null.
+                        viewModel = requireNotNull(examsViewModel),
+                        // Vincular una pregunta a un examen es hoy un efecto
+                        // lateral de editar la pregunta, y eso se hace en la
+                        // pantalla de Preguntas. El enlace es real, no un atajo
+                        // decorativo: lleva justo donde se hace.
+                        onOpenQuestionBank = { navigator.push(AppRoute.Content.Questions) },
+                    )
                     AppContentTarget.MOBILE_CONTENT_ROOT -> MobileContentRoot(
                         appConfig = appConfig,
                         initialView = route.toMobileContentView(),
@@ -879,7 +1002,14 @@ private fun adminSectionRoute(
             // ya no depende de él.
             val viewModel: QuestionsViewModel = koinInject()
             AdminSectionRoute(
-                onPrimaryAction = {},
+                // «Nueva pregunta» estaba cableado a `{}`: el botón de la
+                // cabecera existía en `AppDestination` y no hacía absolutamente
+                // nada al pulsarlo. Abre el editor en alta, que es lo que promete.
+                onPrimaryAction = {
+                    viewModel.dispatch(
+                        com.oposicontrol.admin.features.questions.presentation.QuestionsIntent.StartCreate,
+                    )
+                },
                 content = { QuestionsScreen(viewModel) },
             )
         }

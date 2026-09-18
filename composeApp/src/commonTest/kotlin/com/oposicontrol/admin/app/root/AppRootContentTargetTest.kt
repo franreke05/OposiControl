@@ -57,6 +57,33 @@ class AppRootContentTargetTest {
         assertEquals(AppRoute.Analytics.Home, DashboardV2Destination.ANALYTICS.toAppRoute())
         assertEquals(AppRoute.Commercial.Subscriptions, DashboardV2Destination.SUBSCRIPTIONS.toAppRoute())
         assertEquals(AppRoute.System.Audit, DashboardV2Destination.AUDIT.toAppRoute())
+        assertEquals(AppRoute.Content.Exams, DashboardV2Destination.NEW_EXAM.toAppRoute())
+    }
+
+    /**
+     * PC-15: el atajo de examen nuevo navega a Exámenes Y pide el borrador en blanco,
+     * con el mismo intent que el botón «Nuevo examen» del workspace. Navegar sin
+     * pedirlo dejaría al administrador en el catálogo con el último examen abierto.
+     */
+    @Test
+    fun theNewExamShortcutOpensABlankDraftAndOnlyThatShortcutDoes() {
+        DashboardV2Destination.entries.forEach { destination ->
+            val navigated = mutableListOf<AppRoute>()
+            var blankDrafts = 0
+
+            openDashboardDestination(
+                destination = destination,
+                navigate = { navigated += it },
+                openBlankExamDraft = { blankDrafts++ },
+            )
+
+            assertEquals(listOf(destination.toAppRoute()), navigated, "$destination tiene que navegar una vez")
+            assertEquals(
+                if (destination == DashboardV2Destination.NEW_EXAM) 1 else 0,
+                blankDrafts,
+                "$destination y el borrador en blanco",
+            )
+        }
     }
 
     @Test
@@ -468,11 +495,34 @@ class AppRootContentTargetTest {
                 hasLegacySection = true,
             ),
         )
-        assertTrue(
+    }
+
+    @Test
+    fun usuariosNoDibujaLaBusquedaGlobalPorqueTieneLaSuya() {
+        // Mismo criterio que el panel de escritorio y el workspace de Exámenes: el
+        // catálogo de Usuarios busca de verdad por nombre y email, y encima
+        // quedaba la global contestando siempre «Sin resultados».
+        assertFalse(
             showsGlobalSearch(
                 target = AppContentTarget.USERS_HUB,
                 compactLayout = false,
                 hasLegacySection = true,
+            ),
+        )
+    }
+
+    @Test
+    fun preguntasNoDibujaLaBusquedaGlobalPorqueTieneLaSuya() {
+        // Mismo criterio que el workspace de Exámenes, que ya estaba excluido: el
+        // banco de Preguntas busca de verdad sobre código y enunciado, y encima
+        // quedaba la global contestando siempre «Sin resultados». Dos cajas
+        // equivalentes, y la de arriba enseñando a desconfiar de la que funciona.
+        assertFalse(
+            showsGlobalSearch(
+                target = AppContentTarget.LEGACY_SECTION,
+                compactLayout = false,
+                hasLegacySection = true,
+                sectionHasOwnSearch = true,
             ),
         )
     }
@@ -531,5 +581,94 @@ class AppRootContentTargetTest {
             primaryActionLabelFor(AppContentTarget.LEGACY_SECTION, legacyLabel = "Crear usuario"),
         )
         assertNull(primaryActionLabelFor(AppContentTarget.LEGACY_SECTION, legacyLabel = null))
+    }
+
+    // --- Exámenes: workspace en escritorio, camino móvil intacto -------------
+
+    @Test
+    fun examenesEnEscritorioAbreElWorkspaceNuevo() {
+        assertEquals(
+            AppContentTarget.EXAM_WORKSPACE,
+            resolveContentTarget(
+                AppRoute.Content.Exams,
+                compactLayout = false,
+                showTabPager = false,
+                hasLegacyRoute = true,
+            ),
+        )
+    }
+
+    @Test
+    fun elDetalleDeExamenEntraPorLaMismaPuertaQueElCatalogo() {
+        // En el workspace, el detalle no es un destino aparte: es la columna
+        // central de la misma pantalla.
+        assertEquals(
+            AppContentTarget.EXAM_WORKSPACE,
+            resolveContentTarget(
+                AppRoute.Content.ExamDetail("EX-123"),
+                compactLayout = false,
+                showTabPager = false,
+                hasLegacyRoute = true,
+            ),
+        )
+    }
+
+    @Test
+    fun enCompactoExamenesSigueCayendoEnElContenidoMovil() {
+        // La rama que NO puede cambiar: el workspace es una pantalla de tres
+        // columnas y no cabe en un móvil.
+        listOf<AppRoute>(AppRoute.Content.Exams, AppRoute.Content.ExamDetail("EX-123")).forEach { route ->
+            assertEquals(
+                AppContentTarget.MOBILE_CONTENT_ROOT,
+                resolveContentTarget(route, compactLayout = true, showTabPager = false, hasLegacyRoute = true),
+                "«$route» en compacto debe seguir abriendo el contenido móvil.",
+            )
+        }
+    }
+
+    @Test
+    fun importacionesNoQuedaAtrapadaPorElWorkspaceDeExamenes() {
+        // `Content.Imports` es también una ruta de Contenido y se resuelve antes:
+        // si el guard de Exámenes se colocara mal, se llevaría por delante la
+        // pantalla de importación.
+        assertEquals(
+            AppContentTarget.CONTENT_UPLOAD,
+            resolveContentTarget(
+                AppRoute.Content.Imports,
+                compactLayout = false,
+                showTabPager = false,
+                hasLegacyRoute = true,
+            ),
+        )
+    }
+
+    @Test
+    fun elWorkspaceDeExamenesNoDibujaLaBusquedaGlobal() {
+        // Tiene buscador local propio —y ése sí encuentra—. Dos campos de
+        // búsqueda uno sobre otro, con el de arriba contestando siempre «Sin
+        // resultados», enseñan a desconfiar del que funciona.
+        assertFalse(
+            showsGlobalSearch(
+                target = AppContentTarget.EXAM_WORKSPACE,
+                compactLayout = false,
+                hasLegacySection = true,
+            ),
+        )
+    }
+
+    @Test
+    fun laAccionDePaginaDelWorkspaceDeExamenesSeLlamaNuevoExamen() {
+        // Abre un borrador en blanco y no crea nada, así que no puede llamarse
+        // igual que el botón de la barra de guardado —«Crear examen»—, que sí lo
+        // persiste: dos acciones coral con la misma etiqueta y efectos distintos
+        // en la misma pantalla. Y no toma prestada la etiqueta del adaptador.
+        assertEquals(
+            "Nuevo examen",
+            primaryActionLabelFor(AppContentTarget.EXAM_WORKSPACE, legacyLabel = null),
+        )
+        assertEquals(
+            "Nuevo examen",
+            primaryActionLabelFor(AppContentTarget.EXAM_WORKSPACE, legacyLabel = "Otra cosa"),
+        )
     }
 }

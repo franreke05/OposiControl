@@ -141,20 +141,25 @@ class NavigationInformationArchitectureTest {
     }
 
     // --- Consolidación de navegación (2026-09-04): de 31 a 14 -----------------
-    // El sidebar pasó de 31 entradas a 14. Estas pruebas fijan el número exacto
-    // y que cada ruta que salió del menú (a) sigue registrada, (b) sigue
-    // resolviendo metadata sin reventar, y (c) sigue accesible por ruta directa
-    // — que es justo lo que "reorganizar sin borrar funcionalidad" significa.
+    // El sidebar pasó de 31 entradas a 14, y volvió a 15 cuando Especialidades
+    // recuperó su fila (ver theSidebarHasExactlyTheFifteenTargetEntries). Estas
+    // pruebas fijan el número exacto y que cada ruta que salió del menú (a) sigue
+    // registrada, (b) sigue resolviendo metadata sin reventar, y (c) sigue
+    // accesible por ruta directa — que es justo lo que "reorganizar sin borrar
+    // funcionalidad" significa.
 
     @Test
-    fun theSidebarHasExactlyTheFourteenTargetEntries() {
+    fun theSidebarHasExactlyTheFifteenTargetEntries() {
         val sidebarTitles = appNavigationGroups.flatMap { it.sidebarItems }.map { it.metadata.title }
 
-        assertEquals(14, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 14: $sidebarTitles")
+        assertEquals(15, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 15: $sidebarTitles")
         assertEquals(
             listOf(
                 "Dashboard",
-                "Exámenes", "Preguntas", "Importación",
+                // Especialidades va justo debajo de Exámenes: es su configuración
+                // previa —qué modos admite la oposición— y el editor de exámenes
+                // no puede ofrecer un tipo que la especialidad no tenga abierto.
+                "Exámenes", "Especialidades", "Preguntas", "Importación",
                 "Usuarios",
                 "Catálogo", "OposiMarket", "OposiTickets",
                 "OposiRed", "Moderación", "Soporte",
@@ -164,6 +169,20 @@ class NavigationInformationArchitectureTest {
             ),
             sidebarTitles,
         )
+    }
+
+    @Test
+    fun specialtiesIsReachableFromTheSidebarRightBelowExams() {
+        // El defecto que cierra: la consolidación dejó `Content.Taxonomy` con
+        // `showInSidebar = false` pero NO la absorbió en ninguna pestaña de hub
+        // —a diferencia de Recursos, que se fue a Preguntas—. Ni los atajos del
+        // dashboard ni la búsqueda global llegaban a ella, así que la única
+        // pantalla que da de alta especialidades y edita sus capacidades se
+        // quedó sin ninguna puerta.
+        val content = appNavigationGroups.single { it.id == NavigationGroupId.CONTENT }
+        val titles = content.sidebarItems.map { it.metadata.title }
+
+        assertEquals(listOf("Exámenes", "Especialidades", "Preguntas", "Importación"), titles)
     }
 
     @Test
@@ -177,12 +196,15 @@ class NavigationInformationArchitectureTest {
     }
 
     @Test
-    fun theSeventeenRemovedRoutesAreHiddenNotDeleted() {
+    fun theSixteenRemovedRoutesAreHiddenNotDeleted() {
         // Las cuatro rutas de Sistema (Roles/Settings/Diagnostics/Audit) suman
         // sólo tres aquí: Settings es la que se dejó visible como "Sistema" —
         // ver systemSettingsIsTheOneVisibleSystemEntryRelabeledSistema.
+        //
+        // Y son dieciséis, no diecisiete: `Content.Taxonomy` (Especialidades)
+        // recuperó su fila en el sidebar — ver
+        // specialtiesIsReachableFromTheSidebarRightBelowExams.
         val hiddenRoutes = listOf(
-            AppRoute.Content.Taxonomy,
             AppRoute.Content.Resources,
             AppRoute.Rankings,
             AppRoute.Commercial.Subscriptions,
