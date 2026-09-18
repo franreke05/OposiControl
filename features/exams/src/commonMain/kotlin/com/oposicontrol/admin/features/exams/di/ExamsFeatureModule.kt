@@ -2,8 +2,9 @@ package com.oposicontrol.admin.features.exams.di
 
 import com.oposicontrol.admin.domain.usecase.communities.ObserveCommunitiesUseCase
 import com.oposicontrol.admin.domain.usecase.communities.RefreshCommunitiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.ArchiveExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
-import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.ArchiveQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaUseCase
@@ -24,10 +25,13 @@ import com.oposicontrol.admin.domain.usecase.content.UnpublishExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.ImportQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.MoveRafagaQuestionUseCase
+import com.oposicontrol.admin.domain.usecase.content.ObserveAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveRafagasUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveSpecialtiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.RefreshAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.UnlinkQuestionFromExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshRafagasUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertExamUseCase
@@ -46,6 +50,12 @@ val examsFeatureModule = module {
     factory { RefreshSpecialtiesUseCase(get()) }
     factory { UpsertSpecialtyUseCase(get()) }
     factory { DeleteSpecialtyUseCase(get()) }
+    factory { ObserveAllExamsUseCase(get()) }
+    factory { RefreshAllExamsUseCase(get()) }
+    factory { UnlinkQuestionFromExamUseCase(get()) }
+    factory { ArchiveQuestionUseCase(get()) }
+    // Siguen registrados: los consume `ContentUploadViewModel`, que trabaja
+    // sobre la lista de solucionarios del camino móvil.
     factory { ObserveExamsUseCase(get()) }
     factory { ObserveRafagasUseCase(get()) }
     factory { RefreshExamsUseCase(get()) }
@@ -55,6 +65,7 @@ val examsFeatureModule = module {
     factory { GetExamResourceAuditUseCase(get()) }
     factory { UpsertExamUseCase(get()) }
     factory { DeleteExamUseCase(get()) }
+    factory { ArchiveExamUseCase(get()) }
     factory { PublishExamUseCase(get()) }
     factory { UnpublishExamUseCase(get()) }
     factory { GetSpecialtyCapabilitiesUseCase(get()) }
@@ -64,7 +75,7 @@ val examsFeatureModule = module {
     factory { DeleteRafagaUseCase(get()) }
     factory { UpsertQuestionUseCase(get()) }
     factory { ImportQuestionsUseCase(get()) }
-    factory { DeleteQuestionUseCase(get()) }
+
     factory { MoveQuestionUseCase(get()) }
     factory { UpsertRafagaQuestionUseCase(get()) }
     factory { DeleteRafagaQuestionUseCase(get()) }
@@ -83,18 +94,19 @@ val examsFeatureModule = module {
         ExamsViewModel(
             dispatcherProvider = get(),
             observeSpecialtiesUseCase = get(),
-            observeExamsUseCase = get(),
+            observeAllExamsUseCase = get(),
             observeRafagasUseCase = get(),
             refreshSpecialtiesUseCase = get(),
             upsertSpecialtyUseCase = get(),
             deleteSpecialtyUseCase = get(),
-            refreshExamsUseCase = get(),
+            refreshAllExamsUseCase = get(),
             refreshRafagasUseCase = get(),
             getExamQuestionsUseCase = get(),
             getRafagaQuestionsUseCase = get(),
             getExamResourceAuditUseCase = get(),
             upsertExamUseCase = get(),
             deleteExamUseCase = get(),
+            archiveExamUseCase = get(),
             publishExamUseCase = get(),
             unpublishExamUseCase = get(),
             getSpecialtyCapabilitiesUseCase = get(),
@@ -104,7 +116,8 @@ val examsFeatureModule = module {
             deleteRafagaUseCase = get(),
             upsertQuestionUseCase = get(),
             importQuestionsUseCase = get(),
-            deleteQuestionUseCase = get(),
+            unlinkQuestionFromExamUseCase = get(),
+            archiveQuestionUseCase = get(),
             moveQuestionUseCase = get(),
             upsertRafagaQuestionUseCase = get(),
             deleteRafagaQuestionUseCase = get(),

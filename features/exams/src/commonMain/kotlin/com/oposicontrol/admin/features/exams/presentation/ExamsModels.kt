@@ -76,13 +76,64 @@ enum class ExamEditorMode {
 }
 
 sealed interface PendingDeleteTarget {
-    data object Exam : PendingDeleteTarget
+    /**
+     * ARCHIVAR el examen abierto: reversible.
+     *
+     * Se llamaba `Exam`, sin más, cuando archivar era lo único que la pantalla
+     * sabía hacer con un examen y además se ofrecía bajo el rótulo «Eliminar».
+     * Ahora hay dos objetivos y ninguno de los dos puede llamarse por el nombre
+     * del otro ni por un nombre que valga para los dos.
+     */
+    data object ArchiveExam : PendingDeleteTarget
+
+    /**
+     * **BORRAR el examen abierto: irreversible.**
+     *
+     * El «Forever» del nombre no es énfasis: es la única diferencia con
+     * [ArchiveExam] en el sitio donde se decide qué hacer
+     * (`confirmPendingDelete`), y un `Exam` a secas junto a un `ArchiveExam` se
+     * lee como «el genérico» — que es exactamente el error que hay que hacer
+     * imposible.
+     *
+     * El servidor puede negarse: si del examen cuelgan datos de usuarios responde
+     * 409 y no borra nada. Eso llega como aviso de la acción, no como error de
+     * campo (ver `examDeletionNotice`).
+     */
+    data object DeleteExamForever : PendingDeleteTarget
     data object Rafaga : PendingDeleteTarget
+
+    /**
+     * Archivar la pregunta SELECCIONADA en el editor.
+     *
+     * Es el objetivo del camino móvil, que trabaja sobre `selectedQuestionId`.
+     * Conserva su comportamiento —la pregunta sale del banco y por tanto de
+     * todos los exámenes—; lo que cambia es que ahora lo ejecuta el caso de uso
+     * que dice eso en su nombre.
+     */
     data object Question : PendingDeleteTarget
     data object RafagaQuestion : PendingDeleteTarget
     data object Specialty : PendingDeleteTarget
     data object ExamCover : PendingDeleteTarget
     data class Resource(val resourceId: String) : PendingDeleteTarget
+
+    /** Quitar el vínculo de esta pregunta con el examen abierto. La pregunta sigue en el banco. */
+    data class UnlinkQuestion(val questionId: String) : PendingDeleteTarget
+
+    /** Archivar esta pregunta del banco: sale de todos los exámenes en los que esté. */
+    data class ArchiveQuestion(val questionId: String) : PendingDeleteTarget
+
+    /**
+     * Abrir otro examen —o empezar uno nuevo, con [examId] a `null`— descartando
+     * los cambios del editor.
+     *
+     * No borra nada del servidor, y aun así vive aquí. El nombre del contenedor
+     * dice «delete» pero lo que agrupa es «acciones con una consecuencia
+     * irreversible que hay que confirmar antes», y perder media hora de
+     * formulario lo es. La alternativa era montar un segundo mecanismo de
+     * confirmación en paralelo al que la pantalla ya tiene, y dos formas de
+     * preguntar lo mismo acaban divergiendo.
+     */
+    data class SwitchExam(val examId: String?) : PendingDeleteTarget
 }
 
 internal fun blankQuestionId(): String = randomUuid()

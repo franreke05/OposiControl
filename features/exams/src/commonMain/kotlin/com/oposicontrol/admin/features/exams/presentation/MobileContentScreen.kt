@@ -1033,15 +1033,22 @@ private fun SolucionarioEditor(
                     ),
                 ),
             )
-            MobileSectionLabel("Eliminar contenido")
+            // Decía «Eliminar» y archivaba. Ahora dice lo que hace.
+            //
+            // El camino móvil ofrece SÓLO archivar, y es una decisión: borrar un
+            // examen para siempre no es una acción para una pantalla de teléfono
+            // con los pulgares. El borrado definitivo vive en la pestaña
+            // Publicación del panel de escritorio, con su sección aparte y su
+            // confirmación seria.
+            MobileSectionLabel("Retirar del catálogo")
             ResponsiveActionRow(
                 actions = listOf(
                     MobileActionSpec(
                         icon = MobileIcon.Remove,
-                        label = "Eliminar",
+                        label = "Archivar",
                         minWidth = 132,
                         enabled = state.selectedExamId != null,
-                        onClick = { onIntent(ExamsIntent.RequestDeleteSelectedExam) },
+                        onClick = { onIntent(ExamsIntent.RequestArchiveSelectedExam) },
                     ),
                 ),
             )

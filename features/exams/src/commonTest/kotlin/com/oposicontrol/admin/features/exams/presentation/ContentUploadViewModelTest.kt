@@ -98,7 +98,6 @@ private class ContentUploadTestContentRepository : ContentRepository {
     override suspend fun deleteRafaga(rafagaId: String): AppResult<Unit> = error("not used by ContentUploadViewModel")
     override suspend fun upsertQuestion(question: ExamQuestion): AppResult<ExamQuestion> = error("not used by ContentUploadViewModel")
     override suspend fun importQuestions(examId: String, questions: List<ExamQuestion>): AppResult<List<ExamQuestion>> = error("not used by ContentUploadViewModel")
-    override suspend fun deleteQuestion(examId: String, questionId: String): AppResult<Unit> = error("not used by ContentUploadViewModel")
     override suspend fun moveQuestion(examId: String, questionId: String, direction: QuestionMoveDirection): AppResult<List<ExamQuestion>> = error("not used by ContentUploadViewModel")
     override suspend fun upsertRafagaQuestion(question: RafagaQuestion): AppResult<RafagaQuestion> = error("not used by ContentUploadViewModel")
     override suspend fun deleteRafagaQuestion(rafagaId: String, questionId: String): AppResult<Unit> = error("not used by ContentUploadViewModel")
@@ -149,7 +148,7 @@ private class FakeContentImportRepository : ContentImportRepository {
 
     override suspend fun updateStaging(item: ContentImportStagingItem): AppResult<ContentImportStagingItem> = AppResult.Success(item)
 
-    override suspend fun publishImportBatch(batchId: String): AppResult<ContentImportBatch> {
+    override suspend fun publishImportBatch(batchId: String, confirmExamPublished: Boolean): AppResult<ContentImportBatch> {
         val current = gate
         publishCalls++
         current.await()

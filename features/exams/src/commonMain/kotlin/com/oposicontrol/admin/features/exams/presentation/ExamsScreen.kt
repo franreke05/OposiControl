@@ -119,7 +119,10 @@ fun ExamsContent(
             ExamDetailPane(
                 state = state,
                 onIntent = onIntent,
-                onRequestArchive = { onIntent(ExamsIntent.RequestDeleteSelectedExam) },
+                // El parámetro se llama `onRequestArchive` y ahora manda de
+                // verdad la intención de archivar: antes mandaba la de «borrar»,
+                // que archivaba.
+                onRequestArchive = { onIntent(ExamsIntent.RequestArchiveSelectedExam) },
             )
         },
     )
@@ -130,10 +133,21 @@ fun ExamsContent(
     // de "hay un borrado pendiente" en dos sitios. Esta pantalla puede producir
     // dos de esos targets: archivar el examen y quitar su portada.
     when (state.pendingDeleteTarget) {
-        PendingDeleteTarget.Exam -> ConfirmDialog(
+        PendingDeleteTarget.ArchiveExam -> ConfirmDialog(
             title = "Archivar examen",
             message = state.pendingDeleteMessage,
             confirmLabel = "Archivar",
+            dismissLabel = "No archivar",
+            onConfirm = { onIntent(ExamsIntent.ConfirmPendingDelete) },
+            onDismiss = { onIntent(ExamsIntent.DismissPendingDelete) },
+        )
+        // Mismo par de diálogos que el workspace, y con el mismo texto: los dos
+        // salen del ViewModel, así que las dos pantallas no pueden divergir.
+        PendingDeleteTarget.DeleteExamForever -> ConfirmDialog(
+            title = "Eliminar el examen para siempre",
+            message = state.pendingDeleteMessage,
+            confirmLabel = "Sí, eliminar",
+            dismissLabel = "No eliminar",
             onConfirm = { onIntent(ExamsIntent.ConfirmPendingDelete) },
             onDismiss = { onIntent(ExamsIntent.DismissPendingDelete) },
         )
