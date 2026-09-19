@@ -20,7 +20,12 @@ object CandidateFiles {
     private fun leer(ruta: String): String {
         val f = File(raiz, ruta)
         check(f.isFile) { "Falta $ruta" }
-        return f.readText()
+        // `core.autocrlf=true` entrega CRLF en un checkout fresco (el blob es LF)
+        // pero no en un working tree donde el fichero nunca pasó por un checkout
+        // real. RoleSyncMutationTest busca patrones multilinea con `\n` puro
+        // (`Char(10)`): sin normalizar aquí, esas mutaciones no encuentran nada
+        // que reemplazar en CRLF y fallan solo fuera de ese working tree concreto.
+        return f.readText().replace("\r\n", "\n")
     }
 
     fun guard(): String = leer("supabase/canonical/role_sync_guard_candidate_v1/001_admin_sync_roles_guard.sql")
