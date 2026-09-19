@@ -365,7 +365,7 @@ class KtorAdminV1ContentRepositoryImplTest {
                 val post = seen.single { it.method.value == "POST" && it.url.encodedPath == "/api/v1/admin/preguntas" }
                 val body = Json.parseToJsonElement(post.bodyText()).jsonObject
                 assertEquals("\"$tipoPregunta\"", body.getValue("tipoPregunta").toString(), "examen $tipoExamen")
-                assertEquals("\"ESP-X\"", body.getValue("especialidadId").toString(), "la especialidad es la del examen")
+                assertFalse("especialidadId" in body, "la pregunta no tiene especialidad (M8): $body")
                 assertEquals(
                     1,
                     seen.count { it.method.value == "GET" && it.url.encodedPath == "/api/v1/admin/examenes/EX-X" },

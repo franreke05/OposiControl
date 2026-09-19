@@ -289,7 +289,6 @@ class KtorAdminV1ContentRepositoryImpl(
         // guardada y un mapeo que convertía Razonado en `rafaga`, que la base rechaza.
         val exam = getExamen(question.examId)
         val body = question.toDto(typePregunta = questionTypeFor(exam.tipoExamen))
-            .copy(especialidadId = exam.especialidadId)
         val response = if (endpoint == BackendRoutes.ADMIN_V1_PREGUNTAS) {
             client.post(adminUrl(endpoint)) {
                 adminHeaders()
@@ -491,7 +490,6 @@ class KtorAdminV1ContentRepositoryImpl(
         }
         val dto = AdminPreguntaDto(
             id = question.id,
-            especialidadId = getExamen(question.rafagaId).especialidadId,
             tipoPregunta = "rafaga",
             titulo = question.statement,
             fuenteTexto = question.statement,
@@ -1082,7 +1080,6 @@ private data class AdminExamenDto(
 private data class AdminPreguntaDto(
     val id: String = "",
     val codigoPregunta: String = "",
-    val especialidadId: String = "",
     /**
      * Siempre en el cable (K0-1). Con el default `"rafaga"` y el `Json` del cliente
      * sin `encodeDefaults`, una pregunta Ráfaga salía SIN tipo y sólo se guardaba bien
@@ -1460,7 +1457,6 @@ private fun AdminPreguntaDto.toRafagaQuestion(rafagaId: String) = RafagaQuestion
  */
 private fun ExamQuestion.toDto(typePregunta: String) = AdminPreguntaDto(
     id = id,
-    especialidadId = "",
     tipoPregunta = typePregunta,
     titulo = statement,
     opciones = options.sortedBy { it.sortOrder }.map { it.toDto() },

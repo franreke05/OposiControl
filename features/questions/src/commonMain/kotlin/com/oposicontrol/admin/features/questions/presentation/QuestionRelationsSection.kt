@@ -34,9 +34,9 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
  * dice como fallo. Antes se inferían de la sesión y una lista vacía no significaba
  * nada, así que la pantalla tenía que disculparse con una nota.
  *
- * Vincular y quitar tienen ruta propia, sin reenviar el borrador. En un alta la
- * especialidad se ELIGE, y el examen inicial es opcional: si se elige, la base lo
- * vincula en la misma transacción que crea la pregunta.
+ * Vincular y quitar tienen ruta propia, sin reenviar el borrador. En un alta el
+ * examen inicial es opcional —la pregunta no tiene especialidad (M8)—: si se elige, la
+ * base lo vincula en la misma transacción que crea la pregunta.
  */
 @Composable
 internal fun QuestionRelationsSection(state: QuestionsState, onIntent: (QuestionsIntent) -> Unit) {
@@ -69,32 +69,10 @@ internal fun QuestionRelationsSection(state: QuestionsState, onIntent: (Question
     }
 }
 
-/** Alta: la especialidad (obligatoria) y el examen inicial (opcional). */
+/** Alta: sólo el examen inicial, opcional. La pregunta no tiene especialidad (M8). */
 @Composable
 private fun QuestionCreateTargets(state: QuestionsState, onIntent: (QuestionsIntent) -> Unit) {
     val tokens = GlassTheme.tokens
-    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
-        Text(
-            text = "Especialidad",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold,
-            color = tokens.textPrimary,
-        )
-        val specialties = (state.specialties as? UiAsync.Success)?.value.orEmpty()
-            .map { QuestionFilterOption(it.id, it.name) }
-        QuestionSelect(
-            selectedLabel = specialties.firstOrNull { it.value == state.draftSpecialtyId }?.label ?: "Elige una especialidad",
-            options = specialties,
-            onSelect = { onIntent(QuestionsIntent.UpdateCreateSpecialtyId(it)) },
-            accessibilityLabel = "Especialidad de la pregunta",
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Text(
-            text = "Obligatoria: la pregunta pertenece a una especialidad desde que nace.",
-            style = MaterialTheme.typography.bodySmall,
-            color = tokens.textSecondary,
-        )
-    }
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
         Text(
             text = "Examen inicial (opcional)",
@@ -102,14 +80,12 @@ private fun QuestionCreateTargets(state: QuestionsState, onIntent: (QuestionsInt
             fontWeight = FontWeight.SemiBold,
             color = tokens.textPrimary,
         )
-        // Sólo los exámenes que la base aceptaría: del tipo elegido y de la
-        // especialidad elegida (KQ0-5). Sin especialidad, ninguno: elegir un examen
-        // antes que la especialidad sería elegir a ciegas.
-        val linkable = if (state.draftSpecialtyId.isBlank()) {
-            emptyList()
-        } else {
-            questionLinkableExamOptions(state.exams, state.draftType, specialtyId = state.draftSpecialtyId)
-        }
+        // Todos los exámenes del TIPO elegido, de cualquier especialidad y estado
+        // (M8). El selector siempre existe —«Sin examen inicial» es una respuesta
+        // válida—; si no hay candidatos o el catálogo no cargó, se dice debajo en vez
+        // de fingir una lista vacía.
+        val examsView = questionLinkableExamsView(state.exams, state.draftType)
+        val linkable = (examsView as? QuestionLinkableExamsView.Options)?.options.orEmpty()
         QuestionSelect(
             selectedLabel = linkable.firstOrNull { it.value == state.draftCreateExamId }?.label ?: "Sin examen inicial",
             options = listOf(QuestionFilterOption("", "Sin examen inicial")) + linkable,
@@ -122,6 +98,13 @@ private fun QuestionCreateTargets(state: QuestionsState, onIntent: (QuestionsInt
             style = MaterialTheme.typography.bodySmall,
             color = tokens.textSecondary,
         )
+        questionLinkableExamsNote(examsView)?.let { (note, isError) ->
+            Text(
+                text = note,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isError) tokens.dangerInk else tokens.textSecondary,
+            )
+        }
     }
 }
 

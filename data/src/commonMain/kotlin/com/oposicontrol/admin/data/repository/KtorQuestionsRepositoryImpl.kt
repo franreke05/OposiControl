@@ -68,7 +68,6 @@ class KtorQuestionsRepositoryImpl(
             adminAuthHeaders(appConfig, sessionLocalDataSource)
             query.search.trim().take(QUESTION_SEARCH_MAX_LENGTH).takeIf { it.isNotEmpty() }?.let { parameter("q", it) }
             query.type?.let { parameter("tipo", it.wireValue) }
-            query.specialtyId?.takeIf { it.isNotBlank() }?.let { parameter("especialidadId", it) }
             parameter("activa", query.active.wireValue)
             query.examId?.takeIf { it.isNotBlank() }?.let { parameter("examenId", it) }
             parameter("orden", query.sort.wireValue)
@@ -99,13 +98,12 @@ class KtorQuestionsRepositoryImpl(
     /**
      * Alta (KQ2-4): el `id` es el que generó la pantalla y se REPITE en cada
      * reintento, así que un timeout no puede acabar en dos preguntas. Sin lectura
-     * previa del examen: la especialidad la elige el administrador, y el examen
+     * previa del examen: la pregunta no tiene especialidad (M8), y el examen
      * inicial —si lo hay— viaja en el mismo cuerpo y se vincula en la misma
      * transacción del servidor.
      */
     override suspend fun createQuestion(
         questionId: String,
-        specialtyId: String,
         draft: QuestionDraft,
         examId: String?,
     ) = adapter.safeCall {
@@ -116,7 +114,6 @@ class KtorQuestionsRepositoryImpl(
             setBody(
                 QPreguntaCreateDto(
                     id = questionId,
-                    especialidadId = specialtyId,
                     tipoPregunta = draft.type.wireValue,
                     titulo = draft.statement,
                     fuenteTexto = draft.source,
@@ -240,8 +237,6 @@ private data class QPreguntaResponse(val data: QPreguntaDto)
 private data class QPreguntaDto(
     val id: String = "",
     val codigoPregunta: String = "",
-    /** Para ofrecer al vincular sólo exámenes de la misma especialidad (KQ0-5). */
-    val especialidadId: String = "",
     val tipoPregunta: String = "rafaga",
     val titulo: String = "",
     val fuenteTexto: String = "",
@@ -298,7 +293,6 @@ private data class QRecursoDto(
 @Serializable
 private data class QPreguntaCreateDto(
     val id: String,
-    val especialidadId: String,
     val tipoPregunta: String,
     val titulo: String,
     @EncodeDefault(EncodeDefault.Mode.ALWAYS) val fuenteTexto: String = "",
@@ -420,7 +414,6 @@ private fun QPreguntaDto.toDetail() = QuestionDetail(
     // se deja null a propósito, nunca "ahora mismo" como si fuera real.
     createdAt = null,
     updatedAt = null,
-    specialtyId = especialidadId.ifBlank { null },
 )
 
 /**

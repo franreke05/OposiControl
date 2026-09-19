@@ -34,7 +34,7 @@ data class ImportState(
         get() = (exams as? UiAsync.Success)?.value.orEmpty().filter { it.typeExam == selectedType.apiValue }
 }
 
-/** Preguntas de la especialidad elegida que además pasan búsqueda/filtro de revisión. */
+/** Filas del lote activo que además pasan búsqueda/filtro de revisión. */
 fun ImportState.visibleStaging(): List<ContentImportStagingItem> {
     val staging = (activeBatch as? UiAsync.Success)?.value?.staging.orEmpty()
     val query = reviewSearch.trim()

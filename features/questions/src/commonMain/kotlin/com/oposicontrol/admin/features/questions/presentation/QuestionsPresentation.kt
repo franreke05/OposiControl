@@ -7,7 +7,6 @@ import com.oposicontrol.admin.domain.model.ExamType
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.QuestionType
-import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.QuestionActiveFilter
 
 /**
@@ -133,11 +132,6 @@ fun questionExamFilterOptions(exams: UiAsync<List<Exam>>): List<QuestionFilterOp
     listOf(QuestionFilterOption<String?>(null, "Todos los exámenes")) +
         (exams as? UiAsync.Success)?.value.orEmpty().map { QuestionFilterOption<String?>(it.id, examOptionLabel(it)) }
 
-/** El filtro del banco por especialidad (KQ0-4). */
-fun questionSpecialtyFilterOptions(specialties: UiAsync<List<Specialty>>): List<QuestionFilterOption<String?>> =
-    listOf(QuestionFilterOption<String?>(null, "Todas las especialidades")) +
-        (specialties as? UiAsync.Success)?.value.orEmpty().map { QuestionFilterOption<String?>(it.id, it.name) }
-
 /**
  * Si un examen admite preguntas de [type]: el mismo emparejamiento que impone
  * `validar_pregunta_examen` en la base (Ráfaga admite ráfaga, Razonado razonada e
@@ -151,26 +145,29 @@ fun examAcceptsQuestionType(exam: Exam, type: QuestionType): Boolean = when (Exa
 }
 
 /**
- * Los exámenes a los que se puede vincular una pregunta (KQ0-5): del tipo que la
- * admite, de SU especialidad cuando se conoce y no archivados, cada uno con su
- * estado a la vista. Ofrecer los demás era ofrecer un rechazo seguro de la base
- * (`QUESTION_EXAM_TYPE_MISMATCH`, `QUESTION_EXAM_SPECIALTY_MISMATCH`).
- *
- * En un alta la especialidad todavía no existe —la aporta el examen elegido—, así
- * que [specialtyId] es `null` y sólo se filtra por tipo.
+ * Los exámenes a los que se puede vincular una pregunta: TODOS los del tipo que la
+ * admite, sea cual sea su especialidad, año o estado (borrador, publicado o archivado,
+ * dicho junto al nombre). La especialidad es del examen, no de la pregunta (M8), y ni
+ * ella ni el estado deciden la compatibilidad: sólo el TIPO. Se excluye únicamente lo
+ * que la base rechazaría (`QUESTION_EXAM_TYPE_MISMATCH`) y los exámenes en los que la
+ * pregunta ya está ([alreadyLinkedExamIds]; vincular dos veces sería un no-op).
  */
 fun questionLinkableExamOptions(
     exams: UiAsync<List<Exam>>,
     type: QuestionType?,
-    specialtyId: String?,
+    alreadyLinkedExamIds: Set<String> = emptySet(),
 ): List<QuestionFilterOption<String>> {
     if (type == null) return emptyList()
     return (exams as? UiAsync.Success)?.value.orEmpty()
-        .filter { exam -> exam.status != ExamStatus.ARCHIVED }
+        .filter { exam -> exam.id !in alreadyLinkedExamIds }
         .filter { exam -> examAcceptsQuestionType(exam, type) }
-        .filter { exam -> specialtyId.isNullOrBlank() || exam.specialtyId == specialtyId }
-        .map { exam -> QuestionFilterOption(exam.id, "${examOptionLabel(exam)} · ${examStatusLabel(exam.status)}") }
+        .map { exam -> QuestionFilterOption(exam.id, examPickerLabel(exam)) }
 }
+
+/** Código · título, con la especialidad y el estado del examen a la vista: el mismo tipo en otra especialidad no se confunde. */
+fun examPickerLabel(exam: Exam): String =
+    listOfNotNull(examOptionLabel(exam), exam.specialtyName.trim().ifBlank { null }, examStatusLabel(exam.status))
+        .joinToString(" · ")
 
 /**
  * Qué enseñar en el diálogo «Vincular a examen» — bug real corregido: los tres
@@ -180,6 +177,9 @@ fun questionLinkableExamOptions(
 sealed interface QuestionLinkableExamsView {
     data object Loading : QuestionLinkableExamsView
     data object Unavailable : QuestionLinkableExamsView
+
+    /** Los vínculos de la pregunta no se pudieron consultar: sin ellos no se sabe qué exámenes ya tiene. */
+    data object LinksUnavailable : QuestionLinkableExamsView
     data object NoCandidates : QuestionLinkableExamsView
     data class Options(val options: List<QuestionFilterOption<String>>) : QuestionLinkableExamsView
 }
@@ -187,14 +187,41 @@ sealed interface QuestionLinkableExamsView {
 fun questionLinkableExamsView(
     exams: UiAsync<List<Exam>>,
     type: QuestionType?,
-    specialtyId: String?,
+    alreadyLinkedExamIds: Set<String> = emptySet(),
 ): QuestionLinkableExamsView = when (exams) {
     is UiAsync.Loading, UiAsync.Idle -> QuestionLinkableExamsView.Loading
     is UiAsync.Error -> QuestionLinkableExamsView.Unavailable
     is UiAsync.Success, UiAsync.Empty -> {
-        val options = questionLinkableExamOptions(exams, type, specialtyId)
+        val options = questionLinkableExamOptions(exams, type, alreadyLinkedExamIds)
         if (options.isEmpty()) QuestionLinkableExamsView.NoCandidates else QuestionLinkableExamsView.Options(options)
     }
+}
+
+/**
+ * Qué enseña el diálogo «Vincular a examen» de una pregunta GUARDADA: el catálogo de exámenes
+ * y los vínculos que ya tiene se combinan, y hasta que los vínculos se conocen no se ofrece
+ * nada (si no, se ofrecería un examen en el que la pregunta ya está).
+ */
+fun questionLinkDialogView(state: QuestionsState): QuestionLinkableExamsView {
+    val type = (state.detail as? UiAsync.Success)?.value?.type
+    return when (val links = state.examLinks) {
+        is UiAsync.Success -> questionLinkableExamsView(state.exams, type, links.value.map { it.examId }.toSet())
+        UiAsync.Empty -> questionLinkableExamsView(state.exams, type)
+        is UiAsync.Error -> QuestionLinkableExamsView.LinksUnavailable
+        is UiAsync.Loading, UiAsync.Idle -> QuestionLinkableExamsView.Loading
+    }
+}
+
+/**
+ * La nota que acompaña a un selector de exámenes cuando NO hay opciones que elegir, y si
+ * es un error (`true`) o un hecho (`false`). `null` con opciones: no hay nada que decir.
+ */
+fun questionLinkableExamsNote(view: QuestionLinkableExamsView): Pair<String, Boolean>? = when (view) {
+    QuestionLinkableExamsView.Loading -> "Cargando exámenes…" to false
+    QuestionLinkableExamsView.Unavailable -> QUESTION_LINKABLE_EXAMS_UNAVAILABLE_NOTE to true
+    QuestionLinkableExamsView.LinksUnavailable -> QUESTION_LINKS_UNAVAILABLE_NOTE to true
+    QuestionLinkableExamsView.NoCandidates -> QUESTION_LINKABLE_EXAMS_EMPTY_NOTE to false
+    is QuestionLinkableExamsView.Options -> null
 }
 
 /** Publicado o borrador, dicho junto al examen que se elige. */
@@ -325,8 +352,6 @@ fun questionSaveBar(state: QuestionsState): QuestionSaveBar {
         QuestionSaveTone.SAVING -> if (creating) "Creando la pregunta…" else "Guardando los cambios…"
         QuestionSaveTone.ERROR -> (state.saveState as UiAsync.Error).error.message
         QuestionSaveTone.DIRTY -> when {
-            creating && state.draftSpecialtyId.isBlank() ->
-                "Elige la especialidad de la pregunta. El examen inicial es opcional."
             !valid -> "Revisa el enunciado, las cuatro opciones y cuál es la correcta."
             creating -> "Esta pregunta todavía no existe. Se creará al guardar."
             else -> "Hay cambios sin guardar en esta pregunta."
@@ -413,8 +438,8 @@ fun questionDifficultyLabel(state: QuestionsState): String =
 
 /** Por qué no hay tema ni especialidad que enseñar. */
 const val QUESTION_NO_TOPIC_NOTE: String =
-    "El contrato de preguntas no incluye tema ni especialidad propios: la especialidad la aporta el " +
-        "examen al que se vincula."
+    "Una pregunta no tiene especialidad ni tema propios: la especialidad es del examen, " +
+        "y una misma pregunta puede estar en exámenes de especialidades distintas."
 
 // ---------------------------------------------------------------------------
 // Relación con exámenes
@@ -431,8 +456,8 @@ const val QUESTION_LINKS_UNAVAILABLE_NOTE: String =
     "No se han podido consultar los exámenes de esta pregunta. Vuelve a intentarlo."
 
 /**
- * Diálogo «Vincular a examen»: cero candidatos es un hecho real —esta
- * especialidad/tipo no tiene examen todavía—, no un fallo. Se dice así en vez
+ * Diálogo «Vincular a examen»: cero candidatos es un hecho real —no hay
+ * ningún examen de este tipo todavía—, no un fallo. Se dice así en vez
  * de enseñar un selector vacío que parece roto.
  */
 const val QUESTION_LINKABLE_EXAMS_EMPTY_NOTE: String = "No hay exámenes compatibles disponibles."
@@ -555,15 +580,15 @@ fun questionCapabilities(): List<QuestionCapability> = listOf(
     QuestionCapability("Filtrar por tipo", QuestionCapabilityLevel.REAL, "En el servidor, paginado."),
     QuestionCapability("Filtrar por estado", QuestionCapabilityLevel.REAL, "En el servidor, paginado: activas, inactivas o todas."),
     QuestionCapability("Filtrar por examen", QuestionCapabilityLevel.REAL, "En el servidor, paginado, en el orden del examen."),
-    QuestionCapability("Filtrar por especialidad", QuestionCapabilityLevel.REAL, "En el servidor, paginado."),
+    QuestionCapability("Filtrar por especialidad", QuestionCapabilityLevel.BLOCKED, "La pregunta no tiene especialidad: es del examen."),
     QuestionCapability("Filtrar por tema", QuestionCapabilityLevel.BLOCKED, "El contrato no tiene tema."),
-    QuestionCapability("Crear", QuestionCapabilityLevel.PARTIAL, "Existe el endpoint; exige examen inicial y puede fallar (P0-5)."),
+    QuestionCapability("Crear", QuestionCapabilityLevel.REAL, "Alta atómica e idempotente por id, sin especialidad; el examen inicial es opcional."),
     QuestionCapability("Editar contenido", QuestionCapabilityLevel.REAL, "Enunciado, tipo, explicación, fuente y estado."),
     QuestionCapability("Editar respuestas", QuestionCapabilityLevel.PARTIAL, "Depende de una RPC que hoy puede rechazar (P0-5)."),
     // KQ0-7: archivar no sólo «marca inactiva»: la saca de sus exámenes y del recuento.
     QuestionCapability("Archivar", QuestionCapabilityLevel.REAL, "La quita de sus exámenes y del recuento."),
-    QuestionCapability("Vincular a examen", QuestionCapabilityLevel.REAL, "Viaja en el mismo PATCH con posición."),
-    QuestionCapability("Desvincular", QuestionCapabilityLevel.BLOCKED, "No existe en el contrato."),
+    QuestionCapability("Vincular a examen", QuestionCapabilityLevel.REAL, "POST /preguntas/{id}/examenes: compatible por tipo, cualquier especialidad, posición opcional."),
+    QuestionCapability("Desvincular", QuestionCapabilityLevel.REAL, "DELETE /preguntas/{id}/examenes/{examenId}: quita sólo la relación."),
     QuestionCapability("Ver recursos", QuestionCapabilityLevel.REAL, "Llegan en el detalle de la pregunta."),
     QuestionCapability("Subir recursos", QuestionCapabilityLevel.BLOCKED, "P0-4: la subida no funciona."),
 )

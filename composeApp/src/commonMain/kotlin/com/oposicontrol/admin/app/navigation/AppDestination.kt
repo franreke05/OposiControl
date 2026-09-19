@@ -59,7 +59,7 @@ enum class AdminSection(
     ),
     EXAMS(
         label = "Exámenes",
-        description = "Metadatos, publicación y agrupacion de preguntas por especialidad.",
+        description = "Metadatos, publicación y preguntas de cada examen.",
         primaryActionLabel = "Crear examen",
     ),
     QUESTIONS_RESOURCES(

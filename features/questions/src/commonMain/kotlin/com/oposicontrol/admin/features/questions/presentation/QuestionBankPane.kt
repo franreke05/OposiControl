@@ -114,15 +114,6 @@ internal fun QuestionBankPane(
             horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
         ) {
             QuestionSelect(
-                selectedLabel = questionSpecialtyFilterOptions(state.specialties)
-                    .firstOrNull { it.value == state.specialtyFilter }?.label
-                    ?: "Todas las especialidades",
-                options = questionSpecialtyFilterOptions(state.specialties),
-                onSelect = { onIntent(QuestionsIntent.SetSpecialtyFilter(it)) },
-                accessibilityLabel = "Filtrar por especialidad",
-                modifier = Modifier.weight(1f),
-            )
-            QuestionSelect(
                 selectedLabel = questionExamFilterOptions(state.exams)
                     .firstOrNull { it.value == state.examFilter }?.label
                     ?: "Todos los exámenes",

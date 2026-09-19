@@ -83,7 +83,6 @@ class KtorQuestionsRepositoryImplTest {
                 QuestionListQuery(
                     search = "  art. 14 & #CE  ",
                     type = QuestionType.RAZONADA,
-                    specialtyId = "5f0c7d2e-0a51-4a86-9d3c-2f1e8b7a6c54",
                     active = QuestionActiveFilter.ALL,
                     examId = "9b2e4c61-7d3a-4f08-8e5b-1c6a0d9f3e27",
                     sort = QuestionListSort.BY_CODE,
@@ -96,13 +95,13 @@ class KtorQuestionsRepositoryImplTest {
         val parameters = seen.single().url.parameters
         assertEquals("art. 14 & #CE", parameters["q"])
         assertEquals("razonada", parameters["tipo"])
-        assertEquals("5f0c7d2e-0a51-4a86-9d3c-2f1e8b7a6c54", parameters["especialidadId"])
         assertEquals("todas", parameters["activa"])
         assertEquals("9b2e4c61-7d3a-4f08-8e5b-1c6a0d9f3e27", parameters["examenId"])
         assertEquals("codigo", parameters["orden"])
         assertEquals("50", parameters["limit"])
         assertEquals("100", parameters["offset"])
-        assertEquals(8, parameters.names().size, "Se ha colado un parámetro: ${parameters.names()}")
+        assertNull(parameters["especialidadId"], "la pregunta no tiene especialidad: no hay filtro por ella")
+        assertEquals(7, parameters.names().size, "Se ha colado un parámetro: ${parameters.names()}")
     }
 
     /** Más de 100 caracteres sería un 400 del servidor: se recorta antes de salir. */
@@ -133,7 +132,6 @@ class KtorQuestionsRepositoryImplTest {
 
         assertEquals("", detail.difficulty)
         assertEquals("", detail.source)
-        assertEquals("ESP-1", detail.specialtyId)
     }
 
     /** KQ0-6: el mismo mapeo que Exámenes; `pdf`, `enlace` y lo desconocido nunca son una imagen. */
@@ -195,12 +193,12 @@ class KtorQuestionsRepositoryImplTest {
     }
 
     /**
-     * KQ2-4: el alta manda el id que generó la pantalla y la especialidad elegida, sin
-     * leer antes el examen; el examen inicial viaja sólo si se eligió. Mutación:
-     * volver a derivar la especialidad del examen añade un GET y pone esto en rojo.
+     * KQ2-4 + M8: el alta manda el id que generó la pantalla y NINGUNA especialidad (la pregunta
+     * no la tiene), sin leer antes el examen; el examen inicial viaja sólo si se eligió.
+     * Mutación: volver a mandar o derivar una especialidad pone esto en rojo.
      */
     @Test
-    fun aCreateSendsTheClientIdAndTheSpecialtyWithoutReadingTheExamFirst() = runTest {
+    fun aCreateSendsTheClientIdAndNoSpecialtyWithoutReadingTheExamFirst() = runTest {
         val seen = mutableListOf<HttpRequestData>()
         val repository = repository(seen) { DETALLE }
         val draft = QuestionDraft(
@@ -215,15 +213,15 @@ class KtorQuestionsRepositoryImplTest {
             difficulty = "",
         )
 
-        assertIsSuccess(repository.createQuestion("11111111-1111-4111-8111-111111111111", "ESP-1", draft, examId = null))
-        assertIsSuccess(repository.createQuestion("11111111-1111-4111-8111-111111111111", "ESP-1", draft, examId = "EX-1"))
+        assertIsSuccess(repository.createQuestion("11111111-1111-4111-8111-111111111111", draft, examId = null))
+        assertIsSuccess(repository.createQuestion("11111111-1111-4111-8111-111111111111", draft, examId = "EX-1"))
 
         val posts = seen.filter { it.method.value == "POST" }
         assertEquals(2, posts.size, "sin lectura previa del examen: ${seen.map { "${it.method.value} ${it.url.encodedPath}" }}")
         assertEquals(seen.size, posts.size)
         val sinExamen = Json.parseToJsonElement((posts[0].body as TextContent).text).jsonObject
         assertEquals("\"11111111-1111-4111-8111-111111111111\"", sinExamen["id"]?.toString())
-        assertEquals("\"ESP-1\"", sinExamen["especialidadId"]?.toString())
+        assertNull(sinExamen["especialidadId"], "la pregunta no tiene especialidad y el alta no la manda (M8): $sinExamen")
         assertNull(sinExamen["examenId"], "sin examen inicial no viaja ninguno: $sinExamen")
         assertFalse("dificultad" in sinExamen, "una dificultad vacía no viaja: $sinExamen")
         val conExamen = Json.parseToJsonElement((posts[1].body as TextContent).text).jsonObject
@@ -310,8 +308,8 @@ class KtorQuestionsRepositoryImplTest {
         /** Lo que devuelve `GET /preguntas` desde KQ0-3: la página y el total de la consulta. */
         val PAGINA = """
         {"data":[
-          {"id":"P-1","codigoPregunta":"PREG-000001","especialidadId":"ESP-1","tipoPregunta":"razonada","titulo":"Uno"},
-          {"id":"P-2","codigoPregunta":"PREG-000002","especialidadId":"ESP-1","tipoPregunta":"rafaga","titulo":"Dos","activa":false}
+          {"id":"P-1","codigoPregunta":"PREG-000001","tipoPregunta":"razonada","titulo":"Uno"},
+          {"id":"P-2","codigoPregunta":"PREG-000002","tipoPregunta":"rafaga","titulo":"Dos","activa":false}
         ],"total":137,"limit":25,"offset":0}
         """.trimIndent()
 
@@ -320,7 +318,7 @@ class KtorQuestionsRepositoryImplTest {
          * omite el servidor— y un recurso de cada tipo vivo del CHECK más uno raro.
          */
         val DETALLE = """
-        {"data":{"id":"P-1","codigoPregunta":"PREG-000001","especialidadId":"ESP-1","tipoPregunta":"inmersiva",
+        {"data":{"id":"P-1","codigoPregunta":"PREG-000001","tipoPregunta":"inmersiva",
           "titulo":"Caso clínico","razonamiento":"","recursos":[
           {"id":"R-IMG","preguntaId":"P-1","tipoRecurso":"imagen","titulo":"Imagen","urlExterna":"https://x/i.png","posicion":1},
           {"id":"R-AUD","preguntaId":"P-1","tipoRecurso":"audio","titulo":"Audio","urlExterna":"https://x/a.mp3","posicion":2},

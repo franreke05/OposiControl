@@ -12,7 +12,6 @@ import com.oposicontrol.admin.domain.model.QuestionPage
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.QuestionType
-import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.QuestionActiveFilter
 import kotlinx.datetime.Instant
 import kotlin.test.Test
@@ -47,17 +46,6 @@ class QuestionsPresentationTest {
         publishedAt = now,
         sortOrder = 0,
         questionCount = 5,
-        createdAt = now,
-        updatedAt = now,
-    )
-
-    private fun specialty(id: String, name: String) = Specialty(
-        id = id,
-        name = name,
-        description = "",
-        isActive = true,
-        sortOrder = 0,
-        linkedExams = 0,
         createdAt = now,
         updatedAt = now,
     )
@@ -173,9 +161,6 @@ class QuestionsPresentationTest {
         )
         val exams = questionExamFilterOptions(UiAsync.Success(listOf(exam())))
         assertEquals(listOf("Todos los exámenes", "EX-2026-0001 · TCAE · Simulacro marzo"), exams.map { it.label })
-        val specialties = questionSpecialtyFilterOptions(UiAsync.Success(listOf(specialty("esp-1", "TCAE"))))
-        assertEquals(listOf("Todas las especialidades", "TCAE"), specialties.map { it.label })
-        assertEquals(listOf(null, "esp-1"), specialties.map { it.value })
     }
 
     /**
@@ -187,7 +172,6 @@ class QuestionsPresentationTest {
         val estado = QuestionsState(
             searchQuery = "  Francia ",
             typeFilter = QuestionType.RAZONADA,
-            specialtyFilter = "esp-1",
             activeFilter = QuestionActiveFilter.INACTIVE,
             sort = QuestionsSort.BY_CODE,
             pageIndex = 2,
@@ -197,7 +181,6 @@ class QuestionsPresentationTest {
             QuestionListQuery(
                 search = "Francia",
                 type = QuestionType.RAZONADA,
-                specialtyId = "esp-1",
                 active = QuestionActiveFilter.INACTIVE,
                 examId = null,
                 sort = QuestionListSort.BY_CODE,
@@ -217,38 +200,63 @@ class QuestionsPresentationTest {
     }
 
     /**
-     * KQ0-5: al vincular sólo se ofrecen los exámenes que la base aceptaría —tipo
-     * compatible, misma especialidad, no archivados— y cada uno dice si está
-     * publicado o en borrador. Las ráfagas también: antes el catálogo no las traía.
+     * M8: al vincular se ofrecen TODOS los exámenes del tipo compatible —de cualquier
+     * especialidad y en cualquier estado— y cada uno dice su especialidad y si está
+     * publicado, en borrador o archivado. Las ráfagas también: antes el catálogo no las traía.
      */
     @Test
-    fun `al vincular solo se ofrecen examenes compatibles con su estado a la vista`() {
+    fun `al vincular se ofrecen los examenes compatibles por tipo de cualquier especialidad y estado`() {
         val catalogo = UiAsync.Success(
             listOf(
                 exam(id = "raf", code = "RAF-1").copy(typeExam = "rafaga", status = ExamStatus.PUBLISHED),
                 exam(id = "raz", code = "RAZ-1").copy(typeExam = "razonado", status = ExamStatus.DRAFT),
                 exam(id = "gui", code = "GUI-1").copy(typeExam = "guiado", status = ExamStatus.PUBLISHED),
-                exam(id = "raz-otra", code = "RAZ-2").copy(typeExam = "razonado", specialtyId = "esp-2"),
+                exam(id = "raz-otra", code = "RAZ-2").copy(typeExam = "razonado", specialtyId = "esp-2", specialtyName = "Enfermería"),
                 exam(id = "raz-arch", code = "RAZ-3").copy(typeExam = "razonado", status = ExamStatus.ARCHIVED),
                 exam(id = "inm", code = "INM-1").copy(typeExam = "inmersivo"),
                 exam(id = "raro", code = "RARO").copy(typeExam = "mixto"),
             ),
         )
 
-        val razonada = questionLinkableExamOptions(catalogo, QuestionType.RAZONADA, specialtyId = "esp-1")
-        assertEquals(listOf("raz", "gui"), razonada.map { it.value })
-        assertEquals("RAZ-1 · TCAE · Simulacro marzo · Borrador", razonada.first().label)
-        assertEquals("GUI-1 · TCAE · Simulacro marzo · Publicado", razonada.last().label)
+        // TEST 5/7/14: razonada ↔ razonado (borrador incluido) y el alias legacy de lectura; SIN
+        // filtrar por especialidad: «raz-otra» es de otra especialidad y aparece.
+        val razonada = questionLinkableExamOptions(catalogo, QuestionType.RAZONADA)
+        assertEquals(listOf("raz", "gui", "raz-otra", "raz-arch"), razonada.map { it.value })
+        assertEquals("RAZ-1 · TCAE · Simulacro marzo · TCAE · Borrador", razonada.first().label)
+        assertEquals("RAZ-2 · TCAE · Simulacro marzo · Enfermería · Publicado", razonada[2].label)
+        assertEquals("GUI-1 · TCAE · Simulacro marzo · TCAE · Publicado", razonada[1].label)
 
-        assertEquals(listOf("raf"), questionLinkableExamOptions(catalogo, QuestionType.RAFAGA, "esp-1").map { it.value })
-        // En un alta la especialidad aún no existe: sólo filtra el tipo.
+        // TEST 2/6: rafaga ↔ rafaga; inmersiva ↔ inmersivo.
+        assertEquals(listOf("raf"), questionLinkableExamOptions(catalogo, QuestionType.RAFAGA).map { it.value })
+        assertEquals(listOf("inm"), questionLinkableExamOptions(catalogo, QuestionType.INMERSIVA).map { it.value })
+
+        // Sólo se excluye lo ya vinculado (TEST 8): la relación no se ofrece dos veces.
         assertEquals(
-            listOf("raz", "gui", "raz-otra"),
-            questionLinkableExamOptions(catalogo, QuestionType.RAZONADA, specialtyId = null).map { it.value },
+            listOf("gui", "raz-otra", "raz-arch"),
+            questionLinkableExamOptions(catalogo, QuestionType.RAZONADA, alreadyLinkedExamIds = setOf("raz")).map { it.value },
         )
+
         // Un tipo sin identificar no se vincula a nada, y un examen raro no admite nada.
-        assertTrue(questionLinkableExamOptions(catalogo, type = null, specialtyId = "esp-1").isEmpty())
+        assertTrue(questionLinkableExamOptions(catalogo, type = null).isEmpty())
         assertFalse(examAcceptsQuestionType(exam().copy(typeExam = "mixto"), QuestionType.RAFAGA))
+    }
+
+    /** TEST 14: la compatibilidad no mira la especialidad — dos exámenes del mismo tipo en especialidades distintas son ambos candidatos. */
+    @Test
+    fun `una pregunta rafaga puede vincularse a examenes rafaga de especialidades distintas`() {
+        val catalogo = UiAsync.Success(
+            listOf(
+                exam(id = "tcae", code = "RAF-TCAE").copy(typeExam = "rafaga", specialtyId = "esp-1", specialtyName = "TCAE"),
+                exam(id = "enf", code = "RAF-ENF").copy(typeExam = "rafaga", specialtyId = "esp-2", specialtyName = "Enfermería", status = ExamStatus.DRAFT),
+                exam(id = "pol", code = "RAF-POL").copy(typeExam = "rafaga", specialtyId = "esp-3", specialtyName = "Policía", status = ExamStatus.PUBLISHED),
+                exam(id = "raz", code = "RAZ-ENF").copy(typeExam = "razonado", specialtyId = "esp-2"),
+            ),
+        )
+
+        val options = questionLinkableExamOptions(catalogo, QuestionType.RAFAGA)
+
+        assertEquals(listOf("tcae", "enf", "pol"), options.map { it.value })
+        assertTrue(options[1].label.contains("Enfermería") && options[1].label.contains("Borrador"), options[1].label)
     }
 
     /**
@@ -261,36 +269,73 @@ class QuestionsPresentationTest {
      */
     @Test
     fun `el dialogo de vincular distingue cargando, caido y sin candidatos reales`() {
-        val compatible = exam(id = "raf-1").copy(typeExam = "rafaga", specialtyId = "esp-1", status = ExamStatus.DRAFT)
+        val compatible = exam(id = "raf-1").copy(typeExam = "rafaga", status = ExamStatus.DRAFT)
 
-        assertEquals(
-            QuestionLinkableExamsView.Loading,
-            questionLinkableExamsView(UiAsync.Loading, QuestionType.RAFAGA, "esp-1"),
-        )
-        assertEquals(
-            QuestionLinkableExamsView.Loading,
-            questionLinkableExamsView(UiAsync.Idle, QuestionType.RAFAGA, "esp-1"),
-        )
+        assertEquals(QuestionLinkableExamsView.Loading, questionLinkableExamsView(UiAsync.Loading, QuestionType.RAFAGA))
+        assertEquals(QuestionLinkableExamsView.Loading, questionLinkableExamsView(UiAsync.Idle, QuestionType.RAFAGA))
         assertEquals(
             QuestionLinkableExamsView.Unavailable,
-            questionLinkableExamsView(UiAsync.Error(AppError.Validation("caido")), QuestionType.RAFAGA, "esp-1"),
+            questionLinkableExamsView(UiAsync.Error(AppError.Validation("caido")), QuestionType.RAFAGA),
         )
-        // Catálogo real y sano, pero esta especialidad no tiene ningún examen: es
-        // el caso que reportó el propietario (PREG-000001, especialidad sin
-        // exámenes) y no puede confundirse con un fallo.
+        // Catálogo real y sano pero sin ningún examen de este TIPO: un hecho, no un fallo.
         assertEquals(
             QuestionLinkableExamsView.NoCandidates,
-            questionLinkableExamsView(UiAsync.Success(listOf(compatible)), QuestionType.RAFAGA, "esp-2"),
+            questionLinkableExamsView(UiAsync.Success(listOf(compatible)), QuestionType.RAZONADA),
         )
         assertEquals(
             QuestionLinkableExamsView.NoCandidates,
-            questionLinkableExamsView(UiAsync.Success(emptyList()), QuestionType.RAFAGA, "esp-1"),
+            questionLinkableExamsView(UiAsync.Success(emptyList()), QuestionType.RAFAGA),
+        )
+        // Si el único candidato ya está vinculado, tampoco queda nada que elegir.
+        assertEquals(
+            QuestionLinkableExamsView.NoCandidates,
+            questionLinkableExamsView(UiAsync.Success(listOf(compatible)), QuestionType.RAFAGA, setOf("raf-1")),
         )
         // Con un candidato real, sea Ráfaga o el tipo que sea, se enseña el selector.
-        val withOptions = questionLinkableExamsView(UiAsync.Success(listOf(compatible)), QuestionType.RAFAGA, "esp-1")
+        val withOptions = questionLinkableExamsView(UiAsync.Success(listOf(compatible)), QuestionType.RAFAGA)
         assertTrue(withOptions is QuestionLinkableExamsView.Options)
         assertEquals(listOf("raf-1"), (withOptions as QuestionLinkableExamsView.Options).options.map { it.value })
     }
+
+    /**
+     * El diálogo de una pregunta guardada combina el catálogo con SUS vínculos: hasta que se
+     * conocen no ofrece nada, y con ellos excluye los exámenes en los que ya está.
+     */
+    @Test
+    fun `el dialogo de una pregunta guardada espera a conocer sus vinculos`() {
+        val a = exam(id = "a", code = "A").copy(typeExam = "rafaga")
+        val b = exam(id = "b", code = "B").copy(typeExam = "rafaga", specialtyId = "esp-2", specialtyName = "Enfermería")
+        val detalle = UiAsync.Success(
+            com.oposicontrol.admin.domain.model.QuestionDetail(
+                id = "q", code = "PREG-1", type = QuestionType.RAFAGA, statement = "e", options = emptyList(),
+                explanation = "", source = "", active = true, difficulty = "", resources = emptyList(),
+            ),
+        )
+        val base = QuestionsState(exams = UiAsync.Success(listOf(a, b)), detail = detalle)
+        val enlace = com.oposicontrol.admin.domain.model.QuestionExamLink(examId = "a", examCode = "A", examTitle = "t", position = 1)
+
+        assertEquals(QuestionLinkableExamsView.Loading, questionLinkDialogView(base.copy(examLinks = UiAsync.Loading)))
+        assertEquals(QuestionLinkableExamsView.Loading, questionLinkDialogView(base.copy(examLinks = UiAsync.Idle)))
+        assertEquals(
+            QuestionLinkableExamsView.LinksUnavailable,
+            questionLinkDialogView(base.copy(examLinks = UiAsync.Error(AppError.Validation("caido")))),
+        )
+        val sinVinculos = questionLinkDialogView(base.copy(examLinks = UiAsync.Empty))
+        assertEquals(listOf("a", "b"), (sinVinculos as QuestionLinkableExamsView.Options).options.map { it.value })
+        val conVinculo = questionLinkDialogView(base.copy(examLinks = UiAsync.Success(listOf(enlace))))
+        assertEquals(listOf("b"), (conVinculo as QuestionLinkableExamsView.Options).options.map { it.value })
+    }
+
+    /** Un error cargando exámenes se dice como error; nunca se disfraza de lista vacía. */
+    @Test
+    fun `la nota del selector separa error, vacio real y cargando`() {
+        assertEquals("Cargando exámenes…" to false, questionLinkableExamsNote(QuestionLinkableExamsView.Loading))
+        assertEquals(QUESTION_LINKABLE_EXAMS_UNAVAILABLE_NOTE to true, questionLinkableExamsNote(QuestionLinkableExamsView.Unavailable))
+        assertEquals(QUESTION_LINKS_UNAVAILABLE_NOTE to true, questionLinkableExamsNote(QuestionLinkableExamsView.LinksUnavailable))
+        assertEquals("No hay exámenes compatibles disponibles." to false, questionLinkableExamsNote(QuestionLinkableExamsView.NoCandidates))
+        assertNull(questionLinkableExamsNote(QuestionLinkableExamsView.Options(emptyList())))
+    }
+
 
     /** KQ0-7: archivar dice lo que hace — sale de sus exámenes y del recuento — y cómo volver. */
     @Test
@@ -377,7 +422,7 @@ class QuestionsPresentationTest {
     }
 
     @Test
-    fun `un alta pide crear y no se habilita sin examen inicial`() {
+    fun `un alta no exige especialidad ni examen inicial`() {
         val alta = QuestionsState(
             isCreating = true,
             draftStatement = "Enunciado nuevo",
@@ -387,14 +432,16 @@ class QuestionsPresentationTest {
         )
         val bar = questionSaveBar(alta)
         assertEquals("Crear pregunta", bar.primaryLabel)
-        assertFalse(bar.primaryEnabled, "Sin especialidad no se puede crear (KQ2-4)")
-        assertTrue(bar.message.contains("especialidad"), bar.message)
+        // TEST 1/10: la pregunta no tiene especialidad y el examen inicial es opcional: el alta
+        // válida se habilita sola, sin nada más que elegir.
+        assertTrue(bar.primaryEnabled, "Un alta con enunciado y opciones válidos se crea sin especialidad ni examen (M8)")
+        assertFalse(bar.message.contains("especialidad", ignoreCase = true), bar.message)
+        assertEquals("Esta pregunta todavía no existe. Se creará al guardar.", bar.message)
 
-        // El examen inicial ya NO es obligatorio: la especialidad basta.
-        val conEspecialidad = alta.copy(draftSpecialtyId = "esp-1")
-        assertTrue(questionSaveBar(conEspecialidad).primaryEnabled)
-        val soloExamen = alta.copy(draftCreateExamId = "ex-1")
-        assertFalse(questionSaveBar(soloExamen).primaryEnabled, "el examen no sustituye a la especialidad")
+        // Con examen inicial también (TEST 9): sigue siendo válida.
+        assertTrue(questionSaveBar(alta.copy(draftCreateExamId = "ex-1")).primaryEnabled)
+        // Lo que sí bloquea es un enunciado vacío, no una especialidad ausente.
+        assertFalse(questionSaveBar(alta.copy(draftStatement = " ")).primaryEnabled)
     }
 
     // -----------------------------------------------------------------------
@@ -450,7 +497,7 @@ class QuestionsPresentationTest {
     fun `la dificultad se lee y se dice que no hay tema ni especialidad`() {
         assertEquals("media", questionDifficultyLabel(state()))
         assertEquals("Sin definir", questionDifficultyLabel(state().copy(draftDifficulty = "")))
-        assertTrue(QUESTION_NO_TOPIC_NOTE.contains("no incluye tema"), QUESTION_NO_TOPIC_NOTE)
+        assertTrue(QUESTION_NO_TOPIC_NOTE.contains("no tiene especialidad ni tema"), QUESTION_NO_TOPIC_NOTE)
     }
 
     @Test
@@ -574,19 +621,21 @@ class QuestionsPresentationTest {
     @Test
     fun `la matriz declara bloqueado lo que el contrato no tiene`() {
         assertEquals(QuestionCapabilityLevel.BLOCKED, questionCapability("Filtrar por tema").level)
-        assertEquals(QuestionCapabilityLevel.BLOCKED, questionCapability("Desvincular").level)
+        // M8: la pregunta no tiene especialidad, así que tampoco hay filtro por ella.
+        assertEquals(QuestionCapabilityLevel.BLOCKED, questionCapability("Filtrar por especialidad").level)
         assertEquals(QuestionCapabilityLevel.BLOCKED, questionCapability("Subir recursos").level)
 
         assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Editar contenido").level)
         assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Archivar").level)
         assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Vincular a examen").level)
+        assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Desvincular").level)
+        assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Crear").level)
         assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Ver recursos").level)
 
-        assertEquals(QuestionCapabilityLevel.PARTIAL, questionCapability("Crear").level)
         assertEquals(QuestionCapabilityLevel.PARTIAL, questionCapability("Editar respuestas").level)
 
         // KQ0-4: buscar y filtrar ya son del servidor, paginados, y lo dicen.
-        listOf("Buscar", "Filtrar por tipo", "Filtrar por estado", "Filtrar por examen", "Filtrar por especialidad").forEach { name ->
+        listOf("Buscar", "Filtrar por tipo", "Filtrar por estado", "Filtrar por examen").forEach { name ->
             val capability = questionCapability(name)
             assertEquals(QuestionCapabilityLevel.REAL, capability.level, name)
             assertTrue(capability.note.contains("En el servidor, paginado"), "$name: ${capability.note}")

@@ -32,7 +32,7 @@ enum class QuestionActiveFilter(val wireValue: String) {
  */
 interface QuestionsRepository {
     /**
-     * Una página del banco (`GET /preguntas?q=&tipo=&especialidadId=&activa=&examenId=&orden=&limit=&offset=`),
+     * Una página del banco (`GET /preguntas?q=&tipo=&activa=&examenId=&orden=&limit=&offset=`),
      * con el total exacto de la consulta (KQ0-4).
      *
      * Sustituye a `listQuestions()`, `listQuestions(filter)` y `listQuestionsForExam`.
@@ -54,12 +54,12 @@ interface QuestionsRepository {
      * reintento: es la clave de idempotencia de `admin_create_question`. Un reintento
      * tras un timeout con el mismo id no crea otra pregunta; con un id nuevo, sí.
      *
-     * [specialtyId] se elige directamente: la especialidad ya no se deriva del examen
-     * inicial, que ahora es opcional ([examId]) y se vincula en la misma transacción.
+     * La pregunta NO tiene especialidad (M8): pertenece al banco y la especialidad es del
+     * examen. El examen inicial es opcional ([examId]) y, si viene, se vincula en la misma
+     * transacción; sólo se exige que su TIPO sea compatible.
      */
     suspend fun createQuestion(
         questionId: String,
-        specialtyId: String,
         draft: QuestionDraft,
         examId: String? = null,
     ): AppResult<QuestionDetail>

@@ -10,7 +10,6 @@ import com.oposicontrol.admin.domain.model.QuestionListSort
 import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionPage
 import com.oposicontrol.admin.domain.model.QuestionType
-import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.repository.QuestionActiveFilter
 
 enum class QuestionsSort { MOST_RECENT, BY_CODE }
@@ -19,7 +18,7 @@ enum class QuestionsSort { MOST_RECENT, BY_CODE }
  * Estado de la pantalla Preguntas (banco global, JVM/Desktop).
  *
  * `questions` es SIEMPRE una página que devolvió el servidor para la consulta que
- * describen los filtros ([toListQuery]): búsqueda, tipo, especialidad, estado,
+ * describen los filtros ([toListQuery]): búsqueda, tipo, estado,
  * examen, orden y paginación se resuelven allí (KQ0-4). Antes se descargaba el
  * banco entero y se filtraba lo cargado, y «Inactivas» filtraba un conjunto del
  * que las inactivas ya se habían ido.
@@ -28,11 +27,9 @@ data class QuestionsState(
     val questions: UiAsync<QuestionPage> = UiAsync.Loading,
     /** TODOS los exámenes, ráfagas incluidas (KQ0-5): una pregunta de ráfaga también se vincula. */
     val exams: UiAsync<List<Exam>> = UiAsync.Loading,
-    val specialties: UiAsync<List<Specialty>> = UiAsync.Loading,
 
     val searchQuery: String = "",
     val typeFilter: QuestionType? = null,
-    val specialtyFilter: String? = null,
     val examFilter: String? = null,
     /** Activas por defecto, como el servidor; «Inactivas» y «Todas» se piden de verdad. */
     val activeFilter: QuestionActiveFilter = QuestionActiveFilter.ACTIVE,
@@ -59,8 +56,6 @@ data class QuestionsState(
      * respuesta se perdió, el segundo no crea otra pregunta.
      */
     val draftQuestionId: String = "",
-    /** Sólo para alta: la especialidad se elige directamente; ya no la aporta el examen. */
-    val draftSpecialtyId: String = "",
     /** Sólo para alta: examen inicial OPCIONAL, vinculado en la misma transacción (KQ3-4). */
     val draftCreateExamId: String = "",
     val optionsDirty: Boolean = false,
@@ -112,7 +107,6 @@ const val QUESTION_SEARCH_DEBOUNCE_MILLIS: Long = 300
 fun QuestionsState.toListQuery(): QuestionListQuery = QuestionListQuery(
     search = searchQuery.trim(),
     type = typeFilter,
-    specialtyId = specialtyFilter,
     active = activeFilter,
     examId = examFilter,
     sort = when (sort) {
@@ -130,7 +124,6 @@ fun QuestionsState.toListQuery(): QuestionListQuery = QuestionListQuery(
 fun QuestionsState.hasBankFilters(): Boolean =
     searchQuery.isNotBlank() ||
         typeFilter != null ||
-        specialtyFilter != null ||
         examFilter != null ||
         activeFilter != QuestionActiveFilter.ACTIVE
 

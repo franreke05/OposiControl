@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
  *
  * Depende de [QuestionsRepository] (propio, ver diseño aprobado) para todo lo
  * específico de preguntas, y de [ContentRepository] sólo para los catálogos de
- * exámenes y especialidades — capacidades que ya existían y que usan otras
+ * exámenes — capacidad que ya existía y que usan otras
  * pantallas; no añade nada a ese contrato.
  *
  * **Los catálogos los pide esta pantalla (KQ0-5, QN-10).** Antes sólo observaba
@@ -58,11 +58,6 @@ class QuestionsViewModel(
                 updateState { it.copy(exams = seededCatalog(exams, it.exams)) }
             }
         }
-        scope.launch {
-            contentRepository.observeSpecialties().collectLatest { specialties ->
-                updateState { it.copy(specialties = seededCatalog(specialties, it.specialties)) }
-            }
-        }
         scope.launch { refreshCatalogs() }
         scope.launch { loadQuestions() }
     }
@@ -70,7 +65,7 @@ class QuestionsViewModel(
     override suspend fun handleIntent(intent: QuestionsIntent) {
         when (intent) {
             QuestionsIntent.Refresh -> {
-                if (currentState().exams is UiAsync.Error || currentState().specialties is UiAsync.Error) {
+                if (currentState().exams is UiAsync.Error) {
                     refreshCatalogs()
                 }
                 reloadQuestions()
@@ -89,10 +84,6 @@ class QuestionsViewModel(
             }
             is QuestionsIntent.SetTypeFilter -> {
                 updateState { it.copy(typeFilter = intent.type, pageIndex = 0) }
-                reloadQuestions()
-            }
-            is QuestionsIntent.SetSpecialtyFilter -> {
-                updateState { it.copy(specialtyFilter = intent.specialtyId?.takeIf { id -> id.isNotBlank() }, pageIndex = 0) }
                 reloadQuestions()
             }
             is QuestionsIntent.SetActiveFilter -> {
@@ -118,15 +109,6 @@ class QuestionsViewModel(
 
             is QuestionsIntent.SelectQuestion -> selectQuestion(intent.id)
             QuestionsIntent.StartCreate -> startCreate()
-            // Cambiar de especialidad suelta el examen inicial de otra: la base lo
-            // rechazaría (`QUESTION_EXAM_SPECIALTY_MISMATCH`) y el selector ya no lo ofrece.
-            is QuestionsIntent.UpdateCreateSpecialtyId -> updateState { state ->
-                val createExam = (state.exams as? UiAsync.Success)?.value?.firstOrNull { it.id == state.draftCreateExamId }
-                state.copy(
-                    draftSpecialtyId = intent.specialtyId,
-                    draftCreateExamId = if (createExam != null && createExam.specialtyId != intent.specialtyId) "" else state.draftCreateExamId,
-                )
-            }
             is QuestionsIntent.UpdateCreateExamId -> updateState { it.copy(draftCreateExamId = intent.examId) }
 
             is QuestionsIntent.UpdateStatement -> updateState { it.copy(draftStatement = intent.value, dirty = true) }
@@ -235,17 +217,13 @@ class QuestionsViewModel(
     }
 
     /**
-     * Pide los dos catálogos que usan los selectores (KQ0-5): exámenes primero,
-     * porque el repositorio cuenta los de cada especialidad con esa caché (K0-5).
+     * Pide el catálogo de exámenes que usan los selectores (KQ0-5). La especialidad de
+     * cada examen ya viene resuelta en él: la pregunta no tiene especialidad (M8).
      */
     private suspend fun refreshCatalogs() {
         when (val exams = contentRepository.refreshAllExams()) {
             is AppResult.Failure -> updateState { it.copy(exams = UiAsync.Error(exams.error)) }
             is AppResult.Success -> updateState { it.copy(exams = loadedCatalog(exams.value)) }
-        }
-        when (val specialties = contentRepository.refreshSpecialties()) {
-            is AppResult.Failure -> updateState { it.copy(specialties = UiAsync.Error(specialties.error)) }
-            is AppResult.Success -> updateState { it.copy(specialties = loadedCatalog(specialties.value)) }
         }
     }
 
@@ -267,7 +245,6 @@ class QuestionsViewModel(
                 // UNA vez por alta (KQ2-4): sobrevive a cada reintento hasta que la
                 // pregunta exista o el alta se cancele.
                 draftQuestionId = randomUuid(),
-                draftSpecialtyId = "",
                 draftCreateExamId = "",
                 optionsDirty = true, // alta siempre manda opciones
                 dirty = false,
@@ -467,7 +444,6 @@ class QuestionsViewModel(
         val result = if (state.isCreating) {
             questionsRepository.createQuestion(
                 questionId = state.draftQuestionId,
-                specialtyId = state.draftSpecialtyId,
                 draft = draft,
                 examId = state.draftCreateExamId.takeIf { it.isNotBlank() },
             )
@@ -535,8 +511,7 @@ private fun QuestionsState.toDraft() = QuestionDraft(
  */
 fun QuestionsState.isDraftValid(): Boolean {
     if (draftStatement.isBlank()) return false
-    // KQ2-4: la especialidad se elige; el examen inicial es opcional.
-    if (isCreating && draftSpecialtyId.isBlank()) return false
+    // KQ2-4: el examen inicial es opcional; la pregunta no tiene especialidad (M8).
     if (optionsDirty || isCreating) {
         if (draftOptions.size != 4) return false
         if (draftOptions.any { it.content.isBlank() }) return false

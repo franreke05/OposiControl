@@ -150,16 +150,15 @@ internal fun QuestionsContent(
 }
 
 /**
- * Vincular a un examen: sólo se ofrecen los exámenes que la base aceptaría para
- * ESTA pregunta —su tipo guardado y su especialidad— con su estado a la vista
- * (KQ0-5). Va por la puerta canónica (`POST /preguntas/{id}/examenes`, M4), nunca
+ * Vincular a un examen: se ofrecen TODOS los exámenes que admiten el tipo guardado de
+ * ESTA pregunta —de cualquier especialidad y en cualquier estado, dicho junto al nombre—
+ * salvo aquellos en los que ya está (M8: la especialidad es del examen). Va por la puerta canónica (`POST /preguntas/{id}/examenes`, M4), nunca
  * por el PATCH de la pregunta.
  */
 @Composable
 private fun QuestionLinkExamDialog(state: QuestionsState, onIntent: (QuestionsIntent) -> Unit) {
     val tokens = GlassTheme.tokens
-    val saved = (state.detail as? UiAsync.Success)?.value
-    val examsView = questionLinkableExamsView(state.exams, saved?.type, saved?.specialtyId)
+    val examsView = questionLinkDialogView(state)
     val linkable = (examsView as? QuestionLinkableExamsView.Options)?.options.orEmpty()
     Dialog(onDismissRequest = { onIntent(QuestionsIntent.CancelAssociateDialog) }) {
         GlassSurface(
@@ -178,27 +177,17 @@ private fun QuestionLinkExamDialog(state: QuestionsState, onIntent: (QuestionsIn
                     fontWeight = FontWeight.SemiBold,
                     color = tokens.textPrimary,
                 )
-                // «Todavía no hay catálogo» (cargando/fallo) y «no hay candidatos»
-                // (catálogo real, cero compatibles) son hechos distintos: antes los
-                // tres casos caían en el mismo selector vacío, indistinguible de un
-                // fallo silencioso.
-                when (examsView) {
-                    QuestionLinkableExamsView.Loading -> Text(
-                        text = "Cargando exámenes…",
+                // Cargando, fallo, «no hay candidatos» y opciones son hechos distintos: cada uno
+                // dice lo suyo (`questionLinkableExamsNote`) y sólo con opciones hay selector.
+                val note = questionLinkableExamsNote(examsView)
+                if (note != null) {
+                    Text(
+                        text = note.first,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = tokens.textSecondary,
+                        color = if (note.second) tokens.dangerInk else tokens.textSecondary,
                     )
-                    QuestionLinkableExamsView.Unavailable -> Text(
-                        text = QUESTION_LINKABLE_EXAMS_UNAVAILABLE_NOTE,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = tokens.dangerInk,
-                    )
-                    QuestionLinkableExamsView.NoCandidates -> Text(
-                        text = QUESTION_LINKABLE_EXAMS_EMPTY_NOTE,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = tokens.textPrimary,
-                    )
-                    is QuestionLinkableExamsView.Options -> QuestionSelect(
+                } else {
+                    QuestionSelect(
                         selectedLabel = linkable.firstOrNull { it.value == state.associateExamId }?.label
                             ?: "Elige un examen",
                         options = linkable,

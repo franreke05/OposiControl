@@ -34,7 +34,7 @@ enum class QuestionListSort(val wireValue: String) {
 /**
  * Qué página del banco se pide (KQ0-4, QN-07).
  *
- * Todo se resuelve EN EL SERVIDOR: búsqueda, tipo, especialidad, estado, examen,
+ * Todo se resuelve EN EL SERVIDOR: búsqueda, tipo, estado, examen,
  * orden y paginación. Antes el cliente descargaba el banco entero —sin cota— y
  * filtraba lo cargado, y el filtro «Inactivas» filtraba un conjunto del que las
  * inactivas ya se habían ido.
@@ -44,7 +44,6 @@ enum class QuestionListSort(val wireValue: String) {
 data class QuestionListQuery(
     val search: String = "",
     val type: QuestionType? = null,
-    val specialtyId: String? = null,
     val active: QuestionActiveFilter = QuestionActiveFilter.ACTIVE,
     val examId: String? = null,
     val sort: QuestionListSort = QuestionListSort.MOST_RECENT,
@@ -87,12 +86,6 @@ data class QuestionDetail(
      */
     val createdAt: Instant? = null,
     val updatedAt: Instant? = null,
-    /**
-     * `especialidad_id` de la pregunta (KQ0-5). Sirve para ofrecer al vincular sólo
-     * exámenes de SU especialidad: la base rechaza los demás
-     * (`QUESTION_EXAM_SPECIALTY_MISMATCH`). `null` si el servidor no lo manda.
-     */
-    val specialtyId: String? = null,
 )
 
 /** Campos editables — lo que viaja en un alta o una actualización. */

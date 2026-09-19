@@ -12,7 +12,6 @@ import com.oposicontrol.admin.domain.model.QuestionPage
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.QuestionType
-import com.oposicontrol.admin.domain.model.Specialty
 import kotlinx.datetime.Instant
 
 /**
@@ -122,22 +121,8 @@ internal object QuestionsFixtures {
     ) = QuestionsState(
         questions = UiAsync.Success(page(CATALOGO)),
         exams = UiAsync.Success(EXAMENES),
-        specialties = UiAsync.Success(ESPECIALIDADES),
         selectedQuestionId = selected,
         detail = detail,
-    )
-
-    private val ESPECIALIDADES: List<Specialty> = listOf(
-        Specialty(
-            id = "esp-tcae",
-            name = "TCAE",
-            description = "",
-            isActive = true,
-            sortOrder = 0,
-            linkedExams = 3,
-            createdAt = NOW,
-            updatedAt = NOW,
-        ),
     )
 
     private fun detail(

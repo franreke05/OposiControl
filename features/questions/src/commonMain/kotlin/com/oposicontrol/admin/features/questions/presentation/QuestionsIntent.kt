@@ -9,7 +9,6 @@ sealed interface QuestionsIntent {
     data class Search(val query: String) : QuestionsIntent
     data class SetTypeFilter(val type: QuestionType?) : QuestionsIntent
     data class SetExamFilter(val examId: String?) : QuestionsIntent
-    data class SetSpecialtyFilter(val specialtyId: String?) : QuestionsIntent
     data class SetActiveFilter(val active: QuestionActiveFilter) : QuestionsIntent
     data class SetSort(val sort: QuestionsSort) : QuestionsIntent
     data class SetPageIndex(val index: Int) : QuestionsIntent
@@ -17,7 +16,6 @@ sealed interface QuestionsIntent {
 
     data class SelectQuestion(val id: String) : QuestionsIntent
     data object StartCreate : QuestionsIntent
-    data class UpdateCreateSpecialtyId(val specialtyId: String) : QuestionsIntent
     data class UpdateCreateExamId(val examId: String) : QuestionsIntent
 
     data class UpdateStatement(val value: String) : QuestionsIntent

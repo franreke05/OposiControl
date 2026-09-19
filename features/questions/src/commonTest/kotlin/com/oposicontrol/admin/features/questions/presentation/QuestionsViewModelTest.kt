@@ -179,10 +179,10 @@ class QuestionsViewModelTest {
         assertEquals(QuestionType.RAFAGA, repository.lastQuery.type)
 
         viewModel.dispatch(QuestionsIntent.SetPageIndex(1))
-        viewModel.dispatch(QuestionsIntent.SetSpecialtyFilter("sp-1"))
+        viewModel.dispatch(QuestionsIntent.SetActiveFilter(QuestionActiveFilter.ALL))
         advanceUntilIdle()
         assertEquals(0, repository.lastQuery.offset)
-        assertEquals("sp-1", repository.lastQuery.specialtyId)
+        assertEquals(QuestionActiveFilter.ALL, repository.lastQuery.active)
 
         viewModel.dispatch(QuestionsIntent.SetPageIndex(1))
         viewModel.dispatch(QuestionsIntent.SetSort(QuestionsSort.BY_CODE))
@@ -276,10 +276,10 @@ class QuestionsViewModelTest {
         advanceUntilIdle()
 
         assertEquals(1, content.refreshAllExamsCalls)
-        assertEquals(1, content.refreshSpecialtiesCalls)
+        // M8: la pregunta no tiene especialidad, así que esta pantalla ya no pide ese catálogo.
+        assertEquals(0, content.refreshSpecialtiesCalls)
         val exams = assertIs<UiAsync.Success<List<Exam>>>(viewModel.state.value.exams)
         assertTrue(exams.value.any { it.id == "ex-raf" }, "Falta la ráfaga: ${exams.value.map { it.id }}")
-        assertEquals(UiAsync.Empty, viewModel.state.value.specialties)
     }
 
     /** Un catálogo que no se ha podido pedir es un error, nunca una lista vacía en silencio. */
@@ -402,9 +402,9 @@ class QuestionsViewModelTest {
         assertFalse(viewModel.state.value.isDraftValid())
     }
 
-    /** KQ2-4: la especialidad se elige; el examen inicial es opcional. */
+    /** M8 · TEST 1/10: un alta no necesita especialidad (no existe) ni examen inicial. */
     @Test
-    fun createRequiresASpecialtyButNotAnExam() = runTest {
+    fun createNeedsNeitherASpecialtyNorAnExam() = runTest {
         val repository = FakeQuestionsRepository(listResult = AppResult.Success(emptyList()))
         val viewModel = buildViewModel(repository)
         advanceUntilIdle()
@@ -415,12 +415,12 @@ class QuestionsViewModelTest {
             viewModel.dispatch(QuestionsIntent.UpdateOptionContent(label, text))
         }
         advanceUntilIdle()
-        assertFalse(viewModel.state.value.isDraftValid(), "sin especialidad no hay alta")
-
-        viewModel.dispatch(QuestionsIntent.UpdateCreateSpecialtyId("sp-1"))
-        advanceUntilIdle()
-        assertTrue(viewModel.state.value.isDraftValid(), "con especialidad y sin examen, sí")
+        assertTrue(viewModel.state.value.isDraftValid(), "sin especialidad ni examen, el alta es válida")
         assertEquals("", viewModel.state.value.draftCreateExamId)
+
+        viewModel.dispatch(QuestionsIntent.UpdateCreateExamId("ex-1"))
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.isDraftValid(), "con examen inicial, también")
     }
 
     /**
@@ -438,7 +438,6 @@ class QuestionsViewModelTest {
         advanceUntilIdle()
 
         viewModel.dispatch(QuestionsIntent.StartCreate)
-        viewModel.dispatch(QuestionsIntent.UpdateCreateSpecialtyId("sp-1"))
         viewModel.dispatch(QuestionsIntent.UpdateStatement("Enunciado nuevo"))
         listOf("A" to "a", "B" to "b", "C" to "c", "D" to "d").forEach { (label, text) ->
             viewModel.dispatch(QuestionsIntent.UpdateOptionContent(label, text))
@@ -454,13 +453,43 @@ class QuestionsViewModelTest {
         advanceUntilIdle()
 
         assertEquals(listOf(generated, generated), repository.createdIds, "el reintento tiene que llevar el MISMO id")
-        assertEquals(listOf("sp-1", "sp-1"), repository.createdSpecialtyIds)
         assertEquals(listOf<String?>(null, null), repository.createdExamIds, "sin examen inicial no viaja ninguno")
 
         // Y un alta NUEVA es otro id.
         viewModel.dispatch(QuestionsIntent.StartCreate)
         advanceUntilIdle()
         assertTrue(viewModel.state.value.draftQuestionId != generated)
+    }
+
+    /**
+     * M8 · TEST 9: el examen inicial viaja con el alta, en la misma llamada, sea de la
+     * especialidad que sea (el ViewModel ni la conoce) y esté en borrador o publicado.
+     */
+    @Test
+    fun createWithAnInitialExamSendsItInTheSameCallAndNoSpecialty() = runTest {
+        val draftExamOtherSpecialty = rafaga.copy(id = "ex-raf-enf", specialtyId = "sp-2", specialtyName = "Enfermería", status = ExamStatus.DRAFT)
+        val repository = FakeQuestionsRepository(
+            listResult = AppResult.Success(emptyList()),
+            createResult = AppResult.Success(detail("q-nueva")),
+        )
+        val viewModel = buildViewModel(repository, content = FakeContentRepository(listOf(exam, rafaga, draftExamOtherSpecialty)))
+        advanceUntilIdle()
+
+        viewModel.dispatch(QuestionsIntent.StartCreate)
+        viewModel.dispatch(QuestionsIntent.UpdateType(QuestionType.RAFAGA))
+        viewModel.dispatch(QuestionsIntent.UpdateStatement("Enunciado nuevo"))
+        listOf("A" to "a", "B" to "b", "C" to "c", "D" to "d").forEach { (label, text) ->
+            viewModel.dispatch(QuestionsIntent.UpdateOptionContent(label, text))
+        }
+        viewModel.dispatch(QuestionsIntent.UpdateCreateExamId("ex-raf-enf"))
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.isDraftValid())
+
+        viewModel.dispatch(QuestionsIntent.Save)
+        advanceUntilIdle()
+
+        assertEquals(listOf<String?>("ex-raf-enf"), repository.createdExamIds)
+        assertIs<UiAsync.Success<Unit>>(viewModel.state.value.saveState)
     }
 
     /** KQ3-2: los vínculos vienen del servidor, no de haber llegado filtrando por un examen. */
@@ -549,6 +578,34 @@ class QuestionsViewModelTest {
         assertEquals(0, repository.updateCallCount)
         assertEquals(listOf(returned), (viewModel.state.value.examLinks as UiAsync.Success).value)
         assertFalse(viewModel.state.value.showAssociateDialog)
+    }
+
+    /**
+     * M8 · TEST 4: si el servidor rechaza un vínculo (tipo incompatible), el rechazo se dice como
+     * error, el diálogo sigue abierto y los vínculos conocidos no cambian.
+     */
+    @Test
+    fun aRejectedLinkIsShownAsAnErrorAndLeavesTheKnownLinksAlone() = runTest {
+        val existing = QuestionExamLink(examId = "ex-1", examCode = "EX-0012", examTitle = "Examen", position = 1)
+        val repository = FakeQuestionsRepository(
+            listResult = AppResult.Success(listOf(listItem())),
+            detailResult = AppResult.Success(detail()),
+            linksResult = AppResult.Success(listOf(existing)),
+            linkResult = AppResult.Failure(AppError.Validation("El tipo de la pregunta no corresponde al del examen")),
+        )
+        val viewModel = buildViewModel(repository, exams = listOf(exam, rafaga))
+        advanceUntilIdle()
+        viewModel.dispatch(QuestionsIntent.SelectQuestion("q-1"))
+        advanceUntilIdle()
+
+        viewModel.dispatch(QuestionsIntent.RequestAssociateExam)
+        viewModel.dispatch(QuestionsIntent.UpdateAssociateExamId("ex-raf"))
+        viewModel.dispatch(QuestionsIntent.ConfirmAssociateExam)
+        advanceUntilIdle()
+
+        assertIs<UiAsync.Error>(viewModel.state.value.saveState)
+        assertTrue(viewModel.state.value.showAssociateDialog, "el diálogo sigue abierto para corregir")
+        assertEquals(listOf(existing), (viewModel.state.value.examLinks as UiAsync.Success).value)
     }
 
     @Test
@@ -669,7 +726,6 @@ private class FakeQuestionsRepository(
         private set
     /** Los ids con los que se pidió cada alta: el reintento tiene que repetir el primero. */
     val createdIds = mutableListOf<String>()
-    val createdSpecialtyIds = mutableListOf<String>()
     val createdExamIds = mutableListOf<String?>()
     val listedLinksFor = mutableListOf<String>()
     var linkCallCount = 0
@@ -696,12 +752,10 @@ private class FakeQuestionsRepository(
 
     override suspend fun createQuestion(
         questionId: String,
-        specialtyId: String,
         draft: QuestionDraft,
         examId: String?,
     ): AppResult<QuestionDetail> {
         createdIds += questionId
-        createdSpecialtyIds += specialtyId
         createdExamIds += examId
         return createResult ?: AppResult.Failure(AppError.Validation("admin_create_question no disponible"))
     }
