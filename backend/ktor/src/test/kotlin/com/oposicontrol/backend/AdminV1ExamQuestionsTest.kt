@@ -507,7 +507,7 @@ class AdminV1ExamQuestionsTest {
                 uri.contains("/rest/v1/preguntas?") -> StubResponse(
                     200,
                     ids.joinToString(",", "[", "]") { id ->
-                        """{"id":"$id","codigo_pregunta":"C-$id","especialidad_id":"ESP",""" +
+                        """{"id":"$id","codigo_pregunta":"C-$id",""" +
                             """"tipo_pregunta":"rafaga","titulo":"Titulo $id","fuente_texto":"","dificultad":"media","activa":true}"""
                     },
                     null,

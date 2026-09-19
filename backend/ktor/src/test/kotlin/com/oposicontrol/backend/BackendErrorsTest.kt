@@ -525,7 +525,6 @@ class BackendErrorsTest {
             "EXAM_TYPE_LOCKED_BY_QUESTIONS" to HttpStatusCode.Conflict,
             "QUESTION_TYPE_LOCKED_BY_EXAMS" to HttpStatusCode.Conflict,
             "QUESTION_TYPE_LOCKED_BY_RESOURCES" to HttpStatusCode.Conflict,
-            "QUESTION_EXAM_SPECIALTY_MISMATCH" to HttpStatusCode.UnprocessableEntity,
             "QUESTION_EXAM_TYPE_MISMATCH" to HttpStatusCode.UnprocessableEntity,
             // M4 · vínculo, orden y desvínculo
             "EXAM_NOT_FOUND" to HttpStatusCode.NotFound,
@@ -541,8 +540,6 @@ class BackendErrorsTest {
             "QUESTION_ID_REQUIRED" to HttpStatusCode.UnprocessableEntity,
             "QUESTION_ID_CONFLICT" to HttpStatusCode.Conflict,
             "QUESTION_STATEMENT_REQUIRED" to HttpStatusCode.UnprocessableEntity,
-            "QUESTION_SPECIALTY_REQUIRED" to HttpStatusCode.UnprocessableEntity,
-            "QUESTION_SPECIALTY_NOT_FOUND" to HttpStatusCode.UnprocessableEntity,
             "QUESTION_TYPE_UNKNOWN" to HttpStatusCode.UnprocessableEntity,
             "QUESTION_DIFFICULTY_UNKNOWN" to HttpStatusCode.UnprocessableEntity,
             "QUESTION_OPTIONS_INVALID" to HttpStatusCode.UnprocessableEntity,
@@ -639,7 +636,6 @@ class BackendErrorsTest {
             "preguntas_creado_por_fkey" to "AUTHOR_NOT_FOUND",
             "examenes_creado_por_fkey" to "AUTHOR_NOT_FOUND",
             "preguntas_lote_importacion_id_fkey" to "IMPORT_BATCH_NOT_FOUND",
-            "preguntas_especialidad_id_fkey" to "QUESTION_SPECIALTY_NOT_FOUND",
             "examenes_especialidad_id_fkey" to "EXAM_SPECIALTY_NOT_FOUND",
             "otra_restriccion_fkey" to "REFERENCE_NOT_FOUND",
         ).forEach { (restriccion, codigo) ->

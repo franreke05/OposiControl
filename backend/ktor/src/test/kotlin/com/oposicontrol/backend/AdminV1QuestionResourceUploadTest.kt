@@ -36,7 +36,6 @@ import kotlin.test.assertTrue
 class AdminV1QuestionResourceUploadTest {
 
     private val preguntaId = "77777777-7777-4777-8777-777777777777"
-    private val especialidadId = "88888888-8888-4888-8888-888888888888"
     private val recursoId = "99999999-9999-4999-8999-999999999999"
 
     @Test fun elArchivoSubeAlBucketPrivadoConLaRutaDelCheckYDespuesSeEscribeLaFila() = testApplication {
@@ -231,7 +230,7 @@ class AdminV1QuestionResourceUploadTest {
                 uri.contains("/rest/v1/recursos_pregunta") -> V1StubResponse(200, "[]")
                 uri.contains("/rest/v1/preguntas") -> V1StubResponse(
                     200,
-                    """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001","especialidad_id":"$especialidadId",""" +
+                    """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001",""" +
                         """"tipo_pregunta":"$tipo","titulo":"Titulo","activa":true}]""",
                 )
                 else -> V1StubResponse(200, "[]")

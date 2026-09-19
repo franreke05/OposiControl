@@ -57,7 +57,6 @@ import kotlin.test.assertTrue
 class IndependentBodyIdentifierTruncationTest {
 
     private val preguntaId = "11111111-1111-4111-8111-111111111111"
-    private val especialidadId = "22222222-2222-4222-8222-222222222222"
     private val examenId = "33333333-3333-4333-8333-333333333333"
     private val recursoId = "44444444-4444-4444-8444-444444444444"
 
@@ -213,7 +212,7 @@ class IndependentBodyIdentifierTruncationTest {
             ?.let { ""","recursos":[{"id":"$it","tipoRecurso":"texto","titulo":"r","posicion":1}]""" }
             .orEmpty()
         val examen = examenIdInBody?.let { ""","examenId":"$it","posicion":3""" }.orEmpty()
-        return """{"id":"$preguntaId","codigoPregunta":"P-1","especialidadId":"$especialidadId",""" +
+        return """{"id":"$preguntaId","codigoPregunta":"P-1",""" +
             """"tipoPregunta":"inmersiva","titulo":"Titulo"$examen$recursos}"""
     }
 
@@ -260,7 +259,7 @@ class IndependentBodyIdentifierTruncationTest {
                     )
                     uri.contains("/rest/v1/preguntas") -> V1StubResponse(
                         200,
-                        """[{"id":"$preguntaId","codigo_pregunta":"P-1","especialidad_id":"$especialidadId",""" +
+                        """[{"id":"$preguntaId","codigo_pregunta":"P-1",""" +
                             """"tipo_pregunta":"rafaga","titulo":"Titulo","activa":true}]""",
                     )
                     else -> V1StubResponse(200, "[]")

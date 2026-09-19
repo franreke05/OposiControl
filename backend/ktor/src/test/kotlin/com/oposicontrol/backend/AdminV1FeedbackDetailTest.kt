@@ -26,11 +26,10 @@ private fun row(
 
 class AdminV1FeedbackDetailTest {
     @Test
-    fun buildFeedbackDetailDto_mapsAllRealFields_withQuestionAndSpecialty() {
+    fun buildFeedbackDetailDto_mapsAllRealFields_andCarriesWhateverSpecialtyNameItIsGiven() {
         val pregunta = AdminPreguntaDto(
             id = "p-1",
             codigoPregunta = "RAF-0042",
-            especialidadId = "esp-1",
             titulo = "¿Cuál es el plazo de alegaciones?",
         )
 
@@ -64,7 +63,7 @@ class AdminV1FeedbackDetailTest {
 
     @Test
     fun buildFeedbackDetailDto_neverFabricatesASpecialtyName_whenItCouldNotBeResolved() {
-        val pregunta = AdminPreguntaDto(id = "p-1", codigoPregunta = "RAF-0042", especialidadId = "esp-orfana", titulo = "Título")
+        val pregunta = AdminPreguntaDto(id = "p-1", codigoPregunta = "RAF-0042", titulo = "Título")
 
         val dto = buildFeedbackDetailDto(row = row(), autorNombre = "", pregunta = pregunta, especialidadNombre = null)
 

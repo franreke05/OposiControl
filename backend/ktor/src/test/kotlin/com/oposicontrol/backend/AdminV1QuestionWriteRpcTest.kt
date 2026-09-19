@@ -69,7 +69,7 @@ class AdminV1QuestionWriteRpcTest {
 
         val response = client.post("/api/v1/admin/preguntas") {
             contentType(ContentType.Application.Json)
-            setBody("""{"id":"no-soy-uuid","especialidadId":"$especialidadId","titulo":"T","opciones":[]}""")
+            setBody("""{"id":"no-soy-uuid","titulo":"T","opciones":[]}""")
         }
 
         assertEquals(HttpStatusCode.BadRequest, response.status, response.bodyAsText())
@@ -102,18 +102,34 @@ class AdminV1QuestionWriteRpcTest {
         assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
     }
 
-    /** Sin especialidad no hay alta posible: 400 antes de salir. */
-    @Test fun sinEspecialidadEsUn400() = testApplication {
+    /** M8 · TEST 1/10: la pregunta no tiene especialidad. El alta sin ella es válida y la RPC no la recibe. */
+    @Test fun elAltaNoLlevaEspecialidadNiSeLaExige() = testApplication {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
-        application { writeModule(gatewayWith(upstream)) }
+        application { writeModule(gatewayWith(upstream, creada = true)) }
 
         val response = client.post("/api/v1/admin/preguntas") {
             contentType(ContentType.Application.Json)
-            setBody("""{"id":"$preguntaId","especialidadId":"","titulo":"T"}""")
+            setBody(altaJson())
         }
 
-        assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertTrue(upstream.isEmpty(), upstream.describe())
+        assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
+        val rpc = readRequestBody(upstream.single { it.uri().rawPath.endsWith("/rpc/admin_create_question") })
+        assertFalse(rpc.contains("especialidad"), "la RPC de alta no recibe especialidad: $rpc")
+    }
+
+    /** Un cliente antiguo que aún manda `especialidadId` no rompe el alta: se ignora, no se reenvía. */
+    @Test fun unEspecialidadIdSobranteSeIgnora() = testApplication {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        application { writeModule(gatewayWith(upstream, creada = true)) }
+
+        val response = client.post("/api/v1/admin/preguntas") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"id":"$preguntaId","especialidadId":"$especialidadId","tipoPregunta":"rafaga","titulo":"T","opciones":[{"letra":"A","texto":"a","esCorrecta":true},{"letra":"B","texto":"b"},{"letra":"C","texto":"c"},{"letra":"D","texto":"d"}]}""")
+        }
+
+        assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
+        val rpc = readRequestBody(upstream.single { it.uri().rawPath.endsWith("/rpc/admin_create_question") })
+        assertFalse(rpc.contains("especialidad"), "no se reenvía: $rpc")
     }
 
     /** Un mismo id con otro contenido es el conflicto de la RPC, entero y con su 409. */
@@ -230,7 +246,6 @@ class AdminV1QuestionWriteRpcTest {
 
     private fun alta() = AdminPreguntaDto(
         id = preguntaId,
-        especialidadId = especialidadId,
         tipoPregunta = "rafaga",
         titulo = "Titulo",
         opciones = listOf(
@@ -242,12 +257,12 @@ class AdminV1QuestionWriteRpcTest {
     )
 
     private fun altaJson(): String =
-        """{"id":"$preguntaId","especialidadId":"$especialidadId","tipoPregunta":"rafaga","titulo":"Titulo",""" +
+        """{"id":"$preguntaId","tipoPregunta":"rafaga","titulo":"Titulo",""" +
             """"opciones":[{"letra":"A","texto":"a","esCorrecta":true},{"letra":"B","texto":"b"},""" +
             """{"letra":"C","texto":"c"},{"letra":"D","texto":"d"}]}"""
 
     private fun preguntaRow(): String =
-        """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001","especialidad_id":"$especialidadId",""" +
+        """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001",""" +
             """"tipo_pregunta":"rafaga","titulo":"Titulo","activa":true}]"""
 
     private fun gatewayWith(

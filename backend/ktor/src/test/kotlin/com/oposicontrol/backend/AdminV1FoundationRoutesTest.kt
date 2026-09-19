@@ -148,12 +148,9 @@ class AdminV1FoundationRoutesTest {
                     jsonBody("""{"especialidadId":"$especialidadId","comunidadId":"x-probe-c","titulo":"Examen"}""")
                 }
             },
-            RouteCall("pregunta · especialidadId") {
-                client.post("/api/v1/admin/preguntas") { jsonBody("""{"especialidadId":"x-probe-c","titulo":"P"}""") }
-            },
             RouteCall("pregunta · examenId") {
                 client.post("/api/v1/admin/preguntas") {
-                    jsonBody("""{"especialidadId":"$especialidadId","examenId":"x-probe-c","titulo":"P"}""")
+                    jsonBody("""{"examenId":"x-probe-c","titulo":"P"}""")
                 }
             },
         )

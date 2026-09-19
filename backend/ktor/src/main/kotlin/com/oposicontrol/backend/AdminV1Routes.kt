@@ -176,7 +176,6 @@ internal enum class PreguntaListOrden(val wire: String, val postgrest: String) {
 internal data class AdminPreguntaListQuery(
     val texto: String? = null,
     val tipo: String? = null,
-    val especialidadId: String? = null,
     val activa: Boolean? = true,
     val examenId: String? = null,
     val orden: PreguntaListOrden = PreguntaListOrden.RECIENTES,
@@ -219,7 +218,6 @@ internal fun Parameters.toPreguntaListQuery(): AdminPreguntaListQuery {
     return AdminPreguntaListQuery(
         texto = texto,
         tipo = tipo,
-        especialidadId = this["especialidadId"]?.takeIf { it.isNotBlank() }?.validatedUuid("especialidadId"),
         activa = parseActivaFilter(this["activa"]),
         examenId = this["examenId"]?.takeIf { it.isNotBlank() }?.validatedUuid("examenId"),
         orden = orden,
@@ -627,7 +625,8 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         }
         route("/preguntas") {
             // KQ0-3: una PÁGINA del banco con su total, filtrada y ordenada EN EL
-            // SERVIDOR. `?q=&tipo=&especialidadId=&activa=&examenId=&orden=&limit=&offset=`
+            // SERVIDOR. `?q=&tipo=&activa=&examenId=&orden=&limit=&offset=` (la pregunta no
+            // tiene especialidad: no hay filtro por ella; `especialidadId` se ignora)
             // → `{data, total, limit, offset}`. `activa` ausente sigue siendo `true`
             // (ver [parseActivaFilter] para por qué el default NO es «todas»).
             //
@@ -645,19 +644,11 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             // llegó, aunque su respuesta se perdiera). Un 201 en el reintento
             // haría creer al banco que hay dos preguntas donde hay una.
             post {
-                // F-07: mismos ids de cuerpo que el PATCH de abajo, y además
-                // `especialidadId`, que acaba en una columna uuid. Sin validar, un
+                // F-07: mismos ids de cuerpo que el PATCH de abajo. Sin validar, un
                 // valor que no es UUID volvía de Postgres como 22P02 (500) y un `#`
                 // en `examenId` truncaba el filtro. Se rechaza con 400 antes de
-                // llamar a Supabase.
+                // llamar a Supabase. La pregunta NO lleva especialidad (M8): es del examen.
                 val body = call.receive<AdminPreguntaDto>().withValidatedIdentifiers()
-                if (body.especialidadId.isBlank()) {
-                    return@post call.respond(
-                        HttpStatusCode.BadRequest,
-                        ErrorDto(error = "bad_request", message = "La pregunta necesita especialidad."),
-                    )
-                }
-                body.especialidadId.validatedUuid("especialidadId")
                 // Q2-4: el autor es el `sub` del JWT verificado, o nadie. Un id
                 // inexistente en `auth.users` era un 23503 con el texto del borrado.
                 val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
@@ -1891,7 +1882,7 @@ private data class AdminPreguntaExamenListRow(
 )
 
 /** Las columnas del listado del banco: las que pinta la fila, ni una más. */
-private const val PREGUNTA_LIST_COLUMNS = "id,codigo_pregunta,especialidad_id,tipo_pregunta,titulo,fuente_texto,dificultad,activa"
+private const val PREGUNTA_LIST_COLUMNS = "id,codigo_pregunta,tipo_pregunta,titulo,fuente_texto,dificultad,activa"
 
 @Serializable
 data class AdminPreguntaResponse(val data: AdminPreguntaDto)
@@ -1920,7 +1911,6 @@ data class AdminPreguntaDto(
      * ignora en escritura, ni el alta ni el PATCH lo mandan a Supabase.
      */
     val codigoPregunta: String = "",
-    val especialidadId: String,
     @EncodeDefault val tipoPregunta: String = "rafaga",
     val titulo: String,
     /**
@@ -2014,7 +2004,6 @@ internal fun AdminPreguntaDto.withValidatedIdentifiers(): AdminPreguntaDto = cop
 private data class AdminPreguntaRow(
     val id: String? = null,
     @SerialName("codigo_pregunta") val codigoPregunta: String,
-    @SerialName("especialidad_id") val especialidadId: String,
     @SerialName("tipo_pregunta") val tipoPregunta: String = "rafaga",
     val titulo: String,
     @SerialName("fuente_texto") val fuenteTexto: String? = null,
@@ -2170,7 +2159,7 @@ private fun AdminPreguntaExamenVinculoRow.toDto(): AdminPreguntaExamenVinculoDto
 /**
  * Clave del cuerpo HTTP del PATCH de pregunta → clave de `p_cambios` de
  * `admin_update_question` (KQ2-2). Todo lo demás del cuerpo se IGNORA: `id`,
- * `codigoPregunta` (Q1), `especialidadId` (la RPC no la cambia), `recursos` (KQ0-8) y
+ * `codigoPregunta` (Q1), cualquier `especialidadId` sobrante (la pregunta no la tiene, M8), `recursos` (KQ0-8) y
  * `examenId`/`posicion` (D-03: el PATCH ya no vincula; la única puerta es
  * `POST /preguntas/{id}/examenes`).
  */
@@ -2633,8 +2622,8 @@ data class AdminFeedbackDetailDto(
     val pregunta: AdminFeedbackPreguntaContextDto? = null,
 )
 
-/** [especialidadNombre] null si la especialidad no se pudo resolver — nunca
- * se muestra el uuid crudo en su lugar. */
+/** [especialidadNombre] va SIEMPRE null desde M8: la pregunta no tiene especialidad propia (es del examen).
+ * Se conserva como campo reservado del contrato; nunca se rellena con el uuid crudo. */
 @Serializable
 data class AdminFeedbackPreguntaContextDto(
     val codigoPregunta: String,
@@ -3063,8 +3052,8 @@ private data class AdminGrantTicketsResult(
 )
 
 /**
- * Argumentos de `public.admin_create_question` (Q2, firma leída de MAIN: 13
- * parámetros con nombre, los ocho últimos con default).
+ * Argumentos de `public.admin_create_question` (Q2; M8 retiró `p_especialidad_id`: la pregunta
+ * no tiene especialidad, así que son 12 parámetros con nombre, los ocho últimos con default).
  *
  * - [preguntaId] es la CLAVE DE IDEMPOTENCIA (KQ2-1, P1 de C): la genera el cliente
  *   UNA vez por alta y la repite en cada reintento. La RPC hace `on conflict (id)
@@ -3078,7 +3067,6 @@ private data class AdminGrantTicketsResult(
 @Serializable
 private data class AdminCreateQuestionRpc(
     @SerialName("p_pregunta_id") val preguntaId: String,
-    @SerialName("p_especialidad_id") val especialidadId: String,
     @SerialName("p_tipo_pregunta") val tipoPregunta: String,
     @SerialName("p_titulo") val titulo: String,
     @SerialName("p_opciones") val opciones: List<AdminRpcOpcionInput>,
@@ -3777,7 +3765,6 @@ class AdminV1Gateway private constructor(
         val filtros = buildList {
             q.activa?.let { add("activa=eq.$it") }
             q.tipo?.let { add("tipo_pregunta=eq.$it") }
-            q.especialidadId?.let { add("especialidad_id=eq.$it") }
             q.texto?.let(::preguntaSearchFilter)?.let { add("or=($it)") }
         }
         val rango = "&limit=${q.limit}&offset=${q.offset}"
@@ -3915,7 +3902,7 @@ class AdminV1Gateway private constructor(
      *   `QUESTION_ID_CONFLICT`. Si el cliente no manda id (un llamador interno), se
      *   genera aquí: sin reintento posible, no hay nada que proteger.
      * - **Todo o nada.** La RPC valida (enunciado, 4 opciones, 1 correcta, tipo,
-     *   dificultad, especialidad y, si hay examen, el vínculo) ANTES de escribir, e
+     *   dificultad y, si hay examen, el vínculo por tipo) ANTES de escribir, e
      *   inserta pregunta, opciones, solución y vínculo en una transacción. Ya no hay
      *   `require` aquí: las reglas y sus códigos son de la base, y duplicarlas en
      *   Kotlin sólo las haría divergir.
@@ -3934,7 +3921,6 @@ class AdminV1Gateway private constructor(
             sbJson.encodeToString(
                 AdminCreateQuestionRpc(
                     preguntaId = preguntaId,
-                    especialidadId = input.especialidadId,
                     tipoPregunta = input.tipoPregunta,
                     titulo = input.titulo,
                     opciones = input.opciones.map { AdminRpcOpcionInput(it.letra, it.texto, it.esCorrecta) },
@@ -4066,7 +4052,7 @@ class AdminV1Gateway private constructor(
      * Sustituye a `upsertPreguntaExamen`, que leía `max(numero_en_examen)+1` y
      * escribía después: sin cerrojo, dos altas simultáneas se daban el mismo
      * número, y `posicion ?: 1` chocaba con la pregunta que ya ocupaba la 1 en un
-     * examen no vacío. La RPC valida especialidad, tipo, archivado y límite ANTES
+     * examen no vacío. La RPC valida tipo, archivado y límite ANTES
      * de insertar, y recoloca el resto en la misma transacción.
      */
     internal fun vincularPreguntaExamen(examenId: String, preguntaId: String, posicion: Int?) {
@@ -4447,7 +4433,6 @@ class AdminV1Gateway private constructor(
     private fun AdminPreguntaRow.toDtoSinDetalle() = AdminPreguntaDto(
         id = id.orEmpty(),
         codigoPregunta = codigoPregunta,
-        especialidadId = especialidadId,
         tipoPregunta = tipoPregunta,
         titulo = titulo,
         // NULL en la base → texto vacío en la respuesta (KQ0-2): el contrato de
@@ -4955,22 +4940,16 @@ class AdminV1Gateway private constructor(
 
     /** Detalle real de una incidencia para Screen 07: la fila de
      * feedback_pregunta más el contexto de su pregunta asociada (código
-     * humano, título y nombre de especialidad), resuelto en como máximo dos
-     * llamadas extra — nunca N+1 (esto es un detalle de un único id, no un
-     * listado). [pregunta] es null si la pregunta ya no existe; en ese caso
-     * tampoco se resuelve especialidad. */
+     * humano y título), sin N+1 (esto es un detalle de un único id, no un
+     * listado). [pregunta] es null si la pregunta ya no existe. La pregunta no
+     * tiene especialidad propia (M8), así que `especialidadNombre` va siempre null. */
     fun getFeedbackDetail(id: String): AdminFeedbackDetailDto? {
         val row = request("GET", "/rest/v1/feedback_pregunta?select=*&id=eq.$id&limit=1", null)
             .decodeList<FeedbackRow>().firstOrNull() ?: return null
         val autorNombre = row.usuarioId?.let { resolveUserDisplayNames(listOf(it))[it] }.orEmpty()
         val pregunta = runCatching { getPregunta(row.preguntaId) }.getOrNull()
-        val especialidadNombre = pregunta?.especialidadId
-            ?.takeIf { it.isNotBlank() }
-            ?.let { specId ->
-                request("GET", "/rest/v1/especialidades?select=id,nombre&id=eq.$specId&limit=1", null)
-                    .decodeList<EspecialidadNombreRow>().firstOrNull()?.nombre
-            }
-        return buildFeedbackDetailDto(row, autorNombre, pregunta, especialidadNombre)
+        // M8: la pregunta no tiene especialidad, así que el contexto ya no la lleva.
+        return buildFeedbackDetailDto(row, autorNombre, pregunta, especialidadNombre = null)
     }
 
     // USUARIOS (perfiles_usuario + roles_usuario)

@@ -26,7 +26,6 @@ import kotlin.test.assertTrue
 class AdminV1QuestionNullColumnsTest {
 
     private val preguntaId = "c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3"
-    private val especialidadId = "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4"
 
     @Test
     fun theListAndTheDetailSurviveNullColumns() = testApplication {
@@ -68,7 +67,7 @@ class AdminV1QuestionNullColumnsTest {
                 uri.contains("/rest/v1/soluciones_pregunta") -> V1StubResponse(200, "[]")
                 uri.contains("/rest/v1/preguntas") -> V1StubResponse(
                     200,
-                    """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001","especialidad_id":"$especialidadId",""" +
+                    """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001",""" +
                         """"tipo_pregunta":"inmersiva","titulo":"Titulo","fuente_texto":null,"dificultad":null,"activa":true}]""",
                     contentRange = "0-0/1",
                 )

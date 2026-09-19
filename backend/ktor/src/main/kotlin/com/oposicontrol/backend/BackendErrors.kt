@@ -98,7 +98,7 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     ),
     "EXAM_TYPE_LOCKED_BY_QUESTIONS" to DomainErrorDefinition(
         HttpStatusCode.Conflict,
-        "No se puede cambiar el tipo ni la especialidad de un examen con preguntas vinculadas. " +
+        "No se puede cambiar el tipo de un examen con preguntas vinculadas. " +
             "Quita antes sus preguntas.",
     ),
     "EXAM_PUBLISHED_WOULD_BE_EMPTY" to DomainErrorDefinition(
@@ -121,10 +121,6 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     "QUESTION_ARCHIVED" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
         "La pregunta está archivada: restáurala antes de vincularla a un examen.",
-    ),
-    "QUESTION_EXAM_SPECIALTY_MISMATCH" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "La pregunta y el examen son de especialidades distintas.",
     ),
     "QUESTION_EXAM_TYPE_MISMATCH" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
@@ -158,7 +154,7 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     ),
     "QUESTION_TYPE_LOCKED_BY_EXAMS" to DomainErrorDefinition(
         HttpStatusCode.Conflict,
-        "No se puede cambiar el tipo ni la especialidad de una pregunta vinculada a exámenes. " +
+        "No se puede cambiar el tipo de una pregunta vinculada a exámenes. " +
             "Quítala antes de esos exámenes.",
     ),
     "QUESTION_TYPE_LOCKED_BY_RESOURCES" to DomainErrorDefinition(
@@ -182,14 +178,6 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     "QUESTION_STATEMENT_REQUIRED" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
         "El enunciado no puede quedar vacío.",
-    ),
-    "QUESTION_SPECIALTY_REQUIRED" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "Elige la especialidad de la pregunta.",
-    ),
-    "QUESTION_SPECIALTY_NOT_FOUND" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "La especialidad elegida ya no existe.",
     ),
     "QUESTION_TYPE_UNKNOWN" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
@@ -273,7 +261,7 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     ),
     "IMPORT_LINK_TARGET_INVALID" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
-        "Alguna pregunta elegida para vincular ya no está activa o no es de la misma especialidad y tipo.",
+        "Alguna pregunta elegida para vincular ya no está activa, no es del mismo tipo o ya no coincide con lo revisado.",
     ),
     "IMPORT_TYPE_MISMATCH" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
@@ -746,7 +734,6 @@ private fun missingReferenceDefinition(body: String): SqlStateErrorDefinition {
     return when {
         message.contains("preguntas_creado_por_fkey") || message.contains("examenes_creado_por_fkey") -> AUTHOR_NOT_FOUND
         message.contains("preguntas_lote_importacion_id_fkey") -> IMPORT_BATCH_NOT_FOUND
-        message.contains("preguntas_especialidad_id_fkey") -> QUESTION_SPECIALTY_NOT_FOUND_REFERENCE
         message.contains("examenes_especialidad_id_fkey") -> EXAM_SPECIALTY_NOT_FOUND
         else -> REFERENCE_NOT_FOUND
     }
@@ -762,13 +749,6 @@ private val IMPORT_BATCH_NOT_FOUND = SqlStateErrorDefinition(
     "IMPORT_BATCH_NOT_FOUND",
     HttpStatusCode.UnprocessableEntity,
     "El lote de importación ya no existe. Recarga las importaciones.",
-)
-
-/** Mismo código y texto que levanta Q2 cuando lo comprueba antes de insertar. */
-private val QUESTION_SPECIALTY_NOT_FOUND_REFERENCE = SqlStateErrorDefinition(
-    "QUESTION_SPECIALTY_NOT_FOUND",
-    HttpStatusCode.UnprocessableEntity,
-    "La especialidad elegida ya no existe.",
 )
 
 private val EXAM_SPECIALTY_NOT_FOUND = SqlStateErrorDefinition(

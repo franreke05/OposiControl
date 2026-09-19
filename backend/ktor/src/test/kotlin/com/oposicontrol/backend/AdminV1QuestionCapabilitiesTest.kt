@@ -41,7 +41,6 @@ import kotlin.test.assertTrue
 class AdminV1QuestionCapabilitiesTest {
 
     private val preguntaId = "77777777-7777-4777-8777-777777777777"
-    private val especialidadId = "88888888-8888-4888-8888-888888888888"
     private val recursoId = "99999999-9999-4999-8999-999999999999"
     private val examenId = "12121212-1212-4212-8212-121212121212"
 
@@ -394,7 +393,6 @@ class AdminV1QuestionCapabilitiesTest {
     ) = AdminPreguntaDto(
         id = preguntaId,
         codigoPregunta = "PREG-000001",
-        especialidadId = especialidadId,
         tipoPregunta = tipo,
         titulo = "Titulo",
         razonamiento = razonamiento,
@@ -410,7 +408,7 @@ class AdminV1QuestionCapabilitiesTest {
      * podria devolver fila donde el caso negativo devuelve vacio.
      */
     private fun preguntaRow(tipo: String): String =
-        """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001","especialidad_id":"$especialidadId",""" +
+        """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001",""" +
             """"tipo_pregunta":"$tipo","titulo":"Titulo","activa":true}]"""
 
     /**

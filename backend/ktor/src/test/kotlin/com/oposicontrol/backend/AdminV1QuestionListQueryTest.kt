@@ -34,7 +34,7 @@ class AdminV1QuestionListQueryTest {
 
     private val especialidadId = "a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1"
     private val examenId = "b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2"
-    private val columnas = "id,codigo_pregunta,especialidad_id,tipo_pregunta,titulo,fuente_texto,dificultad,activa"
+    private val columnas = "id,codigo_pregunta,tipo_pregunta,titulo,fuente_texto,dificultad,activa"
 
     @Test
     fun theDefaultQueryIsOnePageOfActiveQuestionsNewestFirstWithTheExactCount() {
@@ -58,7 +58,6 @@ class AdminV1QuestionListQueryTest {
         gatewayWith(upstream).listPreguntasPagina(
             AdminPreguntaListQuery(
                 tipo = "razonada",
-                especialidadId = especialidadId,
                 activa = false,
                 orden = PreguntaListOrden.CODIGO,
                 limit = 10,
@@ -67,7 +66,7 @@ class AdminV1QuestionListQueryTest {
         )
 
         assertEquals(
-            "select=$columnas&activa=eq.false&tipo_pregunta=eq.razonada&especialidad_id=eq.$especialidadId" +
+            "select=$columnas&activa=eq.false&tipo_pregunta=eq.razonada" +
                 "&order=codigo_pregunta.asc,id.asc&limit=10&offset=20",
             upstream.single().uri().rawQuery,
         )
@@ -153,6 +152,15 @@ class AdminV1QuestionListQueryTest {
     // Parámetros inválidos: 400 y NI UNA petición
     // -----------------------------------------------------------------
 
+    /** M8: la pregunta no tiene especialidad, así que no hay filtro por ella. Un cliente antiguo que
+     *  aún la manda no recibe un 400 ni estrecha la consulta: se ignora. */
+    @Test
+    fun aSpecialtyParameterIsIgnoredBecauseQuestionsHaveNone() {
+        val query = parametersOf("especialidadId", especialidadId).toPreguntaListQuery()
+
+        assertEquals(AdminPreguntaListQuery(), query)
+    }
+
     @Test
     fun invalidParametersAreRejectedBeforeAnyQuery() {
         listOf(
@@ -162,7 +170,6 @@ class AdminV1QuestionListQueryTest {
             "offset" to "-1",
             "offset" to "100001",
             "tipo" to "x",
-            "especialidadId" to "x",
             "examenId" to "x#",
             "orden" to "x",
             "activa" to "quizas",
@@ -208,7 +215,7 @@ class AdminV1QuestionListQueryTest {
     // -----------------------------------------------------------------
 
     private fun preguntaJson(id: String): String =
-        """{"id":"$id","codigo_pregunta":"PREG-000001","especialidad_id":"$especialidadId",""" +
+        """{"id":"$id","codigo_pregunta":"PREG-000001",""" +
             """"tipo_pregunta":"rafaga","titulo":"Titulo","fuente_texto":null,"dificultad":null,"activa":true}"""
 
     private fun gatewayWith(

@@ -32,7 +32,6 @@ import kotlin.test.assertTrue
 class IndependentResourceRuleContractTest {
 
     private val preguntaId = "f1f1f1f1-f1f1-4f1f-8f1f-f1f1f1f1f1f1"
-    private val especialidadId = "f2f2f2f2-f2f2-4f2f-8f2f-f2f2f2f2f2f2"
     private val recursoId = "f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f3f3"
 
     // -----------------------------------------------------------------
@@ -171,7 +170,7 @@ class IndependentResourceRuleContractTest {
                     uri.contains("/rest/v1/soluciones_pregunta") -> V1StubResponse(200, "[]")
                     uri.contains("/rest/v1/preguntas") -> V1StubResponse(
                         200,
-                        """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001","especialidad_id":"$especialidadId",""" +
+                        """[{"id":"$preguntaId","codigo_pregunta":"PREG-000001",""" +
                             """"tipo_pregunta":"$tipoGuardado","titulo":"Titulo","activa":true}]""",
                     )
                     else -> V1StubResponse(200, "[]")
