@@ -729,6 +729,19 @@ Reported: opening a question and clicking "Vincular a examen" showed the picker 
 
 `DATABASE_CHANGES: none (no migrations; only disposable E2E_TEST_LINK_*/E2E_REVIEW_* rows, all deleted)`. `MAIN_WRITES: TCAE-TEST-RAF-001 left despublicado, see disclosed side effect above — the only non-reverted change to pre-existing MAIN data`. Commit `87f347f`, pushed to `integration/oposicontrol-pre-infra`.
 
+## Working-tree preservation snapshot — Users, Noticias, Especialidades, role sync (2026-09-19)
+
+**Certification status, stated plainly so "in GitHub" is not read as "certified":**
+- **Inicio + Contenido (Dashboard, Exámenes, Preguntas, Importación): CERTIFIED** — see the closure and bugfix sections above.
+- **Users, Noticias, Especialidades: PRESERVED IN GITHUB, certification still pending.** Their unit tests and desktop compile are green, but they have not had the live end-to-end pass against MAIN that Inicio + Contenido had.
+- **`supabase/canonical/role_sync_guard_candidate_v1/` (SEC-006): PRESERVED, `APPLY_PENDING_APPROVAL`, NOT applied to MAIN.** Its behavior is proven only against a disposable embedded PostgreSQL (`:backend:dbtest:test`), never against MAIN.
+
+Branch `integration/oposicontrol-pre-infra`. Commits: `7973a5d` users, `8e1eb3f` news, `8f4170e` specialties (also updates `SpecialtyCapabilitiesViewModelTest`, left stale by the unified `Save` intent), `b282d6e` role-sync invariants + new `:backend:dbtest` module, `94a4a21` role-sync SQL candidate, `b76a777` `dry_run_fixture/002_content_live_shape.sql` (kept: `ContentDbHarness.FIXTURE` hardcodes its path), `468fc9b` CRLF fix below.
+
+**Lesson from verifying in a clean worktree:** `core.autocrlf=true` and no `.gitattributes` means a fresh checkout gets CRLF while blobs are LF. `RoleSyncMutationTest` matches multi-line patterns with a pure LF, so three mutations failed with "la mutacion no cambio nada" on any fresh checkout while passing in the original working tree, where the file had never been through a checkout. Fixed in `CandidateFiles.leer()` by normalizing CRLF. Any new test that string-matches multi-line repo files needs the same care.
+
+`DATABASE_CHANGES: none`. `MAIN_WRITES: none`. Role sync NOT applied to MAIN.
+
 ## Preserved boundaries
 
 OposiBot, public.usuario, /v1/auth/*, Opositeca, OposiRed, PDF/import, exam-resources, news-assets and POST_OPOSIBOT_LEGACY_CLEANUP remain protected. The deferred cleanup has not executed.
