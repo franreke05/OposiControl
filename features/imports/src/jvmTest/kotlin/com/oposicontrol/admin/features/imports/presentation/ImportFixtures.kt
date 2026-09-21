@@ -4,6 +4,8 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.domain.model.ContentExamType
 import com.oposicontrol.admin.domain.model.ContentImportBatch
+import com.oposicontrol.admin.domain.model.ContentImportDuplicate
+import com.oposicontrol.admin.domain.model.ContentImportSummary
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamStatus
@@ -55,6 +57,10 @@ internal object ImportFixtures {
         source: String = "",
         status: String = "ok",
         error: String? = null,
+        annulled: Boolean = false,
+        annulmentReason: String? = null,
+        duplicate: ContentImportDuplicate? = null,
+        link: String? = null,
     ) = ContentImportStagingItem(
         id = id,
         position = position,
@@ -70,6 +76,10 @@ internal object ImportFixtures {
         originalBlock = "",
         parseStatus = status,
         parseError = error,
+        annulled = annulled,
+        annulmentReason = annulmentReason,
+        duplicate = duplicate,
+        linkQuestionId = link,
     )
 
     private val FILAS_OK = listOf(
@@ -102,8 +112,8 @@ internal object ImportFixtures {
         batches = UiAsync.Success(
             listOf(
                 batch(FILAS_OK, file = "simulacro_tema_28.pdf"),
-                batch(FILAS_OK.take(3), status = "publicado", imported = 3, file = "tema_12_basico.pdf"),
-                batch(FILAS_OK.take(2), status = "parcial", imported = 1, type = "razonado", file = "razonadas_abril.pdf"),
+                batch(FILAS_OK.take(3), status = "importado", imported = 3, file = "tema_12_basico.pdf"),
+                batch(FILAS_OK.take(2), status = "revisado", imported = 0, type = "razonado", file = "razonadas_abril.pdf"),
             ),
         ),
     )
@@ -185,10 +195,41 @@ internal object ImportFixtures {
         ),
     )
 
-    /** Publicado a medias: el peor final, dicho sin disfrazarlo. */
-    fun publicadoParcial(): ImportState = base().copy(
-        activeBatch = UiAsync.Success(batch(FILAS_OK, status = "parcial", imported = 2)),
-        actionState = UiAsync.Success("Publicación parcial: 2 de 5. Revisa los errores antes de reintentar."),
+    /** Tras publicar: el lote sale «Publicado», las filas quedan `importada` (no error) y el botón se apaga. */
+    fun publicado(): ImportState = base().copy(
+        activeBatch = UiAsync.Success(
+            batch(
+                FILAS_OK.mapIndexed { index, row ->
+                    row.copy(parseStatus = "importada", annulled = index == 1, annulmentReason = if (index == 1) "Anulada por el tribunal por error en el enunciado" else null)
+                },
+                status = "importado",
+                imported = 5,
+            ),
+        ),
+        actionState = UiAsync.Success("Lote publicado: 5 de 5 preguntas ya están en el examen (1 anuladas por el tribunal)."),
+    )
+
+    /** Duplicada del banco (se puede vincular), duplicada de lote (sólo omitir), vinculada y anulada. */
+    fun revisionConDuplicadosYAnulada(): ImportState = base().copy(
+        activeBatch = UiAsync.Success(
+            batch(
+                listOf(
+                    FILAS_OK[0].copy(annulled = true, annulmentReason = "El tribunal la anuló"),
+                    row(
+                        "s-9", 9, "¿Qué residuo corresponde al contenedor de grupo III?",
+                        duplicate = ContentImportDuplicate("banco", "q-77", "PREG-0077"),
+                    ),
+                    row(
+                        "s-10", 10, "Pregunta repetida en el propio PDF.",
+                        duplicate = ContentImportDuplicate("lote", null, "", "s-1"),
+                    ),
+                    row(
+                        "s-11", 11, "Pregunta ya vinculada.", status = "aprobada", link = "q-78",
+                        duplicate = ContentImportDuplicate("banco", "q-78", "PREG-0078"),
+                    ),
+                ),
+            ),
+        ),
     )
 
     // -----------------------------------------------------------------------

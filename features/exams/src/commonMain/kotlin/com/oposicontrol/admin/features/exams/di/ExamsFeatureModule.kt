@@ -14,6 +14,7 @@ import com.oposicontrol.admin.domain.usecase.content.CreateContentDraftUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetContentImportBatchUseCase
 import com.oposicontrol.admin.domain.usecase.content.ListContentImportBatchesUseCase
 import com.oposicontrol.admin.domain.usecase.content.PublishContentImportBatchUseCase
+import com.oposicontrol.admin.domain.usecase.content.SkipContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpdateContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadPdfToStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
@@ -140,6 +141,7 @@ val examsFeatureModule = module {
             getBatchUseCase = get(),
             uploadPdfUseCase = get(),
             updateStagingUseCase = get(),
+            skipStagingUseCase = SkipContentImportStagingUseCase(get()),
             publishBatchUseCase = get(),
             createDraftUseCase = get(),
             analyticsTracker = get(),

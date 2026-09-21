@@ -6,7 +6,12 @@ import com.oposicontrol.admin.domain.model.ContentImportBatch
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.Exam
 
-enum class ReviewFilter { ALL, LISTA, ADVERTENCIA, ERROR, DUPLICADA }
+/**
+ * El estado de PARSEO de una fila, agrupado para filtrar. La anulación por el tribunal
+ * NO es una categoría de este eje: es un dato de la pregunta en el examen y va aparte
+ * (`estado ok + anulada` es válido).
+ */
+enum class ReviewFilter { ALL, LISTA, ADVERTENCIA, OMITIDA, IMPORTADA, ERROR, DUPLICADA }
 
 data class ImportState(
     val exams: UiAsync<List<Exam>> = UiAsync.Loading,
@@ -48,33 +53,64 @@ fun ImportState.visibleStaging(): List<ContentImportStagingItem> {
         .sortedBy { it.position }
 }
 
+/** El estado de parseo tal y como lo manda la base, comparado sin mayúsculas. */
+private fun ContentImportStagingItem.isStatus(vararg values: String): Boolean =
+    values.any { parseStatus.trim().equals(it, ignoreCase = true) }
+
 /**
- * El tono de una fila, con el vocabulario VIVO de `estado_parseo` (KI3-5, IMP-18):
- * `advertencia` es un aviso —la fila se publica igual— y no un error; una
- * coincidencia detectada por la base es DUPLICADA aunque el estado diga `ok`.
+ * ¿La fila va vinculada a una pregunta que ya existe?
+ *
+ * Igual que la RPC: el vínculo sólo cuenta en filas `ok`/`aprobada`. Una fila omitida
+ * o importada con un puntero viejo no está «vinculada» a efectos de nada.
+ */
+fun stagingIsLinked(item: ContentImportStagingItem): Boolean =
+    !item.linkQuestionId.isNullOrBlank() && item.isStatus("ok", "aprobada")
+
+/**
+ * El tono de una fila, con el vocabulario VIVO de `estado_parseo`:
+ * `ok | advertencia | error | importada | aprobada | omitida`.
+ *
+ *  - `importada` ya está en el examen: tono propio, NUNCA error.
+ *  - `omitida` es una decisión del revisor y `advertencia` una duda del parser que
+ *    exige aprobar u omitir: son dos cosas distintas y no comparten tono.
+ *  - Una coincidencia detectada por la base es DUPLICADA aunque el estado diga `ok`,
+ *    mientras la fila no esté vinculada, omitida ni importada.
+ *  - La anulación NO cambia el tono: es un dato de la pregunta en el examen.
  */
 fun stagingTone(item: ContentImportStagingItem): ReviewFilter = when {
-    item.duplicate != null && item.linkQuestionId == null && !item.parseStatus.equals("omitida", ignoreCase = true) -> ReviewFilter.DUPLICADA
-    item.parseStatus.equals("omitida", ignoreCase = true) -> ReviewFilter.ADVERTENCIA
-    item.parseStatus.equals("advertencia", ignoreCase = true) -> ReviewFilter.ADVERTENCIA
-    item.parseStatus.equals("duplicada_candidata", ignoreCase = true) -> ReviewFilter.DUPLICADA
+    item.isStatus("importada") -> ReviewFilter.IMPORTADA
+    item.isStatus("omitida") -> ReviewFilter.OMITIDA
+    item.duplicate != null && !stagingIsLinked(item) -> ReviewFilter.DUPLICADA
+    item.isStatus("advertencia") -> ReviewFilter.ADVERTENCIA
+    item.isStatus("duplicada_candidata") -> ReviewFilter.DUPLICADA
     !item.parseError.isNullOrBlank() -> ReviewFilter.ERROR
-    item.parseStatus.equals("ok", ignoreCase = true) || item.parseStatus.equals("aprobada", ignoreCase = true) -> ReviewFilter.LISTA
+    item.isStatus("ok", "aprobada") -> ReviewFilter.LISTA
     else -> ReviewFilter.ERROR
 }
 
 data class BatchMetrics(
     val detected: Int,
     val ready: Int,
-    val review: Int,
+    /** `advertencia`: hay que aprobarlas u omitirlas antes de publicar. */
+    val warnings: Int,
+    val skipped: Int,
+    val imported: Int,
     val errors: Int,
     val duplicates: Int,
+    /** Filas anuladas por el tribunal (ortogonal al estado de parseo). */
+    val annulled: Int,
 )
 
 fun ContentImportBatch.metrics(): BatchMetrics {
-    val ready = staging.count { stagingTone(it) == ReviewFilter.LISTA }
-    val review = staging.count { stagingTone(it) == ReviewFilter.ADVERTENCIA }
-    val errors = staging.count { stagingTone(it) == ReviewFilter.ERROR }
-    val duplicates = staging.count { stagingTone(it) == ReviewFilter.DUPLICADA }
-    return BatchMetrics(detected = detectedCount, ready = ready, review = review, errors = errors, duplicates = duplicates)
+    val tones = staging.map { stagingTone(it) }
+    return BatchMetrics(
+        detected = detectedCount,
+        ready = tones.count { it == ReviewFilter.LISTA },
+        warnings = tones.count { it == ReviewFilter.ADVERTENCIA },
+        skipped = tones.count { it == ReviewFilter.OMITIDA },
+        imported = tones.count { it == ReviewFilter.IMPORTADA },
+        errors = tones.count { it == ReviewFilter.ERROR },
+        duplicates = tones.count { it == ReviewFilter.DUPLICADA },
+        annulled = staging.count { it.annulled },
+    )
 }

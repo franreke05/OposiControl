@@ -16,6 +16,7 @@ import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ContentImportBatch
 import com.oposicontrol.admin.domain.model.ContentImportDuplicate
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
+import com.oposicontrol.admin.domain.model.ContentImportSummary
 import com.oposicontrol.admin.domain.model.canonicalExamType
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamType
@@ -401,7 +402,7 @@ class KtorAdminV1ContentRepositoryImpl(
         val response = client.patch(adminUrl(endpoint)) {
             adminHeaders()
             contentType(ContentType.Application.Json)
-            setBody(item.toDto())
+            setBody(item.toPatchBody())
             expectSuccess = false
         }
         response.requireBackendSuccess(endpoint)
@@ -1016,6 +1017,8 @@ private data class AdminImportResultadoDto(
     val vinculadas: Int = 0,
     val omitidas: Int = 0,
     val totalImportadas: Int = 0,
+    /** Relaciones publicadas como anuladas (M10). Ausente en un backend anterior. */
+    val anuladas: Int = 0,
 )
 
 /** Con el `Json` del cliente (`encodeDefaults = false`) un `false` se omitiría: se fuerza para que la decisión viaje. */
@@ -1102,6 +1105,13 @@ private data class AdminPreguntaDto(
     val recursos: List<AdminRecursoDto> = emptyList(),
     val examenId: String? = null,
     val posicion: Int? = null,
+    /**
+     * Lectura: la relación examen↔pregunta va anulada (M10). Nunca se escribe desde
+     * aquí: con `encodeDefaults = false` un `false` no viaja, y ningún guardado de este
+     * editor los asigna.
+     */
+    val anulada: Boolean = false,
+    val motivoAnulacion: String? = null,
 )
 
 @Serializable
@@ -1148,6 +1158,18 @@ private data class AdminLoteDto(
     val staging: List<AdminStagingItemDto> = emptyList(),
     /** `false` = la detección de duplicados no pudo ejecutarse (falta IM3); nunca se lee como «sin duplicados». */
     val duplicadosComprobados: Boolean = true,
+    /** El recuento por estado calculado por el servidor; `null` = no lo mandó o no pudo calcularlo. */
+    val resumen: AdminLoteResumenDto? = null,
+)
+
+/** Cada cifra es anulable: una respuesta recortada no se lee como «0». */
+@Serializable
+private data class AdminLoteResumenDto(
+    val listas: Int? = null,
+    val conError: Int? = null,
+    val advertencias: Int? = null,
+    val omitidas: Int? = null,
+    val importadas: Int? = null,
 )
 
 @Serializable
@@ -1170,6 +1192,9 @@ private data class AdminStagingItemDto(
     /** La decisión «vincular con la pregunta X» (IM2, KI2). Sólo tiene sentido con `aprobada`. */
     val vincularPreguntaId: String? = null,
     val duplicado: AdminImportDuplicadoDto? = null,
+    /** Lectura: la pregunta va anulada en el examen destino (M10). Ortogonal a [estadoParseo]. */
+    val anulada: Boolean = false,
+    val motivoAnulacion: String? = null,
 )
 
 @Serializable
@@ -1190,6 +1215,15 @@ private fun AdminLoteDto.toDomain() = ContentImportBatch(
     importedCount = totalImportadas,
     staging = staging.map { it.toDomain() },
     duplicatesChecked = duplicadosComprobados,
+    summary = resumen?.let {
+        ContentImportSummary(
+            ready = it.listas,
+            withErrors = it.conError,
+            warnings = it.advertencias,
+            skipped = it.omitidas,
+            imported = it.importadas,
+        )
+    },
 )
 
 private fun AdminStagingItemDto.toDomain() = ContentImportStagingItem(
@@ -1217,26 +1251,55 @@ private fun AdminStagingItemDto.toDomain() = ContentImportStagingItem(
             stagingOriginalId = it.stagingOriginalId,
         )
     },
+    annulled = anulada,
+    annulmentReason = motivoAnulacion,
 )
 
-private fun ContentImportStagingItem.toDto() = AdminStagingItemDto(
-    id = id,
-    posicion = position,
-    titulo = title,
-    opcionA = optionA,
-    opcionB = optionB,
-    opcionC = optionC,
-    opcionD = optionD,
-    respuestaCorrecta = correctAnswer,
-    razonamiento = reasoning,
-    fuenteTexto = sourceText,
-    etiquetaTexto = tagText,
-    bloqueOriginal = originalBlock,
-    estadoParseo = parseStatus,
-    errorParseo = parseError,
-    preguntaId = questionId,
-    vincularPreguntaId = linkQuestionId,
-)
+/**
+ * Cuerpo del `PATCH /importaciones/staging/{id}`, con claves EXPLÍCITAS.
+ *
+ * El `Json` del cliente no codifica defaults ni nulos, y aquí los dos importan:
+ *
+ *  - `anulada` viaja SIEMPRE: un `false` omitido por valer su default no desanularía
+ *    la fila, porque el servidor reemplaza la fila entera con lo que llega.
+ *  - `motivoAnulacion` viaja con su texto o con `null` EXPLÍCITO (borrar el motivo
+ *    guardado). Sólo lleva texto si la fila está anulada: el servidor rechaza un motivo
+ *    sin anulación.
+ *  - `vincularPreguntaId` viaja con la pregunta o con `null` explícito («deshaz el
+ *    vínculo»); el servidor sólo lo usa con la fila `aprobada`.
+ *
+ * Una fila `omitida` no lleva los campos vacíos: omitir no exige contenido y no hay
+ * nada que decirle al servidor sobre un enunciado o una opción que no existen. Lo que
+ * la fila SÍ tenga se manda igual, porque el servidor la reemplaza entera. La EXCEPCIÓN es
+ * `vincularPreguntaId`: al omitir viaja SIEMPRE como `null` explícito, para que un puntero
+ * viejo no sobreviva en la fila y «Aprobar» lo resucite.
+ *
+ * DECISIÓN ACEPTADA: el PATCH reemplaza la fila entera. Un cliente antiguo que omita `anulada`
+ * la desanula; este cliente manda siempre `anulada`. Orden de despliegue: MIGRACIÓN M10
+ * PRIMERO en MAIN y después Ktor.
+ */
+internal fun ContentImportStagingItem.toPatchBody(): JsonObject {
+    val lean = parseStatus.equals("omitida", ignoreCase = true)
+    return buildJsonObject {
+        fun text(key: String, value: String) {
+            if (!lean || value.isNotBlank()) put(key, JsonPrimitive(value))
+        }
+        text("titulo", title)
+        text("opcionA", optionA)
+        text("opcionB", optionB)
+        text("opcionC", optionC)
+        text("opcionD", optionD)
+        text("respuestaCorrecta", correctAnswer)
+        text("razonamiento", reasoning)
+        text("fuenteTexto", sourceText)
+        text("etiquetaTexto", tagText)
+        put("estadoParseo", JsonPrimitive(parseStatus))
+        // Omitir también manda `null` EXPLÍCITO: si no, el puntero viejo sobrevive en la fila y «Aprobar» lo resucita.
+        put("vincularPreguntaId", JsonPrimitive(linkQuestionId?.takeIf { !lean && it.isNotBlank() }))
+        put("anulada", JsonPrimitive(annulled))
+        put("motivoAnulacion", JsonPrimitive(annulmentReason?.trim()?.takeIf { annulled && it.isNotEmpty() }))
+    }
+}
 
 private fun AdminEspecialidadDto.toDomain(linkedExams: Int = 0) = Specialty(
     id = id,
@@ -1429,6 +1492,8 @@ private fun AdminPreguntaDto.toExamQuestion(examId: String) = ExamQuestion(
     resources = recursos.map { it.toDomain() }.sortedBy { it.sortOrder },
     createdAt = nowInstant(),
     updatedAt = nowInstant(),
+    annulled = anulada,
+    annulmentReason = motivoAnulacion,
 )
 
 private fun AdminPreguntaDto.toRafagaQuestion(rafagaId: String) = RafagaQuestion(
@@ -1462,6 +1527,10 @@ private fun ExamQuestion.toDto(typePregunta: String) = AdminPreguntaDto(
     opciones = options.sortedBy { it.sortOrder }.map { it.toDto() },
     examenId = examId,
     posicion = sortOrder + 1,
+    // Guardar la pregunta no puede desanular la relación: si va anulada, lo sigue diciendo.
+    // Con `false` no viaja (encodeDefaults = false), exactamente como antes.
+    anulada = annulled,
+    motivoAnulacion = annulmentReason?.takeIf { annulled },
 )
 
 private fun QuestionOption.toDto() = AdminOpcionDto(
@@ -1582,8 +1651,9 @@ private const val ADMIN_V1_IMPORT_MAX_BYTES = 20 * 1024 * 1024
 internal const val ADMIN_V1_PDF_IMPORT_TIMEOUT_MILLIS: Long = 180_000
 
 /**
- * Publicar un lote: una escritura y cuatro lecturas POR FILA, secuenciales en el
- * servidor. Hasta que exista la RPC atómica, un lote grande tarda minutos.
+ * Publicar un lote: UNA RPC atómica (todo o nada, con detección de duplicados) que procesa todas
+ * las filas dentro de una transacción en el servidor. Un lote grande tarda, así que el
+ * presupuesto es holgado a propósito.
  */
 internal const val ADMIN_V1_BATCH_PUBLISH_TIMEOUT_MILLIS: Long = 300_000
 

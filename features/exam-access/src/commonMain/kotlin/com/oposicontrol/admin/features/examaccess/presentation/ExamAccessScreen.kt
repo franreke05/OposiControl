@@ -17,6 +17,7 @@ import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
+import com.oposicontrol.admin.core.ui.components.DropdownField
 import com.oposicontrol.admin.core.ui.components.FilterBar
 import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
@@ -56,7 +57,7 @@ fun ExamAccessScreen(
                         rows = accesses.map { access ->
                             AdminTableRow(
                                 key = access.id,
-                                cells = listOf(access.userName, access.examTitle, access.accessType, access.status),
+                                cells = listOf(access.userName, access.examTitle, ExamAccessTypes.label(access.accessType), access.status),
                                 selected = access.id == state.selectedId,
                             )
                         },
@@ -86,12 +87,11 @@ fun ExamAccessScreen(
                         placeholder = "Título del examen",
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    FieldLabel("Tipo de acceso")
-                    GlassTextField(
-                        value = state.editorAccessType,
-                        onValueChange = { viewModel.dispatch(ExamAccessIntent.UpdateAccessType(it)) },
-                        placeholder = "compra, regalo, prueba…",
-                        modifier = Modifier.fillMaxWidth(),
+                    DropdownField(
+                        label = "Tipo de acceso",
+                        selectedLabel = ExamAccessTypes.label(state.editorAccessType),
+                        options = ExamAccessTypes.options,
+                        onSelect = { code -> code?.let { viewModel.dispatch(ExamAccessIntent.UpdateAccessType(it)) } },
                     )
                     GlassToggleRow(
                         title = "Acceso activo",

@@ -31,7 +31,7 @@ class ExamAccessViewModel(
                     selectedId = null,
                     editorUserName = "",
                     editorExamTitle = "",
-                    editorAccessType = "manual",
+                    editorAccessType = ExamAccessTypes.DEFAULT,
                     editorIsActive = true,
                     actionState = UiAsync.Idle,
                 )
@@ -59,7 +59,7 @@ class ExamAccessViewModel(
                 selectedId = item.id,
                 editorUserName = item.userName,
                 editorExamTitle = item.examTitle,
-                editorAccessType = item.accessType,
+                editorAccessType = ExamAccessTypes.normalize(item.accessType),
                 editorIsActive = item.status == "active",
                 actionState = if (resetActionState) UiAsync.Idle else it.actionState,
             )
@@ -96,7 +96,7 @@ class ExamAccessViewModel(
             id = currentState().selectedId.orEmpty(),
             userName = currentState().editorUserName,
             examTitle = currentState().editorExamTitle,
-            accessType = currentState().editorAccessType,
+            accessType = ExamAccessTypes.normalize(currentState().editorAccessType),
             isActive = currentState().editorIsActive,
         )
         when (val result = repository.upsertExamAccess(item)) {

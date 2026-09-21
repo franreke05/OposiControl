@@ -4,6 +4,8 @@ import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.ContentImportBatch
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
+import com.oposicontrol.admin.domain.model.IMPORT_ANNULMENT_REASON_MAX_LENGTH
+import com.oposicontrol.admin.domain.model.stagingCompletenessProblem
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.Rafaga
@@ -39,16 +41,34 @@ class UploadPdfToStagingUseCase(private val repository: ContentImportRepository)
     }
 }
 
+/**
+ * GUARDAR o APROBAR una fila de staging: aquí sí se exige que esté completa.
+ *
+ * Omitirla es otra operación ([SkipContentImportStagingUseCase]) y no pasa por esta
+ * validación: una fila en error tiene que poder descartarse aunque le falte todo.
+ */
 class UpdateContentImportStagingUseCase(private val repository: ContentImportRepository) {
     suspend operator fun invoke(item: ContentImportStagingItem): AppResult<ContentImportStagingItem> {
-        if (item.title.isBlank()) return AppResult.Failure(AppError.Validation("La pregunta necesita título."))
-        if (listOf(item.optionA, item.optionB, item.optionC, item.optionD).any { it.isBlank() }) {
-            return AppResult.Failure(AppError.Validation("Las cuatro opciones deben tener contenido."))
+        stagingCompletenessProblem(item)?.let { return AppResult.Failure(AppError.Validation(it)) }
+        val reason = item.annulmentReason?.trim()?.takeIf { item.annulled && it.isNotEmpty() }
+        if (reason != null && reason.length > IMPORT_ANNULMENT_REASON_MAX_LENGTH) {
+            return AppResult.Failure(
+                AppError.Validation("El motivo de la anulación admite hasta $IMPORT_ANNULMENT_REASON_MAX_LENGTH caracteres."),
+            )
         }
-        if (item.correctAnswer.uppercase() !in setOf("A", "B", "C", "D")) {
-            return AppResult.Failure(AppError.Validation("La respuesta correcta debe ser A, B, C o D."))
-        }
-        return repository.updateStaging(item)
+        // El motivo sólo viaja con la anulación puesta; sin ella se borra.
+        return repository.updateStaging(item.copy(annulmentReason = reason))
+    }
+}
+
+/**
+ * OMITIR una fila: pasa a `omitida` SIN exigir título, opciones, respuesta ni
+ * razonamiento. La fila queda como está en el lote y no se publica; no se borra nada.
+ */
+class SkipContentImportStagingUseCase(private val repository: ContentImportRepository) {
+    suspend operator fun invoke(item: ContentImportStagingItem): AppResult<ContentImportStagingItem> {
+        if (item.id.isBlank()) return AppResult.Failure(AppError.Validation("Selecciona una fila."))
+        return repository.updateStaging(item.copy(parseStatus = "omitida", parseError = null))
     }
 }
 

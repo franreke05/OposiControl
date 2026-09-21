@@ -61,7 +61,8 @@ class ImportVisualHarness {
         render(Capture("imports-review.png", 1920, 1400, dark = false), fx.revisionConDetalle())
         render(Capture("imports-review-dark.png", 1920, 1400, dark = true), fx.revisionConDetalle())
         render(Capture("imports-duplicate.png", 1920, 1080, dark = false), fx.revisionConDuplicado())
-        render(Capture("imports-partial.png", 1920, 1080, dark = false), fx.publicadoParcial())
+        render(Capture("imports-published.png", 1920, 1080, dark = false), fx.publicado())
+        render(Capture("imports-duplicates-annulled.png", 1920, 1080, dark = false), fx.revisionConDuplicadosYAnulada())
     }
 
     @Test

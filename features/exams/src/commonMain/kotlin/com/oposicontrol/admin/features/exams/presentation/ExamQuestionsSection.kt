@@ -318,10 +318,23 @@ private fun ExamQuestionRowPanel(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                row.annulmentDetail?.let { reason ->
+                    Text(
+                        text = "Anulada: $reason",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             // El tipo, con el tono que dice si se sabe: NEUTRAL cuando resuelve,
             // UNKNOWN cuando no. Un tipo sin identificar no puede pintarse igual
             // que uno conocido, o volvería a leerse como un valor más.
+            // Anulada por el tribunal en ESTE examen: etiqueta propia; la posición no cambia.
+            if (row.annulled) {
+                StatusDotChip(label = EXAM_QUESTION_ANNULLED_LABEL, tone = EXAM_QUESTION_ANNULLED_TONE)
+            }
             StatusDotChip(
                 label = row.typeLabel,
                 tone = if (row.typeKnown) StatusTone.NEUTRAL else StatusTone.UNKNOWN,

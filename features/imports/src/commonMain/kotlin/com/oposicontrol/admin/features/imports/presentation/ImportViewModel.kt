@@ -11,6 +11,7 @@ import com.oposicontrol.admin.domain.usecase.content.ListContentImportBatchesUse
 import com.oposicontrol.admin.domain.usecase.content.ObserveAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.PublishContentImportBatchUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshAllExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.SkipContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpdateContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadPdfToStagingUseCase
 import kotlinx.coroutines.flow.collectLatest
@@ -36,6 +37,7 @@ class ImportViewModel(
     private val uploadPdfUseCase: UploadPdfToStagingUseCase,
     private val updateStagingUseCase: UpdateContentImportStagingUseCase,
     private val publishBatchUseCase: PublishContentImportBatchUseCase,
+    private val skipStagingUseCase: SkipContentImportStagingUseCase,
 ) : MviViewModel<ImportState, ImportIntent>(
     initialState = ImportState(),
     dispatcherProvider = dispatcherProvider,
@@ -80,7 +82,13 @@ class ImportViewModel(
             is ImportIntent.UpdateEditDraft -> updateState { it.copy(editDraft = intent.item) }
             ImportIntent.SaveEditDraft -> saveEditDraft()
             is ImportIntent.ApproveStaging -> updateStagingRow(intent.item.copy(parseStatus = "aprobada"), "Pregunta aprobada.")
-            is ImportIntent.SkipStaging -> updateStagingRow(intent.item.copy(parseStatus = "omitida"), "Pregunta marcada para saltar; no se borró.")
+            // Omitir NO exige que la fila esté completa: es otro caso de uso, sin la validación de guardar/aprobar.
+            is ImportIntent.SkipStaging -> updateStagingRow(
+                intent.item, "Pregunta marcada para saltar; no se borró.",
+                action = { skipStagingUseCase(it) },
+            )
+            is ImportIntent.LinkStagingToExisting -> linkToExisting(intent.item)
+            is ImportIntent.UnlinkStaging -> unlinkFromExisting(intent.item)
 
             ImportIntent.PublishBatch -> publishBatch(confirmExamPublished = false)
             ImportIntent.ConfirmPublishOnPublishedExam -> {
@@ -139,22 +147,76 @@ class ImportViewModel(
         updateStagingRow(draft, "Cambios guardados en el lote en revisión.", keepEditorOpen = true)
     }
 
-    private suspend fun updateStagingRow(item: ContentImportStagingItem, message: String, keepEditorOpen: Boolean = false) {
+    /**
+     * Guarda una fila con el caso de uso que toque: [action] es guardar/aprobar por
+     * defecto (exige la fila completa) u omitir (no exige nada).
+     *
+     * La respuesta del servidor a un PATCH no trae la coincidencia detectada, así que se
+     * conserva la que la fila ya tenía: sin ella una duplicada vinculada perdería el
+     * código de la pregunta («Vinculada a PREG-…») y al deshacer no habría a qué volver.
+     */
+    private suspend fun updateStagingRow(
+        item: ContentImportStagingItem,
+        message: String,
+        keepEditorOpen: Boolean = false,
+        action: suspend (ContentImportStagingItem) -> AppResult<ContentImportStagingItem> = { updateStagingUseCase(it) },
+    ) {
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = updateStagingUseCase(item)) {
+        when (val result = action(item)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> updateState { state ->
+                val saved = result.value.let { row -> if (row.duplicate == null) row.copy(duplicate = item.duplicate) else row }
                 val active = (state.activeBatch as? UiAsync.Success)?.value
                     ?: return@updateState state.copy(actionState = UiAsync.Success(message))
                 state.copy(
-                    activeBatch = UiAsync.Success(active.copy(staging = active.staging.map { row -> if (row.id == result.value.id) result.value else row })),
-                    editDraft = if (keepEditorOpen) result.value else null,
-                    selectedStagingId = if (keepEditorOpen) result.value.id else null,
+                    activeBatch = UiAsync.Success(active.copy(staging = active.staging.map { row -> if (row.id == saved.id) saved else row })),
+                    editDraft = if (keepEditorOpen) saved else null,
+                    selectedStagingId = if (keepEditorOpen) saved.id else null,
                     actionState = UiAsync.Success(message),
                 )
             }
         }
     }
+
+    /**
+     * «Vincular a existente»: la fila se aprueba VINCULADA a la pregunta que el servidor
+     * detectó como duplicada del banco. No se crea ninguna pregunta nueva.
+     *
+     * Se manda la fila TAL Y COMO ESTÁ GUARDADA en el lote, no el borrador: el servidor
+     * sólo acepta el vínculo si el texto coincide con el de la pregunta existente, y un
+     * borrador a medio editar rompería esa coincidencia.
+     */
+    private suspend fun linkToExisting(item: ContentImportStagingItem) {
+        val stored = storedRow(item)
+        val target = stored.duplicate?.takeIf { it.origin.equals("banco", ignoreCase = true) }
+        val questionId = target?.questionId?.takeIf { it.isNotBlank() }
+            ?: return updateState {
+                it.copy(actionState = UiAsync.Error(AppError.Validation("Esta fila no tiene una pregunta existente con la que vincular.")))
+            }
+        val label = target.questionCode.takeIf { it.isNotBlank() } ?: "la pregunta existente"
+        updateStagingRow(
+            stored.copy(parseStatus = "aprobada", linkQuestionId = questionId),
+            "Fila vinculada a $label; no se creará una pregunta nueva.",
+            keepEditorOpen = true,
+        )
+    }
+
+    /**
+     * Deshace el vínculo: la fila queda `aprobada` SIN vínculo, es decir, otra vez una
+     * duplicada sin resolver (Omitir / Vincular / editar). Una sola llamada: con el
+     * servidor actual, una fila aprobada sin `vincularPreguntaId` borra el vínculo.
+     */
+    private suspend fun unlinkFromExisting(item: ContentImportStagingItem) {
+        val stored = storedRow(item)
+        updateStagingRow(
+            stored.copy(parseStatus = "aprobada", linkQuestionId = null),
+            "Vínculo deshecho: la fila vuelve a estar pendiente de resolver.",
+            keepEditorOpen = true,
+        )
+    }
+
+    private fun storedRow(item: ContentImportStagingItem): ContentImportStagingItem =
+        (currentState().activeBatch as? UiAsync.Success)?.value?.staging?.firstOrNull { it.id == item.id } ?: item
 
     /**
      * Publicar es UNA llamada atómica en el servidor (KI3-1): o el lote queda
@@ -170,8 +232,22 @@ class ImportViewModel(
      */
     private suspend fun publishBatch(confirmExamPublished: Boolean) {
         if (currentState().actionState is UiAsync.Loading) return
-        val batchId = (currentState().activeBatch as? UiAsync.Success)?.value?.id
+        val current = currentState()
+        val activeBatch = (current.activeBatch as? UiAsync.Success)?.value
             ?: return updateState { it.copy(actionState = UiAsync.Error(AppError.Validation("Abre un lote antes de publicar."))) }
+        val batchId = activeBatch.id
+        if (!confirmExamPublished) {
+            // El preflight es una previsión: si ya sabe que no se puede, no se manda a ciegas.
+            // El servidor sigue siendo la autoridad y vuelve a comprobarlo todo.
+            val gate = importPublishGate(current, activeBatch)
+            if (!gate.enabled) {
+                return updateState { it.copy(actionState = UiAsync.Error(AppError.Validation(gate.reason))) }
+            }
+            // Examen ya publicado: se pide la confirmación (KI3-3) ANTES de llamar, no después.
+            if (gate.requiresPublishedExamConfirmation) {
+                return updateState { it.copy(showPublishConfirm = true, actionState = UiAsync.Idle) }
+            }
+        }
         updateState { it.copy(actionState = UiAsync.Loading) }
         when (val result = publishBatchUseCase(batchId, confirmExamPublished)) {
             is AppResult.Failure -> when {
@@ -181,8 +257,14 @@ class ImportViewModel(
             }
             is AppResult.Success -> {
                 val batch = result.value
-                val message = if (batch.status == "importado") {
-                    "Lote publicado: ${batch.importedCount} de ${batch.detectedCount} preguntas ya están en el examen."
+                val message = if (importBatchIsPublished(batch.status)) {
+                    val annulled = batch.staging.count { it.annulled && stagingTone(it) == ReviewFilter.IMPORTADA }
+                    "Lote publicado: ${batch.importedCount} de ${batch.detectedCount} preguntas ya están en el examen" +
+                        when (annulled) {
+                            0 -> "."
+                            1 -> " (1 anulada por el tribunal)."
+                            else -> " ($annulled anuladas por el tribunal)."
+                        }
                 } else {
                     "El lote no se ha publicado (estado: ${batch.status}). Revisa las filas antes de reintentar."
                 }
@@ -197,7 +279,7 @@ class ImportViewModel(
         when (val reread = getBatchUseCase(batchId)) {
             is AppResult.Success -> {
                 val batch = reread.value
-                if (batch.status == "importado") {
+                if (importBatchIsPublished(batch.status)) {
                     updateState {
                         it.copy(
                             activeBatch = UiAsync.Success(batch),

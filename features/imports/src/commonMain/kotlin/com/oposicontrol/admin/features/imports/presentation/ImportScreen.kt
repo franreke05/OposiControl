@@ -192,7 +192,7 @@ private fun ImportHowItWorksDialog(onDismiss: () -> Unit) {
                     color = tokens.textSecondary,
                 )
                 Text(
-                    text = IMPORT_NOT_ATOMIC_NOTICE,
+                    text = IMPORT_ATOMIC_NOTICE,
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.textSecondary,
                 )

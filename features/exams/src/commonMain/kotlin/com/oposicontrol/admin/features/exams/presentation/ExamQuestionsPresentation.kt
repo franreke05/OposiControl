@@ -90,6 +90,10 @@ data class ExamQuestionRow(
     val facts: String,
     val canMoveUp: Boolean,
     val canMoveDown: Boolean,
+    /** La relación examen↔pregunta va anulada por el tribunal (M10). La posición se mantiene. */
+    val annulled: Boolean = false,
+    /** Texto secundario de la anulación: el motivo, o `null` si no consta. */
+    val annulmentDetail: String? = null,
 )
 
 /**
@@ -111,9 +115,28 @@ fun examQuestionRows(questions: List<ExamQuestion>): List<ExamQuestionRow> {
             facts = examQuestionFacts(question),
             canMoveUp = index > 0,
             canMoveDown = index < ordered.lastIndex,
+            annulled = question.annulled,
+            annulmentDetail = examQuestionAnnulmentDetail(question),
         )
     }
 }
+
+/**
+ * La etiqueta de una pregunta anulada en este examen. Es la MISMA etiqueta y el MISMO tono que el chip
+ * de la revisión de importaciones (`IMPORT_ANNULLED_CHIP` / `IMPORT_ANNULLED_TONE` en features/imports).
+ */
+const val EXAM_QUESTION_ANNULLED_LABEL: String = "Anulada"
+
+/** Tono del chip de anulada: atención. */
+val EXAM_QUESTION_ANNULLED_TONE: com.oposicontrol.admin.core.ui.components.StatusTone =
+    com.oposicontrol.admin.core.ui.components.StatusTone.ATTENTION
+
+/**
+ * El motivo de la anulación como texto secundario, o `null`. Sólo lo hay si la pregunta
+ * va anulada: un motivo suelto sin anulación no se enseña.
+ */
+internal fun examQuestionAnnulmentDetail(question: ExamQuestion): String? =
+    if (question.annulled) question.annulmentReason?.trim()?.takeIf { it.isNotEmpty() } else null
 
 /** El título de la pregunta, o su enunciado, o que no tiene ninguno de los dos. */
 internal fun examQuestionTitle(question: ExamQuestion): String =

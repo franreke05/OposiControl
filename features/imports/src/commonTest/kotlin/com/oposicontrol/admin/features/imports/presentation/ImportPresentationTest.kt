@@ -2,8 +2,13 @@ package com.oposicontrol.admin.features.imports.presentation
 
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
+import com.oposicontrol.admin.core.ui.components.StatusTone
 import com.oposicontrol.admin.domain.model.ContentExamType
 import com.oposicontrol.admin.domain.model.ContentImportBatch
+import com.oposicontrol.admin.domain.model.ContentImportDuplicate
+import com.oposicontrol.admin.domain.model.ContentImportSummary
+import com.oposicontrol.admin.domain.model.Exam
+import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,14 +35,20 @@ class ImportPresentationTest {
         source: String = "",
         status: String = "ok",
         error: String? = null,
+        annulled: Boolean = false,
+        reason: String? = null,
+        duplicate: ContentImportDuplicate? = null,
+        link: String? = null,
+        questionId: String? = null,
+        options: String = "Opción",
     ) = ContentImportStagingItem(
         id = id,
         position = position,
         title = title,
-        optionA = "Opción A",
-        optionB = "Opción B",
-        optionC = "Opción C",
-        optionD = "Opción D",
+        optionA = if (options.isEmpty()) "" else "$options A",
+        optionB = "$options B",
+        optionC = "$options C",
+        optionD = "$options D",
         correctAnswer = correct,
         reasoning = reasoning,
         sourceText = source,
@@ -45,6 +56,11 @@ class ImportPresentationTest {
         originalBlock = "",
         parseStatus = status,
         parseError = error,
+        questionId = questionId,
+        linkQuestionId = link,
+        duplicate = duplicate,
+        annulled = annulled,
+        annulmentReason = reason,
     )
 
     private fun batch(
@@ -52,15 +68,18 @@ class ImportPresentationTest {
         status: String = "parseado",
         type: String = "rafaga",
         imported: Int = 0,
+        summary: ContentImportSummary? = null,
+        examId: String = "ex-1",
     ) = ContentImportBatch(
         id = "5f2c9a10-3b4d-4e6f-8a9b-0c1d2e3f4a5b",
-        examId = "ex-1",
+        examId = examId,
         fileName = "simulacro_tema_28.pdf",
         examType = type,
         status = status,
         detectedCount = rows.size,
         importedCount = imported,
         staging = rows,
+        summary = summary,
     )
 
     // -----------------------------------------------------------------------
@@ -162,12 +181,21 @@ class ImportPresentationTest {
         assertEquals(ImportStepState.PENDING, steps[3].state)
     }
 
-    /** Una publicación parcial no es un final feliz: la etapa queda marcada. */
+    /** Un lote `importado` es un final feliz: la etapa de publicación queda hecha y dice «Publicado». */
     @Test
-    fun `una publicacion parcial marca la etapa de publicacion como problema`() {
-        val steps = importStages(ImportState(activeBatch = UiAsync.Success(batch(status = "parcial"))))
+    fun `un lote importado marca la publicacion como hecha`() {
+        val steps = importStages(ImportState(activeBatch = UiAsync.Success(batch(status = "importado", imported = 1))))
+        assertEquals(ImportStepState.DONE, steps[3].state)
+        assertEquals("Publicado", steps[3].detail)
+        assertEquals(ImportStepState.DONE, steps[2].state)
+    }
+
+    /** Un lote `fallido` sí es un problema, y no se disfraza. */
+    @Test
+    fun `un lote fallido marca la etapa de publicacion como problema`() {
+        val steps = importStages(ImportState(activeBatch = UiAsync.Success(batch(status = "fallido"))))
         assertEquals(ImportStepState.BLOCKED, steps[3].state)
-        assertEquals("Publicado a medias", steps[3].detail)
+        assertEquals("Fallido", steps[3].detail)
     }
 
     // -----------------------------------------------------------------------
@@ -186,12 +214,29 @@ class ImportPresentationTest {
 
     @Test
     fun `los estados del lote son los que el backend manda`() {
+        assertEquals("Pendiente", importBatchStatusLabel("pendiente"))
         assertEquals("Pendiente de revisión", importBatchStatusLabel("parseado"))
-        assertEquals("Publicado", importBatchStatusLabel("publicado"))
-        assertEquals("Publicado a medias", importBatchStatusLabel("parcial"))
+        assertEquals("Revisado", importBatchStatusLabel("revisado"))
+        assertEquals("Publicado", importBatchStatusLabel("importado"))
+        assertEquals("Fallido", importBatchStatusLabel("fallido"))
         assertEquals("Sin estado", importBatchStatusLabel(""))
         // Un estado desconocido se enseña tal cual, no se traduce a «Desconocido».
         assertEquals("revisando", importBatchStatusLabel("revisando"))
+    }
+
+    /** F1: sólo `importado` es publicado, con tono positivo; `fallido` es negativo; el vocabulario muerto ya no lo es. */
+    @Test
+    fun `importado es publicado y el vocabulario muerto ya no lo es`() {
+        assertTrue(importBatchIsPublished("importado"))
+        assertEquals(StatusTone.POSITIVE, importBatchStatusTone("importado"))
+        assertEquals(StatusTone.NEGATIVE, importBatchStatusTone("fallido"))
+        assertEquals(StatusTone.ATTENTION, importBatchStatusTone("parseado"))
+        listOf("parseado", "revisado", "pendiente", "fallido", "publicado", "parcial").forEach {
+            assertFalse(importBatchIsPublished(it), "«$it» no es un lote publicado")
+        }
+        // `publicado` y `parcial` ya no son estados del lote: se enseñan tal cual, sin traducirlos.
+        assertEquals("parcial", importBatchStatusLabel("parcial"))
+        assertEquals(StatusTone.UNKNOWN, importBatchStatusTone("parcial"))
     }
 
     @Test
@@ -248,10 +293,49 @@ class ImportPresentationTest {
     }
 
     @Test
-    fun `una fila omitida se distingue de un error`() {
+    fun `una fila omitida se distingue de un error y de una advertencia`() {
         val item = row(status = "omitida")
-        assertEquals(ReviewFilter.ADVERTENCIA, stagingTone(item))
-        assertEquals("Omitida", importRowToneLabel(ReviewFilter.ADVERTENCIA))
+        assertEquals(ReviewFilter.OMITIDA, stagingTone(item))
+        assertEquals("Omitida", importRowToneLabel(ReviewFilter.OMITIDA))
+        assertEquals("Advertencia", importRowToneLabel(ReviewFilter.ADVERTENCIA))
+        assertEquals("Marcada para omitir: no se publicará.", importRowProblem(item))
+    }
+
+    /** F1: una fila `importada` ya está en el examen; con o sin texto de error suelto NUNCA es un error. */
+    @Test
+    fun `una fila importada tiene su propio tono y nunca es error`() {
+        val item = row(status = "importada", questionId = "q-1")
+        assertEquals(ReviewFilter.IMPORTADA, stagingTone(item))
+        assertEquals("Importada", importRowToneLabel(ReviewFilter.IMPORTADA))
+        assertEquals(StatusTone.POSITIVE, importRowToneStatusTone(ReviewFilter.IMPORTADA))
+        assertNull(importRowProblem(item))
+        // Aunque arrastre un error viejo del parser o un duplicado.
+        assertEquals(ReviewFilter.IMPORTADA, stagingTone(item.copy(parseError = "error viejo")))
+        assertEquals(ReviewFilter.IMPORTADA, stagingTone(item.copy(duplicate = ContentImportDuplicate("banco", "q-1", "PREG-1"))))
+    }
+
+    /** F1: `aprobada` es lista, `advertencia` exige decidir y `error` sigue siendo error. */
+    @Test
+    fun `el vocabulario vivo de la fila se lee entero`() {
+        assertEquals(ReviewFilter.LISTA, stagingTone(row(status = "ok")))
+        assertEquals(ReviewFilter.LISTA, stagingTone(row(status = "aprobada")))
+        assertEquals(ReviewFilter.ADVERTENCIA, stagingTone(row(status = "advertencia")))
+        assertEquals(ReviewFilter.OMITIDA, stagingTone(row(status = "omitida")))
+        assertEquals(ReviewFilter.IMPORTADA, stagingTone(row(status = "importada")))
+        assertEquals(ReviewFilter.ERROR, stagingTone(row(status = "error")))
+    }
+
+    /** La anulación NO es un estado de parseo: `ok` + anulada es una fila lista y anulada. */
+    @Test
+    fun `anulada no cambia el tono de la fila`() {
+        val item = row(status = "ok", annulled = true, reason = "Error del tribunal")
+        assertEquals(ReviewFilter.LISTA, stagingTone(item))
+        assertEquals("Anulada por el tribunal: Error del tribunal", importRowAnnulmentNote(item))
+        assertEquals("Anulada por el tribunal", importRowAnnulmentNote(item.copy(annulmentReason = "  ")))
+        assertNull(importRowAnnulmentNote(row()))
+        // Misma etiqueta y mismo tono que la pregunta anulada de la lista del examen (features/exams).
+        assertEquals("Anulada", IMPORT_ANNULLED_CHIP)
+        assertEquals(StatusTone.ATTENTION, IMPORT_ANNULLED_TONE)
     }
 
     @Test
@@ -325,8 +409,7 @@ class ImportPresentationTest {
     @Test
     fun `un lote vacio o ya publicado no se publica`() {
         assertFalse(importPublishGate(ImportState(), batch(rows = emptyList())).enabled)
-        assertFalse(importPublishGate(ImportState(), batch(status = "publicado")).enabled)
-        assertFalse(importPublishGate(ImportState(), batch(status = "parcial")).enabled)
+        assertFalse(importPublishGate(ImportState(), batch(status = "importado")).enabled)
     }
 
     @Test
@@ -337,14 +420,39 @@ class ImportPresentationTest {
         assertTrue(gate.reason.contains("omitidas"), gate.reason)
     }
 
-    /** La atomicidad NO existe, y se avisa antes de pulsar, no después. */
+    /** F1: la publicación ES atómica, y ningún texto ni capacidad dice lo contrario. */
     @Test
-    fun `la publicacion no finge ser atomica`() {
-        assertTrue(IMPORT_NOT_ATOMIC_NOTICE.contains("no es atómica"), IMPORT_NOT_ATOMIC_NOTICE)
-        assertEquals(ImportCapabilityLevel.BLOCKED, importCapability("Publicar atómicamente").level)
-        val parcial = importPartialResultMessage(batch(status = "parcial", imported = 3).copy(detectedCount = 10))
-        assertTrue(parcial.contains("3 de 10"), parcial)
-        assertFalse(parcial.lowercase().contains("éxito"))
+    fun `la publicacion es atomica y ningun texto dice lo contrario`() {
+        assertTrue(IMPORT_ATOMIC_NOTICE.contains("atómica"), IMPORT_ATOMIC_NOTICE)
+        assertFalse(IMPORT_ATOMIC_NOTICE.contains("no es atómica"))
+        assertEquals(ImportCapabilityLevel.REAL, importCapability("Publicar atómicamente").level)
+        importCapabilities().forEach { capability ->
+            val text = "${capability.name} ${capability.note}".lowercase()
+            assertFalse(text.contains("parcial"), "«${capability.name}» aún habla de publicación parcial")
+            assertFalse(text.contains("no hay todo-o-nada"), text)
+        }
+    }
+
+    /** Tras publicar: lote «Publicado», filas importadas sin error, sin «Corrige N errores» y el botón apagado con su motivo. */
+    @Test
+    fun `tras publicar no hay errores ni se puede volver a publicar`() {
+        val published = batch(
+            listOf(
+                row(status = "importada", questionId = "q-1"),
+                row(id = "s-2", status = "importada", questionId = "q-2", error = "error viejo"),
+            ),
+            status = "importado",
+            imported = 2,
+        )
+        val metrics = published.metrics()
+        assertEquals(0, metrics.errors)
+        assertEquals(2, metrics.imported)
+        val gate = importPublishGate(ImportState(), published)
+        assertFalse(gate.enabled)
+        assertEquals("Este lote ya se ha publicado.", gate.reason)
+        assertFalse(gate.issues.any { it.kind == ImportPreflightKind.ROW_ERRORS })
+        assertEquals("Publicado", importBatchStatusLabel(published.status))
+        assertEquals(StatusTone.POSITIVE, importBatchStatusTone(published.status))
     }
 
     // -----------------------------------------------------------------------
@@ -423,7 +531,8 @@ class ImportPresentationTest {
         assertEquals(ImportCapabilityLevel.NOT_FOUND, importCapability("Descargar plantilla").level)
         assertEquals(ImportCapabilityLevel.NOT_FOUND, importCapability("Descartar lote").level)
 
-        assertEquals(ImportCapabilityLevel.BLOCKED, importCapability("Publicar atómicamente").level)
+        assertEquals(ImportCapabilityLevel.REAL, importCapability("Publicar atómicamente").level)
+        assertEquals(ImportCapabilityLevel.REAL, importCapability("Vincular a existente").level)
 
         assertEquals(ImportCapabilityLevel.PARTIAL, importCapability("Parsear PDF").level)
         assertEquals(ImportCapabilityLevel.PARTIAL, importCapability("Validar filas").level)
@@ -468,13 +577,18 @@ class ImportPresentationTest {
             row(id = "b", status = "omitida"),
             row(id = "c", status = "duplicada_candidata"),
             row(id = "d", error = "boom"),
+            row(id = "e", status = "advertencia"),
+            row(id = "f", status = "importada", questionId = "q-1", annulled = true),
         )
         val metrics = batch(rows).metrics()
-        assertEquals(4, metrics.detected)
+        assertEquals(6, metrics.detected)
         assertEquals(1, metrics.ready)
-        assertEquals(1, metrics.review)
+        assertEquals(1, metrics.skipped)
+        assertEquals(1, metrics.warnings)
+        assertEquals(1, metrics.imported)
         assertEquals(1, metrics.duplicates)
         assertEquals(1, metrics.errors)
+        assertEquals(1, metrics.annulled)
     }
 
     // -----------------------------------------------------------------------

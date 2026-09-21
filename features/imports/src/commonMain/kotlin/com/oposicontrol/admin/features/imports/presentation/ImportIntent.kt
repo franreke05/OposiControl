@@ -21,6 +21,12 @@ sealed interface ImportIntent {
     data class ApproveStaging(val item: ContentImportStagingItem) : ImportIntent
     data class SkipStaging(val item: ContentImportStagingItem) : ImportIntent
 
+    /** Aprueba la fila VINCULADA a la pregunta existente que el servidor detectó (duplicado del banco). No crea otra. */
+    data class LinkStagingToExisting(val item: ContentImportStagingItem) : ImportIntent
+
+    /** Deshace el vínculo: la fila vuelve a ser una duplicada sin resolver. */
+    data class UnlinkStaging(val item: ContentImportStagingItem) : ImportIntent
+
     data object PublishBatch : ImportIntent
     /** El administrador confirma que el examen está publicado y las preguntas se verán al instante (IM3). */
     data object ConfirmPublishOnPublishedExam : ImportIntent

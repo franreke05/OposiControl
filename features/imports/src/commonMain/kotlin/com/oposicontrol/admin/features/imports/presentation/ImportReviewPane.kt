@@ -36,6 +36,7 @@ import com.oposicontrol.admin.core.ui.components.GhostButton
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.components.SemanticRole
+import com.oposicontrol.admin.core.ui.components.GlassToggleRow
 import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Radius
@@ -124,10 +125,15 @@ private fun ImportReviewFilters(
             )
             listOf(
                 ReviewFilter.LISTA to tokens.success,
-                ReviewFilter.ADVERTENCIA to tokens.textSecondary,
+                ReviewFilter.ADVERTENCIA to tokens.warning,
+                ReviewFilter.OMITIDA to tokens.textSecondary,
                 ReviewFilter.DUPLICADA to tokens.warning,
                 ReviewFilter.ERROR to tokens.danger,
-            ).forEach { (filter, tone) ->
+                ReviewFilter.IMPORTADA to tokens.info,
+            ).filter { (filter, _) ->
+                // «Importada» sólo cuando hay alguna: en un lote sin publicar sería un chip a 0 sin sentido.
+                filter != ReviewFilter.IMPORTADA || (counts[filter] ?: 0) > 0
+            }.forEach { (filter, tone) ->
                 FilterChip(
                     label = importRowToneLabel(filter),
                     count = counts[filter] ?: 0,
@@ -197,7 +203,8 @@ private fun ImportStagingRow(
             .semantics {
                 this.selected = selected
                 contentDescription = "Fila ${item.position}. ${importRowTitle(item)}. " +
-                    "${importRowToneLabel(tone)}. ${problem ?: ""}"
+                    "${importRowToneLabel(tone)}. ${problem ?: ""} " +
+                    "${importRowLinkLabel(item) ?: ""} ${importRowAnnulmentNote(item) ?: ""}"
             }
             .padding(Spacing.sm),
         verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
@@ -221,7 +228,17 @@ private fun ImportStagingRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            StatusChip(status = importRowToneLabel(tone), tone = importRowToneStatusTone(tone))
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalAlignment = Alignment.CenterVertically) {
+                // La anulación es un dato de la pregunta en el examen: chip propio, aparte del estado de parseo.
+                if (item.annulled) StatusChip(status = IMPORT_ANNULLED_CHIP, tone = IMPORT_ANNULLED_TONE)
+                StatusChip(status = importRowToneLabel(tone), tone = importRowToneStatusTone(tone))
+            }
+        }
+        importRowLinkLabel(item)?.let { link ->
+            Text(link, style = MaterialTheme.typography.bodySmall, color = tokens.success)
+        }
+        importRowAnnulmentNote(item)?.let { note ->
+            Text(note, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
             Text(
@@ -278,6 +295,8 @@ private fun ImportStagingDetail(
     val admitsReasoning = batchType != ContentExamType.RAFAGA
     val carriesUnsupported = !admitsReasoning &&
         (draft.reasoning.isNotBlank() || draft.sourceText.isNotBlank())
+    val actions = importRowActions(draft, batchPublished = importBatchIsPublished(batch.status))
+    val editable = actions.editable
 
     Column(
         modifier = modifier
@@ -306,6 +325,7 @@ private fun ImportStagingDetail(
             )
         }
 
+        val tone = stagingTone(draft)
         importRowProblem(draft)?.let { problem ->
             Row(
                 modifier = Modifier
@@ -317,9 +337,32 @@ private fun ImportStagingDetail(
                 verticalAlignment = Alignment.Top,
                 horizontalArrangement = Arrangement.spacedBy(Spacing.xxs),
             ) {
-                AppIconImage(AppIcon.WARNING, size = 13.dp, tint = tokens.danger)
-                Text(problem, style = MaterialTheme.typography.bodySmall, color = tokens.dangerInk)
+                val isError = tone == ReviewFilter.ERROR
+                AppIconImage(
+                    icon = if (isError) AppIcon.WARNING else AppIcon.INFO,
+                    size = 13.dp,
+                    tint = if (isError) tokens.danger else tokens.textSecondary,
+                )
+                Text(
+                    text = problem,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isError) tokens.dangerInk else tokens.textSecondary,
+                )
             }
+        }
+        importRowLinkLabel(draft)?.let { link ->
+            Text(link, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = tokens.success)
+        }
+        if (!editable) {
+            Text(
+                text = if (tone == ReviewFilter.IMPORTADA) {
+                    "Esta fila ya está publicada en el examen: no se puede editar desde el lote."
+                } else {
+                    "El lote ya se ha publicado: sus filas no se pueden editar."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.textSecondary,
+            )
         }
 
         ImportTextField(
@@ -328,6 +371,7 @@ private fun ImportStagingDetail(
             placeholder = "Enunciado",
             singleLine = false,
             minHeight = 64.dp,
+            enabled = editable,
         )
         listOf("A" to draft.optionA, "B" to draft.optionB, "C" to draft.optionC, "D" to draft.optionD)
             .forEach { (label, value) ->
@@ -343,6 +387,7 @@ private fun ImportStagingDetail(
                         onIntent(ImportIntent.UpdateEditDraft(updated))
                     },
                     placeholder = "Opción $label",
+                    enabled = editable,
                 )
             }
         ImportDropdown(
@@ -350,11 +395,13 @@ private fun ImportStagingDetail(
             selectedLabel = importRowCorrectAnswer(draft),
             options = IMPORT_VALID_ANSWERS.sorted().map { it to it },
             onSelect = { onIntent(ImportIntent.UpdateEditDraft(draft.copy(correctAnswer = it))) },
+            enabled = editable,
         )
         ImportTextField(
             value = draft.tagText,
             onValueChange = { onIntent(ImportIntent.UpdateEditDraft(draft.copy(tagText = it))) },
             placeholder = "Tema (texto libre)",
+            enabled = editable,
         )
 
         if (admitsReasoning) {
@@ -364,11 +411,13 @@ private fun ImportStagingDetail(
                 placeholder = "Explicación",
                 singleLine = false,
                 minHeight = 56.dp,
+                enabled = editable,
             )
             ImportTextField(
                 value = draft.sourceText,
                 onValueChange = { onIntent(ImportIntent.UpdateEditDraft(draft.copy(sourceText = it))) },
                 placeholder = "Fuente",
+                enabled = editable,
             )
         } else if (carriesUnsupported) {
             Text(
@@ -378,31 +427,78 @@ private fun ImportStagingDetail(
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            SecondaryButton(
-                text = "Omitir",
-                size = ButtonSize.COMPACT,
-                onClick = { onIntent(ImportIntent.SkipStaging(draft)) },
-            )
-            SecondaryButton(
-                text = "Aprobar",
-                size = ButtonSize.COMPACT,
-                onClick = { onIntent(ImportIntent.ApproveStaging(draft)) },
-            )
-            PrimaryButton(
-                text = "Guardar fila",
-                size = ButtonSize.COMPACT,
-                onClick = { onIntent(ImportIntent.SaveEditDraft) },
-                enabled = importAnswerIsValid(draft.correctAnswer),
-                loading = state.actionState is UiAsync.Loading,
+        // La anulación es un dato de la pregunta EN EL EXAMEN, no del parseo: se corrige aquí, se
+        // guarda con la fila y sólo lleva motivo si está anulada.
+        GlassToggleRow(
+            title = IMPORT_ANNULLED_LABEL,
+            description = "La pregunta se publica anulada en este examen; conserva su posición.",
+            checked = draft.annulled,
+            onCheckedChange = { annulled ->
+                onIntent(
+                    ImportIntent.UpdateEditDraft(
+                        draft.copy(
+                            annulled = annulled,
+                            annulmentReason = if (annulled) draft.annulmentReason else null,
+                        ),
+                    ),
+                )
+            },
+            enabled = editable,
+        )
+        if (draft.annulled) {
+            ImportTextField(
+                value = draft.annulmentReason.orEmpty(),
+                onValueChange = { onIntent(ImportIntent.UpdateEditDraft(draft.copy(annulmentReason = it))) },
+                placeholder = "Motivo de la anulación (opcional)",
+                enabled = editable,
             )
         }
-        if (!importAnswerIsValid(draft.correctAnswer)) {
-            Text(
-                text = "La respuesta correcta debe ser A, B, C o D.",
-                style = MaterialTheme.typography.bodySmall,
-                color = tokens.textSecondary,
-            )
+
+        if (editable) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                if (actions.canSkip) {
+                    SecondaryButton(
+                        text = "Omitir",
+                        size = ButtonSize.COMPACT,
+                        onClick = { onIntent(ImportIntent.SkipStaging(draft)) },
+                    )
+                }
+                if (actions.linkLabel != null) {
+                    SecondaryButton(
+                        text = actions.linkLabel,
+                        size = ButtonSize.COMPACT,
+                        onClick = { onIntent(ImportIntent.LinkStagingToExisting(draft)) },
+                    )
+                }
+                if (actions.canUnlink) {
+                    SecondaryButton(
+                        text = "Deshacer vínculo",
+                        size = ButtonSize.COMPACT,
+                        onClick = { onIntent(ImportIntent.UnlinkStaging(draft)) },
+                    )
+                }
+                if (actions.canApprove) {
+                    SecondaryButton(
+                        text = "Aprobar",
+                        size = ButtonSize.COMPACT,
+                        onClick = { onIntent(ImportIntent.ApproveStaging(draft)) },
+                    )
+                }
+                PrimaryButton(
+                    text = "Guardar fila",
+                    size = ButtonSize.COMPACT,
+                    onClick = { onIntent(ImportIntent.SaveEditDraft) },
+                    enabled = importAnswerIsValid(draft.correctAnswer),
+                    loading = state.actionState is UiAsync.Loading,
+                )
+            }
+            if (!importAnswerIsValid(draft.correctAnswer)) {
+                Text(
+                    text = "La respuesta correcta debe ser A, B, C o D para guardar o aprobar. Omitir no lo exige.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.textSecondary,
+                )
+            }
         }
         Box(modifier = Modifier.fillMaxWidth()) {
             Text(

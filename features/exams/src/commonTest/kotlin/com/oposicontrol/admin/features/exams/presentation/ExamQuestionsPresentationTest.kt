@@ -339,4 +339,41 @@ class ExamQuestionsPresentationTest {
         assertNull(examQuestionsLoadError(UiAsync.Success(listOf(question("q-1", 0)))))
         assertNull(examQuestionsLoadError(UiAsync.Empty))
     }
+
+    // -----------------------------------------------------------------------
+    // Anulada por el tribunal (M10): dato de la relación, la posición se mantiene
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `una pregunta anulada en el examen lo dice con su motivo y conserva su posicion`() {
+        val rows = examQuestionRows(
+            listOf(
+                question("q-1", 0),
+                question("q-2", 1).copy(annulled = true, annulmentReason = "  Error del tribunal "),
+                question("q-3", 2),
+            ),
+        )
+
+        assertEquals(listOf(1, 2, 3), rows.map { it.position }, "anular no cambia la numeración")
+        assertEquals(listOf(false, true, false), rows.map { it.annulled })
+        assertEquals("Error del tribunal", rows[1].annulmentDetail)
+        assertNull(rows[0].annulmentDetail)
+        assertEquals("Anulada", EXAM_QUESTION_ANNULLED_LABEL)
+        // El mismo tono que el chip «Anulada» de la revisión de importaciones (features/imports).
+        assertEquals(com.oposicontrol.admin.core.ui.components.StatusTone.ATTENTION, EXAM_QUESTION_ANNULLED_TONE)
+        // La anulación no cambia lo demás que se sabe de la pregunta.
+        assertEquals(rows[0].facts, rows[1].facts)
+        assertEquals(rows[0].typeLabel, rows[1].typeLabel)
+    }
+
+    @Test
+    fun `una anulada sin motivo se marca igual y un motivo suelto sin anulacion no se enseña`() {
+        val sinMotivo = examQuestionRows(listOf(question("q-1", 0).copy(annulled = true))).single()
+        assertTrue(sinMotivo.annulled)
+        assertNull(sinMotivo.annulmentDetail)
+
+        val motivoHuerfano = examQuestionRows(listOf(question("q-1", 0).copy(annulled = false, annulmentReason = "huérfano"))).single()
+        assertFalse(motivoHuerfano.annulled)
+        assertNull(motivoHuerfano.annulmentDetail)
+    }
 }

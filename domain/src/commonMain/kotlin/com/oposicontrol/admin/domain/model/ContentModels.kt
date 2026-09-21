@@ -93,6 +93,14 @@ data class ExamQuestion(
     val resources: List<QuestionResource>,
     val createdAt: Instant,
     val updatedAt: Instant,
+    /**
+     * La pregunta va ANULADA en ESTE examen (M10): es propiedad de la relación
+     * examen↔pregunta, no de la pregunta. La posición se mantiene; el tribunal la
+     * anuló pero sigue ocupando su sitio.
+     */
+    val annulled: Boolean = false,
+    /** Sólo con [annulled]; `null` = sin motivo registrado. */
+    val annulmentReason: String? = null,
 )
 
 data class RafagaQuestion(

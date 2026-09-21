@@ -6,6 +6,7 @@ import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.ContentExamType
 import com.oposicontrol.admin.domain.model.ContentImportBatch
+import com.oposicontrol.admin.domain.model.ContentImportDuplicate
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
@@ -25,6 +26,7 @@ import com.oposicontrol.admin.domain.usecase.content.ListContentImportBatchesUse
 import com.oposicontrol.admin.domain.usecase.content.ObserveAllExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.PublishContentImportBatchUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshAllExamsUseCase
+import com.oposicontrol.admin.domain.usecase.content.SkipContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpdateContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadPdfToStagingUseCase
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -46,16 +48,24 @@ class ImportViewModelTest {
     private val exam = Exam(
         id = "ex-1", code = "EX-0012", specialtyId = "sp-1", specialtyName = "Administrativo",
         title = "Administrativo del Estado 2024", description = "", priceTickets = 0,
-        status = ExamStatus.PUBLISHED, publishFrom = null, publishedAt = null, sortOrder = 0,
+        status = ExamStatus.DRAFT, publishFrom = null, publishedAt = null, sortOrder = 0,
         questionCount = 1, typeExam = "rafaga",
         createdAt = kotlinx.datetime.Instant.parse("2026-01-01T00:00:00Z"),
         updatedAt = kotlinx.datetime.Instant.parse("2026-01-01T00:00:00Z"),
     )
 
-    private fun stagingItem(id: String, parseStatus: String = "ok", parseError: String? = null) = ContentImportStagingItem(
-        id = id, position = 1, title = "Enunciado $id", optionA = "A", optionB = "B", optionC = "C", optionD = "D",
-        correctAnswer = "A", reasoning = "", sourceText = "", tagText = "", originalBlock = "",
-        parseStatus = parseStatus, parseError = parseError,
+    private fun stagingItem(
+        id: String,
+        parseStatus: String = "ok",
+        parseError: String? = null,
+        duplicate: ContentImportDuplicate? = null,
+        link: String? = null,
+        blank: Boolean = false,
+    ) = ContentImportStagingItem(
+        id = id, position = 1, title = if (blank) "" else "Enunciado $id",
+        optionA = if (blank) "" else "A", optionB = if (blank) "" else "B", optionC = if (blank) "" else "C", optionD = if (blank) "" else "D",
+        correctAnswer = if (blank) "" else "A", reasoning = "", sourceText = "", tagText = "", originalBlock = "",
+        parseStatus = parseStatus, parseError = parseError, duplicate = duplicate, linkQuestionId = link,
     )
 
     private fun batch(staging: List<ContentImportStagingItem> = listOf(stagingItem("s-1"))) = ContentImportBatch(
@@ -74,6 +84,7 @@ class ImportViewModelTest {
             uploadPdfUseCase = UploadPdfToStagingUseCase(importRepo),
             updateStagingUseCase = UpdateContentImportStagingUseCase(importRepo),
             publishBatchUseCase = PublishContentImportBatchUseCase(importRepo),
+            skipStagingUseCase = SkipContentImportStagingUseCase(importRepo),
         )
     }
 
@@ -180,14 +191,13 @@ class ImportViewModelTest {
         assertEquals("aprobada", active.staging.first().parseStatus)
     }
 
+    /** F1: publicar termina en `importado`: el lote sale «Publicado», sin errores y sin poder repetirse. */
     @Test
-    fun publishDisabledWhileErrorsRemainIsEnforcedByTheScreenNotTheViewModelAlone() = runTest {
-        // El ViewModel no bloquea la llamada en sí (eso lo hace el botón en la
-        // pantalla), pero el resultado real del backend debe reflejarse
-        // honestamente, incluida una publicación parcial.
+    fun publishingLeavesTheBatchPublishedWithNoErrorsAndTheButtonOff() = runTest {
+        val published = batch(listOf(stagingItem("s-1", "importada"))).copy(status = "importado", importedCount = 1)
         val repo = FakeImportRepository(
             getResult = AppResult.Success(batch()),
-            publishResult = AppResult.Success(batch().copy(status = "parcial", importedCount = 0)),
+            publishResult = AppResult.Success(published),
         )
         val vm = buildViewModel(repo)
         advanceUntilIdle()
@@ -197,8 +207,78 @@ class ImportViewModelTest {
         vm.dispatch(ImportIntent.PublishBatch)
         advanceUntilIdle()
 
-        val message = (vm.state.value.actionState as UiAsync.Success).value
-        assertTrue(message.contains("parcial"), "esperaba mensaje de importación parcial, fue: $message")
+        val state = vm.state.value
+        val message = (state.actionState as UiAsync.Success).value
+        assertTrue(message.startsWith("Lote publicado: 1 de 1"), message)
+        val active = (state.activeBatch as UiAsync.Success).value
+        assertEquals("Publicado", importBatchStatusLabel(active.status))
+        assertEquals(0, active.metrics().errors)
+        val gate = importPublishGate(state, active)
+        assertFalse(gate.enabled)
+        assertEquals("Este lote ya se ha publicado.", gate.reason)
+    }
+
+    private suspend fun TestScope.publishAndReadMessage(annulledRows: Int): String {
+        val rows = List(annulledRows) { stagingItem("s-$it", "importada").copy(annulled = true) } + stagingItem("n-1", "importada")
+        val published = batch(rows).copy(status = "importado", importedCount = rows.size)
+        val repo = FakeImportRepository(getResult = AppResult.Success(batch()), publishResult = AppResult.Success(published))
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.PublishBatch)
+        advanceUntilIdle()
+        return (vm.state.value.actionState as UiAsync.Success).value
+    }
+
+    /** Concordancia: «1 anulada», no «1 anuladas». */
+    @Test
+    fun theAnnulledCountInThePublishMessageAgreesInNumber() = runTest {
+        val one = publishAndReadMessage(annulledRows = 1)
+        assertTrue(one.endsWith("(1 anulada por el tribunal)."), one)
+        assertFalse(one.contains("1 anuladas"), one)
+
+        val two = publishAndReadMessage(annulledRows = 2)
+        assertTrue(two.endsWith("(2 anuladas por el tribunal)."), two)
+
+        val none = publishAndReadMessage(annulledRows = 0)
+        assertFalse(none.contains("anulada"), none)
+        assertTrue(none.endsWith("ya están en el examen."), none)
+    }
+
+    /** El preflight es una previsión: si ya sabe que hay un bloqueo, no se llama al servidor a ciegas. */
+    @Test
+    fun aKnownBlockerStopsThePublishBeforeTheServerIsCalled() = runTest {
+        val broken = batch(listOf(stagingItem("ok-1"), stagingItem("bad", parseError = "falta la opción D")))
+        val repo = FakeImportRepository(getResult = AppResult.Success(broken), publishResult = AppResult.Success(batch()))
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.PublishBatch)
+        advanceUntilIdle()
+
+        assertTrue(repo.publishConfirmations.isEmpty(), "sin llamada al servidor")
+        val error = vm.state.value.actionState as UiAsync.Error
+        assertEquals("Corrige el error antes de publicar.", error.error.message)
+    }
+
+    /** El límite de 200 se avisa antes de llamar. */
+    @Test
+    fun theExamLimitStopsThePublishWithTheNumbers() = runTest {
+        val full = exam.copy(questionCount = 200)
+        val repo = FakeImportRepository(getResult = AppResult.Success(batch()), publishResult = AppResult.Success(batch()))
+        val vm = buildViewModel(repo, exams = listOf(full))
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.PublishBatch)
+        advanceUntilIdle()
+
+        assertTrue(repo.publishConfirmations.isEmpty())
+        assertTrue((vm.state.value.actionState as UiAsync.Error).error.message.contains("201"))
     }
 
     @Test
@@ -233,7 +313,43 @@ class ImportViewModelTest {
         assertEquals(listOf("ex-2"), vm.state.value.examsForSelectedType.map { it.id })
     }
 
-    /** IM3: el servidor pide confirmar porque el examen está publicado; la segunda llamada lleva la respuesta. */
+    /** KI3-3: con el examen publicado a la vista, la confirmación se pide ANTES de llamar; la llamada lleva la respuesta. */
+    @Test
+    fun aPublishedExamAsksForConfirmationBeforeTheCall() = runTest {
+        val repo = FakeImportRepository(
+            getResult = AppResult.Success(batch()),
+            publishResult = AppResult.Success(batch().copy(status = "importado", importedCount = 1)),
+        )
+        val vm = buildViewModel(repo, exams = listOf(exam.copy(status = ExamStatus.PUBLISHED)))
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.PublishBatch)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.showPublishConfirm, "se pregunta antes de publicar")
+        assertTrue(repo.publishConfirmations.isEmpty(), "todavía no se ha llamado")
+
+        vm.dispatch(ImportIntent.ConfirmPublishOnPublishedExam)
+        advanceUntilIdle()
+        assertEquals(listOf(true), repo.publishConfirmations)
+        assertEquals("importado", (vm.state.value.activeBatch as UiAsync.Success).value.status)
+
+        // Y descartarla no publica nada.
+        val repo2 = FakeImportRepository(getResult = AppResult.Success(batch()), publishResult = AppResult.Success(batch()))
+        val vm2 = buildViewModel(repo2, exams = listOf(exam.copy(status = ExamStatus.PUBLISHED)))
+        advanceUntilIdle()
+        vm2.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+        vm2.dispatch(ImportIntent.PublishBatch)
+        advanceUntilIdle()
+        vm2.dispatch(ImportIntent.DismissPublishConfirm)
+        advanceUntilIdle()
+        assertFalse(vm2.state.value.showPublishConfirm)
+        assertTrue(repo2.publishConfirmations.isEmpty())
+    }
+
+    /** IM3: si el cliente no sabía que el examen está publicado, el servidor sigue siendo la autoridad y pide confirmar. */
     @Test
     fun aPublishedExamAsksForConfirmationAndRetriesWithIt() = runTest {
         val repo = FakeImportRepository(
@@ -286,6 +402,165 @@ class ImportViewModelTest {
         assertIs<UiAsync.Success<String>>(vm.state.value.actionState)
     }
 
+    // -----------------------------------------------------------------
+    // F2 — Omitir no exige que la fila esté completa
+    // -----------------------------------------------------------------
+
+    @Test
+    fun skippingARowWithEverythingEmptyMarksItOmitted() = runTest {
+        val empty = stagingItem("s-empty", parseStatus = "error", parseError = "sin enunciado", blank = true)
+        val repo = FakeImportRepository(getResult = AppResult.Success(batch(listOf(empty))))
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.SkipStaging(empty))
+        advanceUntilIdle()
+
+        assertEquals(listOf("omitida"), repo.updates.map { it.parseStatus })
+        val active = (vm.state.value.activeBatch as UiAsync.Success).value
+        assertEquals("omitida", active.staging.single().parseStatus)
+        assertEquals(ReviewFilter.OMITIDA, stagingTone(active.staging.single()))
+        assertIs<UiAsync.Success<String>>(vm.state.value.actionState)
+    }
+
+    @Test
+    fun approvingAnIncompleteRowIsStillRejectedWithAClearMessage() = runTest {
+        val empty = stagingItem("s-empty", parseStatus = "error", blank = true)
+        val repo = FakeImportRepository(getResult = AppResult.Success(batch(listOf(empty))))
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.ApproveStaging(empty))
+        advanceUntilIdle()
+
+        assertTrue(repo.updates.isEmpty(), "no se llama al servidor con una fila incompleta")
+        assertEquals("La pregunta necesita título.", (vm.state.value.actionState as UiAsync.Error).error.message)
+    }
+
+    // -----------------------------------------------------------------
+    // Vincular a existente
+    // -----------------------------------------------------------------
+
+    private val bankDuplicate = ContentImportDuplicate("banco", "q-77", "PREG-0077")
+
+    @Test
+    fun linkingToTheExistingQuestionApprovesTheRowLinkedAndCreatesNothingNew() = runTest {
+        val dup = stagingItem("s-dup", duplicate = bankDuplicate)
+        val repo = FakeImportRepository(getResult = AppResult.Success(batch(listOf(dup))))
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+        assertEquals(ReviewFilter.DUPLICADA, stagingTone(dup))
+
+        vm.dispatch(ImportIntent.LinkStagingToExisting(dup))
+        advanceUntilIdle()
+
+        val sent = repo.updates.single()
+        assertEquals("aprobada", sent.parseStatus)
+        assertEquals("q-77", sent.linkQuestionId)
+        val row = (vm.state.value.activeBatch as UiAsync.Success).value.staging.single()
+        assertEquals(ReviewFilter.LISTA, stagingTone(row))
+        assertEquals("Vinculada a PREG-0077", importRowLinkLabel(row))
+        // El PATCH del servidor no devuelve la coincidencia: se conserva, para poder deshacer.
+        assertEquals("PREG-0077", row.duplicate?.questionCode)
+        assertEquals(row, vm.state.value.editDraft, "el editor sigue abierto y refleja el vínculo")
+        assertTrue((vm.state.value.actionState as UiAsync.Success).value.contains("PREG-0077"))
+        assertEquals(0, repo.uploadCallCount)
+    }
+
+    @Test
+    fun linkingUsesTheStoredRowNotADraftThatNoLongerMatchesTheExistingQuestion() = runTest {
+        val dup = stagingItem("s-dup", duplicate = bankDuplicate)
+        val repo = FakeImportRepository(getResult = AppResult.Success(batch(listOf(dup))))
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.LinkStagingToExisting(dup.copy(title = "Texto a medio editar")))
+        advanceUntilIdle()
+
+        assertEquals("Enunciado s-dup", repo.updates.single().title)
+    }
+
+    @Test
+    fun aBatchDuplicateCannotBeLinked() = runTest {
+        val dup = stagingItem("s-dup", duplicate = ContentImportDuplicate("lote", null, "", "s-1"))
+        val repo = FakeImportRepository(getResult = AppResult.Success(batch(listOf(dup))))
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.LinkStagingToExisting(dup))
+        advanceUntilIdle()
+
+        assertTrue(repo.updates.isEmpty())
+        assertIs<UiAsync.Error>(vm.state.value.actionState)
+    }
+
+    @Test
+    fun unlinkingLeavesTheRowAsAnUnresolvedDuplicateAgain() = runTest {
+        val linked = stagingItem("s-dup", parseStatus = "aprobada", duplicate = bankDuplicate, link = "q-77")
+        val repo = FakeImportRepository(getResult = AppResult.Success(batch(listOf(linked))))
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.UnlinkStaging(linked))
+        advanceUntilIdle()
+
+        val sent = repo.updates.single()
+        assertEquals("aprobada", sent.parseStatus)
+        assertEquals(null, sent.linkQuestionId)
+        val row = (vm.state.value.activeBatch as UiAsync.Success).value.staging.single()
+        assertEquals(ReviewFilter.DUPLICADA, stagingTone(row))
+        assertEquals(null, importRowLinkLabel(row))
+        // Y otra vez se puede vincular.
+        assertEquals("Vincular a existente (PREG-0077)", importRowActions(row, batchPublished = false).linkLabel)
+    }
+
+    // -----------------------------------------------------------------
+    // Anulada por el tribunal: se corrige con el mismo guardado de fila
+    // -----------------------------------------------------------------
+
+    @Test
+    fun theAnnulmentIsCorrectedAndSavedWithTheSameRowSave() = runTest {
+        val row = stagingItem("s-1")
+        val repo = FakeImportRepository(getResult = AppResult.Success(batch(listOf(row))))
+        val vm = buildViewModel(repo)
+        advanceUntilIdle()
+        vm.dispatch(ImportIntent.OpenBatch("b-1"))
+        vm.dispatch(ImportIntent.SelectStaging("s-1"))
+        advanceUntilIdle()
+
+        vm.dispatch(ImportIntent.UpdateEditDraft(vm.state.value.editDraft!!.copy(annulled = true, annulmentReason = " Error del tribunal ")))
+        vm.dispatch(ImportIntent.SaveEditDraft)
+        advanceUntilIdle()
+
+        val sent = repo.updates.single()
+        assertTrue(sent.annulled)
+        assertEquals("Error del tribunal", sent.annulmentReason)
+        val saved = (vm.state.value.activeBatch as UiAsync.Success).value.staging.single()
+        assertTrue(saved.annulled)
+        // Estado de parseo intacto: `ok` + anulada es una fila lista y anulada.
+        assertEquals(ReviewFilter.LISTA, stagingTone(saved))
+        assertEquals(1, (vm.state.value.activeBatch as UiAsync.Success).value.metrics().annulled)
+
+        // Desanular borra el motivo.
+        vm.dispatch(ImportIntent.UpdateEditDraft(vm.state.value.editDraft!!.copy(annulled = false)))
+        vm.dispatch(ImportIntent.SaveEditDraft)
+        advanceUntilIdle()
+        assertEquals(null, repo.updates.last().annulmentReason)
+        assertFalse(repo.updates.last().annulled)
+    }
+
     @Test
     fun closingBatchResetsReviewState() = runTest {
         val repo = FakeImportRepository(getResult = AppResult.Success(batch()))
@@ -331,8 +606,14 @@ private class FakeImportRepository(
         return uploadResult ?: AppResult.Failure(AppError.Validation("no upload configured"))
     }
 
-    override suspend fun updateStaging(item: ContentImportStagingItem): AppResult<ContentImportStagingItem> =
-        updateResult?.invoke(item) ?: AppResult.Success(item)
+    /** Lo que llegó a `updateStaging`, en orden. */
+    val updates = mutableListOf<ContentImportStagingItem>()
+
+    override suspend fun updateStaging(item: ContentImportStagingItem): AppResult<ContentImportStagingItem> {
+        updates += item
+        // Como el servidor real, la respuesta NO trae la coincidencia detectada (`duplicado`).
+        return updateResult?.invoke(item) ?: AppResult.Success(item.copy(duplicate = null))
+    }
 
     override suspend fun publishImportBatch(batchId: String, confirmExamPublished: Boolean): AppResult<ContentImportBatch> {
         publishConfirmations += confirmExamPublished

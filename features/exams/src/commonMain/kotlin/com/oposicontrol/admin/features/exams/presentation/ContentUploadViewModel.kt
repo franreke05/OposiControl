@@ -20,6 +20,7 @@ import com.oposicontrol.admin.domain.usecase.content.ListContentImportBatchesUse
 import com.oposicontrol.admin.domain.usecase.content.PublishContentImportBatchUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshSpecialtiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.SkipContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpdateContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadPdfToStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.ObserveExamsUseCase
@@ -39,6 +40,7 @@ class ContentUploadViewModel(
     private val getBatchUseCase: GetContentImportBatchUseCase,
     private val uploadPdfUseCase: UploadPdfToStagingUseCase,
     private val updateStagingUseCase: UpdateContentImportStagingUseCase,
+    private val skipStagingUseCase: SkipContentImportStagingUseCase,
     private val publishBatchUseCase: PublishContentImportBatchUseCase,
     private val createDraftUseCase: CreateContentDraftUseCase,
     private val analyticsTracker: AnalyticsTracker,
@@ -172,29 +174,32 @@ class ContentUploadViewModel(
 
     private suspend fun skipStaging(item: ContentImportStagingItem) {
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = updateStagingUseCase(item.copy(parseStatus = "omitida"))) {
+        // Omitir NO exige completitud: es el mismo caso de uso que la pantalla de escritorio.
+        when (val result = skipStagingUseCase(item)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> replaceStaging(result.value, "Pregunta marcada para saltar; no se borró.")
         }
     }
 
     private suspend fun publishBatch() {
-        // Guarda antes de cualquier punto de suspensión: publicar escribe en el
-        // contenido canónico y el flujo de importación todavía NO es atómico
-        // (content_import_atomicity_candidate_v1 sigue pendiente de aplicar),
-        // así que dos publicaciones solapadas podrían duplicar preguntas. En un
-        // dispatcher confinado a un solo hilo esto basta, sin Mutex adicional.
+        // Guarda antes de cualquier punto de suspensión: la publicación es UNA RPC atómica en el
+        // servidor, pero un segundo toque con la primera en vuelo enviaría una petición
+        // redundante (y su error confundiría al administrador). En un dispatcher confinado a
+        // un solo hilo esto basta, sin Mutex adicional.
         if (currentState().actionState is UiAsync.Loading) return
         val batchId = (currentState().activeBatch as? UiAsync.Success)?.value?.id
             ?: return showError("Abre un lote antes de publicar.")
         updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = publishBatchUseCase(batchId)) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+        // Sin diálogo de confirmación en esta pantalla compacta: `confirmExamPublished` va a false y, si
+        // el examen ya está publicado (409), se explica que la confirmación se hace desde el escritorio.
+        when (val result = publishBatchUseCase(batchId, confirmExamPublished = false)) {
+            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error.asPublishError())) }
             is AppResult.Success -> {
-                val message = if (result.value.status == "parcial") {
-                    "Importación parcial: ${result.value.importedCount}/${result.value.detectedCount}. Revisa los errores antes de reintentar."
+                // La publicación es atómica: o el lote queda `importado` o falla entero (no hay «parcial»).
+                val message = if (result.value.status.trim().equals("importado", ignoreCase = true)) {
+                    "Lote importado (${result.value.importedCount}/${result.value.detectedCount}); el examen no se ha publicado automáticamente."
                 } else {
-                    "Contenido aprobado persistido; el examen no se ha publicado automáticamente."
+                    "El lote no ha quedado importado (estado: ${result.value.status.ifBlank { "desconocido" }}). Revisa las filas antes de reintentar."
                 }
                 updateState { it.copy(activeBatch = UiAsync.Success(result.value), actionState = UiAsync.Success(message)) }
                 refreshBatches()

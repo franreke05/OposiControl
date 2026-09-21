@@ -2,6 +2,7 @@ package com.oposicontrol.admin.features.exams.presentation
 
 import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.ContentImportBatch
@@ -27,6 +28,7 @@ import com.oposicontrol.admin.domain.usecase.content.ObserveSpecialtiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.PublishContentImportBatchUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshExamsUseCase
 import com.oposicontrol.admin.domain.usecase.content.RefreshSpecialtiesUseCase
+import com.oposicontrol.admin.domain.usecase.content.SkipContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpdateContentImportStagingUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadPdfToStagingUseCase
 import kotlinx.coroutines.CompletableDeferred
@@ -129,6 +131,8 @@ private class ContentUploadTestContentRepository : ContentRepository {
 private class FakeContentImportRepository : ContentImportRepository {
     var publishCalls = 0
     var uploadCalls = 0
+    var publishError: AppError? = null
+    val publishConfirmations = mutableListOf<Boolean>()
     private var gate = CompletableDeferred<Unit>()
 
     fun release() {
@@ -146,12 +150,19 @@ private class FakeContentImportRepository : ContentImportRepository {
         return AppResult.Success(batch())
     }
 
-    override suspend fun updateStaging(item: ContentImportStagingItem): AppResult<ContentImportStagingItem> = AppResult.Success(item)
+    val updatedItems = mutableListOf<ContentImportStagingItem>()
+
+    override suspend fun updateStaging(item: ContentImportStagingItem): AppResult<ContentImportStagingItem> {
+        updatedItems += item
+        return AppResult.Success(item)
+    }
 
     override suspend fun publishImportBatch(batchId: String, confirmExamPublished: Boolean): AppResult<ContentImportBatch> {
         val current = gate
         publishCalls++
+        publishConfirmations += confirmExamPublished
         current.await()
+        publishError?.let { return AppResult.Failure(it) }
         return AppResult.Success(batch(batchId, status = "importado"))
     }
 }
@@ -170,6 +181,7 @@ private fun newViewModel(
     getBatchUseCase = GetContentImportBatchUseCase(importRepository),
     uploadPdfUseCase = UploadPdfToStagingUseCase(importRepository),
     updateStagingUseCase = UpdateContentImportStagingUseCase(importRepository),
+    skipStagingUseCase = SkipContentImportStagingUseCase(importRepository),
     publishBatchUseCase = PublishContentImportBatchUseCase(importRepository),
     createDraftUseCase = CreateContentDraftUseCase(contentRepository),
     analyticsTracker = NoOpAnalyticsTracker,
@@ -178,10 +190,9 @@ private fun newViewModel(
 class ContentUploadViewModelTest {
 
     /**
-     * Publicar escribe en el contenido canonico por un camino que todavia NO es
-     * atomico (content_import_atomicity_candidate_v1 sigue sin aplicarse), asi
-     * que dos peticiones solapadas podrian duplicar preguntas. Un doble toque
-     * debe producir exactamente UNA publicacion.
+     * Aunque la publicacion es una RPC atomica en el servidor, un segundo toque con la primera
+     * en vuelo enviaria una peticion redundante: un doble toque debe producir exactamente UNA
+     * publicacion.
      */
     @Test
     fun publishBatch_dispatchedTwiceBeforeItSettles_onlyPublishesOnce() = runTest {
@@ -266,5 +277,76 @@ class ContentUploadViewModelTest {
         assertEquals(0, importRepository.publishCalls)
         val error = viewModel.state.value.actionState
         assertEquals(true, error is UiAsync.Error)
+    }
+
+    /**
+     * OMITIR usa el caso de uso SIN validación de completitud (el mismo que la pantalla de escritorio):
+     * una fila en error a la que le falta todo tiene que poder descartarse.
+     */
+    @Test
+    fun skipStaging_onAnIncompleteRow_isNotBlockedByCompletenessValidation() = runTest {
+        val importRepository = FakeContentImportRepository()
+        val viewModel = newViewModel(testScheduler, importRepository)
+        testScheduler.advanceUntilIdle()
+
+        val incompleta = ContentImportStagingItem(
+            id = "S-1", position = 1, title = "", optionA = "", optionB = "", optionC = "", optionD = "",
+            correctAnswer = "", reasoning = "", sourceText = "", tagText = "", originalBlock = "bloque",
+            parseStatus = "error", parseError = "Falta el enunciado",
+        )
+        viewModel.dispatch(ContentUploadIntent.SkipStaging(incompleta))
+        testScheduler.advanceUntilIdle()
+
+        val enviado = importRepository.updatedItems.single()
+        assertEquals("omitida", enviado.parseStatus)
+        assertEquals(null, enviado.parseError)
+        assertEquals(true, viewModel.state.value.actionState is UiAsync.Success)
+    }
+
+    /**
+     * Esta pantalla no tiene diálogo de confirmación: nunca manda `confirmExamPublished = true`, y el
+     * 409 «examen publicado» se traduce a un mensaje claro que remite al escritorio.
+     */
+    @Test
+    fun publishBatch_onAPublishedExam409_explainsItMustBeConfirmedFromDesktop() = runTest {
+        val importRepository = FakeContentImportRepository().apply {
+            publishError = AppError.Validation(
+                message = "El examen está publicado: confirma que las preguntas se verán al instante.",
+                code = "IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED",
+            )
+        }
+        val viewModel = newViewModel(testScheduler, importRepository)
+        testScheduler.advanceUntilIdle()
+        viewModel.dispatch(ContentUploadIntent.OpenBatch("b1"))
+        testScheduler.advanceUntilIdle()
+
+        viewModel.dispatch(ContentUploadIntent.PublishBatch)
+        testScheduler.advanceUntilIdle()
+        importRepository.release()
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(listOf(false), importRepository.publishConfirmations)
+        val error = (viewModel.state.value.actionState as UiAsync.Error).error
+        assertEquals(true, error.message.contains("escritorio"), error.message)
+        assertEquals(true, error.message.contains("ya está publicado"), error.message)
+    }
+
+    /** Publicar recibe `importado` (no existe «parcial»): el mensaje lo reconoce y no habla de parcial. */
+    @Test
+    fun publishBatch_reportsAnImportedBatchWithoutAnyPartialWording() = runTest {
+        val importRepository = FakeContentImportRepository()
+        val viewModel = newViewModel(testScheduler, importRepository)
+        testScheduler.advanceUntilIdle()
+        viewModel.dispatch(ContentUploadIntent.OpenBatch("b1"))
+        testScheduler.advanceUntilIdle()
+
+        viewModel.dispatch(ContentUploadIntent.PublishBatch)
+        testScheduler.advanceUntilIdle()
+        importRepository.release()
+        testScheduler.advanceUntilIdle()
+
+        val message = (viewModel.state.value.actionState as UiAsync.Success).value
+        assertEquals(true, message.startsWith("Lote importado"), message)
+        assertEquals(false, message.contains("parcial", ignoreCase = true), message)
     }
 }

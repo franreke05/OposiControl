@@ -25,6 +25,7 @@ import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.domain.model.ContentExamType
 import com.oposicontrol.admin.domain.model.ContentImportBatch
 
 /**
@@ -99,9 +100,14 @@ private fun ImportBatchCard(
 
         ImportMetricLine("Detectadas", metrics.detected, tokens.textPrimary)
         ImportMetricLine("Listas", metrics.ready, tokens.success)
-        ImportMetricLine("Omitidas", metrics.review, tokens.textSecondary)
+        ImportMetricLine("Con advertencia", metrics.warnings, tokens.warning)
+        ImportMetricLine("Omitidas", metrics.skipped, tokens.textSecondary)
         ImportMetricLine("Duplicadas", metrics.duplicates, tokens.warning)
         ImportMetricLine("Con error", metrics.errors, tokens.danger)
+        // Importadas: ya están en el examen. Sólo salen cuando hay alguna (lote publicado).
+        if (metrics.imported > 0) ImportMetricLine("Importadas", metrics.imported, tokens.info)
+        // Anuladas por el tribunal: un dato de la pregunta en el examen, aparte del estado de parseo.
+        ImportMetricLine("Anuladas por el tribunal", metrics.annulled, tokens.textSecondary)
 
         PrimaryButton(
             text = "Publicar lote",
@@ -118,11 +124,18 @@ private fun ImportBatchCard(
             color = tokens.textSecondary,
         )
 
-        ImportNotice(text = IMPORT_NOT_ATOMIC_NOTICE, icon = AppIcon.WARNING, danger = false)
+        // Los motivos concretos (preflight): por qué no se puede publicar, o qué conviene saber antes.
+        gate.issues.filter { it.kind != ImportPreflightKind.PUBLISHING && it.kind != ImportPreflightKind.ALREADY_PUBLISHED && it.message != gate.reason }
+            .forEach { issue ->
+                ImportNotice(
+                    text = issue.message,
+                    icon = if (issue.blocking) AppIcon.WARNING else AppIcon.INFO,
+                    danger = issue.blocking,
+                )
+            }
 
-        if (batch.status.equals("parcial", ignoreCase = true)) {
-            ImportNotice(text = importPartialResultMessage(batch), icon = AppIcon.WARNING, danger = true)
-        }
+        ImportNotice(text = IMPORT_ATOMIC_NOTICE, icon = AppIcon.INFO, danger = false)
+
         (state.actionState as? UiAsync.Error)?.let { error ->
             ImportNotice(text = error.error.message, icon = AppIcon.WARNING, danger = true)
         }
@@ -168,6 +181,9 @@ private fun ImportTypeRulesCard(state: ImportState) {
                 AppIconImage(AppIcon.CLOSE, size = 12.dp, tint = tokens.textSecondary)
                 Text(item, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
             }
+        }
+        if (state.selectedType == ContentExamType.INMERSIVO) {
+            ImportNotice(text = IMMERSIVE_RESOURCE_IMPORT_NOTICE, icon = AppIcon.INFO, danger = false)
         }
     }
 }

@@ -104,7 +104,6 @@ internal fun ImportHistoryPane(
 
             is UiAsync.Success -> Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
                 batches.value.forEach { batch ->
-                    val metrics = batch.metrics()
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -115,8 +114,7 @@ internal fun ImportHistoryPane(
                             .clickable { onIntent(ImportIntent.OpenBatch(batch.id)) }
                             .semantics {
                                 contentDescription = "${importBatchLabel(batch)}. " +
-                                    "${importBatchTypeLabel(batch)}. " +
-                                    "${metrics.detected} detectadas, ${metrics.errors} con error. " +
+                                    "${importBatchHistoryLine(batch)}. " +
                                     importBatchStatusLabel(batch.status)
                             }
                             .padding(Spacing.sm),
@@ -133,8 +131,7 @@ internal fun ImportHistoryPane(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = "${importBatchTypeLabel(batch)} · ${metrics.detected} detectadas · " +
-                                    "${metrics.ready} listas · ${metrics.errors} con error",
+                                text = importBatchHistoryLine(batch),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = tokens.textSecondary,
                                 maxLines = 1,

@@ -11,6 +11,7 @@ import com.oposicontrol.admin.core.database.AdminDatabase
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.data.storage.PlatformFileReader
+import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamStatus
@@ -34,6 +35,7 @@ import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -874,6 +876,169 @@ class KtorAdminV1ContentRepositoryImplTest {
         assertTrue(capabilities.permiteRazonados, "un razonados ausente se leyó como cerrado")
         assertTrue(capabilities.permiteInmersivos, "un inmersivos ausente se leyó como cerrado")
         assertEquals(listOf("rafaga", "razonado", "inmersivo"), capabilities.enabledExamModes)
+    }
+
+    // -----------------------------------------------------------------
+    // Importaciones: staging (anulada, motivo, vínculo, omitir) y resumen del lote
+    // -----------------------------------------------------------------
+
+    private fun stagingRow(
+        status: String = "ok",
+        annulled: Boolean = false,
+        reason: String? = null,
+        link: String? = null,
+    ) = ContentImportStagingItem(
+        id = "S-1", position = 1, title = "Enunciado", optionA = "A", optionB = "B", optionC = "C", optionD = "D",
+        correctAnswer = "A", reasoning = "Porque sí", sourceText = "", tagText = "Tema 1", originalBlock = "bloque",
+        parseStatus = status, annulled = annulled, annulmentReason = reason, linkQuestionId = link,
+    )
+
+    private val stagingResponse =
+        """{"data":{"id":"S-1","posicion":1,"titulo":"Enunciado","estadoParseo":"ok","anulada":true,"motivoAnulacion":"Error del tribunal"}}"""
+
+    private suspend fun patchBodyOf(item: ContentImportStagingItem): JsonObject {
+        val seen = mutableListOf<HttpRequestData>()
+        val repository = repository(record = seen) { request ->
+            if (request.url.encodedPath.endsWith("/importaciones/staging/S-1")) stagingResponse else null
+        }
+        assertIsSuccess(repository.updateStaging(item))
+        val patch = seen.single { it.method.value == "PATCH" }
+        assertEquals("/api/v1/admin/importaciones/staging/S-1", patch.url.encodedPath)
+        return Json.parseToJsonElement(patch.bodyText()).jsonObject
+    }
+
+    @Test
+    fun savingARowAlwaysSendsTheAnnulmentFlagAndItsReason() = runTest {
+        val annulled = patchBodyOf(stagingRow(annulled = true, reason = "  Error del tribunal "))
+        assertEquals("true", annulled.getValue("anulada").toString())
+        assertEquals("\"Error del tribunal\"", annulled.getValue("motivoAnulacion").toString())
+
+        // `false` NO puede omitirse: el servidor reemplaza la fila entera y una clave ausente no desanula.
+        val plain = patchBodyOf(stagingRow(annulled = false))
+        assertEquals("false", plain.getValue("anulada").toString())
+    }
+
+    @Test
+    fun anExplicitNullReasonTravelsSoTheServerCanClearIt() = runTest {
+        // Sin anulación no hay motivo, aunque el borrador arrastre uno: viaja `null`, y `null` borra.
+        val cleared = patchBodyOf(stagingRow(annulled = false, reason = "huérfano"))
+        assertTrue(cleared.containsKey("motivoAnulacion"), "la clave debe viajar, no omitirse: $cleared")
+        assertEquals("null", cleared.getValue("motivoAnulacion").toString())
+
+        // Anulada sin motivo: también `null` explícito (borra el que hubiera).
+        val noReason = patchBodyOf(stagingRow(annulled = true, reason = "   "))
+        assertEquals("null", noReason.getValue("motivoAnulacion").toString())
+    }
+
+    @Test
+    fun linkingSendsTheQuestionAndUnlinkingSendsAnExplicitNull() = runTest {
+        val linked = patchBodyOf(stagingRow(status = "aprobada", link = "Q-77"))
+        assertEquals("\"aprobada\"", linked.getValue("estadoParseo").toString())
+        assertEquals("\"Q-77\"", linked.getValue("vincularPreguntaId").toString())
+
+        val unlinked = patchBodyOf(stagingRow(status = "aprobada", link = null))
+        assertEquals("null", unlinked.getValue("vincularPreguntaId").toString())
+    }
+
+    @Test
+    fun skippingARowDoesNotSendTheFieldsThatAreEmpty() = runTest {
+        val skipped = ContentImportStagingItem(
+            id = "S-1", position = 1, title = "", optionA = "", optionB = "", optionC = "", optionD = "",
+            correctAnswer = "", reasoning = "", sourceText = "", tagText = "", originalBlock = "bloque",
+            parseStatus = "omitida",
+        )
+
+        val body = patchBodyOf(skipped)
+
+        assertEquals("\"omitida\"", body.getValue("estadoParseo").toString())
+        listOf(
+            "titulo", "opcionA", "opcionB", "opcionC", "opcionD",
+            "respuestaCorrecta", "razonamiento", "fuenteTexto", "etiquetaTexto",
+        ).forEach { key -> assertFalse(body.containsKey(key), "omitir no manda $key vacío: $body") }
+        // Lo que sí tiene, se manda: el servidor reemplaza la fila entera.
+        val withContent = patchBodyOf(skipped.copy(title = "Tiene enunciado", tagText = "Tema 3"))
+        assertEquals("\"Tiene enunciado\"", withContent.getValue("titulo").toString())
+        assertEquals("\"Tema 3\"", withContent.getValue("etiquetaTexto").toString())
+        assertFalse(withContent.containsKey("opcionA"))
+    }
+
+    /** Omitir manda `vincularPreguntaId = null` EXPLÍCITO: un puntero viejo no puede sobrevivir y resucitar con «Aprobar». */
+    @Test
+    fun skippingARowAlwaysSendsAnExplicitNullLinkEvenIfItHadOne() = runTest {
+        val sinVinculo = ContentImportStagingItem(
+            id = "S-1", position = 1, title = "", optionA = "", optionB = "", optionC = "", optionD = "",
+            correctAnswer = "", reasoning = "", sourceText = "", tagText = "", originalBlock = "bloque",
+            parseStatus = "omitida",
+        )
+        val conVinculoViejo = sinVinculo.copy(linkQuestionId = "Q-77")
+
+        listOf(sinVinculo, conVinculoViejo).forEach { fila ->
+            val body = patchBodyOf(fila)
+            assertTrue(body.containsKey("vincularPreguntaId"), "la clave debe viajar: $body")
+            assertEquals("null", body.getValue("vincularPreguntaId").toString())
+        }
+    }
+
+    @Test
+    fun theBatchReadsTheServerSummaryAndTheAnnulmentOfItsRows() = runTest {
+        val repository = repository(respondWith = { request ->
+            if (request.url.encodedPath.endsWith("/importaciones/preguntas/L-1")) {
+                """{"data":{"id":"L-1","examenId":"EX-RAF","estado":"importado","totalDetectadas":3,"totalImportadas":3,
+                   "resumen":{"listas":0,"conError":0,"advertencias":0,"omitidas":1,"importadas":2},
+                   "staging":[{"id":"S-1","estadoParseo":"importada","anulada":true,"motivoAnulacion":"Anulada por el tribunal"},
+                              {"id":"S-2","estadoParseo":"importada"}]}}"""
+            } else {
+                null
+            }
+        })
+
+        val batch = assertIsSuccess(repository.getImportBatch("L-1"))
+
+        assertEquals(1, batch.summary?.skipped)
+        assertEquals(2, batch.summary?.imported)
+        assertEquals(0, batch.summary?.ready)
+        assertTrue(batch.staging[0].annulled)
+        assertEquals("Anulada por el tribunal", batch.staging[0].annulmentReason)
+        assertFalse(batch.staging[1].annulled, "ausente = no anulada")
+        assertNull(batch.staging[1].annulmentReason)
+    }
+
+    @Test
+    fun aBatchWithoutSummaryStaysNullInsteadOfZeroes() = runTest {
+        val repository = repository(respondWith = { request ->
+            if (request.url.encodedPath.endsWith("/importaciones/preguntas") && request.method.value == "GET") {
+                """{"data":[{"id":"L-1","examenId":"EX-RAF","totalDetectadas":40},
+                            {"id":"L-2","examenId":"EX-RAF","totalDetectadas":5,"resumen":{"listas":5}}]}"""
+            } else {
+                null
+            }
+        })
+
+        val batches = assertIsSuccess(repository.listImportBatches())
+
+        assertNull(batches[0].summary, "sin resumen no se inventa ningún recuento")
+        assertEquals(5, batches[1].summary?.ready)
+        // Una cifra que falta dentro del resumen tampoco se rellena con un 0.
+        assertNull(batches[1].summary?.withErrors)
+    }
+
+    @Test
+    fun theExamQuestionsCarryTheAnnulmentOfTheRelationAndKeepTheirPosition() = runTest {
+        val repository = repository(respondWith = { request ->
+            if (request.method.value == "GET" && request.url.encodedPath.endsWith("/EX-RAF/preguntas")) {
+                """{"data":[{"id":"P-1","titulo":"Uno","tipoPregunta":"rafaga","posicion":1},
+                            {"id":"P-2","titulo":"Dos","tipoPregunta":"rafaga","posicion":2,"anulada":true,"motivoAnulacion":"Error del tribunal"}]}"""
+            } else {
+                null
+            }
+        })
+
+        val questions = assertIsSuccess(repository.getExamQuestions("EX-RAF")).associateBy { it.id }
+
+        assertFalse(questions.getValue("P-1").annulled)
+        assertTrue(questions.getValue("P-2").annulled)
+        assertEquals("Error del tribunal", questions.getValue("P-2").annulmentReason)
+        assertEquals(1, questions.getValue("P-2").sortOrder, "la posición se mantiene")
     }
 
     private fun HttpRequestData.bodyText(): String = (body as? TextContent)?.text.orEmpty()

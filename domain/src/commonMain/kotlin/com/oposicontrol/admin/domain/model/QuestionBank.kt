@@ -115,6 +115,9 @@ data class QuestionExamLink(
     val position: Int,
     val examType: String = "",
     val status: String = "",
+    /** La pregunta va anulada en ESE examen (M10): dato de la relación. */
+    val annulled: Boolean = false,
+    val annulmentReason: String? = null,
 ) {
     val isPublished: Boolean get() = status.equals("publicado", ignoreCase = true)
 }

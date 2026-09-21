@@ -271,9 +271,7 @@ private fun ImportReview(
     onSkip: (ContentImportStagingItem) -> Unit,
     onPublish: () -> Unit,
 ) {
-    val pending = batch.staging.count { it.parseStatus == "ok" }
-    val approved = batch.staging.count { it.parseStatus == "aprobada" }
-    val errors = batch.staging.count { it.parseStatus == "error" || !it.parseError.isNullOrBlank() }
+    val summary = contentUploadPublishSummary(batch)
     GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -281,19 +279,19 @@ private fun ImportReview(
                 TextButton(onClick = onBack) { Text("Volver") }
             }
             Text(batch.fileName, style = MaterialTheme.typography.bodyMedium)
-            Text("${batch.detectedCount} detectadas · ${batch.staging.size - errors} válidas · $pending requieren revisión · $errors con error", style = MaterialTheme.typography.bodySmall)
+            Text("${batch.detectedCount} detectadas · ${summary.publishable} se publicarán · ${summary.blocking} con error o advertencia", style = MaterialTheme.typography.bodySmall)
+            Text(summary.note(), style = MaterialTheme.typography.bodySmall)
             PublicationSafetyNotice()
             batch.staging.sortedBy { it.position }.forEach { item ->
                 StagingEditorCard(item = item, onSave = onSave, onSkip = onSkip)
             }
             PrimaryButton(
-                text = "Publicar aprobadas",
+                text = CONTENT_UPLOAD_PUBLISH_LABEL,
                 onClick = onPublish,
-                // `!busy` no es cosmético: publicar escribe en el contenido
-                // canónico por un camino que todavía no es atómico, así que un
-                // segundo toque mientras la primera petición sigue en vuelo
-                // podría duplicar preguntas.
-                enabled = approved > 0 && batch.status != "importado" && !busy,
+                // La RPC publica `ok` Y `aprobada`; con errores/advertencias pendientes no.
+                // `!busy` no es cosmético: un segundo toque mientras la primera
+                // petición sigue en vuelo enviaría una publicación redundante.
+                enabled = summary.canPublish(batch.status, busy),
                 loading = busy,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -371,15 +369,9 @@ private fun ImportHelpPanel(visible: Boolean, onClose: () -> Unit) {
 /**
  * Aviso de seguridad de publicación (§39).
  *
- * Mientras la publicación por lotes no sea atómica, un fallo a mitad puede dejar
- * parte de las preguntas publicadas y parte no. Eso es un hecho del sistema
- * actual y quien publica tiene derecho a saberlo antes de pulsar, no después.
- *
- * Se dice en términos de lo que le pasa a su contenido —puede quedarse a medias,
- * revísalo— y no en términos de transacciones ni de migraciones pendientes: el
- * detalle técnico está en el Second Brain, no en esta pantalla.
- *
- * Cuando la publicación pase a ser todo-o-nada, este aviso se retira.
+ * La publicación por lotes es ATÓMICA (una RPC todo-o-nada) y detecta duplicados, así que
+ * el aviso dice lo que de verdad pasa: si algo falla no se publica nada, y una duplicada
+ * sin resolver bloquea la publicación en vez de reemplazar contenido existente.
  */
 @Composable
 private fun PublicationSafetyNotice() {
@@ -404,13 +396,13 @@ private fun PublicationSafetyNotice() {
             )
         }
         Text(
-            text = "Si la publicación falla a mitad, algunas preguntas pueden quedar publicadas " +
-                "y otras no. Comprueba el examen al terminar.",
+            text = "La publicación es todo o nada: si algo falla, no se publica ninguna pregunta " +
+                "del lote y puedes corregirlo y reintentar.",
             style = MaterialTheme.typography.bodySmall,
             color = tokens.textSecondary,
         )
         Text(
-            text = "Tampoco se detectan duplicados todavía: no se reemplaza contenido que ya exista.",
+            text = "Los duplicados se detectan al publicar: no se reemplaza contenido que ya exista.",
             style = MaterialTheme.typography.bodySmall,
             color = tokens.textSecondary,
         )

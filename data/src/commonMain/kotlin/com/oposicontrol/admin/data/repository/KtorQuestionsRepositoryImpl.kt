@@ -345,6 +345,8 @@ private data class QPreguntaExamenVinculoDto(
     val tipoExamen: String = "",
     val estado: String = "borrador",
     val posicion: Int = 0,
+    val anulada: Boolean = false,
+    val motivoAnulacion: String? = null,
 )
 
 private fun QPreguntaExamenVinculoDto.toLink() = QuestionExamLink(
@@ -354,6 +356,8 @@ private fun QPreguntaExamenVinculoDto.toLink() = QuestionExamLink(
     position = posicion,
     examType = tipoExamen,
     status = estado,
+    annulled = anulada,
+    annulmentReason = motivoAnulacion,
 )
 
 private fun List<QuestionOption>.toDto(): List<QOpcionDto> = mapIndexed { index, option ->
