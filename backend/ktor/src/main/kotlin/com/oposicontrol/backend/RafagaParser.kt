@@ -2,6 +2,7 @@ package com.oposicontrol.backend
 
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.text.PDFTextStripper
+import java.text.Normalizer
 
 internal data class ParsedPregunta(
     val numero: Int,
@@ -28,11 +29,21 @@ internal data class ParsedPregunta(
      * Un aviso que NO invalida el bloque: la fila se importa igual, pero algo se va
      * a perder o a ignorar y el revisor tiene que saberlo antes de publicar.
      *
-     * Hoy sólo lo usa Ráfaga con explicación o fuente: esas dos columnas existen en
-     * la pregunta, pero el modo Ráfaga no las enseña nunca. Sin aviso, quien redactó
-     * la explicación creería que se publica.
+     * Hoy lo usan dos casos: Ráfaga con explicación o fuente (esas dos columnas existen en
+     * la pregunta, pero el modo Ráfaga no las enseña nunca) y un posible pie o número de
+     * página colado dentro del texto ([PAGE_MARKER_WARNING]).
      */
     val advertencia: String? = null,
+    /**
+     * `ESTADO: ANULADA` en el PDF: el tribunal anuló esta pregunta EN ESTE examen.
+     *
+     * Es una propiedad de la RELACIÓN pregunta↔examen (`preguntas_examen.anulada`), nunca de
+     * la pregunta global, y es ortogonal al estado de parseo: una pregunta anulada y bien
+     * formada es una fila `ok`.
+     */
+    val anulada: Boolean = false,
+    /** `MOTIVO_ANULACION:` (≤ 500, sólo con [anulada]); `null` si no venía o venía vacío. */
+    val motivoAnulacion: String? = null,
 )
 
 internal data class RafagaParseError(
@@ -69,6 +80,10 @@ internal data class RafagaBloqueConError(
     val fuente: String,
     val etiquetas: String,
     val detalle: String,
+    /** Lo que el PDF decía de `ESTADO`, conservado aunque el bloque tenga otros errores. */
+    val anulada: Boolean = false,
+    /** Lo que el PDF decía de `MOTIVO_ANULACION` (recortado; `null` si vacío). Puede pasar de 500: es justo el error. */
+    val motivoAnulacion: String? = null,
 )
 
 /**
@@ -84,8 +99,74 @@ internal data class RafagaParseResult(
     val bloquesConError: List<RafagaBloqueConError>,
 )
 
-private val KNOWN_FIELDS = setOf("TITULO", "A", "B", "C", "D", "RESPUESTA", "RAZONAMIENTO", "FUENTE", "ETIQUETA")
-private val BLOCK_SEPARATOR = Regex("---\\s*PREGUNTA\\s*---")
+private val TEXT_FIELDS = listOf("TITULO", "A", "B", "C", "D", "RESPUESTA", "RAZONAMIENTO", "FUENTE", "ETIQUETA")
+private const val FIELD_ESTADO = "ESTADO"
+private const val FIELD_MOTIVO = "MOTIVO_ANULACION"
+private val KNOWN_FIELDS = TEXT_FIELDS.toSet() + FIELD_ESTADO + FIELD_MOTIVO
+
+/**
+ * El ÚNICO separador oficial: una línea que, recortada, es exactamente `--- PREGUNTA ---`
+ * (mayúsculas, nada más en la línea).
+ */
+private val OFFICIAL_SEPARATOR = Regex("^---\\s*PREGUNTA\\s*---$")
+
+/**
+ * Una línea que PARECE un separador pero no es el oficial: `--- PREGUNTA 1 ---`,
+ * `--- pregunta ---`, `---PREGUNTA:`, `— PREGUNTA —`… Antes se ignoraba y las dos preguntas
+ * quedaban FUSIONADAS en una (o la segunda se perdía en silencio). Ahora abre su propio
+ * bloque, marcado como error.
+ */
+private val SUSPECT_SEPARATOR = Regex(
+    // Una racha CONTIGUA de >= 2 caracteres de decoración (sin espacios entre ellos): así
+    // `- Pregunta 4 del examen anterior` o `* Pregunta clave` (viñetas de prosa) NO casan.
+    // La segunda alternativa es un único guion largo/medio SIMÉTRICO (`— PREGUNTA —`).
+    "^(?:[-–—_=*#]{2,}\\s*PREGUNTA\\b.*|[–—]\\s*PREGUNTA\\b.*[–—])$",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * Espacios y marcas invisibles que un PDF/Word mete sin que nadie los vea y que rompen un
+ * separador o una clave: U+00A0 se convierte en espacio normal; BOM (U+FEFF) y espacio de
+ * ancho cero (U+200B) se eliminan.
+ */
+private fun normalizeInvisible(text: String): String =
+    text.replace(' ', ' ').replace("﻿", "").replace("​", "")
+
+/**
+ * Una línea de continuación que empieza por `ESTADO` / `MOTIVO_ANULACION` SIN los dos puntos
+ * ASCII delante (`ESTADO ANULADA`, `ESTADO - ANULADA`, `ESTADO： ANULADA` con `：` de ancho
+ * completo). Antes caía en «continuación» y una pregunta anulada se importaba como normal en
+ * silencio. En MAYÚSCULAS basta; en otra grafía sólo si además dice «anulada».
+ */
+private val ESTADO_WITHOUT_COLON = Regex("^ESTADO(?![\\p{L}\\p{N}_])")
+private val MOTIVO_WITHOUT_COLON = Regex("^MOTIVO_ANULACION(?![\\p{L}\\p{N}_])")
+private val ESTADO_LOOSE_ANULADA =
+    Regex("^estado(?![\\p{L}\\p{N}_]).*\\banulad[ao]\\b", RegexOption.IGNORE_CASE)
+private val MOTIVO_LOOSE =
+    Regex("^motivo[_ ]anulaci[oó]n(?![\\p{L}\\p{N}_])", RegexOption.IGNORE_CASE)
+
+/** Una línea que es, sola, la palabra ANULADA (con puntuación o espacios alrededor). */
+private val LONE_ANULADA = Regex("^[\\s\\p{P}]*ANULADA[\\s\\p{P}]*$", RegexOption.IGNORE_CASE)
+
+/** Los textos de error de estos casos, literales, para que el test y la pantalla digan lo mismo. */
+internal const val ESTADO_COLON_DETAIL = "escríbelo como `ESTADO: ANULADA` (con dos puntos)"
+internal const val MOTIVO_COLON_DETAIL = "escríbelo como `MOTIVO_ANULACION: texto` (con dos puntos)"
+internal const val LONE_ANULADA_DETAIL = "«ANULADA» suelto: escríbelo como `ESTADO: ANULADA` (con dos puntos)"
+
+/** El texto del error de separador, literal, para que el test y la pantalla digan lo mismo. */
+internal const val INVALID_SEPARATOR_DETAIL = "Separador no válido: usa exactamente --- PREGUNTA ---"
+
+/** El aviso de pie/número de página, literal. */
+internal const val PAGE_MARKER_WARNING = "Posible pie o número de página dentro del texto: revisa la fila"
+
+/** Sólo una línea que es EXACTAMENTE un marcador de página (o 1–4 dígitos). Sin heurística. */
+private val PAGE_MARKER_LINE = Regex(
+    "^(?:(?:P[aá]gina|P[aá]g\\.?|Page)\\s*\\d+(?:\\s*(?:de|/|of)\\s*\\d+)?|\\d{1,4})$",
+    RegexOption.IGNORE_CASE,
+)
+
+/** Máximo del motivo de anulación (mismo límite que el CHECK de la base). */
+internal const val MAX_ANNULMENT_REASON_LENGTH = 500
 
 /**
  * Una línea con forma de CLAVE de documentación antigua: `ID_GLOBAL:`, `ID_AUDIO:`,
@@ -114,25 +195,97 @@ internal fun extractTextFromPdf(bytes: ByteArray): String =
 /** Compatibilidad: el flujo de Ráfaga, que es el que existía antes de que hubiera tipos. */
 internal fun parseRafagaText(text: String): RafagaParseResult = parseQuestionBlocks(text, "rafaga")
 
+/** Un bloque ya recortado del texto: sus líneas y si lo abrió un separador sospechoso. */
+private class RawBlock(val separatorLine: String?, val invalidSeparator: Boolean, val lines: List<String>)
+
+/**
+ * Corta el texto POR LÍNEAS (no con un `split` global):
+ *
+ * - Lo anterior al primer separador (oficial o sospechoso) es PREÁMBULO y se ignora: portada,
+ *   título del documento, instrucciones… no crean fila.
+ * - Un separador oficial abre un bloque; uno sospechoso abre un bloque marcado como error.
+ * - Un bloque oficial vacío (dos separadores seguidos, o uno al final) no es una pregunta.
+ */
+/** Los bloques y si el PREÁMBULO ignorado tenía forma de pregunta (una pregunta 1 perdida). */
+private class SplitResult(val blocks: List<RawBlock>, val preambleLooksLikeQuestion: Boolean)
+
+private val PREAMBLE_TITLE_LINE = Regex("^TITULO\\s*:", RegexOption.IGNORE_CASE)
+private val PREAMBLE_BODY_LINE = Regex("^(?:[A-D]|RESPUESTA)\\s*:", RegexOption.IGNORE_CASE)
+
+/** El aviso cuando el preámbulo ignorado parece una pregunta entera. */
+internal const val PREAMBLE_LOOKS_LIKE_QUESTION_WARNING =
+    "Antes del primer separador hay texto con forma de pregunta (TITULO y opciones o RESPUESTA) que se ha ignorado: " +
+        "comprueba que el separador de la pregunta 1 es exactamente --- PREGUNTA ---."
+
+private fun splitBlocks(text: String): SplitResult {
+    val blocks = mutableListOf<RawBlock>()
+    val preamble = mutableListOf<String>()
+    var separator: String? = null
+    var invalid = false
+    var lines = mutableListOf<String>()
+    var open = false
+
+    fun close() {
+        if (!open) return
+        if (invalid || lines.any { it.isNotBlank() }) blocks += RawBlock(separator, invalid, lines.toList())
+    }
+
+    for (line in text.lines()) {
+        val trimmed = line.trim()
+        val oficial = OFFICIAL_SEPARATOR.matches(trimmed)
+        val sospechoso = !oficial && SUSPECT_SEPARATOR.matches(trimmed)
+        if (oficial || sospechoso) {
+            close()
+            open = true
+            separator = trimmed
+            invalid = sospechoso
+            lines = mutableListOf()
+        } else if (open) {
+            lines += line
+        } else {
+            preamble += trimmed
+        }
+    }
+    close()
+    val looksLikeQuestion = preamble.any { PREAMBLE_TITLE_LINE.containsMatchIn(it) } &&
+        preamble.any { PREAMBLE_BODY_LINE.containsMatchIn(it) }
+    return SplitResult(blocks, looksLikeQuestion)
+}
+
 /**
  * Parsea el texto y devuelve las tres cosas: lo que salió bien, los errores, y
  * **los bloques que fallaron con su contenido parcial**.
  *
- * Las reglas comunes y el ORDEN en que se comprueban no cambian: título, luego las
- * cuatro opciones (se acumulan todas las que falten, no sólo la primera), luego la
- * respuesta. Un bloque que falla no se tira: se devuelve aparte para que llegue a
- * staging marcado y un humano lo corrija.
+ * Un bloque que falla no se tira: se devuelve aparte para que llegue a staging marcado y un
+ * humano lo corrija. Se ACUMULAN todos los errores del bloque (título, las cuatro opciones,
+ * respuesta, razonamiento, estado…), no sólo el primero.
+ *
+ * ### Formato (reglas obligatorias)
+ *
+ * 1. El separador oficial es UNA línea `--- PREGUNTA ---`. Una línea que lo parece pero no lo
+ *    es abre un bloque de ERROR ([INVALID_SEPARATOR_DETAIL]); nunca fusiona preguntas.
+ * 2. El preámbulo anterior al primer separador se ignora. `numero` es el ordinal del bloque
+ *    tras el preámbulo (1 = la primera pregunta real).
+ * 3. Un campo repetido dentro del bloque es un ERROR («Campo duplicado: X»), no «gana el
+ *    último»; se conserva el PRIMER valor leído.
+ * 4. `ESTADO` sólo admite `ANULADA` (insensible a mayúsculas). Su ausencia es lo normal:
+ *    `ESTADO: NORMAL` explícito TAMBIÉN es un error, para que la única forma de expresar una
+ *    pregunta normal sea no decir nada. `MOTIVO_ANULACION` exige `ESTADO: ANULADA`, ≤ 500;
+ *    vacío se trata como ausente. Una línea `ESTADO`/`MOTIVO_ANULACION` SIN los dos puntos ASCII
+ *    (`ESTADO ANULADA`, `ESTADO - ANULADA`, `ESTADO： ANULADA`) o una línea suelta `ANULADA` es un
+ *    ERROR claro, nunca una continuación: si no, una anulada se importaría como normal en silencio.
+ *    Antes de trocear se normalizan U+00A0 (→ espacio), BOM U+FEFF y U+200B (se eliminan).
+ * 5. Una clave con grafía casi correcta (`Fuente:`, `TÍTULO:`, `respuesta:`) es un ERROR
+ *    («Clave mal escrita: usa X»): antes se pegaba al campo anterior. `Nota:` en prosa sigue
+ *    siendo texto. Las claves antiguas con guion bajo (`ID_GLOBAL:`) siguen rechazadas.
+ * 6. Sin heurística mágica de cabeceras/pies: sólo un AVISO si una línea de continuación es
+ *    exactamente un marcador de página ([PAGE_MARKER_WARNING]).
  *
  * ### Lo que depende de [tipoPregunta]
  *
- * El importador nació siendo sólo de Ráfaga y validaba igual para todos, así que un
- * PDF de preguntas razonadas SIN explicación se importaba entero y se publicaba a
- * los opositores sin la parte que da sentido al modo. Ahora:
- *
  * - `razonada`/`inmersiva`: `RAZONAMIENTO` vacío es un ERROR del bloque.
  * - `rafaga`: `RAZONAMIENTO` o `FUENTE` con texto es una ADVERTENCIA
- *   ([RAFAGA_DISCARDS_EXTRAS_WARNING]), no un error: la pregunta es válida, pero eso
- *   no se va a ver.
+ *   ([RAFAGA_DISCARDS_EXTRAS_WARNING]), no un error.
  */
 internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaParseResult {
     val preguntas = mutableListOf<ParsedPregunta>()
@@ -141,117 +294,174 @@ internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaPars
     val tipo = tipoPregunta.trim().lowercase()
     val exigeRazonamiento = tipo in TYPES_REQUIRING_REASONING
 
-    text.split(BLOCK_SEPARATOR)
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-        .forEachIndexed { i, block ->
-            val numero = i + 1
-            val (fields, clavesDesconocidas) = extractFields(block)
-            val erroresDelBloque = mutableListOf<RafagaParseError>()
-            clavesDesconocidas.forEach { clave ->
-                erroresDelBloque += RafagaParseError(numero, clave, "Campo no admitido en el PDF")
-            }
+    val split = splitBlocks(normalizeInvisible(text))
+    split.blocks.forEachIndexed { i, raw ->
+        val numero = i + 1
+        val block = raw.lines.joinToString("\n").trim()
+        val bloqueOriginal = if (raw.invalidSeparator) {
+            listOfNotNull(raw.separatorLine, block.takeIf { it.isNotEmpty() }).joinToString("\n")
+        } else {
+            block
+        }
+        val scan = extractFields(block)
+        val fields = scan.fields
+        val erroresDelBloque = mutableListOf<RafagaParseError>()
+        fun error(campo: String, detalle: String) {
+            erroresDelBloque += RafagaParseError(numero, campo, detalle)
+        }
 
-            val titulo = fields["TITULO"]?.trim()
-            val opciones = mutableListOf<Pair<String, String>>()
-            var respuesta: String? = null
+        if (raw.invalidSeparator) error("SEPARADOR", INVALID_SEPARATOR_DETAIL)
+        scan.clavesDesconocidas.forEach { clave -> error(clave, "Campo no admitido en el PDF") }
+        scan.clavesMalEscritas.forEach { (escrita, correcta) ->
+            error(escrita, "Clave mal escrita: usa $correcta")
+        }
+        scan.duplicados.forEach { campo -> error(campo, "Campo duplicado: $campo") }
+        scan.estadoSinDosPuntos.forEach { (campo, detalle) -> error(campo, detalle) }
 
-            if (titulo.isNullOrBlank()) {
-                erroresDelBloque += RafagaParseError(numero, "TITULO", "Obligatorio y no puede estar vacío")
+        val titulo = fields["TITULO"]?.trim()
+        val opciones = mutableListOf<Pair<String, String>>()
+        var respuesta: String? = null
+
+        if (titulo.isNullOrBlank()) {
+            error("TITULO", "Obligatorio y no puede estar vacío")
+        }
+        // Es barato validarlo todo: un bloque sin título también dice qué opciones y qué
+        // respuesta le faltan, en vez de obligar al revisor a descubrirlo de uno en uno.
+        var opcionError = false
+        for (letra in listOf("A", "B", "C", "D")) {
+            val texto = fields[letra]?.trim()
+            if (texto.isNullOrBlank()) {
+                error(letra, "Opción $letra obligatoria")
+                opcionError = true
             } else {
-                var opcionError = false
-                for (letra in listOf("A", "B", "C", "D")) {
-                    val texto = fields[letra]?.trim()
-                    if (texto.isNullOrBlank()) {
-                        erroresDelBloque += RafagaParseError(numero, letra, "Opción $letra obligatoria")
-                        opcionError = true
-                    } else {
-                        opciones += letra to texto
-                    }
-                }
-                if (!opcionError) {
-                    val valor = fields["RESPUESTA"]?.trim()?.uppercase()
-                    if (valor.isNullOrBlank() || valor !in setOf("A", "B", "C", "D")) {
-                        erroresDelBloque += RafagaParseError(
-                            numero,
-                            "RESPUESTA",
-                            "Debe ser A, B, C o D — recibido: '${valor.orEmpty()}'",
-                        )
-                    } else {
-                        respuesta = valor
-                    }
-                }
-            }
-
-            val razonamiento = fields["RAZONAMIENTO"]?.trim().orEmpty()
-            val fuente = fields["FUENTE"]?.trim().orEmpty()
-            if (exigeRazonamiento && razonamiento.isBlank()) {
-                erroresDelBloque += RafagaParseError(
-                    numero,
-                    "RAZONAMIENTO",
-                    "Obligatorio en preguntas razonadas e inmersivas",
-                )
-            }
-
-            val etiquetas = fields["ETIQUETA"]
-                ?.split(",")
-                ?.map { it.trim() }
-                ?.filter { it.isNotBlank() }
-                ?: emptyList()
-
-            val respuestaValida = respuesta
-            if (erroresDelBloque.isEmpty() && titulo != null && respuestaValida != null) {
-                preguntas += ParsedPregunta(
-                    numero = numero,
-                    titulo = titulo,
-                    opciones = opciones,
-                    respuesta = respuestaValida,
-                    razonamiento = razonamiento,
-                    fuente = fuente,
-                    etiquetas = etiquetas,
-                    bloqueOriginal = block,
-                    advertencia = RAFAGA_DISCARDS_EXTRAS_WARNING
-                        .takeIf { !exigeRazonamiento && (razonamiento.isNotBlank() || fuente.isNotBlank()) },
-                )
-            } else {
-                errores += erroresDelBloque
-                bloquesConError += RafagaBloqueConError(
-                    numero = numero,
-                    bloqueOriginal = block,
-                    // Sin título legible se usa la primera línea real del bloque.
-                    // No se inventa texto: la fila tiene que poder identificarse
-                    // en una lista de 300, y lo único honesto que hay es el PDF.
-                    titulo = titulo.orEmpty().ifBlank {
-                        block.lineSequence().firstOrNull { line -> line.isNotBlank() }?.trim().orEmpty()
-                    },
-                    opcionA = fields["A"]?.trim().orEmpty(),
-                    opcionB = fields["B"]?.trim().orEmpty(),
-                    opcionC = fields["C"]?.trim().orEmpty(),
-                    opcionD = fields["D"]?.trim().orEmpty(),
-                    respuesta = fields["RESPUESTA"]?.trim()?.uppercase().orEmpty(),
-                    razonamiento = fields["RAZONAMIENTO"]?.trim().orEmpty(),
-                    fuente = fields["FUENTE"]?.trim().orEmpty(),
-                    etiquetas = etiquetas.joinToString(","),
-                    detalle = erroresDelBloque.joinToString(" · ") { "${it.campo}: ${it.detalle}" },
-                )
+                opciones += letra to texto
             }
         }
+        val valorRespuesta = fields["RESPUESTA"]?.trim()?.uppercase()
+        if (valorRespuesta.isNullOrBlank() || valorRespuesta !in setOf("A", "B", "C", "D")) {
+            // Sin opciones completas no se acumula: el bloque ya falla por ellas y el
+            // revisor arregla primero eso (comportamiento anterior, conservado).
+            if (!opcionError) {
+                error("RESPUESTA", "Debe ser A, B, C o D — recibido: '${valorRespuesta.orEmpty()}'")
+            }
+        } else {
+            respuesta = valorRespuesta
+        }
+
+        val razonamiento = fields["RAZONAMIENTO"]?.trim().orEmpty()
+        val fuente = fields["FUENTE"]?.trim().orEmpty()
+        if (exigeRazonamiento && razonamiento.isBlank()) {
+            error("RAZONAMIENTO", "Obligatorio en preguntas razonadas e inmersivas")
+        }
+
+        // ESTADO / MOTIVO_ANULACION. Lo leído se conserva aunque el bloque falle.
+        val estado = fields[FIELD_ESTADO]?.trim()
+        val anulada = estado != null && estado.uppercase() == "ANULADA"
+        if (estado != null && !anulada) {
+            error(FIELD_ESTADO, "solo se admite ANULADA (o ausente para pregunta normal)")
+        }
+        val motivo = fields[FIELD_MOTIVO]?.trim()?.takeIf { it.isNotEmpty() }
+        if (motivo != null) {
+            if (estado == null) {
+                error(FIELD_MOTIVO, "solo se admite junto con ESTADO: ANULADA")
+            } else if (motivo.length > MAX_ANNULMENT_REASON_LENGTH) {
+                error(FIELD_MOTIVO, "máximo $MAX_ANNULMENT_REASON_LENGTH caracteres (tiene ${motivo.length})")
+            }
+        }
+
+        val etiquetas = fields["ETIQUETA"]
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotBlank() }
+            ?: emptyList()
+
+        val respuestaValida = respuesta
+        if (erroresDelBloque.isEmpty() && titulo != null && respuestaValida != null) {
+            val avisos = listOfNotNull(
+                RAFAGA_DISCARDS_EXTRAS_WARNING
+                    .takeIf { !exigeRazonamiento && (razonamiento.isNotBlank() || fuente.isNotBlank()) },
+                PAGE_MARKER_WARNING.takeIf { scan.posiblePaginaEnTexto },
+                PREAMBLE_LOOKS_LIKE_QUESTION_WARNING.takeIf { i == 0 && split.preambleLooksLikeQuestion },
+            )
+            preguntas += ParsedPregunta(
+                numero = numero,
+                titulo = titulo,
+                opciones = opciones,
+                respuesta = respuestaValida,
+                razonamiento = razonamiento,
+                fuente = fuente,
+                etiquetas = etiquetas,
+                bloqueOriginal = bloqueOriginal,
+                advertencia = avisos.takeIf { it.isNotEmpty() }?.joinToString(" "),
+                anulada = anulada,
+                motivoAnulacion = motivo.takeIf { anulada },
+            )
+        } else {
+            errores += erroresDelBloque
+            bloquesConError += RafagaBloqueConError(
+                numero = numero,
+                bloqueOriginal = bloqueOriginal,
+                // Sin título legible se usa la primera línea real del bloque.
+                // No se inventa texto: la fila tiene que poder identificarse
+                // en una lista de 300, y lo único honesto que hay es el PDF.
+                titulo = titulo.orEmpty().ifBlank {
+                    block.lineSequence().firstOrNull { line -> line.isNotBlank() }?.trim()
+                        ?: raw.separatorLine.orEmpty()
+                },
+                opcionA = fields["A"]?.trim().orEmpty(),
+                opcionB = fields["B"]?.trim().orEmpty(),
+                opcionC = fields["C"]?.trim().orEmpty(),
+                opcionD = fields["D"]?.trim().orEmpty(),
+                respuesta = fields["RESPUESTA"]?.trim()?.uppercase().orEmpty(),
+                razonamiento = fields["RAZONAMIENTO"]?.trim().orEmpty(),
+                fuente = fields["FUENTE"]?.trim().orEmpty(),
+                etiquetas = etiquetas.joinToString(","),
+                detalle = erroresDelBloque.joinToString(" · ") { "${it.campo}: ${it.detalle}" } +
+                    (if (i == 0 && split.preambleLooksLikeQuestion) " · $PREAMBLE_LOOKS_LIKE_QUESTION_WARNING" else ""),
+                anulada = anulada,
+                motivoAnulacion = motivo,
+            )
+        }
+    }
 
     return RafagaParseResult(preguntas, errores, bloquesConError)
 }
 
+/** Todo lo que salió de leer un bloque: los campos (el PRIMER valor de cada uno) y sus anomalías. */
+private class FieldScan(
+    val fields: Map<String, String>,
+    val clavesDesconocidas: List<String>,
+    /** Pares (lo escrito, lo correcto): `Fuente` → `FUENTE`. */
+    val clavesMalEscritas: List<Pair<String, String>>,
+    val duplicados: List<String>,
+    val posiblePaginaEnTexto: Boolean,
+    /** Pares (campo, detalle): líneas de ESTADO/MOTIVO_ANULACION/ANULADA sin `:` ASCII. */
+    val estadoSinDosPuntos: List<Pair<String, String>>,
+)
+
+/** Sin acentos y en mayúsculas: `Título` → `TITULO`. */
+private fun foldKey(key: String): String =
+    Normalizer.normalize(key.trim(), Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "").uppercase()
+
 /**
- * Los campos del bloque y las CLAVES ANTIGUAS que trae (`ID_GLOBAL:`, `ID_AUDIO:`…).
+ * Los campos del bloque y sus anomalías.
  *
- * Las segundas se devuelven en vez de tragárselas: antes caían en la rama de
- * «continuación» y se pegaban al campo anterior, así que el identificador interno de
- * un documento viejo acababa dentro del enunciado publicado. Una línea con dos
- * puntos que NO casa [LEGACY_KEY_LINE] sigue siendo continuación, porque una
- * explicación puede contener perfectamente `Nota: …`.
+ * - **Claves antiguas** (`ID_GLOBAL:`…): se devuelven en vez de tragárselas; antes caían en
+ *   «continuación» y el identificador interno acababa dentro del enunciado publicado. Una
+ *   línea con dos puntos que NO casa [LEGACY_KEY_LINE] ni es un campo casi-conocido sigue
+ *   siendo continuación (`Nota: …` en una explicación).
+ * - **Claves casi correctas** (mismo texto salvo mayúsculas/acentos): error, y sus líneas de
+ *   continuación NO se pegan al campo anterior.
+ * - **Campos repetidos**: se conserva el primero; las líneas de continuación del repetido se
+ *   descartan (no se pegan al primero).
  */
-private fun extractFields(block: String): Pair<Map<String, String>, List<String>> {
-    val result = mutableMapOf<String, StringBuilder>()
+private fun extractFields(block: String): FieldScan {
+    val result = linkedMapOf<String, StringBuilder>()
     val clavesDesconocidas = linkedSetOf<String>()
+    val clavesMalEscritas = linkedMapOf<String, String>()
+    val duplicados = linkedSetOf<String>()
+    var posiblePagina = false
+    val estadoSinDosPuntos = linkedSetOf<Pair<String, String>>()
     var current: String? = null
     for (line in block.lines()) {
         val trimmed = line.trim()
@@ -260,8 +470,19 @@ private fun extractFields(block: String): Pair<Map<String, String>, List<String>
         if (colonIdx > 0) {
             val key = trimmed.substring(0, colonIdx).trim()
             if (key in KNOWN_FIELDS) {
-                current = key
-                result[key] = StringBuilder(trimmed.substring(colonIdx + 1).trim())
+                if (key in result) {
+                    duplicados += key
+                    current = null
+                } else {
+                    current = key
+                    result[key] = StringBuilder(trimmed.substring(colonIdx + 1).trim())
+                }
+                continue
+            }
+            val casi = foldKey(key)
+            if (casi in KNOWN_FIELDS) {
+                clavesMalEscritas.putIfAbsent(key, casi)
+                current = null
                 continue
             }
             val claveAntigua = LEGACY_KEY_LINE.find(trimmed)?.groupValues?.get(1)
@@ -272,8 +493,34 @@ private fun extractFields(block: String): Pair<Map<String, String>, List<String>
                 continue
             }
         }
+        // Una línea que PARECE ESTADO/MOTIVO_ANULACION/ANULADA pero no es un campo con `:` ASCII
+        // jamás se pega como continuación: la anulación se perdería sin que nadie lo viera.
+        val estadoDetalle = when {
+            ESTADO_WITHOUT_COLON.containsMatchIn(trimmed) || ESTADO_LOOSE_ANULADA.containsMatchIn(trimmed) ->
+                FIELD_ESTADO to ESTADO_COLON_DETAIL
+            MOTIVO_WITHOUT_COLON.containsMatchIn(trimmed) || MOTIVO_LOOSE.containsMatchIn(trimmed) ->
+                FIELD_MOTIVO to MOTIVO_COLON_DETAIL
+            LONE_ANULADA.matches(trimmed) -> FIELD_ESTADO to LONE_ANULADA_DETAIL
+            else -> null
+        }
+        if (estadoDetalle != null) {
+            estadoSinDosPuntos += estadoDetalle
+            current = null
+            continue
+        }
         // Continuation line (e.g. multi-line RAZONAMIENTO)
-        current?.let { result[it]?.append('\n')?.append(trimmed) }
+        val destino = current?.let { result[it] }
+        if (destino != null) {
+            if (PAGE_MARKER_LINE.matches(trimmed)) posiblePagina = true
+            destino.append('\n').append(trimmed)
+        }
     }
-    return result.mapValues { it.value.toString() } to clavesDesconocidas.toList()
+    return FieldScan(
+        fields = result.mapValues { it.value.toString() },
+        clavesDesconocidas = clavesDesconocidas.toList(),
+        clavesMalEscritas = clavesMalEscritas.toList(),
+        duplicados = duplicados.toList(),
+        posiblePaginaEnTexto = posiblePagina,
+        estadoSinDosPuntos = estadoSinDosPuntos.toList(),
+    )
 }

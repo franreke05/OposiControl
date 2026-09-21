@@ -58,3 +58,9 @@ tasks.named<JavaExec>("run") {
             }
     }
 }
+
+tasks.withType<Test>().configureEach {
+    // `-Dgenerate.pdf.fixtures=true` en la linea de comandos de Gradle no llega solo a la JVM de test:
+    // se reenvia para que `GeneratePdfFixtures` pueda (re)escribir los PDF binarios de src/test/resources/pdf.
+    System.getProperty("generate.pdf.fixtures")?.let { systemProperty("generate.pdf.fixtures", it) }
+}

@@ -140,6 +140,8 @@ class SupabaseV1Gateway private constructor(
                 V1PreguntaAsociadaRow(
                     preguntaId = preguntaId,
                     posicion = row.primitiveInt("posicion") ?: row.primitiveInt("orden") ?: index + 1,
+                    anulada = row.primitiveBoolean("anulada") ?: false,
+                    motivoAnulacion = row.primitiveText("motivo_anulacion")?.takeIf { it.isNotBlank() },
                 )
             }
             .sortedBy { it.posicion }
@@ -173,6 +175,8 @@ class SupabaseV1Gateway private constructor(
             val pregunta = preguntasById[asociacion.preguntaId] ?: return@mapNotNull null
             pregunta.toV1PreguntaExamenDto(
                 posicion = asociacion.posicion,
+                anulada = asociacion.anulada,
+                motivoAnulacion = asociacion.motivoAnulacion.takeIf { asociacion.anulada },
                 opciones = opcionesByPreguntaId[asociacion.preguntaId]
                     .orEmpty()
                     .sortedWith(compareBy<V1OpcionPreguntaInternalDto> { it.posicion }.thenBy { it.letra })
@@ -280,6 +284,14 @@ data class V1PreguntaExamenDto(
     val tipoPregunta: String,
     val posicion: Int,
     val opciones: List<V1OpcionPreguntaDto>,
+    /**
+     * El tribunal anuló esta pregunta EN ESTE examen (`preguntas_examen.anulada`). Aditivo: un
+     * cliente antiguo que no conozca el campo lo ignora. Este endpoint NO puntúa; sólo informa
+     * para que el cliente no trate una anulada como una pregunta normal.
+     */
+    val anulada: Boolean = false,
+    /** `preguntas_examen.motivo_anulacion`; `null` si no es anulada o no se dio motivo. */
+    val motivoAnulacion: String? = null,
 )
 
 @Serializable
@@ -292,6 +304,8 @@ data class V1OpcionPreguntaDto(
 private data class V1PreguntaAsociadaRow(
     val preguntaId: String,
     val posicion: Int,
+    val anulada: Boolean = false,
+    val motivoAnulacion: String? = null,
 )
 
 private data class V1OpcionPreguntaInternalDto(
@@ -344,6 +358,8 @@ private fun JsonObject.toV1ExamenDto(): V1ExamenDto? {
 private fun JsonObject.toV1PreguntaExamenDto(
     posicion: Int,
     opciones: List<V1OpcionPreguntaDto>,
+    anulada: Boolean = false,
+    motivoAnulacion: String? = null,
 ): V1PreguntaExamenDto? {
     val id = primitiveText("id") ?: return null
     return V1PreguntaExamenDto(
@@ -353,6 +369,8 @@ private fun JsonObject.toV1PreguntaExamenDto(
         tipoPregunta = primitiveText("tipo_pregunta").orEmpty().ifBlank { "rafaga" },
         posicion = posicion,
         opciones = opciones,
+        anulada = anulada,
+        motivoAnulacion = motivoAnulacion,
     )
 }
 

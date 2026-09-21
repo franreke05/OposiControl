@@ -11,6 +11,8 @@ import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -179,14 +181,38 @@ class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
 @Serializable data class AppPerfilDto(val usuarioId: String, val nombreMostrar: String? = null, val username: String? = null, val esInvitado: Boolean = false, val onboardingCompletado: Boolean = false)
 @Serializable data class AppExamenDto(val id: String, val titulo: String, val descripcion: String = "", val tipoExamen: String = "", val tipoAcceso: String = "", val totalPreguntas: Int = 0, val anio: Int? = null)
 @Serializable data class AppOpcionDto(val id: String, val letra: String, val texto: String)
-@Serializable data class AppPreguntaDto(val id: String, val titulo: String, val posicion: Int, val opciones: List<AppOpcionDto>)
+/**
+ * Una pregunta servida. [anulada] = el tribunal la anulo EN ESTE examen (propiedad de la relacion
+ * pregunta-examen): se muestra en su posicion original pero NO puntua y no admite respuesta que cuente.
+ * [motivoAnulacion] es opcional y solo viene con `anulada = true`.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class AppPreguntaDto(
+    val id: String,
+    val titulo: String,
+    val posicion: Int,
+    val opciones: List<AppOpcionDto>,
+    @EncodeDefault val anulada: Boolean = false,
+    val motivoAnulacion: String? = null,
+)
 @Serializable data class AppRetoDto(val id: String, val fecha: String, val titulo: String, val descripcion: String = "", val objetivoPreguntas: Int = 0, val recompensaPuntos: Int = 0)
 @Serializable data class AppEstadisticasDto(val usuarioId: String, val examenesFinalizados: Int = 0, val preguntasRespondidas: Int = 0, val respuestasCorrectas: Int = 0, val porcentajeAcierto: Double = 0.0, val puntosTotales: Int = 0, val nivel: Int = 1)
 @Serializable data class AppIntentoDto(val id: String, val examenId: String, val estado: String, val totalPreguntas: Int = 0, val totalRespondidas: Int = 0, val totalCorrectas: Int = 0, val porcentajeAcierto: Double = 0.0)
 
 @Serializable data class AppHomeResponse(val perfil: AppPerfilDto? = null, val retoDiario: AppRetoDto? = null, val examenes: List<AppExamenDto> = emptyList())
 @Serializable data class AppExamenesResponse(val data: List<AppExamenDto>)
-@Serializable data class AppExamenDetalleResponse(val examen: AppExamenDto, val preguntas: List<AppPreguntaDto>)
+/**
+ * [preguntas] son TODAS las activas en su posicion original (las anuladas incluidas, con `anulada = true`);
+ * [totalEvaluables] = las servidas activas y NO anuladas: el denominador real del intento.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class AppExamenDetalleResponse(
+    val examen: AppExamenDto,
+    val preguntas: List<AppPreguntaDto>,
+    @EncodeDefault val totalEvaluables: Int = 0,
+)
 @Serializable data class AppIntentoResponse(val data: AppIntentoDto)
 @Serializable data class AppEstadisticasResponse(val data: AppEstadisticasDto? = null)
 @Serializable data class AppRetoResponse(val data: AppRetoDto? = null)
@@ -269,7 +295,20 @@ data class CommercialSubscriptionDto(
 )
 
 @Serializable data class ResponderRequest(val preguntaId: String, val opcionSeleccionadaId: String)
-@Serializable data class ResponderResponse(val esCorrecta: Boolean, val opcionCorrectaId: String? = null)
+/**
+ * La respuesta a `POST /intentos/{id}/responder`.
+ *
+ * [anulada] = la pregunta esta anulada en el examen del intento: NO se guarda respuesta, [esCorrecta] es
+ * `false` (sin significado: ni acierto ni fallo) y [opcionCorrectaId] viene igualmente para poder
+ * ensenarla. Sin error: la app no puede tratarla como un fallo de red.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class ResponderResponse(
+    val esCorrecta: Boolean,
+    val opcionCorrectaId: String? = null,
+    @EncodeDefault val anulada: Boolean = false,
+)
 @Serializable data class AppFeedbackRequest(val preguntaId: String, val tipoFeedback: String = "otro", val descripcion: String = "", val intentoId: String? = null)
 @Serializable data class AppEventoRequest(
     val nombreEvento: String,
@@ -402,6 +441,24 @@ class AppV1Gateway private constructor(
         get("/rest/v1/examenes?select=*&activo=eq.true&publicado_en=not.is.null&order=anio.desc.nullslast,titulo.asc")
             .map { it.toExamenDto() }
 
+    /**
+     * El examen con TODAS sus preguntas activas, cada una en su posición original.
+     *
+     * ### Contrato que consume la app móvil externa (M10, pregunta anulada)
+     *
+     * - Cada pregunta trae `anulada` (boolean, siempre presente) y, sólo si está anulada, un
+     *   `motivoAnulacion` opcional. Es propiedad de la RELACIÓN pregunta↔examen: la misma pregunta
+     *   puede estar anulada en este examen y ser normal en otro.
+     * - Una pregunta anulada se ENSEÑA en su sitio (para que la numeración del examen oficial
+     *   coincida con la del papel) pero NO puntúa: ni acierta, ni falla, ni cuenta como sin responder.
+     * - `totalEvaluables` = preguntas servidas activas y NO anuladas. Es el denominador real del
+     *   examen y coincide con `total_preguntas` del intento que abre [iniciar].
+     * - `examen.totalPreguntas` NO cambia de significado: son las posiciones activas (visibles),
+     *   anuladas incluidas.
+     * - Al responder una anulada (`POST /intentos/{id}/responder`) la respuesta es
+     *   `{ "esCorrecta": false, "anulada": true, "opcionCorrectaId": "…" }` sin error: la app
+     *   enseña la opción correcta y no suma nada. Ver [responder].
+     */
     fun examenDetalle(examenId: String): AppExamenDetalleResponse? {
         examenId.validatedUuid("examenId")
         val examen = get("/rest/v1/examenes?select=*&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1").firstOrNull() ?: return null
@@ -418,12 +475,14 @@ class AppV1Gateway private constructor(
                 id = pid!!,
                 titulo = p.str("titulo").orEmpty(),
                 posicion = a.int("posicion") ?: 0,
+                anulada = a.bool("anulada") == true,
+                motivoAnulacion = a.str("motivo_anulacion")?.takeIf { a.bool("anulada") == true },
                 opciones = opcionesByPregunta[pid].orEmpty().map {
                     AppOpcionDto(it.str("id")!!, it.str("letra").orEmpty(), it.str("texto_opcion").orEmpty())
                 },
             )
         }
-        return AppExamenDetalleResponse(examen.toExamenDto(), preguntas)
+        return AppExamenDetalleResponse(examen.toExamenDto(), preguntas, totalEvaluables = preguntas.count { !it.anulada })
     }
 
     /**
@@ -464,6 +523,14 @@ class AppV1Gateway private constructor(
      * cambia el recuento sin tocar la tabla de pertenencia—, así que esos catálogos
      * ya dicen la verdad sin tocar su código.
      *
+     * ### Las anuladas no cuentan (M10)
+     *
+     * `total_preguntas` del intento = preguntas EVALUABLES: servidas (activas) y NO anuladas en
+     * este examen (`preguntas_examen.anulada`). La anulada se enseña en su posición pero no puntúa,
+     * así que no puede estar en el denominador: si lo estuviera, el intento esperaría respuestas
+     * que `record_answer` no guarda y nunca cuadraría. Igual que con las archivadas, el recuento
+     * usa la MISMA definición que [examenDetalle] (`totalEvaluables`).
+     *
      * Techo conocido y heredado: `id=in.(…)` crece con el número de preguntas y
      * un examen muy largo puede topar con el límite de longitud de URL. Es el
      * mismo techo que ya tiene [examenDetalle]; no se introduce aquí.
@@ -486,26 +553,56 @@ class AppV1Gateway private constructor(
             put("examen_id", examenId)
             put("estado", "en_progreso")
             put("iniciado_en", Instant.now().toString())
-            put("total_preguntas", contarPreguntasServibles(examenId))
+            put("total_preguntas", contarPreguntasEvaluables(examenId))
         }
         return post("/rest/v1/intentos_examen", body).first().toIntentoDto()
     }
 
     /**
-     * Cuántas preguntas va a entregar la app para este examen. Ver [iniciar].
+     * Cuántas preguntas EVALUABLES va a entregar la app para este examen: servidas (activas) y no
+     * anuladas. Ver [iniciar].
      *
      * Devuelve 0 sólo cuando el examen de verdad no tiene ninguna pregunta
-     * servible: un fallo de lectura lanza y `iniciar` no llega a crear el
+     * evaluable: un fallo de lectura lanza y `iniciar` no llega a crear el
      * intento, que es lo correcto — un intento mal dimensionado es peor que un
      * intento que no se abre.
+     *
+     * Se lee `select=*` (y no `pregunta_id,anulada`) a propósito, igual que [examenDetalle]: si el
+     * backend se despliega antes que la migración M10, una columna inexistente en el `select`
+     * sería un 400 que impide iniciar CUALQUIER examen, mientras que con `*` la ausencia de
+     * `anulada` se lee como «no anulada».
      */
-    private fun contarPreguntasServibles(examenId: String): Int {
-        val preguntaIds = get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId")
+    private fun contarPreguntasEvaluables(
+        examenId: String,
+        asociaciones: List<JsonObject> = get("/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId"),
+    ): Int {
+        val preguntaIds = asociaciones
+            .filter { it.bool("anulada") != true }
             .mapNotNull { it.str("pregunta_id") }
         if (preguntaIds.isEmpty()) return 0
         return get("/rest/v1/preguntas?select=id&id=in.(${preguntaIds.joinToString(",")})&activa=eq.true").size
     }
 
+    /**
+     * Responde una pregunta del intento.
+     *
+     * ### Contrato que consume la app móvil externa (M10, pregunta anulada)
+     *
+     * Respuesta normal: `{ "esCorrecta": true|false, "opcionCorrectaId": "…", "anulada": false }`.
+     *
+     * Pregunta ANULADA por el tribunal en el examen del intento: `{ "esCorrecta": false,
+     * "opcionCorrectaId": "…", "anulada": true }` con un 200, SIN error y sin guardar nada. La app
+     * debe tratarla como «sin puntuar»: no marca acierto ni fallo y enseña la opción correcta como
+     * cualquier corrección. `esCorrecta = false` con `anulada = true` NO es un fallo.
+     *
+     * Se decide como anulada si la RELACIÓN pregunta↔examen lo dice (`preguntas_examen.anulada`)
+     * O si `record_answer` devuelve `es_correcta = NULL` (su señal de «no puntúa»). Con cualquiera de
+     * las dos basta: si la relación está anulada pero una versión anterior de la RPC sí guardó la
+     * respuesta, [finalizar] la excluye igualmente del total.
+     *
+     * Se conservan todas las validaciones: el intento existe, es del usuario y está en curso; la
+     * pregunta pertenece al examen; la opción pertenece a la pregunta.
+     */
     fun responder(usuarioId: String, intentoId: String, req: ResponderRequest): ResponderResponse {
         usuarioId.validatedUuid("usuarioId")
         intentoId.validatedUuid("intentoId")
@@ -515,9 +612,9 @@ class AppV1Gateway private constructor(
             ?: throw AppUnauthorized("El intento no pertenece al usuario.")
         require(intento.str("estado") == "en_progreso") { "El intento ya no admite respuestas." }
         val examenId = intento.str("examen_id") ?: error("El intento no tiene examen asociado.")
-        require(
-            get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
-        ) { "La pregunta no pertenece al examen del intento." }
+        val relacion = get("/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId&pregunta_id=eq.${req.preguntaId}&limit=1")
+            .firstOrNull()
+        require(relacion != null) { "La pregunta no pertenece al examen del intento." }
         require(
             get("/rest/v1/opciones_pregunta?select=id&id=eq.${req.opcionSeleccionadaId}&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
         ) { "La opcion no pertenece a la pregunta." }
@@ -527,25 +624,61 @@ class AppV1Gateway private constructor(
             put("p_pregunta_id", req.preguntaId)
             put("p_opcion_seleccionada_id", req.opcionSeleccionadaId)
         }).firstOrNull() ?: error("La respuesta no fue registrada.")
-        return ResponderResponse(result.bool("es_correcta") ?: false, result.str("opcion_correcta_id"))
+        val correcta = result.bool("es_correcta")
+        val anulada = relacion.bool("anulada") == true || correcta == null
+        return ResponderResponse(
+            esCorrecta = !anulada && correcta == true,
+            opcionCorrectaId = result.str("opcion_correcta_id"),
+            anulada = anulada,
+        )
     }
 
+    /**
+     * Cierra el intento y calcula sus totales.
+     *
+     * ### Fórmula (sin cambios) y qué pasa con las anuladas
+     *
+     * `total_respondidas` = respuestas EVALUABLES; `total_correctas` = las acertadas;
+     * `total_falladas` = respondidas − correctas; `porcentaje_acierto` = correctas / respondidas;
+     * `puntuacion` = correctas. Una pregunta ANULADA en el examen del intento ni suma ni resta ni
+     * cuenta como «sin responder»: no está en `total_preguntas` (que son las evaluables, ver
+     * [iniciar]) y sus respuestas se EXCLUYEN aquí aunque existan (defensa por si la anulación llegó
+     * DESPUÉS de responder, o una versión anterior de `record_answer` la guardó).
+     *
+     * `total_sin_responder` = max(0, evaluables − respondidas), con las evaluables recalculadas al
+     * cerrar (activas y no anuladas ahora mismo). Es una columna `integer not null default 0` de
+     * `intentos_examen`.
+     *
+     * ### Contrato que consume la app móvil externa
+     *
+     * El intento devuelto lleva `totalPreguntas` (evaluables al abrir), `totalRespondidas`,
+     * `totalCorrectas` y `porcentajeAcierto`, todos SIN anuladas. La app no debe restarlas ni
+     * sumarlas por su cuenta: los totales ya vienen excluyéndolas.
+     */
     fun finalizar(usuarioId: String, intentoId: String): AppIntentoDto {
         usuarioId.validatedUuid("usuarioId")
         intentoId.validatedUuid("intentoId")
-        val intento = get("/rest/v1/intentos_examen?select=id,estado&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1").firstOrNull()
+        val intento = get("/rest/v1/intentos_examen?select=id,estado,examen_id&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1").firstOrNull()
             ?: throw AppUnauthorized("El intento no pertenece al usuario.")
         require(intento.str("estado") == "en_progreso") { "El intento ya esta finalizado." }
-        val respuestas = get("/rest/v1/respuestas_intento?select=es_correcta&intento_id=eq.$intentoId")
+        val examenId = intento.str("examen_id")?.validatedUuid("examenId")
+        val asociaciones = examenId
+            ?.let { get("/rest/v1/preguntas_examen?select=*&examen_id=eq.$it") }
+            .orEmpty()
+        val anuladas = asociaciones.filter { it.bool("anulada") == true }.mapNotNull { it.str("pregunta_id") }.toSet()
+        val respuestas = get("/rest/v1/respuestas_intento?select=es_correcta,pregunta_id&intento_id=eq.$intentoId")
+            .filter { it.str("pregunta_id") !in anuladas }
         val total = respuestas.size
         val correctas = respuestas.count { it.bool("es_correcta") == true }
         val porcentaje = if (total > 0) correctas * 100.0 / total else 0.0
+        val sinResponder = if (examenId == null) 0 else maxOf(0, contarPreguntasEvaluables(examenId, asociaciones) - total)
         val body = buildJsonObject {
             put("estado", "finalizado")
             put("finalizado_en", Instant.now().toString())
             put("total_respondidas", total)
             put("total_correctas", correctas)
             put("total_falladas", total - correctas)
+            put("total_sin_responder", sinResponder)
             put("porcentaje_acierto", porcentaje)
             put("puntuacion", correctas)
         }

@@ -259,6 +259,33 @@ class AdminV1ImportRulesTest {
         assertTrue(stagingPatch(upstream).contains("\"vincular_pregunta_id\":null"), stagingPatch(upstream))
     }
 
+    /**
+     * OMITIR una fila que estaba aprobada con vínculo BORRA el puntero: el cuerpo hacia PostgREST
+     * lleva `vincular_pregunta_id: null` explícito (antes la clave iba ausente = «no tocar» y la
+     * fila omitida conservaba el vínculo, aunque el cliente afirmaba borrarlo). Con `ok`/`error`
+     * el puntero sigue sin tocarse.
+     */
+    @Test fun omitirUnaFilaConVinculoBorraElPuntero() {
+        val upstream = mutableListOf<HttpRequest>()
+        val filaVinculada = stagingRowJson().replace(
+            "\"estado_parseo\":\"ok\"",
+            "\"estado_parseo\":\"aprobada\",\"vincular_pregunta_id\":\"$preguntaExistenteId\"",
+        )
+        val gateway = gatewayWith(upstream, stagingPatch = V1StubResponse(200, "[$filaVinculada]"))
+
+        // El cliente manda `vincularPreguntaId = null` al omitir.
+        gateway.updateStaging(filaId, AdminStagingItemDto(titulo = "T", estadoParseo = "omitida", vincularPreguntaId = null))
+
+        val patch = stagingPatch(upstream)
+        assertTrue(patch.contains("\"estado_parseo\":\"omitida\""), patch)
+        assertTrue(patch.contains("\"vincular_pregunta_id\":null"), patch)
+        assertTrue(!patch.contains(preguntaExistenteId), patch)
+
+        upstream.clear()
+        gateway.updateStaging(filaId, AdminStagingItemDto(titulo = "T", estadoParseo = "error"))
+        assertTrue(!stagingPatch(upstream).contains("vincular_pregunta_id"), stagingPatch(upstream))
+    }
+
     /** IM2: una fila ya publicada no se toca; el trigger lo dice y aquí llega como 409 legible. */
     @Test fun unaFilaYaPublicadaNoSePuedeModificar() {
         val gateway = gatewayWith(

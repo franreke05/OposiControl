@@ -531,6 +531,10 @@ class BackendErrorsTest {
             "QUESTION_NOT_FOUND" to HttpStatusCode.NotFound,
             "QUESTION_NOT_LINKED_TO_EXAM" to HttpStatusCode.NotFound,
             "QUESTION_ARCHIVED" to HttpStatusCode.UnprocessableEntity,
+            // M10 · anulación por examen
+            "EXAM_QUESTION_ANNULMENT_REASON_REQUIRES_ANNULMENT" to HttpStatusCode.UnprocessableEntity,
+            "EXAM_QUESTION_ANNULMENT_REASON_TOO_LONG" to HttpStatusCode.UnprocessableEntity,
+            "QUESTION_ANNULMENT_REQUIRES_EXAM" to HttpStatusCode.UnprocessableEntity,
             "EXAM_QUESTION_LIMIT_REACHED" to HttpStatusCode.UnprocessableEntity,
             "EXAM_QUESTION_POSITION_INVALID" to HttpStatusCode.UnprocessableEntity,
             "EXAM_REORDER_SET_MISMATCH" to HttpStatusCode.Conflict,

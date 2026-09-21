@@ -127,6 +127,19 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
         "El tipo de la pregunta no corresponde al del examen: Ráfaga admite ráfaga, Razonado admite razonada " +
             "e Inmersivo admite inmersiva.",
     ),
+    // M10 · pregunta anulada en un examen (la anulación es de la relación pregunta↔examen).
+    "EXAM_QUESTION_ANNULMENT_REASON_REQUIRES_ANNULMENT" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "El motivo de anulación sólo se admite cuando la pregunta está anulada en el examen.",
+    ),
+    "EXAM_QUESTION_ANNULMENT_REASON_TOO_LONG" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "El motivo de anulación no puede superar los 500 caracteres.",
+    ),
+    "QUESTION_ANNULMENT_REQUIRES_EXAM" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Una pregunta sólo puede anularse dentro de un examen: indica el examen o quita la anulación.",
+    ),
     // LOS TRES «TODAVÍA NO ESTÁ DISPONIBLE» SON 409 A PROPÓSITO, Y NO UN 501/503.
     //
     // Son fallos de aprovisionamiento —falta la migración M4— y el código honesto

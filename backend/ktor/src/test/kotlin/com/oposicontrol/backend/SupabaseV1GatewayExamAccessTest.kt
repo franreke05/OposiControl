@@ -116,6 +116,41 @@ class SupabaseV1GatewayExamAccessTest {
     }
 
     /**
+     * Una pregunta anulada en ESTE examen ya no se sirve como si fuera normal: el DTO expone
+     * `anulada` y `motivoAnulacion` (aditivo; sin puntuación aquí).
+     */
+    @Test fun annulledQuestionsAreExposedAsAnnulledWithTheirReason() {
+        val gateway = gatewayWith { uri ->
+            when {
+                uri.contains("/rest/v1/examenes") ->
+                    V1StubResponse(200, "[${examenRow(publicadoEn = "\"2026-01-01T00:00:00Z\"")}]")
+                uri.contains("/rest/v1/preguntas_examen") -> V1StubResponse(
+                    200,
+                    """[{"examen_id":"$examenId","pregunta_id":"P1","posicion":1,"anulada":true,"motivo_anulacion":"Error del tribunal"},""" +
+                        """{"examen_id":"$examenId","pregunta_id":"P2","posicion":2,"anulada":false,"motivo_anulacion":null},""" +
+                        """{"examen_id":"$examenId","pregunta_id":"P3","posicion":3}]""",
+                )
+                uri.contains("/rest/v1/preguntas?") -> V1StubResponse(
+                    200,
+                    """[{"id":"P1","titulo":"Uno","tipo_pregunta":"rafaga","activa":true},""" +
+                        """{"id":"P2","titulo":"Dos","tipo_pregunta":"rafaga","activa":true},""" +
+                        """{"id":"P3","titulo":"Tres","tipo_pregunta":"rafaga","activa":true}]""",
+                )
+                else -> V1StubResponse(200, "[]")
+            }
+        }
+
+        val result = assertIs<V1PreguntasExamenResult.Success>(gateway.getPreguntasExamenRafaga(examenId))
+
+        val (p1, p2, p3) = result.data.preguntas
+        assertTrue(p1.anulada)
+        assertEquals("Error del tribunal", p1.motivoAnulacion)
+        assertEquals(false, p2.anulada)
+        assertEquals(null, p2.motivoAnulacion)
+        assertEquals(false, p3.anulada, "sin columna, default false")
+    }
+
+    /**
      * No-regresion sobre la otra mitad: el arreglo no puede colapsar las dos
      * respuestas en una. Un examen **publicado** que no es gratuito sigue siendo
      * `Forbidden`, porque ahi su existencia ya es publica por

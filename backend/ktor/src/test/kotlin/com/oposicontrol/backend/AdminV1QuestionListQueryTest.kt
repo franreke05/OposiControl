@@ -93,18 +93,20 @@ class AdminV1QuestionListQueryTest {
 
         val page = gatewayWith(
             upstream,
-            body = """[{"posicion":3,"preguntas":${preguntaJson("P1")}}]""",
+            body = """[{"posicion":3,"anulada":true,"motivo_anulacion":"Anulada por el tribunal","preguntas":${preguntaJson("P1")}}]""",
         ).listPreguntasPagina(AdminPreguntaListQuery(examenId = examenId, tipo = "rafaga"))
 
         val request = upstream.single()
         assertEquals("/rest/v1/preguntas_examen", request.uri().rawPath)
         assertEquals(
-            "select=posicion,preguntas!inner($columnas)&examen_id=eq.$examenId" +
+            "select=*,preguntas!inner($columnas)&examen_id=eq.$examenId" +
                 "&preguntas.activa=eq.true&preguntas.tipo_pregunta=eq.rafaga&order=posicion.asc&limit=25&offset=0",
             request.uri().rawQuery,
         )
         assertEquals(examenId, page.data.single().examenId)
         assertEquals(3, page.data.single().posicion)
+        assertTrue(page.data.single().anulada, "la relacion anulada viaja en el listado del examen")
+        assertEquals("Anulada por el tribunal", page.data.single().motivoAnulacion)
     }
 
     /**

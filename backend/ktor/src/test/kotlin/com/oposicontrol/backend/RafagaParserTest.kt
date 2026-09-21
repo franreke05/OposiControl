@@ -140,7 +140,9 @@ class RafagaParserTest {
         assertTrue(parsed.preguntas.isEmpty())
         assertEquals("RAZONAMIENTO", parsed.errores.single().campo)
         // Control: el mismo bloque es una Ráfaga perfectamente válida.
-        assertEquals(1, parseQuestionBlocks(parsed.bloquesConError.single().bloqueOriginal, "rafaga").preguntas.size)
+        // (`bloqueOriginal` no lleva el separador: se le antepone el oficial, porque lo anterior al primer
+        // separador es preambulo y se ignora.)
+        assertEquals(1, parseQuestionBlocks("--- PREGUNTA ---\n" + parsed.bloquesConError.single().bloqueOriginal, "rafaga").preguntas.size)
     }
 
     /** Ráfaga con FUENTE o RAZONAMIENTO: válida, pero AVISADA, porque no se van a publicar. */
@@ -163,7 +165,10 @@ class RafagaParserTest {
         val pregunta = assertNotNull(parsed.preguntas.singleOrNull(), "${parsed.errores}")
         assertEquals(RAFAGA_DISCARDS_EXTRAS_WARNING, pregunta.advertencia)
         // Y sin extras no hay aviso.
-        val limpia = parseQuestionBlocks(pregunta.bloqueOriginal.lines().filterNot { it.startsWith("FUENTE") }.joinToString("\n"), "rafaga")
+        val limpia = parseQuestionBlocks(
+            "--- PREGUNTA ---\n" + pregunta.bloqueOriginal.lines().filterNot { it.startsWith("FUENTE") }.joinToString("\n"),
+            "rafaga",
+        )
         assertNull(limpia.preguntas.single().advertencia)
     }
 }

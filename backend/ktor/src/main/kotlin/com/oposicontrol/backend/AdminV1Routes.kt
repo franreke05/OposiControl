@@ -1730,6 +1730,32 @@ private fun canonicalExamTypeOrReject(raw: String): String {
 }
 
 /**
+ * Vocabulario canónico de `contenido_desbloqueado_usuario.motivo` (CHECK vivo en
+ * MAIN). Conjunto cerrado: es lo único que la base admite.
+ */
+private val CANONICAL_UNLOCK_REASONS: Set<String> =
+    setOf("premium", "compra", "regalo", "admin", "promocion")
+
+/**
+ * Normaliza el tipo de un acceso manual al `motivo` canónico o RECHAZA con 422.
+ *
+ * Recorta y pasa a minúsculas. `manual` (alias del cliente antiguo, que lo mandaba
+ * por defecto) y el vacío equivalen a `admin`: quien concede a mano es la
+ * administración. Cualquier otro valor se rechaza; jamás se escribe un motivo
+ * fuera del conjunto. El mensaje nombra los válidos y no devuelve la entrada.
+ */
+private fun canonicalUnlockReasonOrReject(raw: String): String {
+    val normalized = raw.trim().lowercase()
+    if (normalized.isEmpty() || normalized == "manual") return "admin"
+    if (normalized in CANONICAL_UNLOCK_REASONS) return normalized
+    throw BackendDomainException(
+        "EXAM_ACCESS_GRANT_TYPE_UNKNOWN",
+        HttpStatusCode.UnprocessableEntity,
+        "Tipo de acceso no válido. Valores admitidos: premium, compra, regalo, admin, promocion.",
+    )
+}
+
+/**
  * Normaliza `tipo_acceso` al conjunto cerrado o RECHAZA con 422.
  *
  * No hay alias legacy aquí. Y la combinación tipo↔acceso (`rafaga⇒gratuito`,
@@ -1768,7 +1794,9 @@ private data class AdminExamenRow(
     @SerialName("especialidad_id") val especialidadId: String,
     @SerialName("comunidad_id") val comunidadId: String? = null,
     val titulo: String,
-    val descripcion: String = "",
+    // `examenes.descripcion` es NULL-able en la base: un examen creado fuera de la API (SQL, otra
+    // herramienta) rompía el listado y la importación entera con un 502 «upstream contract failure».
+    val descripcion: String? = null,
     @SerialName("tipo_examen") val tipoExamen: String = "rafaga",
     @SerialName("tipo_acceso") val tipoAcceso: String = "gratuito",
     val anio: Int? = null,
@@ -1819,7 +1847,7 @@ private fun AdminExamenRow.toDto() = AdminExamenDto(
     especialidadId = especialidadId,
     comunidadId = comunidadId,
     titulo = titulo,
-    descripcion = descripcion,
+    descripcion = descripcion.orEmpty(),
     tipoExamen = tipoExamen,
     tipoAcceso = tipoAcceso,
     anio = anio,
@@ -1878,6 +1906,8 @@ data class AdminPreguntasPageResponse(
 @Serializable
 private data class AdminPreguntaExamenListRow(
     val posicion: Int,
+    val anulada: Boolean = false,
+    @SerialName("motivo_anulacion") val motivoAnulacion: String? = null,
     val preguntas: AdminPreguntaRow,
 )
 
@@ -1935,6 +1965,14 @@ data class AdminPreguntaDto(
     // Asociacion opcional a un examen al crear.
     val examenId: String? = null,
     val posicion: Int? = null,
+    /**
+     * Sólo lectura (M10), y sólo con [examenId]: la pregunta esta ANULADA por el tribunal en ESE examen.
+     * Es propiedad de la relacion pregunta-examen, no de la pregunta: sin `examenId` es siempre `false`.
+     * Se ignora en escritura (crear/editar una pregunta nunca la anula).
+     */
+    @EncodeDefault val anulada: Boolean = false,
+    /** Sólo lectura (M10): motivo de la anulacion en [examenId]; `null` si no hay. */
+    val motivoAnulacion: String? = null,
 )
 
 @Serializable
@@ -2089,6 +2127,9 @@ private data class AdminPreguntaExamenRow(
     @SerialName("pregunta_id") val preguntaId: String,
     val posicion: Int,
     @SerialName("numero_en_examen") val numeroEnExamen: Int? = null,
+    /** M10: relacion anulada por el tribunal. Default `false` para decodificar selects que no la piden. */
+    val anulada: Boolean = false,
+    @SerialName("motivo_anulacion") val motivoAnulacion: String? = null,
 )
 
 @Serializable
@@ -2108,6 +2149,7 @@ data class AdminVincularPreguntaRequest(val examenId: String, val posicion: Int?
  * [totalPreguntas] es el recuento mantenido por la base (M1): con los dos, el diálogo de
  * archivar o quitar puede avisar ANTES de que un examen publicado se quede vacío (KQ5, Q4).
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminPreguntaExamenVinculoDto(
     val examenId: String,
@@ -2117,6 +2159,9 @@ data class AdminPreguntaExamenVinculoDto(
     val estado: String = "borrador",
     val posicion: Int = 0,
     val totalPreguntas: Int = 0,
+    /** M10: en ESTE examen la pregunta esta anulada por el tribunal (no puntua). */
+    @EncodeDefault val anulada: Boolean = false,
+    val motivoAnulacion: String? = null,
 )
 
 @Serializable
@@ -2125,6 +2170,8 @@ data class AdminPreguntaExamenesResponse(val data: List<AdminPreguntaExamenVincu
 @Serializable
 private data class AdminPreguntaExamenVinculoRow(
     val posicion: Int = 0,
+    val anulada: Boolean = false,
+    @SerialName("motivo_anulacion") val motivoAnulacion: String? = null,
     val examenes: AdminPreguntaExamenEmbed? = null,
 )
 
@@ -2153,6 +2200,8 @@ private fun AdminPreguntaExamenVinculoRow.toDto(): AdminPreguntaExamenVinculoDto
         },
         posicion = posicion,
         totalPreguntas = examen.totalPreguntas ?: 0,
+        anulada = anulada,
+        motivoAnulacion = motivoAnulacion,
     )
 }
 
@@ -2297,6 +2346,20 @@ data class AdminStagingItemDto(
     val vincularPreguntaId: String? = null,
     /** Lectura: la coincidencia detectada para esta fila, o `null` si no hay (KI3-2). */
     val duplicado: AdminImportDuplicadoDto? = null,
+    /**
+     * La pregunta fue ANULADA por el tribunal en el examen de este lote (M10). Es propiedad de la
+     * RELACION pregunta-examen: al publicar se escribe en `preguntas_examen`, nunca en `preguntas`.
+     * Ortogonal a [estadoParseo]: una fila anulada y bien formada es `ok`.
+     *
+     * El PATCH `/importaciones/staging/{id}` REEMPLAZA la fila entera como el resto de campos: `false`
+     * (o ausente) desanula.
+     */
+    @EncodeDefault val anulada: Boolean = false,
+    /**
+     * Motivo de la anulacion. Sólo con [anulada] = `true`; se recorta, vacio = `null` y >500 es un 400.
+     * En el PATCH un `null` (o ausente) BORRA el motivo guardado.
+     */
+    val motivoAnulacion: String? = null,
 )
 
 /**
@@ -2333,6 +2396,28 @@ data class AdminLoteDto(
      * afirmación que este backend no puede hacer, y el revisor publicaría repetidas.
      */
     @EncodeDefault val duplicadosComprobados: Boolean = true,
+    /**
+     * Cuántas filas hay en cada estado de revision (M10 / historial). `null` = NO se pudo
+     * calcular: nunca un 0/0 inventado. Ver [AdminLoteResumenDto].
+     */
+    val resumen: AdminLoteResumenDto? = null,
+)
+
+/**
+ * Recuento de las filas de staging de un lote por estado de parseo.
+ *
+ * - [listas] = `ok` + `aprobada` (publicables); [conError] = `error`; [advertencias] =
+ *   `advertencia`; [omitidas] = `omitida`; [importadas] = `importada`.
+ * - Las anuladas NO forman categoria: la anulacion es ortogonal al estado de parseo.
+ */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class AdminLoteResumenDto(
+    @EncodeDefault val listas: Int = 0,
+    @EncodeDefault val conError: Int = 0,
+    @EncodeDefault val advertencias: Int = 0,
+    @EncodeDefault val omitidas: Int = 0,
+    @EncodeDefault val importadas: Int = 0,
 )
 
 /** Cuerpo (opcional) de `POST /importaciones/preguntas/{loteId}/importar`. */
@@ -2347,6 +2432,7 @@ data class AdminImportarLoteRequest(val confirmarExamenPublicado: Boolean = fals
  * distinguir «he publicado 120» de «ya estaban», y las dos respuestas tienen los
  * mismos totales.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminImportResultadoDto(
     val ejecutado: Boolean,
@@ -2354,6 +2440,8 @@ data class AdminImportResultadoDto(
     val vinculadas: Int,
     val omitidas: Int,
     val totalImportadas: Int,
+    /** Cuantas de las preguntas publicadas quedaron ANULADAS en el examen (M10). */
+    @EncodeDefault val anuladas: Int = 0,
 )
 
 /** `data` conserva la forma de [AdminLoteResponse]: un cliente que sólo lea `data` no se rompe. */
@@ -2433,6 +2521,19 @@ private val RAFAGA_OPTION_LETTERS: List<String> = listOf("A", "B", "C", "D")
  */
 internal class PdfImportRejectedException(message: String) : RuntimeException(message)
 
+/** Lotes por peticion del resumen: 50 uuid en la URL son ~1.9 KB, muy por debajo de cualquier limite. */
+private const val LOTE_SUMMARY_IDS_PER_REQUEST = 50
+
+/** Tamano de pagina del resumen; el fin de la lectura lo decide `Content-Range`, no este numero. */
+private const val LOTE_SUMMARY_PAGE_SIZE = 1000
+
+/** Solo las dos columnas que hacen falta para contar filas de staging por estado. */
+@Serializable
+private data class StagingEstadoRow(
+    @SerialName("lote_id") val loteId: String,
+    @SerialName("estado_parseo") val estadoParseo: String = "",
+)
+
 /** Detalle técnico de la importación: al log (con el `request_id` del MDC), nunca al cliente. */
 private val PdfImportLogger: org.slf4j.Logger = org.slf4j.LoggerFactory.getLogger("OC-KTOR-IMPORT")
 
@@ -2502,6 +2603,9 @@ private data class StagingRow(
     @SerialName("estado_parseo") val estadoParseo: String,
     @SerialName("error_parseo") val errorParseo: String? = null,
     @SerialName("vincular_pregunta_id") val vincularPreguntaId: String? = null,
+    /** M10: la anulacion vive en la relacion; en staging es lo que el revisor ve y corrige antes de publicar. */
+    val anulada: Boolean = false,
+    @SerialName("motivo_anulacion") val motivoAnulacion: String? = null,
     val metadatos: JsonObject = JsonObject(emptyMap()),
 )
 
@@ -2531,6 +2635,10 @@ private data class StagingPatch(
     val estadoParseo: String? = null,
     val errorParseo: JsonElement? = null,
     val vincularPreguntaId: JsonElement? = null,
+    /** `null` = no se toca. El PATCH de revision lo manda siempre (la fila se reemplaza entera). */
+    val anulada: Boolean? = null,
+    /** `JsonNull` = borra el motivo; `null` = no se toca. */
+    val motivoAnulacion: JsonElement? = null,
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         titulo?.let { put("titulo", JsonPrimitive(it)) }
@@ -2545,7 +2653,23 @@ private data class StagingPatch(
         estadoParseo?.let { put("estado_parseo", JsonPrimitive(it)) }
         errorParseo?.let { put("error_parseo", it) }
         vincularPreguntaId?.let { put("vincular_pregunta_id", it) }
+        anulada?.let { put("anulada", JsonPrimitive(it)) }
+        motivoAnulacion?.let { put("motivo_anulacion", it) }
     }
+}
+
+/**
+ * La anulacion de una fila de staging, saneada: motivo recortado, vacio = `null`, sólo con `anulada`
+ * y de 500 caracteres como maximo (el CHECK de `preguntas_parseadas_staging`). Lanza
+ * [IllegalArgumentException] (400) con un mensaje que el administrador puede leer.
+ */
+private fun normalizedAnnulmentReason(anulada: Boolean, motivo: String?): String? {
+    val limpio = motivo?.trim()?.takeIf { it.isNotEmpty() }
+    require(limpio == null || anulada) { "El motivo de anulacion solo se admite si la pregunta esta anulada." }
+    require(limpio == null || limpio.length <= MAX_ANNULMENT_REASON_LENGTH) {
+        "El motivo de anulacion no puede superar los $MAX_ANNULMENT_REASON_LENGTH caracteres."
+    }
+    return limpio
 }
 
 private fun StagingRow.toDto() = AdminStagingItemDto(
@@ -2565,6 +2689,8 @@ private fun StagingRow.toDto() = AdminStagingItemDto(
     errorParseo = errorParseo,
     preguntaId = preguntaId,
     vincularPreguntaId = vincularPreguntaId,
+    anulada = anulada,
+    motivoAnulacion = motivoAnulacion,
 )
 
 // ----- Feedback de preguntas + Auditoria -----
@@ -3140,6 +3266,8 @@ private data class AdminImportLoteResultRow(
     val nuevas: Int = 0,
     val vinculadas: Int = 0,
     val omitidas: Int = 0,
+    /** M10: filas publicadas con la relacion anulada. Ausente en una RPC anterior a M10. */
+    val anuladas: Int = 0,
 )
 
 /** Una fila de `admin_import_lote_duplicados` (IM3, KI3-2). */
@@ -3781,13 +3909,18 @@ class AdminV1Gateway private constructor(
             )
         } else {
             val page = transport.getPage(
-                "/rest/v1/preguntas_examen?select=posicion,preguntas!inner($PREGUNTA_LIST_COLUMNS)" +
+                "/rest/v1/preguntas_examen?select=*,preguntas!inner($PREGUNTA_LIST_COLUMNS)" +
                     "&examen_id=eq.${q.examenId}" + filtros.joinToString("") { "&preguntas.$it" } +
                     "&order=posicion.asc$rango",
             )
             AdminPreguntasPageResponse(
                 data = page.body.decodeList<AdminPreguntaExamenListRow>().map {
-                    it.preguntas.toDtoSinDetalle().copy(examenId = q.examenId, posicion = it.posicion)
+                    it.preguntas.toDtoSinDetalle().copy(
+                        examenId = q.examenId,
+                        posicion = it.posicion,
+                        anulada = it.anulada,
+                        motivoAnulacion = it.motivoAnulacion,
+                    )
                 },
                 total = page.total,
                 limit = q.limit,
@@ -3848,7 +3981,12 @@ class AdminV1Gateway private constructor(
                 opciones = opcionesByPregunta[link.preguntaId].orEmpty(),
                 solucion = solucionByPregunta[link.preguntaId],
                 recursos = recursosByPregunta[link.preguntaId].orEmpty(),
-            ).copy(examenId = examenId, posicion = link.posicion)
+            ).copy(
+                examenId = examenId,
+                posicion = link.posicion,
+                anulada = link.anulada,
+                motivoAnulacion = link.motivoAnulacion,
+            )
         }.sortedBy { it.posicion ?: Int.MAX_VALUE }
     }
 
@@ -4114,7 +4252,7 @@ class AdminV1Gateway private constructor(
     fun listExamenesDePregunta(preguntaId: String): List<AdminPreguntaExamenVinculoDto> =
         request(
             "GET",
-            "/rest/v1/preguntas_examen?select=posicion,examenes(id,codigo_examen,titulo,tipo_examen,activo,publicado_en,total_preguntas)" +
+            "/rest/v1/preguntas_examen?select=*,examenes(id,codigo_examen,titulo,tipo_examen,activo,publicado_en,total_preguntas)" +
                 "&pregunta_id=eq.$preguntaId&order=examen_id.asc",
             null,
         ).decodeList<AdminPreguntaExamenVinculoRow>().mapNotNull { it.toDto() }
@@ -4443,10 +4581,62 @@ class AdminV1Gateway private constructor(
     )
 
     // IMPORTACIONES (lote + staging -> importar)
-    fun listLotes(): List<AdminLoteDto> =
-        request("GET", "/rest/v1/lotes_importacion_preguntas?select=*&order=creado_en.desc", null)
+    /**
+     * El historial de lotes, con su [AdminLoteDto.resumen].
+     *
+     * Antes cada lote salia con `staging = []` y el cliente derivaba el resumen de esa lista, asi que el
+     * historial ensenaba SIEMPRE 0/0. Ahora el recuento por estado se pide al servidor
+     * ([resumenesDeLotes]); si no se puede calcular, `resumen = null` y la pantalla lo dice: un 0
+     * inventado seria peor que no decir nada.
+     */
+    fun listLotes(): List<AdminLoteDto> {
+        val lotes = request("GET", "/rest/v1/lotes_importacion_preguntas?select=*&order=creado_en.desc", null)
             .decodeList<LoteRow>()
-            .map { it.toDto(emptyList()) }
+        val resumenes = resumenesDeLotes(lotes.mapNotNull { it.id })
+        return lotes.map { lote -> lote.toDto(emptyList()).copy(resumen = lote.id?.let { resumenes?.get(it) }) }
+    }
+
+    /**
+     * Recuento por estado de las filas de staging de [loteIds], o `null` si no se pudo calcular.
+     *
+     * Lee SOLO `lote_id,estado_parseo`, en bloques de [LOTE_SUMMARY_IDS_PER_REQUEST] lotes y PAGINANDO
+     * hasta llegar al total que dice `Content-Range` (`getPage` lo exige): PostgREST corta en silencio en
+     * su `max-rows`, y un recuento sobre la primera pagina seria un resumen falso sin ningun error.
+     * Un lote sin filas devuelve ceros de verdad (se leyo y no hay nada).
+     */
+    private fun resumenesDeLotes(loteIds: List<String>): Map<String, AdminLoteResumenDto>? {
+        val ids = loteIds.mapNotNull { runCatching { it.validatedUuid("loteId") }.getOrNull() }
+        if (ids.isEmpty()) return emptyMap()
+        return try {
+            val estados = HashMap<String, MutableList<String>>()
+            ids.chunked(LOTE_SUMMARY_IDS_PER_REQUEST).forEach { chunk ->
+                var offset = 0
+                while (true) {
+                    val page = transport.getPage(
+                        "/rest/v1/preguntas_parseadas_staging?select=lote_id,estado_parseo" +
+                            "&lote_id=in.(${chunk.joinToString(",")})&order=lote_id.asc,posicion.asc" +
+                            "&limit=$LOTE_SUMMARY_PAGE_SIZE&offset=$offset",
+                    )
+                    val rows = page.body.decodeList<StagingEstadoRow>()
+                    rows.forEach { estados.getOrPut(it.loteId) { mutableListOf() } += it.estadoParseo }
+                    offset += rows.size
+                    if (rows.isEmpty() || offset >= page.total) break
+                }
+            }
+            ids.associateWith { id -> resumenDeEstados(estados[id].orEmpty()) }
+        } catch (error: Exception) {
+            PdfImportLogger.warn("Resumen de lotes no calculable: {}", error::class.simpleName)
+            null
+        }
+    }
+
+    private fun resumenDeEstados(estados: List<String>) = AdminLoteResumenDto(
+        listas = estados.count { it == "ok" || it == "aprobada" },
+        conError = estados.count { it == "error" },
+        advertencias = estados.count { it == "advertencia" },
+        omitidas = estados.count { it == "omitida" },
+        importadas = estados.count { it == "importada" },
+    )
 
     /**
      * El lote con sus filas y, si todavía no está publicado, los duplicados
@@ -4472,6 +4662,8 @@ class AdminV1Gateway private constructor(
         return lote.toDto(
             staging = staging.map { row -> row.toDto().copy(duplicado = duplicados?.get(row.id.orEmpty())) },
             duplicadosComprobados = lote.estado == "importado" || duplicados != null,
+            // Derivado de las filas leidas; si faltan filas (max-rows), no se afirma nada.
+            resumen = resumenDeEstados(staging.map { it.estadoParseo }).takeIf { staging.size >= lote.totalDetectadas },
         )
     }
 
@@ -4523,6 +4715,9 @@ class AdminV1Gateway private constructor(
      *   más común. Ese INSERT fallaba DESPUÉS del lote y dejaba un lote huérfano con
      *   `total_detectadas = N` y cero filas: el error más frecuente del PDF rompía
      *   precisamente la revisión que existe para arreglarlo.
+     * - **Se valida TODO antes de escribir.** Las filas de staging se construyen (y por tanto se
+     *   validan: motivo sin anulada, estado desconocido…) antes del INSERT del lote; si alguna
+     *   lanza, no se ha escrito nada y no queda lote huérfano.
      * - **Se compensa.** Si el INSERT de staging falla igualmente, se borra el lote
      *   (las filas caen por FK). Un lote vacío en el historial no se puede publicar ni
      *   corregir, sólo confundir.
@@ -4544,6 +4739,42 @@ class AdminV1Gateway private constructor(
             throw domainError("IMPORT_TYPE_MISMATCH")
         }
         val loteId = UUID.randomUUID().toString()
+        // Se construyen y VALIDAN todas las filas de staging ANTES de escribir nada: una fila que
+        // lanza (motivo sin anulada, estado desconocido...) no puede dejar un lote huérfano ya insertado.
+        val rows = req.preguntas.mapIndexed { i, p ->
+            StagingRow(
+                id = UUID.randomUUID().toString(),
+                loteId = loteId,
+                posicion = if (p.posicion > 0) p.posicion else i + 1,
+                bloqueOriginal = p.bloqueOriginal.ifBlank { p.titulo },
+                titulo = p.titulo,
+                opcionA = p.opcionA,
+                opcionB = p.opcionB,
+                opcionC = p.opcionC,
+                opcionD = p.opcionD,
+                // NULL si no es una de las cuatro letras: el CHECK vivo sólo admite
+                // A–D o NULL, y la fila que trae una respuesta ilegible es justo la
+                // que tiene que llegar a revisión.
+                respuestaCorrecta = p.respuestaCorrecta.trim().uppercase().takeIf { it in RAFAGA_OPTION_LETTERS },
+                razonamiento = p.razonamiento,
+                fuenteTexto = p.fuenteTexto,
+                etiquetaTexto = p.etiquetaTexto,
+                // Ya no es siempre `"ok"`: `crearLoteDesdePdf` manda ahora
+                // filas en `"error"` o `"advertencia"` para que exista la etapa
+                // de revisión. Un estado en blanco sigue significando `"ok"`.
+                estadoParseo = requireKnownStagingState(p.estadoParseo.ifBlank { "ok" }),
+                errorParseo = p.errorParseo?.takeIf { it.isNotBlank() },
+                anulada = p.anulada,
+                // Una fila `error` puede traer un motivo ilegible (sin ESTADO: ANULADA, o de mas de 500):
+                // viaja al staging SIN el, que sigue en `bloque_original` y en `error_parseo`. Romper aqui el
+                // INSERT tiraria el lote entero por la errata de una sola fila. Las demas filas son estrictas.
+                motivoAnulacion = if (p.estadoParseo == "error") {
+                    runCatching { normalizedAnnulmentReason(p.anulada, p.motivoAnulacion) }.getOrNull()
+                } else {
+                    normalizedAnnulmentReason(p.anulada, p.motivoAnulacion)
+                },
+            )
+        }
         request(
             "POST", "/rest/v1/lotes_importacion_preguntas",
             sbJson.encodeToString(
@@ -4562,31 +4793,6 @@ class AdminV1Gateway private constructor(
             prefer = "return=minimal",
         )
         if (req.preguntas.isNotEmpty()) {
-            val rows = req.preguntas.mapIndexed { i, p ->
-                StagingRow(
-                    id = UUID.randomUUID().toString(),
-                    loteId = loteId,
-                    posicion = if (p.posicion > 0) p.posicion else i + 1,
-                    bloqueOriginal = p.bloqueOriginal.ifBlank { p.titulo },
-                    titulo = p.titulo,
-                    opcionA = p.opcionA,
-                    opcionB = p.opcionB,
-                    opcionC = p.opcionC,
-                    opcionD = p.opcionD,
-                    // NULL si no es una de las cuatro letras: el CHECK vivo sólo admite
-                    // A–D o NULL, y la fila que trae una respuesta ilegible es justo la
-                    // que tiene que llegar a revisión.
-                    respuestaCorrecta = p.respuestaCorrecta.trim().uppercase().takeIf { it in RAFAGA_OPTION_LETTERS },
-                    razonamiento = p.razonamiento,
-                    fuenteTexto = p.fuenteTexto,
-                    etiquetaTexto = p.etiquetaTexto,
-                    // Ya no es siempre `"ok"`: `crearLoteDesdePdf` manda ahora
-                    // filas en `"error"` o `"advertencia"` para que exista la etapa
-                    // de revisión. Un estado en blanco sigue significando `"ok"`.
-                    estadoParseo = requireKnownStagingState(p.estadoParseo.ifBlank { "ok" }),
-                    errorParseo = p.errorParseo?.takeIf { it.isNotBlank() },
-                )
-            }
             try {
                 request("POST", "/rest/v1/preguntas_parseadas_staging", sbJsonBulk.encodeToString(rows), prefer = "return=minimal")
             } catch (error: Exception) {
@@ -4678,6 +4884,9 @@ class AdminV1Gateway private constructor(
                     // explicación de una Ráfaga no se va a publicar.
                     estadoParseo = if (p.advertencia != null) "advertencia" else "ok",
                     errorParseo = p.advertencia,
+                    // La anulacion es ortogonal al estado de parseo: una anulada valida es `ok`.
+                    anulada = p.anulada,
+                    motivoAnulacion = p.motivoAnulacion,
                 )
             } + parsed.bloquesConError.map { b ->
                 AdminStagingItemDto(
@@ -4694,6 +4903,8 @@ class AdminV1Gateway private constructor(
                     etiquetaTexto = b.etiquetas,
                     estadoParseo = "error",
                     errorParseo = b.detalle,
+                    anulada = b.anulada,
+                    motivoAnulacion = b.motivoAnulacion,
                 )
             }
             ).sortedBy { it.posicion }
@@ -4727,6 +4938,16 @@ class AdminV1Gateway private constructor(
      * Con cualquier otro estado el puntero quedaría guardado sin que nadie lo use, y
      * una fila omitida con destino de vínculo es una contradicción que la RPC tendría
      * que resolver adivinando.
+     *
+     * Por la misma razón, OMITIR una fila escribe `vincular_pregunta_id = NULL` explícito
+     * (igual que aprobar sin vínculo): el cliente envía `vincularPreguntaId: null` y afirma que
+     * el puntero se borra; antes quedaba «no tocar» y la fila omitida conservaba el vínculo
+     * de una aprobación anterior. Con `ok`/`error`/`advertencia` el puntero no se toca.
+     *
+     * ### El PATCH reemplaza la fila ENTERA (decisión aceptada)
+     *
+     * Un cliente antiguo que omita `anulada` desanula la fila; el cliente actual manda siempre
+     * `anulada`. Orden de despliegue: MIGRACIÓN M10 PRIMERO en MAIN y después Ktor.
      */
     fun updateStaging(id: String, item: AdminStagingItemDto): AdminStagingItemDto {
         // Dos de los estados los elige el CLIENTE (`aprobada`, `omitida`) y esto los
@@ -4739,6 +4960,7 @@ class AdminV1Gateway private constructor(
             "La respuesta correcta tiene que ser A, B, C o D."
         }
         val vincular = item.vincularPreguntaId?.takeIf { it.isNotBlank() }?.validatedUuid("vincularPreguntaId")
+        val motivoAnulacion = normalizedAnnulmentReason(item.anulada, item.motivoAnulacion)
         require(vincular == null || estado == "aprobada") {
             "Para vincular con una pregunta existente, la fila tiene que quedar aprobada."
         }
@@ -4755,12 +4977,17 @@ class AdminV1Gateway private constructor(
             etiquetaTexto = item.etiquetaTexto,
             estadoParseo = estado,
             errorParseo = if (decidida) JsonNull else null,
-            // Ausente = no se toca; `null` explícito = deshacer el vínculo elegido.
+            // Ausente = no se toca; `null` explícito = deshacer el vínculo elegido. Aprobar sin
+            // vínculo y OMITIR son decisiones finales: ambas borran el puntero (una fila omitida
+            // con el vínculo de cuando estaba aprobada sería la contradicción que el KDoc prohíbe).
             vincularPreguntaId = when {
                 vincular != null -> JsonPrimitive(vincular)
-                estado == "aprobada" -> JsonNull
+                decidida -> JsonNull
                 else -> null
             },
+            // La fila se reemplaza entera: anulada siempre viaja, y el motivo con ella (`null` lo borra).
+            anulada = item.anulada,
+            motivoAnulacion = motivoAnulacion?.let { JsonPrimitive(it) } ?: JsonNull,
         )
         return request(
             "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.$id",
@@ -4825,6 +5052,7 @@ class AdminV1Gateway private constructor(
                 vinculadas = resultado.vinculadas,
                 omitidas = resultado.omitidas,
                 totalImportadas = resultado.totalImportadas,
+                anuladas = resultado.anuladas,
             ),
         )
     }
@@ -4844,6 +5072,7 @@ class AdminV1Gateway private constructor(
     private fun LoteRow.toDto(
         staging: List<AdminStagingItemDto>,
         duplicadosComprobados: Boolean = true,
+        resumen: AdminLoteResumenDto? = null,
     ) = AdminLoteDto(
         id = id.orEmpty(),
         examenId = examenId,
@@ -4854,6 +5083,7 @@ class AdminV1Gateway private constructor(
         totalImportadas = totalImportadas,
         staging = staging,
         duplicadosComprobados = duplicadosComprobados,
+        resumen = resumen,
     )
 
     // FEEDBACK + AUDITORIA
@@ -5630,14 +5860,27 @@ class AdminV1Gateway private constructor(
         }
     }
 
+    /**
+     * Concede (o actualiza) un acceso manual a un examen.
+     *
+     * `accessType` se normaliza contra el CHECK vivo de
+     * `contenido_desbloqueado_usuario.motivo` ([CANONICAL_UNLOCK_REASONS]) ANTES de
+     * cualquier lectura o escritura: un valor fuera del conjunto se rechaza con 422
+     * y no sale ni una petición hacia PostgREST.
+     *
+     * DEUDA P2 conocida (no se toca aquí): `userName` y `examTitle` se resuelven por
+     * nombre/título ([findPerfil]/[findExamen]) recorriendo la tabla completa; un
+     * título duplicado o un nombre ambiguo elige el primero. Debería recibir ids.
+     */
     fun upsertExamAccess(input: AdminExamAccessDto): AdminExamAccessDto {
+        val motivo = canonicalUnlockReasonOrReject(input.accessType)
         val user = findPerfil(input.userName)
         val exam = findExamen(input.examTitle)
         val row = ContenidoDesbloqueadoInsertRow(
             id = input.id.ifBlank { UUID.randomUUID().toString() },
             usuarioId = user.usuarioId,
             examenId = exam.id,
-            motivo = input.accessType.ifBlank { "manual" },
+            motivo = motivo,
             validoHasta = null,
         )
         return request(
