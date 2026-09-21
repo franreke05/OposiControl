@@ -326,3 +326,31 @@ Changed behaviour:
 | `PATCH /api/v1/admin/examenes/{id}` (`ADMIN-002`) | Merge-patch (RFC 7396) **sólo** en `comunidad_id`, `anio` y `duracion_minutos` (lista cerrada `CLEARABLE_EXAMEN_COLUMNS`, `AdminV1Routes.kt`). Si la clave llega con `null`, la columna pasa a NULL; si la clave no llega, la columna no se toca. Antes, un `null` se omitía al reenviar a PostgREST y la columna no cambiaba: pasar un examen a Nacional, o vaciar el año o la duración, no se guardaba. El resto de columnas conserva el comportamiento anterior. `total_preguntas`, `portada_*` y `publicado_en` no se tocan aunque lleguen con `null`. Un cuerpo inválido devuelve el mismo `400` genérico. El único cliente que envía siempre las tres claves es el PATCH del editor de examen. El guardado de ráfaga no las envía, así que no las borra (ver EXAM-001 en `../registry/RISKS.md`). |
 
 El merge-patch está cubierto por `AdminV1ExamQuestionsTest`, con mutación. Ninguna de las dos rutas se ha ejercitado contra un Ktor en marcha: `LIVE_DATA_RUNTIME: NOT_VERIFIED`.
+
+## Pregunta anulada por examen (M10) — 2026-09-19
+
+Cambios aditivos, verificados en código (`AppV1Routes.kt`, `SupabaseV1Gateway.kt`, `AdminV1Routes.kt`) y probados por E2E LIVE contra MAIN el 2026-09-19. La anulación pertenece a la relación `preguntas_examen`, nunca a `preguntas`: la misma pregunta puede estar anulada en un examen y normal en otro.
+
+| Endpoint | Cambio |
+|---|---|
+| `GET /api/v1/app/examenes/{id}` (`APP-003`) | Sirve todas las preguntas activas en su posición; cada una trae `anulada` (siempre presente) y `motivoAnulacion` (sólo si anulada). Nuevo `totalEvaluables` = activas y no anuladas |
+| `POST /api/v1/app/examenes/{id}/iniciar` (`APP-004`) | `total_preguntas` del intento = evaluables (activas y no anuladas) |
+| `POST /api/v1/app/intentos/{id}/responder` (`APP-005`) | Sobre una anulada: 200 con `anulada=true`, `esCorrecta=false` (sin significado) y `opcionCorrectaId`; no guarda respuesta ni puntúa. **La app debe leer `anulada` antes de `esCorrecta`** |
+| `POST /api/v1/app/intentos/{id}/finalizar` (`APP-006`) | Excluye respuestas de anuladas; `total_sin_responder = max(0, evaluables − respondidas)`. Fórmula sin cambios: `porcentaje = correctas/respondidas`, `puntuacion = correctas` |
+| `GET /v1/examenes/{examenId}/preguntas` (`V1-004`, Ráfaga público) | Cada pregunta trae `anulada` y `motivoAnulacion`. Este endpoint no puntúa |
+| `PATCH /api/v1/admin/importaciones/staging/{id}` (`ADMIN-012`) | El item lleva `anulada`/`motivoAnulacion`; el PATCH reemplaza la fila entera (un cliente que omita `anulada` la desanula, DEBT-055) |
+| `POST /api/v1/admin/importaciones/{loteId}/importar` (`ADMIN-013`) | Cuerpo opcional `confirmarExamenPublicado`; la respuesta añade `resultado.anuladas`. Idempotente: lote ya importado ⇒ `ejecutado:false` |
+
+Orden de despliegue: **M10 (`supabase/migrations/20260919122139_annulled_questions_in_exams.sql`) primero en MAIN, Ktor después** (RISKS.md IMP-003).
+
+## Accesos y sincronización de roles — 2026-09-21
+
+Verificado en código (`AdminV1Routes.kt`, `BackendErrors.kt`) y probado en vivo contra MAIN (smoke con Ktor real y usuarios E2E desechables, borrados al final).
+
+| Endpoint | Contrato |
+|---|---|
+| `POST /api/v1/admin/accesos` (`ADMIN-027`) | Cuerpo `AdminExamAccessDto` (`id`, `userName`, `examTitle`, `accessType`, `isActive`); responde 201. **`accessType` es un vocabulario CERRADO** que espeja la CHECK viva `contenido_desbloqueado_usuario_motivo_check`: `premium`, `compra`, `regalo`, `admin`, `promocion`. El valor se recorta y pasa a minúsculas; `manual` y el vacío equivalen a `admin` (alias del cliente antiguo); cualquier otro valor ⇒ **422 `EXAM_ACCESS_GRANT_TYPE_UNKNOWN`** (código serializado en minúsculas, `exam_access_grant_type_unknown`), sin ninguna escritura y sin devolver la entrada. Antes del 2026-09-21 el cliente mandaba `manual` por defecto y la base lo rechazaba siempre con 422 `check_violation`: conceder un acceso con la acción por defecto era imposible (P1, corregido). Usuario y examen se resuelven por nombre/título (`userName`/`examTitle`; también acepta el UUID): deuda P2 DEBT-067 |
+| `POST /api/v1/admin/usuarios/{id}/roles` (`ADMIN-019`) | Cuerpo `{roleIds:[uuid…]}`; path y cuerpo se validan como UUID antes de cualquier petición upstream (400). Llama a `public.admin_sync_roles`, instalada en MAIN el 2026-09-21 (`20260921071916`; antes no existía y esta ruta fallaba con PGRST202). Errores de la guarda, traducidos en `BackendErrors.kt` sin SQL ni ids: **422 `role_sync_empty_roles`** (un usuario administrativo no puede quedarse sin roles; los roles quedan intactos), **422 `role_sync_unknown_role`** (algún rol no existe), **422 `role_sync_invalid_user`** (usuario inexistente), **409 `role_sync_last_superadmin`** (la operación dejaría 0 superadmins partiendo de ≥1; con otro superadmin vivo degradar sí se permite; dos degradaciones simultáneas de los dos únicos superadmins ⇒ una 200 y otra 409). Un sistema sin superadmins (MAIN hoy) no queda bloqueado: sólo se veta provocar la transición |
+| `POST /api/v1/admin/usuarios/{id}/roles` — acceso a la RPC | La RPC directa está denegada a `anon` (401) y a un usuario autenticado sin `service_role` (403); sólo `service_role` (Ktor) puede ejecutarla |
+
+Nota de recorrido (rutas de Usuarios, Competición y OpositTickets ya catalogadas arriba): smoke live 2026-09-21, 39/39 checks PASS — usuarios (listado, get, ficha, 404, 403 sin rol admin), competición (catálogo de ligas de 5 niveles, ranking global, ranking de liga, posición de usuario sin datos inventados, búsqueda, id no UUID ⇒ 400) y OpositTickets (dos concesiones con la MISMA `idempotencyKey` ⇒ mismo saldo y UN movimiento en `transacciones_cartera`; clave nueva suma; cantidad 0 ⇒ 422).

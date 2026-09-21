@@ -44,11 +44,43 @@ All seven are byte-identical between MAIN's `supabase_migrations.schema_migratio
 
 Backup and rollback, in MAIN and in the repo: `private.preguntas_especialidad_backup_20260919` (the 3 `pregunta_id → especialidad_id` pairs at apply time), `private.m8_previous_definitions_20260919` (the exact previous definition of the 5 functions and the trigger) and `supabase/canonical/questions_without_specialty_m8/ROLLBACK.sql`. Both `private.*` tables are safe to drop once the rollback can no longer be wanted (tracked as DEBT-050). Applied through `apply_migration` with the file's SQL **minus comments**, so the file in `supabase/migrations/` is not byte-identical to `schema_migrations.statements` (functionally identical; the comments carry the rationale). Not proven by the embedded-Postgres suite: `dry_run_fixture/002_content_live_shape.sql` is the pre-M2 shape and does not replay M2–M8; M8 was proven live (see `docs/brain/CURRENT_STATE.md`).
 
+### M10 — pregunta anulada por el tribunal en un examen (2026-09-19)
+
+| Version | Name | What it does |
+|---|---|---|
+| `20260919122139` | `annulled_questions_in_exams` (M10) | **La anulación pertenece a la RELACIÓN `preguntas_examen`, nunca a `preguntas`**: `anulada boolean not null default false` y `motivo_anulacion text` (sólo con `anulada`, no vacío, ≤ 500; CHECK `preguntas_examen_anulada_motivo_chk`). Las mismas dos columnas (y CHECK) en `preguntas_parseadas_staging`. La misma pregunta puede estar anulada en un examen y normal en otro. Reescribe: `admin_link_question_to_exam` (firma nueva de 5 args: `+p_anulada`, `+p_motivo_anulacion`), `admin_create_question` (14 args), `admin_import_lote_preguntas` (sigue siendo UNA transacción; devuelve `anuladas`; exige confirmación si cambia una relación de un examen publicado; el tope de 200 cuenta sólo relaciones nuevas), `record_answer` (una anulada NO puntúa: no guarda respuesta, devuelve `es_correcta` NULL y la opción correcta) y el trigger de staging inmutable (`tg_staging_inmutable_tras_importar` incluye `anulada`/`motivo_anulacion`). Las firmas antiguas se eliminan (sin sobrecargas). EXECUTE sólo `service_role`. |
+
+- **Aplicada en MAIN** `ndiooyyqtaeysnedywer` (versión de MAIN `20260919122139`; el archivo de `supabase/migrations/` lleva la misma versión).
+- **Respaldo**: `private.m10_previous_definitions_20260919` (definiciones exactas previas de las 5 funciones/trigger; RLS activado, sin acceso para `public`/`anon`/`authenticated`). Borrable cuando el rollback ya no pueda hacer falta (junto con las de M8, DEBT-050).
+- **Rollback / preflight**: `supabase/canonical/annulled_questions_m10/ROLLBACK.sql` (una transacción; **aborta** si existe alguna relación o fila de staging anulada, porque quitar las columnas devolvería esa pregunta al cómputo de la nota; restaura las definiciones guardadas y elimina columnas y CHECK; ejecutar con `execute_sql`/`psql`, no con `apply_migration`) y `PREFLIGHT.sql` (sólo SELECT; todas las filas deben decir OK).
+- **Orden de despliegue: M10 primero, Ktor después** (RISKS.md IMP-003, DEBT-056): un Ktor con `anulada` contra una BD sin M10 falla al escribir.
+- **Deuda asociada**: estadísticas agregadas no excluyen anulaciones posteriores (DEBT-060); `validar_y_calcular_respuesta_intento` no rechaza escrituras directas (DEBT-061); sin test SQL reproducible (DEBT-062).
+- **Verificación**: E2E LIVE contra MAIN vía Ktor real, 74/74 checks (véase `docs/product/domains/PDF_IMPORT.md`); los datos de prueba se borraron y MAIN volvió a 3 preguntas / 2 vínculos / 3 exámenes / 0 lotes.
+
+### Drift de historial de migraciones (informe 2026-09-19)
+
+MAIN tiene 18 versiones en `supabase_migrations.schema_migrations` sin archivo correspondiente en `supabase/migrations/` (sus fuentes viven en `supabase/canonical/`), y M10 lleva en MAIN la versión `20260919122139`. Cifra tomada del informe de cierre de la sesión, no recontada aquí. Registrado como DEBT-063 (P3). La equivalencia byte a byte entre el archivo de M10 y `schema_migrations.statements` no se recontrastó en esta pasada (M8 sí se aplicó sin comentarios, véase arriba).
+
 **Governance note:** M5, M7, IM1 and IM3 were applied by a process outside this session's own review pipeline (IM3 was not in the owner's original authorization). Discovered mid-session, disclosed to the owner immediately, and resolved: an independent retroactive audit certified all four as technically sound, the owner ratified IM3, and this session then independently re-verified all seven live before continuing. See `docs/brain/CURRENT_STATE.md` → "INICIO + CONTENIDO closure" for the full narrative.
 
 Known residual gap, not closed by M7: `storage.objects`' policy for premium immersive-exam resources still lacks the `publicado_en` check that the six public-schema tables got (ownership prevented the ALTER). Tracked informally; not yet in `TECH_DEBT.md` as its own line since it's currently inert (inherits protection transitively) — worth a dedicated entry if `storage.objects` ownership is ever fixed to allow the ALTER.
 
-## Role sync guard candidate — 2026-09-12
+## Guarda de roles instalada en MAIN — 2026-09-21
+
+| Version | Name | What it does |
+|---|---|---|
+| `20260921071916` | `role_sync_guard` | Instala `public.admin_sync_roles(uuid, uuid[])` y su helper `public.admin_role_code_canonical(text)`. Archivo: `supabase/migrations/20260921071916_role_sync_guard.sql`; origen: `supabase/canonical/role_sync_guard_candidate_v1/001` (sin los `begin`/`commit` propios: `apply_migration` ya es transaccional). |
+
+- **Instalación LIMPIA, no reemplazo.** Antes de esta fecha `public.admin_sync_roles` NO existía en MAIN (sólo `has_role`/`has_any_role`). `AdminV1Gateway.syncRoles` (`AdminV1Routes.kt`, `POST /api/v1/admin/usuarios/{id}/roles`) llamaba a una RPC inexistente, así que «guardar roles» de Usuarios fallaba con PGRST202. La función de `docs/supabase/20260624_admin_atomic_operations.sql` nunca estuvo desplegada en MAIN. Por eso lo que dice la sección de abajo («reemplaza el cuerpo», «`APPLY_PENDING_APPROVAL`») y las afirmaciones de otros documentos de que «tiene éxito hoy en MAIN» son falsas o están SUPERADAS.
+- **Estado verificado (VERIFIED_LIVE 2026-09-21).** `admin_sync_roles(uuid,uuid[])`: `SECURITY DEFINER`, `search_path=""`, `row_security=off`, `volatile`, ACL `{postgres, service_role}` (anon/authenticated sin EXECUTE, comprobado). `admin_role_code_canonical(text)`: inmutable y ejecutable por PUBLIC a propósito (el propietario de la guarda necesita EXECUTE sobre él; no toca tablas).
+- **Invariantes** (códigos levantados con `raise exception`): `ROLE_SYNC_INVALID_USER`, `ROLE_SYNC_UNKNOWN_ROLE`, `ROLE_SYNC_EMPTY_ROLES` (un administrativo no puede quedarse sin roles) y `ROLE_SYNC_LAST_SUPERADMIN` (sólo bloquea la TRANSICIÓN antes>0 → después=0; MAIN hoy tiene 0 superadmins y 1 fila en `roles_usuario` con rol `admin`, así que no bloquea nada heredado).
+- **Rollback EXACTO de la instalación limpia:** `drop function public.admin_sync_roles(uuid, uuid[]); drop function public.admin_role_code_canonical(text);`. El fichero `002_rollback_admin_sync_roles.sql` del paquete candidato NO sirve para esto: restaura la versión sin guarda de `docs/supabase/20260624`, que no es lo que había en MAIN. Revertir reabre SEC-006 (y deja «guardar roles» otra vez sin RPC).
+- **Evidencia.** `:backend:dbtest` (RoleSync*, PostgreSQL 16 embebido) 45/45 tras `cleanTest` (9 suites). SMOKE LIVE contra Ktor real con usuarios E2E desechables (`E2E_TEST_SMOKE_*`, borrados; MAIN volvió a 1 fila en `roles_usuario`, 0 superadmins, 3 preguntas): asignar rol OK; array vacío a un administrativo → 422 `role_sync_empty_roles` con roles intactos; rol inexistente → 422 `role_sync_unknown_role`; usuario inexistente → 422 `role_sync_invalid_user`; dos degradaciones SIMULTÁNEAS de los dos únicos superadmins → 1×200 y 1×409 `role_sync_last_superadmin` y queda 1 superadmin; retirar el último superadmin → 409; con otro superadmin vivo degradar SÍ se permite; la RPC directa desde anon (401) y desde un usuario autenticado (403) está denegada.
+- **Alcance de la protección** (heredado de la cabecera del SQL): protege a quien llama a la RPC; un `DELETE`/`INSERT` directo sobre `roles_usuario` con la clave de `service_role` no toma el cerrojo ni pasa por las comprobaciones (una invariante de BD completa exigiría un constraint trigger diferido; fuera de alcance).
+- **RPC legada aún en MAIN, sin uso:** `rpc_grant_exam_access(integer,integer,...)` con ids enteros; Ktor no la llama (Accesos escribe directamente en `contenido_desbloqueado_usuario`).
+- **RPC que Ktor invoca y NO existen en MAIN (2026-09-21):** `admin_replace_search_index` y `admin_upsert_search_entry` (`TagSearchGateway.kt:144,188`; definidas sólo en `docs/supabase/20260624_admin_atomic_operations.sql`). Ver DEBT-068 y RISKS LEG-003.
+
+## Role sync guard candidate — 2026-09-12 (HISTÓRICO: SUPERADO 2026-09-21 por la instalación de arriba; el texto que sigue describe el candidato, no el estado de MAIN)
 
 `supabase/canonical/role_sync_guard_candidate_v1/` reemplaza el cuerpo de
 `public.admin_sync_roles(uuid, uuid[])` por una versión con guarda. La función
@@ -63,7 +95,7 @@ transición de ≥1 a 0 superadministradores— serializadas con
 después de escribir, de modo que el `raise exception` deshace la operación
 entera. Estilo calcado de `product_metrics_candidate_v1/010_admin_grant_tickets.sql`.
 
-Clasificación: `APPLY_PENDING_APPROVAL`. `MAIN_WRITES: NONE`. No se ejecutó
+Clasificación (SUPERADA 2026-09-21: aplicada como `20260921071916`): `APPLY_PENDING_APPROVAL`. `MAIN_WRITES: NONE`. No se ejecutó
 contra ninguna base de datos. El esquema se ancla en
 `supabase/canonical/dry_run_fixture/001_live_shape.sql:14-25` y en los DTO Kotlin
 que ya leen esas tablas, no en un volcado real: antes de aplicarlo hay que
