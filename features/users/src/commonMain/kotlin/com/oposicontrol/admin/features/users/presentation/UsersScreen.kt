@@ -25,7 +25,6 @@ import androidx.compose.ui.window.Dialog
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.ButtonSize
 import com.oposicontrol.admin.core.ui.components.ConfirmDialog
-import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
 import com.oposicontrol.admin.core.ui.components.DesktopVerticalScrollbar
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.GlassSurface
@@ -63,7 +62,7 @@ internal fun UsersContent(
     onIntent: (UsersIntent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    CrudSplitLayout(
+    UsersSplit(
         modifier = modifier,
         listPane = {
             UsersListPane(
@@ -72,31 +71,36 @@ internal fun UsersContent(
                 onSelect = { onIntent(UsersIntent.SelectUser(it)) },
             )
         },
-        detailPane = {
+        detailPane = { embedded ->
             if (state.selectedUser == null) {
                 EmptyStateCard(
                     title = "Sin usuario seleccionado",
                     message = "Elige a alguien del catálogo para ver su ficha y editar su nombre y sus roles.",
                     icon = AppIcon.USERS,
                 )
+            } else if (embedded) {
+                // Apilado: la pantalla entera desplaza (ver `UsersSplit`); la ficha sólo
+                // se compone a su altura natural.
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                    UserDetailWorkspace(state = state, onIntent = onIntent)
+                    UserCapabilitiesNotice()
+                }
             } else {
-                // La columna de detalle desplaza. `CrudSplitLayout` no lo hace por
-                // sí mismo, y aquí hay editor + ficha por pestañas + el bloque de
-                // capacidades: en una pantalla de 1080 de alto, todo lo que queda
-                // por debajo del pliegue era sencillamente inalcanzable.
-                //
-                // A diferencia de Exámenes, aquí el scroll de página sí vale: no
-                // hay barra de guardar anclada al fondo que se perdería al bajar.
+                // La columna de detalle desplaza: hay cabecera, métricas, pestañas, editor y
+                // el bloque de capacidades, y en una pantalla de 1080 de alto todo lo que
+                // queda por debajo del pliegue sería inalcanzable. A diferencia de Exámenes,
+                // aquí el scroll de página sí vale: no hay barra de guardar anclada al fondo
+                // que se perdería al bajar.
                 val detailScroll = rememberScrollState()
                 Box(modifier = Modifier.fillMaxSize()) {
                     Column(
-                        modifier = Modifier.fillMaxSize().verticalScroll(detailScroll),
+                        modifier = Modifier.fillMaxSize().verticalScroll(detailScroll).padding(end = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(Spacing.md),
                     ) {
-                        UserEditorPane(state = state, onIntent = onIntent)
-                        // Ficha de solo lectura: rendimiento, liga, economía y
-                        // comunidad. Estado propio, así que su fallo no impide editar.
-                        UserDetailPanel(state)
+                        // Cabecera de la persona, métricas, pestañas y el contenido de la
+                        // pestaña abierta. La ficha tiene estado propio: que falle una
+                        // sección no impide editar el nombre ni los roles.
+                        UserDetailWorkspace(state = state, onIntent = onIntent)
                         // Al final: lo que la pantalla no puede hacer es referencia,
                         // no debe mandar sobre los datos de la persona.
                         UserCapabilitiesNotice()

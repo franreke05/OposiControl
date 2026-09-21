@@ -187,6 +187,33 @@ internal object UsersFixtures {
         )
     }
 
+    /**
+     * Una ficha con secciones que faltan y otras que no se pudieron leer: `NO_DATA` y
+     * `NO_DISPONIBLE` conviven en la misma pantalla y cada tarjeta lo dice por su cuenta.
+     */
+    fun fichaParcial(): UsersState {
+        val u = CENSO.first { it.id == "u-4" }
+        return base(selected = u.id).copy(
+            editorName = u.fullName,
+            editorRoleIds = u.roleIds.toSet(),
+            detail = UiAsync.Success(
+                UserDetail(
+                    profile = UserProfile(userId = "u-4", displayName = "Javier Ortega", username = "jortega", onboardingCompleted = false, createdAt = "2026-01-23"),
+                    performance = UserPerformance(finishedExams = 3, answeredQuestions = 120, correctAnswers = 80, successRate = 66.7),
+                    unavailableSections = setOf(UserDetailSection.STREAK, UserDetailSection.SUBSCRIPTIONS, UserDetailSection.TESTER),
+                ),
+            ),
+        )
+    }
+
+    /** La ficha todavía carga; el catálogo y el editor siguen usables. */
+    fun fichaCargando(): UsersState = opositoraSeleccionada().copy(detail = UiAsync.Loading)
+
+    /** La ficha entera no se pudo leer: se dice, y aun así se puede editar el nombre y los roles. */
+    fun fichaCaida(): UsersState = opositoraSeleccionada().copy(
+        detail = UiAsync.Error(AppError.Network("connection refused", code = 503)),
+    )
+
     /** Nombre corregido y todavía sin guardar: la barra tiene que decirlo. */
     fun conCambiosSinGuardar(): UsersState =
         opositoraSeleccionada().copy(editorName = "Ana García Molina")

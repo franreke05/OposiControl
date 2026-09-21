@@ -1,12 +1,17 @@
 package com.oposicontrol.admin.features.users.presentation
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -16,18 +21,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.oposicontrol.admin.core.ui.components.AdminTable
-import com.oposicontrol.admin.core.ui.components.AdminTableColumn
-import com.oposicontrol.admin.core.ui.components.AdminTableRow
+import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AppIcon
-import com.oposicontrol.admin.core.ui.components.AppIconImage
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
-import com.oposicontrol.admin.core.ui.components.DesktopIconButton
-import com.oposicontrol.admin.core.ui.components.FilterBar
-import com.oposicontrol.admin.core.ui.components.GlassChip
-import com.oposicontrol.admin.core.ui.components.Help
+import com.oposicontrol.admin.core.ui.components.DesktopVerticalScrollbar
+import com.oposicontrol.admin.core.ui.components.DropdownField
+import com.oposicontrol.admin.core.ui.components.EmptyStateCard
+import com.oposicontrol.admin.core.ui.components.GlassSearchBar
+import com.oposicontrol.admin.core.ui.components.GlassSurface
+import com.oposicontrol.admin.core.ui.components.SemanticIconContainer
+import com.oposicontrol.admin.core.ui.components.SemanticRole
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.User
@@ -53,45 +58,25 @@ private enum class AccountFilter(val label: String) {
 }
 
 /**
- * Anchos a los que cada columna secundaria empieza a caber.
- *
- * Son umbrales sobre el ancho **del panel**, no sobre el de la ventana, y esa es
- * justo la corrección: `CrudSplitLayout` da a la lista un `weight(0.32f)` con
- * tope de 560dp, así que en una ventana de 1920 —que es WIDE— este panel mide
- * unos 525dp. Decidir las columnas con el breakpoint de ventana metía seis
- * columnas donde caben tres, y «OT» y «Cuenta» se quedaban fuera del scroll
- * horizontal de la tabla: invisibles, no estrechas.
- *
- * Es el mismo error que ya costó un apilado indebido en Preguntas, al revés:
- * allí se aplicó el breakpoint al ancho del contenido, aquí el de la ventana a un
- * panel. La regla que queda: el breakpoint describe la VENTANA; para repartir
- * dentro de un panel se miden umbrales explícitos.
- */
-private object UsersTableWidths {
-    val tickets = 620.dp
-    val role = 820.dp
-    val signup = 1000.dp
-}
-
-/**
  * Catálogo de usuarios.
  *
  * Dos decisiones que vienen de la auditoría del contrato, no del diseño:
  *
- * - Hay una columna **Población**. Esta tabla mezcla a los usuarios de la app con
- *   las cuentas que tienen acceso a este mismo panel, porque ambas son filas de
- *   `perfiles_usuario` y sólo las separa el rol. Antes había que leer la columna
- *   de roles e interpretarla.
- * - La columna de estado dice **Registrado/Invitado** y no Activo/Bloqueado. No
- *   existe bloqueo en el sistema. Ver [USER_NO_BLOCK_STATE_NOTE].
+ * - Cada fila dice la **población** por el color del rol (un rol con acceso al panel
+ *   se lee distinto de uno de opositor): esta lista mezcla a los usuarios de la app
+ *   con las cuentas que tienen acceso a este mismo panel, porque ambas son filas de
+ *   `perfiles_usuario` y sólo las separa el rol.
+ * - El tipo de cuenta dice **Registrado/Invitado** y no Activo/Bloqueado. No existe
+ *   bloqueo en el sistema. Ver [USER_NO_BLOCK_STATE_NOTE].
  *
- * Ya no hay paginación de cliente. La había sobre una lista que el backend sirve
- * paginada de 50 en 50, así que partía en dos páginas de 25 lo que ya era una sola
- * página del servidor — y el pie decía «25 de 50 usuarios» como si 50 fuese el
- * total del sistema. Ahora se enseñan las filas cargadas y se dice que son las
- * primeras. Ver [userListTruncationNote].
+ * No hay paginación de cliente: el backend sirve el catálogo paginado de 50 en 50 y
+ * la pantalla enseña las filas cargadas y dice que son las primeras. Ver
+ * [userListTruncationNote].
+ *
+ * Los filtros son los que YA existían —población, cuenta y rol—, con el mismo estado
+ * local y la misma lógica; sólo cambia cómo se presentan (selectores en línea en vez
+ * de tres filas de chips).
  */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun UsersListPane(
     state: UsersState,
@@ -106,114 +91,100 @@ internal fun UsersListPane(
 
     val rolesById = state.rolesById
     val adminRoleIds = state.adminRoleIds
+    val loaded = (state.users as? UiAsync.Success)?.value
 
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+    GlassSurface(
+        modifier = modifier.fillMaxSize(),
+        shape = RoundedCornerShape(16.dp),
+        shadowElevation = 6.dp,
     ) {
-        FilterBar(
-            searchValue = state.searchQuery,
-            onSearchChange = onSearch,
-            placeholder = "Buscar por nombre o nombre de usuario",
+        Column(
+            modifier = Modifier.fillMaxSize().padding(Spacing.md),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm),
         ) {
-            PopulationFilter.entries.forEach { option ->
-                GlassChip(
-                    label = option.label,
-                    selected = populationFilter == option,
-                    onClick = { populationFilter = option },
-                )
-            }
-        }
-
-        // FlowRow y no Row: en el panel de lista —unos 525dp en 1920— los chips no
-        // caben en una línea, y un `Row` no envuelve: comprime al último hasta
-        // dejarlo en una columna de letras de veinte píxeles de ancho. «Moderador»
-        // salía escrito en vertical. Se vio en la captura, no en la compilación.
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
-        ) {
-            Text(
-                text = "Cuenta",
-                style = MaterialTheme.typography.labelMedium,
-                color = tokens.textSecondary,
-            )
-            AccountFilter.entries.forEach { option ->
-                GlassChip(
-                    label = option.label,
-                    selected = accountFilter == option,
-                    onClick = { accountFilter = option },
-                )
-            }
-        }
-
-        if (state.availableRoles.isNotEmpty()) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
-                Text(
-                    text = "Rol",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = tokens.textSecondary,
-                )
-                GlassChip(
-                    label = "Cualquiera",
-                    selected = roleFilter == null,
-                    onClick = { roleFilter = null },
-                )
-                state.availableRoles.forEach { role ->
-                    GlassChip(
-                        label = role.name,
-                        selected = roleFilter == role.id,
-                        onClick = { roleFilter = if (roleFilter == role.id) null else role.id },
+                SemanticIconContainer(icon = AppIcon.USERS, role = SemanticRole.INFO, size = 40.dp, iconSize = 20.dp)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        text = "Usuarios",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = tokens.textPrimary,
+                    )
+                    Text(
+                        text = loaded?.let { users ->
+                            val shown = filteredUsers(users, state, populationFilter, accountFilter, roleFilter, adminRoleIds).size
+                            userCountLabel(shown = shown, loaded = users.size)
+                        } ?: "Catálogo de usuarios",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.textSecondary,
                     )
                 }
             }
-        }
 
-        AsyncStatePane(
-            state = state.users,
-            emptyTitle = "Sin usuarios",
-            // Sin acción de crear: el alta no se hace desde el panel, y ofrecerla
-            // aquí era prometer algo que terminaba en un error del cliente.
-            emptyMessage = "El sistema no ha devuelto ningún usuario.",
-            emptyIcon = AppIcon.USERS,
-        ) { users ->
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                val showTickets = maxWidth >= UsersTableWidths.tickets
-                val showRole = maxWidth >= UsersTableWidths.role
-                val showSignup = maxWidth >= UsersTableWidths.signup
+            GlassSearchBar(
+                value = state.searchQuery,
+                onValueChange = onSearch,
+                placeholder = "Buscar por nombre o nombre de usuario",
+                modifier = Modifier.fillMaxWidth(),
+            )
 
-                val filtered = users.filter { user ->
-                    matchesSearch(user, state.searchQuery) &&
-                        matchesPopulation(user, populationFilter, adminRoleIds) &&
-                        matchesAccount(user, accountFilter) &&
-                        (roleFilter == null || roleFilter in user.roleIds)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+                verticalAlignment = Alignment.Top,
+            ) {
+                DropdownField(
+                    label = "Población",
+                    selectedLabel = populationFilter.label,
+                    options = PopulationFilter.entries.map { it.name to it.label },
+                    onSelect = { id ->
+                        populationFilter = PopulationFilter.entries.firstOrNull { it.name == id } ?: PopulationFilter.TODAS
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                DropdownField(
+                    label = "Cuenta",
+                    selectedLabel = accountFilter.label,
+                    options = AccountFilter.entries.map { it.name to it.label },
+                    onSelect = { id ->
+                        accountFilter = AccountFilter.entries.firstOrNull { it.name == id } ?: AccountFilter.TODAS
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                if (state.availableRoles.isNotEmpty()) {
+                    DropdownField(
+                        label = "Rol",
+                        selectedLabel = state.availableRoles.firstOrNull { it.id == roleFilter }?.name ?: "Cualquiera",
+                        options = listOf<Pair<String?, String>>(null to "Cualquiera") +
+                            state.availableRoles.map { it.id to it.name },
+                        onSelect = { id -> roleFilter = id },
+                        modifier = Modifier.weight(1.4f),
+                    )
                 }
+            }
 
-                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                    // El recuento y el aviso de truncamiento van ENCIMA de la
-                    // tabla, no debajo. Debajo no se leían nunca: `AdminTable` se
-                    // queda con el alto disponible y los empujaba fuera del
-                    // viewport. Y el aviso de truncamiento es justamente la
-                    // corrección de que la lista se quedaba en 50 usuarios sin
-                    // decirlo: invisible, no corregía nada.
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-                    ) {
-                        Text(
-                            text = userCountLabel(shown = filtered.size, loaded = users.size),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = tokens.textSecondary,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-
+            AsyncStatePane(
+                state = state.users,
+                modifier = Modifier.weight(1f),
+                emptyTitle = "Sin usuarios",
+                // Sin acción de crear: el alta no se hace desde el panel, y ofrecerla
+                // aquí era prometer algo que terminaba en un error del cliente.
+                emptyMessage = "El sistema no ha devuelto ningún usuario.",
+                emptyIcon = AppIcon.USERS,
+            ) { users ->
+                val filtered = filteredUsers(users, state, populationFilter, accountFilter, roleFilter, adminRoleIds)
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    // El aviso de truncamiento va ENCIMA de la lista: debajo no se leía
+                    // nunca, y es justo la corrección de que el catálogo se quedaba en 50
+                    // usuarios sin decirlo.
                     userListTruncationNote(users.size)?.let { note ->
                         Text(
                             text = note,
@@ -221,51 +192,52 @@ internal fun UsersListPane(
                             color = tokens.warningInk,
                         )
                     }
-
-                    AdminTable(
-                        columns = buildList {
-                            add(AdminTableColumn("Usuario", 1.5f, minWidth = 150.dp))
-                            add(AdminTableColumn("Población", 0.9f, minWidth = 110.dp))
-                            if (showRole) add(AdminTableColumn("Rol", 0.9f))
-                            if (showSignup) add(AdminTableColumn("Alta", 0.7f))
-                            if (showTickets) {
-                                add(AdminTableColumn("OT", 0.5f, minWidth = 64.dp, numeric = true, help = Help.oposiTickets))
-                            }
-                            add(AdminTableColumn("Cuenta", 0.7f, minWidth = 96.dp))
-                        },
-                        rows = filtered.map { user ->
-                            AdminTableRow(
-                                key = user.id,
-                                cells = buildList {
-                                    add(userDisplayName(user))
-                                    add(userPopulationLabel(userPopulation(user, adminRoleIds)))
-                                    if (showRole) add(userRoleSummary(user, rolesById))
-                                    if (showSignup) add(userSignupDate(user))
-                                    if (showTickets) add(user.ticketsBalance.toString())
-                                    add(userAccountKindLabel(userAccountKind(user)))
-                                },
-                                selected = user.id == state.selectedUserId,
-                                supporting = userAccountName(user),
-                            )
-                        },
-                        onRowClick = onSelect,
-                        emptyTitle = "Sin resultados",
-                        emptyMessage = "Ningún usuario coincide con la búsqueda y los filtros actuales.",
-                        rowActions = { row ->
-                            DesktopIconButton(
-                                label = "Ver ficha de ${row.cells.firstOrNull().orEmpty()}",
-                                onClick = { onSelect(row.key) },
-                                size = 28.dp,
+                    if (filtered.isEmpty()) {
+                        EmptyStateCard(
+                            title = "Sin resultados",
+                            message = "Ningún usuario coincide con la búsqueda y los filtros actuales.",
+                            icon = AppIcon.SEARCH,
+                        )
+                    } else {
+                        val listState = rememberLazyListState()
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                            LazyColumn(
+                                state = listState,
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                             ) {
-                                AppIconImage(AppIcon.VIEW, size = 14.dp)
+                                items(filtered, key = { it.id }) { user ->
+                                    UserRowCard(
+                                        user = user,
+                                        selected = user.id == state.selectedUserId,
+                                        rolesById = rolesById,
+                                        adminRoleIds = adminRoleIds,
+                                        onClick = { onSelect(user.id) },
+                                        modifier = Modifier.padding(end = 6.dp),
+                                    )
+                                }
                             }
-                        },
-                    )
-
+                            DesktopVerticalScrollbar(listState, Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+private fun filteredUsers(
+    users: List<User>,
+    state: UsersState,
+    populationFilter: PopulationFilter,
+    accountFilter: AccountFilter,
+    roleFilter: String?,
+    adminRoleIds: Set<String>,
+): List<User> = users.filter { user ->
+    matchesSearch(user, state.searchQuery) &&
+        matchesPopulation(user, populationFilter, adminRoleIds) &&
+        matchesAccount(user, accountFilter) &&
+        (roleFilter == null || roleFilter in user.roleIds)
 }
 
 private fun matchesSearch(user: User, query: String): Boolean {

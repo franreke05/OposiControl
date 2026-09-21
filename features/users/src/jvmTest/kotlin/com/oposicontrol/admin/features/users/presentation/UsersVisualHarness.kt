@@ -1,7 +1,11 @@
 package com.oposicontrol.admin.features.users.presentation
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -10,13 +14,19 @@ import androidx.compose.ui.test.captureToImage
 // método del propio scope de `runDesktopComposeUiTest`, así que importarlo no
 // resuelve. Mismo juego de imports que `ExamBasicInfoVisualHarness`.
 import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.unit.Density
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.DesktopShell
+import com.oposicontrol.admin.core.ui.components.DesktopTab
+import com.oposicontrol.admin.core.ui.components.DesktopTabs
 import com.oposicontrol.admin.core.ui.components.ShellNavigationGroup
 import com.oposicontrol.admin.core.ui.components.ShellNavigationItem
 import com.oposicontrol.admin.core.ui.theme.AdminTheme
+import com.oposicontrol.admin.core.ui.theme.Spacing
 import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.Test
@@ -93,6 +103,28 @@ class UsersVisualHarness {
         render(Capture("users-aviso-alta.png", 1920, 1080, dark = false), fx.avisoDeAlta())
     }
 
+    /** Las cinco pestañas restantes de la ficha: el mismo lenguaje de tarjetas, no una lista de campos. */
+    @Test
+    fun capturaLasPestanas() {
+        listOf("Rendimiento", "Competición", "Economía", "Comunidad", "Debilidades").forEach { tab ->
+            render(
+                Capture("users-tab-${tab.lowercase().replace("ó", "o").replace("í", "i")}.png", 1920, 1080, dark = false, openTab = tab),
+                fx.opositoraSeleccionada(),
+            )
+        }
+        render(Capture("users-tab-economia-dark.png", 1920, 1080, dark = true, openTab = "Economía"), fx.opositoraSeleccionada())
+    }
+
+    /** `NO_DATA`, `NO_DISPONIBLE` y cargando, cada uno en su tarjeta. */
+    @Test
+    fun capturaLosEstadosParcialesDeLaFicha() {
+        render(Capture("users-ficha-parcial.png", 1920, 1400, dark = false), fx.fichaParcial())
+        render(Capture("users-ficha-parcial-dark.png", 1920, 1400, dark = true), fx.fichaParcial())
+        render(Capture("users-ficha-parcial-rendimiento.png", 1920, 1080, dark = false, openTab = "Rendimiento"), fx.fichaParcial())
+        render(Capture("users-ficha-cargando.png", 1920, 1080, dark = false), fx.fichaCargando())
+        render(Capture("users-ficha-caida.png", 1920, 1400, dark = false), fx.fichaCaida())
+    }
+
     @Test
     fun capturaLosAnchos() {
         render(Capture("users-1600.png", 1600, 900, dark = false), fx.opositoraSeleccionada())
@@ -111,7 +143,14 @@ class UsersVisualHarness {
      * resuelve con `isSystemInDarkTheme()`, y en una máquina con el sistema en
      * oscuro las capturas «de referencia» saldrían oscuras sin que nada lo dijera.
      */
-    private data class Capture(val fileName: String, val width: Int, val height: Int, val dark: Boolean)
+    private data class Capture(
+        val fileName: String,
+        val width: Int,
+        val height: Int,
+        val dark: Boolean,
+        /** Pestaña de la ficha que se abre antes de capturar. */
+        val openTab: String? = null,
+    )
 
     private fun render(capture: Capture, state: UsersState) {
         runDesktopComposeUiTest(width = capture.width, height = capture.height) {
@@ -128,6 +167,10 @@ class UsersVisualHarness {
             // la tipografía del sistema en vez de con Manrope.
             Thread.sleep(FONT_SETTLE_MILLIS)
             waitForIdle()
+            capture.openTab?.let { tab ->
+                onAllNodesWithText(tab).onLast().performClick()
+                waitForIdle()
+            }
 
             // `onRoot()` no sirve aquí: un `Dialog` de escritorio abre una SEGUNDA
             // raíz de composición, así que en los estados con diálogo la aserción
@@ -169,7 +212,21 @@ class UsersVisualHarness {
                 // Sin buscador global: el catálogo tiene el suyo, que sí encuentra.
                 globalSearch = {},
             ) {
-                UsersContent(state = state, onIntent = {})
+                // Las pestañas globales del hub, transcritas de `HubScreens.kt` (`UsersHubTab`):
+                // en la app real `UsersScreen` va debajo de esta fila, así que la captura
+                // tiene que enseñarla para que se vean los DOS niveles de navegación.
+                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                    DesktopTabs(
+                        tabs = listOf(
+                            DesktopTab("users", "Usuarios", AppIcon.USERS),
+                            DesktopTab("competition", "Competición", AppIcon.RANKINGS),
+                            DesktopTab("access", "Accesos", AppIcon.ACCESS),
+                        ),
+                        selectedId = "users",
+                        onSelect = {},
+                    )
+                    UsersContent(state = state, onIntent = {})
+                }
             }
         }
     }
