@@ -24,7 +24,13 @@
         </encoder>
     </appender>
 
+    <appender name="SENTRY" class="io.sentry.logback.SentryAppender">
+        <minimumEventLevel>ERROR</minimumEventLevel>
+        <minimumBreadcrumbLevel>INFO</minimumBreadcrumbLevel>
+    </appender>
+
     <root level="${LOG_LEVEL}">
         <appender-ref ref="STDOUT" />
+        <appender-ref ref="SENTRY" />
     </root>
 </configuration>

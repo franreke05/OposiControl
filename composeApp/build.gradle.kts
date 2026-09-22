@@ -35,6 +35,30 @@ val localSupabasePublicKey = localEnvValue("SUPABASE_ANON_KEY")
     .takeUnless { it.startsWith("sb_secret_", ignoreCase = true) }
     .orEmpty()
 
+val productionDesktopBuild =
+    providers.gradleProperty("oposiProduction").orNull?.toBooleanStrictOrNull() ?: false
+
+val desktopBaseUrl =
+    if (productionDesktopBuild) {
+        "https://api.oposibots.es"
+    } else {
+        localEnvValue("BASE_URL").ifBlank { "http://localhost:8080" }
+    }
+
+val desktopAppEnv =
+    if (productionDesktopBuild) "prod" else "dev"
+
+val desktopSentryEnvironment =
+    if (productionDesktopBuild) "production" else "development"
+
+val desktopSentryDsn =
+    localEnvValue("SENTRY_DESKTOP_DSN")
+
+val desktopSentryRelease =
+    providers.gradleProperty("oposiRelease").orNull
+        ?.trim()
+        .orEmpty()
+
 kotlin {
     androidTarget {
         compilerOptions {
@@ -102,6 +126,7 @@ kotlin {
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
+            implementation("io.sentry:sentry:8.57.0")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -203,10 +228,14 @@ compose.desktop {
 
         jvmArgs(
             "-Doposi.BACKEND_TOKEN=",
-            "-Doposi.BASE_URL=http://localhost:8080",
-            "-Doposi.APP_ENV=dev",
+            "-Doposi.BASE_URL=$desktopBaseUrl",
+            "-Doposi.APP_ENV=$desktopAppEnv",
             "-Doposi.SUPABASE_URL=$localSupabaseUrl",
             "-Doposi.SUPABASE_ANON_KEY=$localSupabasePublicKey",
+            "-Doposi.SENTRY_DESKTOP_DSN=$desktopSentryDsn",
+            "-Doposi.SENTRY_DESKTOP_ENVIRONMENT=$desktopSentryEnvironment",
+            "-Doposi.SENTRY_DESKTOP_TRACES_SAMPLE_RATE=0.10",
+            "-Doposi.SENTRY_DESKTOP_RELEASE=$desktopSentryRelease",
         )
 
         nativeDistributions {
@@ -221,9 +250,13 @@ tasks.matching { it.name == "jvmRun" }.configureEach {
     if (this is JavaExec) {
         mainClass.set("com.oposicontrol.admin.app.MainKt")
         systemProperty("oposi.BACKEND_TOKEN", "")
-        systemProperty("oposi.BASE_URL", "http://localhost:8080")
-        systemProperty("oposi.APP_ENV", "dev")
+        systemProperty("oposi.BASE_URL", desktopBaseUrl)
+        systemProperty("oposi.APP_ENV", desktopAppEnv)
         systemProperty("oposi.SUPABASE_URL", localSupabaseUrl)
         systemProperty("oposi.SUPABASE_ANON_KEY", localSupabasePublicKey)
+        systemProperty("oposi.SENTRY_DESKTOP_DSN", desktopSentryDsn)
+        systemProperty("oposi.SENTRY_DESKTOP_ENVIRONMENT", desktopSentryEnvironment)
+        systemProperty("oposi.SENTRY_DESKTOP_TRACES_SAMPLE_RATE", "0.10")
+        systemProperty("oposi.SENTRY_DESKTOP_RELEASE", desktopSentryRelease)
     }
 }

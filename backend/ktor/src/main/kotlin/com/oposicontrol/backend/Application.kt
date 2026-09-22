@@ -32,6 +32,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
+import io.sentry.Sentry
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -57,11 +58,43 @@ private const val RESOURCE_MAX_BYTES = 50 * 1024 * 1024
 /** Detalle de fallos upstream: se registra aquí y nunca se devuelve al cliente. */
 private val UpstreamFailureLogger: org.slf4j.Logger = org.slf4j.LoggerFactory.getLogger("OC-KTOR-UPSTREAM")
 
+private fun initializeSentry() {
+    val dsn = System.getenv("SENTRY_DSN").orEmpty().trim()
+    if (dsn.isBlank()) return
+
+    val environment = System.getenv("SENTRY_ENVIRONMENT")
+        .orEmpty()
+        .ifBlank { "development" }
+
+    val tracesSampleRate = System.getenv("SENTRY_TRACES_SAMPLE_RATE")
+        ?.toDoubleOrNull()
+        ?.coerceIn(0.0, 1.0)
+        ?: 0.0
+
+    Sentry.init { options ->
+        options.dsn = dsn
+        options.environment = environment
+        options.release = System.getenv("SENTRY_RELEASE")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        options.tracesSampleRate = tracesSampleRate
+        options.isSendDefaultPii = false
+        options.isAttachStacktrace = true
+    }
+}
 
 fun main() {
+    initializeSentry()
+
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     val host = System.getenv("HOST").orEmpty().ifBlank { "0.0.0.0" }
-    embeddedServer(Netty, host = host, port = port, module = Application::module).start(wait = true)
+
+    embeddedServer(
+        Netty,
+        host = host,
+        port = port,
+        module = Application::module,
+    ).start(wait = true)
 }
 
 /**
@@ -272,6 +305,22 @@ internal fun Application.installBackendStatusPages() {
                 durationMs = call.elapsedMsOrNull(),
                 errorType = cause::class.simpleName,
             )
+            Sentry.withScope { scope ->
+                requestId?.let {
+                    scope.setTag("request_id", it)
+                }
+
+                scope.setTag(
+                    "operation",
+                    call.request.path(),
+                )
+
+                call.elapsedMsOrNull()?.let {
+                    scope.setExtra("duration_ms", it.toString())
+                }
+
+                Sentry.captureException(cause)
+            }
             // El detalle va al log, nunca al cuerpo. Antes se respondía
             // "${'$'}{cause::class.simpleName}: ..." y eso publicaba nombres de clase
             // Kotlin/Java a cualquiera capaz de provocar un 500: el mismo oráculo

@@ -6,7 +6,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import com.oposicontrol.admin.app.bootstrap.JvmRuntimeConfigSource
 import com.oposicontrol.admin.core.common.platform.AppPlatformContext
+import io.sentry.Sentry
 import java.awt.Dimension
 
 /**
@@ -25,17 +27,54 @@ import java.awt.Dimension
  * la sidebar y el contenido dejan de convivir, y es preferible que el sistema
  * operativo no permita llegar a ese tamaño a que la aplicación se rompa dentro.
  */
-fun main() = application {
-    val windowState = rememberWindowState(size = DpSize(1440.dp, 900.dp))
+private fun initializeDesktopSentry() {
+    val config = JvmRuntimeConfigSource()
 
-    Window(
-        onCloseRequest = ::exitApplication,
-        state = windowState,
-        title = "OposiControl Admin",
-    ) {
-        LaunchedEffect(Unit) {
-            window.minimumSize = Dimension(1024, 640)
+    val dsn = config.read("SENTRY_DESKTOP_DSN")
+        ?.trim()
+        .orEmpty()
+
+    if (dsn.isBlank()) return
+
+    val environment = config.read("SENTRY_DESKTOP_ENVIRONMENT")
+        ?.trim()
+        ?.ifBlank { "development" }
+        ?: "development"
+
+    val tracesSampleRate = config.read("SENTRY_DESKTOP_TRACES_SAMPLE_RATE")
+        ?.toDoubleOrNull()
+        ?.coerceIn(0.0, 1.0)
+        ?: 0.0
+
+    val release = config.read("SENTRY_DESKTOP_RELEASE")
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+
+    Sentry.init { options ->
+        options.dsn = dsn
+        options.environment = environment
+        options.release = release
+        options.tracesSampleRate = tracesSampleRate
+        options.isSendDefaultPii = false
+        options.isAttachStacktrace = true
+    }
+}
+
+fun main() {
+    initializeDesktopSentry()
+
+    application {
+        val windowState = rememberWindowState(size = DpSize(1440.dp, 900.dp))
+
+        Window(
+            onCloseRequest = ::exitApplication,
+            state = windowState,
+            title = "OposiControl Admin",
+        ) {
+            LaunchedEffect(Unit) {
+                window.minimumSize = Dimension(1024, 640)
+            }
+            OposiControlAdminApp(AppPlatformContext())
         }
-        OposiControlAdminApp(AppPlatformContext())
     }
 }
