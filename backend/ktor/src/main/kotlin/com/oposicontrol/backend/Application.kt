@@ -26,6 +26,7 @@ import io.ktor.server.request.host
 import io.ktor.server.request.path
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
+import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
@@ -649,57 +650,11 @@ fun Application.module() {
                         call.respond(gateway.reorderRecursos(call.requiredPath("preguntaId"), call.receive()))
                     }
                 }
-                route("/noticias") {
-                    get {
-                        call.respond(
-                            newsGateway.listNoticias(
-                                limit = sanitizeNewsLimit(call.request.queryParameters["limit"]),
-                                offset = sanitizeNewsOffset(call.request.queryParameters["offset"]),
-                            ),
-                        )
-                    }
-                    // Releer una noticia sin arrastrar la biblioteca entera.
-                    get("/{noticiaId}") {
-                        val noticia = newsGateway.findNoticia(call.requiredPath("noticiaId"))
-                            ?: return@get call.respond(
-                                HttpStatusCode.NotFound,
-                                ErrorDto(error = "noticia_no_encontrada", message = "La noticia no existe."),
-                            )
-                        call.respond(noticia)
-                    }
-                    post("/assets") {
-                        call.respondBackendSupabaseResult("/content/noticias/assets") {
-                            val file = call.receiveSingleFile(
-                                maxBytes = COVER_MAX_BYTES,
-                                requiredMimePrefix = "image/",
-                                defaultFileName = "news-asset",
-                            )
-                            newsGateway.uploadAsset(
-                                NewsUploadedFile(
-                                    fileName = file.fileName,
-                                    mimeType = file.mimeType,
-                                    bytes = file.bytes,
-                                ),
-                            )
-                        }
-                    }
-                    post {
-                        val saved = newsGateway.saveNoticia(call.receive())
-                        tagSearchGateway.indexNoticia(saved)
-                        call.respond(HttpStatusCode.Created, saved)
-                    }
-                    put {
-                        val saved = newsGateway.saveNoticia(call.receive())
-                        tagSearchGateway.indexNoticia(saved)
-                        call.respond(saved)
-                    }
-                    delete("/{noticiaId}") {
-                        val id = call.requiredPath("noticiaId")
-                        newsGateway.deleteNoticia(id)
-                        tagSearchGateway.remove("noticia", id)
-                        call.respond(HttpStatusCode.NoContent)
-                    }
-                }
+                newsContentRoutes(
+                    newsGateway = newsGateway,
+                    onIndexed = tagSearchGateway::indexNoticia,
+                    onRemoved = { tagSearchGateway.remove("noticia", it) },
+                )
             }
             get("/tags") {
                 call.respondBackendSupabaseResult("/tags") {
@@ -2174,3 +2129,73 @@ private class InMemoryGateway {
 }
 
 private data class LocatedPregunta(val solucionarioId: String, val pregunta: PreguntaDto)
+
+/**
+ * Rutas de `/content/noticias`.
+ *
+ * Extraídas de `Application.module()` tal cual, sin cambiar una línea de su
+ * cuerpo: estaban inline dentro de un `routing { }` de trescientas líneas y por
+ * eso NO se podían montar en un test. Un CRUD que solo se puede probar
+ * arrancando la aplicación entera contra Supabase no se prueba nunca.
+ *
+ * El `authenticate("gateway-auth")` se queda FUERA, en quien llama, para que el
+ * test pueda instalar su propio proveedor sin que la ruta lo sepa. La ruta no
+ * decide quién entra; eso es de la aplicación.
+ */
+internal fun Route.newsContentRoutes(
+    newsGateway: NewsGateway,
+    onIndexed: (NoticiaDto) -> Unit,
+    onRemoved: (String) -> Unit,
+) {
+    route("/noticias") {
+        get {
+            call.respond(
+                newsGateway.listNoticias(
+                    limit = sanitizeNewsLimit(call.request.queryParameters["limit"]),
+                    offset = sanitizeNewsOffset(call.request.queryParameters["offset"]),
+                ),
+            )
+        }
+        // Releer una noticia sin arrastrar la biblioteca entera.
+        get("/{noticiaId}") {
+            val noticia = newsGateway.findNoticia(call.requiredPath("noticiaId"))
+                ?: return@get call.respond(
+                    HttpStatusCode.NotFound,
+                    ErrorDto(error = "noticia_no_encontrada", message = "La noticia no existe."),
+                )
+            call.respond(noticia)
+        }
+        post("/assets") {
+            call.respondBackendSupabaseResult("/content/noticias/assets") {
+                val file = call.receiveSingleFile(
+                    maxBytes = COVER_MAX_BYTES,
+                    requiredMimePrefix = "image/",
+                    defaultFileName = "news-asset",
+                )
+                newsGateway.uploadAsset(
+                    NewsUploadedFile(
+                        fileName = file.fileName,
+                        mimeType = file.mimeType,
+                        bytes = file.bytes,
+                    ),
+                )
+            }
+        }
+        post {
+            val saved = newsGateway.saveNoticia(call.receive())
+            onIndexed(saved)
+            call.respond(HttpStatusCode.Created, saved)
+        }
+        put {
+            val saved = newsGateway.saveNoticia(call.receive())
+            onIndexed(saved)
+            call.respond(saved)
+        }
+        delete("/{noticiaId}") {
+            val id = call.requiredPath("noticiaId")
+            newsGateway.deleteNoticia(id)
+            onRemoved(id)
+            call.respond(HttpStatusCode.NoContent)
+        }
+    }
+}

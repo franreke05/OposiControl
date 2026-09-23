@@ -281,6 +281,19 @@ internal fun NewsLayerProperties(layer: NewsLayerDraft, lastIndex: Int, onIntent
         }
 
         NewsField("Nombre de capa", layer.name, { onIntent(NewsIntent.UpdateLayerName(layer.id, it)) })
+        // El tipo decide cómo se pinta la capa y qué propiedades aplican. El
+        // intent existía y no lo alcanzaba nadie: una capa creada como texto se
+        // quedaba como texto para siempre, y había que borrarla y rehacerla
+        // para convertirla en título.
+        NewsChoice(
+            "Tipo de capa",
+            when (layer.kind.lowercase()) {
+                "titulo", "title" -> "Título"
+                "imagen", "image" -> "Imagen"
+                else -> "Texto"
+            },
+            listOf("titulo" to "Título", "texto" to "Texto", "imagen" to "Imagen"),
+        ) { onIntent(NewsIntent.UpdateLayerKind(layer.id, it)) }
         if (layer.isImageLayer()) {
             Text(
                 newsAssetName(layer.content),
@@ -390,6 +403,23 @@ private fun NewsLayerActions(layer: NewsLayerDraft, lastIndex: Int, onIntent: (N
             SecondaryButton(
                 "Atrás",
                 { onIntent(NewsIntent.MoveLayerDown(layer.id)) },
+                size = ButtonSize.COMPACT,
+                enabled = !layer.locked && layer.sortOrder > 0,
+            )
+        }
+        // Al frente / al fondo: existían en el ViewModel y estaban PROBADOS,
+        // pero ninguna pantalla los alcanzaba. Con diez capas, subir de una en
+        // una hasta arriba son nueve clics para una operación que es una.
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            SecondaryButton(
+                "Al frente",
+                { onIntent(NewsIntent.BringLayerToFront(layer.id)) },
+                size = ButtonSize.COMPACT,
+                enabled = !layer.locked && layer.sortOrder < lastIndex,
+            )
+            SecondaryButton(
+                "Al fondo",
+                { onIntent(NewsIntent.SendLayerToBack(layer.id)) },
                 size = ButtonSize.COMPACT,
                 enabled = !layer.locked && layer.sortOrder > 0,
             )
