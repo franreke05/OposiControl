@@ -12,7 +12,7 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun NewsEditorPane(state: NewsState, onIntent: (NewsIntent) -> Unit) {
+internal fun NewsEditorPane(state: NewsState, onIntent: (NewsIntent) -> Unit, paneWidth: Int = 0) {
     var tab by remember { mutableStateOf("Contenido") }
     NewsPanel(if (state.selectedId == null || state.selectedId.startsWith("local-")) "Nueva noticia" else "Editando noticia") {
         Text(state.saveLabel(), style = MaterialTheme.typography.labelMedium, color = if (state.isDirty) GlassTheme.tokens.accentInk else GlassTheme.tokens.textSecondary)
@@ -25,6 +25,22 @@ internal fun NewsEditorPane(state: NewsState, onIntent: (NewsIntent) -> Unit) {
             }
         }
         HorizontalDivider(color = GlassTheme.tokens.border)
+        // El lienzo vive AQUÍ, y no dentro de una pestaña.
+        //
+        // Antes solo aparecía en «Capas visuales»: escribir el título o elegir
+        // la especialidad se hacía a ciegas, con la composición fuera de la
+        // vista, y la única referencia era la miniatura del carril derecho. Lo
+        // que se está montando es una imagen, así que la imagen manda y las
+        // pestañas solo cambian el formulario que la acompaña.
+        // El lienzo usa el ancho real de la columna, no un número fijo: estaba
+        // clavado a 640 px y dejaba franjas muertas a los lados en cuanto la
+        // ventana crecía. Se descuentan los 36 px de padding del panel.
+        NewsCanvasFrame(
+            state = state,
+            onIntent = onIntent,
+            canvasWidth = (paneWidth - 72).coerceIn(280, 900),
+            toolbar = true,
+        )
         when (tab) {
             "Contenido" -> {
                 NewsField("Título de la noticia", state.editorTitle, { onIntent(NewsIntent.UpdateTitle(it)) })
@@ -56,8 +72,32 @@ internal fun NewsEditorPane(state: NewsState, onIntent: (NewsIntent) -> Unit) {
                     GhostButton("Quitar imagen principal", { onIntent(NewsIntent.UpdateImagePath("")) })
                 }
             }
-            else -> NewsLayersEditor(state, onIntent)
+            else -> {
+                // `UpdateCanvasWidth`/`UpdateCanvasHeight` existían y el
+                // ViewModel las recortaba con `withClampedLayers()`, pero
+                // ninguna pantalla las ofrecía: el lienzo estaba clavado a
+                // 800×500 sin forma de cambiarlo.
+                Text("Tamaño del lienzo", style = MaterialTheme.typography.titleSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.width(132.dp)) {
+                        NewsField("Ancho (px)", state.editorCanvasWidth.toString(), { onIntent(NewsIntent.UpdateCanvasWidth(it)) })
+                    }
+                    Column(Modifier.width(132.dp)) {
+                        NewsField("Alto (px)", state.editorCanvasHeight.toString(), { onIntent(NewsIntent.UpdateCanvasHeight(it)) })
+                    }
+                }
+                Text(
+                    "Reducir el lienzo recorta las capas que quedasen fuera; no se pierden, se reposicionan dentro.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GlassTheme.tokens.textSecondary,
+                )
+            }
         }
+        // Las capas también son permanentes: son el índice de lo que hay en el
+        // lienzo, y esconderlas tras una pestaña obliga a cambiar de contexto
+        // para saber qué se está mirando.
+        HorizontalDivider(color = GlassTheme.tokens.border)
+        NewsLayersEditor(state, onIntent)
     }
 }
 

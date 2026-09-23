@@ -223,7 +223,8 @@ private fun QuestionEditorSections(
         QuestionClassificationSection(state, onIntent)
         QuestionRelationsSection(state, onIntent)
         if (questionShowsResources(state.draftType)) {
-            QuestionResourcesSection(detail)
+            // Con estado y despachador: la sección ya no es sólo una lista, escribe.
+            QuestionResourcesSection(state, onIntent, detail)
         }
     }
 }

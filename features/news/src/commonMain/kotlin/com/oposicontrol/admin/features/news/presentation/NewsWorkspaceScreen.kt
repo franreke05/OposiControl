@@ -47,7 +47,7 @@ fun NewsContent(state: NewsState, onIntent: (NewsIntent) -> Unit) {
                 SecondaryButton(if (compactLibrary) "Volver al editor" else "Abrir biblioteca", { compactLibrary = !compactLibrary })
                 if (compactLibrary) NewsLibraryPane(state, { dispatch(it); if (it is NewsIntent.Select) compactLibrary = false }, Modifier.fillMaxWidth().height(bodyHeight.dp))
                 else NewsScrollPane(Modifier.fillMaxWidth().height(bodyHeight.dp)) {
-                    NewsEditorPane(state, dispatch)
+                    NewsEditorPane(state, dispatch, width)
                     NewsPreviewPane(state, dispatch, width)
                     NewsPublicationPane(state, dispatch)
                 }
@@ -56,7 +56,7 @@ fun NewsContent(state: NewsState, onIntent: (NewsIntent) -> Unit) {
                 // El editor es el protagonista: ocupa el ancho que sobra y es lo
                 // único que crece cuando la ventana crece.
                 NewsScrollPane(Modifier.width(panes.editor.dp).fillMaxHeight()) {
-                    NewsEditorPane(state, dispatch)
+                    NewsEditorPane(state, dispatch, panes.editor)
                     // Cuando no hay columnas propias, su contenido cae aquí en vez
                     // de estrujarse: mejor desplazarse que no poder leer.
                     if (panes.inspector == 0) NewsLayerInspectorPane(state, dispatch)

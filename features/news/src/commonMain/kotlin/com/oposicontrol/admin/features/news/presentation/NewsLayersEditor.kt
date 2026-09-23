@@ -320,6 +320,31 @@ internal fun NewsLayerProperties(layer: NewsLayerDraft, lastIndex: Int, onIntent
                 },
                 listOf("sans" to "Sans serif", "serif" to "Serif", "mono" to "Monoespaciada", "cursive" to "Cursiva"),
             ) { onIntent(NewsIntent.UpdateLayerFontFamily(layer.id, it)) }
+            // «Del tipo de capa» es una opción explícita, no la ausencia de
+            // elección: sin ella, fijar un peso una vez sería irreversible y
+            // no habría forma de devolver la capa a su aspecto por defecto.
+            NewsChoice(
+                "Peso",
+                when (layer.fontWeight) {
+                    "bold" -> "Negrita"
+                    "semibold" -> "Seminegrita"
+                    "medium" -> "Media"
+                    "normal" -> "Normal"
+                    else -> "Del tipo de capa"
+                },
+                listOf(
+                    "" to "Del tipo de capa",
+                    "normal" to "Normal",
+                    "medium" to "Media",
+                    "semibold" to "Seminegrita",
+                    "bold" to "Negrita",
+                ),
+            ) { onIntent(NewsIntent.UpdateLayerFontWeight(layer.id, it)) }
+            NewsField(
+                "Tamaño (px, 0 = del tipo de capa)",
+                layer.fontSizeSp.toString(),
+                { onIntent(NewsIntent.UpdateLayerFontSize(layer.id, it)) },
+            )
             NewsField(
                 "Color del texto (hexadecimal)",
                 layer.textColor,

@@ -821,6 +821,12 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val resourceId = recursoId.takeIf { it.isNotBlank() }?.validatedUuid("recursoId")
                     ?: UUID.randomUUID().toString()
                 val saved = withUpstreamIo {
+                    // La compresión va DENTRO de `withUpstreamIo` y no antes: es
+                    // trabajo bloqueante —CPU para una imagen, un proceso externo
+                    // para vídeo o audio— y el hilo de Netty no es sitio para eso.
+                    // Aquí ya no se suspende nada, que es lo que exige el contrato
+                    // de `withUpstreamIo`.
+                    val optimized = optimizedQuestionResource(tipoRecurso, mimeType, bytes)
                     gateway.addRecursoArchivo(
                         preguntaId = id,
                         recursoId = resourceId,
@@ -828,8 +834,8 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                         titulo = titulo,
                         descripcion = descripcion,
                         posicion = posicion,
-                        mimeType = mimeType,
-                        bytes = bytes,
+                        mimeType = optimized.mimeType,
+                        bytes = optimized.bytes,
                     )
                 }
                 call.respond(HttpStatusCode.Created, AdminRecursoResponse(saved))
@@ -2097,6 +2103,40 @@ private val QUESTION_RESOURCE_MIME: Map<String, Map<String, String>> = mapOf(
 
 /** Los tipos que EXIGEN archivo: por JSON no se pueden crear (no habría nada que reproducir). */
 private val QUESTION_RESOURCE_FILE_TYPES: Set<String> = QUESTION_RESOURCE_MIME.keys
+
+/**
+ * Comprime el archivo de un recurso ANTES de que cruce la red hacia Storage.
+ *
+ * ### Lo que esta función se prohíbe a sí misma
+ *
+ * **No puede cambiar QUÉ se admite.** [QUESTION_RESOURCE_MIME] es la política de
+ * admisión y sigue decidiéndola [AdminV1Gateway.addRecursoArchivo]; aquí se
+ * comprueba dos veces contra ese mismo mapa:
+ *
+ * 1. Si el MIME de ENTRADA no está admitido, no se toca nada. Sin esto, un
+ *    `video/quicktime` —hoy un 422 limpio— se transcodificaría a `video/mp4` y
+ *    empezaría a colarse por la puerta de atrás. Comprimir no es una política de
+ *    admisión y no debe comportarse como una.
+ * 2. Si el MIME de SALIDA no está admitido para ese `tipo_recurso`, gana el
+ *    original. Así la extensión que deriva el gateway (`.jpg`, `.mp4`…) existe
+ *    siempre y corresponde a los bytes que se suben.
+ *
+ * Cualquier fallo de la compresión sale por aquí como "el original", nunca como
+ * una excepción: el material del administrador no se pierde porque la
+ * optimización tenga un mal día.
+ */
+private fun optimizedQuestionResource(tipoRecurso: String, mimeType: String, bytes: ByteArray): CompressedMedia {
+    val tipo = tipoRecurso.trim().lowercase()
+    val mime = mimeType.substringBefore(';').trim().lowercase()
+    val intacto = CompressedMedia(bytes, mime, MediaCompressionOutcome.SKIPPED_UNSUPPORTED)
+    val admitidos = QUESTION_RESOURCE_MIME[tipo] ?: return intacto
+    if (!admitidos.containsKey(mime)) return intacto
+    // El gateway construye la ruta como `<recurso>.<ext>` con la extensión que
+    // sale de este mismo mapa, así que aquí SÍ se puede cambiar de formato.
+    val optimized = MediaCompression.compress(bytes, mime, allowFormatChange = true)
+    if (!optimized.applied || !admitidos.containsKey(optimized.mimeType)) return intacto
+    return optimized
+}
 
 @Serializable
 private data class AdminOpcionRow(
@@ -3441,6 +3481,7 @@ class AdminV1Gateway private constructor(
     private val json: Json,
     client: HttpClient = sharedUpstreamHttpClient,
     private val systemMetrics: SystemMetricsProvider = PrometheusSystemMetricsGateway.fromEnvironment(),
+    private val supabaseDisk: SupabaseDiskUsageProvider = SupabaseDiskMetricsGateway.fromEnvironment(),
 ) {
     /**
      * Migrado a [SupabaseRequestTransport] (FASE 1).
@@ -6324,8 +6365,9 @@ class AdminV1Gateway private constructor(
      * Resumen del estado de los servicios.
      *
      * Ktor y Supabase se comprueban directamente. CPU/RAM del host, p95 HTTP y
-     * errores 5xx proceden de Prometheus; cada serie ausente conserva `null` y
-     * se declara en `notInstrumented` en vez de inventar un cero.
+     * errores 5xx proceden de Prometheus; el disco de datos, del endpoint
+     * privilegiado de Supabase. Cada serie ausente conserva `null` y se declara
+     * en `notInstrumented` en vez de inventar un cero.
      */
     fun getSystemStatus(): AdminSystemStatusDto {
         val startedAt = System.nanoTime()
@@ -6353,6 +6395,11 @@ class AdminV1Gateway private constructor(
         // se contradigan.
         val cpuPercent = metrics.cpuPercent.finiteOrNull()
         val ramPercent = metrics.ramPercent.finiteOrNull()
+        // Fuente distinta (endpoint privilegiado de Supabase) y por tanto fallo
+        // independiente: si no se puede medir, el resto del estado se sirve
+        // igual. El `runCatching` cubre un proveedor que lance en vez de
+        // devolver `null`; el `finiteOrNull()`, uno que devuelva NaN/Infinity.
+        val supabaseDiskPercent = runCatching { supabaseDisk.diskPercent() }.getOrNull().finiteOrNull()
 
         return AdminSystemStatusDto(
             overallStatus = aggregateSystemStatus(listOf(ktorLevel, supabaseLevel)),
@@ -6361,6 +6408,7 @@ class AdminV1Gateway private constructor(
             workerStatus = SystemStatusLevelWire.UNKNOWN,
             cpuPercent = cpuPercent,
             ramPercent = ramPercent,
+            supabaseDiskPercent = supabaseDiskPercent,
             apiLatencyMs = metrics.apiLatencyMs,
             errors24h = metrics.errors24h,
             updatedAt = Instant.now().toString(),
@@ -6368,6 +6416,7 @@ class AdminV1Gateway private constructor(
                 SystemStatusNotInstrumented.WORKER,
                 SystemStatusNotInstrumented.CPU.takeIf { cpuPercent == null },
                 SystemStatusNotInstrumented.MEMORY.takeIf { ramPercent == null },
+                SystemStatusNotInstrumented.SUPABASE_DISK.takeIf { supabaseDiskPercent == null },
                 SystemStatusNotInstrumented.API_LATENCY.takeIf { metrics.apiLatencyMs == null },
                 SystemStatusNotInstrumented.API_ERRORS.takeIf { metrics.errors24h == null },
                 SystemStatusNotInstrumented.MOBILE_CRASHES,
@@ -6727,14 +6776,26 @@ class AdminV1Gateway private constructor(
      *    huérfano privado y una línea de log, nunca una fila apuntando a nada).
      */
     fun uploadExamenPortada(examId: String, bytes: ByteArray, mimeType: String): AdminExamenDto? {
-        val mime = mimeType.substringBefore(';').trim().lowercase()
-        val extension = EXAM_COVER_EXTENSIONS[mime] ?: throw examCoverTypeInvalidException()
+        val declaredMime = mimeType.substringBefore(';').trim().lowercase()
+        // El tipo DECLARADO se valida antes de comprimir: comprimir no puede
+        // ampliar lo que se admite, igual que en los recursos de pregunta.
+        EXAM_COVER_EXTENSIONS[declaredMime] ?: throw examCoverTypeInvalidException()
+
+        // Si el resultado saliera con un MIME que esta ruta no sabe extensionar,
+        // gana el original: la extension del objeto y su `Content-Type` tienen
+        // que corresponder a los bytes que se suben.
+        val optimized = MediaCompression.compress(bytes, declaredMime, allowFormatChange = true)
+        val useOptimized = EXAM_COVER_EXTENSIONS.containsKey(optimized.mimeType)
+        val finalBytes = if (useOptimized) optimized.bytes else bytes
+        val mime = if (useOptimized) optimized.mimeType else declaredMime
+        val extension = EXAM_COVER_EXTENSIONS.getValue(mime)
+
         val existing = request("GET", "/rest/v1/examenes?select=id,portada_storage_path&id=eq.$examId&limit=1", null)
             .decodeList<AdminExamenPortadaRow>().firstOrNull() ?: return null
         val bucket = examResourcesBucket()
         ensureStorageBucketExists(bucket)
         val objectPath = "exam-covers/${existing.id.lowercase()}/${UUID.randomUUID().toString().lowercase()}.$extension"
-        transport.storagePut(bucket, objectPath, bytes, mime, upsert = false)
+        transport.storagePut(bucket, objectPath, finalBytes, mime, upsert = false)
         val saved = try {
             // Concurrencia (Nuclear Review Finding 1): el PATCH sólo se aplica si la
             // portada sigue siendo la que se leyó arriba. Si otra escritura ganó la
@@ -6877,6 +6938,7 @@ class AdminV1Gateway private constructor(
             systemMetrics: SystemMetricsProvider = SystemMetricsProvider {
                 SystemMetricsSnapshot(null, null, null, null)
             },
-        ): AdminV1Gateway = AdminV1Gateway(supabaseUrl, serviceRoleKey, json, client, systemMetrics)
+            supabaseDisk: SupabaseDiskUsageProvider = SupabaseDiskUsageProvider { null },
+        ): AdminV1Gateway = AdminV1Gateway(supabaseUrl, serviceRoleKey, json, client, systemMetrics, supabaseDisk)
     }
 }

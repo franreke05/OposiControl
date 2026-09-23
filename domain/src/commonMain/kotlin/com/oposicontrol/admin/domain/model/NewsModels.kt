@@ -140,4 +140,11 @@ data class NewsLayer(
     val sortOrder: Int,
     val locked: Boolean = false,
     val rotationDegrees: Int = 0,
+    /**
+     * `0` = derivado del tipo de capa, que es lo que el lienzo hace hoy
+     * (titulo grande, texto normal). Ver [NewsLayer.fontWeight] y el borrador
+     * de presentacion para la justificacion completa del centinela.
+     */
+    val fontSizeSp: Int = 0,
+    val fontWeight: String = "",
 )

@@ -2,6 +2,8 @@ package com.oposicontrol.admin.features.questions.presentation
 
 import com.oposicontrol.admin.domain.model.QuestionType
 import com.oposicontrol.admin.domain.repository.QuestionActiveFilter
+import com.oposicontrol.admin.domain.repository.QuestionResourceFile
+import com.oposicontrol.admin.domain.repository.QuestionResourceKind
 
 sealed interface QuestionsIntent {
     data object Refresh : QuestionsIntent
@@ -36,6 +38,38 @@ sealed interface QuestionsIntent {
     data class RequestUnlinkExam(val examId: String) : QuestionsIntent
     data object ConfirmUnlinkExam : QuestionsIntent
     data object DismissUnlinkConfirm : QuestionsIntent
+
+    // -----------------------------------------------------------------
+    // Recursos de una pregunta inmersiva (KQ4)
+    //
+    // El alta es un formulario propio y no parte del borrador de la pregunta: se
+    // guarda por su ruta, sin reenviar enunciado ni opciones. Es la misma razón por
+    // la que vincular a un examen dejó de ser un PATCH con el borrador entero.
+    // -----------------------------------------------------------------
+
+    data object RequestAddResource : QuestionsIntent
+    data object CancelResourceDialog : QuestionsIntent
+
+    /** Cambiar de tipo VACÍA lo que ese tipo no admite; ver `QuestionResourceForm.withKind`. */
+    data class UpdateResourceKind(val kind: QuestionResourceKind) : QuestionsIntent
+    data class UpdateResourceTitle(val value: String) : QuestionsIntent
+    data class UpdateResourceDescription(val value: String) : QuestionsIntent
+
+    /** Sólo `enlace`. */
+    data class UpdateResourceUrl(val value: String) : QuestionsIntent
+
+    /** Sólo `texto`. */
+    data class UpdateResourceText(val value: String) : QuestionsIntent
+
+    /** Sólo `imagen`, `audio`, `video` y `pdf`: los bytes ya leídos por el selector. */
+    data class PickResourceFile(val file: QuestionResourceFile) : QuestionsIntent
+    data object ClearResourceFile : QuestionsIntent
+    data object ConfirmAddResource : QuestionsIntent
+
+    /** Archivar un recurso es destructivo y no se puede deshacer: se confirma. */
+    data class RequestDeleteResource(val resourceId: String) : QuestionsIntent
+    data object ConfirmDeleteResource : QuestionsIntent
+    data object DismissDeleteResourceConfirm : QuestionsIntent
 
     data object RequestCancel : QuestionsIntent
     data object ConfirmCancel : QuestionsIntent

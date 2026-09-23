@@ -1,0 +1,72 @@
+# Imagen de ejecución del backend Ktor.
+#
+# Es el Dockerfile VIVO del despliegue, con control de versiones. Hasta ahora
+# vivía suelto en `/opt/oposicontrol-deploy/Dockerfile`, propiedad de root y
+# fuera del repositorio: nadie podía ver su historia ni revisar un cambio antes
+# de aplicarlo. Se construye con `-f`, así que el archivo del servidor se queda
+# donde está y este pasa a ser el que manda.
+#
+# ----------------------------------------------------------------------------
+# DIFERENCIA CON EL ANTERIOR: DOS LÍNEAS
+# ----------------------------------------------------------------------------
+#
+#   1. `apt-get install ffmpeg`  — habilita la compresión de vídeo y audio.
+#   2. `java.awt.headless=true`  — ImageIO sin servidor gráfico.
+#
+# Todo lo demás es idéntico al que ya corría, A PROPÓSITO. Se descartaron, una
+# por una, las mejoras que propuso la revisión automática:
+#
+#   - Build multi-etapa: el binario se compila FUERA con `installDist` y aquí
+#     solo se copia. Moverlo dentro cambiaría el pipeline de despliegue entero
+#     para no ganar nada en el objetivo de esta entrega.
+#   - Quitar `HOST`/`PORT`: sin `HOST=0.0.0.0` Ktor puede escuchar solo en
+#     loopback dentro del contenedor y quedar inalcanzable desde el proxy.
+#   - `-XX:MaxRAMPercentage=70`: **ffmpeg es un subproceso de ESTE contenedor**
+#     y su memoria vive fuera del heap. Sin límite de memoria en el compose la
+#     JVM ve la RAM del host, así que subir el heap al 70 % dejaría sin aire a
+#     ffmpeg y a los contenedores vecinos.
+#   - `ExitOnOutOfMemoryError` y `HEALTHCHECK`: cambian la semántica de fallo.
+#     No en el mismo despliegue que estrena cinco cambios funcionales.
+
+FROM eclipse-temurin:21-jre-jammy
+
+# ffmpeg ANTES de copiar la aplicación: esta capa no cambia entre despliegues y
+# se reaprovecha, mientras que la copia del binario cambia siempre.
+#
+# `--no-install-recommends` no es cosmético: sin él apt arrastra la cola de
+# sugeridos de ffmpeg y la imagen crece mucho más de lo necesario.
+#
+# El paquete de Ubuntu trae libx264 y el codificador AAC nativo, que es
+# exactamente lo que invoca el backend. Se descarta a propósito un binario
+# estático de un tercero: ahorraría unos megabytes a cambio de meter un
+# proveedor más en la cadena de suministro.
+#
+# ffmpeg es OPCIONAL en ejecución: si faltara, el backend lo detecta una vez,
+# lo registra una vez y sube los originales sin comprimir. Las imágenes se
+# comprimen igual, porque eso lo hace la propia JVM.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --system --create-home --uid 10001 app
+
+WORKDIR /app
+
+COPY backend/ktor/build/install/ktor/ /app/
+
+RUN chown -R app:app /app
+
+USER app
+
+# `headless=true` explícito. `javax.imageio` y `Graphics2D` funcionan sin
+# servidor gráfico, pero dejarlo dicho evita que una JVM futura intente hablar
+# con un X11 que aquí no existe — y ese fallo sería SILENCIOSO: las imágenes
+# dejarían de comprimirse cayendo por «formato no soportado», sin error.
+ENV JAVA_TOOL_OPTIONS="-Djava.awt.headless=true"
+
+ENV HOST=0.0.0.0
+ENV PORT=8080
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app/bin/ktor"]

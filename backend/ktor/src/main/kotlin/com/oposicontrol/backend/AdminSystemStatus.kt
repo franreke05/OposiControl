@@ -22,6 +22,8 @@ data class AdminSystemStatusDto(
     val workerStatus: String,
     val cpuPercent: Double? = null,
     val ramPercent: Double? = null,
+    /** Ocupación del volumen de datos de Postgres en Supabase, en porcentaje. */
+    val supabaseDiskPercent: Double? = null,
     val apiLatencyMs: Long? = null,
     val errors24h: Long? = null,
     val mobileCrashes24h: Int? = null,
@@ -50,6 +52,12 @@ object SystemStatusNotInstrumented {
     /** CPU y memoria del host proceden de Node Exporter vía Prometheus. */
     const val CPU = "cpuPercent"
     const val MEMORY = "ramPercent"
+
+    /**
+     * El disco de datos procede del endpoint privilegiado de Supabase, no de
+     * Prometheus: su ausencia es independiente de la de CPU y memoria.
+     */
+    const val SUPABASE_DISK = "supabaseDiskPercent"
 
     /** Latencia y errores proceden del histograma/contador HTTP de Ktor. */
     const val API_LATENCY = "apiLatencyMs"

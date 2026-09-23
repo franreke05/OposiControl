@@ -172,6 +172,14 @@ private data class NoticiaLayerDto(
     val locked: Boolean = false,
     val orden: Int,
     val rotationDegrees: Int = 0,
+    /**
+     * Mismos nombres y mismos defaults que `NoticiaLayerDto` del backend: es el
+     * mismo objeto a los dos lados del cable y acaba en `capas jsonb`. Un
+     * default distinto aqui convertiria una capa derivada en una capa con
+     * tamano fijo solo por pasar por el panel. `0` = derivado del tipo de capa.
+     */
+    val fontSizeSp: Int = 0,
+    val fontWeight: String = "",
 )
 
 private fun NewsAssetUploadDto.toDomain() = NewsAssetUpload(
@@ -224,6 +232,8 @@ private fun NoticiaLayerDto.toDomain() = NewsLayer(
     sortOrder = orden,
     locked = locked,
     rotationDegrees = rotationDegrees.normalizedDegrees(),
+    fontSizeSp = fontSizeSp,
+    fontWeight = fontWeight,
 )
 
 private fun NewsLayer.toDto(order: Int) = NoticiaLayerDto(
@@ -242,6 +252,8 @@ private fun NewsLayer.toDto(order: Int) = NoticiaLayerDto(
     locked = locked,
     orden = order,
     rotationDegrees = rotationDegrees.normalizedDegrees(),
+    fontSizeSp = fontSizeSp,
+    fontWeight = fontWeight,
 )
 
 private fun Int.normalizedDegrees(): Int {

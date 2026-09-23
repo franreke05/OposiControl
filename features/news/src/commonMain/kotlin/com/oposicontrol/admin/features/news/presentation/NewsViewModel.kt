@@ -39,6 +39,24 @@ private const val NewsCanvasDefaultHeight = 500
 private const val NewsLayerMinWidth = 24
 private const val NewsLayerMinHeight = 24
 
+/**
+ * Rango editable del tamano de fuente. Empieza en 8 y no en 0 a proposito: `0`
+ * es el centinela de «derivado del tipo de capa» (ver [NewsLayerDraft.fontSizeSp])
+ * y no debe poder escribirse como si fuera un tamano.
+ */
+private const val NewsLayerMinFontSizeSp = 8
+private const val NewsLayerMaxFontSizeSp = 200
+
+/**
+ * Los unicos pesos que el lienzo sabe pintar, mas la cadena vacia.
+ *
+ * `""` significa «derivado del tipo de capa», igual que `fontSizeSp = 0` y que
+ * el `textColor` vacio que ya existia. Sin ese centinela, «normal» seria a la
+ * vez «no lo he decidido» y «quiero peso normal», y toda capa de titulo ya
+ * guardada perderia la negrita al cargarse.
+ */
+private val NewsLayerFontWeights = setOf("", "normal", "medium", "semibold", "bold")
+
 private val draftJson = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 
 @Serializable
@@ -58,6 +76,10 @@ private data class NewsLayerDraftJson(
     val locked: Boolean = false,
     val sortOrder: Int,
     val rotationDegrees: Int = 0,
+    // Con default, igual que en los DTO: un borrador local guardado antes de
+    // que existiera la tipografia se relee sin el campo y sale derivado.
+    val fontSizeSp: Int = 0,
+    val fontWeight: String = "",
 )
 
 private fun NewsLayerDraft.toJson() = NewsLayerDraftJson(
@@ -65,6 +87,7 @@ private fun NewsLayerDraft.toJson() = NewsLayerDraftJson(
     x = x, y = y, width = width, height = height, opacity = opacity,
     fontFamily = fontFamily, textColor = textColor, visible = visible,
     locked = locked, sortOrder = sortOrder, rotationDegrees = rotationDegrees,
+    fontSizeSp = fontSizeSp, fontWeight = fontWeight,
 )
 
 private fun NewsLayerDraftJson.toDraft() = NewsLayerDraft(
@@ -72,6 +95,7 @@ private fun NewsLayerDraftJson.toDraft() = NewsLayerDraft(
     x = x, y = y, width = width, height = height, opacity = opacity,
     fontFamily = fontFamily, textColor = textColor, visible = visible,
     locked = locked, sortOrder = sortOrder, rotationDegrees = rotationDegrees,
+    fontSizeSp = fontSizeSp, fontWeight = fontWeight,
 )
 
 private fun List<NewsLayerDraft>.encodeToJsonString(): String =
@@ -231,6 +255,20 @@ class NewsViewModel(
             is NewsIntent.UpdateLayerRotation -> updateLayer(intent.id) { layer -> layer.copy(rotationDegrees = intent.degrees.normalizedDegrees()) }
             is NewsIntent.UpdateLayerWidth -> updateLayer(intent.id) { layer -> layer.copy(width = intent.value.toPositiveInt(layer.width)) }
             is NewsIntent.UpdateLayerFontFamily -> updateLayer(intent.id) { layer -> layer.copy(fontFamily = intent.value) }
+            is NewsIntent.UpdateLayerFontSize -> updateLayer(intent.id) { layer ->
+                // Un `0` explícito devuelve la capa a «derivado del tipo», que es
+                // su estado de origen. Sin este caso, `toBoundedInt` lo subiría a
+                // 8 y fijar el tamaño una vez sería irreversible.
+                val size = if (intent.value.trim() == "0") {
+                    0
+                } else {
+                    intent.value.toBoundedInt(layer.fontSizeSp, NewsLayerMinFontSizeSp, NewsLayerMaxFontSizeSp)
+                }
+                layer.copy(fontSizeSp = size)
+            }
+            is NewsIntent.UpdateLayerFontWeight -> updateLayer(intent.id) { layer ->
+                layer.copy(fontWeight = intent.value.toKnownFontWeight(layer.fontWeight))
+            }
             is NewsIntent.UpdateLayerTextColor -> updateLayer(intent.id) { layer -> layer.copy(textColor = intent.value) }
             is NewsIntent.UpdateLayerX -> updateLayer(intent.id) { layer -> layer.copy(x = intent.value.toIntOrNull() ?: layer.x) }
             is NewsIntent.UpdateLayerY -> updateLayer(intent.id) { layer -> layer.copy(y = intent.value.toIntOrNull() ?: layer.y) }
@@ -932,13 +970,36 @@ private fun NewsItem.toDomain() = NewsArticle(
     layers = layers.map { it.toDomain() },
 )
 
-private fun NewsLayer.toUi() = NewsLayerDraft(id, name, kind, content, x, y, width, height, opacity, fontFamily, textColor, visible, locked, sortOrder, rotationDegrees.normalizedDegrees())
+private fun NewsLayer.toUi() = NewsLayerDraft(
+    id, name, kind, content, x, y, width, height, opacity, fontFamily, textColor, visible, locked, sortOrder,
+    rotationDegrees.normalizedDegrees(),
+    fontSizeSp = fontSizeSp,
+    // Lo que llega del backend tambien se normaliza: un peso desconocido en la
+    // fila no debe entrar al editor, se cae al default derivado.
+    fontWeight = fontWeight.toKnownFontWeight(""),
+)
 
-private fun NewsLayerDraft.toDomain() = NewsLayer(id, name, kind, content, x, y, width, height, opacity, fontFamily, textColor, visible, sortOrder, locked, rotationDegrees.normalizedDegrees())
+private fun NewsLayerDraft.toDomain() = NewsLayer(
+    id, name, kind, content, x, y, width, height, opacity, fontFamily, textColor, visible, sortOrder, locked,
+    rotationDegrees.normalizedDegrees(),
+    fontSizeSp = fontSizeSp,
+    fontWeight = fontWeight,
+)
 
 private fun String.toPositiveInt(fallback: Int): Int = toIntOrNull()?.coerceAtLeast(1) ?: fallback
 
 private fun String.toBoundedInt(fallback: Int, min: Int, max: Int): Int = toIntOrNull()?.coerceIn(min, max) ?: fallback
+
+/**
+ * Conserva el peso anterior si llega uno que el lienzo no sabe pintar, igual
+ * que [toBoundedInt] conserva el numero anterior ante un texto que no es un
+ * numero. Sin esto, un valor suelto se guardaria en `capas jsonb` y volveria
+ * del backend como un peso que nadie puede resolver.
+ */
+private fun String.toKnownFontWeight(fallback: String): String {
+    val normalized = trim().lowercase()
+    return if (normalized in NewsLayerFontWeights) normalized else fallback
+}
 
 private fun Int.normalizedDegrees(): Int {
     val mod = this % 360

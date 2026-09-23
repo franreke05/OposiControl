@@ -40,6 +40,7 @@ class SystemStatusViewModelTest {
                     workerStatus = SystemStatusLevel.UNKNOWN,
                     cpuPercent = 24.5,
                     ramPercent = 41.25,
+                    supabaseDiskPercent = 3.5632,
                     apiLatencyMs = 86,
                     errors24h = 3,
                     mobileCrashes24h = 0,
@@ -57,7 +58,77 @@ class SystemStatusViewModelTest {
         assertEquals(SystemStatusLevel.UNKNOWN, state.value.workerStatus)
         assertEquals(24.5, state.value.cpuPercent)
         assertEquals(41.25, state.value.ramPercent)
+        assertEquals(3.5632, state.value.supabaseDiskPercent)
         assertEquals(3L, state.value.errors24h)
+    }
+
+    @Test
+    fun anUnavailableSupabaseDiskIsPartialDataAndNeverAZero() = runTest {
+        val now = Instant.parse("2030-01-01T00:01:00Z")
+        val viewModel = viewModelWith(
+            SystemStatusAvailability.Available(
+                SystemStatus(
+                    overallStatus = SystemStatusLevel.OPERATIVE,
+                    ktorStatus = SystemStatusLevel.OPERATIVE,
+                    supabaseStatus = SystemStatusLevel.OPERATIVE,
+                    workerStatus = SystemStatusLevel.UNKNOWN,
+                    cpuPercent = 24.5,
+                    ramPercent = 41.25,
+                    supabaseDiskPercent = null,
+                    apiLatencyMs = 86,
+                    errors24h = 3,
+                    mobileCrashes24h = 0,
+                    queueDepth = 2,
+                    updatedAt = now,
+                ),
+            ),
+            currentTime = now,
+        )
+
+        advanceUntilIdle()
+
+        val state = assertIs<SystemStatusUiState.PartialData>(
+            viewModel.state.value.uiState,
+            "Un disco que no se ha podido medir es una métrica ausente, y la pantalla lo avisa.",
+        )
+        assertEquals(null, state.value.supabaseDiskPercent)
+        assertEquals(null, state.value.supabaseDiskPercent.toPercentLabel())
+    }
+
+    @Test
+    fun aMeasuredEmptyDiskIsShownAsZeroAndNotAsUnavailable() = runTest {
+        val now = Instant.parse("2030-01-01T00:01:00Z")
+        val viewModel = viewModelWith(
+            SystemStatusAvailability.Available(
+                SystemStatus(
+                    overallStatus = SystemStatusLevel.OPERATIVE,
+                    ktorStatus = SystemStatusLevel.OPERATIVE,
+                    supabaseStatus = SystemStatusLevel.OPERATIVE,
+                    workerStatus = SystemStatusLevel.UNKNOWN,
+                    cpuPercent = 24.5,
+                    ramPercent = 41.25,
+                    supabaseDiskPercent = 0.0,
+                    apiLatencyMs = 86,
+                    errors24h = 3,
+                    mobileCrashes24h = 0,
+                    queueDepth = 2,
+                    updatedAt = now,
+                ),
+            ),
+            currentTime = now,
+        )
+
+        advanceUntilIdle()
+
+        val state = assertIs<SystemStatusUiState.Content>(viewModel.state.value.uiState)
+        assertEquals(0.0, state.value.supabaseDiskPercent)
+        assertEquals("0 %", state.value.supabaseDiskPercent.toPercentLabel())
+    }
+
+    @Test
+    fun theRealSupabaseReadingIsFormattedWithTheSharedPercentLabel() {
+        // 100 * (1 - 8.05275648e9 / 8.350298112e9) = 3,5632…%
+        assertEquals("3.6 %", 3.5632.toPercentLabel())
     }
 
     @Test

@@ -86,6 +86,19 @@ data class NoticiaLayerDto(
     val locked: Boolean = false,
     val orden: Int = 0,
     val rotationDegrees: Int = 0,
+    /**
+     * Tipografia de la capa. Campos nuevos CON default: `capas` es `jsonb`, las
+     * filas ya guardadas no traen estas claves y deserializan a `0`/`"normal"`
+     * sin tocar la base ni migrar nada.
+     *
+     * `fontSizeSp = 0` significa «derivado del tipo de capa», no «tamano cero»:
+     * es como se pinta hoy el lienzo y como debe seguir pintandose lo ya
+     * guardado. Ademas, el `Json` del backend no serializa defaults
+     * (`encodeDefaults = false`), asi que una capa derivada no engorda el
+     * `jsonb` con dos claves que no dicen nada.
+     */
+    val fontSizeSp: Int = 0,
+    val fontWeight: String = "",
 )
 
 class InMemoryNewsGateway : NewsGateway {
@@ -170,14 +183,36 @@ class SupabaseNewsGateway private constructor(
         )
     }
 
+    /**
+     * El asset se COMPRIME antes de cruzar la red hacia el bucket.
+     *
+     * La validación de que es una imagen va primero y no cambia: comprimir no
+     * puede convertir en admisible algo que no lo era. Lo que sí cambia es que
+     * el objeto puede acabar siendo un JPEG aunque llegara como PNG, y por eso
+     * la extensión del objeto se deriva del MIME **resultante** y no del nombre
+     * que mandó el cliente — un `fondo.png` que contiene un JPEG se descarga
+     * roto en la mitad de los visores.
+     *
+     * Si la compresión no sirve de nada (falla, no la sabemos hacer, o el
+     * resultado pesa más), [MediaCompression.compress] devuelve los bytes y el
+     * MIME originales y aquí no se nota: se sube exactamente lo que llegó.
+     */
     override fun uploadAsset(file: NewsUploadedFile): NewsAssetUploadDto {
         require(file.mimeType.startsWith("image/")) { "El asset de noticia debe ser una imagen." }
-        val objectPath = "news/${UUID.randomUUID()}/${file.fileName.sanitizeStorageSegment()}"
-        storageUpload(objectPath, file.mimeType, file.bytes)
+        val optimized = MediaCompression.compress(
+            bytes = file.bytes,
+            mimeType = file.mimeType,
+            // La ruta del objeto se construye aquí mismo: este punto de subida
+            // SÍ puede garantizar que extensión y MIME acaben de acuerdo.
+            allowFormatChange = true,
+        )
+        val objectName = file.fileName.sanitizeStorageSegment().withExtensionFor(optimized.mimeType)
+        val objectPath = "news/${UUID.randomUUID()}/$objectName"
+        storageUpload(objectPath, optimized.mimeType, optimized.bytes)
         return NewsAssetUploadDto(
             path = objectPath,
             publicUrl = storagePublicUrl(objectPath),
-            mimeType = file.mimeType,
+            mimeType = optimized.mimeType,
         )
     }
 
@@ -421,6 +456,24 @@ private fun String.toClientBackground(): String {
 
 private fun String.toPostgrestValue(): String {
     return URLEncoder.encode(this, StandardCharsets.UTF_8.toString())
+}
+
+/**
+ * Ajusta la extensión al MIME real de los bytes que se van a subir.
+ *
+ * Sólo toca los formatos que sabe nombrar: para cualquier otro MIME devuelve el
+ * nombre tal cual, porque inventar una extensión es peor que no tocarla.
+ */
+internal fun String.withExtensionFor(mimeType: String): String {
+    val extension = when (mimeType.substringBefore(';').trim().lowercase()) {
+        "image/jpeg" -> "jpg"
+        "image/png" -> "png"
+        "image/webp" -> "webp"
+        "image/gif" -> "gif"
+        else -> return this
+    }
+    val base = substringBeforeLast('.', this).ifBlank { "file" }
+    return "$base.$extension"
 }
 
 private fun String.sanitizeStorageSegment(): String {

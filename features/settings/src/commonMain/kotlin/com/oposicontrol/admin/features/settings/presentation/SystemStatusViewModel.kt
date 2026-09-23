@@ -54,6 +54,7 @@ private fun SystemStatus.toUiState(now: Instant): SystemStatusUiState {
         workerStatus = workerStatus,
         cpuPercent = cpuPercent,
         ramPercent = ramPercent,
+        supabaseDiskPercent = supabaseDiskPercent,
         apiLatencyMs = apiLatencyMs,
         errors24h = errors24h,
         mobileCrashes24h = mobileCrashes24h,
@@ -64,8 +65,16 @@ private fun SystemStatus.toUiState(now: Instant): SystemStatusUiState {
         overallStatus == SystemStatusLevel.DEGRADED || overallStatus == SystemStatusLevel.DOWN -> {
             SystemStatusUiState.Degraded(ui)
         }
-        listOf(cpuPercent, ramPercent, apiLatencyMs, errors24h, mobileCrashes24h, queueDepth, updatedAt)
-            .any { it == null } -> SystemStatusUiState.PartialData(ui)
+        listOf(
+            cpuPercent,
+            ramPercent,
+            supabaseDiskPercent,
+            apiLatencyMs,
+            errors24h,
+            mobileCrashes24h,
+            queueDepth,
+            updatedAt,
+        ).any { it == null } -> SystemStatusUiState.PartialData(ui)
         else -> SystemStatusUiState.Content(ui)
     }
 }

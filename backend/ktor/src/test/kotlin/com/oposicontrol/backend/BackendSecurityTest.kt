@@ -1,5 +1,7 @@
 package com.oposicontrol.backend
 
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -109,6 +111,65 @@ class BackendSecurityTest {
     }
 
     @Test
+    fun newsLayerTypographyTravelsInsideTheLayersColumn() {
+        val input = NoticiaDto(
+            titulo = "Noticia",
+            especialidad = ESPECIALIDAD_UUID,
+            tipo = TIPO_UUID,
+            texto = "Cuerpo editorial",
+            capas = listOf(
+                NoticiaLayerDto(id = "a", nombre = "Titulo", contenido = "Hola", orden = 0, fontSizeSp = 42, fontWeight = "bold"),
+                NoticiaLayerDto(id = "b", nombre = "Texto", contenido = "Cuerpo", orden = 1),
+            ),
+        )
+
+        val row = input.toSupabaseRow({ it }, { it })
+        assertEquals(42, row.capas.first().fontSizeSp)
+        assertEquals("bold", row.capas.first().fontWeight)
+
+        val restored = row.toDto().capas
+        assertEquals(42, restored.first().fontSizeSp)
+        assertEquals("bold", restored.first().fontWeight)
+        // `0` no es un tamano, es «derivado del tipo de capa»: el lienzo lo
+        // resuelve por `tipo`. Debe sobrevivir el viaje SIN convertirse en un
+        // numero, o la capa se congelaria con el tamano de hoy.
+        assertEquals(0, restored.last().fontSizeSp)
+        // `""` es el centinela de «derivado»: «normal» es una elección explícita.
+        assertEquals("", restored.last().fontWeight)
+    }
+
+    @Test
+    fun newsLayersSavedBeforeTypographyDeserializeAsDerived() {
+        // Una fila tal y como esta HOY en `capas jsonb`: sin `fontSizeSp` ni
+        // `fontWeight`. `capas` es jsonb, asi que los campos nuevos entran sin
+        // migracion, pero solo si lo ya guardado se sigue leyendo sin fallar.
+        val legacyRow = """
+            {
+              "id": "$NOTICIA_UUID",
+              "titulo": "Noticia",
+              "especialidad_id": "$ESPECIALIDAD_UUID",
+              "tipo_noticia_id": "$TIPO_UUID",
+              "texto": "Cuerpo editorial",
+              "capas": [
+                {"id":"a","nombre":"Titulo","tipo":"titulo","contenido":"Hola","x":48,"y":142,"width":360,"height":44,"opacity":100,"visible":true,"orden":0}
+              ]
+            }
+        """.trimIndent()
+
+        val layer = newsGatewayJson.decodeFromString<SupabaseNoticiaRow>(legacyRow).toDto().capas.single()
+
+        // Derivada, que es exactamente como se pintaba antes de existir el campo.
+        assertEquals(0, layer.fontSizeSp)
+        assertEquals("", layer.fontWeight)
+        // Y el resto de la capa intacto: el cambio es estrictamente aditivo.
+        assertEquals(48, layer.x)
+        assertEquals(142, layer.y)
+        assertEquals(360, layer.width)
+        assertEquals(44, layer.height)
+        assertEquals("Titulo", layer.nombre)
+    }
+
+    @Test
     fun newsListLimitIsBoundedInsteadOfReadingTheWholeTable() {
         // Sin parametro, un techo honesto en vez de "todo".
         assertEquals(DEFAULT_NEWS_PAGE_SIZE, sanitizeNewsLimit(null))
@@ -134,6 +195,13 @@ class BackendSecurityTest {
         assertFalse("7".isCanonicalUuid())
         assertFalse("".isCanonicalUuid())
     }
+}
+
+/** El mismo `Json` que `Application.module()` le entrega a `SupabaseNewsGateway`. */
+private val newsGatewayJson = Json {
+    ignoreUnknownKeys = true
+    explicitNulls = false
+    prettyPrint = false
 }
 
 private const val NOTICIA_UUID = "8f14e45f-ceea-467a-9a3e-1b2c3d4e5f60"

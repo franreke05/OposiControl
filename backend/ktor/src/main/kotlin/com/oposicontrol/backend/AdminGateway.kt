@@ -761,8 +761,17 @@ private data class AuditRow(
     val metadata: Map<String, String>? = null,
 )
 
+/**
+ * Fila de `public.tipo_noticia`.
+ *
+ * `id` es `uuid`, no entero. Declarado como `Int?` la deserialización de
+ * PostgREST reventaba y el catálogo entero llegaba al panel como «No
+ * disponible», sin poder clasificar ninguna noticia. Mismo defecto que ya se
+ * corrigió en `NewsGateway`: la tabla nació con claves `uuid` y el backend
+ * asumía las de un esquema que nunca existió.
+ */
 @Serializable
-private data class NewsTypeRow(val id: Int? = null, val nombre: String, val slug: String, val activo: Boolean = true)
+private data class NewsTypeRow(val id: String? = null, val nombre: String, val slug: String, val activo: Boolean = true)
 
 @Serializable
 private data class ExamAccessRow(
@@ -907,7 +916,10 @@ private fun NewsTypeRow.toDto() = AdminNewsTypeDto(
 )
 
 private fun AdminNewsTypeDto.toRow() = NewsTypeRow(
-    id = id.toIntOrNull(),
+    // En alta se omite y Postgres aplica `gen_random_uuid()`; en edición viaja
+    // el uuid y `on_conflict=id` fusiona. `toIntOrNull()` lo anulaba siempre,
+    // así que editar un tipo creaba uno nuevo en vez de actualizarlo.
+    id = id.takeIf { it.isNotBlank() },
     nombre = name,
     slug = slug.ifBlank { name.toSlug() },
     activo = isActive,
