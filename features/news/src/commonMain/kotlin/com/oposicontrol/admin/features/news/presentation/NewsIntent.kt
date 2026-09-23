@@ -4,6 +4,8 @@ sealed interface NewsIntent {
     data object Refresh : NewsIntent
     data object CreateNew : NewsIntent
     data object SaveDraft : NewsIntent
+
+    /** Variantes por id: las usa el editor MOVIL, que actua sobre una fila de la lista sin seleccionarla antes. */
     data class SaveDraftFor(val id: String) : NewsIntent
     data object Publish : NewsIntent
     data class PublishFor(val id: String) : NewsIntent
@@ -11,6 +13,8 @@ sealed interface NewsIntent {
     data class ScheduleAt(val isoUtc: String) : NewsIntent
     data object Archive : NewsIntent
     data class ArchiveFor(val id: String) : NewsIntent
+
+    /** Validacion explicita: el editor movil la pide al cambiar de paso. */
     data object ValidateDraft : NewsIntent
     data object DeleteSelected : NewsIntent
     data object SelectBackground : NewsIntent
@@ -28,11 +32,8 @@ sealed interface NewsIntent {
     data class UpdateText(val value: String) : NewsIntent
     data class UpdateImagePath(val value: String) : NewsIntent
     data class UpdateStatus(val value: String) : NewsIntent
-    data class UpdatePublishFrom(val value: String) : NewsIntent
     data class UpdateCanvasWidth(val value: String) : NewsIntent
     data class UpdateCanvasHeight(val value: String) : NewsIntent
-    data class UpdateBackgroundAssetStatus(val value: String) : NewsIntent
-    data class UpdateImageAssetStatus(val value: String) : NewsIntent
     data object ToggleCanvasFullscreen : NewsIntent
     data object AddTitleLayer : NewsIntent
     data object AddLayer : NewsIntent

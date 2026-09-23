@@ -272,15 +272,12 @@ class NewsViewModel(
             is NewsIntent.UpdateLayerTextColor -> updateLayer(intent.id) { layer -> layer.copy(textColor = intent.value) }
             is NewsIntent.UpdateLayerX -> updateLayer(intent.id) { layer -> layer.copy(x = intent.value.toIntOrNull() ?: layer.x) }
             is NewsIntent.UpdateLayerY -> updateLayer(intent.id) { layer -> layer.copy(y = intent.value.toIntOrNull() ?: layer.y) }
-            is NewsIntent.UpdatePublishFrom -> updateAndValidate { it.copy(editorPublishFrom = intent.value) }
             is NewsIntent.UpdateCanvasWidth -> updateAndValidate {
                 it.copy(editorCanvasWidth = intent.value.toPositiveInt(it.editorCanvasWidth)).withClampedLayers()
             }
             is NewsIntent.UpdateCanvasHeight -> updateAndValidate {
                 it.copy(editorCanvasHeight = intent.value.toPositiveInt(it.editorCanvasHeight)).withClampedLayers()
             }
-            is NewsIntent.UpdateBackgroundAssetStatus -> updateAndValidate { it.copy(editorBackgroundAssetStatus = intent.value) }
-            is NewsIntent.UpdateImageAssetStatus -> updateAndValidate { it.copy(editorImageAssetStatus = intent.value) }
             NewsIntent.ToggleCanvasFullscreen -> updateState { it.copy(canvasFullscreen = !it.canvasFullscreen) }
             is NewsIntent.UpdateSearch -> {
                 updateState { it.copy(searchQuery = intent.value) }
