@@ -1,20 +1,14 @@
 package com.oposicontrol.admin.features.reports.presentation
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,9 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -36,8 +28,6 @@ import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.GlassActionButton
-import com.oposicontrol.admin.core.ui.components.GlassSurface
-import com.oposicontrol.admin.core.ui.components.LoadingStateCard
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.domain.model.ForumReportDetail
 import kotlin.time.Clock
@@ -77,13 +67,7 @@ private fun ReportDetailContent(
 }
 
 @Composable
-private fun LoadingDetail() {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        LoadingStateCard(rows = 2)
-        LoadingStateCard(rows = 3)
-        LoadingStateCard(rows = 2)
-    }
-}
+fun LoadingDetail() = com.oposicontrol.admin.core.ui.components.LoadingDetail()
 
 @Composable
 private fun ErrorDetail(error: AppError, onRetry: () -> Unit) {
@@ -251,41 +235,11 @@ private fun StatusPill(kind: ReportStatusKind, label: String) {
         ReportStatusKind.RESOLVED -> GlassTheme.tokens.success
         ReportStatusKind.DISCARDED, ReportStatusKind.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    GlassSurface(
-        modifier = Modifier.defaultMinSize(minHeight = 32.dp),
-        shape = RoundedCornerShape(16.dp),
-        tint = color.copy(alpha = 0.16f),
-        strokeColor = color.copy(alpha = 0.45f),
-        shadowElevation = 0.dp,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(color))
-            Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = color)
-        }
-    }
+    com.oposicontrol.admin.core.ui.components.DetailStatusPill(label, color)
 }
 
 @Composable
-private fun DetailSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = GlassTheme.tokens.accent,
-            )
-            content()
-        }
-    }
-}
+fun DetailSection(title: String, content: @Composable ColumnScope.() -> Unit) = com.oposicontrol.admin.core.ui.components.DetailSection(title, content)
 
 private fun friendlyErrorTitleDetail(error: AppError): String = when (error) {
     is AppError.Network -> "No se pudo conectar"

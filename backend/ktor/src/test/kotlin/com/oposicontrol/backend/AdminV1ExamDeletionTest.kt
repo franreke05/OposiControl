@@ -326,21 +326,5 @@ class AdminV1ExamDeletionTest {
 
     private fun HttpRequest.asPeticion(): Peticion = Peticion(method(), uri().toString(), bodyText())
 
-    private fun HttpRequest.bodyText(): String {
-        val publisher = bodyPublisher().orElse(null) ?: return ""
-        val chunks = StringBuilder()
-        publisher.subscribe(object : java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer> {
-            override fun onSubscribe(subscription: java.util.concurrent.Flow.Subscription) {
-                subscription.request(Long.MAX_VALUE)
-            }
-
-            override fun onNext(item: java.nio.ByteBuffer) {
-                chunks.append(Charsets.UTF_8.decode(item))
-            }
-
-            override fun onError(throwable: Throwable) = Unit
-            override fun onComplete() = Unit
-        })
-        return chunks.toString()
-    }
+    private fun HttpRequest.bodyText(): String = readRequestBody(this)
 }

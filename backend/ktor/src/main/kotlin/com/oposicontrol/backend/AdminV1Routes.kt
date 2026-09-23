@@ -5708,7 +5708,7 @@ class AdminV1Gateway private constructor(
                 req.ticketsReporter,
                 "Recompensa por reporte",
                 tipo = "reporte_validado",
-                idempotencyKey = "report-reward:$id",
+                idempotencyKey = opositesterRewardIdempotencyKey(id),
             )
         }
         val patch = ReportePatch(
@@ -5961,16 +5961,7 @@ class AdminV1Gateway private constructor(
             }
     }
 
-    fun settings(): AdminSettingsDto {
-        return AdminSettingsDto(
-            displayName = System.getenv("OPOSICONTROL_ADMIN_DISPLAY_NAME").orEmpty().ifBlank { "Administrador" },
-            email = System.getenv("OPOSICONTROL_ADMIN_EMAIL").orEmpty(),
-            receiveReleaseNotes = false,
-            defaultEnvironment = System.getenv("APP_ENV").orEmpty().ifBlank { "dev" },
-            preferFakeData = false,
-            enableVerboseLogs = System.getenv("ENABLE_VERBOSE_NETWORK_LOGS")?.toBooleanStrictOrNull() ?: false,
-        )
-    }
+    fun settings(): AdminSettingsDto = adminSettingsFromEnvironment()
 
     // ETIQUETAS
     fun listEtiquetas(): List<AdminEtiquetaDto> =

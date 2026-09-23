@@ -4,6 +4,7 @@ import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.remote.api.adminAuthHeaders
 import com.oposicontrol.admin.domain.model.ExamAccess
 import com.oposicontrol.admin.domain.model.ModerationAction
 import com.oposicontrol.admin.domain.model.NewsType
@@ -16,13 +17,11 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.Serializable
@@ -129,10 +128,7 @@ class KtorAdminOperationsRepositoryImpl(
     private fun adminV1Url(): String = "${appConfig.baseUrl.trimEnd('/')}/api/v1/admin"
 
     private fun HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() }
-            ?: return
-        header(HttpHeaders.Authorization, "Bearer $token")
+        adminAuthHeaders(appConfig, sessionLocalDataSource)
     }
 
     private suspend inline fun <reified T> HttpResponse.checkedBody(endpoint: String): T {

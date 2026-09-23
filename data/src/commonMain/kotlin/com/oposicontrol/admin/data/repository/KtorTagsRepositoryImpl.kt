@@ -3,6 +3,7 @@ package com.oposicontrol.admin.data.repository
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.remote.api.adminAuthHeaders
 import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.domain.model.Tag
 import com.oposicontrol.admin.domain.repository.TagsRepository
@@ -10,14 +11,12 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.flow.Flow
@@ -68,9 +67,7 @@ class KtorTagsRepositoryImpl(
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() } ?: return
-        header(HttpHeaders.Authorization, "Bearer $token")
+        adminAuthHeaders(appConfig, sessionLocalDataSource)
     }
 }
 

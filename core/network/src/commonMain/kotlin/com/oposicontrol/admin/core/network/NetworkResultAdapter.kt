@@ -51,7 +51,7 @@ class NetworkResultAdapter(
 
     private fun mapBackendFailure(message: String?): AppError {
         val raw = message.orEmpty()
-        val status = Regex("^backend\\s+(\\d{3})\\b").find(raw)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val status = BACKEND_STATUS_PATTERN.find(raw)?.groupValues?.getOrNull(1)?.toIntOrNull()
         return when {
             status == 401 -> AppError.Authentication("Tu sesión ha caducado. Vuelve a iniciar sesión.")
             status == 403 -> AppError.Authorization("No tienes permisos para realizar esta acción.")
@@ -113,7 +113,7 @@ class NetworkResultAdapter(
      * concatenada por quien lanzó el error, no una respuesta viva.
      */
     private fun backendMessage(raw: String): String? =
-        Regex("\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+        BACKEND_MESSAGE_PATTERN
             .find(raw)
             ?.groupValues
             ?.getOrNull(1)
@@ -135,7 +135,7 @@ class NetworkResultAdapter(
      * siendo el que se pinta, y lo escribe el backend.
      */
     private fun backendErrorCode(raw: String): String? =
-        Regex("\"error\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+        BACKEND_ERROR_CODE_PATTERN
             .find(raw)
             ?.groupValues
             ?.getOrNull(1)
@@ -158,6 +158,20 @@ class NetworkResultAdapter(
             "database_lock_timeout",
             "database_statement_timeout",
         )
+
+        /**
+         * Las tres expresiones que lee un error de backend, compiladas UNA vez.
+         *
+         * Estaban construidas dentro de las funciones. Todo fallo HTTP con prefijo
+         * `backend NNN` recorre las tres, asi que eran tres `Regex` compiladas por
+         * cada error. `Regex` es inmutable y `find` crea su propio matcher, de modo
+         * que subirlas aqui no cambia nada de lo que hacen: es la misma decision que
+         * este fichero ya habia tomado para [REFERENCE_PATTERN], y que en estas tres
+         * se habia quedado a medias.
+         */
+        val BACKEND_STATUS_PATTERN = Regex("^backend\\s+(\\d{3})\\b")
+        val BACKEND_MESSAGE_PATTERN = Regex("\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+        val BACKEND_ERROR_CODE_PATTERN = Regex("\"error\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
 
         /** Mismo alfabeto y longitudes que el `X-Request-Id` que Ktor acepta. */
         val REFERENCE_PATTERN = Regex("Referencia:\\s*([A-Za-z0-9._-]{8,128})")

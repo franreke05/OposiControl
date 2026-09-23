@@ -107,7 +107,7 @@ fun AdminSection.toAppRoute(): AppRoute = when (this) {
 
 fun resolveGuardRoute(session: SessionState, requested: AppRoute): AppRoute? = when (session) {
     SessionState.SESSION_RESTORING -> null
-    SessionState.UNAUTHENTICATED -> if (requested is AppRoute.Auth) AppRoute.Auth else AppRoute.Auth
+    SessionState.UNAUTHENTICATED -> AppRoute.Auth
     SessionState.AUTHENTICATED -> if (requested is AppRoute.Auth) AppRoute.Home else requested
 }
 

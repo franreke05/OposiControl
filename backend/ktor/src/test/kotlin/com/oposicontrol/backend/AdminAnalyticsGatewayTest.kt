@@ -1,21 +1,7 @@
 package com.oposicontrol.backend
 
 import kotlinx.serialization.json.Json
-import java.net.Authenticator
-import java.net.CookieHandler
-import java.net.ProxySelector
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpHeaders
 import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
-import java.util.Optional
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.Executor
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLParameters
-import javax.net.ssl.SSLSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -45,7 +31,7 @@ class AdminAnalyticsGatewayTest {
                 uri.contains("perfiles_usuario") && uri.contains("onboarding_completado") -> countResponse("*/0")
                 uri.contains("perfiles_usuario") -> countResponse("0-0/3")
                 // eventos_app total: el upstream falla.
-                uri.contains("eventos_app") && !uri.contains("creado_en") -> StubResponse(500, "boom", null)
+                uri.contains("eventos_app") && !uri.contains("creado_en") -> V1StubResponse(500, "boom", null)
                 uri.contains("eventos_app") -> countResponse("*/0")
                 uri.contains("sesiones_estudio") && uri.contains("finalizada_en") -> countResponse("0-0/6")
                 uri.contains("sesiones_estudio") && uri.contains("iniciada_en") -> countResponse("0-0/4")
@@ -96,7 +82,7 @@ class AdminAnalyticsGatewayTest {
                 // El total de sesiones falla; las terminadas se leen bien.
                 uri.contains("sesiones_estudio") && uri.contains("finalizada_en") -> countResponse("0-0/6")
                 uri.contains("sesiones_estudio") && uri.contains("iniciada_en") -> countResponse("0-0/4")
-                uri.contains("sesiones_estudio") -> StubResponse(503, "upstream down", null)
+                uri.contains("sesiones_estudio") -> V1StubResponse(503, "upstream down", null)
                 else -> countResponse("*/0")
             }
         }
@@ -115,7 +101,7 @@ class AdminAnalyticsGatewayTest {
 
     @Test
     fun aTotalOutageLeavesEveryMetricNullAndEveryKeyNamed() {
-        val gateway = gatewayWith { StubResponse(500, "down", null) }
+        val gateway = gatewayWith { V1StubResponse(500, "down", null) }
 
         val producto = gateway.producto()
 
@@ -145,7 +131,7 @@ class AdminAnalyticsGatewayTest {
     fun aCountThatComesBackWithoutAUsableTotalIsNotTreatedAsZero() {
         // 200 OK pero sin `Content-Range` aprovechable (por ejemplo si alguien
         // quita el `Prefer: count=exact`): el total es desconocido, no cero.
-        val gateway = gatewayWith { StubResponse(200, "[]", "0-24/*") }
+        val gateway = gatewayWith { V1StubResponse(200, "[]", "0-24/*") }
 
         val producto = gateway.producto()
 
@@ -225,7 +211,7 @@ class AdminAnalyticsGatewayTest {
         val requests = mutableListOf<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { uri ->
             if (uri.contains("v_preguntas_dificultad_global")) {
-                StubResponse(
+                V1StubResponse(
                     200,
                     """[{"pregunta_id":"p1","titulo":"Difícil","porcentaje_fallo":91.5,"total_respuestas":40}]""",
                     null,
@@ -254,7 +240,7 @@ class AdminAnalyticsGatewayTest {
     fun theLeagueDistributionCountsEachLeagueExactlyAndKeepsAFailedBucketAsUnknown() {
         val gateway = gatewayWith { uri ->
             when {
-                uri.contains("ligas_nivel") -> StubResponse(
+                uri.contains("ligas_nivel") -> V1StubResponse(
                     200,
                     """[
                         {"id":"l1","codigo":"liga_50","nombre":"Liga 50","preguntas_minimas":50,"ventana_calculo":50},
@@ -263,7 +249,7 @@ class AdminAnalyticsGatewayTest {
                     null,
                 )
                 uri.contains("liga_nivel_id=eq.l1") -> countResponse("0-0/12")
-                uri.contains("liga_nivel_id=eq.l2") -> StubResponse(500, "boom", null)
+                uri.contains("liga_nivel_id=eq.l2") -> V1StubResponse(500, "boom", null)
                 else -> countResponse("*/0")
             }
         }
@@ -350,77 +336,13 @@ class AdminAnalyticsGatewayTest {
 
     private fun gatewayWith(
         record: (HttpRequest) -> Unit = {},
-        responder: (String) -> StubResponse,
+        responder: (String) -> V1StubResponse,
     ): AdminAnalyticsGateway = AdminAnalyticsGateway(
         supabaseUrl = "https://stub.supabase.test",
         serviceRoleKey = "stub-key",
         json = Json { ignoreUnknownKeys = true },
-        client = StubHttpClient(record, responder),
+        client = V1StubHttpClient(record, responder),
     )
 
-    private fun countResponse(contentRange: String) = StubResponse(206, "[]", contentRange)
-
-    internal data class StubResponse(val status: Int, val body: String, val contentRange: String?)
-
-    /**
-     * `HttpClient` mínimo que responde según la URL pedida.
-     *
-     * Se implementa a mano en vez de usar un doble de librería porque el gateway
-     * usa el cliente de la JDK (igual que el resto del backend) y lo que hay que
-     * observar es exactamente lo que sale por el cable: método, cabeceras
-     * `Prefer`/`Range` y timeout.
-     */
-    private class StubHttpClient(
-        private val record: (HttpRequest) -> Unit,
-        private val responder: (String) -> StubResponse,
-    ) : HttpClient() {
-        override fun cookieHandler(): Optional<CookieHandler> = Optional.empty()
-        override fun connectTimeout(): Optional<Duration> = Optional.empty()
-        override fun followRedirects(): Redirect = Redirect.NEVER
-        override fun proxy(): Optional<ProxySelector> = Optional.empty()
-        override fun sslContext(): SSLContext = SSLContext.getDefault()
-        override fun sslParameters(): SSLParameters = SSLParameters()
-        override fun authenticator(): Optional<Authenticator> = Optional.empty()
-        override fun version(): Version = Version.HTTP_1_1
-        override fun executor(): Optional<Executor> = Optional.empty()
-
-        @Suppress("UNCHECKED_CAST")
-        override fun <T : Any?> send(
-            request: HttpRequest,
-            responseBodyHandler: HttpResponse.BodyHandler<T>,
-        ): HttpResponse<T> {
-            record(request)
-            return StubHttpResponse(request, responder(request.uri().toString())) as HttpResponse<T>
-        }
-
-        override fun <T : Any?> sendAsync(
-            request: HttpRequest,
-            responseBodyHandler: HttpResponse.BodyHandler<T>,
-        ): CompletableFuture<HttpResponse<T>> = CompletableFuture.completedFuture(send(request, responseBodyHandler))
-
-        override fun <T : Any?> sendAsync(
-            request: HttpRequest,
-            responseBodyHandler: HttpResponse.BodyHandler<T>,
-            pushPromiseHandler: HttpResponse.PushPromiseHandler<T>?,
-        ): CompletableFuture<HttpResponse<T>> = sendAsync(request, responseBodyHandler)
-    }
-
-    private class StubHttpResponse(
-        private val request: HttpRequest,
-        private val stub: StubResponse,
-    ) : HttpResponse<String> {
-        override fun statusCode(): Int = stub.status
-        override fun request(): HttpRequest = request
-        override fun previousResponse(): Optional<HttpResponse<String>> = Optional.empty()
-        override fun headers(): HttpHeaders {
-            val headers = stub.contentRange
-                ?.let { mapOf("content-range" to listOf(it)) }
-                ?: emptyMap()
-            return HttpHeaders.of(headers) { _, _ -> true }
-        }
-        override fun body(): String = stub.body
-        override fun sslSession(): Optional<SSLSession> = Optional.empty()
-        override fun uri(): URI = request.uri()
-        override fun version(): HttpClient.Version = HttpClient.Version.HTTP_1_1
-    }
+    private fun countResponse(contentRange: String) = V1StubResponse(206, "[]", contentRange)
 }

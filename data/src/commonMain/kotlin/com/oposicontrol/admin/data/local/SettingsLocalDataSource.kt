@@ -11,10 +11,15 @@ class SettingsLocalDataSource(
     private val database: AdminDatabase,
     appConfig: AppConfig,
 ) {
-    private val state = MutableStateFlow(readSettings() ?: defaultSettings(appConfig))
+    private val state: MutableStateFlow<AdminSettings>
 
     init {
-        if (readSettings() == null) {
+        // Una sola consulta. Antes `readSettings()` se llamaba dos veces para
+        // responder a la misma pregunta: dos queries SQLDelight en la
+        // construcción del singleton, con el mismo resultado.
+        val stored = readSettings()
+        state = MutableStateFlow(stored ?: defaultSettings(appConfig))
+        if (stored == null) {
             save(state.value)
         }
     }

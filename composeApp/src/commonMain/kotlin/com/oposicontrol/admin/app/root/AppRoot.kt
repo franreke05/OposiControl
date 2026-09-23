@@ -14,7 +14,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.ui.Modifier
 import com.oposicontrol.admin.app.navigation.AppRoute
 import com.oposicontrol.admin.app.navigation.handleSystemBack
-import com.oposicontrol.admin.app.navigation.parentRoute
+import com.oposicontrol.admin.app.navigation.canNavigateBack
 import com.oposicontrol.admin.app.platform.PlatformBackHandler
 import com.oposicontrol.admin.app.navigation.AppRouteMenuGroup
 import com.oposicontrol.admin.app.navigation.AppRouteMenuItem
@@ -460,7 +460,7 @@ fun AppRoot(
             // handler se desactiva y el gesto llega al sistema — que es el
             // comportamiento normal de Android, no un caso especial.
             PlatformBackHandler(
-                enabled = backStack.size > 1 || route.parentRoute() != null,
+                enabled = navigator.canNavigateBack(),
                 onBack = { navigator.handleSystemBack() },
             )
             WarmUpPrimaryTabs(authState.isAuthenticated)

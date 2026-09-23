@@ -8,6 +8,5 @@ sealed interface ModerationIntent {
     data class UpdateSearch(val value: String) : ModerationIntent
     data class UpdateActionType(val value: String) : ModerationIntent
     data class UpdateTargetUser(val value: String) : ModerationIntent
-    data class UpdateExecutor(val value: String) : ModerationIntent
     data class UpdateReason(val value: String) : ModerationIntent
 }

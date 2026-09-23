@@ -48,7 +48,6 @@ class ModerationViewModel(
             ModerationIntent.Save -> save()
             is ModerationIntent.Select -> select(intent.id)
             is ModerationIntent.UpdateActionType -> updateState { it.copy(editorActionType = intent.value) }
-            is ModerationIntent.UpdateExecutor -> updateState { it.copy(editorExecutor = intent.value) }
             is ModerationIntent.UpdateReason -> updateState { it.copy(editorReason = intent.value) }
             is ModerationIntent.UpdateSearch -> {
                 updateState { it.copy(searchQuery = intent.value) }

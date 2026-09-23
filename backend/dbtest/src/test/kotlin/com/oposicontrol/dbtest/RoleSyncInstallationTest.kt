@@ -83,9 +83,9 @@ class RoleSyncInstallationTest {
     @Test
     fun soloServiceRoleConservaExecuteSobreLaRpc(): Unit = PostgresHarness.escenario { c ->
         c.aplicarGuard()
-        assertEquals("true", c.unico("select has_function_privilege('service_role', 'public.admin_sync_roles(uuid,uuid[])', 'execute')::text"))
-        assertEquals("false", c.unico("select has_function_privilege('anon', 'public.admin_sync_roles(uuid,uuid[])', 'execute')::text"))
-        assertEquals("false", c.unico("select has_function_privilege('authenticated', 'public.admin_sync_roles(uuid,uuid[])', 'execute')::text"))
+        assertEquals("true", c.puedeEjecutar("service_role"))
+        assertEquals("false", c.puedeEjecutar("anon"))
+        assertEquals("false", c.puedeEjecutar("authenticated"))
     }
 
     // ---- ACL preflight, probado por comportamiento -------------------------

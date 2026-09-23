@@ -493,6 +493,5 @@ class AdminV1AnnulmentTest {
         client = V1StubHttpClient({ upstream += it }, responder),
     )
 
-    private fun List<HttpRequest>.describe(): String =
-        "(${size}) " + joinToString(", ") { "${it.method()} ${it.uri().rawPath}?${it.uri().rawQuery.orEmpty()}" }
+    private fun List<HttpRequest>.describe(): String = describeRequests(this)
 }

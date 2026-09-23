@@ -62,16 +62,5 @@ fun ForumThread.toUi(now: Instant): ForumThreadUi {
 
 /** Mismo criterio que el resto de pantallas (p.ej. ReportsModels.formatRelativeTime):
  * nunca fabrica un valor si [iso] no se puede interpretar como instante real. */
-fun formatForumRelativeTime(iso: String, now: Instant): String {
-    if (iso.isBlank()) return ""
-    val instant = runCatching { Instant.parse(iso) }.getOrNull() ?: return ""
-    val minutes = (now - instant).inWholeMinutes
-    return when {
-        minutes < 1 -> "ahora mismo"
-        minutes < 60 -> "hace $minutes min"
-        minutes < 60 * 24 -> "hace ${minutes / 60} h"
-        minutes < 60 * 24 * 7 -> "hace ${minutes / (60 * 24)} d"
-        iso.length >= 10 -> "el ${iso.substring(8, 10)}/${iso.substring(5, 7)}/${iso.substring(0, 4)}"
-        else -> ""
-    }
-}
+fun formatForumRelativeTime(iso: String, now: Instant): String =
+    com.oposicontrol.admin.core.common.presentation.formatRelativeTime(iso, now)

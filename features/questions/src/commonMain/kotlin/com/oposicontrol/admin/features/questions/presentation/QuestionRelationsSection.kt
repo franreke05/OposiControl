@@ -40,7 +40,6 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
  */
 @Composable
 internal fun QuestionRelationsSection(state: QuestionsState, onIntent: (QuestionsIntent) -> Unit) {
-    val tokens = GlassTheme.tokens
     FormSection(
         title = "Exámenes vinculados",
         description = "Dónde se usa esta pregunta y en qué posición.",

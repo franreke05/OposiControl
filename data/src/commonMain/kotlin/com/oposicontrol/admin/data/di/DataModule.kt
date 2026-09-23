@@ -192,12 +192,7 @@ val dataModule = module {
     }
 
     single<TagSearchRepository> {
-        KtorTagSearchRepositoryImpl(
-            client = get(),
-            appConfig = get(),
-            sessionLocalDataSource = get(),
-            adapter = get(),
-        )
+        KtorTagSearchRepositoryImpl(adapter = get())
     }
 
     single<TagsRepository> {

@@ -319,21 +319,5 @@ class IndependentPhase3ResidueTest {
         """{"id":"$examenId","codigo_examen":"EX-1","especialidad_id":"$especialidadId","titulo":"Examen",""" +
             """"tipo_examen":"rafaga","tipo_acceso":"gratuito","activo":true,"total_preguntas":0}"""
 
-    private fun HttpRequest.bodyText(): String {
-        val publisher = bodyPublisher().orElse(null) ?: return ""
-        val chunks = StringBuilder()
-        publisher.subscribe(object : java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer> {
-            override fun onSubscribe(subscription: java.util.concurrent.Flow.Subscription) {
-                subscription.request(Long.MAX_VALUE)
-            }
-
-            override fun onNext(item: java.nio.ByteBuffer) {
-                chunks.append(Charsets.UTF_8.decode(item))
-            }
-
-            override fun onError(throwable: Throwable) = Unit
-            override fun onComplete() = Unit
-        })
-        return chunks.toString()
-    }
+    private fun HttpRequest.bodyText(): String = readRequestBody(this)
 }

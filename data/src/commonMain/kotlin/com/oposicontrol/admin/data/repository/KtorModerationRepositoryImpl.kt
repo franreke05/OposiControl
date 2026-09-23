@@ -3,6 +3,7 @@ package com.oposicontrol.admin.data.repository
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.remote.api.adminAuthHeaders
 import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.domain.model.ForumReport
 import com.oposicontrol.admin.domain.model.ForumReportContentPreview
@@ -11,14 +12,12 @@ import com.oposicontrol.admin.domain.repository.ModerationRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.Serializable
@@ -30,11 +29,13 @@ class KtorModerationRepositoryImpl(
     private val adapter: NetworkResultAdapter,
 ) : ModerationRepository {
 
-    override suspend fun listPendingReports() = adapter.safeCall {
-        val r = client.get(url(BackendRoutes.ADMIN_V1_REPORTES)) { backendHeaders() }
-        r.requireSuccess(BackendRoutes.ADMIN_V1_REPORTES)
-        r.body<ReportesV1Response>().data.map { it.toDomain() }
-    }
+    /**
+     * Es exactamente `listReports(includeResolved = false)`: con `false` el
+     * `parameter("estado", ...)` no se añade, así que la petición que sale por
+     * el cable es byte a byte la misma. El contrato ya lo decía en
+     * `ModerationRepository` -- ahora lo dice también el código.
+     */
+    override suspend fun listPendingReports() = listReports(includeResolved = false)
 
     override suspend fun listReports(includeResolved: Boolean) = adapter.safeCall {
         val r = client.get(url(BackendRoutes.ADMIN_V1_REPORTES)) {
@@ -96,9 +97,7 @@ class KtorModerationRepositoryImpl(
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() } ?: return
-        header(HttpHeaders.Authorization, "Bearer $token")
+        adminAuthHeaders(appConfig, sessionLocalDataSource)
     }
 }
 

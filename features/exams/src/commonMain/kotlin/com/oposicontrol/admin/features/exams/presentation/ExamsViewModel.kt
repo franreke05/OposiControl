@@ -685,7 +685,7 @@ class ExamsViewModel(
             (query.isBlank() ||
                 exam.title.lowercase().contains(query) ||
                 exam.specialtyName.lowercase().contains(query)) &&
-                (statusFilter.isBlank() || statusFilter.equals("all", ignoreCase = true) || exam.status.name.lowercase() == statusFilter.trim().lowercase())
+                (statusFilter.isBlank() || statusFilter.equals("all", ignoreCase = true) || exam.status.name.lowercase() == statusFilter)
         }
         updateState {
             it.copy(

@@ -21,10 +21,6 @@ object PostgresHarness {
         instancia.postgresDatabase.connection.use { c -> c.ejecutar(SupabaseFixture.ROLES_CLUSTER) }
         instancia
     }
-
-    fun version(): String =
-        pg.postgresDatabase.connection.use { it.unico("select version()")!! }
-
     /** Base nueva con el fixture legacy instalado. */
     fun <T> escenario(bloque: (Connection) -> T): T {
         val nombre = "escenario_" + contador.incrementAndGet()
@@ -54,8 +50,6 @@ fun Connection.unico(sql: String): String? =
     createStatement().use { st ->
         st.executeQuery(sql).use { rs -> if (rs.next()) rs.getString(1) else null }
     }
-
-fun Connection.entero(sql: String): Int = unico(sql)!!.toInt()
 
 /** Instala el candidate REAL del repositorio. */
 fun Connection.aplicarGuard() = ejecutar(CandidateFiles.guard())
@@ -141,3 +135,12 @@ fun <T> PostgresHarness.escenarioConIcu(locale: String, bloque: (java.sql.Connec
         bloque(c)
     }
 }
+
+/**
+ * ¿Puede [rol] ejecutar `admin_sync_roles`? La misma consulta se verificaba
+ * dos veces: como helper en un fichero y repetida literal, para los mismos
+ * tres roles, en otro. Ambos sitios exigen el mismo resultado hoy, así que
+ * promoverla aquí no cambia ninguna aserción.
+ */
+fun Connection.puedeEjecutar(rol: String): String =
+    unico("select has_function_privilege('$rol', 'public.admin_sync_roles(uuid,uuid[])', 'execute')::text")!!

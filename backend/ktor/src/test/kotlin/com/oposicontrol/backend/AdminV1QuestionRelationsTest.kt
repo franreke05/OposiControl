@@ -212,6 +212,5 @@ class AdminV1QuestionRelationsTest {
         routing { adminV1Routes(gateway) }
     }
 
-    private fun List<HttpRequest>.describe(): String =
-        "(${size}) " + joinToString(", ") { "${it.method()} ${it.uri().rawPath}?${it.uri().rawQuery.orEmpty()}" }
+    private fun List<HttpRequest>.describe(): String = describeRequests(this)
 }

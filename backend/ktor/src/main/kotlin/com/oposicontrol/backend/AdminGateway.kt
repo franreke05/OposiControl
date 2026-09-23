@@ -147,16 +147,7 @@ class SupabaseAdminGateway internal constructor(
         ).decodeList<RoleRow>().first().toDto()
     }
 
-    fun settings(): AdminSettingsDto {
-        return AdminSettingsDto(
-            displayName = System.getenv("OPOSICONTROL_ADMIN_DISPLAY_NAME").orEmpty().ifBlank { "Administrador" },
-            email = System.getenv("OPOSICONTROL_ADMIN_EMAIL").orEmpty(),
-            receiveReleaseNotes = false,
-            defaultEnvironment = System.getenv("APP_ENV").orEmpty().ifBlank { "dev" },
-            preferFakeData = false,
-            enableVerboseLogs = System.getenv("ENABLE_VERBOSE_NETWORK_LOGS")?.toBooleanStrictOrNull() ?: false,
-        )
-    }
+    fun settings(): AdminSettingsDto = adminSettingsFromEnvironment()
 
     fun listAudit(): List<AdminAuditEventDto> = emptyListOnMissingLegacySchema("listAudit") {
         val usersById = usuarios().associateBy { it.id }
@@ -961,3 +952,21 @@ private fun String.toSlug(): String {
     return URLEncoder.encode(normalized.lowercase().replace(Regex("[^a-z0-9]+"), "-").trim('-'), StandardCharsets.UTF_8)
         .ifBlank { "item" }
 }
+
+/**
+ * Los ajustes del panel, leídos del entorno del proceso.
+ *
+ * Estaba escrito dos veces, byte a byte: una en `AdminGateway.settings()` y
+ * otra en el gateway de `AdminV1Routes`. Son dos clases distintas que sirven a
+ * dos rutas distintas, así que las dos siguen teniendo su `settings()`; lo que
+ * ya no tienen es su propia copia de QUÉ variables de entorno se leen y con
+ * qué valores por defecto. Añadir un ajuste era acertar en dos sitios.
+ */
+internal fun adminSettingsFromEnvironment(): AdminSettingsDto = AdminSettingsDto(
+    displayName = System.getenv("OPOSICONTROL_ADMIN_DISPLAY_NAME").orEmpty().ifBlank { "Administrador" },
+    email = System.getenv("OPOSICONTROL_ADMIN_EMAIL").orEmpty(),
+    receiveReleaseNotes = false,
+    defaultEnvironment = System.getenv("APP_ENV").orEmpty().ifBlank { "dev" },
+    preferFakeData = false,
+    enableVerboseLogs = System.getenv("ENABLE_VERBOSE_NETWORK_LOGS")?.toBooleanStrictOrNull() ?: false,
+)

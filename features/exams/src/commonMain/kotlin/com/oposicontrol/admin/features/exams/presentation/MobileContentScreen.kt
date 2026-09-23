@@ -1654,10 +1654,6 @@ private fun ContentInfoPill(
     }
 }
 
-private fun Int.toTicketLabel(): String {
-    return if (this <= 0) "Gratis" else "$this tickets"
-}
-
 @Composable
 private fun QuestionsPanel(
     state: ExamsState,
@@ -3080,36 +3076,6 @@ private fun NewsCardPreview(item: NewsItem) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-@Composable
-private fun NewsActiveToggle(
-    isActive: Boolean,
-    onToggle: () -> Unit,
-) {
-    val background = if (isActive) GlassTheme.tokens.accent else GlassTheme.tokens.glassFillStrong
-    val color = if (isActive) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-    Box(
-        modifier = Modifier
-            .size(42.dp)
-            .background(background, RoundedCornerShape(14.dp))
-            .clickable(onClick = onToggle),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (isActive) {
-            Canvas(modifier = Modifier.size(18.dp)) {
-                val stroke = 3.dp.toPx()
-                drawLine(color, Offset(size.width * 0.2f, size.height * 0.5f), Offset(size.width * 0.45f, size.height * 0.75f), stroke, StrokeCap.Round)
-                drawLine(color, Offset(size.width * 0.45f, size.height * 0.75f), Offset(size.width * 0.85f, size.height * 0.25f), stroke, StrokeCap.Round)
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .background(color.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
-            )
-        }
     }
 }
 

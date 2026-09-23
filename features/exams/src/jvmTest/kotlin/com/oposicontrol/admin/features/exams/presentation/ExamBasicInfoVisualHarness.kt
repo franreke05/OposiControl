@@ -29,15 +29,10 @@ import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import kotlinx.datetime.Instant
-import java.awt.Font
-import java.awt.GradientPaint
-import java.awt.RenderingHints
-import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
 import kotlin.test.Test
 import kotlin.test.assertTrue
-import java.awt.Color as AwtColor
 
 /**
  * Banco de pruebas visual de **Información básica**, en los dos temas.
@@ -456,30 +451,6 @@ class ExamBasicInfoVisualHarness {
      * fixture de test. La vista previa lee un fichero local, así que para
      * comprobar que decodifica hace falta un fichero local que decodificar.
      */
-    private fun portadaDePrueba(): File {
-        val file = File(outputDir, "fixtures/portada-tcae-mayo.png")
-        if (file.exists()) return file
-        file.parentFile.mkdirs()
-        val width = 880
-        val height = 496
-        val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-        val graphics = image.createGraphics()
-        graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-        graphics.paint = GradientPaint(
-            0f, 0f, AwtColor(0x1F, 0x5F, 0x9E),
-            width.toFloat(), height.toFloat(), AwtColor(0x2E, 0x9E, 0x6B),
-        )
-        graphics.fillRect(0, 0, width, height)
-        graphics.color = AwtColor.WHITE
-        graphics.font = Font(Font.SANS_SERIF, Font.BOLD, 60)
-        graphics.drawString("TCAE · Simulacro", 56, height - 132)
-        graphics.font = Font(Font.SANS_SERIF, Font.PLAIN, 38)
-        graphics.drawString("Convocatoria mayo 2026", 56, height - 72)
-        graphics.dispose()
-        ImageIO.write(image, "png", file)
-        return file
-    }
-
 }
 
 /**
@@ -830,33 +801,6 @@ private fun comunidadNoDisponible(): ExamsState = abierto(
  * avisando de cambios que nadie ha hecho — un fallo del fixture disfrazado de
  * fallo de la pantalla, que es peor que no tener la captura.
  */
-private fun conPortadaGuardada(): ExamsState {
-    val path = "exam-covers/ex-1/3b0e8f7a-52c4-4e1d-9a6b-1f2d3c4b5a69.png"
-    val url = "https://cdn.oposicontrol.dev/storage/v1/object/sign/exam-resources/$path?token=firma"
-    val conPortada = CATALOGO[0].copy(
-        coverUrl = url,
-        coverStoragePath = path,
-        coverMimeType = "image/png",
-    )
-    val catalogo = CATALOGO.map { if (it.id == conPortada.id) conPortada else it }
-    return abierto(conPortada).copy(exams = UiAsync.Success(catalogo), catalogExams = catalogo)
-}
-
-/**
- * Examen nuevo con imagen elegida.
- *
- * Aquí NO se ofrece «Subir ahora»: no hay examen al que subirla. Lo que se dice
- * es lo que de verdad va a pasar —se subirá al crear el examen— y la imagen se
- * ve: es un fichero local y la plataforma lo decodifica.
- */
-private fun examenNuevoConPortadaElegida(localPath: String): ExamsState = examenNuevoVacio().copy(
-    editorTitle = "TCAE · Simulacro mayo",
-    editorSpecialtyId = "esp-tcae",
-    specialtyCapabilities = UiAsync.Success(CAPACIDADES),
-    editorCoverLocalUri = localPath,
-    editorCoverFileName = File(localPath).name,
-)
-
 /** Especialidades caídas en un examen NUEVO: sin catálogo no hay forma de elegir una. */
 private fun nuevoConEspecialidadesCaidas(): ExamsState = examenNuevoVacio().copy(
     specialties = UiAsync.Error(AppError.Network("No se ha podido conectar con el servidor.")),

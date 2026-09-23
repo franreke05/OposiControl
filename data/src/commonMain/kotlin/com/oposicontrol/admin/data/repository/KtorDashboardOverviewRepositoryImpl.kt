@@ -228,9 +228,9 @@ internal fun DashboardOverviewDto.toDomain(): DashboardOverview {
 private fun DashboardSystemPayload.toReport() = DashboardBlockReport(
     block = DashboardBlock.SYSTEM,
     health = DashboardHealth(
-        overall = health.overallStatus.toStatusLevel(),
-        ktor = health.ktorStatus.toStatusLevel(),
-        supabase = health.supabaseStatus.toStatusLevel(),
+        overall = health.overallStatus.toSystemStatusLevel(),
+        ktor = health.ktorStatus.toSystemStatusLevel(),
+        supabase = health.supabaseStatus.toSystemStatusLevel(),
         // `updatedAt` sí es opcional: es un adorno de la tarjeta, no el dato.
         updatedAt = health.updatedAt.toInstantOrNull(),
         // Ausente (sonda fallida) se conserva como ausente. Un 0 ms se leería
@@ -357,10 +357,6 @@ private fun DashboardActivityEntryPayload.toDomainOrNull(): DashboardActivityEnt
  */
 private fun Long.toCountOrNull(): Int? =
     takeIf { it in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() }?.toInt()
-
-/** `null` si el nivel no es uno de los cuatro conocidos: nunca se supone "operativo". */
-private fun String.toStatusLevel(): SystemStatusLevel =
-    SystemStatusLevel.entries.firstOrNull { it.name == trim().uppercase() } ?: SystemStatusLevel.UNKNOWN
 
 private fun String?.toInstantOrNull(): Instant? =
     this?.takeIf { it.isNotBlank() }?.let { runCatching { Instant.parse(it) }.getOrNull() }
