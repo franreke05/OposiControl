@@ -16,11 +16,30 @@ import java.util.UUID
 private const val STORED_NEWS_TEXT_PREFIX = "__OPOSICONTROL_NEWS_V1__\n"
 
 interface NewsGateway {
-    fun listNoticias(): List<NoticiaDto>
+    /**
+     * [limit] acota la lectura. La biblioteca pedía la tabla entera en cada
+     * refresco, lo que funciona con doce noticias y deja de funcionar solo:
+     * el coste crece para siempre y nadie se entera hasta que duele.
+     */
+    fun listNoticias(limit: Int = DEFAULT_NEWS_PAGE_SIZE, offset: Int = 0): List<NoticiaDto>
+
+    /** Releer UNA noticia sin traerse la biblioteca completa detrás. */
+    fun findNoticia(noticiaId: String): NoticiaDto?
+
     fun saveNoticia(input: NoticiaDto): NoticiaDto
     fun deleteNoticia(noticiaId: String)
     fun uploadAsset(file: NewsUploadedFile): NewsAssetUploadDto
 }
+
+/** Suficiente para la biblioteca real y un techo honesto frente al crecimiento. */
+const val DEFAULT_NEWS_PAGE_SIZE = 200
+
+/** Ni cero ni negativo ni ilimitado: un `limit=0` devolvería una lista vacía sin decir por qué. */
+internal fun sanitizeNewsLimit(raw: String?): Int =
+    raw?.trim()?.toIntOrNull()?.coerceIn(1, 500) ?: DEFAULT_NEWS_PAGE_SIZE
+
+internal fun sanitizeNewsOffset(raw: String?): Int =
+    raw?.trim()?.toIntOrNull()?.coerceAtLeast(0) ?: 0
 
 data class NewsUploadedFile(
     val fileName: String,
@@ -72,7 +91,10 @@ data class NoticiaLayerDto(
 class InMemoryNewsGateway : NewsGateway {
     private val noticias = linkedMapOf<String, NoticiaDto>()
 
-    override fun listNoticias(): List<NoticiaDto> = noticias.values.toList()
+    override fun listNoticias(limit: Int, offset: Int): List<NoticiaDto> =
+        noticias.values.toList().drop(offset).take(limit)
+
+    override fun findNoticia(noticiaId: String): NoticiaDto? = noticias[noticiaId]
 
     override fun saveNoticia(input: NoticiaDto): NoticiaDto {
         require(input.titulo.isNotBlank()) { "La noticia necesita titulo." }
@@ -101,20 +123,30 @@ class SupabaseNewsGateway private constructor(
     @Volatile
     private var storageBucketChecked = false
 
-    override fun listNoticias(): List<NoticiaDto> {
+    override fun listNoticias(limit: Int, offset: Int): List<NoticiaDto> {
         val rows = request(
             method = "GET",
-            path = "/rest/v1/noticia?select=*&order=id.desc",
+            // Ordenar por `id` dejó de tener sentido al ser `uuid`: el orden
+            // sería arbitrario. La biblioteca necesita lo más reciente arriba.
+            path = "/rest/v1/noticia?select=*&order=creado_en.desc&limit=$limit&offset=$offset",
             body = null,
         ).decodeList<SupabaseNoticiaRow>()
-        return rows.map { row -> row.toDto(json) }
+        return rows.map { row -> row.toDto() }
+    }
+
+    override fun findNoticia(noticiaId: String): NoticiaDto? {
+        require(noticiaId.isCanonicalUuid()) { "Id de noticia no valido." }
+        return request(
+            method = "GET",
+            path = "/rest/v1/noticia?id=eq.$noticiaId&select=*&limit=1",
+            body = null,
+        ).decodeList<SupabaseNoticiaRow>().firstOrNull()?.toDto()
     }
 
     override fun saveNoticia(input: NoticiaDto): NoticiaDto {
         require(input.titulo.isNotBlank()) { "La noticia necesita titulo." }
         require(input.texto.isNotBlank() || input.capas.any { it.contenido.isNotBlank() }) { "La noticia necesita texto o capas." }
         val row = input.toSupabaseRow(
-            json = json,
             resolveEspecialidadId = ::resolveEspecialidadId,
             resolveTipoNoticiaId = ::resolveTipoNoticiaId,
         )
@@ -124,14 +156,16 @@ class SupabaseNewsGateway private constructor(
             body = json.encodeToString(listOf(row)),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<SupabaseNoticiaRow>().first()
-        return saved.toDto(json)
+        return saved.toDto()
     }
 
     override fun deleteNoticia(noticiaId: String) {
-        val numericId = noticiaId.toIntOrNull() ?: throw IllegalArgumentException("Id de noticia no valido.")
+        // El id es `uuid`. Validarlo aquí evita mandar a PostgREST un filtro que
+        // no puede comparar y que volvería como 400 sin explicación util.
+        require(noticiaId.isCanonicalUuid()) { "Id de noticia no valido." }
         request(
             method = "DELETE",
-            path = "/rest/v1/noticia?id=eq.$numericId",
+            path = "/rest/v1/noticia?id=eq.$noticiaId",
             body = null,
         )
     }
@@ -219,15 +253,18 @@ class SupabaseNewsGateway private constructor(
         return json.decodeFromString(this)
     }
 
-    private fun resolveEspecialidadId(value: String): Int {
+    private fun resolveEspecialidadId(value: String): String {
         return resolveCatalogId(
             value = value,
-            table = "especialidad",
+            // La tabla es `especialidades`, en plural. Apuntaba a `especialidad`,
+            // que no existe: la resolución fallaba en silencio (`runCatching`) y
+            // salía por «No existe especialidad».
+            table = "especialidades",
             label = "especialidad",
         )
     }
 
-    private fun resolveTipoNoticiaId(value: String): Int {
+    private fun resolveTipoNoticiaId(value: String): String {
         return resolveCatalogId(
             value = value,
             table = "tipo_noticia",
@@ -235,10 +272,18 @@ class SupabaseNewsGateway private constructor(
         )
     }
 
-    private fun resolveCatalogId(value: String, table: String, label: String): Int {
-        value.toIntOrNull()?.let { return it }
+    /**
+     * Acepta el `uuid` que ya envía el panel, o resuelve por `slug`/`nombre`
+     * para quien trabaje con nombres legibles.
+     *
+     * Un uuid se da por bueno sin ir a la base: es el camino normal del panel y
+     * ahorra una petición por guardado. Si no existe, la FK lo rechaza al
+     * insertar, que es donde debe rechazarse.
+     */
+    private fun resolveCatalogId(value: String, table: String, label: String): String {
         val query = value.trim()
         require(query.isNotBlank()) { "La noticia necesita $label valida." }
+        if (query.isCanonicalUuid()) return query
         val encoded = query.toPostgrestValue()
         val resolved = runCatching {
             request(
@@ -268,20 +313,43 @@ class SupabaseNewsGateway private constructor(
 
 @Serializable
 private data class CatalogIdRow(
-    val id: Int,
+    val id: String,
 )
 
+/**
+ * Un `uuid` canónico, no cualquier texto con guiones. Sin esta comprobación,
+ * `"sin-seleccionar"` se tomaría por identificador y llegaría a la FK como un
+ * error de base de datos en vez de como un mensaje que el panel pueda mostrar.
+ */
+internal fun String.isCanonicalUuid(): Boolean =
+    runCatching { UUID.fromString(this).toString().equals(this, ignoreCase = true) }.getOrDefault(false)
+
+/**
+ * Fila de `public.noticia`.
+ *
+ * Los identificadores son `uuid`, no enteros. Se declaraban `Int` contra una
+ * base cuyas claves primarias son `uuid` desde siempre: `especialidad_id` no
+ * podía resolver nunca, y por eso guardar una noticia fallaba aunque el resto
+ * de la vertical estuviera completa.
+ *
+ * `capas` es una columna `jsonb` propia. Antes la composición se serializaba
+ * DENTRO de `texto` con un prefijo, lo que hacía que una misma columna
+ * significara dos cosas y que la composición no se pudiera consultar.
+ */
 @Serializable
 internal data class SupabaseNoticiaRow(
-    val id: Int? = null,
+    // Nulo en alta: PostgREST omite el campo (`explicitNulls = false`) y Postgres
+    // aplica `gen_random_uuid()`. En edición viaja y `on_conflict=id` fusiona.
+    val id: String? = null,
     val titulo: String,
     @SerialName("tipo_fondo")
     val fondo: String = "A",
     @SerialName("especialidad_id")
-    val especialidadId: Int = 1,
+    val especialidadId: String,
     val texto: String,
+    val capas: List<NoticiaLayerDto> = emptyList(),
     @SerialName("tipo_noticia_id")
-    val tipoNoticiaId: Int = 1,
+    val tipoNoticiaId: String,
     @SerialName("imagen_path")
     val imagenPath: String? = null,
     @SerialName("background_path")
@@ -293,60 +361,44 @@ internal data class SupabaseNoticiaRow(
     val publishedAt: String? = null,
 )
 
-@Serializable
-private data class StoredNewsText(
-    val body: String = "",
-    val capas: List<NoticiaLayerDto> = emptyList(),
-)
-
-internal fun SupabaseNoticiaRow.toDto(json: Json): NoticiaDto {
-    val stored = texto.decodeStoredNewsText(json)
+internal fun SupabaseNoticiaRow.toDto(): NoticiaDto {
     return NoticiaDto(
-        id = id?.toString().orEmpty(),
+        id = id.orEmpty(),
         titulo = titulo,
-        especialidad = especialidadId.toString(),
-        tipo = tipoNoticiaId.toString(),
+        especialidad = especialidadId,
+        tipo = tipoNoticiaId,
         fondo = fondo.toClientBackground(),
-        // ponytail: legacy rows stored the background in imagen_path; remove after data migration.
+        // ponytail: filas antiguas guardaban el fondo en imagen_path; retirar
+        // cuando no queden filas creadas antes de `background_path`.
         fondoPath = backgroundPath ?: imagenPath,
         estado = estado,
         publicarDesde = publicarDesde.orEmpty(),
-        texto = stored.body,
+        texto = texto,
         imagenPath = imagenPath,
-        capas = stored.capas,
+        capas = capas.sortedBy { it.orden },
     )
 }
 
 internal fun NoticiaDto.toSupabaseRow(
-    json: Json,
-    resolveEspecialidadId: (String) -> Int,
-    resolveTipoNoticiaId: (String) -> Int,
+    resolveEspecialidadId: (String) -> String,
+    resolveTipoNoticiaId: (String) -> String,
 ): SupabaseNoticiaRow {
+    // El orden se normaliza al guardar: el cliente puede haber reordenado capas
+    // dejando huecos (0, 2, 5) y el lienzo pinta por índice, no por distancia.
+    val normalizedLayers = capas.sortedBy { it.orden }.mapIndexed { index, layer -> layer.copy(orden = index) }
     return SupabaseNoticiaRow(
-        id = id.toIntOrNull(),
+        id = id.takeIf { it.isNotBlank() },
         titulo = titulo,
         fondo = fondo.toDatabaseBackground(),
         especialidadId = resolveEspecialidadId(especialidad),
-        texto = texto.encodeStoredNewsText(capas, json),
+        texto = texto,
+        capas = normalizedLayers,
         tipoNoticiaId = resolveTipoNoticiaId(tipo),
         imagenPath = imagenPath,
         backgroundPath = fondoPath,
         estado = estado.ifBlank { "draft" },
         publicarDesde = publicarDesde.takeIf { it.isNotBlank() },
     )
-}
-
-private fun String.decodeStoredNewsText(json: Json): StoredNewsText {
-    if (!startsWith(STORED_NEWS_TEXT_PREFIX)) return StoredNewsText(body = this)
-    val payload = removePrefix(STORED_NEWS_TEXT_PREFIX)
-    return runCatching { json.decodeFromString<StoredNewsText>(payload) }
-        .getOrElse { StoredNewsText(body = this) }
-}
-
-private fun String.encodeStoredNewsText(capas: List<NoticiaLayerDto>, json: Json): String {
-    if (capas.isEmpty()) return this
-    val normalizedLayers = capas.sortedBy { it.orden }.mapIndexed { index, layer -> layer.copy(orden = index) }
-    return STORED_NEWS_TEXT_PREFIX + json.encodeToString(StoredNewsText(body = this, capas = normalizedLayers))
 }
 
 private fun String.toDatabaseBackground(): String {

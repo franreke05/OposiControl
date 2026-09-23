@@ -650,7 +650,23 @@ fun Application.module() {
                     }
                 }
                 route("/noticias") {
-                    get { call.respond(newsGateway.listNoticias()) }
+                    get {
+                        call.respond(
+                            newsGateway.listNoticias(
+                                limit = sanitizeNewsLimit(call.request.queryParameters["limit"]),
+                                offset = sanitizeNewsOffset(call.request.queryParameters["offset"]),
+                            ),
+                        )
+                    }
+                    // Releer una noticia sin arrastrar la biblioteca entera.
+                    get("/{noticiaId}") {
+                        val noticia = newsGateway.findNoticia(call.requiredPath("noticiaId"))
+                            ?: return@get call.respond(
+                                HttpStatusCode.NotFound,
+                                ErrorDto(error = "noticia_no_encontrada", message = "La noticia no existe."),
+                            )
+                        call.respond(noticia)
+                    }
                     post("/assets") {
                         call.respondBackendSupabaseResult("/content/noticias/assets") {
                             val file = call.receiveSingleFile(
