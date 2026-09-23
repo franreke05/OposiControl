@@ -4,6 +4,7 @@ import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.remote.api.adminAuthHeaders
 import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.domain.model.BurstCampaign
 import com.oposicontrol.admin.domain.model.BurstCampaignType
@@ -16,13 +17,11 @@ import com.oposicontrol.admin.domain.repository.CommerceRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.coroutines.flow.Flow
@@ -33,10 +32,12 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * Store admin operations proxied through the Ktor boundary. Replaces
- * [SupabaseCommerceRepositoryImpl], which called Supabase PostgREST directly
- * from Desktop with the anon key + user JWT -- the only repository in
- * [com.oposicontrol.admin.data.di.dataModule] bypassing Ktor. Backend side:
+ * Store admin operations proxied through the Ktor boundary. Replaced the
+ * earlier `SupabaseCommerceRepositoryImpl`, which called Supabase PostgREST
+ * directly from Desktop with the anon key + user JWT -- the only repository in
+ * [com.oposicontrol.admin.data.di.dataModule] that bypassed Ktor. That class
+ * was deleted once this one took over: no repository reaches PostgREST now.
+ * Backend side:
  * AdminV1Routes.kt `/api/v1/admin/tienda` routes.
  */
 class KtorCommerceRepositoryImpl(
@@ -139,9 +140,7 @@ class KtorCommerceRepositoryImpl(
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() } ?: return
-        header(HttpHeaders.Authorization, "Bearer $token")
+        adminAuthHeaders(appConfig, sessionLocalDataSource)
     }
 }
 

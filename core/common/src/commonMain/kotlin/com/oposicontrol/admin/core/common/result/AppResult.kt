@@ -22,9 +22,4 @@ inline fun <T> AppResult<T>.onSuccess(block: (T) -> Unit): AppResult<T> {
     return this
 }
 
-inline fun <T> AppResult<T>.onFailure(block: (AppError) -> Unit): AppResult<T> {
-    if (this is AppResult.Failure) block(error)
-    return this
-}
-
 fun <T> AppResult<T>.getOrNull(): T? = (this as? AppResult.Success<T>)?.value

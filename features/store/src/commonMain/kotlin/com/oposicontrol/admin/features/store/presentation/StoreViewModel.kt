@@ -307,13 +307,6 @@ class StoreViewModel(
         else -> CommerceStatus.DRAFT
     }
 
-    private fun String.toBurstCampaignType() = when (lowercase()) {
-        "exam_burst" -> BurstCampaignType.EXAM_BURST
-        "ticket_multiplier" -> BurstCampaignType.TICKET_MULTIPLIER
-        "resource_unlock" -> BurstCampaignType.RESOURCE_UNLOCK
-        else -> BurstCampaignType.DAILY_STREAK
-    }
-
     private fun String.toInstantOrNull(): Instant? = takeIf { it.isNotBlank() }?.let {
         runCatching { Instant.parse(it) }.getOrNull()
     }

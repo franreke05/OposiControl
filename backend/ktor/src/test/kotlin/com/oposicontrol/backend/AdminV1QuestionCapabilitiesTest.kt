@@ -466,8 +466,7 @@ class AdminV1QuestionCapabilitiesTest {
         routing { adminV1Routes(gatewayWith(upstream)) }
     }
 
-    private fun List<HttpRequest>.describe(): String =
-        "(${size}) " + joinToString(", ") { "${it.method()} ${it.uri().rawPath}?${it.uri().rawQuery.orEmpty()}" }
+    private fun List<HttpRequest>.describe(): String = describeRequests(this)
 
     private fun HttpRequest.bodyText(): String = readRequestBody(this)
 }

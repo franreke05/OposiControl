@@ -42,8 +42,6 @@ data class Exam(
 
 val Exam.isRafaga: Boolean get() = typeExam == "rafaga"
 val Exam.isInmersivo: Boolean get() = typeExam == "inmersivo"
-val Exam.isPremium: Boolean get() = typeAccess == "premium"
-val Exam.isGratuito: Boolean get() = typeAccess == "gratuito"
 
 data class Rafaga(
     val id: String,

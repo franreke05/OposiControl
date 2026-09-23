@@ -2,6 +2,7 @@ package com.oposicontrol.admin.domain.usecase.content
 
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.core.common.result.map
 import com.oposicontrol.admin.domain.model.ContentImportBatch
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.IMPORT_ANNULMENT_REASON_MAX_LENGTH
@@ -86,7 +87,7 @@ class CreateContentDraftUseCase(private val repository: ContentRepository) {
         if (title.isBlank()) return AppResult.Failure(AppError.Validation("Indica el nombre del examen borrador."))
         val now = Clock.System.now()
         return if (canonicalExamType(examType) == "rafaga") {
-            when (val result = repository.upsertRafaga(
+            repository.upsertRafaga(
                 Rafaga(
                     id = "",
                     specialtyId = specialtyId,
@@ -100,12 +101,9 @@ class CreateContentDraftUseCase(private val repository: ContentRepository) {
                     createdAt = now,
                     updatedAt = now,
                 ),
-            )) {
-                is AppResult.Failure -> result
-                is AppResult.Success -> AppResult.Success(result.value.id)
-            }
+            ).map { it.id }
         } else {
-            when (val result = repository.upsertExam(
+            repository.upsertExam(
                 Exam(
                     id = "",
                     specialtyId = specialtyId,
@@ -123,10 +121,7 @@ class CreateContentDraftUseCase(private val repository: ContentRepository) {
                     createdAt = now,
                     updatedAt = now,
                 ),
-            )) {
-                is AppResult.Failure -> result
-                is AppResult.Success -> AppResult.Success(result.value.id)
-            }
+            ).map { it.id }
         }
     }
 }

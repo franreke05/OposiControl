@@ -527,8 +527,3 @@ internal fun examDeletionNoticeStatus(kind: ExamDeletionNoticeKind): ExamCheckSt
     // borra, o no toca nada.
     ExamDeletionNoticeKind.BLOCKED, ExamDeletionNoticeKind.FAILED -> ExamCheckStatus.BLOCKING
 }
-
-internal fun examDeletionNoticeIcon(kind: ExamDeletionNoticeKind): Pair<AppIcon, SemanticRole> = when (kind) {
-    ExamDeletionNoticeKind.WORKING -> AppIcon.CLOCK to SemanticRole.NEUTRAL
-    ExamDeletionNoticeKind.BLOCKED, ExamDeletionNoticeKind.FAILED -> AppIcon.WARNING to SemanticRole.DANGER
-}

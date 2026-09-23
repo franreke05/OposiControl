@@ -111,8 +111,5 @@ enum class ContentExamType(val apiValue: String, val questionApiValue: String, v
 
 fun canonicalExamType(value: String): String = ContentExamType.fromApiValue(value).apiValue
 
-fun canonicalQuestionType(value: String): String = when (canonicalExamType(value)) {
-    "rafaga" -> "rafaga"
-    "razonado" -> "razonada"
-    else -> "inmersiva"
-}
+fun canonicalQuestionType(value: String): String =
+    ContentExamType.fromApiValue(value).questionApiValue

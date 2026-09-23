@@ -19,7 +19,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -50,13 +49,9 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.GlassSurface
-import com.oposicontrol.admin.core.ui.components.LoadingStateCard
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.domain.model.ForumThread
 import kotlin.time.Clock
-import oposicontrol.core.ui.generated.resources.Res
-import oposicontrol.core.ui.generated.resources.ic_filter
-import org.jetbrains.compose.resources.painterResource
 
 @Composable
 fun ForumScreen(
@@ -248,33 +243,7 @@ private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun FilterIconButton(active: Boolean, onClick: () -> Unit) {
-    // Exact .size(), not defaultMinSize(): same fillMaxSize()-inside-GlassSurface
-    // ambiguity documented in ReportsScreen.FilterIconButton — an exact size
-    // removes it outright instead of relying on an unbounded-height accident.
-    GlassSurface(
-        modifier = Modifier
-            .size(48.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .semantics {
-                contentDescription = if (active) "Filtro, con filtros aplicados" else "Filtro"
-            },
-        shape = RoundedCornerShape(16.dp),
-        tint = if (active) GlassTheme.tokens.accent.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
-        strokeColor = if (active) GlassTheme.tokens.accent.copy(alpha = 0.45f) else GlassTheme.tokens.glassStroke,
-        shadowElevation = 0.dp,
-    ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(
-                painter = painterResource(Res.drawable.ic_filter),
-                contentDescription = null,
-                tint = if (active) GlassTheme.tokens.accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-    }
-}
+fun FilterIconButton(active: Boolean, onClick: () -> Unit) = com.oposicontrol.admin.core.ui.components.FilterIconButton(active, onClick)
 
 @Composable
 private fun ThreadsList(
@@ -394,13 +363,7 @@ private fun ThreadCard(item: ForumThreadUi, onClick: () -> Unit) {
 }
 
 @Composable
-private fun LoadingList() {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        LoadingStateCard(rows = 3)
-        LoadingStateCard(rows = 3)
-        LoadingStateCard(rows = 3)
-    }
-}
+fun LoadingList() = com.oposicontrol.admin.core.ui.components.LoadingList()
 
 @Composable
 private fun EmptyForumState(mainFilter: ForumMainFilter) {

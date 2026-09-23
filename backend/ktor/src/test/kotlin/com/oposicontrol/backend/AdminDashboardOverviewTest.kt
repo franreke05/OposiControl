@@ -11,24 +11,10 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
-import java.net.Authenticator
-import java.net.CookieHandler
-import java.net.ProxySelector
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpHeaders
 import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
 import java.time.Instant
 import java.time.temporal.ChronoUnit
-import java.util.Optional
-import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executor
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLParameters
-import javax.net.ssl.SSLSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -134,7 +120,7 @@ class AdminDashboardOverviewTest {
         // los conteos ya devuelven null por su cuenta. Con ella caída, ACTIVITY
         // se declara fallida y el resto del panel se pinta igual.
         val gateway = gatewayWith { uri ->
-            if (uri.contains("auditoria_log")) StubResponse(503, "upstream down", null) else countResponse("0-0/4")
+            if (uri.contains("auditoria_log")) V1StubResponse(503, "upstream down", null) else countResponse("0-0/4")
         }
 
         val overview = gateway.overviewBlocking()
@@ -154,7 +140,7 @@ class AdminDashboardOverviewTest {
         // La distinción que el contrato existe para mantener: "no lo pediste" y
         // "lo pedí y se rompió" no pueden llegar iguales a la pantalla.
         val gateway = gatewayWith { uri ->
-            if (uri.contains("auditoria_log")) StubResponse(503, "down", null) else countResponse("*/0")
+            if (uri.contains("auditoria_log")) V1StubResponse(503, "down", null) else countResponse("*/0")
         }
 
         val overview = gateway.overviewBlocking(setOf(DashboardOverviewBlock.CONTENT))
@@ -170,7 +156,7 @@ class AdminDashboardOverviewTest {
     fun aFailedActivityBlockIsNeverServedAsAnEmptyTimeline() {
         val gateway = gatewayWith { uri ->
             // 200 con cuerpo ilegible: la franja no se puede componer.
-            if (uri.contains("auditoria_log")) StubResponse(200, "no-json", null) else countResponse("*/0")
+            if (uri.contains("auditoria_log")) V1StubResponse(200, "no-json", null) else countResponse("*/0")
         }
 
         val overview = gateway.overviewBlocking()
@@ -211,7 +197,7 @@ class AdminDashboardOverviewTest {
         // Cronometrar una lectura que falló mide cuánto tardó en romperse, no
         // cuánto tarda Supabase en responder. Publicarlo como latencia sería
         // inventar un dato con forma de medición.
-        val gateway = gatewayWith { StubResponse(503, "down", null) }
+        val gateway = gatewayWith { V1StubResponse(503, "down", null) }
 
         val health = gateway.overviewBlocking(setOf(DashboardOverviewBlock.SYSTEM)).system?.health
 
@@ -235,7 +221,7 @@ class AdminDashboardOverviewTest {
         val gateway = gatewayWith { uri ->
             when {
                 uri.contains("reportes_contenido") -> countResponse("*/0") // cero real
-                uri.contains("feedback_pregunta") -> StubResponse(500, "boom", null) // ilegible
+                uri.contains("feedback_pregunta") -> V1StubResponse(500, "boom", null) // ilegible
                 else -> countResponse("0-0/2")
             }
         }
@@ -286,7 +272,7 @@ class AdminDashboardOverviewTest {
     @Test
     fun draftExamsFailsInsteadOfBecomingZeroWhenItsCountCannotBeRead() {
         val gateway = gatewayWith { uri ->
-            if (uri.contains("publicado_en=is.null")) StubResponse(503, "down", null) else countResponse("*/0")
+            if (uri.contains("publicado_en=is.null")) V1StubResponse(503, "down", null) else countResponse("*/0")
         }
 
         val attention = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ATTENTION)).attention
@@ -350,14 +336,14 @@ class AdminDashboardOverviewTest {
     /** La respuesta REAL de `admin_dashboard_economy_totals` en MAIN el día del contrato. */
     private val economyTotalsLiveBody = """[{"gross_revenue_cents":0,"paid_purchases":0,"tickets_in_circulation":21475}]"""
 
-    private fun economyResponder(totals: StubResponse): (String) -> StubResponse = { uri ->
+    private fun economyResponder(totals: V1StubResponse): (String) -> V1StubResponse = { uri ->
         if (uri.contains("/rest/v1/rpc/admin_dashboard_economy_totals")) totals else countResponse("0-0/9")
     }
 
     @Test
     fun theEconomyTotalsComeFromOneRpcCallAndArriveAsNumbersIncludingALegitimateZero() {
         val requests = CopyOnWriteArrayList<HttpRequest>()
-        val gateway = gatewayWith(record = requests::add, responder = economyResponder(StubResponse(200, economyTotalsLiveBody, null)))
+        val gateway = gatewayWith(record = requests::add, responder = economyResponder(V1StubResponse(200, economyTotalsLiveBody, null)))
 
         val economy = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.ECONOMY)).economy)
 
@@ -380,7 +366,7 @@ class AdminDashboardOverviewTest {
     @Test
     fun aNullRevenueIsNoDataAndNeitherZeroNorAFailedRead() {
         val body = """[{"gross_revenue_cents":null,"paid_purchases":3,"tickets_in_circulation":50}]"""
-        val gateway = gatewayWith(responder = economyResponder(StubResponse(200, body, null)))
+        val gateway = gatewayWith(responder = economyResponder(V1StubResponse(200, body, null)))
 
         val economy = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.ECONOMY)).economy)
 
@@ -396,7 +382,7 @@ class AdminDashboardOverviewTest {
     fun aFailedEconomyRpcFailsBothMetricsWithoutFailingTheBlock() {
         val pgrst202 = """{"code":"PGRST202","details":"Searched for the function public.admin_dashboard_economy_totals",""" +
             """"hint":null,"message":"Could not find the function"}"""
-        val gateway = gatewayWith(responder = economyResponder(StubResponse(404, pgrst202, null)))
+        val gateway = gatewayWith(responder = economyResponder(V1StubResponse(404, pgrst202, null)))
 
         val overview = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ECONOMY))
         val economy = assertNotNull(overview.economy, "Una RPC caída no tumba la franja.")
@@ -422,7 +408,7 @@ class AdminDashboardOverviewTest {
             "[]",
             """[{"gross_revenue_cents":0,"paid_purchases":0}]""",
         ).forEach { body ->
-            val gateway = gatewayWith(responder = economyResponder(StubResponse(200, body, null)))
+            val gateway = gatewayWith(responder = economyResponder(V1StubResponse(200, body, null)))
 
             val economy = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.ECONOMY)).economy)
 
@@ -436,14 +422,14 @@ class AdminDashboardOverviewTest {
     // PC-02 · Usuarios activos por RPC
     // -----------------------------------------------------------------
 
-    private fun activeUsersResponder(response: StubResponse): (String) -> StubResponse = { uri ->
+    private fun activeUsersResponder(response: V1StubResponse): (String) -> V1StubResponse = { uri ->
         if (uri.contains("/rest/v1/rpc/admin_dashboard_active_users")) response else countResponse("*/0")
     }
 
     @Test
     fun activeUsersIsTheScalarOfTheRpcCalledWithThirtyDays() {
         val requests = CopyOnWriteArrayList<HttpRequest>()
-        val gateway = gatewayWith(record = requests::add, responder = activeUsersResponder(StubResponse(200, "12\n", null)))
+        val gateway = gatewayWith(record = requests::add, responder = activeUsersResponder(V1StubResponse(200, "12\n", null)))
 
         val pulse = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.PULSE)).pulse)
 
@@ -459,7 +445,7 @@ class AdminDashboardOverviewTest {
 
     @Test
     fun aRealZeroActiveUsersIsADatumAndNotAGap() {
-        val gateway = gatewayWith(responder = activeUsersResponder(StubResponse(200, "0", null)))
+        val gateway = gatewayWith(responder = activeUsersResponder(V1StubResponse(200, "0", null)))
 
         val pulse = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.PULSE)).pulse)
 
@@ -470,11 +456,11 @@ class AdminDashboardOverviewTest {
     @Test
     fun anyActiveUsersFailureOrWrongShapeIsAFailedReadAndNeverZero() {
         listOf(
-            StubResponse(404, """{"code":"PGRST202","message":"Could not find the function"}""", null),
-            StubResponse(401, """{"code":"42501","message":"permission denied for function admin_dashboard_active_users"}""", null),
-            StubResponse(200, "[0]", null),
-            StubResponse(200, "\"12\"", null),
-            StubResponse(200, "null", null),
+            V1StubResponse(404, """{"code":"PGRST202","message":"Could not find the function"}""", null),
+            V1StubResponse(401, """{"code":"42501","message":"permission denied for function admin_dashboard_active_users"}""", null),
+            V1StubResponse(200, "[0]", null),
+            V1StubResponse(200, "\"12\"", null),
+            V1StubResponse(200, "null", null),
         ).forEach { response ->
             val gateway = gatewayWith(responder = activeUsersResponder(response))
 
@@ -507,7 +493,7 @@ class AdminDashboardOverviewTest {
     @Test
     fun anErrorRateWithAnUnreadableCountIsAFailedRead() {
         val gateway = gatewayWith { uri ->
-            if (uri.contains("es_correcta=eq.false")) StubResponse(500, "boom", null) else countResponse("0-0/40")
+            if (uri.contains("es_correcta=eq.false")) V1StubResponse(500, "boom", null) else countResponse("0-0/40")
         }
 
         val pulse = assertNotNull(gateway.overviewBlocking(setOf(DashboardOverviewBlock.PULSE)).pulse)
@@ -518,7 +504,7 @@ class AdminDashboardOverviewTest {
 
     @Test
     fun failedMetricsIsAlwaysASubsetOfUnavailableMetrics() {
-        val gateway = gatewayWith { StubResponse(503, "down", null) }
+        val gateway = gatewayWith { V1StubResponse(503, "down", null) }
 
         val overview = gateway.overviewBlocking()
 
@@ -588,7 +574,7 @@ class AdminDashboardOverviewTest {
     fun theTimelineAsksOnlyForTheColumnsItDelivers() {
         val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { uri ->
-            if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
+            if (uri.contains("auditoria_log")) V1StubResponse(200, "[]", null) else countResponse("*/0")
         }
 
         gateway.overviewBlocking(setOf(DashboardOverviewBlock.ACTIVITY))
@@ -616,7 +602,7 @@ class AdminDashboardOverviewTest {
         // además lleva `fin_en`.
         val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { uri ->
-            if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
+            if (uri.contains("auditoria_log")) V1StubResponse(200, "[]", null) else countResponse("*/0")
         }
 
         gateway.overviewBlocking()
@@ -707,7 +693,7 @@ class AdminDashboardOverviewTest {
     fun everyCountIsAskedToPostgrestAsAnExactCountWithoutTransferringRows() {
         val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { uri ->
-            if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
+            if (uri.contains("auditoria_log")) V1StubResponse(200, "[]", null) else countResponse("*/0")
         }
 
         gateway.overviewBlocking()
@@ -755,7 +741,7 @@ class AdminDashboardOverviewTest {
     fun anActivityRowWithoutAParseableTimestampIsDiscardedAndNeverStampedWithNow() {
         val gateway = gatewayWith { uri ->
             if (uri.contains("auditoria_log")) {
-                StubResponse(
+                V1StubResponse(
                     200,
                     """[
                         {"id":"a1","accion":"examen_publicado","tabla_afectada":"examenes",
@@ -794,7 +780,7 @@ class AdminDashboardOverviewTest {
         // en otro campo.
         val gateway = gatewayWith { uri ->
             if (uri.contains("auditoria_log")) {
-                StubResponse(
+                V1StubResponse(
                     200,
                     """[
                         {"id":"a1","accion":"examen_publicado","creado_en":"2026-09-01T10:15:00Z"},
@@ -822,7 +808,7 @@ class AdminDashboardOverviewTest {
         // al cliente idénticas: una lista vacía.
         val gateway = gatewayWith { uri ->
             if (uri.contains("auditoria_log")) {
-                StubResponse(
+                V1StubResponse(
                     200,
                     """[
                         {"id":"a1","accion":"sin_fecha"},
@@ -851,7 +837,7 @@ class AdminDashboardOverviewTest {
     @Test
     fun anEmptyAuditTableReportsNoDropsAtAll() {
         val gateway = gatewayWith { uri ->
-            if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
+            if (uri.contains("auditoria_log")) V1StubResponse(200, "[]", null) else countResponse("*/0")
         }
 
         val activity = gateway.overviewBlocking(setOf(DashboardOverviewBlock.ACTIVITY)).activity
@@ -876,7 +862,7 @@ class AdminDashboardOverviewTest {
     fun theTimelineIsOrderedAndLimitedByPostgrestAndNotInKotlin() {
         val requests = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(record = requests::add) { uri ->
-            if (uri.contains("auditoria_log")) StubResponse(200, "[]", null) else countResponse("*/0")
+            if (uri.contains("auditoria_log")) V1StubResponse(200, "[]", null) else countResponse("*/0")
         }
 
         gateway.overviewBlocking(setOf(DashboardOverviewBlock.ACTIVITY))
@@ -955,81 +941,13 @@ class AdminDashboardOverviewTest {
 
     private fun gatewayWith(
         record: (HttpRequest) -> Unit = {},
-        responder: (String) -> StubResponse,
+        responder: (String) -> V1StubResponse,
     ): AdminDashboardOverviewGateway = AdminDashboardOverviewGateway(
         supabaseUrl = "https://stub.supabase.test",
         serviceRoleKey = "stub-key",
         json = Json { ignoreUnknownKeys = true },
-        client = StubHttpClient(record, responder),
+        client = V1StubHttpClient(record, responder),
     )
 
-    private fun countResponse(contentRange: String) = StubResponse(206, "[]", contentRange)
-
-    internal data class StubResponse(val status: Int, val body: String, val contentRange: String?)
-
-    /**
-     * `HttpClient` mínimo de la JDK, igual que el de `AdminAnalyticsGatewayTest`.
-     * Se escribe a mano porque lo que hay que observar es exactamente lo que sale
-     * por el cable: método, cabeceras `Prefer`/`Range` y timeout.
-     *
-     * **Los casos que graban usan `CopyOnWriteArrayList` y no `mutableListOf`.**
-     * Desde que las cinco franjas no-SYSTEM se componen en paralelo, `record`
-     * lo llaman cinco hilos del pool IO a la vez, y `ArrayList.add` no es
-     * seguro ahí: perdería peticiones en silencio y los casos que cuentan
-     * cuántas salieron pasarían o fallarían según el día. Un test que mide
-     * concurrencia con una estructura que no la soporta mide su propia carrera.
-     */
-    private class StubHttpClient(
-        private val record: (HttpRequest) -> Unit,
-        private val responder: (String) -> StubResponse,
-    ) : HttpClient() {
-        override fun cookieHandler(): Optional<CookieHandler> = Optional.empty()
-        override fun connectTimeout(): Optional<Duration> = Optional.empty()
-        override fun followRedirects(): Redirect = Redirect.NEVER
-        override fun proxy(): Optional<ProxySelector> = Optional.empty()
-        override fun sslContext(): SSLContext = SSLContext.getDefault()
-        override fun sslParameters(): SSLParameters = SSLParameters()
-        override fun authenticator(): Optional<Authenticator> = Optional.empty()
-        override fun version(): Version = Version.HTTP_1_1
-        override fun executor(): Optional<Executor> = Optional.empty()
-
-        @Suppress("UNCHECKED_CAST")
-        override fun <T : Any?> send(
-            request: HttpRequest,
-            responseBodyHandler: HttpResponse.BodyHandler<T>,
-        ): HttpResponse<T> {
-            record(request)
-            return StubHttpResponse(request, responder(request.uri().toString())) as HttpResponse<T>
-        }
-
-        override fun <T : Any?> sendAsync(
-            request: HttpRequest,
-            responseBodyHandler: HttpResponse.BodyHandler<T>,
-        ): CompletableFuture<HttpResponse<T>> = CompletableFuture.completedFuture(send(request, responseBodyHandler))
-
-        override fun <T : Any?> sendAsync(
-            request: HttpRequest,
-            responseBodyHandler: HttpResponse.BodyHandler<T>,
-            pushPromiseHandler: HttpResponse.PushPromiseHandler<T>?,
-        ): CompletableFuture<HttpResponse<T>> = sendAsync(request, responseBodyHandler)
-    }
-
-    private class StubHttpResponse(
-        private val request: HttpRequest,
-        private val stub: StubResponse,
-    ) : HttpResponse<String> {
-        override fun statusCode(): Int = stub.status
-        override fun request(): HttpRequest = request
-        override fun previousResponse(): Optional<HttpResponse<String>> = Optional.empty()
-        override fun headers(): HttpHeaders {
-            val headers = stub.contentRange
-                ?.let { mapOf("content-range" to listOf(it)) }
-                ?: emptyMap()
-            return HttpHeaders.of(headers) { _, _ -> true }
-        }
-        override fun body(): String = stub.body
-        override fun sslSession(): Optional<SSLSession> = Optional.empty()
-        override fun uri(): URI = request.uri()
-        override fun version(): HttpClient.Version = HttpClient.Version.HTTP_1_1
-    }
+    private fun countResponse(contentRange: String) = V1StubResponse(206, "[]", contentRange)
 }

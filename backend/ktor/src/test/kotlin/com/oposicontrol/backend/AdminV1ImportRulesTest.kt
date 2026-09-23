@@ -354,8 +354,7 @@ class AdminV1ImportRulesTest {
         },
     )
 
-    private fun List<HttpRequest>.describe(): String =
-        "(${size}) " + joinToString(", ") { "${it.method()} ${it.uri().rawPath}?${it.uri().rawQuery.orEmpty()}" }
+    private fun List<HttpRequest>.describe(): String = describeRequests(this)
 
     private fun HttpRequest.bodyText(): String = readRequestBody(this)
 }
@@ -385,3 +384,20 @@ internal fun readRequestBody(request: HttpRequest): String {
     })
     return chunks.toString()
 }
+
+/**
+ * Las peticiones que salieron, en una línea, para el mensaje de un fallo.
+ *
+ * Estaba copiada en diez ficheros, byte a byte. Vive aquí, al lado de
+ * [readRequestBody], por la misma razón que dice el KDoc de aquélla: cada copia
+ * privada es una copia que puede quedarse sutilmente distinta.
+ *
+ * Y ya pasó: `IndependentDashboardFanoutContractTest` tiene una versión que NO
+ * imprime el verbo HTTP. Esa se ha dejado como estaba a propósito — unificarla
+ * cambiaría el texto de sus mensajes de fallo, y eso es una decisión de quien
+ * escribió ese test, no de una limpieza.
+ */
+internal fun describeRequests(requests: List<HttpRequest>): String =
+    "(${requests.size}) " + requests.joinToString(", ") {
+        "${it.method()} ${it.uri().rawPath}?${it.uri().rawQuery.orEmpty()}"
+    }

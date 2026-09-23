@@ -119,6 +119,15 @@ internal fun SystemStatusDto.toDomain() = SystemStatus(
     updatedAt = updatedAt.takeIf { it.isNotBlank() }?.let { runCatching { Instant.parse(it) }.getOrNull() },
 )
 
-/** Un nivel que este cliente no conoce es desconocido, nunca operativo. */
-private fun String.toSystemStatusLevel(): SystemStatusLevel =
+/**
+ * Un nivel que este cliente no conoce es desconocido, nunca operativo.
+ *
+ * `internal` y no `private` porque la pantalla de Estado y el panel de Inicio
+ * tienen que leer EXACTAMENTE el mismo vocabulario. Antes eran dos copias
+ * idénticas en este mismo paquete, y `KtorDashboardOverviewRepositoryImplTest`
+ * .healthKeepsTheSameLevelVocabularyAsTheSystemStatusScreen existía sólo para
+ * vigilar que no divergieran. Con una única función el test ya no vigila una
+ * copia: comprueba la función que de verdad se usa en los dos sitios.
+ */
+internal fun String.toSystemStatusLevel(): SystemStatusLevel =
     SystemStatusLevel.entries.firstOrNull { it.name == trim().uppercase() } ?: SystemStatusLevel.UNKNOWN

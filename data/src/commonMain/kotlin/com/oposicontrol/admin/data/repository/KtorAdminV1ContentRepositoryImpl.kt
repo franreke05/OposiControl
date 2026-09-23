@@ -211,12 +211,12 @@ class KtorAdminV1ContentRepositoryImpl(
     }
 
     override suspend fun publishExam(examId: String) = adapter.safeCall {
-        val dto = postExamState(examId, BackendRoutes.adminV1ExamenPublicar(examId))
+        val dto = postExamState(BackendRoutes.adminV1ExamenPublicar(examId))
         dto.toExam(findSpecialtyName(dto.especialidadId)).also { applySavedExam(it) }
     }
 
     override suspend fun unpublishExam(examId: String) = adapter.safeCall {
-        val dto = postExamState(examId, BackendRoutes.adminV1ExamenDespublicar(examId))
+        val dto = postExamState(BackendRoutes.adminV1ExamenDespublicar(examId))
         dto.toExam(findSpecialtyName(dto.especialidadId)).also { applySavedExam(it) }
     }
 
@@ -226,7 +226,7 @@ class KtorAdminV1ContentRepositoryImpl(
      * examen ya guardado.
      */
     override suspend fun archiveExam(examId: String) = adapter.safeCall {
-        val dto = postExamState(examId, BackendRoutes.adminV1ExamenArchivar(examId))
+        val dto = postExamState(BackendRoutes.adminV1ExamenArchivar(examId))
         dto.toExam(findSpecialtyName(dto.especialidadId)).also { applySavedExam(it) }
     }
 
@@ -627,7 +627,7 @@ class KtorAdminV1ContentRepositoryImpl(
 
     override suspend fun clearExamCover(examId: String): AppResult<Exam> =
         adapter.safeCall {
-            val endpoint = "${BackendRoutes.adminV1ExamenPortada(examId)}"
+            val endpoint = BackendRoutes.adminV1ExamenPortada(examId)
             val response = client.delete(adminUrl(endpoint)) {
                 adminHeaders()
                 expectSuccess = false
@@ -752,9 +752,9 @@ class KtorAdminV1ContentRepositoryImpl(
         val saved = response.body<AdminExamenResponse>().data
         if (!chainLifecycle) return saved
         return when (status) {
-            ExamStatus.PUBLISHED -> postExamState(saved.id, BackendRoutes.adminV1ExamenPublicar(saved.id))
+            ExamStatus.PUBLISHED -> postExamState(BackendRoutes.adminV1ExamenPublicar(saved.id))
             ExamStatus.DRAFT -> if (saved.publicadoEn != null) {
-                postExamState(saved.id, BackendRoutes.adminV1ExamenDespublicar(saved.id))
+                postExamState(BackendRoutes.adminV1ExamenDespublicar(saved.id))
             } else {
                 saved
             }
@@ -792,7 +792,7 @@ class KtorAdminV1ContentRepositoryImpl(
         examsFlow.value = allExamsFlow.value.filterNot { it.typeExam == ExamType.RAFAGA.wireValue }
     }
 
-    private suspend fun postExamState(examId: String, endpoint: String): AdminExamenDto {
+    private suspend fun postExamState(endpoint: String): AdminExamenDto {
         val response = client.post(adminUrl(endpoint)) {
             adminHeaders()
             expectSuccess = false

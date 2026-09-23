@@ -3,17 +3,16 @@ package com.oposicontrol.admin.data.repository
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.remote.api.adminAuthHeaders
 import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.domain.model.ConnectionDiagnosticCheck
 import com.oposicontrol.admin.domain.model.ConnectionDiagnosticReport
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
-import io.ktor.http.HttpHeaders
 import io.ktor.http.isSuccess
 
 class KtorConnectionDiagnosticsRepositoryImpl(
@@ -118,10 +117,7 @@ class KtorConnectionDiagnosticsRepositoryImpl(
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() }
-            ?: return
-        header(HttpHeaders.Authorization, "Bearer $token")
+        adminAuthHeaders(appConfig, sessionLocalDataSource)
     }
 
     private suspend fun HttpResponse.diagnosticDetail(): String {

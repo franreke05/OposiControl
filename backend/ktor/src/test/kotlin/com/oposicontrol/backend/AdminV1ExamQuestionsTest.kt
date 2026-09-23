@@ -6,21 +6,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.net.Authenticator
-import java.net.CookieHandler
-import java.net.ProxySelector
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpHeaders
 import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.time.Duration
-import java.util.Optional
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.Executor
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLParameters
-import javax.net.ssl.SSLSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -178,12 +164,12 @@ class AdminV1ExamQuestionsTest {
     fun unlinkingAQuestionThatWasNeverLinkedFailsInsteadOfPretendingItWorked() {
         val gateway = gatewayWith(responder = { uri ->
             when {
-                uri.contains("rpc/admin_unlink_question_from_exam") -> StubResponse(
+                uri.contains("rpc/admin_unlink_question_from_exam") -> V1StubResponse(
                     400,
                     """{"code":"P0001","details":null,"hint":null,"message":"QUESTION_NOT_LINKED_TO_EXAM"}""",
                     null,
                 )
-                else -> StubResponse(200, "[]", null)
+                else -> V1StubResponse(200, "[]", null)
             }
         })
 
@@ -205,12 +191,12 @@ class AdminV1ExamQuestionsTest {
     fun unlinkingWithoutTheProvisionedRpcIsAReadableDomainError() {
         val gateway = gatewayWith(responder = { uri ->
             when {
-                uri.contains("rpc/admin_unlink_question_from_exam") -> StubResponse(
+                uri.contains("rpc/admin_unlink_question_from_exam") -> V1StubResponse(
                     404,
                     """{"code":"PGRST202","details":null,"hint":null,"message":"Could not find the function"}""",
                     null,
                 )
-                else -> StubResponse(200, "[]", null)
+                else -> V1StubResponse(200, "[]", null)
             }
         })
 
@@ -393,7 +379,7 @@ class AdminV1ExamQuestionsTest {
     @Test
     fun aNullOnANonClearableKeyIsABadRequestAndNothingIsWritten() {
         val seen = mutableListOf<HttpRequest>()
-        val gateway = gatewayWith(record = { seen += it }, responder = { StubResponse(200, "[${examenRowJson()}]", null) })
+        val gateway = gatewayWith(record = { seen += it }, responder = { V1StubResponse(200, "[${examenRowJson()}]", null) })
 
         assertFailsWith<BadRequestException> {
             gateway.updateExamen("EX1", buildJsonObject { put("titulo", "Examen"); put("esOficial", JsonNull) })
@@ -408,7 +394,7 @@ class AdminV1ExamQuestionsTest {
     @Test
     fun aBlankCodeIsRejectedWithItsOwnCode() {
         val seen = mutableListOf<HttpRequest>()
-        val gateway = gatewayWith(record = { seen += it }, responder = { StubResponse(200, "[${examenRowJson()}]", null) })
+        val gateway = gatewayWith(record = { seen += it }, responder = { V1StubResponse(200, "[${examenRowJson()}]", null) })
 
         val error = assertFailsWith<BackendDomainException> {
             gateway.updateExamen("EX1", buildJsonObject { put("codigoExamen", "   ") })
@@ -423,7 +409,7 @@ class AdminV1ExamQuestionsTest {
     @Test
     fun aBodyWithoutAnyKnownKeyReturnsTheExamUnchanged() {
         val seen = mutableListOf<HttpRequest>()
-        val gateway = gatewayWith(record = { seen += it }, responder = { StubResponse(200, "[${examenRowJson()}]", null) })
+        val gateway = gatewayWith(record = { seen += it }, responder = { V1StubResponse(200, "[${examenRowJson()}]", null) })
 
         val examen = gateway.updateExamen("EX1", buildJsonObject { put("claveInventada", 1) })
 
@@ -445,7 +431,7 @@ class AdminV1ExamQuestionsTest {
         val bodies = mutableListOf<String>()
         val gateway = gatewayWith(
             record = { request -> bodies += request.bodyText() },
-            responder = { StubResponse(201, "[${examenRowJson(totalPreguntas = 0)}]", null) },
+            responder = { V1StubResponse(201, "[${examenRowJson(totalPreguntas = 0)}]", null) },
         )
 
         gateway.createExamen(AdminExamenDto(especialidadId = especialidadId, titulo = "Examen nuevo", totalPreguntas = 7))
@@ -457,7 +443,7 @@ class AdminV1ExamQuestionsTest {
     @Test
     fun anExamWithoutQuestionsIsReadAsZeroAndNotAsOne() {
         val gateway = gatewayWith(responder = {
-            StubResponse(200, "[${examenRowJson(totalPreguntas = 0)}]", null)
+            V1StubResponse(200, "[${examenRowJson(totalPreguntas = 0)}]", null)
         })
 
         val examen = gateway.getExamen("EX1")
@@ -476,7 +462,7 @@ class AdminV1ExamQuestionsTest {
         val bodies = mutableListOf<String>()
         val gateway = gatewayWith(
             record = { request -> if (request.method() == "PATCH") bodies += request.bodyText() },
-            responder = { StubResponse(200, "[${examenRowJson()}]", null) },
+            responder = { V1StubResponse(200, "[${examenRowJson()}]", null) },
         )
         gateway.updateExamen("EX1", raw)
         return bodies.single()
@@ -493,18 +479,18 @@ class AdminV1ExamQuestionsTest {
     }
 
     /** Un examen con [questionCount] preguntas, cada una con opciones, solución y un recurso. */
-    private fun examQuestionsResponder(questionCount: Int): (String) -> StubResponse {
+    private fun examQuestionsResponder(questionCount: Int): (String) -> V1StubResponse {
         val ids = (1..questionCount).map { "P$it" }
         return { uri ->
             when {
-                uri.contains("/rest/v1/preguntas_examen") -> StubResponse(
+                uri.contains("/rest/v1/preguntas_examen") -> V1StubResponse(
                     200,
                     ids.mapIndexed { index, id ->
                         """{"examen_id":"EX1","pregunta_id":"$id","posicion":${index + 1},"numero_en_examen":${index + 1}}"""
                     }.joinToString(",", "[", "]"),
                     null,
                 )
-                uri.contains("/rest/v1/preguntas?") -> StubResponse(
+                uri.contains("/rest/v1/preguntas?") -> V1StubResponse(
                     200,
                     ids.joinToString(",", "[", "]") { id ->
                         """{"id":"$id","codigo_pregunta":"C-$id",""" +
@@ -512,7 +498,7 @@ class AdminV1ExamQuestionsTest {
                     },
                     null,
                 )
-                uri.contains("/rest/v1/opciones_pregunta") -> StubResponse(
+                uri.contains("/rest/v1/opciones_pregunta") -> V1StubResponse(
                     200,
                     ids.flatMap { id ->
                         listOf(
@@ -522,14 +508,14 @@ class AdminV1ExamQuestionsTest {
                     }.joinToString(",", "[", "]"),
                     null,
                 )
-                uri.contains("/rest/v1/soluciones_pregunta") -> StubResponse(
+                uri.contains("/rest/v1/soluciones_pregunta") -> V1StubResponse(
                     200,
                     ids.joinToString(",", "[", "]") { id ->
                         """{"id":"S$id","pregunta_id":"$id","opcion_correcta_id":"${id}A","razonamiento":"porque si"}"""
                     },
                     null,
                 )
-                uri.contains("/rest/v1/recursos_pregunta") -> StubResponse(
+                uri.contains("/rest/v1/recursos_pregunta") -> V1StubResponse(
                     200,
                     ids.joinToString(",", "[", "]") { id ->
                         """{"id":"R$id","pregunta_id":"$id","codigo_recurso":"R-$id","tipo_recurso":"imagen",""" +
@@ -537,7 +523,7 @@ class AdminV1ExamQuestionsTest {
                     },
                     null,
                 )
-                else -> StubResponse(200, "[]", null)
+                else -> V1StubResponse(200, "[]", null)
             }
         }
     }
@@ -549,16 +535,16 @@ class AdminV1ExamQuestionsTest {
      * La versión anterior simulaba el bucle de DELETE + recompactación que ya no
      * existe: llevaba un `linkDeleted` para que la segunda lectura devolviera el hueco.
      */
-    private fun unlinkResponder(): (String) -> StubResponse = { uri ->
+    private fun unlinkResponder(): (String) -> V1StubResponse = { uri ->
         when {
-            uri.contains("/rest/v1/rpc/") -> StubResponse(200, "", null)
-            uri.contains("/rest/v1/preguntas_examen") -> StubResponse(
+            uri.contains("/rest/v1/rpc/") -> V1StubResponse(200, "", null)
+            uri.contains("/rest/v1/preguntas_examen") -> V1StubResponse(
                 200,
                 """[{"examen_id":"EX1","pregunta_id":"P1","posicion":1,"numero_en_examen":1},""" +
                     """{"examen_id":"EX1","pregunta_id":"P3","posicion":2,"numero_en_examen":3}]""",
                 null,
             )
-            else -> StubResponse(200, "[]", null)
+            else -> V1StubResponse(200, "[]", null)
         }
     }
 
@@ -568,93 +554,13 @@ class AdminV1ExamQuestionsTest {
 
     private fun gatewayWith(
         record: (HttpRequest) -> Unit = {},
-        responder: (String) -> StubResponse,
+        responder: (String) -> V1StubResponse,
     ): AdminV1Gateway = AdminV1Gateway.forTesting(
         supabaseUrl = "https://stub.supabase.test",
         serviceRoleKey = "stub-key",
         json = Json { ignoreUnknownKeys = true },
-        client = StubHttpClient(record, responder),
+        client = V1StubHttpClient(record, responder),
     )
 
-    private fun HttpRequest.bodyText(): String {
-        val publisher = bodyPublisher().orElse(null) ?: return ""
-        val chunks = StringBuilder()
-        publisher.subscribe(object : java.util.concurrent.Flow.Subscriber<java.nio.ByteBuffer> {
-            override fun onSubscribe(subscription: java.util.concurrent.Flow.Subscription) {
-                subscription.request(Long.MAX_VALUE)
-            }
-
-            override fun onNext(item: java.nio.ByteBuffer) {
-                chunks.append(Charsets.UTF_8.decode(item))
-            }
-
-            override fun onError(throwable: Throwable) = Unit
-            override fun onComplete() = Unit
-        })
-        return chunks.toString()
-    }
-
-    internal data class StubResponse(val status: Int, val body: String, val contentRange: String?)
-
-    /**
-     * `HttpClient` mínimo que responde según la URL pedida.
-     *
-     * A mano y no con un doble de librería porque el gateway usa el cliente de
-     * la JDK, y lo que hay que observar es exactamente lo que sale por el cable:
-     * método, URL y cuerpo.
-     */
-    private class StubHttpClient(
-        private val record: (HttpRequest) -> Unit,
-        private val responder: (String) -> StubResponse,
-    ) : HttpClient() {
-        override fun cookieHandler(): Optional<CookieHandler> = Optional.empty()
-        override fun connectTimeout(): Optional<Duration> = Optional.empty()
-        override fun followRedirects(): Redirect = Redirect.NEVER
-        override fun proxy(): Optional<ProxySelector> = Optional.empty()
-        override fun sslContext(): SSLContext = SSLContext.getDefault()
-        override fun sslParameters(): SSLParameters = SSLParameters()
-        override fun authenticator(): Optional<Authenticator> = Optional.empty()
-        override fun version(): Version = Version.HTTP_1_1
-        override fun executor(): Optional<Executor> = Optional.empty()
-
-        @Suppress("UNCHECKED_CAST")
-        override fun <T : Any?> send(
-            request: HttpRequest,
-            responseBodyHandler: HttpResponse.BodyHandler<T>,
-        ): HttpResponse<T> {
-            record(request)
-            return StubHttpResponse(request, responder(request.uri().toString())) as HttpResponse<T>
-        }
-
-        override fun <T : Any?> sendAsync(
-            request: HttpRequest,
-            responseBodyHandler: HttpResponse.BodyHandler<T>,
-        ): CompletableFuture<HttpResponse<T>> = CompletableFuture.completedFuture(send(request, responseBodyHandler))
-
-        override fun <T : Any?> sendAsync(
-            request: HttpRequest,
-            responseBodyHandler: HttpResponse.BodyHandler<T>,
-            pushPromiseHandler: HttpResponse.PushPromiseHandler<T>?,
-        ): CompletableFuture<HttpResponse<T>> = sendAsync(request, responseBodyHandler)
-    }
-
-    private class StubHttpResponse(
-        private val request: HttpRequest,
-        private val stub: StubResponse,
-    ) : HttpResponse<String> {
-        override fun statusCode(): Int = stub.status
-        override fun request(): HttpRequest = request
-        override fun previousResponse(): Optional<HttpResponse<String>> = Optional.empty()
-        override fun headers(): HttpHeaders {
-            val headers = stub.contentRange
-                ?.let { mapOf("content-range" to listOf(it)) }
-                ?: emptyMap()
-            return HttpHeaders.of(headers) { _, _ -> true }
-        }
-
-        override fun body(): String = stub.body
-        override fun sslSession(): Optional<SSLSession> = Optional.empty()
-        override fun uri(): URI = request.uri()
-        override fun version(): HttpClient.Version = HttpClient.Version.HTTP_1_1
-    }
+    private fun HttpRequest.bodyText(): String = readRequestBody(this)
 }

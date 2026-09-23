@@ -29,8 +29,7 @@ class RoleSyncRollbackAndCollationTest {
                 "where oid = to_regprocedure('public.admin_sync_roles(uuid,uuid[])')",
         )!!
 
-    private fun Connection.puedeEjecutar(rol: String): String =
-        unico("select has_function_privilege('$rol', 'public.admin_sync_roles(uuid,uuid[])', 'execute')::text")!!
+
 
     // ---- Rollback ---------------------------------------------------------
 

@@ -161,7 +161,6 @@ class SpecialtiesViewModel(
                 exams = when {
                     allExams.isNotEmpty() -> UiAsync.Success(allExams)
                     confirmedEmpty -> UiAsync.Success(emptyList())
-                    current.exams is UiAsync.Loading || current.exams is UiAsync.Idle -> current.exams
                     else -> current.exams
                 },
             )

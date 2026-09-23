@@ -241,7 +241,7 @@ data class UserCapability(
  * `AdminV1Routes.warnUser` (sólo auditoría) y `UsersApi` (crear y eliminar
  * cortados en el cliente).
  */
-fun userCapabilities(): List<UserCapability> = listOf(
+private val USER_CAPABILITIES: List<UserCapability> = listOf(
     UserCapability(
         name = "Editar nombre",
         level = UserCapabilityLevel.REAL,
@@ -296,11 +296,11 @@ fun userCapabilities(): List<UserCapability> = listOf(
 
 /** Busca una capacidad por nombre. Devuelve null si no está declarada. */
 fun userCapability(name: String): UserCapability? =
-    userCapabilities().firstOrNull { it.name == name }
+    USER_CAPABILITIES.firstOrNull { it.name == name }
 
 /** Las que no funcionan del todo, primero las peores. Para el bloque de avisos. */
 fun userUnavailableCapabilities(): List<UserCapability> =
-    userCapabilities()
+    USER_CAPABILITIES
         .filter { it.level != UserCapabilityLevel.REAL }
         .sortedBy { it.level.ordinal }
 

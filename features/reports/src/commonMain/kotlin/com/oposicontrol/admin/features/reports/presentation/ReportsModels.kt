@@ -136,16 +136,5 @@ private fun mapEntityTypeLabel(tipo: String): String = when (tipo.lowercase()) {
 
 /** Formatea un timestamp ISO real como texto relativo. Nunca inventa un
  * valor: si [iso] no se puede interpretar, devuelve cadena vacía. */
-fun formatRelativeTime(iso: String, now: Instant): String {
-    if (iso.isBlank()) return ""
-    val instant = runCatching { Instant.parse(iso) }.getOrNull() ?: return ""
-    val minutes = (now - instant).inWholeMinutes
-    return when {
-        minutes < 1 -> "ahora mismo"
-        minutes < 60 -> "hace $minutes min"
-        minutes < 60 * 24 -> "hace ${minutes / 60} h"
-        minutes < 60 * 24 * 7 -> "hace ${minutes / (60 * 24)} d"
-        iso.length >= 10 -> "el ${iso.substring(8, 10)}/${iso.substring(5, 7)}/${iso.substring(0, 4)}"
-        else -> ""
-    }
-}
+fun formatRelativeTime(iso: String, now: Instant): String =
+    com.oposicontrol.admin.core.common.presentation.formatRelativeTime(iso, now)

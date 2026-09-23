@@ -1044,3 +1044,44 @@ retira la ENTRADA, no lo guardado.
 `GATES LOCALES`: backend 869/869, data 106/106, news 34/34, questions 86/86,
 settings 10/10, exams 313/313 — **1.418 tests, 0 fallos**.
 `composeApp:compileKotlinJvm` PASS. `git diff --check` limpio.
+
+### Optimización Kotlin/KMP profesional (worktree aislado, 2026-09-23)
+
+Rama `refactor/kotlin-kmp-professional-optimization`, worktree
+`OposiControl-KotlinOptimizer`, baseline `7187040`. **NO fusionada a main
+todavía** — el usuario prohibió push/merge/rebase durante la optimización.
+
+Revisión read-only en 8 lotes (8 revisores independientes, cero escritura
+durante la revisión), cobertura reconciliada contra el recuento real de
+ficheros del repo (no contra lo que cada revisor declaró): **731/731 `.kt`
+tras los borrados** (739 al empezar). Un fallo de agrupación propio dejó
+`backend/dbtest/` (14 ficheros) sin asignar en la primera pasada; se detectó
+al reconciliar totales y se corrigió con una novena revisión dirigida.
+
+Aplicado como escritor único, con gate de compilación + tests por módulo
+tocado antes de seguir al siguiente: **84 ficheros cambiados, 328
+inserciones, 5.198 eliminaciones** (neto −4.870 líneas). 8 ficheros borrados
+por completo (~3.489 líneas de código muerto verificado: dos repositorios
+Supabase-directo legacy de ~1.900 líneas entre los dos, un fichero de DTOs de
+255 líneas sin más importador que ellos, dos composables de exámenes sin
+llamador de 635 líneas, cuatro ficheros de `composeApp` sin consumidor). Nueve
+copias de la política de autenticación del panel (`backendHeaders()`)
+unificadas en el canónico `adminAuthHeaders()`. Tres formateadores de tiempo
+relativo y varios componentes Compose (píldora de filtro, esqueleto de carga,
+sección de detalle) triplicados entre Informes/Foro/OposiTester, unificados en
+`core/common`/`core/ui`. Detalle completo, con fichero:línea y qué se aplicó
+frente a qué quedó registrado, en `docs/optimization/APPLIED.md` y los 8
+informes de `docs/optimization/reports/`.
+
+Gate final: `jvmTest`/`test` en los 26 módulos con tests del repositorio
+(excluidos los targets Android — sin `ANDROID_HOME` en este worktree) —
+**BUILD SUCCESSFUL, 0 fallos**, incluida la suite de `backend:dbtest` contra
+PostgreSQL embebido real (45/45).
+
+No se aplicó ningún hallazgo Tier 2/3: cambian comportamiento observable,
+piden un test que no existe, o son decisión de producto/arquitectura fuera de
+mandato. Quedan documentados con precisión de línea, incluidos dos hallazgos
+que NO son de optimización sino defectos reales detectados de paso: una fuga
+de corrutinas en `MviViewModel` para ViewModels `factory{}` que nunca llaman
+`clear()`, y un fallo latente de formateo de fecha en `AuditViewModel` (~1 de
+cada 1000 refrescos, cuando el instante cae en un segundo exacto).

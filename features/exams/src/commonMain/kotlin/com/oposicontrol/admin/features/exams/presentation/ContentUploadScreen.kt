@@ -165,7 +165,6 @@ private fun ImportSetup(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 ContentExamType.entries.forEach { type ->
-                    val selected = state.selectedExamType == type.apiValue
                     Button(
                         onClick = { onIntent(ContentUploadIntent.SelectType(type.apiValue)) },
                         modifier = Modifier.width(112.dp),
@@ -209,7 +208,6 @@ private fun <T> SelectionChips(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items.forEach { item ->
-            val selected = id(item) == selectedId
             Button(
                 onClick = { onSelected(id(item)) },
                 modifier = Modifier.width(190.dp),

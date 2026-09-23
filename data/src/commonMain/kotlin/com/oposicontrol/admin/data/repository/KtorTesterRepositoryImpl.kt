@@ -3,6 +3,7 @@ package com.oposicontrol.admin.data.repository
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.data.remote.api.adminAuthHeaders
 import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.domain.model.TesterQuestionContext
 import com.oposicontrol.admin.domain.model.TesterReport
@@ -12,7 +13,6 @@ import com.oposicontrol.admin.domain.repository.TesterRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -67,9 +67,7 @@ class KtorTesterRepositoryImpl(
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() } ?: return
-        header(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
+        adminAuthHeaders(appConfig, sessionLocalDataSource)
     }
 }
 

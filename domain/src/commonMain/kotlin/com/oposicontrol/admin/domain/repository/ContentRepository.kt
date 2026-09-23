@@ -101,11 +101,13 @@ interface ContentRepository {
      * `ExamPublicationPresentation`—, y el `default` de abajo no la inventa.
      *
      * El `default` sigue el precedente de [unlinkQuestionFromExam] y
-     * [archiveQuestion]: las implementaciones legacy de este contrato
-     * (`KtorContentRepositoryImpl`, `SupabaseContentRepositoryImpl`) hablan con
-     * backends que no tienen esta ruta, y un método abstracto las obligaría a
-     * fingir que sí. Fallar diciéndolo es más honesto que archivar por otro
-     * camino.
+     * [archiveQuestion]: el contrato admite implementaciones contra backends
+     * que no tienen esta ruta, y un método abstracto las obligaría a fingir
+     * que sí. Fallar diciéndolo es más honesto que archivar por otro camino.
+     *
+     * Las dos implementaciones legacy que motivaron el default se borraron al
+     * quedarse sin instanciar. El default se queda porque es contrato de la
+     * interfaz, no un resto de aquellas clases.
      */
     suspend fun archiveExam(examId: String): AppResult<Exam> =
         AppResult.Failure(

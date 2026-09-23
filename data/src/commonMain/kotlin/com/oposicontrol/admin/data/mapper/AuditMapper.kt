@@ -14,14 +14,3 @@ fun AuditEventDto.toDomain(): AuditEvent {
         metadata = metadata,
     )
 }
-
-fun AuditEvent.toDto(): AuditEventDto {
-    return AuditEventDto(
-        id = id,
-        actorName = actorName,
-        action = action,
-        target = target,
-        occurredAt = occurredAt.toString(),
-        metadata = metadata,
-    )
-}

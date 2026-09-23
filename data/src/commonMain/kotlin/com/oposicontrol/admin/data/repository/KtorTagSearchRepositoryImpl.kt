@@ -1,29 +1,27 @@
 package com.oposicontrol.admin.data.repository
 
-import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
-import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.domain.model.Tag
 import com.oposicontrol.admin.domain.model.TagSearchQuery
 import com.oposicontrol.admin.domain.model.TaggedSearchResult
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
-import io.ktor.client.HttpClient
-import io.ktor.client.call.body
-import io.ktor.client.plugins.expectSuccess
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.request.parameter
-import io.ktor.client.request.post
-import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.HttpHeaders
-import io.ktor.http.isSuccess
-import kotlinx.serialization.Serializable
 
+/**
+ * Búsqueda por etiquetas: enlazada en `dataModule`, pero SIN backend todavía.
+ *
+ * Los tres métodos devuelven vacío porque `/tags`, `/search` y
+ * `/search/reindex` siguen en la API legacy y no se han migrado a `/v1`.
+ *
+ * El fichero arrastraba además el cliente HTTP, el constructor de URL, las
+ * cabeceras de autenticación, dos DTOs y sus mappers: ~50 líneas que ninguna
+ * de las tres funciones podía alcanzar, y que hacían leer esta clase como si
+ * hiciera peticiones. Se han borrado. Lo que queda dice la verdad.
+ *
+ * DEUDA CONOCIDA, no resuelta aquí: devolver vacío hace que el panel no
+ * distinga "no hay resultados" de "esto todavía no existe". Arreglarlo es un
+ * cambio del contrato [TagSearchRepository], no una optimización.
+ */
 class KtorTagSearchRepositoryImpl(
-    private val client: HttpClient,
-    private val appConfig: AppConfig,
-    private val sessionLocalDataSource: SessionLocalDataSource,
     private val adapter: NetworkResultAdapter,
 ) : TagSearchRepository {
     override suspend fun findTags(query: String) = adapter.safeCall {
@@ -40,54 +38,4 @@ class KtorTagSearchRepositoryImpl(
         // Legacy /search/reindex disabled until search is migrated to /v1.
         Unit
     }
-
-    private fun backendUrl(): String = appConfig.baseUrl.trimEnd('/')
-
-    private fun io.ktor.client.request.HttpRequestBuilder.backendHeaders() {
-        val token = sessionLocalDataSource.currentSession()?.accessToken?.takeIf { it.isNotBlank() }
-            ?: appConfig.backendToken.takeIf { it.isNotBlank() }
-            ?: return
-        header(HttpHeaders.Authorization, "Bearer $token")
-    }
 }
-
-private suspend fun HttpResponse.failureDetail(route: String): String {
-    val body = bodyAsText().take(200).ifBlank { "empty response body" }
-    return "backend ${status.value} $route: $body"
-}
-
-@Serializable
-private data class TagDto(
-    val id: String = "",
-    val nombre: String,
-    val slug: String,
-    val origen: String = "auto",
-)
-
-@Serializable
-private data class TaggedSearchResultDto(
-    val entityType: String,
-    val entityId: String,
-    val section: String,
-    val title: String,
-    val summary: String = "",
-    val tags: List<TagDto> = emptyList(),
-    val updatedAt: String = "",
-)
-
-private fun TagDto.toDomain() = Tag(
-    id = id,
-    name = nombre,
-    slug = slug,
-    origin = origen,
-)
-
-private fun TaggedSearchResultDto.toDomain() = TaggedSearchResult(
-    entityType = entityType,
-    entityId = entityId,
-    section = section,
-    title = title,
-    summary = summary,
-    tags = tags.map { it.toDomain() },
-    updatedAt = updatedAt,
-)

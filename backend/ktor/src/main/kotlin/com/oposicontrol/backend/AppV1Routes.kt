@@ -394,11 +394,6 @@ class AppV1Gateway private constructor(
         return hasRole
     }
 
-    fun hasModeratorOrAdminRole(usuarioId: String): Boolean {
-        usuarioId.validatedUuid("usuarioId")
-        return hasAnyCanonicalRole(usuarioId, CanonicalAuthorization.moderatorOrAdminRoleCodes)
-    }
-
     private data class CachedRoleDecision(val hasRole: Boolean, val expiresAtMillis: Long)
 
     /**

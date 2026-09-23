@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
@@ -47,13 +46,9 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.GlassSurface
-import com.oposicontrol.admin.core.ui.components.LoadingStateCard
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.domain.model.ForumReport
 import kotlin.time.Clock
-import oposicontrol.core.ui.generated.resources.Res
-import oposicontrol.core.ui.generated.resources.ic_filter
-import org.jetbrains.compose.resources.painterResource
 
 @Composable
 fun ReportsScreen(
@@ -204,35 +199,7 @@ private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun FilterIconButton(active: Boolean, onClick: () -> Unit) {
-    // Exact .size(), not defaultMinSize(): as a non-weighted Row child inside a
-    // non-weighted Column child, this can be measured with an unbounded height:
-    // a fillMaxSize() box inside GlassSurface with only a *minimum* constraint
-    // resolved to a huge (not zero) height under that ambiguity, stretching the
-    // whole row. An exact size removes the ambiguity outright.
-    GlassSurface(
-        modifier = Modifier
-            .size(48.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .semantics {
-                contentDescription = if (active) "Filtro, con filtros aplicados" else "Filtro"
-            },
-        shape = RoundedCornerShape(16.dp),
-        tint = if (active) GlassTheme.tokens.accent.copy(alpha = 0.16f) else GlassTheme.tokens.glassFill,
-        strokeColor = if (active) GlassTheme.tokens.accent.copy(alpha = 0.45f) else GlassTheme.tokens.glassStroke,
-        shadowElevation = 0.dp,
-    ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(
-                painter = painterResource(Res.drawable.ic_filter),
-                contentDescription = null,
-                tint = if (active) GlassTheme.tokens.accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-    }
-}
+fun FilterIconButton(active: Boolean, onClick: () -> Unit) = com.oposicontrol.admin.core.ui.components.FilterIconButton(active, onClick)
 
 @Composable
 private fun ReportsList(reports: List<ForumReport>, onOpenReport: (String) -> Unit) {
@@ -333,13 +300,7 @@ private fun statusColor(kind: ReportStatusKind) = when (kind) {
 }
 
 @Composable
-private fun LoadingList() {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        LoadingStateCard(rows = 3)
-        LoadingStateCard(rows = 3)
-        LoadingStateCard(rows = 3)
-    }
-}
+fun LoadingList() = com.oposicontrol.admin.core.ui.components.LoadingList()
 
 @Composable
 private fun EmptyReportsState(mainFilter: ReportsMainFilter) {
