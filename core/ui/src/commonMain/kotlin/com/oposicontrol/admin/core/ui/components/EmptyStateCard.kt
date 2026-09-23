@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +35,7 @@ fun EmptyStateCard(
     title: String,
     message: String,
     modifier: Modifier = Modifier,
+    icon: AppIcon = AppIcon.SEARCH,
     action: (@Composable () -> Unit)? = null,
 ) {
     GlassSurface(modifier = modifier.fillMaxWidth()) {
@@ -45,15 +47,24 @@ fun EmptyStateCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Un icono, no la barrita coral anterior: da a la tarjeta una silueta
+            // reconocible de un vistazo y la separa de la de error, que lleva un
+            // triángulo rojo en el mismo sitio.
             Box(
                 modifier = Modifier
-                    .width(42.dp)
-                    .height(6.dp)
+                    .size(38.dp)
                     .background(
-                        GlassTheme.tokens.accent.copy(alpha = 0.22f),
-                        RoundedCornerShape(6.dp),
+                        GlassTheme.tokens.surfaceMuted,
+                        RoundedCornerShape(10.dp),
                     ),
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                AppIconImage(
+                    icon = icon,
+                    size = 19.dp,
+                    tint = GlassTheme.tokens.textSecondary,
+                )
+            }
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
@@ -83,7 +94,11 @@ fun LoadingStateCard(
                 .padding(horizontal = 22.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            repeat(rows.coerceIn(1, 5)) { index ->
+            // Hasta 12 filas: el esqueleto debe ocupar aproximadamente el mismo
+            // alto que el contenido real, o al llegar los datos la página pega un
+            // salto. El tope anterior de 5 hacía que una tabla de 40 filas se
+            // anunciara con cuatro rayitas.
+            repeat(rows.coerceIn(1, 12)) { index ->
                 SkeletonLine(
                     modifier = Modifier
                         .fillMaxWidth(if (index == 0) 0.72f else 1f)

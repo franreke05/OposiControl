@@ -1,52 +1,41 @@
-This is a Kotlin Multiplatform project targeting Android, iOS, and Desktop (JVM).
+# OposiControl
 
-* [/composeApp](./composeApp/src) is for code that will be shared across your Compose Multiplatform applications.
-  It contains several subfolders:
-  - [commonMain](./composeApp/src/commonMain/kotlin) is for code that’s common for all targets.
-  - Other folders are for Kotlin code that will be compiled for only the platform indicated in the folder name.
-    For example, if you want to use Apple’s CoreCrypto for the iOS part of your Kotlin app,
-    the [iosMain](./composeApp/src/iosMain/kotlin) folder would be the right place for such calls.
-    Similarly, if you want to edit the Desktop (JVM) specific part, the [jvmMain](./composeApp/src/jvmMain/kotlin)
-    folder is the appropriate location.
+OposiControl es la aplicación administrativa y operativa de OposiControl. Es un proyecto Kotlin Multiplatform con objetivos Android, iOS y Desktop/JVM. Su backend actual está en Ktor. Product Metrics V1 y wallet están verificados en el alcance ejecutado de MAIN; la cobertura legacy, Storage y proveedores externos permanece `NOT_VERIFIED`.
 
-* [/iosApp](./iosApp/iosApp) contains iOS applications. Even if you’re sharing your UI with Compose Multiplatform,
-  you need this entry point for your iOS app. This is also where you should add SwiftUI code for your project.
+## Entrada operativa
 
-### Build and Run Android Application
+Antes de trabajar, leer en este orden:
 
-To build and run the development version of the Android app, use the run configuration from the run widget
-in your IDE’s toolbar or build it directly from the terminal:
-- on macOS/Linux
-  ```shell
-  ./gradlew :composeApp:assembleDebug
-  ```
-- on Windows
-  ```shell
-  .\gradlew.bat :composeApp:assembleDebug
-  ```
+1. [AGENTS.md](./AGENTS.md)
+2. [docs/README.md](./docs/README.md)
+3. [docs/brain/SOURCE_OF_TRUTH.md](./docs/brain/SOURCE_OF_TRUTH.md)
+4. [docs/brain/CURRENT_STATE.md](./docs/brain/CURRENT_STATE.md)
+5. El documento canónico del dominio afectado.
 
-### Build and Run Desktop (JVM) Application
+La gobernanza Hashira vive en [.claude/HASHIRA_LAWS.md](./.claude/HASHIRA_LAWS.md), [.claude/HASHIRA_ROUTING.md](./.claude/HASHIRA_ROUTING.md) y en los diez agentes de [.claude/agents](./.claude/agents). La configuración local `.claude/settings.local.json` no forma parte del conocimiento versionado.
 
-To build and run the development version of the desktop app, use the run configuration from the run widget
-in your IDE’s toolbar or run it directly from the terminal:
-- on macOS/Linux
-  ```shell
-  ./gradlew :composeApp:jvmRun
-  ```
-- on Windows
-  ```shell
-  .\gradlew.bat :composeApp:jvmRun
-  ```
+## Estado de esta reorganización
 
-This build does not currently define JS or Wasm web targets, so `jsBrowserDevelopmentRun`
-and `wasmJsBrowserDevelopmentRun` are not available tasks.
+- `SECOND_BRAIN_MIGRATION: COMPLETED` para la primera estructura documental.
+- `HASHIRA: ACTIVE`.
+- `MIGRATION_REMEDIATION: COMPLETED` para la documentación PASS 01.
+- `DATABASE: VERIFIED` para Product Metrics/wallet.
+- `BACKEND: BACKEND_PASS` con JWT E2E válido bloqueado por fixture externo.
+- Las auditorías, actas cerradas y skills históricos se eliminaron del working tree; Git conserva su historial versionado.
+- El cliente actualmente confirmado en código es `ARTURO`. `Claudia`/`CaravanTruck` no se consideran parte del producto sin evidencia específica.
 
-### Build and Run iOS Application
+## Construcción y pruebas
 
-To build and run the development version of the iOS app, use the run configuration from the run widget
-in your IDE’s toolbar or open the [/iosApp](./iosApp) directory in Xcode and run it from there.
+En Windows:
 
----
+```powershell
+.\gradlew.bat :backend:ktor:test --no-daemon --console=plain
+.\gradlew.bat :features:exams:testDebugUnitTest --no-daemon --console=plain
+.\gradlew.bat test --no-daemon --console=plain
+```
 
-Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)
-and [Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform/#compose-multiplatform).
+El resultado de la validación está registrado en [docs/engineering/TESTING.md](./docs/engineering/TESTING.md). Las pruebas ejecutadas no sustituyen la verificación de runtime visual, despliegue o consumidores externos.
+
+## Límites de esta fase
+
+Esta fase organiza conocimiento, contratos y gobernanza. No cambia Kotlin funcional, endpoints, navegación, UI, roles, Supabase, migraciones, SQL/RPC/RLS/storage, autenticación ni importación PDF. Toda afirmación se etiqueta como implementación actual, decisión de producto, objetivo, documentación o desconocida.

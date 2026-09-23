@@ -11,4 +11,6 @@ data class ForumReport(
     val createdAt: String,
     val reporterId: String,
     val reporterName: String,
+    /** ISO timestamp de cuando se resolvió/descartó, vacío si sigue pendiente. */
+    val resolvedAt: String = "",
 )

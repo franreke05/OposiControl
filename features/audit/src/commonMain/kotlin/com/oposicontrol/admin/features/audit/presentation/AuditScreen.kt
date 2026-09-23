@@ -32,7 +32,7 @@ fun AuditScreen(
         FilterBar(
             searchValue = state.searchQuery,
             onSearchChange = { viewModel.dispatch(AuditIntent.UpdateSearch(it)) },
-            placeholder = "Filtrar por actor, accion o recurso",
+            placeholder = "Filtrar por actor, acción o recurso",
             filters = {
                 GlassActionButton(
                     text = "Actualizar",
@@ -49,10 +49,10 @@ fun AuditScreen(
             )
         }
         FormSection(
-            title = "Auditoria",
+            title = "Auditoría",
             description = "Linea temporal administrativa para operaciones criticas.",
         ) {
-            AsyncStatePane(state.events, emptyMessage = "No hay eventos de auditoria.") { events ->
+            AsyncStatePane(state.events, emptyMessage = "No hay eventos de auditoría.") { events ->
                 val filtered = events.filter {
                     state.searchQuery.isBlank() ||
                         it.actorName.contains(state.searchQuery, ignoreCase = true) ||
@@ -62,7 +62,7 @@ fun AuditScreen(
                 AdminTable(
                     columns = listOf(
                         AdminTableColumn("Actor", 1f),
-                        AdminTableColumn("Accion", 1f),
+                        AdminTableColumn("Acción", 1f),
                         AdminTableColumn("Recurso", 1.2f),
                         AdminTableColumn("Fecha", 1f),
                     ),

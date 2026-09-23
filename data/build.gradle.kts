@@ -24,5 +24,9 @@ kotlin {
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
         }
+        jvmTest.dependencies {
+            implementation(libs.ktor.client.mock)
+            implementation(libs.sqldelight.sqlite.driver)
+        }
     }
 }

@@ -1,0 +1,3 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Retain opositeca_items and etiquetas_opositeca physical UUID tables.
+-- Verify Storage paths and RLS before adding/altering policies.

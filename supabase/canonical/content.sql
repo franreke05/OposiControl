@@ -1,0 +1,4 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Target UUID content family: especialidades, comunidades_autonomas, etiquetas,
+-- preguntas, opciones_pregunta, soluciones_pregunta, preguntas_examen and recursos_pregunta.
+-- Preserve PDF/import staging and legacy adapters until parity is proven.

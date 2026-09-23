@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.exams.presentation
 import com.oposicontrol.admin.core.common.id.randomUuid
 import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 
 data class QuestionOptionDraft(
     val id: String,
@@ -75,13 +76,64 @@ enum class ExamEditorMode {
 }
 
 sealed interface PendingDeleteTarget {
-    data object Exam : PendingDeleteTarget
+    /**
+     * ARCHIVAR el examen abierto: reversible.
+     *
+     * Se llamaba `Exam`, sin más, cuando archivar era lo único que la pantalla
+     * sabía hacer con un examen y además se ofrecía bajo el rótulo «Eliminar».
+     * Ahora hay dos objetivos y ninguno de los dos puede llamarse por el nombre
+     * del otro ni por un nombre que valga para los dos.
+     */
+    data object ArchiveExam : PendingDeleteTarget
+
+    /**
+     * **BORRAR el examen abierto: irreversible.**
+     *
+     * El «Forever» del nombre no es énfasis: es la única diferencia con
+     * [ArchiveExam] en el sitio donde se decide qué hacer
+     * (`confirmPendingDelete`), y un `Exam` a secas junto a un `ArchiveExam` se
+     * lee como «el genérico» — que es exactamente el error que hay que hacer
+     * imposible.
+     *
+     * El servidor puede negarse: si del examen cuelgan datos de usuarios responde
+     * 409 y no borra nada. Eso llega como aviso de la acción, no como error de
+     * campo (ver `examDeletionNotice`).
+     */
+    data object DeleteExamForever : PendingDeleteTarget
     data object Rafaga : PendingDeleteTarget
+
+    /**
+     * Archivar la pregunta SELECCIONADA en el editor.
+     *
+     * Es el objetivo del camino móvil, que trabaja sobre `selectedQuestionId`.
+     * Conserva su comportamiento —la pregunta sale del banco y por tanto de
+     * todos los exámenes—; lo que cambia es que ahora lo ejecuta el caso de uso
+     * que dice eso en su nombre.
+     */
     data object Question : PendingDeleteTarget
     data object RafagaQuestion : PendingDeleteTarget
     data object Specialty : PendingDeleteTarget
     data object ExamCover : PendingDeleteTarget
     data class Resource(val resourceId: String) : PendingDeleteTarget
+
+    /** Quitar el vínculo de esta pregunta con el examen abierto. La pregunta sigue en el banco. */
+    data class UnlinkQuestion(val questionId: String) : PendingDeleteTarget
+
+    /** Archivar esta pregunta del banco: sale de todos los exámenes en los que esté. */
+    data class ArchiveQuestion(val questionId: String) : PendingDeleteTarget
+
+    /**
+     * Abrir otro examen —o empezar uno nuevo, con [examId] a `null`— descartando
+     * los cambios del editor.
+     *
+     * No borra nada del servidor, y aun así vive aquí. El nombre del contenedor
+     * dice «delete» pero lo que agrupa es «acciones con una consecuencia
+     * irreversible que hay que confirmar antes», y perder media hora de
+     * formulario lo es. La alternativa era montar un segundo mecanismo de
+     * confirmación en paralelo al que la pantalla ya tiene, y dos formas de
+     * preguntar lo mismo acaban divergiendo.
+     */
+    data class SwitchExam(val examId: String?) : PendingDeleteTarget
 }
 
 internal fun blankQuestionId(): String = randomUuid()
@@ -107,6 +159,44 @@ internal fun blankResourceDraft(): QuestionResourceDraft {
         sortOrder = 0,
     )
 }
+
+/**
+ * Si esta especialidad permite el tipo de examen dado (§capacidades_especialidad).
+ *
+ * La restricción es sólo de UI: el backend de `updateExamen`/`createExamen` no
+ * valida `tipoExamen` contra las capacidades de la especialidad server-side, así
+ * que esto es lo único que impide guardar un examen Inmersivo en una
+ * especialidad que sólo tiene Ráfaga habilitada.
+ */
+internal fun SpecialtyCapabilities.allows(typeExam: String): Boolean = when (typeExam.trim().lowercase()) {
+    "rafaga" -> permiteRafagas
+    "razonado", "guiado" -> permiteRazonados
+    "inmersivo" -> permiteInmersivos
+    else -> false
+}
+
+/** El primer modo habilitado, en el orden habitual de presentación. Null si la especialidad no permite ninguno. */
+internal fun SpecialtyCapabilities.firstAllowedType(): String? = when {
+    permiteRafagas -> "rafaga"
+    permiteRazonados -> "razonado"
+    permiteInmersivos -> "inmersivo"
+    else -> null
+}
+
+/**
+ * Si tiene sentido ofrecer la compra individual con OposiTickets para este
+ * `tipo_acceso`.
+ *
+ * Auditoría real (no una regla inventada): `SupabaseV1Gateway.kt` sirve las
+ * preguntas de un examen ráfaga sin ninguna comprobación de compra en cuanto
+ * `tipo_acceso == "gratuito"` — el examen ya está abierto para cualquiera. No
+ * hay ningún endpoint de "comprar examen" en este backend que consulte
+ * `precio_tickets`, así que un precio en un examen gratuito no desbloquea nada
+ * que no estuviera ya desbloqueado: es dato inerte, no una función real.
+ * `premium` sí es el único punto real de esta pantalla donde OT tiene efecto,
+ * a falta de un sistema de planes por examen.
+ */
+internal fun String.allowsOposiTicketsPurchase(): Boolean = trim().lowercase() != "gratuito"
 
 internal fun String.toExamStatus(): ExamStatus {
     return when (lowercase()) {

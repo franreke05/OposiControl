@@ -4,6 +4,8 @@ import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
+import com.oposicontrol.admin.data.local.NewsEditorDraftLocalDataSource
+import com.oposicontrol.admin.data.local.NewsEditorDraftSnapshot
 import com.oposicontrol.admin.domain.model.NewsArticle
 import com.oposicontrol.admin.domain.model.NewsAssetUpload
 import com.oposicontrol.admin.domain.repository.NewsRepository
@@ -326,6 +328,7 @@ class NewsViewModelTest {
         advanceUntilIdle()
         viewModel.dispatch(NewsIntent.UpdateTitle("Convocatoria TCAE"))
         viewModel.dispatch(NewsIntent.UpdateBackgroundType("SKY"))
+        viewModel.dispatch(NewsIntent.UpdateSpecialty("TCAE"))
         viewModel.dispatch(NewsIntent.Publish)
         advanceUntilIdle()
 
@@ -369,6 +372,7 @@ class NewsViewModelTest {
 
         viewModel.dispatch(NewsIntent.CreateNew)
         viewModel.dispatch(NewsIntent.UpdateTitle("Convocatoria publicada"))
+        viewModel.dispatch(NewsIntent.UpdateSpecialty("TCAE"))
         viewModel.dispatch(NewsIntent.Publish)
         advanceUntilIdle()
 
@@ -399,6 +403,7 @@ class NewsViewModelTest {
 
         viewModel.dispatch(NewsIntent.CreateNew)
         viewModel.dispatch(NewsIntent.UpdateTitle("Con fondo local"))
+        viewModel.dispatch(NewsIntent.UpdateSpecialty("TCAE"))
         viewModel.dispatch(NewsIntent.SelectBackgroundFile("content://media/background.png", "background.png", "image/png"))
         viewModel.dispatch(NewsIntent.Publish)
         advanceUntilIdle()
@@ -408,9 +413,57 @@ class NewsViewModelTest {
         assertTrue(viewModel.state.value.editorBackgroundPath.startsWith("https://cdn.oposicontrol.local/"))
     }
 
+    @Test
+    fun `new draft requires explicit classification`() = runTest {
+        val viewModel = createViewModel(StandardTestDispatcher(testScheduler))
+        viewModel.dispatch(NewsIntent.CreateNew)
+        advanceUntilIdle()
+        assertEquals("", viewModel.state.value.editorSpecialty)
+        assertEquals("", viewModel.state.value.editorType)
+        assertFalse(viewModel.state.value.isDirty)
+    }
+
+    @Test
+    fun `refresh failure remains visible`() = runTest {
+        val repository = FakeNewsRepositoryForTest().apply { failRefresh = true }
+        val viewModel = createViewModel(StandardTestDispatcher(testScheduler), repository)
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.libraryState is UiAsync.Error)
+    }
+
+    @Test
+    fun `failed local save never reports success`() = runTest {
+        val local = object : NewsEditorDraftLocalDataSource {
+            override fun readDraft(): NewsEditorDraftSnapshot? = null
+            override fun saveDraft(snapshot: NewsEditorDraftSnapshot) { error("disk unavailable") }
+            override fun clearDraft() = Unit
+        }
+        val viewModel = createViewModel(StandardTestDispatcher(testScheduler), local = local)
+        viewModel.dispatch(NewsIntent.CreateNew)
+        viewModel.dispatch(NewsIntent.UpdateTitle("Borrador"))
+        viewModel.dispatch(NewsIntent.SaveDraft)
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.actionState is UiAsync.Error)
+        assertTrue(viewModel.state.value.isDirty)
+    }
+
+    @Test
+    fun `archive does not send locally edited title`() = runTest {
+        val repository = FakeNewsRepositoryForTest()
+        val viewModel = createViewModel(StandardTestDispatcher(testScheduler), repository)
+        advanceUntilIdle()
+        viewModel.dispatch(NewsIntent.Select("news-1"))
+        viewModel.dispatch(NewsIntent.UpdateTitle("Solo local"))
+        viewModel.dispatch(NewsIntent.SaveDraft)
+        viewModel.dispatch(NewsIntent.Archive)
+        advanceUntilIdle()
+        assertEquals("Convocatoria TCAE", repository.lastUpsertedArticle?.title)
+    }
+
     private fun createViewModel(
         dispatcher: TestDispatcher,
         repository: FakeNewsRepositoryForTest = FakeNewsRepositoryForTest(),
+        local: NewsEditorDraftLocalDataSource = InMemoryNewsEditorDraftLocalDataSource(),
     ): NewsViewModel {
         val validate = ValidateNewsDraftUseCase()
         return NewsViewModel(
@@ -425,11 +478,28 @@ class NewsViewModelTest {
             uploadNewsAssetUseCase = UploadNewsAssetUseCase(repository),
             archiveNewsUseCase = ArchiveNewsUseCase(repository),
             analyticsTracker = NoOpAnalyticsTracker,
+            draftLocalDataSource = local,
         )
     }
 }
 
+private class InMemoryNewsEditorDraftLocalDataSource : NewsEditorDraftLocalDataSource {
+    private var snapshot: NewsEditorDraftSnapshot? = null
+
+    override fun readDraft(): NewsEditorDraftSnapshot? = snapshot
+
+    override fun saveDraft(snapshot: NewsEditorDraftSnapshot) {
+        this.snapshot = snapshot
+    }
+
+    override fun clearDraft() {
+        snapshot = null
+    }
+}
+
 private class FakeNewsRepositoryForTest : NewsRepository {
+    var failRefresh = false
+    var lastUpsertedArticle: NewsArticle? = null
     var upsertCount = 0
         private set
     var uploadCount = 0
@@ -469,9 +539,10 @@ private class FakeNewsRepositoryForTest : NewsRepository {
 
     override fun observeNews(): Flow<List<NewsArticle>> = items
 
-    override suspend fun refreshNews(): AppResult<List<NewsArticle>> = AppResult.Success(items.value)
+    override suspend fun refreshNews(): AppResult<List<NewsArticle>> = if (failRefresh) AppResult.Failure(com.oposicontrol.admin.core.common.result.AppError.Validation("Not available")) else AppResult.Success(items.value)
 
     override suspend fun upsertNews(article: NewsArticle): AppResult<NewsArticle> {
+        lastUpsertedArticle = article
         upsertCount += 1
         lastUpsertedId = article.id
         val saved = article.copy(id = article.id.ifBlank { "news-${items.value.size + 1}" })

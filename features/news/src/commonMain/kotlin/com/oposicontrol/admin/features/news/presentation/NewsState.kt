@@ -4,6 +4,9 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.domain.model.NewsValidationReport
 
 data class NewsState(
+    val specialties: UiAsync<List<NewsCatalogOption>> = UiAsync.Loading,
+    val newsTypes: UiAsync<List<NewsCatalogOption>> = UiAsync.Loading,
+    val libraryState: UiAsync<Unit> = UiAsync.Loading,
     val news: UiAsync<List<NewsItem>> = UiAsync.Loading,
     val publishedNews: UiAsync<List<NewsItem>> = UiAsync.Loading,
     val localNews: UiAsync<List<NewsItem>> = UiAsync.Loading,
@@ -15,8 +18,8 @@ data class NewsState(
     val editorTitle: String = "",
     val editorBackgroundType: String = "A",
     val editorBackgroundPath: String = "",
-    val editorSpecialty: String = "TCAE",
-    val editorType: String = "Convocatoria",
+    val editorSpecialty: String = "",
+    val editorType: String = "",
     val editorText: String = "",
     val editorImagePath: String = "",
     val editorStatus: String = "draft",
@@ -32,4 +35,5 @@ data class NewsState(
     val validationReport: NewsValidationReport? = null,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
     val isDirty: Boolean = false,
+    val actionMessage: String = "",
 )

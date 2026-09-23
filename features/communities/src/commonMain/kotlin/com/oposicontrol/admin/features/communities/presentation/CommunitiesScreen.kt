@@ -44,7 +44,7 @@ fun CommunitiesScreen(
                 FilterBar(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(CommunitiesIntent.UpdateSearch(it)) },
-                    placeholder = "Buscar por nombre o codigo",
+                    placeholder = "Buscar por nombre o código",
                 )
                 GlassActionButton(
                     text = "Nueva comunidad",
@@ -55,7 +55,7 @@ fun CommunitiesScreen(
                     AdminTable(
                         columns = listOf(
                             AdminTableColumn("Nombre", 1.2f),
-                            AdminTableColumn("Codigo", 0.5f),
+                            AdminTableColumn("Código", 0.5f),
                             AdminTableColumn("Estado", 0.7f),
                             AdminTableColumn("Orden", 0.5f),
                         ),
@@ -80,7 +80,7 @@ fun CommunitiesScreen(
         detailPane = {
             FormSection(
                 title = if (state.selectedId == null) "Nueva comunidad" else "Detalle de comunidad",
-                description = "Catalogo territorial para acotar examenes por comunidad autonoma.",
+                description = "Catálogo territorial para acotar exámenes por comunidad autonoma.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatusChip(if (state.editorIsActive) "active" else "inactive")
@@ -95,7 +95,7 @@ fun CommunitiesScreen(
                         placeholder = "Ej. Comunidad de Madrid",
                     )
                     Text(
-                        text = "Codigo",
+                        text = "Código",
                         style = MaterialTheme.typography.labelMedium,
                     )
                     GlassTextField(
@@ -129,7 +129,7 @@ fun CommunitiesScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Activa para el catalogo")
+                            Text("Activa para el catálogo")
                             Text(
                                 "Solo las activas deberian quedar visibles para contenido nuevo.",
                                 style = MaterialTheme.typography.bodySmall,

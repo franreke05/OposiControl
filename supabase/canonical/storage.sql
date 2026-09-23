@@ -1,0 +1,4 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Protected live objects: exam-resources (2), news-assets (13).
+-- Empty candidates: question-resources, recursos-pregunta, news-images, chat-attachments.
+-- No object movement or bucket deletion is authorized in this phase.

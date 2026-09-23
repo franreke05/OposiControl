@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Lucide icon "paperclip" (https://lucide.dev), ISC license. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FF1B1F24"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M21,10.5 L11,20.5 a4.5,4.5 0 0,1 -6.36,-6.36 L14.5,4.28 a3,3 0 0,1 4.24,4.24 L9.17,18.09 a1.5,1.5 0 0,1 -2.12,-2.12 L16,7" />
+</vector>

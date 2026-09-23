@@ -19,11 +19,19 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.koin.core)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.datetime)
         }
         commonTest.dependencies {
             implementation(projects.core.testing)
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+        }
+        jvmMain.dependencies { implementation(compose.desktop.currentOs) }
+        androidMain.dependencies { implementation(libs.androidx.activity.compose) }
+        jvmTest.dependencies {
+            implementation(compose.desktop.currentOs)
+            @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
+            implementation(compose.uiTest)
         }
     }
 }

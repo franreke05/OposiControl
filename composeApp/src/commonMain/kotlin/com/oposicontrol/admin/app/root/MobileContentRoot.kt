@@ -11,6 +11,7 @@ import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.features.exams.presentation.ExamsIntent
 import com.oposicontrol.admin.features.exams.presentation.ExamsViewModel
 import com.oposicontrol.admin.features.exams.presentation.MobileContentScreen
+import com.oposicontrol.admin.features.exams.presentation.MobileContentView
 import com.oposicontrol.admin.features.news.presentation.NewsIntent
 import com.oposicontrol.admin.features.news.presentation.NewsViewModel
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
@@ -28,6 +29,8 @@ import org.koin.compose.koinInject
 @Composable
 fun MobileContentRoot(
     appConfig: AppConfig,
+    initialView: MobileContentView = MobileContentView.Solucionarios,
+    showNavigationChrome: Boolean = true,
 ) {
     val examsViewModel: ExamsViewModel = koinInject()
     val newsViewModel: NewsViewModel = koinInject()
@@ -46,6 +49,8 @@ fun MobileContentRoot(
     MobileContentScreen(
         examsViewModel = examsViewModel,
         newsViewModel = newsViewModel,
+        initialView = initialView,
+        showNavigationChrome = showNavigationChrome,
         tagSearchRepository = tagSearchRepository,
         backendActionLabel = "Reconectar",
         backendActionInProgress = backendRestarting,

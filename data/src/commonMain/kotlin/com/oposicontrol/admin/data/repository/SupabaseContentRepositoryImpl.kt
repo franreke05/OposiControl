@@ -26,6 +26,7 @@ import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import com.oposicontrol.admin.domain.model.UnlinkedResource
 import com.oposicontrol.admin.domain.model.UnlinkedResourceReason
 import com.oposicontrol.admin.domain.repository.ContentRepository
@@ -264,6 +265,27 @@ class SupabaseContentRepositoryImpl(
         return result
     }
 
+    /**
+     * Las capacidades por especialidad se administran únicamente a través del
+     * límite canónico de Ktor (`/api/v1/admin/especialidades/{id}/capacidades`).
+     *
+     * Esta implementación legacy habla directamente con Supabase con la anon key y
+     * el JWT del usuario, así que no puede servirlas sin saltarse ese límite. Se
+     * devuelve un fallo explícito en lugar de un valor por defecto silencioso: un
+     * "todo desactivado" inventado aquí apagaría modos que sí existen.
+     */
+    override suspend fun getSpecialtyCapabilities(specialtyId: String): AppResult<SpecialtyCapabilities> =
+        AppResult.Failure(capabilitiesNeedKtorBoundary())
+
+    override suspend fun saveSpecialtyCapabilities(
+        capabilities: SpecialtyCapabilities,
+    ): AppResult<SpecialtyCapabilities> = AppResult.Failure(capabilitiesNeedKtorBoundary())
+
+    private fun capabilitiesNeedKtorBoundary() = AppError.Validation(
+        "Las capacidades por especialidad sólo se pueden administrar a través del backend Ktor. " +
+            "Configura BASE_URL para usar el repositorio canónico.",
+    )
+
     override suspend fun upsertExam(exam: Exam): AppResult<Exam> {
         val accessToken = requireAccessToken("guardar examenes") ?: return authFailure("guardar examenes")
         ensureConfigured()?.let { return AppResult.Failure(it) }
@@ -346,6 +368,15 @@ class SupabaseContentRepositoryImpl(
         }
         return result
     }
+
+    // Tabla legacy `examen` (id numérico), previa a `/admin/v1/examenes/{id}/
+    // publicar|despublicar`. No está cableado en DI (ver DataModule.kt): nada
+    // llega a ejecutar esto en producción.
+    override suspend fun publishExam(examId: String): AppResult<Exam> =
+        AppResult.Failure(AppError.Unknown("Publicar examen no está soportado en este repositorio legacy."))
+
+    override suspend fun unpublishExam(examId: String): AppResult<Exam> =
+        AppResult.Failure(AppError.Unknown("Despublicar examen no está soportado en este repositorio legacy."))
 
     override suspend fun upsertRafaga(rafaga: Rafaga): AppResult<Rafaga> {
         val accessToken = requireAccessToken("guardar rafagas") ?: return authFailure("guardar rafagas")
@@ -485,26 +516,6 @@ class SupabaseContentRepositoryImpl(
                     source.resources.map { it.copy(questionId = savedQuestionId) },
                 )
             }
-        }
-        if (result is AppResult.Success) refreshExams()
-        return result
-    }
-
-    override suspend fun deleteQuestion(examId: String, questionId: String): AppResult<Unit> {
-        val accessToken = requireAccessToken("borrar preguntas") ?: return authFailure("borrar preguntas")
-        ensureConfigured()?.let { return AppResult.Failure(it) }
-        val result = adapter.safeCall {
-            val numericQuestionId = questionId.toIntId()
-            client.delete("${appConfig.supabaseUrl}/rest/v1/recurso_pregunta?pregunta_id=eq.$numericQuestionId") {
-                supabaseHeaders(accessToken)
-            }
-            client.delete("${appConfig.supabaseUrl}/rest/v1/opcion_pregunta?pregunta_id=eq.$numericQuestionId") {
-                supabaseHeaders(accessToken)
-            }
-            client.delete("${appConfig.supabaseUrl}/rest/v1/pregunta?id=eq.$numericQuestionId&examen_id=eq.${examId.toIntId()}") {
-                supabaseHeaders(accessToken)
-            }
-            Unit
         }
         if (result is AppResult.Success) refreshExams()
         return result

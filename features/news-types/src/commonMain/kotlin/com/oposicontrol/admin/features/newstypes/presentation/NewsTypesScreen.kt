@@ -38,7 +38,7 @@ fun NewsTypesScreen(
                 FilterBar(
                     searchValue = state.searchQuery,
                     onSearchChange = { viewModel.dispatch(NewsTypesIntent.UpdateSearch(it)) },
-                    placeholder = "Buscar categoria editorial",
+                    placeholder = "Buscar categoría editorial",
                 )
                 GlassActionButton(
                     text = "Nuevo tipo",
@@ -66,8 +66,8 @@ fun NewsTypesScreen(
         },
         detailPane = {
             FormSection(
-                title = if (state.selectedId == null) "Nuevo tipo de noticia" else "Detalle de categoria",
-                description = "Las noticias heredaran esta categoria para filtros y segmentacion editorial.",
+                title = if (state.selectedId == null) "Nuevo tipo de noticia" else "Detalle de categoría",
+                description = "Las noticias heredaran esta categoría para filtros y segmentacion editorial.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatusChip(if (state.editorIsActive) "active" else "inactive")
@@ -94,12 +94,12 @@ fun NewsTypesScreen(
                         onClick = { viewModel.dispatch(NewsTypesIntent.Save) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Guardar categoria")
+                        Text("Guardar categoría")
                     }
                     when (val actionState = state.actionState) {
                         is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
                         UiAsync.Loading -> Text("Guardando...")
-                        is UiAsync.Success -> Text("Categoria editorial preparada.")
+                        is UiAsync.Success -> Text("Categoría editorial preparada.")
                         else -> Unit
                     }
                 }

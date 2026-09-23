@@ -5,11 +5,14 @@ import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.domain.model.ForumReport
+import com.oposicontrol.admin.domain.model.ForumReportContentPreview
+import com.oposicontrol.admin.domain.model.ForumReportDetail
 import com.oposicontrol.admin.domain.repository.ModerationRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
@@ -33,6 +36,26 @@ class KtorModerationRepositoryImpl(
         r.body<ReportesV1Response>().data.map { it.toDomain() }
     }
 
+    override suspend fun listReports(includeResolved: Boolean) = adapter.safeCall {
+        val r = client.get(url(BackendRoutes.ADMIN_V1_REPORTES)) {
+            backendHeaders()
+            if (includeResolved) parameter("estado", "todos")
+        }
+        r.requireSuccess(BackendRoutes.ADMIN_V1_REPORTES)
+        r.body<ReportesV1Response>().data.map { it.toDomain() }
+    }
+
+    override suspend fun getReport(reportId: String) = adapter.safeCall {
+        val path = BackendRoutes.adminV1Reporte(reportId)
+        val r = client.get(url(path)) { backendHeaders() }
+        r.requireSuccess(path)
+        val dto = r.body<ReporteV1Dto>()
+        ForumReportDetail(
+            report = dto.toDomain(),
+            contentPreview = dto.contentPreview?.toDomain(),
+        )
+    }
+
     override suspend fun resolveReport(reportId: String, action: String, notes: String?, ticketsReporter: Int) = adapter.safeCall {
         val path = BackendRoutes.adminV1ReporteResolver(reportId)
         client.post(url(path)) {
@@ -42,11 +65,16 @@ class KtorModerationRepositoryImpl(
         Unit
     }
 
-    override suspend fun grantTickets(userId: String, amount: Int, reason: String) = adapter.safeCall {
+    override suspend fun grantTickets(
+        userId: String,
+        amount: Int,
+        reason: String,
+        idempotencyKey: String,
+    ) = adapter.safeCall {
         val path = BackendRoutes.adminV1UsuarioTickets(userId)
         val r = client.post(url(path)) {
             backendHeaders(); contentType(ContentType.Application.Json)
-            setBody(GrantTicketsBody(cantidad = amount, motivo = reason))
+            setBody(GrantTicketsBody(cantidad = amount, motivo = reason, idempotencyKey = idempotencyKey))
         }
         r.requireSuccess(path)
         r.body<GrantTicketsResponse>().saldo
@@ -84,10 +112,27 @@ class KtorModerationRepositoryImpl(
     val creadoEn: String = "",
     val reportadoPor: String = "",
     val reporterNombre: String = "",
+    val revisadoEn: String = "",
+    val contentPreview: ContentPreviewV1Dto? = null,
+)
+@Serializable private data class ContentPreviewV1Dto(
+    val type: String,
+    val text: String = "",
+    val author: String = "",
+    val createdAt: String = "",
+    val threadTitle: String? = null,
+    val currentState: String = "",
 )
 @Serializable private data class ReportesV1Response(val data: List<ReporteV1Dto>)
 @Serializable private data class ResolverReporteBody(val accion: String, val notas: String? = null, val ticketsReporter: Int = 0)
-@Serializable private data class GrantTicketsBody(val cantidad: Int, val motivo: String)
+// La clave de idempotencia viaja en el cuerpo: sin ella el backend responde 422,
+// asi que la version anterior de este DTO hacia que conceder tickets fuese
+// imposible desde el cliente.
+@Serializable private data class GrantTicketsBody(
+    val cantidad: Int,
+    val motivo: String,
+    val idempotencyKey: String,
+)
 @Serializable private data class GrantTicketsResponse(val saldo: Int = 0)
 @Serializable private data class WarnUserBody(val actionType: String, val targetUser: String, val reason: String)
 
@@ -101,4 +146,14 @@ private fun ReporteV1Dto.toDomain() = ForumReport(
     createdAt = creadoEn,
     reporterId = reportadoPor,
     reporterName = reporterNombre,
+    resolvedAt = revisadoEn,
+)
+
+private fun ContentPreviewV1Dto.toDomain() = ForumReportContentPreview(
+    type = type,
+    text = text,
+    author = author,
+    createdAt = createdAt,
+    threadTitle = threadTitle,
+    currentState = currentState,
 )

@@ -72,10 +72,35 @@ data class ExamQuestion(
     val title: String,
     val statement: String,
     val sortOrder: Int,
+    /**
+     * El tipo canónico de la pregunta, o `null` si el valor recibido no es
+     * ninguno de los tres.
+     *
+     * **Límite del contrato, verificado — no se puede sortear desde aquí.** El
+     * DTO del backend declara `tipo_pregunta` con valor por defecto `"rafaga"` y
+     * el JSON del servidor no fija `encodeDefaults`, así que una pregunta que no
+     * traiga el campo llega exactamente igual que una Ráfaga real: **`null` NO
+     * significa «el campo venía ausente»**, significa «vino un valor que no
+     * reconocemos». Distinguir ausencia de Ráfaga exigiría un cambio de
+     * contrato; inventar una detección aquí sería fabricar un dato.
+     *
+     * Por eso ninguna superficie puede leer un `RAFAGA` como prueba de que
+     * alguien eligió Ráfaga, y un `null` se enseña como tipo sin identificar y
+     * nunca disfrazado de Ráfaga.
+     */
+    val type: QuestionType? = null,
     val options: List<QuestionOption>,
     val resources: List<QuestionResource>,
     val createdAt: Instant,
     val updatedAt: Instant,
+    /**
+     * La pregunta va ANULADA en ESTE examen (M10): es propiedad de la relación
+     * examen↔pregunta, no de la pregunta. La posición se mantiene; el tribunal la
+     * anuló pero sigue ocupando su sitio.
+     */
+    val annulled: Boolean = false,
+    /** Sólo con [annulled]; `null` = sin motivo registrado. */
+    val annulmentReason: String? = null,
 )
 
 data class RafagaQuestion(

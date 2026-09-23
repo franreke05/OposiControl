@@ -8,19 +8,30 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import java.net.URI
 import java.net.URLEncoder
 import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 
 class SupabaseV1Gateway private constructor(
-    private val supabaseUrl: String,
-    private val serviceRoleKey: String,
+    supabaseUrl: String,
+    serviceRoleKey: String,
     private val json: Json,
-    private val client: HttpClient = HttpClient.newHttpClient(),
+    client: HttpClient = sharedUpstreamHttpClient,
 ) {
+    /**
+     * Migrado a [SupabaseRequestTransport] (FASE 1).
+     *
+     * Este gateway era el unico cuyo `request` no aceptaba `Prefer`, asi que no
+     * podia hacer `count=exact` ni `return=representation`. Con el transporte
+     * compartido esa limitacion desaparece sola, y ademas gana la traduccion de
+     * errores de dominio que antes solo tenian dos de los trece gateways.
+     */
+    private val transport = SupabaseRequestTransport(
+        baseUrl = supabaseUrl,
+        auth = SupabaseRequestAuthPolicy(serviceRoleKey),
+        client = client,
+    )
+
     fun listEspecialidades(): List<V1EspecialidadDto> {
         return request(
             method = "GET",
@@ -36,6 +47,10 @@ class SupabaseV1Gateway private constructor(
         val path = buildString {
             append("/rest/v1/examenes?select=*")
             append("&activo=eq.true")
+            // Mismo filtro que la ruta autenticada: sin él, un examen sin publicar es
+            // visible para cualquiera y sin sesión, justo donde un usuario logueado
+            // no puede verlo.
+            append("&publicado_en=not.is.null")
             filters.especialidadId?.let { append("&especialidad_id=eq.${it.toPostgrestValue()}") }
             filters.comunidadId?.let { append("&comunidad_id=eq.${it.toPostgrestValue()}") }
             filters.tipoExamen?.let { append("&tipo_examen=eq.${it.toPostgrestValue()}") }
@@ -51,7 +66,8 @@ class SupabaseV1Gateway private constructor(
     fun getExamen(examenId: String): V1ExamenDto? {
         return request(
             method = "GET",
-            path = "/rest/v1/examenes?select=*&id=eq.${examenId.toPostgrestValue()}&activo=eq.true&limit=1",
+            path = "/rest/v1/examenes?select=*&id=eq.${examenId.toPostgrestValue()}" +
+                "&activo=eq.true&publicado_en=not.is.null&limit=1",
             body = null,
         )
             .decodeList<JsonObject>()
@@ -59,15 +75,55 @@ class SupabaseV1Gateway private constructor(
             ?.toV1ExamenDto()
     }
 
+    /**
+     * Preguntas de un examen rafaga, para consumo ANONIMO.
+     *
+     * ### EXAM-009
+     *
+     * Esta consulta no filtraba publicacion y su vecina [getExamen] si. El
+     * resultado era que `GET /v1/examenes/{id}` devolvia 404 para un borrador y
+     * `GET /v1/examenes/{id}/preguntas` devolvia 200 con sus enunciados y sus
+     * opciones: **la API negaba que el examen existiera y a la vez entregaba su
+     * contenido**. El filtro estaba escrito, con su comentario, quince lineas
+     * mas arriba; solo no se copio aqui.
+     *
+     * El borrador se descarta **en la base**, no en memoria, y eso es la
+     * garantia: filtrar despues de traer la fila deja el contenido viajando por
+     * la red y depende de que nadie reordene el codigo.
+     *
+     * ### Por que 404 y no 403
+     *
+     * [V1PreguntasExamenResult.Forbidden] existe y la ruta responde 403, pero
+     * seria la respuesta equivocada para un borrador: un 403 frente a un 404
+     * **confirma a un anonimo que ese UUID nombra un examen real**, que es
+     * justo el hecho que un borrador no debe revelar. Ademas [getExamen] ya
+     * responde 404 para ese mismo examen; elegir 403 aqui mantendria la
+     * contradiccion, solo que mudada del cuerpo al codigo de estado.
+     *
+     * El 403 se reserva para lo que ya cubre: un examen **publicado** que no es
+     * rafaga o no es gratuito. Ahi la existencia ya es publica por
+     * `GET /v1/examenes/{id}`, asi que no se filtra nada nuevo.
+     *
+     * El admin sigue viendo borradores por su propia ruta
+     * (`GET /api/v1/admin/examenes/{id}/preguntas`), que es ADMIN y no filtra
+     * publicacion. Las dos rutas no se mezclan a proposito: meter "si eres
+     * admin" dentro de este gateway —que no recibe principal ni JWT en ninguna
+     * firma— convertiria una ruta anonima en una ruta con dos comportamientos,
+     * que es la clase de ambiguedad que produjo EXAM-009.
+     */
     fun getPreguntasExamenRafaga(examenId: String): V1PreguntasExamenResult {
         val examen = request(
             method = "GET",
-            path = "/rest/v1/examenes?select=*&id=eq.${examenId.toPostgrestValue()}&limit=1",
+            path = "/rest/v1/examenes?select=*&id=eq.${examenId.toPostgrestValue()}" +
+                "&activo=eq.true&publicado_en=not.is.null&limit=1",
             body = null,
         )
             .decodeList<JsonObject>()
             .firstOrNull()
             ?: return V1PreguntasExamenResult.NotFound
+        // Redundante con el filtro de la query, y deliberadamente: si alguien
+        // toca la cadena de arriba, la garantia sigue en pie en el proceso.
+        // Redundancia barata en un camino de autorizacion.
         if (examen.primitiveBoolean("activo") != true) return V1PreguntasExamenResult.NotFound
         if (examen.primitiveText("tipo_examen") != "rafaga" || examen.primitiveText("tipo_acceso") != "gratuito") {
             return V1PreguntasExamenResult.Forbidden
@@ -84,6 +140,8 @@ class SupabaseV1Gateway private constructor(
                 V1PreguntaAsociadaRow(
                     preguntaId = preguntaId,
                     posicion = row.primitiveInt("posicion") ?: row.primitiveInt("orden") ?: index + 1,
+                    anulada = row.primitiveBoolean("anulada") ?: false,
+                    motivoAnulacion = row.primitiveText("motivo_anulacion")?.takeIf { it.isNotBlank() },
                 )
             }
             .sortedBy { it.posicion }
@@ -117,6 +175,8 @@ class SupabaseV1Gateway private constructor(
             val pregunta = preguntasById[asociacion.preguntaId] ?: return@mapNotNull null
             pregunta.toV1PreguntaExamenDto(
                 posicion = asociacion.posicion,
+                anulada = asociacion.anulada,
+                motivoAnulacion = asociacion.motivoAnulacion.takeIf { asociacion.anulada },
                 opciones = opcionesByPreguntaId[asociacion.preguntaId]
                     .orEmpty()
                     .sortedWith(compareBy<V1OpcionPreguntaInternalDto> { it.posicion }.thenBy { it.letra })
@@ -132,31 +192,44 @@ class SupabaseV1Gateway private constructor(
         )
     }
 
-    private fun request(method: String, path: String, body: String?): String {
-        val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
-            .header("Content-Type", "application/json")
-        val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
-        val response = try {
-            client.send(builder.method(method, publisher).build(), HttpResponse.BodyHandlers.ofString())
-        } catch (error: Exception) {
-            throw IllegalStateException("Supabase network error on $method ${path.substringBefore('?')}: ${error::class.simpleName}: ${error.message}", error)
-        }
-        if (response.statusCode() !in 200..299) {
-            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> ${response.statusCode()}: ${response.body().take(300)}")
-        }
-        return response.body()
-    }
+    /**
+     * Se conserva como envoltorio de una linea para no tocar los cinco
+     * llamadores: el transporte cambia, el contrato interno no.
+     */
+    private fun request(method: String, path: String, body: String?): String =
+        transport.send(method = method, path = path, body = body)
 
     private inline fun <reified T> String.decodeList(): List<T> = json.decodeFromString(this)
 
     companion object {
+        /**
+         * Misma firma y mismo contrato de `null` que antes, para que el
+         * cableado de `Application.kt` no cambie. Lo unico que cambia es QUE
+         * variable de entorno se lee, y eso lo decide un solo sitio:
+         * [SupabaseRequestAuthPolicy.secretFromEnvironment] prefiere
+         * `SUPABASE_SECRET_KEY` y cae a `SUPABASE_SERVICE_ROLE_KEY`.
+         */
         fun fromEnvironment(json: Json): SupabaseV1Gateway? {
             val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
-            return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseV1Gateway(url, serviceRoleKey, json)
+            val secretKey = SupabaseRequestAuthPolicy.secretFromEnvironment()
+            return if (url.isBlank() || secretKey.isBlank()) null else SupabaseV1Gateway(url, secretKey, json)
         }
+
+        /**
+         * Solo para tests.
+         *
+         * Este gateway no tenia costura y **por eso EXAM-009 llevaba abierto**:
+         * no habia forma de preguntarle "¿y si el examen es un borrador?".
+         * Un defecto de autorizacion que ninguna prueba podia alcanzar no es
+         * mala suerte, es una consecuencia del constructor privado sin
+         * alternativa.
+         */
+        internal fun forTesting(
+            supabaseUrl: String,
+            serviceRoleKey: String,
+            json: Json,
+            client: HttpClient,
+        ): SupabaseV1Gateway = SupabaseV1Gateway(supabaseUrl, serviceRoleKey, json, client)
     }
 }
 
@@ -211,6 +284,14 @@ data class V1PreguntaExamenDto(
     val tipoPregunta: String,
     val posicion: Int,
     val opciones: List<V1OpcionPreguntaDto>,
+    /**
+     * El tribunal anuló esta pregunta EN ESTE examen (`preguntas_examen.anulada`). Aditivo: un
+     * cliente antiguo que no conozca el campo lo ignora. Este endpoint NO puntúa; sólo informa
+     * para que el cliente no trate una anulada como una pregunta normal.
+     */
+    val anulada: Boolean = false,
+    /** `preguntas_examen.motivo_anulacion`; `null` si no es anulada o no se dio motivo. */
+    val motivoAnulacion: String? = null,
 )
 
 @Serializable
@@ -223,6 +304,8 @@ data class V1OpcionPreguntaDto(
 private data class V1PreguntaAsociadaRow(
     val preguntaId: String,
     val posicion: Int,
+    val anulada: Boolean = false,
+    val motivoAnulacion: String? = null,
 )
 
 private data class V1OpcionPreguntaInternalDto(
@@ -275,6 +358,8 @@ private fun JsonObject.toV1ExamenDto(): V1ExamenDto? {
 private fun JsonObject.toV1PreguntaExamenDto(
     posicion: Int,
     opciones: List<V1OpcionPreguntaDto>,
+    anulada: Boolean = false,
+    motivoAnulacion: String? = null,
 ): V1PreguntaExamenDto? {
     val id = primitiveText("id") ?: return null
     return V1PreguntaExamenDto(
@@ -284,6 +369,8 @@ private fun JsonObject.toV1PreguntaExamenDto(
         tipoPregunta = primitiveText("tipo_pregunta").orEmpty().ifBlank { "rafaga" },
         posicion = posicion,
         opciones = opciones,
+        anulada = anulada,
+        motivoAnulacion = motivoAnulacion,
     )
 }
 

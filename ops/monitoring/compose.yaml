@@ -1,0 +1,57 @@
+name: oposicontrol-monitoring
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    container_name: oposicontrol-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=5GB
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - monitoring
+      - oposicontrol
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    container_name: oposicontrol-node-exporter
+    restart: unless-stopped
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - monitoring
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.3
+    container_name: oposicontrol-cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    networks:
+      - monitoring
+
+volumes:
+  prometheus-data:
+    name: oposicontrol-monitoring_prometheus-data
+
+networks:
+  monitoring:
+  oposicontrol:
+    external: true
+    name: oposicontrol-deploy_default

@@ -1,0 +1,3 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Retain categorias_oposired, publicaciones_oposired, comentarios_oposired
+-- and reacciones_oposired physically. Domain/API aliases: Category, Thread, Reply, Reaction.

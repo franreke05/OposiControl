@@ -10,6 +10,7 @@ kotlin {
             implementation(projects.core.common)
             implementation(projects.core.ui)
             implementation(projects.domain)
+            implementation(libs.compose.components.resources)
             implementation(libs.compose.foundation)
             implementation(libs.compose.material3)
             implementation(libs.compose.runtime)
@@ -17,6 +18,20 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.koin.core)
             implementation(libs.kotlinx.datetime)
+        }
+        commonTest.dependencies {
+            implementation(projects.core.testing)
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
+        }
+        // Test de UI SÓLO en jvmTest, no en commonTest: `compose.uiTest` en común
+        // arrastraría `ui-test-junit4` a la compilación de tests unitarios de
+        // Android, que necesita instrumentación o Robolectric. Aquí basta el
+        // runtime de escritorio, y el alcance se queda contenido.
+        jvmTest.dependencies {
+            @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
+            implementation(compose.uiTest)
+            implementation(compose.desktop.currentOs)
         }
     }
 }

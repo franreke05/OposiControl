@@ -1,0 +1,3 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Target UUID support conversations, participants, messages and moderation ownership.
+-- Do not reuse broken integer conversation functions without a UUID contract.

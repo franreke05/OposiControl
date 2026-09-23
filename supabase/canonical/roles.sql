@@ -1,0 +1,3 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Target role codes: superadmin, admin, moderador, usuario.
+-- Authorization must use explicit role sets; no has-any-role admin shortcut.

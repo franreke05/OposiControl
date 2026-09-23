@@ -71,7 +71,9 @@ private fun io.ktor.server.application.ApplicationCall.toV1ExamenesFilter(): V1E
     return V1ExamenesFilter(
         especialidadId = query["especialidadId"]?.validatedUuid("especialidadId"),
         comunidadId = query["comunidadId"]?.validatedUuid("comunidadId"),
-        tipoExamen = query["tipoExamen"]?.validatedValue("tipoExamen", setOf("rafaga", "inmersivo")),
+        // K0-7 (EX-16): los tres tipos canónicos. Sin `razonado`, filtrar por él
+        // respondía 400 aunque el catálogo público sirve exámenes razonados.
+        tipoExamen = query["tipoExamen"]?.validatedValue("tipoExamen", setOf("rafaga", "razonado", "inmersivo")),
         tipoAcceso = query["tipoAcceso"]?.validatedValue("tipoAcceso", setOf("gratuito", "premium")),
     )
 }

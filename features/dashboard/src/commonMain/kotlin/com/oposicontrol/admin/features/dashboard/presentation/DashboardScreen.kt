@@ -36,6 +36,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.ui.components.ButtonSize
+import com.oposicontrol.admin.core.ui.components.PrimaryButton
+import com.oposicontrol.admin.core.ui.components.SecondaryButton
+import com.oposicontrol.admin.core.ui.layout.DesktopBreakpoint
+import com.oposicontrol.admin.core.ui.layout.desktopBreakpointFor
+import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.AppIconImage
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.theme.AdminTheme
@@ -43,6 +50,7 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.domain.model.DashboardActivityEvent
 import com.oposicontrol.admin.domain.model.DashboardAlert
 import com.oposicontrol.admin.domain.model.DashboardAlertSeverity
+import com.oposicontrol.admin.domain.model.DashboardMetricKey
 import com.oposicontrol.admin.domain.model.DashboardMetrics
 import com.oposicontrol.admin.domain.model.DayCount
 import kotlinx.datetime.Instant
@@ -50,10 +58,13 @@ import kotlin.math.roundToInt
 
 enum class DashboardQuickAction {
     REVIEW_PENDING,
+    REVIEW_FORUM_REPORTS,
     IMPORT_QUESTIONS,
     AUDIT_RESOURCES,
     CREATE_NEWS,
     CREATE_EXAM,
+    OPEN_USERS,
+    OPEN_SUPPORT,
     ACTIVATE_OFFER,
     REVIEW_TICKETS,
     OPEN_AUDIT,
@@ -90,10 +101,16 @@ fun DashboardContent(
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val compact = maxWidth < 720.dp
         val tablet = maxWidth in 720.dp..1039.dp
+        // El tope escala con la ventana en vez de quedarse fijo en 1120dp. Con el
+        // tope antiguo, un monitor de 1920 o 2560 mostraba una columna estrecha
+        // centrada entre dos franjas vacías enormes — se pagaba el monitor grande
+        // sin recibir nada a cambio. Sigue habiendo un tope porque una fila de
+        // tarjetas de 2500dp de ancho tampoco se lee bien.
         val contentWidth = when {
             compact -> maxWidth
-            tablet -> minOf(maxWidth, 920.dp)
-            else -> minOf(maxWidth, 1120.dp)
+            tablet -> minOf(maxWidth, 980.dp)
+            desktopBreakpointFor(maxWidth) == DesktopBreakpoint.WIDE -> minOf(maxWidth, 1760.dp)
+            else -> minOf(maxWidth, 1400.dp)
         }
         val sectionGap = if (compact) 16.dp else 20.dp
 
@@ -104,7 +121,14 @@ fun DashboardContent(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(sectionGap),
             ) {
-                AsyncStatePane(state.metrics, emptyMessage = "Todavia no hay metricas.") { metrics ->
+                AsyncStatePane(
+                    state = state.metrics,
+                    emptyTitle = "Todavía no hay métricas",
+                    emptyMessage = "El panel aún no ha recibido datos de actividad.",
+                    emptyIcon = AppIcon.ANALYTICS,
+                    loadingRows = 8,
+                    onRetry = onRefresh,
+                ) { metrics ->
                     Column(verticalArrangement = Arrangement.spacedBy(sectionGap)) {
                         DashboardOperationalTop(
                             metrics = metrics,
@@ -128,7 +152,7 @@ fun DashboardContent(
                             compact = compact,
                         )
                         DashboardPanelGroup(
-                            title = "Tienda y campanas",
+                            title = "Tienda y campañas",
                             panels = commercePanels(metrics),
                             compact = compact,
                         )
@@ -204,7 +228,7 @@ private fun DashboardHeaderText(metrics: DashboardMetrics, compact: Boolean) {
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = "${metrics.totalExams} examenes, ${metrics.totalQuestions} preguntas y ${metrics.publishedNews} noticias bajo control",
+            text = "${metrics.totalExams} exámenes, ${metrics.totalQuestions} preguntas y ${metrics.publishedNews} noticias bajo control",
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = if (compact) 11.sp else 13.sp, letterSpacing = 0.sp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
@@ -247,7 +271,14 @@ private fun DashboardHero(
             verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 18.dp),
         ) {
             Text(
-                text = if (metrics.alerts.isEmpty()) "Contenido listo para operar" else "${metrics.alerts.size} puntos requieren revision",
+                // Concordancia real: con una sola alerta el título decía "1 puntos
+                // requieren revisión". Es el tipo de detalle que hace que un panel
+                // parezca a medio terminar.
+                text = when (metrics.alerts.size) {
+                    0 -> "Contenido listo para operar"
+                    1 -> "1 punto requiere revisión"
+                    else -> "${metrics.alerts.size} puntos requieren revisión"
+                },
                 style = MaterialTheme.typography.headlineSmall.copy(
                     fontSize = if (compact) 22.sp else 26.sp,
                     letterSpacing = 0.sp,
@@ -257,7 +288,7 @@ private fun DashboardHero(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "Prioriza recursos, importaciones y publicaciones antes de revisar tienda y campanas.",
+                text = "Prioriza recursos, importaciones y publicaciones antes de revisar tienda y campañas.",
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, letterSpacing = 0.sp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = if (compact) 2 else 1,
@@ -304,7 +335,7 @@ private fun DashboardKpiGrid(metrics: DashboardMetrics, compact: Boolean, tablet
         val columns = if (compact || tablet) 2 else 4
         val cardWidth = if (columns == 4) 262.dp else (maxWidth - gap) / 2
         val items = listOf(
-            KpiItem("Examenes publicados", metrics.publishedExams.toString(), "${metrics.draftExams} borradores"),
+            KpiItem("Exámenes publicados", metrics.publishedExams.toString(), "${metrics.draftExams} borradores"),
             KpiItem("Preguntas sin recurso", metrics.questionsWithoutResources.toString(), "${metrics.linkedResources} recursos enlazados"),
             KpiItem("Noticias en borrador", metrics.draftNews.toString(), "${metrics.publishedNews} publicadas"),
             KpiItem("Ofertas activas", metrics.activeOffers.toString(), "${metrics.scheduledOffers} programadas"),
@@ -365,7 +396,7 @@ private fun DashboardAlertsSection(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            DashboardSectionTitle("Requiere atencion")
+            DashboardSectionTitle("Requiere atención")
             val visibleAlerts = alerts.ifEmpty {
                 listOf(
                     DashboardAlert(
@@ -489,11 +520,28 @@ private fun DashboardAttemptBar(day: DayCount, maxCount: Int) {
 private fun DashboardPerformanceMetricGrid(metrics: DashboardMetrics, compact: Boolean) {
     val cardWidth = if (compact) 138.dp else 248.dp
     val cardHeight = if (compact) 86.dp else 92.dp
+    // Una métrica que el backend no pudo calcular se enseña como NO_DATA, nunca
+    // como el 0 de relleno que viaja en el DTO: en un panel de administración un
+    // cero inventado es indistinguible de un cero real y se toman decisiones con él.
+    fun kpi(key: String, title: String, supporting: String, format: () -> String) = if (metrics.isAvailable(key)) {
+        KpiItem(title, format(), supporting)
+    } else {
+        KpiItem(title, NO_DATA_LABEL, NO_DATA_SUPPORTING)
+    }
+
     val items = listOf(
-        KpiItem("Usuarios activos (30d)", metrics.activeUsers30d.toString(), "Ultimos 30 dias"),
-        KpiItem("Intentos totales", metrics.totalAttempts.toString(), "Completados"),
-        KpiItem("Puntuacion media", "${metrics.avgScore.roundToInt()}%", "Acierto global"),
-        KpiItem("Tasa de error", "${metrics.globalErrorRate.roundToInt()}%", "Respuestas falladas"),
+        kpi(DashboardMetricKey.ACTIVE_USERS_30D, "Usuarios activos (30d)", "Últimos 30 días") {
+            metrics.activeUsers30d.toString()
+        },
+        kpi(DashboardMetricKey.TOTAL_ATTEMPTS, "Intentos totales", "Completados") {
+            metrics.totalAttempts.toString()
+        },
+        kpi(DashboardMetricKey.AVG_SCORE, "Puntuación media", "Acierto global") {
+            "${metrics.avgScore.roundToInt()}%"
+        },
+        kpi(DashboardMetricKey.GLOBAL_ERROR_RATE, "Tasa de error", "Respuestas falladas") {
+            "${metrics.globalErrorRate.roundToInt()}%"
+        },
     )
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items.chunked(2).forEach { rowItems ->
@@ -503,7 +551,7 @@ private fun DashboardPerformanceMetricGrid(metrics: DashboardMetrics, compact: B
                         item = item,
                         accentColor = when (item.title) {
                             "Tasa de error" -> MaterialTheme.colorScheme.error
-                            "Puntuacion media" -> GlassTheme.tokens.success
+                            "Puntuación media" -> GlassTheme.tokens.success
                             else -> MaterialTheme.colorScheme.primary
                         },
                         modifier = Modifier.width(cardWidth).height(cardHeight),
@@ -560,42 +608,47 @@ private fun DashboardAlertRow(alert: DashboardAlert, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(40.dp)
+            .heightIn(min = 44.dp)
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .background(alertColor(alert.severity).copy(alpha = 0.08f))
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(10.dp)
-                .clip(RoundedCornerShape(5.dp))
+                .size(8.dp)
+                .clip(RoundedCornerShape(4.dp))
                 .background(alertColor(alert.severity)),
         )
-        Column(modifier = Modifier.width(190.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        // `weight(1f)` y no `width(190.dp)`: con el ancho fijo el detalle se
+        // cortaba con puntos suspensivos a 190dp aunque la fila midiera 1.500,
+        // dejando el resto de la fila vacío. El texto ahora ocupa lo que hay y la
+        // acción se ancla al extremo derecho.
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Text(
                 text = alert.title,
-                style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp, letterSpacing = 0.sp),
+                style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = alert.detail,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, letterSpacing = 0.sp),
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         Text(
             text = alert.actionLabel,
-            style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp, letterSpacing = 0.sp),
-            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelMedium,
+            color = GlassTheme.tokens.accentInk,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        AppIconImage(AppIcon.CHEVRON_RIGHT, size = 14.dp, tint = GlassTheme.tokens.textSecondary)
     }
 }
 
@@ -604,10 +657,10 @@ private fun DashboardQuickActions(compact: Boolean, onQuickAction: (DashboardQui
     val actions = listOf(
         QuickActionItem("Contenido", "Crear examen", DashboardQuickAction.CREATE_EXAM),
         QuickActionItem("Contenido", "Importar preguntas", DashboardQuickAction.IMPORT_QUESTIONS),
-        QuickActionItem("Publicacion", "Crear noticia", DashboardQuickAction.CREATE_NEWS),
-        QuickActionItem("Publicacion", "Activar oferta", DashboardQuickAction.ACTIVATE_OFFER),
+        QuickActionItem("Publicación", "Crear noticia", DashboardQuickAction.CREATE_NEWS),
+        QuickActionItem("Publicación", "Activar oferta", DashboardQuickAction.ACTIVATE_OFFER),
         QuickActionItem("Control", "Revisar tickets", DashboardQuickAction.REVIEW_TICKETS),
-        QuickActionItem("Control", "Ver auditoria", DashboardQuickAction.OPEN_AUDIT),
+        QuickActionItem("Control", "Ver auditoría", DashboardQuickAction.OPEN_AUDIT),
     )
     DashboardSectionSurface {
         Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -727,10 +780,10 @@ private fun DashboardBottomSection(
         InfoPanel(
             title = "Estado tecnico",
             lines = listOf(
-                "Ultima sync: ${compactInstant(metrics.lastUpdatedAt)}",
+                "Última sync: ${compactInstant(metrics.lastUpdatedAt)}",
                 "Origen: $environmentLabel",
                 "Backend: activo",
-                "Auditoria: disponible",
+                "Auditoría: disponible",
             ),
         ),
     )
@@ -743,7 +796,7 @@ private fun DashboardBottomSection(
             ) {
                 DashboardSectionTitle("Actividad y sistema")
                 Text(
-                    text = "Ver auditoria",
+                    text = "Ver auditoría",
                     modifier = Modifier.clickable(onClick = onOpenAudit),
                     style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp, letterSpacing = 0.sp),
                     color = MaterialTheme.colorScheme.primary,
@@ -809,52 +862,21 @@ private fun DashboardChip(label: String) {
     }
 }
 
+// Los botones propios del dashboard (`DashboardExactButton`, `DashboardGhostButton`
+// y su `DashboardButtonSurface`) se han sustituido por los del sistema de diseño.
+// No tenían hover ni foco ni estado deshabilitado, y su texto iba forzado a 12sp
+// —dos puntos por debajo de cualquier otro botón de la app— así que el dashboard
+// parecía usar controles de otra aplicación. Se conservan los nombres como
+// envoltorios finos para no reescribir las nueve llamadas.
+
 @Composable
 private fun DashboardExactButton(text: String, modifier: Modifier, onClick: () -> Unit) {
-    DashboardButtonSurface(
-        text = text,
-        modifier = modifier,
-        tint = MaterialTheme.colorScheme.primary,
-        textColor = MaterialTheme.colorScheme.onPrimary,
-        onClick = onClick,
-    )
+    PrimaryButton(text = text, onClick = onClick, modifier = modifier, size = ButtonSize.COMPACT)
 }
 
 @Composable
 private fun DashboardGhostButton(text: String, modifier: Modifier, onClick: () -> Unit) {
-    DashboardButtonSurface(
-        text = text,
-        modifier = modifier,
-        tint = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f),
-        textColor = MaterialTheme.colorScheme.onSurface,
-        onClick = onClick,
-    )
-}
-
-@Composable
-private fun DashboardButtonSurface(
-    text: String,
-    modifier: Modifier,
-    tint: Color,
-    textColor: Color,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(tint)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = 12.sp, letterSpacing = 0.sp),
-            color = textColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+    SecondaryButton(text = text, onClick = onClick, modifier = modifier, size = ButtonSize.COMPACT)
 }
 
 @Composable
@@ -881,7 +903,7 @@ private fun actionForAlert(alert: DashboardAlert): DashboardQuickAction {
 private fun contentPanels(metrics: DashboardMetrics): List<InfoPanel> {
     return listOf(
         InfoPanel(
-            title = "Examenes",
+            title = "Exámenes",
             lines = listOf(
                 "${metrics.publishedExams} publicados",
                 "${metrics.draftExams} borradores",
@@ -891,54 +913,57 @@ private fun contentPanels(metrics: DashboardMetrics): List<InfoPanel> {
         ),
         InfoPanel(
             title = "Recursos",
-            lines = listOf(
-                "${metrics.linkedResources} enlazados",
-                "${metrics.pendingResources} pendientes",
-                "${metrics.unlinkedResources} sin enlazar",
-                "${metrics.questionsWithoutResources} preguntas sin recurso",
-            ),
+            lines = if (metrics.isAvailable(DashboardMetricKey.RESOURCE_AUDIT)) {
+                listOf(
+                    "${metrics.linkedResources} enlazados",
+                    "${metrics.pendingResources} pendientes",
+                    "${metrics.unlinkedResources} sin enlazar",
+                    "${metrics.questionsWithoutResources} preguntas sin recurso",
+                )
+            } else {
+                listOf(SOURCE_DOWN_LINE)
+            },
         ),
         InfoPanel(
             title = "Noticias",
-            lines = listOf(
-                "${metrics.publishedNews} publicadas",
-                "${metrics.draftNews} borradores",
-                "Editor visual conectado",
-                "Capas y fondo persistidos",
-            ),
+            lines = if (metrics.isAvailable(DashboardMetricKey.NEWS)) {
+                listOf(
+                    "${metrics.publishedNews} publicadas",
+                    "${metrics.draftNews} borradores",
+                )
+            } else {
+                listOf(SOURCE_DOWN_LINE)
+            },
         ),
     )
 }
 
 private fun commercePanels(metrics: DashboardMetrics): List<InfoPanel> {
+    // Las tres secciones salen de la misma fuente: si el catálogo comercial no
+    // responde, ninguna de ellas tiene dato. Antes las tres mostraban ceros
+    // limpios y además líneas de relleno («Control por fechas», «Estados
+    // draft/active/scheduled») que parecían información y no lo eran.
+    val commerceDown = !metrics.isAvailable(DashboardMetricKey.COMMERCE)
+    fun panel(title: String, lines: () -> List<String>) =
+        InfoPanel(title = title, lines = if (commerceDown) listOf(SOURCE_DOWN_LINE) else lines())
+
     return listOf(
-        InfoPanel(
-            title = "Tienda",
-            lines = listOf(
+        panel("Tienda") {
+            listOf(
                 "${metrics.activeStoreItems} items activos",
                 "${metrics.activeLimitedResources} recursos temporales",
-                "Catalogo admin operativo",
                 metrics.nextCommerceExpiryLabel,
-            ),
-        ),
-        InfoPanel(
-            title = "Ofertas",
-            lines = listOf(
+            )
+        },
+        panel("Ofertas") {
+            listOf(
                 "${metrics.activeOffers} activas",
                 "${metrics.scheduledOffers} programadas",
-                "Estados draft/active/scheduled",
-                "Control por fechas",
-            ),
-        ),
-        InfoPanel(
-            title = "Rafagas",
-            lines = listOf(
-                "${metrics.activeBurstCampaigns} activas",
-                "Multiplicadores y tickets",
-                "Vinculo con examen o tienda",
-                "Programacion temporal",
-            ),
-        ),
+            )
+        },
+        panel("Ráfagas") {
+            listOf("${metrics.activeBurstCampaigns} activas")
+        },
     )
 }
 
@@ -956,6 +981,13 @@ private fun shortDateLabel(date: String): String {
         date.takeLast(4)
     }
 }
+
+/** Texto único para una métrica sin fuente conectada. Ver DashboardMetrics.unavailableMetrics. */
+// Etiqueta visible del estado NO_DATA. El estado se conserva (§62), pero lo que
+// se lee es castellano: «NO_DATA» es una constante de código, no algo que deba
+// aparecer en la pantalla de quien administra.
+internal const val NO_DATA_LABEL = "Sin dato"
+internal const val NO_DATA_SUPPORTING = "No se pudo consultar"
 
 private data class KpiItem(
     val title: String,
@@ -1013,7 +1045,7 @@ private fun DashboardPreview() {
                         activeBurstCampaigns = 1,
                         activeLimitedResources = 2,
                         nextCommerceExpiryLabel = "Proximo vencimiento: 2026-04-18 10:00",
-                        latestImportLabel = "Ultima revision: 2026-04-14 09:00",
+                        latestImportLabel = "Última revisión: 2026-04-14 09:00",
                         alerts = listOf(
                             DashboardAlert(
                                 id = "questions_without_resources",
@@ -1047,3 +1079,12 @@ private fun DashboardPreview() {
         )
     }
 }
+
+/**
+ * Línea única de un panel cuya fuente no respondió.
+ *
+ * No es un cero ni un vacío: es la afirmación de que no lo sabemos. La distinción
+ * importa porque «0 ofertas activas» es una decisión de negocio y «no se pudo
+ * consultar el catálogo» es una avería, y en pantalla se veían igual.
+ */
+private const val SOURCE_DOWN_LINE = "Sin dato — no se pudo consultar esta fuente"

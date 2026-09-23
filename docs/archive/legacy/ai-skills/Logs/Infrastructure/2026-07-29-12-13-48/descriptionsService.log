@@ -1,0 +1,572 @@
+2026-07-29T10:13:58.629+02:00 ERROR Failed processing feed '2002'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:58.817+02:00 ERROR Failed processing feed '2003'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:58.893+02:00 ERROR Failed processing feed '2004'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:58.995+02:00 ERROR Failed processing feed '2005'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.037+02:00 ERROR Failed processing feed '2006'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.070+02:00 ERROR Failed processing feed '2007'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.257+02:00 ERROR Failed processing feed '2008'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.391+02:00 ERROR Failed processing feed '2009'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.440+02:00 ERROR Failed processing feed '2010'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.463+02:00 ERROR Failed processing feed '2011'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.529+02:00 ERROR Failed processing feed '2012'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.595+02:00 ERROR Failed processing feed '2013'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.646+02:00 ERROR Failed processing feed '2014'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.751+02:00 ERROR Failed processing feed '2015'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:13:59.883+02:00 ERROR Failed processing feed '2016'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:00.094+02:00 ERROR Failed processing feed '2017'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:00.326+02:00 ERROR Failed processing feed '2018'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:00.630+02:00 ERROR Failed processing feed '2019'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:01.026+02:00 ERROR Failed processing feed '2020'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:01.854+02:00 ERROR Failed processing feed '2021'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:03.557+02:00 ERROR Failed processing feed '2022'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:04.759+02:00 ERROR Failed processing feed '2023'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:05.193+02:00 ERROR Failed processing feed '2024'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:05.347+02:00 ERROR Failed processing feed '2025'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:07.900+02:00 ERROR Failed processing feed '2026'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+2026-07-29T10:14:07.932+02:00 ERROR Failed processing feed 'modified'
+––– details ––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+
+System.IO.IOException: The process cannot access the file 'C:\Users\franr\AppData\Local\Application Inspector Analyzer\feeds\vulnInfo' because it is being used by another process.
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options)
+   at Microsoft.Win32.SafeHandles.SafeFileHandle.Open(String fullPath, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.OSFileStreamStrategy..ctor(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.Strategies.FileStreamHelpers.ChooseStrategyCore(String path, FileMode mode, FileAccess access, FileShare share, FileOptions options, Int64 preallocationSize, Nullable`1 unixCreateMode)
+   at System.IO.FileStream..ctor(String path, FileMode mode, FileAccess access, FileShare share, Int32 bufferSize)
+   at LiteDB.FileDiskService.CreateFileStream(String path, FileMode mode, FileAccess access, FileShare share)
+   at LiteDB.FileDiskService.Initialize(Logger log, String password)
+   at LiteDB.LiteEngine..ctor(IDiskService disk, String password, Nullable`1 timeout, Int32 cacheSize, Logger log)
+   at LiteDB.LiteDatabase.<>c__DisplayClass11_0.<.ctor>b__0()
+   at LiteDB.LazyLoad`1.get_Value()
+   at LiteDB.LiteCollection`1.Find(Query query, Int32 skip, Int32 limit)+MoveNext()
+   at System.Linq.Enumerable.TryGetSingle[TSource](IEnumerable`1 source, Boolean& found)
+   at System.Linq.Enumerable.SingleOrDefault[TSource](IEnumerable`1 source)
+   at LiteDB.LiteCollection`1.FindById(BsonValue id)
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.<>c__DisplayClass11_0.<GetAsync>b__0(LiteCollection`1 x) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 99
+   at AI.Descriptions.HostedService.Repositories.LiteVulnerabilityInfoHistoryRepository.SelectAsync[TIn,TOut](Func`2 selectFunc, CancellationToken cancellationToken) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Descriptions.HostedService/Repositories/LiteVulnerabilityInfoHistoryRepository.cs:line 164
+   at AI.Enterprise.Descriptions.Services.Services.NvdCve.NvdCveLoadService.ProcessFeedAsync(String feedName, Func`2 getFeedStream, Func`2 getMetaStream, CancellationToken cancellationToken, Func`3 onUpserted) in /home/gitlab-runner/disk/builds/Jm3bNNXQ/0/ai/plugins/be4p/src/AI.Analyzer/AI.Enterprise.Descriptions/AI.Enterprise.Descriptions.Services/Services/NvdCve/NvdCveLoadService.cs:line 96
+––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––

@@ -1,0 +1,3 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Target analytics/audit actor identity is auth.users UUID.
+-- Derived summaries are backend-owned unless a table-specific RLS decision says otherwise.

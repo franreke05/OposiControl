@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.data.repository
 
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.core.common.config.AppConfig
@@ -20,6 +21,7 @@ import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.Rafaga
 import com.oposicontrol.admin.domain.model.RafagaQuestion
 import com.oposicontrol.admin.domain.model.Specialty
+import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -138,6 +140,33 @@ class KtorContentRepositoryImpl(
         Unit
     }
 
+    override suspend fun getSpecialtyCapabilities(specialtyId: String): AppResult<SpecialtyCapabilities> =
+        adapter.safeCall {
+            val endpoint = "${BackendRoutes.ADMIN_V1_ESPECIALIDADES}/$specialtyId/capacidades"
+            val response = client.get(BackendRoutes.url(appConfig.baseUrl, endpoint)) {
+                expectSuccess = false
+                backendHeaders()
+            }
+            response.requireBackendSuccess(endpoint)
+            response.body<V1SingleDataResponse<SpecialtyCapabilitiesDto>>().data.toDomain()
+        }
+
+    override suspend fun saveSpecialtyCapabilities(
+        capabilities: SpecialtyCapabilities,
+    ): AppResult<SpecialtyCapabilities> = adapter.safeCall {
+        val endpoint = "${BackendRoutes.ADMIN_V1_ESPECIALIDADES}/${capabilities.specialtyId}/capacidades"
+        // PUT: el cuerpo lleva el estado completo de los flags, así que una petición
+        // parcial no puede dejar media configuración aplicada.
+        val response = client.put(BackendRoutes.url(appConfig.baseUrl, endpoint)) {
+            expectSuccess = false
+            backendHeaders()
+            contentType(ContentType.Application.Json)
+            setBody(capabilities.toDto())
+        }
+        response.requireBackendSuccess(endpoint)
+        response.body<V1SingleDataResponse<SpecialtyCapabilitiesDto>>().data.toDomain()
+    }
+
     override suspend fun upsertExam(exam: Exam) = adapter.safeCall {
         val saved: SolucionarioDto = client.requestWithBody(
             url = "${contentUrl()}/solucionarios",
@@ -157,6 +186,16 @@ class KtorContentRepositoryImpl(
         refreshSpecialties()
         Unit
     }
+
+    // Este repositorio habla con el contrato `/content/solucionarios` anterior a
+    // los endpoints `/admin/v1/examenes/{id}/publicar|despublicar` reales, que no
+    // tienen equivalente aquí. No está cableado en DI (ver DataModule.kt): nada
+    // llega a ejecutar esto en producción.
+    override suspend fun publishExam(examId: String): AppResult<Exam> =
+        AppResult.Failure(AppError.Unknown("Publicar examen no está soportado en este repositorio legacy."))
+
+    override suspend fun unpublishExam(examId: String): AppResult<Exam> =
+        AppResult.Failure(AppError.Unknown("Despublicar examen no está soportado en este repositorio legacy."))
 
     override suspend fun upsertRafaga(rafaga: Rafaga) = adapter.safeCall {
         val saved: RafagaDto = client.requestWithBody(
@@ -196,13 +235,6 @@ class KtorContentRepositoryImpl(
             }
         }
         return AppResult.Success(saved)
-    }
-
-    override suspend fun deleteQuestion(examId: String, questionId: String) = adapter.safeCall {
-        client.delete("${contentUrl()}/solucionarios/$examId/preguntas/$questionId") { backendHeaders() }
-            .requireBackendSuccess("/content/solucionarios/$examId/preguntas/$questionId")
-        refreshExams()
-        Unit
     }
 
     override suspend fun moveQuestion(
@@ -520,6 +552,41 @@ private data class V1DataResponse<T>(
 @Serializable
 private data class V1SingleDataResponse<T>(
     val data: T,
+)
+
+/** Contrato de `/api/v1/admin/especialidades/{id}/capacidades`. */
+@Serializable
+private data class SpecialtyCapabilitiesDto(
+    val especialidadId: String = "",
+    val permiteRafagas: Boolean = true,
+    val permiteRazonados: Boolean = false,
+    val permiteInmersivos: Boolean = false,
+    val permiteDemos: Boolean = true,
+    val permiteOposimarket: Boolean = true,
+    val mensajeLimitacion: String? = null,
+    val actualizadoEn: String? = null,
+    val configurado: Boolean = true,
+)
+
+private fun SpecialtyCapabilitiesDto.toDomain() = SpecialtyCapabilities(
+    permiteRafagas = permiteRafagas,
+    permiteRazonados = permiteRazonados,
+    permiteInmersivos = permiteInmersivos,
+    permiteDemos = permiteDemos,
+    permiteOposimarket = permiteOposimarket,
+    specialtyId = especialidadId,
+    limitationMessage = mensajeLimitacion,
+    configured = configurado,
+)
+
+private fun SpecialtyCapabilities.toDto() = SpecialtyCapabilitiesDto(
+    especialidadId = specialtyId,
+    permiteRafagas = permiteRafagas,
+    permiteRazonados = permiteRazonados,
+    permiteInmersivos = permiteInmersivos,
+    permiteDemos = permiteDemos,
+    permiteOposimarket = permiteOposimarket,
+    mensajeLimitacion = limitationMessage?.takeIf { it.isNotBlank() },
 )
 
 @Serializable

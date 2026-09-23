@@ -75,7 +75,7 @@ fun TagsScreen(
         detailPane = {
             FormSection(
                 title = if (state.selectedId == null) "Nueva etiqueta" else "Detalle de etiqueta",
-                description = "Las etiquetas alimentan la busqueda global y la clasificacion de contenido.",
+                description = "Las etiquetas alimentan la busqueda global y la clasificación de contenido.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     FieldLabel("Nombre")

@@ -11,10 +11,15 @@ plugins {
 
 fun localEnvValue(key: String): String {
     providers.environmentVariable(key).orNull?.let { return it }
-    val envFile = rootProject.file(".env")
-    if (!envFile.isFile) return ""
-    return envFile.readLines()
-        .firstOrNull { line -> line.trimStart().startsWith("$key=") }
+    // providers.fileContents (not rootProject.file(...).readLines()) registers
+    // .env as a tracked configuration-cache input: editing .env and re-running
+    // with --configuration-cache now picks up the new value instead of silently
+    // reusing whatever was cached from the first run.
+    val envFileText = providers.fileContents(rootProject.layout.projectDirectory.file(".env")).asText.orNull
+        ?: return ""
+    return envFileText.lineSequence()
+        .map { it.trim() }
+        .firstOrNull { line -> line.isNotEmpty() && !line.startsWith("#") && line.startsWith("$key=") }
         ?.substringAfter("=")
         ?.trim()
         .orEmpty()
@@ -24,7 +29,35 @@ fun String.toBuildConfigString(): String {
     return "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
-val backendTokenForBuild = localEnvValue("OPOSICONTROL_BACKEND_TOKEN")
+val localSupabaseUrl = localEnvValue("SUPABASE_URL")
+val localSupabasePublicKey = localEnvValue("SUPABASE_ANON_KEY")
+    .ifBlank { localEnvValue("SUPABASE_PUBLISHABLE_KEY") }
+    .takeUnless { it.startsWith("sb_secret_", ignoreCase = true) }
+    .orEmpty()
+
+val productionDesktopBuild =
+    providers.gradleProperty("oposiProduction").orNull?.toBooleanStrictOrNull() ?: false
+
+val desktopBaseUrl =
+    if (productionDesktopBuild) {
+        "https://api.oposibots.es"
+    } else {
+        localEnvValue("BASE_URL").ifBlank { "http://localhost:8080" }
+    }
+
+val desktopAppEnv =
+    if (productionDesktopBuild) "prod" else "dev"
+
+val desktopSentryEnvironment =
+    if (productionDesktopBuild) "production" else "development"
+
+val desktopSentryDsn =
+    localEnvValue("SENTRY_DESKTOP_DSN")
+
+val desktopSentryRelease =
+    providers.gradleProperty("oposiRelease").orNull
+        ?.trim()
+        .orEmpty()
 
 kotlin {
     androidTarget {
@@ -60,9 +93,16 @@ kotlin {
             implementation(projects.features.moderation)
             implementation(projects.features.news)
             implementation(projects.features.newsTypes)
+            implementation(projects.features.reports)
+            implementation(projects.features.forum)
+            implementation(projects.features.imports)
+            implementation(projects.features.opositester)
+            implementation(projects.features.questions)
             implementation(projects.features.roles)
             implementation(projects.features.settings)
             implementation(projects.features.specialties)
+            implementation(projects.features.analytics)
+            implementation(projects.features.rankings)
             implementation(projects.features.store)
             implementation(projects.features.support)
             implementation(projects.features.tags)
@@ -77,12 +117,16 @@ kotlin {
             implementation(libs.koin.compose)
             implementation(libs.koin.core)
         }
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
+        }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
         }
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
+            implementation("io.sentry:sentry:8.57.0")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -118,9 +162,10 @@ android {
                 "String", "BASE_URL",
                 localEnvValue("BASE_URL").ifBlank { "http://10.0.2.2:8080" }.toBuildConfigString(),
             )
-            buildConfigField("String", "BACKEND_TOKEN", backendTokenForBuild.toBuildConfigString())
-            buildConfigField("String", "SUPABASE_URL", "\"\"")
-            buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
+            // The legacy static token must never be embedded in a client artifact.
+            buildConfigField("String", "BACKEND_TOKEN", "\"\"")
+            buildConfigField("String", "SUPABASE_URL", localSupabaseUrl.toBuildConfigString())
+            buildConfigField("String", "SUPABASE_ANON_KEY", localSupabasePublicKey.toBuildConfigString())
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
             buildConfigField("boolean", "ENABLE_LOGS", "true")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "false")
@@ -182,9 +227,15 @@ compose.desktop {
         mainClass = "com.oposicontrol.admin.app.MainKt"
 
         jvmArgs(
-            "-Doposi.BACKEND_TOKEN=$backendTokenForBuild",
-            "-Doposi.BASE_URL=http://localhost:8080",
-            "-Doposi.APP_ENV=dev",
+            "-Doposi.BACKEND_TOKEN=",
+            "-Doposi.BASE_URL=$desktopBaseUrl",
+            "-Doposi.APP_ENV=$desktopAppEnv",
+            "-Doposi.SUPABASE_URL=$localSupabaseUrl",
+            "-Doposi.SUPABASE_ANON_KEY=$localSupabasePublicKey",
+            "-Doposi.SENTRY_DESKTOP_DSN=$desktopSentryDsn",
+            "-Doposi.SENTRY_DESKTOP_ENVIRONMENT=$desktopSentryEnvironment",
+            "-Doposi.SENTRY_DESKTOP_TRACES_SAMPLE_RATE=0.10",
+            "-Doposi.SENTRY_DESKTOP_RELEASE=$desktopSentryRelease",
         )
 
         nativeDistributions {
@@ -198,8 +249,14 @@ compose.desktop {
 tasks.matching { it.name == "jvmRun" }.configureEach {
     if (this is JavaExec) {
         mainClass.set("com.oposicontrol.admin.app.MainKt")
-        systemProperty("oposi.BACKEND_TOKEN", backendTokenForBuild)
-        systemProperty("oposi.BASE_URL", "http://localhost:8080")
-        systemProperty("oposi.APP_ENV", "dev")
+        systemProperty("oposi.BACKEND_TOKEN", "")
+        systemProperty("oposi.BASE_URL", desktopBaseUrl)
+        systemProperty("oposi.APP_ENV", desktopAppEnv)
+        systemProperty("oposi.SUPABASE_URL", localSupabaseUrl)
+        systemProperty("oposi.SUPABASE_ANON_KEY", localSupabasePublicKey)
+        systemProperty("oposi.SENTRY_DESKTOP_DSN", desktopSentryDsn)
+        systemProperty("oposi.SENTRY_DESKTOP_ENVIRONMENT", desktopSentryEnvironment)
+        systemProperty("oposi.SENTRY_DESKTOP_TRACES_SAMPLE_RATE", "0.10")
+        systemProperty("oposi.SENTRY_DESKTOP_RELEASE", desktopSentryRelease)
     }
 }

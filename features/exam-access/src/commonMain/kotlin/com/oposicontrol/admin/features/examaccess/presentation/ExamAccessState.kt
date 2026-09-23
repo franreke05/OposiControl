@@ -8,7 +8,7 @@ data class ExamAccessState(
     val selectedId: String? = null,
     val editorUserName: String = "",
     val editorExamTitle: String = "",
-    val editorAccessType: String = "manual",
+    val editorAccessType: String = ExamAccessTypes.DEFAULT,
     val editorIsActive: Boolean = true,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
 )

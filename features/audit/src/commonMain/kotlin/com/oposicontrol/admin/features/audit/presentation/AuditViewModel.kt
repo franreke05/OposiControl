@@ -6,6 +6,7 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.repository.AuditRepository
+import kotlin.time.Clock
 
 class AuditViewModel(
     dispatcherProvider: DispatcherProvider,
@@ -32,7 +33,7 @@ class AuditViewModel(
         when (val result = auditRepository.fetchEvents()) {
             is AppResult.Failure -> updateState { it.copy(events = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
-                val ts = kotlinx.datetime.Clock.System.now().toString().substringBefore(".").replace("T", " ").takeLast(16)
+                val ts = Clock.System.now().toString().substringBefore(".").replace("T", " ").takeLast(16)
                 updateState {
                     it.copy(
                         events = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value),

@@ -1,0 +1,3 @@
+-- CANONICAL V1 CANDIDATE ONLY. Do not apply.
+-- Target UUID commerce capabilities: products, plans, subscriptions, wallet,
+-- purchases and service effects. Legacy purchase RPCs require replacement tests first.

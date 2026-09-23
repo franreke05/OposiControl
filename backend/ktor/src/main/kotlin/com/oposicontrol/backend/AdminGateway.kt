@@ -59,7 +59,11 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
             call.respond(gateway.listTicketTransactions(call.requiredPath("userId")))
         }
         post("/ticket-wallets/{userId}/transactions") {
-            call.respond(HttpStatusCode.Created, gateway.appendTicketAdjustment(call.requiredPath("userId"), call.receive()))
+            // El cuerpo NO se lee: la ruta está deshabilitada y `call.receive()` se
+            // evaluaría antes que el rechazo (Kotlin evalúa los argumentos de
+            // izquierda a derecha), de modo que un JSON mal formado moría en
+            // BadRequestException con un 500 en lugar del 410 previsto.
+            gateway.rejectLegacyTicketAdjustment(call.requiredPath("userId"))
         }
         get("/support/conversations") { call.respond(gateway.listSupportConversations()) }
         get("/support/conversations/{conversationId}/messages") {
@@ -78,11 +82,11 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
     }
 }
 
-class SupabaseAdminGateway private constructor(
+class SupabaseAdminGateway internal constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
     private val json: Json,
-    private val client: HttpClient = HttpClient.newHttpClient(),
+    private val client: HttpClient = newUpstreamHttpClient(),
 ) {
     fun listUsers(): List<AdminUserDto> = emptyListOnMissingLegacySchema("listUsers") {
         val rolesByUser = roleAssignments()
@@ -261,52 +265,37 @@ class SupabaseAdminGateway private constructor(
         ).decodeList<TicketTransactionRow>().map { it.toDto() }
     }
 
-    fun appendTicketAdjustment(userId: String, input: AdminTicketAdjustmentDto): AdminTicketTransactionDto {
-        require(input.amount != 0.0) { "El ajuste no puede ser 0." }
-        require(input.reason.isNotBlank()) { "El ajuste necesita razon." }
-        val numericUserId = userId.toIntId()
-        val current = request("GET", "/rest/v1/cartera_tickets?select=*&usuario_id=eq.$numericUserId", null)
-            .decodeList<TicketWalletRow>()
-            .firstOrNull()
-        val newBalance = (current?.saldo ?: 0.0) + input.amount
-        require(newBalance >= 0.0) { "Saldo insuficiente para crear el debito." }
-        if (current == null) {
-            request(
-                "POST",
-                "/rest/v1/cartera_tickets",
-                json.encodeToString(listOf(TicketWalletUpsertRow(numericUserId, newBalance))),
-                prefer = "return=minimal",
-            )
-        } else {
-            request("PATCH", "/rest/v1/cartera_tickets?usuario_id=eq.$numericUserId", """{"saldo":$newBalance}""")
-        }
-        return request(
-            "POST",
-            "/rest/v1/transaccion_ticket",
-            json.encodeToString(
-                listOf(
-                    TicketTransactionInsertRow(
-                        usuarioId = numericUserId,
-                        tipo = if (input.amount >= 0) "credito" else "debito",
-                        monto = kotlin.math.abs(input.amount),
-                        razon = input.reason,
-                    ),
-                ),
-            ),
-            prefer = "return=representation",
-        ).decodeList<TicketTransactionRow>().first().toDto(signedAmount = input.amount)
-            .also { transaction ->
-                appendAudit(
-                    AdminAuditEventDto(
-                        id = "",
-                        actorName = "backend-admin",
-                        action = "TICKET_TRANSACTION_CREATE",
-                        target = "transaccion_ticket:${transaction.id}",
-                        occurredAt = Instant.now().toString(),
-                        metadata = mapOf("usuario_id" to userId, "monto" to input.amount.toString()),
-                    ),
-                )
-            }
+    /**
+     * DESHABILITADA A PROPOSITO — no borrada (ver ADR de legacy: primero se
+     * sustituye funcionalmente, el cleanup destructivo va despues).
+     *
+     * Esta ruta legacy hacia una mutacion monetaria NO atomica sobre
+     * `cartera_tickets`: leia el saldo, sumaba en memoria y escribia el
+     * resultado, y despues insertaba la fila de ledger en una segunda llamada
+     * suelta. Eso pierde escrituras concurrentes (lost update) y puede dejar
+     * saldo y ledger divergentes si la segunda llamada falla. Ademas nunca
+     * registraba saldo_antes/saldo_despues ni aceptaba clave de idempotencia.
+     *
+     * El escritor canonico `admin_grant_tickets` ya resuelve esto (atomico,
+     * idempotente y seguro ante concurrencia) y se expone en
+     * `/api/v1/admin/tickets/{usuarioId}/transacciones`.
+     *
+     * No se traduce automaticamente la llamada legacy al RPC canonico porque las
+     * familias de identidad no coinciden: aqui el usuario es un entero legacy y
+     * el RPC exige el uuid de `auth.users`. Adivinar esa correspondencia moveria
+     * dinero a la cartera equivocada, asi que se rechaza en la puerta.
+     *
+     * Las lecturas legacy se conservan (`listTicketWallets` /
+     * `listTicketTransactions`): solo se cierra la escritura.
+     */
+    fun rejectLegacyTicketAdjustment(userId: String): Nothing {
+        throw BackendDomainException(
+            "WALLET_LEGACY_ROUTE_DISABLED",
+            HttpStatusCode.Gone,
+            "El ajuste manual de cartera legacy esta deshabilitado porque no era atomico. " +
+                "Usa POST /api/v1/admin/tickets/{usuarioId}/transacciones, que escribe mediante " +
+                "el RPC atomico e idempotente admin_grant_tickets.",
+        )
     }
 
     fun listSupportConversations(): List<AdminSupportConversationDto> = emptyListOnMissingLegacySchema("listSupportConversations") {
@@ -513,8 +502,8 @@ class SupabaseAdminGateway private constructor(
 
     private fun request(method: String, path: String, body: String?, prefer: String? = null): String {
         val builder = HttpRequest.newBuilder(URI.create("$supabaseUrl$path"))
-            .header("apikey", serviceRoleKey)
-            .header("Authorization", "Bearer $serviceRoleKey")
+            .timeout(UPSTREAM_REQUEST_TIMEOUT)
+            .supabaseElevatedAuth(serviceRoleKey)
             .header("Content-Type", "application/json")
         if (prefer != null) builder.header("Prefer", prefer)
         val publisher = body?.let(HttpRequest.BodyPublishers::ofString) ?: HttpRequest.BodyPublishers.noBody()
@@ -583,9 +572,15 @@ class SupabaseAdminGateway private constructor(
             "internal_note",
         )
 
-        fun fromEnvironment(json: Json): SupabaseAdminGateway? {
-            val url = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
-            val serviceRoleKey = System.getenv("SUPABASE_SERVICE_ROLE_KEY").orEmpty()
+        /**
+         * F-01/F-02: clave por [SupabaseRequestAuthPolicy.secretFromEnvironment] y
+         * cabeceras por [supabaseElevatedAuth]. Leía sólo `SUPABASE_SERVICE_ROLE_KEY`
+         * (con la configuración canónica el backend no arrancaba) y firmaba `Bearer`
+         * sin mirar la forma de la clave.
+         */
+        fun fromEnvironment(json: Json, environment: (String) -> String? = System::getenv): SupabaseAdminGateway? {
+            val url = environment("SUPABASE_URL")?.trimEnd('/').orEmpty()
+            val serviceRoleKey = SupabaseRequestAuthPolicy.secretFromEnvironment(environment)
             return if (url.isBlank() || serviceRoleKey.isBlank()) null else SupabaseAdminGateway(url, serviceRoleKey, json)
         }
     }
@@ -648,6 +643,15 @@ data class AdminTicketWalletDto(
     val status: String,
 )
 
+/**
+ * Movimiento de cartera de OposiTickets.
+ *
+ * Los cuatro últimos campos son la parte auditable y llegan sólo desde el ledger
+ * canónico (`transacciones_cartera`): sin saldo antes/después no se puede
+ * reconstruir el histórico ni detectar un descuadre, y sin origen y clave de
+ * idempotencia no se sabe qué provocó el movimiento ni si un reintento lo
+ * duplicó. Son nullable porque la superficie legacy no los tiene.
+ */
 @Serializable
 data class AdminTicketTransactionDto(
     val id: String,
@@ -656,10 +660,20 @@ data class AdminTicketTransactionDto(
     val amount: Double,
     val reason: String,
     val occurredAt: String,
+    val balanceBefore: Int? = null,
+    val balanceAfter: Int? = null,
+    /** Qué originó el movimiento: "admin", una compra, una recompensa… */
+    val originType: String? = null,
+    val originId: String? = null,
+    val idempotencyKey: String? = null,
 )
 
 @Serializable
-data class AdminTicketAdjustmentDto(val amount: Double, val reason: String)
+data class AdminTicketAdjustmentDto(
+    val amount: Double,
+    val reason: String,
+    val idempotencyKey: String? = null,
+)
 
 @Serializable
 data class AdminSupportConversationDto(
