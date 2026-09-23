@@ -16,11 +16,30 @@ import java.util.UUID
 private const val STORED_NEWS_TEXT_PREFIX = "__OPOSICONTROL_NEWS_V1__\n"
 
 interface NewsGateway {
-    fun listNoticias(): List<NoticiaDto>
+    /**
+     * [limit] acota la lectura. La biblioteca pedía la tabla entera en cada
+     * refresco, lo que funciona con doce noticias y deja de funcionar solo:
+     * el coste crece para siempre y nadie se entera hasta que duele.
+     */
+    fun listNoticias(limit: Int = DEFAULT_NEWS_PAGE_SIZE, offset: Int = 0): List<NoticiaDto>
+
+    /** Releer UNA noticia sin traerse la biblioteca completa detrás. */
+    fun findNoticia(noticiaId: String): NoticiaDto?
+
     fun saveNoticia(input: NoticiaDto): NoticiaDto
     fun deleteNoticia(noticiaId: String)
     fun uploadAsset(file: NewsUploadedFile): NewsAssetUploadDto
 }
+
+/** Suficiente para la biblioteca real y un techo honesto frente al crecimiento. */
+const val DEFAULT_NEWS_PAGE_SIZE = 200
+
+/** Ni cero ni negativo ni ilimitado: un `limit=0` devolvería una lista vacía sin decir por qué. */
+internal fun sanitizeNewsLimit(raw: String?): Int =
+    raw?.trim()?.toIntOrNull()?.coerceIn(1, 500) ?: DEFAULT_NEWS_PAGE_SIZE
+
+internal fun sanitizeNewsOffset(raw: String?): Int =
+    raw?.trim()?.toIntOrNull()?.coerceAtLeast(0) ?: 0
 
 data class NewsUploadedFile(
     val fileName: String,
@@ -72,7 +91,10 @@ data class NoticiaLayerDto(
 class InMemoryNewsGateway : NewsGateway {
     private val noticias = linkedMapOf<String, NoticiaDto>()
 
-    override fun listNoticias(): List<NoticiaDto> = noticias.values.toList()
+    override fun listNoticias(limit: Int, offset: Int): List<NoticiaDto> =
+        noticias.values.toList().drop(offset).take(limit)
+
+    override fun findNoticia(noticiaId: String): NoticiaDto? = noticias[noticiaId]
 
     override fun saveNoticia(input: NoticiaDto): NoticiaDto {
         require(input.titulo.isNotBlank()) { "La noticia necesita titulo." }
@@ -101,15 +123,24 @@ class SupabaseNewsGateway private constructor(
     @Volatile
     private var storageBucketChecked = false
 
-    override fun listNoticias(): List<NoticiaDto> {
+    override fun listNoticias(limit: Int, offset: Int): List<NoticiaDto> {
         val rows = request(
             method = "GET",
             // Ordenar por `id` dejó de tener sentido al ser `uuid`: el orden
             // sería arbitrario. La biblioteca necesita lo más reciente arriba.
-            path = "/rest/v1/noticia?select=*&order=creado_en.desc",
+            path = "/rest/v1/noticia?select=*&order=creado_en.desc&limit=$limit&offset=$offset",
             body = null,
         ).decodeList<SupabaseNoticiaRow>()
         return rows.map { row -> row.toDto() }
+    }
+
+    override fun findNoticia(noticiaId: String): NoticiaDto? {
+        require(noticiaId.isCanonicalUuid()) { "Id de noticia no valido." }
+        return request(
+            method = "GET",
+            path = "/rest/v1/noticia?id=eq.$noticiaId&select=*&limit=1",
+            body = null,
+        ).decodeList<SupabaseNoticiaRow>().firstOrNull()?.toDto()
     }
 
     override fun saveNoticia(input: NoticiaDto): NoticiaDto {

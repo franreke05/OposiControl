@@ -109,6 +109,23 @@ class BackendSecurityTest {
     }
 
     @Test
+    fun newsListLimitIsBoundedInsteadOfReadingTheWholeTable() {
+        // Sin parametro, un techo honesto en vez de "todo".
+        assertEquals(DEFAULT_NEWS_PAGE_SIZE, sanitizeNewsLimit(null))
+        assertEquals(DEFAULT_NEWS_PAGE_SIZE, sanitizeNewsLimit("no-es-un-numero"))
+        assertEquals(50, sanitizeNewsLimit("50"))
+        // Un `limit=0` devolveria una lista vacia sin decir por que: se corrige a 1.
+        assertEquals(1, sanitizeNewsLimit("0"))
+        assertEquals(1, sanitizeNewsLimit("-10"))
+        // Y nadie puede pedir la tabla entera disfrazandolo de limite.
+        assertEquals(500, sanitizeNewsLimit("100000"))
+
+        assertEquals(0, sanitizeNewsOffset(null))
+        assertEquals(0, sanitizeNewsOffset("-5"))
+        assertEquals(40, sanitizeNewsOffset("40"))
+    }
+
+    @Test
     fun onlyCanonicalUuidsAreAcceptedAsIdentifiers() {
         assertTrue(ESPECIALIDAD_UUID.isCanonicalUuid())
         // "sin-seleccionar" llegaria a la FK como error de base de datos en vez
