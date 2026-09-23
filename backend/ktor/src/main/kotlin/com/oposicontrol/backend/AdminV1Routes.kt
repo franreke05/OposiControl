@@ -3440,6 +3440,7 @@ class AdminV1Gateway private constructor(
     serviceRoleKey: String,
     private val json: Json,
     client: HttpClient = sharedUpstreamHttpClient,
+    private val systemMetrics: SystemMetricsProvider = PrometheusSystemMetricsGateway.fromEnvironment(),
 ) {
     /**
      * Migrado a [SupabaseRequestTransport] (FASE 1).
@@ -6322,10 +6323,9 @@ class AdminV1Gateway private constructor(
     /**
      * Resumen del estado de los servicios.
      *
-     * Sólo informa de lo que puede comprobar: Ktor (que está respondiendo, por
-     * definición) y Supabase (con una lectura mínima real, cronometrada). Todo lo
-     * demás se declara no instrumentado en vez de darse por bueno — un panel en
-     * verde por desconocimiento se mira y se cree.
+     * Ktor y Supabase se comprueban directamente. CPU/RAM del host, p95 HTTP y
+     * errores 5xx proceden de Prometheus; cada serie ausente conserva `null` y
+     * se declara en `notInstrumented` en vez de inventar un cero.
      */
     fun getSystemStatus(): AdminSystemStatusDto {
         val startedAt = System.nanoTime()
@@ -6344,21 +6344,24 @@ class AdminV1Gateway private constructor(
         )
         // Si esta línea se ejecuta, Ktor está sirviendo la petición.
         val ktorLevel = SystemStatusLevelWire.OPERATIVE
+        val metrics = systemMetrics.snapshot()
 
         return AdminSystemStatusDto(
             overallStatus = aggregateSystemStatus(listOf(ktorLevel, supabaseLevel)),
             ktorStatus = ktorLevel,
             supabaseStatus = supabaseLevel,
             workerStatus = SystemStatusLevelWire.UNKNOWN,
-            // La latencia medida es la de esta comprobación contra Supabase, que
-            // sí es un dato real; no se presenta como latencia general de la API.
-            apiLatencyMs = latencyMs,
+            cpuPercent = metrics.cpuPercent,
+            ramPercent = metrics.ramPercent,
+            apiLatencyMs = metrics.apiLatencyMs,
+            errors24h = metrics.errors24h,
             updatedAt = Instant.now().toString(),
-            notInstrumented = listOf(
+            notInstrumented = listOfNotNull(
                 SystemStatusNotInstrumented.WORKER,
-                SystemStatusNotInstrumented.CPU,
-                SystemStatusNotInstrumented.MEMORY,
-                SystemStatusNotInstrumented.API_ERRORS,
+                SystemStatusNotInstrumented.CPU.takeIf { metrics.cpuPercent == null },
+                SystemStatusNotInstrumented.MEMORY.takeIf { metrics.ramPercent == null },
+                SystemStatusNotInstrumented.API_LATENCY.takeIf { metrics.apiLatencyMs == null },
+                SystemStatusNotInstrumented.API_ERRORS.takeIf { metrics.errors24h == null },
                 SystemStatusNotInstrumented.MOBILE_CRASHES,
                 SystemStatusNotInstrumented.QUEUE_DEPTH,
             ),
@@ -6863,6 +6866,9 @@ class AdminV1Gateway private constructor(
             serviceRoleKey: String,
             json: Json,
             client: HttpClient,
-        ): AdminV1Gateway = AdminV1Gateway(supabaseUrl, serviceRoleKey, json, client)
+            systemMetrics: SystemMetricsProvider = SystemMetricsProvider {
+                SystemMetricsSnapshot(null, null, null, null)
+            },
+        ): AdminV1Gateway = AdminV1Gateway(supabaseUrl, serviceRoleKey, json, client, systemMetrics)
     }
 }

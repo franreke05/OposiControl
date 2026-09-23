@@ -356,6 +356,7 @@ fun Application.module() {
     val serverProfile = System.getenv("SERVER_PROFILE").orEmpty().ifBlank { "combined" }
     val consumerOnly = serverProfile.equals("consumer", ignoreCase = true)
     val authRuntime = OposiBotsAuthRuntime.fromEnvironment(json, required = consumerOnly)
+    installBackendPrometheusMetrics()
     if (consumerOnly) {
         configureConsumerAuthOnly(authRuntime ?: error("Auth consumer no configurado."))
         return
@@ -402,6 +403,7 @@ fun Application.module() {
         }
     }
     routing {
+        prometheusMetricsRoute()
         get("/health") {
             call.respond(
                 mapOf(
@@ -712,6 +714,7 @@ internal fun Application.configureConsumerAuthOnly(runtime: OposiBotsAuthRuntime
         json(runtime.json)
     }
     routing {
+        prometheusMetricsRoute()
         get("/health/live") {
             call.respond(mapOf("status" to "ok"))
         }

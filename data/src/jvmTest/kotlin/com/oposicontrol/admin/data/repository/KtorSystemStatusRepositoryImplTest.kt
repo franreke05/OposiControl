@@ -45,8 +45,9 @@ class KtorSystemStatusRepositoryImplTest {
             """
             {"data":{
               "overallStatus":"DEGRADED","ktorStatus":"OPERATIVE","supabaseStatus":"DEGRADED",
-              "workerStatus":"UNKNOWN","apiLatencyMs":1800,"updatedAt":"2026-09-02T10:00:00Z",
-              "notInstrumented":["workerStatus","cpuPercent","memoryPercent"]
+              "workerStatus":"UNKNOWN","cpuPercent":12.5,"ramPercent":41.25,
+              "apiLatencyMs":1800,"errors24h":0,"updatedAt":"2026-09-02T10:00:00Z",
+              "notInstrumented":["workerStatus","mobileCrashes24h","queueDepth"]
             }}
             """.trimIndent(),
             record = requests,
@@ -58,13 +59,15 @@ class KtorSystemStatusRepositoryImplTest {
         assertEquals(SystemStatusLevel.DEGRADED, status.overallStatus)
         assertEquals(SystemStatusLevel.OPERATIVE, status.ktorStatus)
         assertEquals(SystemStatusLevel.UNKNOWN, status.workerStatus)
+        assertEquals(12.5, status.cpuPercent)
+        assertEquals(41.25, status.ramPercent)
         assertEquals(1800L, status.apiLatencyMs)
+        assertEquals(0L, status.errors24h)
         assertEquals(Instant.parse("2026-09-02T10:00:00Z"), status.updatedAt)
-        // Lo que el backend no mide no llega como 0: llegaría a pantalla como
-        // "CPU al 0 %", que es una afirmación, no una ausencia.
-        assertNull(status.cpuPercent)
-        assertNull(status.memoryPercent)
+        // Lo que el backend no mide no llega como 0: un cero sería una
+        // medición real, no una ausencia.
         assertNull(status.mobileCrashes24h)
+        assertNull(status.queueDepth)
     }
 
     @Test
@@ -94,6 +97,24 @@ class KtorSystemStatusRepositoryImplTest {
             "'No he podido preguntar' no es lo mismo que 'aquí no hay observabilidad': " +
                 "confundirlos escondería una caída real tras un aviso de configuración pendiente.",
         )
+    }
+
+    @Test
+    fun prometheusMetricsRemainUnavailableWhenTheBackendReturnsNulls() = runTest {
+        val repository = repository(
+            """{"data":{"overallStatus":"OPERATIVE","ktorStatus":"OPERATIVE","supabaseStatus":"OPERATIVE","workerStatus":"UNKNOWN","cpuPercent":null,"ramPercent":null,"apiLatencyMs":null,"errors24h":null,"updatedAt":"2026-09-22T10:00:00Z","notInstrumented":["workerStatus","cpuPercent","ramPercent","apiLatencyMs","errors24h","mobileCrashes24h","queueDepth"]}}""",
+        )
+
+        val status = assertIs<SystemStatusAvailability.Available>(repository.loadStatus()).value
+
+        assertEquals(SystemStatusLevel.OPERATIVE, status.ktorStatus)
+        assertEquals(SystemStatusLevel.OPERATIVE, status.supabaseStatus)
+        assertEquals(SystemStatusLevel.UNKNOWN, status.workerStatus)
+        assertNull(status.cpuPercent)
+        assertNull(status.ramPercent)
+        assertNull(status.apiLatencyMs)
+        assertNull(status.errors24h)
+        assertEquals(Instant.parse("2026-09-22T10:00:00Z"), status.updatedAt)
     }
 
     // -----------------------------------------------------------------

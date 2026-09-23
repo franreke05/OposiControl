@@ -38,10 +38,10 @@ class SystemStatusViewModelTest {
                     ktorStatus = SystemStatusLevel.OPERATIVE,
                     supabaseStatus = SystemStatusLevel.OPERATIVE,
                     workerStatus = SystemStatusLevel.UNKNOWN,
-                    cpuPercent = 24,
-                    memoryPercent = 41,
+                    cpuPercent = 24.5,
+                    ramPercent = 41.25,
                     apiLatencyMs = 86,
-                    apiErrors24h = 3,
+                    errors24h = 3,
                     mobileCrashes24h = 0,
                     queueDepth = 2,
                     updatedAt = now.minus(20.seconds),
@@ -55,6 +55,9 @@ class SystemStatusViewModelTest {
         val state = assertIs<SystemStatusUiState.Content>(viewModel.state.value.uiState)
         assertEquals("Hace 20s", state.value.updatedAtLabel)
         assertEquals(SystemStatusLevel.UNKNOWN, state.value.workerStatus)
+        assertEquals(24.5, state.value.cpuPercent)
+        assertEquals(41.25, state.value.ramPercent)
+        assertEquals(3L, state.value.errors24h)
     }
 
     @Test
@@ -68,7 +71,7 @@ class SystemStatusViewModelTest {
             SystemStatusAvailability.Available(
                 SystemStatus(
                     overallStatus = SystemStatusLevel.OPERATIVE,
-                    cpuPercent = 24,
+                    cpuPercent = 24.0,
                 ),
             ),
         )
@@ -89,6 +92,13 @@ class SystemStatusViewModelTest {
 
         val state = assertIs<SystemStatusUiState.Error>(viewModel.state.value.uiState)
         assertEquals("No se pudo conectar al monitor.", state.message)
+    }
+
+    @Test
+    fun zeroIsPresentedAsMeasuredAndNullAsUnavailable() {
+        assertEquals("0 %", 0.0.toPercentLabel())
+        assertEquals("12.5 %", 12.54.toPercentLabel())
+        assertEquals(null, null.toPercentLabel())
     }
 
     private fun TestScope.viewModelWith(

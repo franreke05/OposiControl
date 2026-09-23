@@ -80,7 +80,7 @@ fun Scope.ktorSystemStatusRepository(): SystemStatusRepository =
     KtorSystemStatusRepositoryImpl(get(), get(), get(), get())
 
 @Serializable
-data class SystemStatusResponse(val data: SystemStatusDto = SystemStatusDto())
+data class SystemStatusResponse(val data: SystemStatusDto)
 
 /**
  * Todo lo numérico es nullable y sin relleno: el backend declara en
@@ -93,10 +93,10 @@ data class SystemStatusDto(
     val ktorStatus: String = "",
     val supabaseStatus: String = "",
     val workerStatus: String = "",
-    val cpuPercent: Int? = null,
-    val memoryPercent: Int? = null,
+    val cpuPercent: Double? = null,
+    val ramPercent: Double? = null,
     val apiLatencyMs: Long? = null,
-    val apiErrors24h: Int? = null,
+    val errors24h: Long? = null,
     val mobileCrashes24h: Int? = null,
     val queueDepth: Int? = null,
     val updatedAt: String = "",
@@ -109,9 +109,9 @@ internal fun SystemStatusDto.toDomain() = SystemStatus(
     supabaseStatus = supabaseStatus.toSystemStatusLevel(),
     workerStatus = workerStatus.toSystemStatusLevel(),
     cpuPercent = cpuPercent,
-    memoryPercent = memoryPercent,
+    ramPercent = ramPercent,
     apiLatencyMs = apiLatencyMs,
-    apiErrors24h = apiErrors24h,
+    errors24h = errors24h,
     mobileCrashes24h = mobileCrashes24h,
     queueDepth = queueDepth,
     updatedAt = updatedAt.takeIf { it.isNotBlank() }?.let { runCatching { Instant.parse(it) }.getOrNull() },

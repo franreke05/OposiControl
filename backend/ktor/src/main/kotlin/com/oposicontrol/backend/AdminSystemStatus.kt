@@ -5,10 +5,9 @@ import kotlinx.serialization.Serializable
 /**
  * Estado del sistema agregado en Ktor.
  *
- * La arquitectura acordada es logs / health / (futuro Sentry, futuro Prometheus)
- * → agregación EN Ktor → panel. El panel **nunca** lee logs ni métricas
- * directamente: sólo consume este resumen. Por eso el endpoint existe aunque hoy
- * sólo pueda responder de dos de sus componentes.
+ * La arquitectura acordada es logs / health / Sentry / Prometheus → agregación
+ * EN Ktor → panel. El panel **nunca** lee logs ni métricas directamente: sólo
+ * consume este resumen.
  *
  * Cada componente lleva su propio nivel, y lo que todavía no tiene fuente se
  * declara `UNKNOWN` en vez de `OPERATIVE`. Un panel que pinta todo en verde
@@ -21,10 +20,10 @@ data class AdminSystemStatusDto(
     val ktorStatus: String,
     val supabaseStatus: String,
     val workerStatus: String,
-    val cpuPercent: Int? = null,
-    val memoryPercent: Int? = null,
+    val cpuPercent: Double? = null,
+    val ramPercent: Double? = null,
     val apiLatencyMs: Long? = null,
-    val apiErrors24h: Int? = null,
+    val errors24h: Long? = null,
     val mobileCrashes24h: Int? = null,
     val queueDepth: Int? = null,
     val updatedAt: String,
@@ -48,13 +47,13 @@ object SystemStatusNotInstrumented {
     /** No hay worker asíncrono desplegado todavía. */
     const val WORKER = "workerStatus"
 
-    /** CPU y memoria del proceso serían del backend, no del sistema del usuario. */
+    /** CPU y memoria del host proceden de Node Exporter vía Prometheus. */
     const val CPU = "cpuPercent"
-    const val MEMORY = "memoryPercent"
+    const val MEMORY = "ramPercent"
 
-    /** Requiere Prometheus o un contador propio de peticiones. */
+    /** Latencia y errores proceden del histograma/contador HTTP de Ktor. */
     const val API_LATENCY = "apiLatencyMs"
-    const val API_ERRORS = "apiErrors24h"
+    const val API_ERRORS = "errors24h"
 
     /** Requiere Sentry (o equivalente) recibiendo eventos de la app móvil. */
     const val MOBILE_CRASHES = "mobileCrashes24h"

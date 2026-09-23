@@ -37,6 +37,7 @@ import com.oposicontrol.admin.domain.model.SystemStatusLevel
 import oposicontrol.core.ui.generated.resources.Res
 import oposicontrol.core.ui.generated.resources.ic_filter
 import org.jetbrains.compose.resources.painterResource
+import kotlin.math.roundToInt
 
 @Composable
 fun SystemStatusScreen(
@@ -58,7 +59,7 @@ fun SystemStatusScreen(
             is SystemStatusUiState.Content -> StatusContent(uiState.value, banner = null)
             is SystemStatusUiState.Degraded -> StatusContent(
                 uiState.value,
-                banner = "La API está respondiendo más lentamente de lo habitual.",
+                banner = "Uno o más servicios monitorizados presentan incidencias.",
             )
             is SystemStatusUiState.PartialData -> StatusContent(
                 uiState.value,
@@ -131,10 +132,10 @@ private fun StatusContent(
     )
     MetricsCard(
         metrics = listOf(
-            "CPU" to status.cpuPercent?.let { "$it %" },
-            "RAM" to status.memoryPercent?.let { "$it %" },
+            "CPU" to status.cpuPercent.toPercentLabel(),
+            "RAM" to status.ramPercent.toPercentLabel(),
             "Latencia API" to status.apiLatencyMs?.let { "$it ms" },
-            "Errores 24h" to status.apiErrors24h?.toString(),
+            "Errores 24h" to status.errors24h?.toString(),
             "Crashes móviles" to status.mobileCrashes24h?.toString(),
             "Cola de trabajos" to status.queueDepth?.toString(),
         ),
@@ -379,3 +380,13 @@ private fun heroTint(level: SystemStatusLevel): Color = when (level) {
 
 private fun Modifier.backgroundCircle(color: Color): Modifier =
     this.background(color = color, shape = CircleShape)
+
+/** Conserva `null` como ausencia y presenta un cero medido como `0 %`. */
+internal fun Double?.toPercentLabel(): String? = this?.let { value ->
+    val tenths = (value * 10).roundToInt()
+    if (tenths % 10 == 0) {
+        "${tenths / 10} %"
+    } else {
+        "${tenths / 10}.${kotlin.math.abs(tenths % 10)} %"
+    }
+}

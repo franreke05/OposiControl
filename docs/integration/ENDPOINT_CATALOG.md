@@ -117,6 +117,14 @@ Common: Domain `observability`; Authorization `PUBLIC` (mounted outside `authent
 | `HEALTH-002` | GET | `/health/live` | `SOURCE_VERIFIED` — process alive, never depends on external state |
 | `HEALTH-003` | GET | `/health/ready` | `SOURCE_VERIFIED` — checks Supabase reachability; `200` ready / `503` not_ready |
 
+## `/metrics` — internal observability
+
+| Endpoint ID | Method | Path | Status |
+|---|---|---|---|
+| `OBS-METRICS-001` | GET | `/metrics` | `SOURCE_VERIFIED` / internal Docker scrape only. Prometheus reads `oposicontrol-ktor:8080/metrics`; Caddy must return `404` publicly before the general proxy |
+
+The endpoint exports Micrometer's Ktor HTTP histogram and JVM metrics in Prometheus format. It is deliberately unauthenticated inside the Docker network so Prometheus can scrape it, and deliberately blocked at public ingress.
+
 ## `/api/v1/app/*` — authenticated app API
 
 Common: Domain `app`; Authorization `JWT_REQUIRED`, with documented dev fallback controlled by `OPOSICONTROL_ALLOW_DEV_USER`; Route implementation `AppV1Routes.kt`; Service `UNKNOWN`; Gateway `AppV1Gateway`; Request/Response DTO `SOURCE_CODE_OR_UNKNOWN`; Errors `SOURCE_CODE_OR_UNKNOWN`; Tests `SOURCE_DOCUMENTED`; DB/RPC/Storage `Supabase expected, LIVE_NOT_VERIFIED`; Admin UI `UNKNOWN`; OposiBot `NOT_VERIFIED`; Evidence `AppV1Routes.kt` and backend source.
@@ -217,7 +225,7 @@ JWT and receives 200 from `/api/v1/admin/dashboard`, `/especialidades`,
 | `ADM-PLAN-002` | GET/POST | `/api/v1/admin/planes/{planId}/beneficios` | `SOURCE_VERIFIED`; `beneficios_plan` reachable |
 | `ADM-OT-001` | GET | `/api/v1/admin/tickets/resumen` | `SOURCE_VERIFIED`, registered and 401-protected |
 | `ADM-OT-002` | POST | `/api/v1/admin/tickets/conceder` | `SOURCE_VERIFIED`; delegates entirely to `admin_grant_tickets`, no write executed |
-| `ADM-SYS-001` | GET | `/api/v1/admin/estado-sistema` | `SOURCE_VERIFIED`, registered and 401-protected. Closes the aggregation contract Screen 10 was waiting on |
+| `ADM-SYS-001` | GET | `/api/v1/admin/estado-sistema` | `SOURCE_VERIFIED` / `TEST_VERIFIED`, registered and 401-protected. Returns Ktor/Supabase health plus nullable Prometheus CPU, RAM, HTTP p95 latency, 5xx/24h and a real `updatedAt`; each unavailable series remains `null` |
 
 Changed behaviour:
 

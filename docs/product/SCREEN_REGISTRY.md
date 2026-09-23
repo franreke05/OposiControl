@@ -46,14 +46,14 @@ Registro activo de las 17 secciones administrativas requeridas. La navegación e
 
 ### Screen 10 — Estado del sistema
 
-- `CURRENT: IMPLEMENTED / NOT_CONNECTED`. Integrated into `integration/mobile-finish` (originally `feature/mobile-settings` / `9efd31b`).
-- Route: `AppRoute.System.Status` (independent from the legacy `AppRoute.System.Diagnostics`), opened from the Settings row.
-- `NotConnectedSystemStatusRepository` backs the screen today: the UI is real and prepared for overall status, Ktor, Supabase, worker, CPU, RAM, latency, errors, crashes, queue and `updatedAt`, but no real aggregation backend exists yet — no fake metrics are shown.
+- `CURRENT: CONNECTED / OBSERVABILITY_V1`. Route `AppRoute.System.Status`, independent from the legacy `AppRoute.System.Diagnostics` and opened from Settings.
+- `KtorSystemStatusRepositoryImpl` consumes the authenticated `GET /api/v1/admin/estado-sistema` snapshot. Ktor and Supabase retain their real health signals; CPU/RAM come from Node Exporter through Prometheus; latency is Ktor HTTP p95 over 5 minutes; errors are observed HTTP 5xx over a complete 24-hour window.
+- Missing, invalid or unreachable Prometheus series stay `null` and render as «No disponible»; a measured zero renders as zero. Worker, mobile crashes and queue remain unavailable until they have real sources. `updatedAt` is the actual snapshot timestamp.
 
 ## Navigation and scope notes
 
 - Desktop entry: `main()` (`composeApp/src/jvmMain/.../main.kt`) → `OposiControlAdminApp` (`App.kt`) → `AppRoot`; source exposes the administrative `AdminSection` set. `DesktopModerationRoot` is an unused pass-through wrapper (dead code, not deleted in this phase) — it is not the real entrypoint.
 - Mobile entry: `MobileContentRoot → MobileContentScreen/MobileAdminPanel`; the mobile panel exposes the operational subset plus the Dashboard quick action to `AppRoute.Content.Imports` for Screen 09.
 - The source also contains `SETTINGS`, but the required product registry here intentionally covers the 17 requested sections and does not count Settings as one of them.
-- `AppRoute.System.Status` (Screen 10) is now implemented (`SystemStatusScreen`/`SystemStatusViewModel`), opened from the Settings row; it remains separate from the legacy `AppRoute.System.Diagnostics` route. Backed by `NotConnectedSystemStatusRepository` — real UI, no real backend yet, no fake metrics.
+- `AppRoute.System.Status` (Screen 10) remains separate from the legacy `AppRoute.System.Diagnostics` route. It is connected through `KtorSystemStatusRepositoryImpl`; unavailable sources remain explicit and are never replaced with fabricated zeros.
 - Runtime visual reachability remains `NOT_VERIFIED`.

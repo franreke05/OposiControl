@@ -20,8 +20,11 @@ dependencies {
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.statusPages)
+    implementation("io.ktor:ktor-server-metrics-micrometer:${libs.versions.ktor.get()}")
     implementation(libs.ktor.serialization.kotlinx.json)
     implementation(libs.kotlinx.serialization.json)
+    implementation(platform("io.micrometer:micrometer-bom:1.15.12"))
+    implementation("io.micrometer:micrometer-registry-prometheus")
     implementation("io.lettuce:lettuce-core:6.5.5.RELEASE")
     // Verificacion de JWT de Supabase (ES256). La clave EC se construye desde el JWKS publico.
     implementation("com.auth0:java-jwt:4.4.0")
