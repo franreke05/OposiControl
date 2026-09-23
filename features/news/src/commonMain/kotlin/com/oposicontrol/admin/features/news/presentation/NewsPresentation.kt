@@ -25,11 +25,51 @@ internal fun newsDateLabel(value: String): String {
     val (year, month, day, hour, minute) = match.destructured
     return "$day/$month/$year · $hour:$minute UTC"
 }
-internal data class NewsPaneSizes(val library: Int, val editor: Int, val rail: Int)
+/**
+ * Anchos de las columnas del taller.
+ *
+ * [inspector] separa las propiedades de la capa del carril de publicación: antes
+ * compartían el mismo panel derecho, así que editar una capa obligaba a bajar
+ * por debajo de la vista previa. Son trabajos distintos y ahora son columnas
+ * distintas — el editor manda, y la publicación es contexto, no formulario.
+ *
+ * Cero cuando la ventana no da: la columna desaparece y su contenido cae dentro
+ * del editor, en vez de estrujarse hasta ser ilegible.
+ */
+internal data class NewsPaneSizes(
+    val library: Int,
+    val editor: Int,
+    val inspector: Int,
+    val rail: Int,
+)
+
+/** Hueco entre columnas, el mismo que aplica el `Row` del taller. */
+private const val NEWS_PANE_GAP = 16
+
 internal fun newsPaneSizes(width: Int): NewsPaneSizes = when {
-    width >= 1380 -> NewsPaneSizes(360, width - 852, 460)
-    width >= 940 -> NewsPaneSizes(288, width - 304, 0)
-    else -> NewsPaneSizes(0, width, 0)
+    // WIDE: biblioteca + editor + inspector + publicación → 3 huecos.
+    width >= 1720 -> NewsPaneSizes(
+        library = 320,
+        editor = width - 320 - 320 - 300 - 3 * NEWS_PANE_GAP,
+        inspector = 320,
+        rail = 300,
+    )
+    // STANDARD: la publicación se pliega dentro del editor; el inspector aguanta
+    // porque es donde se trabaja. 3 columnas → 2 huecos.
+    width >= 1380 -> NewsPaneSizes(
+        library = 304,
+        editor = width - 304 - 320 - 2 * NEWS_PANE_GAP,
+        inspector = 320,
+        rail = 0,
+    )
+    // COMPACT: solo biblioteca y editor → 1 hueco.
+    width >= 940 -> NewsPaneSizes(
+        library = 288,
+        editor = width - 288 - NEWS_PANE_GAP,
+        inspector = 0,
+        rail = 0,
+    )
+    else -> NewsPaneSizes(library = 0, editor = width, inspector = 0, rail = 0)
 }
 internal fun NewsState.saveLabel(): String = when {
     actionState is UiAsync.Loading -> "Guardando…"
