@@ -18,6 +18,7 @@ import java.net.URLDecoder
 import java.net.http.HttpClient
 import java.nio.charset.StandardCharsets
 import java.time.Duration
+import java.util.Base64
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -210,6 +211,250 @@ class PrometheusMetricsTest {
     }
 
     // -----------------------------------------------------------------
+    // Disco de datos de Supabase (endpoint privilegiado, texto plano).
+    // -----------------------------------------------------------------
+
+    @Test
+    fun diskParserReadsTheDataVolumeAndIgnoresTheOperatingSystemDisk() {
+        // Las dos métricas existen también para `mountpoint="/"`, que es el disco
+        // del SISTEMA OPERATIVO de la instancia y va por el 75 %. Confundirlos
+        // daría un número plausible y falso, que es lo peor que puede pasarle a
+        // un panel de estado.
+        assertEquals(
+            8_350_298_112.0,
+            parsePrometheusSampleValue(REAL_METRICS_BODY, NODE_FILESYSTEM_SIZE_BYTES, MOUNTPOINT_LABEL, DATA_MOUNTPOINT),
+        )
+        assertEquals(
+            8_052_756_480.0,
+            parsePrometheusSampleValue(REAL_METRICS_BODY, NODE_FILESYSTEM_AVAIL_BYTES, MOUNTPOINT_LABEL, DATA_MOUNTPOINT),
+        )
+        assertEquals(
+            8_589_803_520.0,
+            parsePrometheusSampleValue(REAL_METRICS_BODY, NODE_FILESYSTEM_SIZE_BYTES, MOUNTPOINT_LABEL, "/"),
+            "El disco del sistema es otra serie, y esta prueba existe para que no se mezclen.",
+        )
+    }
+
+    @Test
+    fun diskPercentUsesTheRealMeasuredSizeAndAvailableBytes() {
+        val percent = parseSupabaseDataDiskPercent(REAL_METRICS_BODY)
+
+        // 100 * (1 - 8.05275648e9 / 8.350298112e9) = 3,5632…%
+        assertEquals(3.5632, percent!!, 0.0001)
+        // Y el disco del sistema, que ronda el 75 %, no se ha colado.
+        assertTrue(percent < 10.0)
+    }
+
+    @Test
+    fun aMissingSeriesIsUnavailableAndNeverAZero() {
+        val onlySize = REAL_METRICS_BODY.lineSequence()
+            .filterNot { it.startsWith(NODE_FILESYSTEM_AVAIL_BYTES) }
+            .joinToString("\n")
+        val onlyAvail = REAL_METRICS_BODY.lineSequence()
+            .filterNot { it.startsWith(NODE_FILESYSTEM_SIZE_BYTES) }
+            .joinToString("\n")
+        // El volumen de datos desaparece, pero el del sistema sigue estando: la
+        // tentación de "usar la que haya" se corta aquí.
+        val onlyRootMountpoint = REAL_METRICS_BODY.lineSequence()
+            .filterNot { it.contains("mountpoint=\"/data\"") }
+            .joinToString("\n")
+
+        assertNull(parseSupabaseDataDiskPercent(onlySize))
+        assertNull(parseSupabaseDataDiskPercent(onlyAvail))
+        assertNull(parseSupabaseDataDiskPercent(onlyRootMountpoint))
+    }
+
+    @Test
+    fun emptyMalformedAndNonFiniteBodiesStayUnavailable() {
+        assertNull(parseSupabaseDataDiskPercent(""))
+        assertNull(parseSupabaseDataDiskPercent("   \n\n"))
+        assertNull(parseSupabaseDataDiskPercent("<html><body>401 Unauthorized</body></html>"))
+        assertNull(parseSupabaseDataDiskPercent("""{"message":"Invalid authentication credentials"}"""))
+        assertNull(parseSupabaseDataDiskPercent(diskBody(size = "NaN", available = "8.05275648e+09")))
+        assertNull(parseSupabaseDataDiskPercent(diskBody(size = "8.350298112e+09", available = "+Inf")))
+        assertNull(parseSupabaseDataDiskPercent(diskBody(size = "no-es-un-numero", available = "1")))
+        // Un total de cero bytes haría 1 - x/0 = ±Infinity, no un porcentaje.
+        assertNull(parseSupabaseDataDiskPercent(diskBody(size = "0", available = "0")))
+        // Disponible mayor que el total no describe ningún disco real: recortarlo
+        // a 0 % lo presentaría como "medido y vacío".
+        assertNull(parseSupabaseDataDiskPercent(diskBody(size = "1000", available = "2000")))
+        assertNull(parseSupabaseDataDiskPercent(diskBody(size = "1000", available = "-1")))
+        // Dos muestras que se contradicen no son un dato: no se elige una.
+        assertNull(
+            parseSupabaseDataDiskPercent(
+                diskBody(size = "8.350298112e+09", available = "8.05275648e+09") + "\n" +
+                    """$NODE_FILESYSTEM_SIZE_BYTES{device="/dev/nvme2n1",mountpoint="/data"} 4.0e+09""",
+            ),
+        )
+    }
+
+    @Test
+    fun aFullDiskIsOneHundredAndAnEmptyOneIsAMeasuredZero() {
+        assertEquals(100.0, parseSupabaseDataDiskPercent(diskBody(size = "1000", available = "0")))
+        assertEquals(
+            0.0,
+            parseSupabaseDataDiskPercent(diskBody(size = "1000", available = "1000")),
+            "Un disco vacío es un cero MEDIDO, distinto de 'no disponible'.",
+        )
+    }
+
+    @Test
+    fun theDiskGatewaySendsServiceRoleBasicAuthAndNeverPutsTheKeyInTheUrl() {
+        val paths = CopyOnWriteArrayList<String>()
+        val authorizations = CopyOnWriteArrayList<String>()
+        withPrometheusServer { supabase ->
+            supabase.createContext(PRIVILEGED_METRICS_PATH) { exchange ->
+                paths += exchange.requestURI.toString()
+                authorizations += exchange.requestHeaders.getFirst("Authorization").orEmpty()
+                val body = REAL_METRICS_BODY.toByteArray()
+                exchange.responseHeaders.add("Content-Type", "text/plain")
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+
+            val percent = SupabaseDiskMetricsGateway(supabase.baseUrl(), SECRET_KEY).diskPercent()
+
+            assertEquals(3.5632, percent!!, 0.0001)
+            assertEquals(PRIVILEGED_METRICS_PATH, paths.single())
+            assertFalse(paths.single().contains(SECRET_KEY), "La clave NUNCA viaja en la URL.")
+            val expected = "Basic " + Base64.getEncoder()
+                .encodeToString("$METRICS_BASIC_USER:$SECRET_KEY".toByteArray(StandardCharsets.UTF_8))
+            assertEquals(expected, authorizations.single())
+            assertEquals("service_role", METRICS_BASIC_USER)
+        }
+    }
+
+    @Test
+    fun anUnauthorizedOrUnreachableEndpointIsUnavailableAndDoesNotBreakTheStatus() {
+        withPrometheusServer { supabase ->
+            supabase.createContext(PRIVILEGED_METRICS_PATH) { exchange ->
+                exchange.sendResponseHeaders(401, -1)
+                exchange.close()
+            }
+
+            assertNull(SupabaseDiskMetricsGateway(supabase.baseUrl(), SECRET_KEY).diskPercent())
+        }
+        assertNull(
+            SupabaseDiskMetricsGateway(
+                supabaseUrl = "http://127.0.0.1:1",
+                secretKey = SECRET_KEY,
+                client = HttpClient.newBuilder().connectTimeout(Duration.ofMillis(100)).build(),
+                requestTimeout = Duration.ofMillis(200),
+            ).diskPercent(),
+        )
+        assertNull(SupabaseDiskMetricsGateway("no es una URL válida", SECRET_KEY).diskPercent())
+    }
+
+    @Test
+    fun anUnconfiguredEnvironmentYieldsUnavailableInsteadOfFailingToStart() {
+        assertNull(SupabaseDiskMetricsGateway.fromEnvironment { null }.diskPercent())
+        assertNull(
+            SupabaseDiskMetricsGateway
+                .fromEnvironment { name -> "https://proyecto.supabase.co".takeIf { name == "SUPABASE_URL" } }
+                .diskPercent(),
+        )
+    }
+
+    @Test
+    fun adminStatusExposesTheDiskAndDeclaresItUnavailableOnlyWhenItIsMissing() {
+        withPrometheusServer { supabase ->
+            supabase.createContext("/rest/v1/especialidades") { exchange ->
+                exchange.responseHeaders.add("Content-Range", "0-0/1")
+                val body = "[]".toByteArray()
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            fun statusWith(disk: SupabaseDiskUsageProvider) = AdminV1Gateway.forTesting(
+                supabaseUrl = supabase.baseUrl(),
+                serviceRoleKey = SECRET_KEY,
+                json = Json { ignoreUnknownKeys = true },
+                client = HttpClient.newHttpClient(),
+                supabaseDisk = disk,
+            ).getSystemStatus()
+
+            val measured = statusWith { 3.5632 }
+            assertEquals(3.5632, measured.supabaseDiskPercent)
+            assertFalse(SystemStatusNotInstrumented.SUPABASE_DISK in measured.notInstrumented)
+
+            val zero = statusWith { 0.0 }
+            assertEquals(0.0, zero.supabaseDiskPercent, "Un cero medido se conserva como cero.")
+            assertFalse(SystemStatusNotInstrumented.SUPABASE_DISK in zero.notInstrumented)
+
+            val unavailable = statusWith { null }
+            assertNull(unavailable.supabaseDiskPercent)
+            assertTrue(SystemStatusNotInstrumented.SUPABASE_DISK in unavailable.notInstrumented)
+
+            // Un proveedor que lance, o que devuelva un no finito, tampoco puede
+            // romper el endpoint ni colar un número inventado.
+            val throwing = statusWith { error("boom") }
+            assertNull(throwing.supabaseDiskPercent)
+            assertTrue(SystemStatusNotInstrumented.SUPABASE_DISK in throwing.notInstrumented)
+
+            val nonFinite = statusWith { Double.POSITIVE_INFINITY }
+            assertNull(nonFinite.supabaseDiskPercent)
+            assertTrue(SystemStatusNotInstrumented.SUPABASE_DISK in nonFinite.notInstrumented)
+            // Y sobre todo: serializar no lanza. kotlinx.serialization rechaza
+            // NaN/Infinity al codificar, así que un no finito habría sido un 500.
+            Json.encodeToString(AdminSystemStatusResponse(nonFinite))
+        }
+    }
+
+    @Test
+    fun theDiskFieldTravelsOnTheWireAndAMeasuredZeroSurvivesTheRoundTrip() {
+        val backendJson = Json {
+            ignoreUnknownKeys = true
+            explicitNulls = false
+            prettyPrint = false
+        }
+        val desktopJson = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            prettyPrint = false
+            explicitNulls = false
+        }
+        val cases = listOf(
+            "disco medido" to 3.5632,
+            "disco vacío medido" to 0.0,
+            "disco no disponible" to null,
+        )
+        for ((label, disk) in cases) {
+            val dto = AdminSystemStatusDto(
+                overallStatus = SystemStatusLevelWire.OPERATIVE,
+                ktorStatus = SystemStatusLevelWire.OPERATIVE,
+                supabaseStatus = SystemStatusLevelWire.OPERATIVE,
+                workerStatus = SystemStatusLevelWire.UNKNOWN,
+                cpuPercent = 2.91,
+                ramPercent = 13.5,
+                supabaseDiskPercent = disk,
+                apiLatencyMs = 3,
+                errors24h = 0,
+                updatedAt = "2026-09-23T07:22:03Z",
+            )
+
+            val wire = backendJson.encodeToString(AdminSystemStatusResponse.serializer(), AdminSystemStatusResponse(dto))
+            val decoded = desktopJson.decodeFromString(DesktopSystemStatusResponseMirror.serializer(), wire)
+
+            assertEquals(disk, decoded.data.supabaseDiskPercent, label)
+        }
+        // El cero medido va explícito en el cable, no omitido.
+        assertTrue(
+            backendJson.encodeToString(
+                AdminSystemStatusResponse.serializer(),
+                AdminSystemStatusResponse(
+                    AdminSystemStatusDto(
+                        overallStatus = SystemStatusLevelWire.OPERATIVE,
+                        ktorStatus = SystemStatusLevelWire.OPERATIVE,
+                        supabaseStatus = SystemStatusLevelWire.OPERATIVE,
+                        workerStatus = SystemStatusLevelWire.UNKNOWN,
+                        supabaseDiskPercent = 0.0,
+                        updatedAt = "2026-09-23T07:22:03Z",
+                    ),
+                ),
+            ).contains("\"supabaseDiskPercent\":0.0"),
+        )
+    }
+
+    // -----------------------------------------------------------------
     // Contrato "sólo Double finito o null": ver AGENTS.md / incidente
     // JsonConvertException del 2026-09-23 en Sistema → Estado.
     // -----------------------------------------------------------------
@@ -364,6 +609,7 @@ private data class DesktopSystemStatusDtoMirror(
     val workerStatus: String = "",
     val cpuPercent: Double? = null,
     val ramPercent: Double? = null,
+    val supabaseDiskPercent: Double? = null,
     val apiLatencyMs: Long? = null,
     val errors24h: Long? = null,
     val mobileCrashes24h: Int? = null,
@@ -377,6 +623,36 @@ private data class DesktopSystemStatusResponseMirror(val data: DesktopSystemStat
 
 private fun successBody(value: String): String =
     """{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1,"$value"]}]}}"""
+
+private const val SECRET_KEY = "test-secret-no-debe-aparecer-en-ninguna-parte"
+
+/**
+ * Extracto literal del endpoint privilegiado real, con lo que importa para el
+ * parser: comentarios HELP/TYPE, notación exponencial, series de otras métricas
+ * por medio y —lo esencial— el `mountpoint="/"` del sistema operativo junto al
+ * `mountpoint="/data"` del volumen de Postgres.
+ */
+private val REAL_METRICS_BODY = """
+    # HELP node_filesystem_size_bytes Filesystem size in bytes.
+    # TYPE node_filesystem_size_bytes gauge
+    node_filesystem_size_bytes{service_type="db",device="/dev/nvme0n1p1",fstype="ext4",mountpoint="/"} 8.58980352e+09
+    node_filesystem_size_bytes{service_type="db",device="/dev/nvme1n1",fstype="ext4",mountpoint="/data"} 8.350298112e+09
+    # HELP node_filesystem_free_bytes Filesystem free space in bytes.
+    # TYPE node_filesystem_free_bytes gauge
+    node_filesystem_free_bytes{service_type="db",device="/dev/nvme1n1",fstype="ext4",mountpoint="/data"} 8.45275648e+09
+    # HELP node_filesystem_avail_bytes Filesystem space available to non-root users in bytes.
+    # TYPE node_filesystem_avail_bytes gauge
+    node_filesystem_avail_bytes{service_type="db",device="/dev/nvme0n1p1",fstype="ext4",mountpoint="/"} 2.14745088e+09
+    node_filesystem_avail_bytes{service_type="db",device="/dev/nvme1n1",fstype="ext4",mountpoint="/data"} 8.05275648e+09
+    # HELP pg_stat_database_num_backends Number of backends currently connected.
+    # TYPE pg_stat_database_num_backends gauge
+    pg_stat_database_num_backends{service_type="db",datname="postgres"} 7
+""".trimIndent()
+
+private fun diskBody(size: String, available: String): String = """
+    $NODE_FILESYSTEM_SIZE_BYTES{device="/dev/nvme1n1",fstype="ext4",mountpoint="/data"} $size
+    $NODE_FILESYSTEM_AVAIL_BYTES{device="/dev/nvme1n1",fstype="ext4",mountpoint="/data"} $available
+""".trimIndent()
 
 private fun HttpServer.baseUrl(): String = "http://127.0.0.1:${address.port}"
 

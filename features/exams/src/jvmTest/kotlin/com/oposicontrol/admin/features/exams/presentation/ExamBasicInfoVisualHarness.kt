@@ -153,15 +153,14 @@ class ExamBasicInfoVisualHarness {
             "BASIC-03-cambios-sin-guardar" to conCambiosSinGuardar(),
             "BASIC-04-error-especialidades" to especialidadesCaidas(),
             "BASIC-05-nacional" to nacionalDeVerdad(),
-            "BASIC-06-con-portada" to conPortadaGuardada(),
-            "BASIC-07-sin-portada" to existenteCompleto(),
         )
+        // Los escenarios de portada se retiran con la sección (2026-09-23): la
+        // portada se compone con los componentes de la app y ya no se sube un
+        // archivo desde aquí. No se sustituyen por capturas equivalentes porque
+        // no hay nada equivalente que capturar.
         estados.forEach { (id, state) ->
-            // Las dos de portada bajan hasta el bloque: con el alto de 1080 el
-            // editor enseña Identificación y Ámbito, y la portada queda debajo.
-            val scroll = EXAM_COVER_FORMATS.takeIf { id.contains("portada") }
-            render(Capture("exams-$id-light.png", 1920, 1080, dark = false, scrollTo = scroll), state)
-            render(Capture("exams-$id-dark.png", 1920, 1080, dark = true, scrollTo = scroll), state)
+            render(Capture("exams-$id-light.png", 1920, 1080, dark = false), state)
+            render(Capture("exams-$id-dark.png", 1920, 1080, dark = true), state)
         }
         render(Capture("exams-BASIC-08-dark-nuevo.png", 1920, 1080, dark = true), examenNuevoVacio())
         render(Capture("exams-BASIC-09-dark-existente.png", 1920, 1080, dark = true), existenteCompleto())
@@ -222,21 +221,9 @@ class ExamBasicInfoVisualHarness {
                 creacionRechazadaPorElRecuento(),
             )
         }
-        // Examen nuevo con imagen elegida: vista previa LOCAL real, decodificada
-        // de un PNG de verdad, y «Se subirá al crear el examen».
-        val portada = portadaDePrueba()
-        listOf(false, true).forEach { dark ->
-            render(
-                Capture(
-                    "exams-basic-1920-${if (dark) "dark" else "light"}-portada-nueva.png",
-                    1920,
-                    1080,
-                    dark = dark,
-                    scrollTo = EXAM_COVER_FORMATS,
-                ),
-                examenNuevoConPortadaElegida(portada.absolutePath),
-            )
-        }
+        // La captura de «portada elegida» se retira con la sección (2026-09-23).
+        // La portada se compone con los componentes de la app; ya no hay
+        // selector de archivo que capturar en esta pantalla.
     }
 
     /**

@@ -16,11 +16,16 @@ import com.oposicontrol.admin.domain.model.QuestionPage
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.QuestionType
+import com.oposicontrol.admin.domain.repository.QuestionResourceDraft
+import com.oposicontrol.admin.domain.repository.QuestionResourceFile
 import com.oposicontrol.admin.domain.repository.QuestionsRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.expectSuccess
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.delete
+import io.ktor.client.request.forms.MultiPartFormDataContent
+import io.ktor.client.request.forms.formData
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.patch
@@ -29,6 +34,8 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.Headers
+import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.EncodeDefault
@@ -212,6 +219,135 @@ class KtorQuestionsRepositoryImpl(
         response.body<QPreguntaExamenesResponse>().data.map { it.toLink() }
     }
 
+    // -----------------------------------------------------------------
+    // Recursos de la pregunta (KQ4): `/preguntas/{id}/recursos…`
+    //
+    // Ninguna de las cinco comprueba «sólo inmersiva» ni los campos por tipo. No es
+    // un olvido: el servidor impone la regla contra el tipo GUARDADO de la pregunta
+    // —que es el único que no puede estar desactualizado— y redacta el mensaje que
+    // se lee. `requireSuccess` deja ese mensaje dentro del `IllegalStateException`,
+    // y `NetworkResultAdapter` lo saca al `AppError.Validation` que llega a la
+    // pantalla. Un 422 del backend no puede acabar en un éxito silencioso.
+    // -----------------------------------------------------------------
+
+    override suspend fun listQuestionResources(questionId: String) = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1PreguntaRecursos(questionId)
+        val response = client.get(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            expectSuccess = false
+        }
+        response.requireSuccess(endpoint)
+        response.body<QRecursosResponse>().data.map { it.toResource() }.sortedBy { it.sortOrder }
+    }
+
+    /**
+     * Alta por referencia. Sólo viaja el campo que corresponde al tipo
+     * ([QuestionResourceDraft] ya los trae excluyentes), así que este cuerpo no
+     * puede llevar una `urlExterna` en un `imagen` ni un `contenidoTexto` en un
+     * `enlace` — combinaciones que el `CHECK` de la base rechaza.
+     */
+    override suspend fun createQuestionResource(
+        questionId: String,
+        draft: QuestionResourceDraft,
+    ) = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1PreguntaRecursos(questionId)
+        val response = client.post(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            contentType(ContentType.Application.Json)
+            setBody(draft.toCreateDto())
+            expectSuccess = false
+        }
+        response.requireSuccess(endpoint)
+        response.body<QRecursoResponse>().data.toResource()
+    }
+
+    /**
+     * Subida del archivo, con el MISMO patrón multipart que `uploadExamCover` y que
+     * la importación de PDF: `MultiPartFormDataContent(formData { … })`, el fichero
+     * como parte `file` con su `Content-Disposition` y su `Content-Type` propios, y
+     * `expectSuccess = false` + [requireSuccess] para que el cuerpo del error llegue
+     * entero al adapter.
+     *
+     * Las partes de texto van ANTES que el fichero a propósito: el servidor lee el
+     * multipart en orden y `tipoRecurso` es lo que decide si el MIME vale, así que
+     * mandarlo después de 40 MB sería pedirle que espere a todo el cuerpo para poder
+     * rechazarlo.
+     *
+     * El presupuesto de tiempo se amplía como en la portada, y por el mismo motivo:
+     * con el de 30 s del cliente, una subida grande por una línea lenta se cancela
+     * desde este lado mientras el servidor sigue escribiendo en Storage.
+     */
+    override suspend fun uploadQuestionResourceFile(
+        questionId: String,
+        resourceId: String,
+        draft: QuestionResourceDraft,
+        file: QuestionResourceFile,
+    ) = adapter.safeCall {
+        require(file.bytes.size <= QUESTION_RESOURCE_MAX_BYTES) { "El archivo del recurso supera el límite de 50 MB." }
+        val endpoint = adminV1PreguntaRecursosArchivo(questionId)
+        val response = client.post(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            expectSuccess = false
+            timeout {
+                requestTimeoutMillis = QUESTION_RESOURCE_UPLOAD_TIMEOUT_MILLIS
+                socketTimeoutMillis = QUESTION_RESOURCE_UPLOAD_TIMEOUT_MILLIS
+            }
+            setBody(
+                MultiPartFormDataContent(
+                    formData {
+                        append("tipoRecurso", draft.kind.wireValue)
+                        append("titulo", draft.title)
+                        append("descripcion", draft.description)
+                        draft.position?.let { append("posicion", it.toString()) }
+                        // La clave de idempotencia. Si el reintento la pierde, el
+                        // servidor trata la segunda llamada como un primer intento y
+                        // el mismo archivo acaba subido dos veces.
+                        append("recursoId", resourceId)
+                        append(
+                            key = "file",
+                            value = file.bytes,
+                            headers = Headers.build {
+                                append(
+                                    HttpHeaders.ContentDisposition,
+                                    "form-data; name=\"file\"; filename=\"${file.fileName.sanitizeQuestionResourceFilename()}\"",
+                                )
+                                append(HttpHeaders.ContentType, file.mimeType)
+                            },
+                        )
+                    },
+                ),
+            )
+        }
+        response.requireSuccess(endpoint)
+        response.body<QRecursoResponse>().data.toResource()
+    }
+
+    override suspend fun updateQuestionResource(
+        questionId: String,
+        resourceId: String,
+        draft: QuestionResourceDraft,
+    ) = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1PreguntaRecurso(questionId, resourceId)
+        val response = client.patch(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            contentType(ContentType.Application.Json)
+            setBody(draft.toCreateDto())
+            expectSuccess = false
+        }
+        response.requireSuccess(endpoint)
+        response.body<QRecursoResponse>().data.toResource()
+    }
+
+    override suspend fun deleteQuestionResource(questionId: String, resourceId: String) = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1PreguntaRecurso(questionId, resourceId)
+        val response = client.delete(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            expectSuccess = false
+        }
+        response.requireSuccess(endpoint)
+        response.body<QRecursoResponse>().data.toResource()
+    }
+
     private fun url(path: String): String = BackendRoutes.url(appConfig.baseUrl, path)
 
     private suspend fun HttpResponse.requireSuccess(endpoint: String) {
@@ -275,6 +411,11 @@ private data class QRecursoDto(
     val preguntaId: String = "",
     val tipoRecurso: String = "",
     val titulo: String = "",
+    /**
+     * El backend la guarda y la devuelve desde siempre; este DTO no la leía, así
+     * que el pie que se escribía en el formulario no se veía en ninguna parte.
+     */
+    val descripcion: String = "",
     val urlExterna: String? = null,
     val contenidoTexto: String? = null,
     val posicion: Int = 0,
@@ -400,20 +541,10 @@ private fun QPreguntaDto.toDetail() = QuestionDetail(
     source = fuenteTexto,
     active = activa,
     difficulty = dificultad,
-    resources = recursos.map { resource ->
-        QuestionResource(
-            id = resource.id,
-            questionId = resource.preguntaId,
-            type = resource.tipoRecurso.toQuestionResourceType(),
-            title = resource.titulo,
-            textBody = resource.contenidoTexto,
-            storagePath = resource.rutaStorage,
-            // KQ4: la URL firmada del archivo, o el enlace externo. Nunca una ruta local.
-            publicUrl = resource.urlAcceso ?: resource.urlExterna,
-            mimeType = resource.mimeType,
-            sortOrder = (resource.posicion - 1).coerceAtLeast(0),
-        )
-    }.sortedBy { it.sortOrder },
+    // Mismo mapeo que las rutas de recursos (`toResource`): si el detalle y la
+    // lista divergieran, un recurso recién subido cambiaría de aspecto al recargar
+    // la pregunta.
+    resources = recursos.map { it.toResource() }.sortedBy { it.sortOrder },
     // El contrato V1 de preguntas no trae fecha de creación/actualización —
     // se deja null a propósito, nunca "ahora mismo" como si fuera real.
     createdAt = null,
@@ -438,3 +569,89 @@ private fun String.toQuestionResourceType() = when (trim().lowercase()) {
 
 /** El máximo que el servidor admite en `?q=` (KQ0-3); más sería un 400. */
 private const val QUESTION_SEARCH_MAX_LENGTH = 100
+
+// ---------------------------------------------------------------------------
+// Recursos (KQ4): escritura
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /preguntas/{id}/recursos/archivo`.
+ *
+ * Se compone aquí y no en `BackendRoutes` porque es la única ruta de recursos que
+ * faltaba allí; cuando se añada, esta función desaparece y la llamada no cambia.
+ */
+private fun adminV1PreguntaRecursosArchivo(preguntaId: String): String =
+    "${BackendRoutes.adminV1PreguntaRecursos(preguntaId)}/archivo"
+
+@Serializable
+private data class QRecursosResponse(val data: List<QRecursoDto> = emptyList())
+
+@Serializable
+private data class QRecursoResponse(val data: QRecursoDto)
+
+/**
+ * Cuerpo de escritura de un recurso (`AdminRecursoDto` del servidor, sólo lo que
+ * este cliente puede decidir).
+ *
+ * Sin `id`, sin `preguntaId` —van en la ruta— y sin los tres campos de sólo
+ * lectura (`rutaStorage`, `mimeType`, `urlAcceso`): no existen en el tipo, así que
+ * ningún guardado puede mandarlos. `urlExterna` y `contenidoTexto` son nulables y
+ * se omiten cuando no aplican, que es justo lo que el `CHECK` por tipo exige.
+ *
+ * `titulo`, `descripcion` y `posicion` van marcados `@EncodeDefault`: con el `Json`
+ * del cliente sin `encodeDefaults`, vaciar una descripción no viajaría y el PATCH
+ * la conservaría — el mismo defecto que ya costó una corrección en `fuenteTexto`.
+ */
+@Serializable
+private data class QRecursoWriteDto(
+    val tipoRecurso: String,
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS) val titulo: String = "",
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS) val descripcion: String = "",
+    val urlExterna: String? = null,
+    val contenidoTexto: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS) val posicion: Int = 0,
+)
+
+/** `posicion = 0` es «no la fijo»: el servidor escribe 1, que es lo que su `CHECK > 0` pide. */
+private fun QuestionResourceDraft.toCreateDto() = QRecursoWriteDto(
+    tipoRecurso = kind.wireValue,
+    titulo = title.trim(),
+    descripcion = description.trim(),
+    urlExterna = externalUrl?.trim()?.takeIf { it.isNotEmpty() },
+    contenidoTexto = textBody?.takeIf { it.isNotBlank() },
+    posicion = position?.takeIf { it > 0 } ?: 0,
+)
+
+private fun QRecursoDto.toResource() = QuestionResource(
+    id = id,
+    questionId = preguntaId,
+    type = tipoRecurso.toQuestionResourceType(),
+    title = titulo,
+    // Vacía significa «sin pie», no «no lo sé»: se normaliza a null para que la
+    // pantalla no tenga que distinguir entre cadena vacía y ausencia.
+    description = descripcion.takeIf { it.isNotBlank() },
+    textBody = contenidoTexto,
+    storagePath = rutaStorage,
+    // KQ4: la URL firmada del archivo, o el enlace externo. Nunca una ruta local.
+    publicUrl = urlAcceso ?: urlExterna,
+    mimeType = mimeType,
+    sortOrder = (posicion - 1).coerceAtLeast(0),
+)
+
+/**
+ * Las comillas rompen el `Content-Disposition` de la parte, así que se quitan; el
+ * nombre no decide nada más —la extensión del objeto en Storage la elige el
+ * servidor a partir del MIME—, y por eso un nombre vacío puede caer en uno neutro.
+ */
+private fun String.sanitizeQuestionResourceFilename(): String =
+    replace("\"", "").trim().ifBlank { "recurso.bin" }
+
+/** El mismo límite que impone el servidor; aquí evita mandar 60 MB para que los rechace. */
+private const val QUESTION_RESOURCE_MAX_BYTES = 50 * 1024 * 1024
+
+/**
+ * Presupuesto de tiempo de la subida: 50 MB no caben en los 30 s por defecto del
+ * cliente. El de socket se amplía igual porque entre paquetes de una línea lenta
+ * puede haber más de 30 s sin actividad.
+ */
+private const val QUESTION_RESOURCE_UPLOAD_TIMEOUT_MILLIS: Long = 180_000

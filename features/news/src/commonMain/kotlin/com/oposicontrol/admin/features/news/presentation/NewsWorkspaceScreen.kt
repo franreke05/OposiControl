@@ -47,22 +47,34 @@ fun NewsContent(state: NewsState, onIntent: (NewsIntent) -> Unit) {
                 SecondaryButton(if (compactLibrary) "Volver al editor" else "Abrir biblioteca", { compactLibrary = !compactLibrary })
                 if (compactLibrary) NewsLibraryPane(state, { dispatch(it); if (it is NewsIntent.Select) compactLibrary = false }, Modifier.fillMaxWidth().height(bodyHeight.dp))
                 else NewsScrollPane(Modifier.fillMaxWidth().height(bodyHeight.dp)) {
-                    NewsEditorPane(state, dispatch)
+                    NewsEditorPane(state, dispatch, width)
                     NewsPreviewPane(state, dispatch, width)
                     NewsPublicationPane(state, dispatch)
                 }
             } else Row(Modifier.height(bodyHeight.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 NewsLibraryPane(state, dispatch, Modifier.width(panes.library.dp).fillMaxHeight())
+                // El editor es el protagonista: ocupa el ancho que sobra y es lo
+                // único que crece cuando la ventana crece.
                 NewsScrollPane(Modifier.width(panes.editor.dp).fillMaxHeight()) {
-                    NewsEditorPane(state, dispatch)
+                    NewsEditorPane(state, dispatch, panes.editor)
+                    // Cuando no hay columnas propias, su contenido cae aquí en vez
+                    // de estrujarse: mejor desplazarse que no poder leer.
+                    if (panes.inspector == 0) NewsLayerInspectorPane(state, dispatch)
                     if (panes.rail == 0) {
                         NewsPreviewPane(state, dispatch, panes.editor)
                         NewsPublicationPane(state, dispatch)
                     }
                 }
+                if (panes.inspector > 0) NewsScrollPane(Modifier.width(panes.inspector.dp).fillMaxHeight()) {
+                    NewsLayerInspectorPane(state, dispatch)
+                    if (panes.rail == 0) {
+                        NewsPreviewPane(state, dispatch, panes.inspector)
+                        NewsPublicationPane(state, dispatch)
+                    }
+                }
                 if (panes.rail > 0) NewsScrollPane(Modifier.width(panes.rail.dp).fillMaxHeight()) {
-                    NewsPreviewPane(state, dispatch, panes.rail)
                     NewsPublicationPane(state, dispatch)
+                    NewsPreviewPane(state, dispatch, panes.rail)
                 }
             }
             NewsSaveBar(state, dispatch)

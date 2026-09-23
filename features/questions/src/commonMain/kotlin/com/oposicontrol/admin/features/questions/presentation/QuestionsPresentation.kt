@@ -550,10 +550,6 @@ fun questionResourceRows(resources: List<QuestionResource>): List<QuestionResour
 
 const val QUESTION_RESOURCES_EMPTY: String = "Esta pregunta no tiene recursos vinculados."
 
-/** P0-4: subir recursos no funciona, así que no se ofrece un botón que aparente que sí. */
-const val QUESTION_RESOURCE_UPLOAD_BLOCKED_NOTE: String =
-    "Subir o vincular recursos todavía no está disponible desde esta consola."
-
 // ---------------------------------------------------------------------------
 // Matriz de honestidad — la UI se pinta desde aquí
 // ---------------------------------------------------------------------------
@@ -590,7 +586,12 @@ fun questionCapabilities(): List<QuestionCapability> = listOf(
     QuestionCapability("Vincular a examen", QuestionCapabilityLevel.REAL, "POST /preguntas/{id}/examenes: compatible por tipo, cualquier especialidad, posición opcional."),
     QuestionCapability("Desvincular", QuestionCapabilityLevel.REAL, "DELETE /preguntas/{id}/examenes/{examenId}: quita sólo la relación."),
     QuestionCapability("Ver recursos", QuestionCapabilityLevel.REAL, "Llegan en el detalle de la pregunta."),
-    QuestionCapability("Subir recursos", QuestionCapabilityLevel.BLOCKED, "P0-4: la subida no funciona."),
+    QuestionCapability(
+        "Subir recursos",
+        QuestionCapabilityLevel.REAL,
+        "POST /preguntas/{id}/recursos y .../archivo: alta por referencia o archivo al bucket privado. " +
+            "Sólo en preguntas inmersivas guardadas; la regla la impone el servidor.",
+    ),
 )
 
 fun questionCapability(name: String): QuestionCapability =

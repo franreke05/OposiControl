@@ -18,6 +18,8 @@ data class SystemStatus(
     val workerStatus: SystemStatusLevel = SystemStatusLevel.UNKNOWN,
     val cpuPercent: Double? = null,
     val ramPercent: Double? = null,
+    /** Ocupación del disco de datos de Supabase. `null` = no disponible. */
+    val supabaseDiskPercent: Double? = null,
     val apiLatencyMs: Long? = null,
     val errors24h: Long? = null,
     val mobileCrashes24h: Int? = null,

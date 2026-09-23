@@ -600,12 +600,15 @@ class QuestionsPresentationTest {
         assertFalse(rows[1].accessible)
     }
 
-    /** P0-4: subir recursos no funciona y la UI lo dice en vez de ofrecer un botón que mienta. */
+    /**
+     * P0-4 CERRADO: la subida de recursos funciona, así que la matriz de
+     * honestidad tiene que decirlo. Una matriz que declara bloqueado algo que ya
+     * funciona miente igual que un botón que aparenta funcionar sin hacerlo.
+     */
     @Test
-    fun `subir recursos se declara bloqueado`() {
-        assertTrue(QUESTION_RESOURCE_UPLOAD_BLOCKED_NOTE.contains("todavía no está disponible"))
+    fun `subir recursos se declara disponible`() {
         assertEquals(
-            QuestionCapabilityLevel.BLOCKED,
+            QuestionCapabilityLevel.REAL,
             questionCapability("Subir recursos").level,
         )
     }
@@ -623,7 +626,6 @@ class QuestionsPresentationTest {
         assertEquals(QuestionCapabilityLevel.BLOCKED, questionCapability("Filtrar por tema").level)
         // M8: la pregunta no tiene especialidad, así que tampoco hay filtro por ella.
         assertEquals(QuestionCapabilityLevel.BLOCKED, questionCapability("Filtrar por especialidad").level)
-        assertEquals(QuestionCapabilityLevel.BLOCKED, questionCapability("Subir recursos").level)
 
         assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Editar contenido").level)
         assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Archivar").level)
@@ -631,6 +633,8 @@ class QuestionsPresentationTest {
         assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Desvincular").level)
         assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Crear").level)
         assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Ver recursos").level)
+        // P0-4 cerrado: la subida existe y la matriz lo declara.
+        assertEquals(QuestionCapabilityLevel.REAL, questionCapability("Subir recursos").level)
 
         assertEquals(QuestionCapabilityLevel.PARTIAL, questionCapability("Editar respuestas").level)
 

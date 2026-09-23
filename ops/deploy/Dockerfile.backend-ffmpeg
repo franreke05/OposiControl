@@ -1,0 +1,114 @@
+# syntax=docker/dockerfile:1.7
+#
+# ============================================================================
+# PROPUESTA. Este archivo NO se despliega tal cual.
+# ============================================================================
+#
+# El Dockerfile vivo del backend esta en el servidor, en
+# `/opt/oposicontrol-deploy/Dockerfile`, y no se toca desde el repositorio.
+# Esto es la propuesta de como queda ESE archivo al anadirle `ffmpeg`, escrita
+# entera para que se pueda comparar linea a linea antes de tocar produccion.
+#
+# ----------------------------------------------------------------------------
+# EL CAMBIO REAL ES UNA SOLA COSA
+# ----------------------------------------------------------------------------
+#
+# En la etapa de EJECUCION (no en la de compilacion), instalar `ffmpeg`:
+#
+#     RUN apt-get update \
+#      && apt-get install -y --no-install-recommends ffmpeg \
+#      && rm -rf /var/lib/apt/lists/*
+#
+# Todo lo demas de este archivo es el andamiaje habitual de un servicio Ktor y
+# esta aqui para que la propuesta sea ejecutable, no porque haga falta
+# cambiarlo. Si el Dockerfile vivo ya hace estas cosas de otra manera, se
+# conserva la suya y se le anade unicamente el `RUN` de arriba.
+#
+# ----------------------------------------------------------------------------
+# QUE PASA SI NO SE APLICA ESTE CAMBIO
+# ----------------------------------------------------------------------------
+#
+# Nada se rompe. `ffmpeg` es OPCIONAL en tiempo de ejecucion: el backend
+# detecta su ausencia UNA vez al arrancar la primera subida de video o audio,
+# lo registra UNA vez, y sube los originales sin comprimir. Las imagenes se
+# siguen comprimiendo igual, porque eso lo hace `javax.imageio` dentro de la
+# propia JVM y no necesita ningun binario.
+#
+# Dicho de otro modo: este cambio habilita la compresion de video y audio. No
+# es un requisito para desplegar el backend.
+
+# ----------------------------------------------------------------------------
+# Etapa 1: compilacion
+# ----------------------------------------------------------------------------
+FROM eclipse-temurin:21-jdk-jammy AS build
+
+WORKDIR /src
+
+# El wrapper y los metadatos de Gradle primero: mientras no cambien, esta capa
+# y la descarga de dependencias se reaprovechan entre builds.
+COPY gradlew gradlew.bat settings.gradle.kts build.gradle.kts gradle.properties ./
+COPY gradle ./gradle
+COPY build-logic ./build-logic
+RUN chmod +x ./gradlew
+
+COPY backend ./backend
+COPY core ./core
+COPY domain ./domain
+COPY data ./data
+
+# `installDist` (plugin `application`) deja un arbol listo con el script de
+# arranque y todos los jar. No hay fat-jar que reconstruir ni classpath que
+# mantener a mano.
+RUN ./gradlew --no-daemon --console=plain :backend:ktor:installDist -x test
+
+# ----------------------------------------------------------------------------
+# Etapa 2: ejecucion
+# ----------------------------------------------------------------------------
+FROM eclipse-temurin:21-jre-jammy AS runtime
+
+# >>> ESTE ES EL CAMBIO <<<
+#
+# `--no-install-recommends` no es cosmetico: sin el, apt arrastra la cola de
+# paquetes sugeridos de ffmpeg y la imagen crece mucho mas de lo necesario.
+#
+# El paquete `ffmpeg` de Ubuntu trae libx264 y el codificador AAC nativo, que
+# es exactamente lo que usa el backend (`-c:v libx264`, `-c:a aac`). No hace
+# falta ninguna compilacion propia ni ningun binario estatico descargado de
+# terceros: eso anadiria un proveedor mas a la cadena de suministro a cambio de
+# unos pocos megabytes.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
+# Usuario sin privilegios. El proceso lanza un binario externo (ffmpeg) sobre
+# ficheros temporales: razon de mas para que no lo haga root.
+RUN groupadd --system --gid 10001 oposicontrol \
+ && useradd --system --uid 10001 --gid 10001 --home /app --shell /usr/sbin/nologin oposicontrol
+
+WORKDIR /app
+COPY --from=build --chown=10001:10001 /src/backend/ktor/build/install/ktor/ /app/
+
+# `headless=true` explicito: `javax.imageio` y `Graphics2D` funcionan sin
+# servidor grafico, pero dejarlo dicho evita que una JVM futura intente hablar
+# con un X11 que en este contenedor no existe.
+#
+# `MaxRAMPercentage`: decodificar una imagen grande reserva heap de golpe
+# (ancho x alto x 4 bytes). Con el valor por defecto la JVM ve la RAM del host,
+# no la del contenedor, y el limite de cgroup llega antes que el del heap.
+ENV JAVA_TOOL_OPTIONS="-Djava.awt.headless=true -XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError"
+
+# Los temporales de ffmpeg se escriben aqui y se borran siempre, tambien cuando
+# el proceso se mata por timeout. Montarlo como `tmpfs` en el compose evita que
+# un video de 50 MB toque el disco del servidor:
+#
+#     tmpfs:
+#       - /tmp:size=256m,mode=1777
+ENV TMPDIR=/tmp
+
+USER 10001:10001
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD ["/bin/sh", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
+
+ENTRYPOINT ["/app/bin/ktor"]

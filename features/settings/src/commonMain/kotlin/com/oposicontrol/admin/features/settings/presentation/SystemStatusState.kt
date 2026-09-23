@@ -9,6 +9,7 @@ data class SystemStatusUi(
     val workerStatus: SystemStatusLevel,
     val cpuPercent: Double?,
     val ramPercent: Double?,
+    val supabaseDiskPercent: Double?,
     val apiLatencyMs: Long?,
     val errors24h: Long?,
     val mobileCrashes24h: Int?,

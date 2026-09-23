@@ -127,6 +127,15 @@ data class QuestionResource(
     val questionId: String,
     val type: QuestionResourceType,
     val title: String,
+    /**
+     * El pie del recurso.
+     *
+     * El formulario lo pide y el backend lo guarda desde siempre, pero el modelo
+     * no lo traía: se escribía y no se veía en ninguna parte. Nulable porque es
+     * opcional de verdad —un recurso puede sostenerse con su título—, no para
+     * disimular que falta el dato.
+     */
+    val description: String? = null,
     val textBody: String?,
     val storagePath: String?,
     val publicUrl: String?,

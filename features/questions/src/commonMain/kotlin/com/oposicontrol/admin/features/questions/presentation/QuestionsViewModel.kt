@@ -165,6 +165,63 @@ class QuestionsViewModel(
             QuestionsIntent.DismissUnlinkConfirm -> updateState { it.copy(unlinkExamId = null) }
             QuestionsIntent.ConfirmUnlinkExam -> unlinkExam()
 
+            QuestionsIntent.RequestAddResource -> updateState {
+                it.copy(
+                    showResourceDialog = true,
+                    resourceForm = QuestionResourceForm(),
+                    // UNA vez por alta: sobrevive a cada reintento hasta que el
+                    // recurso exista o el diálogo se cierre.
+                    resourceDraftId = randomUuid(),
+                    resourceSaveState = UiAsync.Idle,
+                )
+            }
+            // Cancelar borra también el error del intento anterior: si no, la
+            // sección se quedaría con un «no hemos podido añadir el recurso» sobre
+            // un alta que ya nadie está intentando.
+            QuestionsIntent.CancelResourceDialog -> updateState {
+                it.copy(
+                    showResourceDialog = false,
+                    resourceForm = QuestionResourceForm(),
+                    resourceDraftId = "",
+                    resourceSaveState = UiAsync.Idle,
+                )
+            }
+            is QuestionsIntent.UpdateResourceKind -> updateState {
+                it.copy(resourceForm = it.resourceForm.withKind(intent.kind), resourceSaveState = UiAsync.Idle)
+            }
+            is QuestionsIntent.UpdateResourceTitle -> updateState {
+                it.copy(resourceForm = it.resourceForm.copy(title = intent.value))
+            }
+            is QuestionsIntent.UpdateResourceDescription -> updateState {
+                it.copy(resourceForm = it.resourceForm.copy(description = intent.value))
+            }
+            is QuestionsIntent.UpdateResourceUrl -> updateState {
+                it.copy(resourceForm = it.resourceForm.copy(externalUrl = intent.value))
+            }
+            is QuestionsIntent.UpdateResourceText -> updateState {
+                it.copy(resourceForm = it.resourceForm.copy(textBody = intent.value))
+            }
+            // Un archivo elegido sobre un tipo que no lo admite se descarta aquí: el
+            // selector sólo se ofrece para los cuatro de archivo, pero el intent es
+            // público y no puede ser la única red.
+            is QuestionsIntent.PickResourceFile -> updateState {
+                if (!it.resourceForm.kind.requiresFile) {
+                    it
+                } else {
+                    it.copy(resourceForm = it.resourceForm.copy(file = intent.file), resourceSaveState = UiAsync.Idle)
+                }
+            }
+            QuestionsIntent.ClearResourceFile -> updateState {
+                it.copy(resourceForm = it.resourceForm.copy(file = null))
+            }
+            QuestionsIntent.ConfirmAddResource -> addResource()
+
+            is QuestionsIntent.RequestDeleteResource -> updateState {
+                it.copy(deleteResourceId = intent.resourceId, resourceDeleteState = UiAsync.Idle)
+            }
+            QuestionsIntent.DismissDeleteResourceConfirm -> updateState { it.copy(deleteResourceId = null) }
+            QuestionsIntent.ConfirmDeleteResource -> deleteResource()
+
             QuestionsIntent.RequestCancel -> requestCancel()
             QuestionsIntent.ConfirmCancel -> confirmCancel()
             QuestionsIntent.DismissCancelConfirm -> updateState { it.copy(showCancelConfirm = false) }
@@ -250,6 +307,14 @@ class QuestionsViewModel(
                 dirty = false,
                 examLinks = UiAsync.Idle,
                 saveState = UiAsync.Idle,
+                // Una pregunta que todavía no existe no tiene id al que colgar un
+                // recurso: el servidor respondería 404. El control no se ofrece.
+                showResourceDialog = false,
+                resourceForm = QuestionResourceForm(),
+                resourceDraftId = "",
+                resourceSaveState = UiAsync.Idle,
+                deleteResourceId = null,
+                resourceDeleteState = UiAsync.Idle,
             )
         }
     }
@@ -271,6 +336,14 @@ class QuestionsViewModel(
                 saveState = UiAsync.Idle,
                 examLinks = UiAsync.Loading,
                 unlinkExamId = null,
+                // Los recursos son de LA pregunta: un diálogo a medias o el error de
+                // la anterior no pueden sobrevivir al cambio de selección.
+                showResourceDialog = false,
+                resourceForm = QuestionResourceForm(),
+                resourceDraftId = "",
+                resourceSaveState = UiAsync.Idle,
+                deleteResourceId = null,
+                resourceDeleteState = UiAsync.Idle,
             )
         }
         scope.launch { loadExamLinks(id, generation) }
@@ -425,6 +498,120 @@ class QuestionsViewModel(
                     it.copy(saveState = UiAsync.Success(Unit), unlinkExamId = null, examLinks = UiAsync.Success(result.value))
                 }
                 if (state.examFilter != null) loadQuestions()
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Recursos de una pregunta inmersiva (KQ4)
+    // -----------------------------------------------------------------
+
+    /**
+     * Alta de recurso: por referencia (`texto`, `enlace`) o subiendo el archivo.
+     *
+     * **La regla «sólo inmersiva» no se comprueba aquí.** La impone el servidor
+     * contra el tipo GUARDADO de la pregunta —el único que no puede estar
+     * desactualizado— y su 422 llega a la pantalla con el mensaje que él redacta.
+     * Lo que sí se comprueba antes de gastar la red es lo que la BASE rechazaría por
+     * forma: un enlace sin esquema, un texto vacío, un archivo que falta.
+     *
+     * El id del recurso NO se regenera cuando falla: un timeout a mitad de una
+     * subida de 40 MB tiene que poder reintentarse con el mismo id, que es lo que
+     * impide que el objeto acabe dos veces en Storage.
+     */
+    private suspend fun addResource() {
+        val state = currentState()
+        val questionId = state.selectedQuestionId
+        if (questionId.isNullOrBlank()) {
+            return updateState {
+                it.copy(
+                    resourceSaveState = UiAsync.Error(
+                        AppError.Validation("Guarda la pregunta antes de añadirle recursos."),
+                    ),
+                )
+            }
+        }
+        val form = state.resourceForm
+        form.validationError()?.let { reason ->
+            return updateState { it.copy(resourceSaveState = UiAsync.Error(AppError.Validation(reason))) }
+        }
+        updateState { it.copy(resourceSaveState = UiAsync.Loading) }
+        val draft = form.toDraft()
+        val file = form.file
+        val result = if (form.kind.requiresFile && file != null) {
+            questionsRepository.uploadQuestionResourceFile(
+                questionId = questionId,
+                resourceId = state.resourceDraftId,
+                draft = draft,
+                file = file,
+            )
+        } else {
+            questionsRepository.createQuestionResource(questionId, draft)
+        }
+        when (result) {
+            is AppResult.Failure -> updateState { it.copy(resourceSaveState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                updateState {
+                    it.copy(
+                        resourceSaveState = UiAsync.Success(Unit),
+                        showResourceDialog = false,
+                        resourceForm = QuestionResourceForm(),
+                        resourceDraftId = "",
+                    )
+                }
+                refreshResources(questionId) { error -> copy(resourceSaveState = UiAsync.Error(error)) }
+            }
+        }
+    }
+
+    /** Archivar un recurso: la lista se relee del servidor, nunca se edita a mano. */
+    private suspend fun deleteResource() {
+        val state = currentState()
+        val questionId = state.selectedQuestionId
+        val resourceId = state.deleteResourceId ?: return
+        if (questionId.isNullOrBlank()) {
+            return updateState { it.copy(deleteResourceId = null) }
+        }
+        updateState { it.copy(resourceDeleteState = UiAsync.Loading) }
+        when (val result = questionsRepository.deleteQuestionResource(questionId, resourceId)) {
+            is AppResult.Failure -> updateState {
+                it.copy(resourceDeleteState = UiAsync.Error(result.error), deleteResourceId = null)
+            }
+            is AppResult.Success -> {
+                updateState { it.copy(resourceDeleteState = UiAsync.Success(Unit), deleteResourceId = null) }
+                refreshResources(questionId) { error -> copy(resourceDeleteState = UiAsync.Error(error)) }
+            }
+        }
+    }
+
+    /**
+     * Relee los recursos del servidor y los mete en el detalle abierto.
+     *
+     * La lista NO se compone a mano con lo que devolvió la escritura: sólo
+     * `GET /recursos` trae la `urlAcceso` firmada de todos y la posición que la base
+     * acabó asignando, así que lo que se pinta es siempre lo que el servidor dice.
+     *
+     * Si la relectura falla, [onFailure] lo cuenta en el estado de la operación que
+     * la pidió. **La escritura ya había ido bien**, y decir lo contrario sería peor
+     * que decir esto: el recurso está guardado y lo que falta es refrescar.
+     */
+    private suspend fun refreshResources(
+        questionId: String,
+        onFailure: QuestionsState.(AppError) -> QuestionsState,
+    ) {
+        when (val result = questionsRepository.listQuestionResources(questionId)) {
+            is AppResult.Failure -> updateState { state ->
+                state.onFailure(AppError.Validation(QUESTION_RESOURCES_STALE_NOTE))
+            }
+            is AppResult.Success -> updateState { state ->
+                // Si mientras tanto se ha cambiado de pregunta, no se pisa el detalle
+                // de la nueva con los recursos de la anterior.
+                val detail = (state.detail as? UiAsync.Success)?.value
+                if (state.selectedQuestionId != questionId || detail == null) {
+                    state
+                } else {
+                    state.copy(detail = UiAsync.Success(detail.copy(resources = result.value)))
+                }
             }
         }
     }

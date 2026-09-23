@@ -11,6 +11,9 @@ import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionPage
 import com.oposicontrol.admin.domain.model.QuestionType
 import com.oposicontrol.admin.domain.repository.QuestionActiveFilter
+import com.oposicontrol.admin.domain.repository.QuestionResourceDraft
+import com.oposicontrol.admin.domain.repository.QuestionResourceFile
+import com.oposicontrol.admin.domain.repository.QuestionResourceKind
 
 enum class QuestionsSort { MOST_RECENT, BY_CODE }
 
@@ -81,9 +84,126 @@ data class QuestionsState(
     val showCancelConfirm: Boolean = false,
     val showDeleteConfirm: Boolean = false,
 
+    // --- Recursos de una pregunta inmersiva (KQ4) ---
+
+    val showResourceDialog: Boolean = false,
+    val resourceForm: QuestionResourceForm = QuestionResourceForm(),
+    /**
+     * El id del recurso que se está dando de alta, generado UNA vez al abrir el
+     * diálogo. Es la clave de idempotencia de la subida: si el primer intento llegó
+     * y su respuesta se perdió, el segundo devuelve la fila que ya existe en vez de
+     * subir el archivo otra vez.
+     */
+    val resourceDraftId: String = "",
+    /** Estado PROPIO del alta: subir 40 MB tarda, y el usuario tiene que verlo. */
+    val resourceSaveState: UiAsync<Unit> = UiAsync.Idle,
+
+    /** El recurso que se está a punto de archivar (confirmación pendiente). */
+    val deleteResourceId: String? = null,
+    /** Estado propio del borrado: un fallo suyo no se confunde con uno del alta. */
+    val resourceDeleteState: UiAsync<Unit> = UiAsync.Idle,
+
     val saveState: UiAsync<Unit> = UiAsync.Idle,
     val archiveState: UiAsync<Unit> = UiAsync.Idle,
 )
+
+/**
+ * El formulario de alta de un recurso.
+ *
+ * **Los campos exclusivos se vacían al cambiar de tipo** ([withKind]). No es un
+ * detalle cosmético: la base tiene un `CHECK` por tipo —`texto` sólo con contenido,
+ * `enlace` sólo con URL, el resto sólo con archivo en Storage— y guardar un estado
+ * donde conviven una URL y un archivo elegido significa que *algún* camino del
+ * código puede acabar mandando los dos. Vaciando, no hay ninguno.
+ *
+ * `file` lleva los BYTES ya leídos por el selector de la plataforma. Vive aquí sólo
+ * mientras el diálogo está abierto; [QuestionResourceForm] se reinicia al cerrarlo.
+ */
+data class QuestionResourceForm(
+    val kind: QuestionResourceKind = QuestionResourceKind.IMAGEN,
+    val title: String = "",
+    val description: String = "",
+    /** Sólo [QuestionResourceKind.ENLACE]. */
+    val externalUrl: String = "",
+    /** Sólo [QuestionResourceKind.TEXTO]. */
+    val textBody: String = "",
+    /** Sólo los cuatro tipos de archivo. */
+    val file: QuestionResourceFile? = null,
+)
+
+/**
+ * Cambia el tipo y SUELTA lo que el nuevo tipo no admite.
+ *
+ * Título y descripción sobreviven porque valen para los seis; lo demás no. Elegir
+ * un PDF, cambiar a «enlace» y guardar no puede mandar el archivo.
+ */
+fun QuestionResourceForm.withKind(next: QuestionResourceKind): QuestionResourceForm = copy(
+    kind = next,
+    externalUrl = if (next == QuestionResourceKind.ENLACE) externalUrl else "",
+    textBody = if (next == QuestionResourceKind.TEXTO) textBody else "",
+    file = if (next.requiresFile) file else null,
+)
+
+/**
+ * Por qué este formulario todavía no se puede guardar, o `null` si ya se puede.
+ *
+ * Comprueba lo que la BASE rechazaría —un `enlace` sin `https://`, un `texto` sin
+ * cuerpo, un `imagen` sin archivo— para no gastar una petición en un no seguro. No
+ * comprueba el tipo de la pregunta: esa regla es del servidor y su mensaje es el
+ * que se enseña.
+ */
+fun QuestionResourceForm.validationError(): String? = when {
+    title.isBlank() -> "El recurso necesita un título."
+    kind.requiresFile && file == null -> "Elige el archivo que quieres subir."
+    kind == QuestionResourceKind.ENLACE && !isPublicHttpUrl(externalUrl) ->
+        "El enlace tiene que empezar por http:// o https://."
+    kind == QuestionResourceKind.TEXTO && textBody.isBlank() ->
+        "Escribe el contenido del recurso de texto."
+    else -> null
+}
+
+/**
+ * El borrador que viaja, con SÓLO el campo de su tipo.
+ *
+ * Es la segunda barrera, después de [withKind]: aunque el estado llevara restos de
+ * otro tipo, aquí no salen. `externalUrl` y `textBody` van `null` —no `""`— para
+ * que el cuerpo JSON ni siquiera incluya la clave.
+ */
+fun QuestionResourceForm.toDraft(): QuestionResourceDraft = QuestionResourceDraft(
+    kind = kind,
+    title = title.trim(),
+    description = description.trim(),
+    externalUrl = if (kind == QuestionResourceKind.ENLACE) externalUrl.trim().takeIf { it.isNotEmpty() } else null,
+    textBody = if (kind == QuestionResourceKind.TEXTO) textBody.takeIf { it.isNotBlank() } else null,
+    // Al final de la lista: la posición la decide el servidor, no esta pantalla.
+    position = null,
+)
+
+/**
+ * Lo que se dice cuando la ESCRITURA fue bien y la relectura de la lista no.
+ *
+ * Dos hechos distintos, y decir «no se ha podido guardar» sería mentir sobre el
+ * primero: el recurso está en la base, lo que no está es en pantalla.
+ */
+const val QUESTION_RESOURCES_STALE_NOTE: String =
+    "El recurso se ha guardado, pero no hemos podido releer la lista. Vuelve a abrir la pregunta."
+
+/** El mismo prefijo que exige el servidor antes de aceptar un `enlace`. */
+private fun isPublicHttpUrl(value: String): Boolean {
+    val url = value.trim()
+    return url.startsWith("http://") || url.startsWith("https://")
+}
+
+/**
+ * Si la pregunta abierta puede recibir recursos AHORA MISMO.
+ *
+ * Dos condiciones, y ninguna es la regla del servidor: tiene que existir —una
+ * pregunta que aún no se ha guardado no tiene id al que colgarle nada, y el
+ * servidor respondería 404— y el tipo del borrador tiene que ser el que los admite.
+ * Si no, el control no aparece; el rechazo, si llega, lo redacta el backend.
+ */
+fun QuestionsState.canAttachResources(): Boolean =
+    !isCreating && !selectedQuestionId.isNullOrBlank() && draftType == QuestionType.INMERSIVA
 
 fun defaultDraftOptions(): List<QuestionOption> = listOf("A", "B", "C", "D").mapIndexed { index, label ->
     QuestionOption(id = "", questionId = "", label = label, content = "", isCorrect = index == 0, sortOrder = index)

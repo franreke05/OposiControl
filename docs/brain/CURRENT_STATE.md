@@ -828,3 +828,219 @@ Supabase/Storage outside the verified Product Metrics/wallet scope remains NOT_V
 - Backend: ../backend/ROUTE_MAP.md
 - Product decisions: ../product/CLIENT_DECISIONS_REQUIRED.md
 - Active attention: ../registry/RISKS.md, ../registry/TECH_DEBT.md, ../registry/UNKNOWNS.md
+
+## Noticias V2 + esquema real de noticias (2026-09-23)
+
+`NEWS_SCHEMA_CREATED`. La vertical de Noticias estaba construida entera —58 intents,
+casos de uso, repositorio, rutas Ktor y subida multipart— sobre tablas que **nunca
+existieron en MAIN**. Verificado por SQL contra `ndiooyyqtaeysnedywer`: `noticia` y
+`tipo_noticia` no aparecían en ningún esquema, y ninguna de las 29 migraciones del
+repositorio las mencionaba. El síntoma visible era «No se pudo actualizar la
+biblioteca» en el panel: no era un fallo de red, era que `GET /rest/v1/noticia` no
+tenía contra qué resolver. Hasta esta fecha, **Noticias no guardaba nada en el
+servidor**; lo único que funcionaba era el borrador local.
+
+Cuatro defectos, no uno:
+
+1. `noticia` no existía.
+2. `tipo_noticia` no existía.
+3. `NewsGateway` consultaba `especialidad` (singular); la tabla real es
+   `especialidades`. El fallo caía dentro de un `runCatching` y salía como «No
+   existe especialidad», escondiendo la causa.
+4. `SupabaseNoticiaRow.especialidadId` se declaraba `Int` contra una base cuyas
+   claves primarias son `uuid`. Ni con las tablas creadas habría guardado: el
+   modelo de tipos era incompatible con la base.
+
+`DATABASE_CHANGES`: `20260923103000_news_canvas_schema.sql`, **APLICADA a MAIN**.
+Aditiva, sin tocar tablas vivas. Crea `tipo_noticia` (uuid, `slug`/`nombre` únicos,
+sembrada con los cuatro tipos que ya valida `ValidateNewsDraftUseCase`) y `noticia`
+(FKs uuid reales, checks de estado/fondo/título, índices de biblioteca). La
+composición pasa a **`capas jsonb`** propia con `check (jsonb_typeof(capas) =
+'array')`: antes se serializaba DENTRO de `texto` con un prefijo, lo que hacía que
+una columna significara dos cosas y que la composición no se pudiera consultar. RLS
+con el patrón de `especialidades`; la política pública exige `estado='published' AND
+(publicar_desde IS NULL OR publicar_desde <= now())` — sin eso, programar sería lo
+mismo que publicar.
+
+`20260923120000_news_published_at.sql` queda **ESCRITA Y SIN APLICAR**. Sella
+`published_at` al publicar, que hoy no lo escribe nadie: la columna existe, el DTO la
+declara y ninguna ruta la rellena, así que una noticia publicada queda con el campo
+nulo para siempre. Va en trigger y no en Ktor porque sellar «solo si está vacío»
+exige leer-y-escribir atómico, que un `upsert` de PostgREST no da.
+
+`LIVE_VERIFIED` contra MAIN, con rollback deliberado para no dejar filas: inserción,
+persistencia del frame en `jsonb` (x=48, width=360 sobreviven el ida y vuelta),
+rechazo de capas no-array, rechazo de programada sin fecha, rechazo de FK inválida y
+disparo del trigger de `actualizado_en`. Ciclo completo crear → guardar → recargar →
+publicar → borrar, tabla devuelta a 0 filas.
+
+`DEPLOYED`: `0eeae46` en `oposibots-prod-01`. `SENTRY_RELEASE` alineado.
+
+### Editor de Noticias — rediseño y capacidades
+
+Layout de cuatro columnas (Biblioteca · Editor · Inspector · Publicación) con plegado
+escalonado: primero cae Publicación —es contexto, no formulario— y luego el Inspector,
+cuyo contenido pasa dentro del editor en vez de estrujarse. Anchos fijos, sin `weight`.
+
+El lienzo deja de vivir dentro de una pestaña: es permanente en el editor y las
+pestañas solo cambian el formulario que lo acompaña. Antes solo aparecía en «Capas
+visuales», así que escribir el título o elegir especialidad se hacía a ciegas.
+
+**Drag y resize reales.** `UpdateLayerFrame(id,x,y,width,height)` existía desde el
+principio y ya se persistía, pero ningún gesto lo disparaba. Tres reglas: el
+acumulador arranca del valor real de la capa en cada `onDragStart` —si no, el
+redondeo a entero suma deriva arrastre tras arrastre—; todo se recorta al lienzo; y
+una capa bloqueada no se mueve **y no pinta tiradores**, porque un tirador que no
+responde es una affordance falsa.
+
+Añadido además: zoom 50–200 % (estado de VISTA, no del documento: no ensucia
+`isDirty`), alineación en los seis ejes mediante `UpdateLayerFrame`, flechas que
+mueven 1 px y 10 px con Mayús, `Supr` para eliminar capa, y tamaño de lienzo editable
+—`UpdateCanvasWidth`/`Height` existían con recorte de capas incluido y ninguna
+pantalla los ofrecía—.
+
+`fontSizeSp` y `fontWeight` por capa, de punta a punta (modelo, DTO cliente, DTO
+backend, borrador local y ViewModel). **`0` y `""` son centinelas de «derivado del
+tipo de capa»**, no valores: así lo ya guardado se sigue pintando igual y se puede
+volver atrás. `"normal"` como default habría hecho que toda capa de título guardada
+perdiera la negrita al cargarse.
+
+`FUNCTIONAL_DRIFT: INTENTIONAL`. Drag/resize y tipografía son funcionalidad NUEVA,
+autorizada explícitamente por el usuario, no refactor a comportamiento constante.
+
+### Delta encontrado en Exámenes/Preguntas
+
+`AdminGateway.NewsTypeRow.id` se declaraba `Int` contra la columna `uuid` de
+`tipo_noticia`: la deserialización de PostgREST reventaba y el catálogo de tipos
+llegaba al panel como «No disponible», impidiendo clasificar cualquier noticia.
+Además `toRow()` hacía `id.toIntOrNull()`, que sobre un uuid da `null` siempre, así
+que **editar un tipo de noticia creaba uno nuevo**. Ambos corregidos.
+`PENDING_DEPLOY`: requiere redesplegar Ktor.
+
+`PORTADA_DE_EXAMEN_RETIRADA` (decisión de producto): la entrada para subir una
+portada desaparece de Exámenes. La portada se compone con los componentes de la app,
+y la API de la app no enviaba la imagen subida, así que el archivo no llegaba a
+verse. `portada_url` y los intents siguen existiendo: se retira la ENTRADA, no lo
+guardado.
+
+`NOT_VERIFIED`: render de Noticias con sesión administrativa real no capturado en
+esta entrega; light/dark y responsive de Noticias V2 sin revisión sistemática;
+deshacer/rehacer y guías NO existen y no se han simulado con botones muertos.
+
+## Compresión de medios y recursos de pregunta (2026-09-23, PRE-DESPLIEGUE)
+
+`NOT_DEPLOYED`. Todo lo de esta sección está en `feature/news-v2-visual-redesign`
+y verificado en local; **nada de esto corre todavía en Hetzner**, que sigue en
+`0eeae46`.
+
+### Compresión automática de subidas
+
+Se comprimen imágenes, vídeo y audio antes de subir a Supabase Storage. Imágenes
+en proceso con `javax.imageio` (lado máximo 2048 px, JPEG q0.82 progresivo,
+orientación EXIF aplicada a los píxeles, techo de 50 MP leído de cabecera para
+evitar bombas de descompresión). Vídeo y audio con `ffmpeg` externo (H.264
+CRF 23 preset veryfast, escala ≤1080p, AAC 128k, `+faststart`).
+
+Reglas innegociables, todas con test: si la compresión falla, tarda más del
+timeout o no hay ffmpeg → **se sube el original**; si el resultado pesa igual o
+más → se sube el original; el MIME devuelto siempre corresponde a los bytes
+devueltos; PDF pasa intacto. MP3/M4A pasan intactos a propósito: recomprimir
+lossy sobre lossy es pérdida generacional a cambio de casi ningún byte. WebP
+pasa intacto porque la JVM de serie ni lo lee ni lo escribe.
+
+**MITIGACIÓN PNG/JPEG (line-art).** Un PNG de menos de 300 KB que no hizo falta
+redimensionar **se queda en PNG**. Motivo: el JPEG con pérdida introduce ringing
+alrededor de los bordes duros, y el material de oposición está lleno de ellos
+—esquemas, tablas, capturas de temario, texto fino—. En ese contenido el JPEG
+sale a la vez MÁS PEQUEÑO y PEOR, así que la regla de «no engordar» NO protege:
+el resultado degradado pasaría el filtro de tamaño. El umbral no mide «es
+line-art» —eso no se sabe barato— sino que no hay nada que ganar. Un PNG grande
+que sí necesita redimensionarse SIGUE convirtiéndose a JPEG, que es donde está
+el ahorro real. Dos tests fijan ambos lados de la regla: uno con rejilla y
+diagonales que debe seguir siendo PNG, y otro con foto grande que debe pasar a
+JPEG.
+
+`ALCANCE`: sólo subidas NUEVAS. Los **15 objetos ya en Storage (≈9,7 MB) NO se
+tocan** y **NO se hace backfill**. Un backfill exigiría releer, recomprimir y
+reescribir `ruta_storage` y metadatos, y es trabajo aparte con riesgo propio.
+
+`ffmpeg` sin medir: no hay Docker en la máquina de desarrollo. El tamaño real
+debe medirse en el despliegue con `docker image inspect`, NO con la estimación
+de 70-90 MB.
+
+### Puntos de subida investigados uno por uno
+
+| Punto | Estado real |
+|---|---|
+| Portada de solucionario (`Application.kt` `uploadPortada`) | **RETIRADA**: lanza `LEGACY_EXAM_COVER_RETIRED`, HTTP 410. No se toca |
+| `/content/preguntas/{id}/recursos/{id}/upload` | **LEGACY ROTO**: hace `preguntaId.toIntId()` y `preguntas.id` es `uuid`, así que `toIntOrNull()` devuelve null y lanza SIEMPRE. Inalcanzable, no se arregla |
+| Portada de examen (`uploadExamenPortada`) | **VIVA**: compresión conectada, validando el MIME declarado ANTES y comprobando que el MIME resultante siga admitido. Comprimir no puede ampliar lo que se acepta |
+
+### Patrón técnico detectado — IDs enteros contra claves uuid
+
+`LEGACY_INT_ID_DRIFT`. Existen restos de backend escritos bajo la hipótesis de
+que las claves primarias eran enteras, cuando en MAIN son `uuid`. Detectado ya
+en **tres** sitios independientes:
+
+1. `noticia` / `especialidad_id` (`SupabaseNoticiaRow`) — corregido.
+2. `tipo_noticia` (`AdminGateway.NewsTypeRow`) — corregido, rompía el catálogo.
+3. Recursos legacy (`uploadRecurso` → `toIntId()`) — dejado como está: la ruta
+   es inalcanzable y arreglarla sería resucitar un endpoint sin consumidor.
+
+**DECISIÓN: no se hace migración ni refactor global de ids legacy ahora.** El
+patrón queda registrado para que la próxima aparición se reconozca a la primera
+en vez de diagnosticarse desde cero. Véase DEBT-076.
+
+### Recursos de preguntas inmersivas — P0-4 CERRADO
+
+El cliente ya crea, sube y archiva recursos. Cinco métodos en
+`QuestionsRepository`, multipart siguiendo el patrón de `uploadExamCover`, y un
+formulario que respeta las reglas reales de la base: `texto` sólo con cuerpo,
+`enlace` sólo con URL `https?://`, el resto sólo con archivo. La regla «sólo
+inmersiva» NO se duplica en cliente: la impone el servidor con 422 y se muestra
+su mensaje.
+
+El diálogo de borrado dice **«Archivar»**, no «Eliminar», porque la ruta pone
+`activo=false` y hoy no existe desarchivar.
+
+Cerrados además tres huecos que dejó el cableado: el campo `description` existía
+en el formulario y en el backend pero no en el modelo de dominio, así que se
+escribía y no se veía; la matriz de honestidad declaraba `«Subir recursos» →
+BLOCKED` cuando ya funciona —una matriz que declara bloqueado lo que funciona
+miente igual que un botón que aparenta funcionar sin hacerlo—; y se retiró la
+constante muerta que anunciaba «todavía no está disponible».
+
+### Disco de Supabase en Estado del sistema
+
+Fila «Disco Supabase» entre RAM y Latencia API. Lo lee **Ktor**, no Prometheus,
+para no meter la service key como credencial de scrape en un fichero del
+servidor. Fuente: endpoint Prometheus privilegiado de Supabase
+(`/customer/v1/privileged/metrics`, HTTP Basic con usuario `service_role`),
+verificado en vivo: 200 con ~940 series.
+
+Se usan `node_filesystem_size_bytes` y `node_filesystem_avail_bytes` filtradas
+por `mountpoint="/data"`. **El `mountpoint="/"` es el disco del SISTEMA
+OPERATIVO y está al ~75 %**: usarlo daría un panel alarmado sin motivo. Con los
+bytes reales da 3,6 %.
+
+`NO EXISTE métrica de Storage` en ese endpoint (cero coincidencias de «storage»
+en las 940 series): Storage va sobre S3. La etiqueta habla sólo del volumen de
+Postgres. Storage sí es medible por SQL sobre `storage.objects`, pero eso exige
+configurar la cuota del plan a mano y NO se ha hecho.
+
+Semántica conservada: cualquier fallo —endpoint caído, 401, cuerpo malformado,
+falta una de las dos series, valor no finito, `avail > size`, dos muestras
+contradictorias— produce `null` y «No disponible». Un disco vacío medido es
+`0 %`. La clave nunca viaja en la URL ni se guarda como propiedad.
+
+### Portada de examen retirada de la UI
+
+Decisión de producto: la portada se compone con los componentes de la app. La
+entrada de subida desaparece de los DOS sitios donde estaba
+(`ExamBasicInfoSection` y `ExamsScreen`), y sus escenarios del arnés visual se
+retiran con ella. `portada_url`, los intents y el endpoint SIGUEN existiendo: se
+retira la ENTRADA, no lo guardado.
+
+`GATES LOCALES`: backend 869/869, data 106/106, news 34/34, questions 86/86,
+settings 10/10, exams 313/313 — **1.418 tests, 0 fallos**.
+`composeApp:compileKotlinJvm` PASS. `git diff --check` limpio.

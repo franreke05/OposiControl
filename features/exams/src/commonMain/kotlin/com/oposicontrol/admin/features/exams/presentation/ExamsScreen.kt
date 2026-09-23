@@ -734,11 +734,9 @@ private fun ExamConfigurationTab(
                 )
             }
         }
-        // Sin HelpTopic propio: no hay una regla de negocio no obvia que explicar
-        // aqui (formatos y tamano maximo ya se ven en el propio uploader).
-        FormSection(title = "Portada") {
-            CoverEditor(state = state, onIntent = onIntent)
-        }
+        // Portada RETIRADA (decisión de producto, 2026-09-23): se compone con
+        // los componentes de la app, no se sube un archivo. Ver el comentario
+        // equivalente en `ExamBasicInfoSection`.
     }
 }
 

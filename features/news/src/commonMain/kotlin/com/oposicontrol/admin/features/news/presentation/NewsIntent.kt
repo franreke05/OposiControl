@@ -56,6 +56,8 @@ sealed interface NewsIntent {
     data class UpdateLayerOpacity(val id: String, val value: String) : NewsIntent
     data class UpdateLayerRotation(val id: String, val degrees: Int) : NewsIntent
     data class UpdateLayerFontFamily(val id: String, val value: String) : NewsIntent
+    data class UpdateLayerFontSize(val id: String, val value: String) : NewsIntent
+    data class UpdateLayerFontWeight(val id: String, val value: String) : NewsIntent
     data class UpdateLayerTextColor(val id: String, val value: String) : NewsIntent
     data class ToggleLayerVisible(val id: String) : NewsIntent
     data class ToggleLayerLocked(val id: String) : NewsIntent

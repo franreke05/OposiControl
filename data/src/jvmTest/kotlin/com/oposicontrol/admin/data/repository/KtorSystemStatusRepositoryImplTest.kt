@@ -46,6 +46,7 @@ class KtorSystemStatusRepositoryImplTest {
             {"data":{
               "overallStatus":"DEGRADED","ktorStatus":"OPERATIVE","supabaseStatus":"DEGRADED",
               "workerStatus":"UNKNOWN","cpuPercent":12.5,"ramPercent":41.25,
+              "supabaseDiskPercent":3.5632,
               "apiLatencyMs":1800,"errors24h":0,"updatedAt":"2026-09-02T10:00:00Z",
               "notInstrumented":["workerStatus","mobileCrashes24h","queueDepth"]
             }}
@@ -61,6 +62,7 @@ class KtorSystemStatusRepositoryImplTest {
         assertEquals(SystemStatusLevel.UNKNOWN, status.workerStatus)
         assertEquals(12.5, status.cpuPercent)
         assertEquals(41.25, status.ramPercent)
+        assertEquals(3.5632, status.supabaseDiskPercent)
         assertEquals(1800L, status.apiLatencyMs)
         assertEquals(0L, status.errors24h)
         assertEquals(Instant.parse("2026-09-02T10:00:00Z"), status.updatedAt)
@@ -115,6 +117,27 @@ class KtorSystemStatusRepositoryImplTest {
         assertNull(status.apiLatencyMs)
         assertNull(status.errors24h)
         assertEquals(Instant.parse("2026-09-22T10:00:00Z"), status.updatedAt)
+    }
+
+    @Test
+    fun theSupabaseDiskKeepsAMeasuredZeroAndAnAbsenceAsNull() = runTest {
+        val head = """{"data":{"overallStatus":"OPERATIVE","ktorStatus":"OPERATIVE","supabaseStatus":"OPERATIVE","""
+
+        val measuredZero = assertIs<SystemStatusAvailability.Available>(
+            repository("""$head"supabaseDiskPercent":0.0,"updatedAt":"2026-09-23T10:00:00Z"}}""").loadStatus(),
+        ).value
+        val explicitNull = assertIs<SystemStatusAvailability.Available>(
+            repository("""$head"supabaseDiskPercent":null,"updatedAt":"2026-09-23T10:00:00Z"}}""").loadStatus(),
+        ).value
+        // El backend omite los nulos (`explicitNulls = false`), así que el campo
+        // ausente también tiene que decodificar como ausencia, no como cero.
+        val omitted = assertIs<SystemStatusAvailability.Available>(
+            repository("""$head"updatedAt":"2026-09-23T10:00:00Z"}}""").loadStatus(),
+        ).value
+
+        assertEquals(0.0, measuredZero.supabaseDiskPercent, "Cero medido no es lo mismo que no disponible.")
+        assertNull(explicitNull.supabaseDiskPercent)
+        assertNull(omitted.supabaseDiskPercent)
     }
 
     // -----------------------------------------------------------------

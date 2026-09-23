@@ -94,6 +94,7 @@ private fun NotConnectedContent(
         metrics = listOf(
             "CPU" to "No disponible",
             "RAM" to "No disponible",
+            "Disco Supabase" to "No disponible",
             "Latencia API" to "No disponible",
             "Errores 24h" to "No disponible",
             "Crashes móviles" to "No disponible",
@@ -134,6 +135,9 @@ private fun StatusContent(
         metrics = listOf(
             "CPU" to status.cpuPercent.toPercentLabel(),
             "RAM" to status.ramPercent.toPercentLabel(),
+            // `toPercentLabel()` devuelve `null` para un `null`, y `MetricRow` lo
+            // pinta como "No disponible": un disco sin medir no se muestra 0 %.
+            "Disco Supabase" to status.supabaseDiskPercent.toPercentLabel(),
             "Latencia API" to status.apiLatencyMs?.let { "$it ms" },
             "Errores 24h" to status.errors24h?.toString(),
             "Crashes móviles" to status.mobileCrashes24h?.toString(),
