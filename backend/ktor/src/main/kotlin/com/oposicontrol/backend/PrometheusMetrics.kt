@@ -66,6 +66,16 @@ internal data class SystemMetricsSnapshot(
     val errors24h: Long?,
 )
 
+/**
+ * `NaN`/`+Infinity`/`-Infinity` nunca deben cruzar la frontera del contrato
+ * JSON: kotlinx.serialization los rechaza al codificar (lanzaría en el
+ * `respond`), y `coerceIn`/`roundToLong` los dejarían pasar o los convertirían
+ * en un número inventado en vez de una ausencia. Se recortan aquí, en el punto
+ * más cercano a Prometheus, para que ningún consumidor tenga que repetir el
+ * chequeo.
+ */
+internal fun Double?.finiteOrNull(): Double? = this?.takeIf(Double::isFinite)
+
 internal fun interface SystemMetricsProvider {
     fun snapshot(): SystemMetricsSnapshot
 }
@@ -91,11 +101,15 @@ internal class PrometheusSystemMetricsGateway(
         val ram = queryAsync(RAM_QUERY)
         val latency = queryAsync(API_LATENCY_QUERY)
         val errors = queryAsync(ERRORS_24H_QUERY)
+        // Cada valor pasa por finiteOrNull() antes de cualquier otra operación:
+        // NaN/±Infinity nunca deben llegar a coerceIn/roundToLong, que los
+        // dejarían pasar (coerceIn) o los convertirían en un Long inventado
+        // (roundToLong de +Infinity da Long.MAX_VALUE, no una ausencia).
         return SystemMetricsSnapshot(
-            cpuPercent = cpu.join()?.coerceIn(0.0, 100.0),
-            ramPercent = ram.join()?.coerceIn(0.0, 100.0),
-            apiLatencyMs = latency.join()?.takeIf { it >= 0.0 }?.times(1_000)?.roundToLong(),
-            errors24h = errors.join()?.takeIf { it >= 0.0 }?.roundToLong(),
+            cpuPercent = cpu.join().finiteOrNull()?.coerceIn(0.0, 100.0),
+            ramPercent = ram.join().finiteOrNull()?.coerceIn(0.0, 100.0),
+            apiLatencyMs = latency.join().finiteOrNull()?.takeIf { it >= 0.0 }?.times(1_000)?.roundToLong(),
+            errors24h = errors.join().finiteOrNull()?.takeIf { it >= 0.0 }?.roundToLong(),
         )
     }
 
@@ -132,7 +146,7 @@ internal fun parsePrometheusInstantValue(body: String, json: Json = Json): Doubl
     if (results.size != 1) return@runCatching null
     val value = results.single().jsonObject["value"] as? JsonArray ?: return@runCatching null
     val number = value.getOrNull(1)?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()
-    number?.takeIf(Double::isFinite)
+    number.finiteOrNull()
 }.getOrNull()
 
 internal const val CPU_QUERY =

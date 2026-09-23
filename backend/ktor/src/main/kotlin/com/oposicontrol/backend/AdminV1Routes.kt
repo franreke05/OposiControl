@@ -6345,21 +6345,29 @@ class AdminV1Gateway private constructor(
         // Si esta línea se ejecuta, Ktor está sirviendo la petición.
         val ktorLevel = SystemStatusLevelWire.OPERATIVE
         val metrics = systemMetrics.snapshot()
+        // finiteOrNull() en la frontera real de serialización: un SystemMetricsProvider
+        // distinto del gateway de Prometheus (test doble, implementación futura) no
+        // puede colar un NaN/Infinity que kotlinx.serialization rechazaría al
+        // codificar `respond`. Se calcula una sola vez y se reutiliza también en
+        // `notInstrumented`, para que el DTO y su propia lista de ausencias nunca
+        // se contradigan.
+        val cpuPercent = metrics.cpuPercent.finiteOrNull()
+        val ramPercent = metrics.ramPercent.finiteOrNull()
 
         return AdminSystemStatusDto(
             overallStatus = aggregateSystemStatus(listOf(ktorLevel, supabaseLevel)),
             ktorStatus = ktorLevel,
             supabaseStatus = supabaseLevel,
             workerStatus = SystemStatusLevelWire.UNKNOWN,
-            cpuPercent = metrics.cpuPercent,
-            ramPercent = metrics.ramPercent,
+            cpuPercent = cpuPercent,
+            ramPercent = ramPercent,
             apiLatencyMs = metrics.apiLatencyMs,
             errors24h = metrics.errors24h,
             updatedAt = Instant.now().toString(),
             notInstrumented = listOfNotNull(
                 SystemStatusNotInstrumented.WORKER,
-                SystemStatusNotInstrumented.CPU.takeIf { metrics.cpuPercent == null },
-                SystemStatusNotInstrumented.MEMORY.takeIf { metrics.ramPercent == null },
+                SystemStatusNotInstrumented.CPU.takeIf { cpuPercent == null },
+                SystemStatusNotInstrumented.MEMORY.takeIf { ramPercent == null },
                 SystemStatusNotInstrumented.API_LATENCY.takeIf { metrics.apiLatencyMs == null },
                 SystemStatusNotInstrumented.API_ERRORS.takeIf { metrics.errors24h == null },
                 SystemStatusNotInstrumented.MOBILE_CRASHES,
