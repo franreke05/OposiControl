@@ -1045,43 +1045,65 @@ retira la ENTRADA, no lo guardado.
 settings 10/10, exams 313/313 — **1.418 tests, 0 fallos**.
 `composeApp:compileKotlinJvm` PASS. `git diff --check` limpio.
 
-### Optimización Kotlin/KMP profesional (worktree aislado, 2026-09-23)
+### Optimización Kotlin/KMP profesional — INTEGRADA en main (2026-09-24)
 
-Rama `refactor/kotlin-kmp-professional-optimization`, worktree
-`OposiControl-KotlinOptimizer`, baseline `7187040`. **NO fusionada a main
-todavía** — el usuario prohibió push/merge/rebase durante la optimización.
+Estado: **integrada en `main`**. Sin deploy: este refactor no implica un
+despliegue de Ktor a producción.
 
-Revisión read-only en 8 lotes (8 revisores independientes, cero escritura
-durante la revisión), cobertura reconciliada contra el recuento real de
-ficheros del repo (no contra lo que cada revisor declaró): **731/731 `.kt`
-tras los borrados** (739 al empezar). Un fallo de agrupación propio dejó
-`backend/dbtest/` (14 ficheros) sin asignar en la primera pasada; se detectó
-al reconciliar totales y se corrigió con una novena revisión dirigida.
+Trazabilidad:
 
-Aplicado como escritor único, con gate de compilación + tests por módulo
-tocado antes de seguir al siguiente: **84 ficheros cambiados, 328
-inserciones, 5.198 eliminaciones** (neto −4.870 líneas). 8 ficheros borrados
-por completo (~3.489 líneas de código muerto verificado: dos repositorios
-Supabase-directo legacy de ~1.900 líneas entre los dos, un fichero de DTOs de
-255 líneas sin más importador que ellos, dos composables de exámenes sin
-llamador de 635 líneas, cuatro ficheros de `composeApp` sin consumidor). Nueve
-copias de la política de autenticación del panel (`backendHeaders()`)
-unificadas en el canónico `adminAuthHeaders()`. Tres formateadores de tiempo
-relativo y varios componentes Compose (píldora de filtro, esqueleto de carga,
-sección de detalle) triplicados entre Informes/Foro/OposiTester, unificados en
-`core/common`/`core/ui`. Detalle completo, con fichero:línea y qué se aplicó
-frente a qué quedó registrado, en `docs/optimization/APPLIED.md` y los 8
-informes de `docs/optimization/reports/`.
+| | SHA |
+|---|---|
+| Baseline original (News V2 certificada) | `7187040ca1b323329a9525627c6339f40de9308a` |
+| Commit del optimizador (rama `refactor/kotlin-kmp-professional-optimization`) | `33e2181fac285df14bf36c67addec888ff77b2ed` |
+| Merge `--no-ff` a `main` | `68e783be14319edbb939bda319df34903fc86e0f` |
 
-Gate final: `jvmTest`/`test` en los 26 módulos con tests del repositorio
-(excluidos los targets Android — sin `ANDROID_HOME` en este worktree) —
-**BUILD SUCCESSFUL, 0 fallos**, incluida la suite de `backend:dbtest` contra
-PostgreSQL embebido real (45/45).
+`origin/main` seguía en el baseline en el momento del merge: sin divergencia ni
+conflictos.
 
-No se aplicó ningún hallazgo Tier 2/3: cambian comportamiento observable,
-piden un test que no existe, o son decisión de producto/arquitectura fuera de
-mandato. Quedan documentados con precisión de línea, incluidos dos hallazgos
-que NO son de optimización sino defectos reales detectados de paso: una fuga
-de corrutinas en `MviViewModel` para ViewModels `factory{}` que nunca llaman
-`clear()`, y un fallo latente de formateo de fecha en `AuditViewModel` (~1 de
-cada 1000 refrescos, cuando el instante cae en un segundo exacto).
+Delta certificado (recalculado desde Git, no copiado de un informe previo):
+**86 ficheros `.kt` afectados = 70 modificados + 2 añadidos + 14 eliminados;
++442 / −5.199; neto −4.757 LOC.** (El commit completo son 99 ficheros, +2.288 /
+−5.199, porque incluye 13 ficheros de documentación.)
+
+Los 14 eliminados: `SupabaseContentRepositoryImpl`, `KtorContentRepositoryImpl`,
+`SupabaseCommerceRepositoryImpl`, `SupabaseNewsRepositoryImpl`, `ContentDtos`
+(data); `ExamQuestionsSection`, `ExamResourcesSection` (features/exams);
+`AdminShell`, `DesktopModerationRoot` y los 4 ficheros `AppExperience`
+expect/actual (composeApp); `AppUiState` (core/common). Todos sin consumidores
+directos ni indirectos (Koin, expect/actual por plataforma, recursos, Gradle).
+
+Cobertura de revisión: 731/731 `.kt` tras los borrados (739 al empezar),
+reconciliada contra el recuento real de disco. Un fallo de agrupación propio
+dejó `backend/dbtest/` (14 ficheros) sin asignar en la primera pasada; se
+detectó y se revisó aparte. Además, certificación independiente del delta con
+dos auditores que no escribieron el código: **0 regresiones** (auth headers,
+formateador de tiempo, componentes Compose, helpers de test y contratos
+serializados verificados como equivalentes al baseline; News V2 sin regresión).
+Dos correcciones triviales de higiene se aplicaron en esa fase (una línea en
+blanco final en `AuditMapper.kt`, dos imports huérfanos de `HttpHeaders`).
+
+Gates: compilación JVM completa y tests de los 34 módulos, forzados sin caché,
+sobre el commit del optimizador y de nuevo sobre `main` tras el merge (ver
+resultado post-merge en el informe de cierre). `backend:dbtest` contra
+PostgreSQL embebido real: 45/45. Android excluido por la misma limitación de
+`ANDROID_HOME` que en el baseline.
+
+Detalle completo, con fichero:línea de lo aplicado y de lo registrado, en
+`docs/optimization/` (`LEDGER.md`, `APPLIED.md`, `reports/01` a `08`).
+
+**Deuda detectada y NO corregida (sigue abierta; no se ha resuelto):**
+
+1. **Fuga de corrutinas en `MviViewModel`**: `clear()` no lo llama nadie, así
+   que los ViewModels inyectados con `factory {}` mantienen su `collectLatest`
+   vivo indefinidamente. Defecto de ciclo de vida real, no de optimización.
+2. **Bug de fecha en `AuditViewModel`**: formatea sin `removeSuffix("Z")`; si el
+   instante cae en un segundo exacto, `takeLast(16)` se desplaza (~1 de cada
+   1.000 refrescos). Requiere su propio test.
+3. **DEBT-081 (`AdminTableColumn`)**: usa `weight: Float`, contra la regla de
+   medidas exactas de AGENTS.md; lo heredan al menos 5 pantallas. Requiere
+   rediseñar `AdminTable` con ancho fijo por columna.
+
+Los hallazgos Tier 2/3 restantes de los 8 informes tampoco se aplicaron
+(cambian comportamiento observable, piden un test que no existe o son decisión
+de producto/arquitectura); quedan documentados con precisión de línea.
