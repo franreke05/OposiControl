@@ -76,6 +76,9 @@ val macSigningEnabled =
 val macSigningIdentity = providers.environmentVariable("OPOSI_MACOS_SIGNING_IDENTITY").orNull.orEmpty()
 val macSigningKeychain = providers.environmentVariable("OPOSI_MACOS_KEYCHAIN").orNull.orEmpty()
 
+// jpackage sólo empaqueta para el sistema en el que corre.
+val isMacHost = System.getProperty("os.name").orEmpty().startsWith("Mac", ignoreCase = true)
+
 kotlin {
     androidTarget {
         compilerOptions {
@@ -257,7 +260,9 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "OposiControlAdmin"
+            // El nombre de la carpeta `.app` sale de ESTE packageName, no del de `macOS {}`:
+            // en macOS la app es `OposiControl.app`; Windows/Linux siguen como OposiControlAdmin.
+            packageName = if (isMacHost) "OposiControl" else "OposiControlAdmin"
             packageVersion = desktopPackageVersion
 
             // Runtime embebido (jlink): lo que sugiere `suggestRuntimeModules`
