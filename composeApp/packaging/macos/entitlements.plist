@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements mínimos para una app JVM firmada con Hardened Runtime.
+
+  - allow-jit: HotSpot genera código máquina en tiempo de ejecución (MAP_JIT en arm64).
+  - allow-unsigned-executable-memory: el JIT de HotSpot en x64 escribe y ejecuta
+    memoria que no está firmada.
+
+  No hay sandbox (la app no se distribuye por la Mac App Store) ni acceso a cámara,
+  micrófono, contactos, etc. Si la build firmada fallara al cargar una librería
+  nativa por "library validation", la corrección sería añadir
+  com.apple.security.cs.disable-library-validation, y sólo con esa evidencia.
+-->
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>
