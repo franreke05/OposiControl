@@ -83,10 +83,10 @@ class PublishedExamsPresentationTest {
     }
 
     @Test
-    fun `la portada solo enseña convocatoria y oficial si se saben`() {
+    fun `la portada solo enseña el año y oficial si se saben`() {
         assertEquals("", coverDetailLine(exam("a")))
-        assertEquals("Convocatoria 2026", coverDetailLine(exam("b", year = 2026)))
-        assertEquals("Convocatoria 2025 · Oficial", coverDetailLine(exam("c", year = 2025, official = true)))
+        assertEquals("2026", coverDetailLine(exam("b", year = 2026)))
+        assertEquals("2025 · Oficial", coverDetailLine(exam("c", year = 2025, official = true)))
         assertEquals("Oficial", coverDetailLine(exam("d", official = true)))
     }
 }

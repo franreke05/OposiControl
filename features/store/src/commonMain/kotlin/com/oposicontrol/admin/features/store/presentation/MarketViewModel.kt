@@ -6,6 +6,7 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.common.result.map
+import com.oposicontrol.admin.domain.model.Community
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.MarketPopupRule
 import com.oposicontrol.admin.domain.model.MarketPromotion
@@ -32,6 +33,12 @@ data class MarketState(
     val section: MarketSection = MarketSection.EXAMS,
     /** Solo los exámenes PUBLICADOS; `Empty` si no hay ninguno. */
     val exams: UiAsync<List<Exam>> = UiAsync.Idle,
+    /**
+     * Comunidades para elegir la ilustración de la portada. Si no se pudieron
+     * cargar queda vacía y las portadas usan la ilustración genérica: es solo
+     * decoración, no un motivo para no enseñar los exámenes.
+     */
+    val examCommunities: List<Community> = emptyList(),
     val examType: ExamTypeFilter = ExamTypeFilter.ALL,
     val examQuery: String = "",
     val packs: UiAsync<List<MarketTicketPack>> = UiAsync.Idle,
@@ -82,8 +89,10 @@ class MarketViewModel(
         when (section) {
             MarketSection.EXAMS -> {
                 updateState { it.copy(exams = UiAsync.Loading) }
-                val result = examsSource.load().map { publishedExams(it) }.toUiAsync()
-                updateState { it.copy(exams = result) }
+                val loaded = examsSource.load()
+                val result = loaded.map { publishedExams(it.exams) }.toUiAsync()
+                val communities = (loaded as? AppResult.Success)?.value?.communities.orEmpty()
+                updateState { it.copy(exams = result, examCommunities = communities) }
             }
             MarketSection.PACKS -> {
                 updateState { it.copy(packs = UiAsync.Loading) }

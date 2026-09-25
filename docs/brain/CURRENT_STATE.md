@@ -1120,13 +1120,18 @@ por tipo con recuento. Solo consulta; los datos se editan en Exámenes.
   (`publishedExams`: `PUBLISHED` y no borrado) sobre `refreshAllExams()`, que
   devuelve el catálogo completo. Un fallo de carga es error con reintento, no un
   escaparate vacío; sin publicados es `Empty` con su mensaje.
-- La portada se **compone** en la app (`ExamCoverArt`, 264×148, 16:9) a partir
-  de los datos del examen, sin subir imagen (decisión de producto 2026-09-23).
-  Colores fijos por tipo (no dependen del tema del panel). La ilustración es un
-  icono translúcido por tipo: **marcador de sitio** hasta que lleguen los
-  vectores propios de cada tipo. Medidas en `ExamCoverSpec`.
-- `PRODUCT_DECISION_PENDING`: instrucciones y vectores de las portadas
-  (inmersivos y demás tipos) los aporta el producto; hasta entonces la portada
-  actual es provisional.
+- La portada se **compone** en la app (`ExamCoverArt`, 264×148, 16:9): fondo oscuro
+  `#131313` del diseño de Figma (nodo `59527:25808`, «icono/card») con la
+  ilustración vectorial dorada de la comunidad para los inmersivos, el viento
+  para las ráfagas y la brújula para los razonados. 21 vectores en
+  `features/store/src/commonMain/composeResources/drawable/cover_*.xml`
+  (convertidos de SVG a vector drawable para que carguen igual en escritorio,
+  Android e iOS; `cover_rafagas_xs` queda sin usar, es el tamaño compacto).
+  La ilustración sale de `coverArtworkFor` (pura y testeada: seed canónico de 19
+  comunidades; Cataluña usa Barcelona y Ceuta/Melilla comparten). Un inmersivo
+  sin comunidad, o con una que el diseño no cubre, usa el icono genérico:
+  no se inventa la de otra comunidad.
+- `PRODUCT_DECISION_PENDING`: pantalla por revisar por el producto tras ver las
+  portadas; falta el diseño de los inmersivos sin comunidad (examen nacional).
 - Tests: 13 nuevos en `features/store` (lógica pura + `MarketViewModel`) y un
   banco visual (`PublishedExamsVisualHarness`, 7 capturas claro/oscuro/estados).

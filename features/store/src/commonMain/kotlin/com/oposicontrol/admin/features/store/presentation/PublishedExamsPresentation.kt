@@ -1,6 +1,7 @@
 package com.oposicontrol.admin.features.store.presentation
 
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.domain.model.Community
 import com.oposicontrol.admin.domain.model.ContentExamType
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamStatus
@@ -13,9 +14,18 @@ import com.oposicontrol.admin.domain.model.ExamStatus
  * implementarlas todas para probar una lista de solo lectura.
  */
 fun interface PublishedExamsSource {
-    /** Todos los exámenes PUBLICADOS, de cualquier tipo. */
-    suspend fun load(): AppResult<List<Exam>>
+    suspend fun load(): AppResult<PublishedCatalog>
 }
+
+/**
+ * Lo que necesita el escaparate: los exámenes (el catálogo completo, se filtra
+ * después con [publishedExams]) y las comunidades, que deciden la ilustración de
+ * la portada de un inmersivo.
+ */
+data class PublishedCatalog(
+    val exams: List<Exam>,
+    val communities: List<Community>,
+)
 
 /** Filtro por tipo de examen. `ALL` no filtra. */
 enum class ExamTypeFilter(val label: String, val type: ContentExamType?) {

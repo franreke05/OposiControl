@@ -37,6 +37,9 @@ class MarketViewModelExamsTest {
         override suspend fun savePopupRule(rule: MarketPopupRule) = AppResult.Success(rule)
     }
 
+    private fun catalog(vararg exams: Exam) =
+        AppResult.Success(PublishedCatalog(exams = exams.toList(), communities = emptyList()))
+
     private fun TestScope.viewModel(source: PublishedExamsSource) = MarketViewModel(
         dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
         repository = EmptyMarket(),
@@ -47,7 +50,7 @@ class MarketViewModelExamsTest {
     @Test
     fun `al abrir carga los examenes y deja solo los publicados`() = runTest {
         val model = viewModel {
-            AppResult.Success(listOf(exam("pub"), exam("draft", status = ExamStatus.DRAFT)))
+            catalog(exam("pub"), exam("draft", status = ExamStatus.DRAFT))
         }
         testScheduler.advanceUntilIdle()
 
@@ -59,7 +62,7 @@ class MarketViewModelExamsTest {
 
     @Test
     fun `sin ningun publicado es Empty y no una lista vacia con exito`() = runTest {
-        val model = viewModel { AppResult.Success(listOf(exam("draft", status = ExamStatus.DRAFT))) }
+        val model = viewModel { catalog(exam("draft", status = ExamStatus.DRAFT)) }
         testScheduler.advanceUntilIdle()
 
         assertEquals(UiAsync.Empty, model.state.value.exams)
@@ -78,7 +81,7 @@ class MarketViewModelExamsTest {
         var calls = 0
         val model = viewModel {
             calls++
-            AppResult.Success(listOf(exam("a")))
+            catalog(exam("a"))
         }
         testScheduler.advanceUntilIdle()
 
@@ -96,7 +99,7 @@ class MarketViewModelExamsTest {
         var calls = 0
         val model = viewModel {
             calls++
-            AppResult.Success(listOf(exam("a")))
+            catalog(exam("a"))
         }
         testScheduler.advanceUntilIdle()
 

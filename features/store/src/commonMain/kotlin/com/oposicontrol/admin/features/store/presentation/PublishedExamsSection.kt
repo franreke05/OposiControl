@@ -71,6 +71,10 @@ internal fun PublishedExamsSection(
         val shown = remember(published, state.examType, state.examQuery) {
             filterPublishedExams(published, state.examType, state.examQuery)
         }
+        val artworkByExam = remember(published, state.examCommunities) {
+            val communities = state.examCommunities.associateBy { it.id }
+            published.associate { it.id to coverArtworkFor(it.contentType(), communities[it.communityId]) }
+        }
         Column(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -110,7 +114,7 @@ internal fun PublishedExamsSection(
                             horizontalArrangement = Arrangement.spacedBy(GridGap),
                             verticalArrangement = Arrangement.spacedBy(GridGap),
                         ) {
-                            shown.forEach { exam -> PublishedExamCard(exam) }
+                            shown.forEach { exam -> PublishedExamCard(exam, artworkByExam[exam.id]) }
                         }
                     }
                     DesktopVerticalScrollbar(
@@ -124,7 +128,7 @@ internal fun PublishedExamsSection(
 }
 
 @Composable
-private fun PublishedExamCard(exam: Exam) {
+private fun PublishedExamCard(exam: Exam, artwork: ExamCoverArtwork?) {
     val tokens = GlassTheme.tokens
     Column(
         modifier = Modifier
@@ -134,7 +138,7 @@ private fun PublishedExamCard(exam: Exam) {
             .background(tokens.surfaceSolid)
             .border(1.dp, tokens.border, Radius.card),
     ) {
-        ExamCoverArt(exam)
+        ExamCoverArt(exam, artwork)
         Column(
             modifier = Modifier.padding(CardInfoPadding).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
