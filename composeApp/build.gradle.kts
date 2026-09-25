@@ -271,6 +271,13 @@ compose.desktop {
             // sigue siendo un módulo aparte y sin él fallan los handshakes TLS ECDHE.
             modules("java.instrument", "java.management", "java.sql", "jdk.unsupported", "jdk.crypto.ec")
 
+            windows {
+                iconFile.set(project.file("packaging/windows/OposiControl.ico"))
+            }
+            linux {
+                iconFile.set(project.file("packaging/linux/OposiControl.png"))
+            }
+
             macOS {
                 // Sólo macOS: `OposiControl.app`. MSI y DEB conservan su nombre.
                 packageName = "OposiControl"
