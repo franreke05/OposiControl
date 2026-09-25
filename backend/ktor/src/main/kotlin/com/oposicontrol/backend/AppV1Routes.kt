@@ -179,7 +179,7 @@ class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
 // ---------- DTOs ----------
 
 @Serializable data class AppPerfilDto(val usuarioId: String, val nombreMostrar: String? = null, val username: String? = null, val esInvitado: Boolean = false, val onboardingCompletado: Boolean = false)
-@Serializable data class AppExamenDto(val id: String, val titulo: String, val descripcion: String = "", val tipoExamen: String = "", val tipoAcceso: String = "", val totalPreguntas: Int = 0, val anio: Int? = null)
+@Serializable data class AppExamenDto(val id: String, val titulo: String, val descripcion: String = "", val tipoExamen: String = "", val tipoAcceso: String = "", val totalPreguntas: Int = 0, val anio: Int? = null, val comunidadCodigo: String? = null)
 @Serializable data class AppOpcionDto(val id: String, val letra: String, val texto: String)
 /**
  * Una pregunta servida. [anulada] = el tribunal la anulo EN ESTE examen (propiedad de la relacion
@@ -437,9 +437,11 @@ class AppV1Gateway private constructor(
         )
     }
 
-    fun listExamenes(): List<AppExamenDto> =
-        get("/rest/v1/examenes?select=*&activo=eq.true&publicado_en=not.is.null&order=anio.desc.nullslast,titulo.asc")
-            .map { it.toExamenDto() }
+    fun listExamenes(): List<AppExamenDto> {
+        val rows = get("/rest/v1/examenes?select=*&activo=eq.true&publicado_en=not.is.null&order=anio.desc.nullslast,titulo.asc")
+        val codigos = rows.comunidadCodigos()
+        return rows.map { it.toExamenDto(codigos) }
+    }
 
     /**
      * El examen con TODAS sus preguntas activas, cada una en su posición original.
@@ -462,9 +464,10 @@ class AppV1Gateway private constructor(
     fun examenDetalle(examenId: String): AppExamenDetalleResponse? {
         examenId.validatedUuid("examenId")
         val examen = get("/rest/v1/examenes?select=*&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1").firstOrNull() ?: return null
+        val comunidadCodigos = listOf(examen).comunidadCodigos()
         val asociaciones = get("/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId&order=posicion.asc")
         val preguntaIds = asociaciones.mapNotNull { it.str("pregunta_id") }
-        if (preguntaIds.isEmpty()) return AppExamenDetalleResponse(examen.toExamenDto(), emptyList())
+        if (preguntaIds.isEmpty()) return AppExamenDetalleResponse(examen.toExamenDto(comunidadCodigos), emptyList())
         val inList = preguntaIds.joinToString(",")
         val preguntasById = get("/rest/v1/preguntas?select=*&id=in.($inList)&activa=eq.true").associateBy { it.str("id") }
         val opcionesByPregunta = get("/rest/v1/opciones_pregunta?select=*&pregunta_id=in.($inList)&order=posicion.asc")
@@ -482,7 +485,7 @@ class AppV1Gateway private constructor(
                 },
             )
         }
-        return AppExamenDetalleResponse(examen.toExamenDto(), preguntas, totalEvaluables = preguntas.count { !it.anulada })
+        return AppExamenDetalleResponse(examen.toExamenDto(comunidadCodigos), preguntas, totalEvaluables = preguntas.count { !it.anulada })
     }
 
     /**
@@ -828,7 +831,7 @@ class AppV1Gateway private constructor(
             )
         }
 
-    private fun JsonObject.toExamenDto() = AppExamenDto(
+    private fun JsonObject.toExamenDto(comunidadCodigos: Map<String, String> = emptyMap()) = AppExamenDto(
         id = str("id")!!,
         titulo = str("titulo").orEmpty(),
         descripcion = str("descripcion").orEmpty(),
@@ -836,7 +839,30 @@ class AppV1Gateway private constructor(
         tipoAcceso = str("tipo_acceso").orEmpty(),
         totalPreguntas = int("total_preguntas") ?: 0,
         anio = int("anio"),
+        comunidadCodigo = str("comunidad_id")?.let(comunidadCodigos::get),
     )
+
+    /**
+     * `comunidad_id` → código ISO 3166-2:ES (`ES-MD`) de las comunidades que usan estos exámenes.
+     *
+     * La portada de un examen se resuelve en el cliente a partir de (tipo + comunidad) y necesita
+     * un identificador ESTABLE de la comunidad: el uuid cambia entre entornos, el código no (es la
+     * clave de unión con los vectores, ver la siembra de `comunidades_autonomas`). Una sola lectura
+     * de una tabla de 19 filas, y sólo si algún examen tiene comunidad.
+     *
+     * Un fallo aquí NUNCA rompe el catálogo: los exámenes salen sin `comunidadCodigo` y el cliente
+     * cae a su portada genérica.
+     */
+    private fun List<JsonObject>.comunidadCodigos(): Map<String, String> {
+        if (none { it.str("comunidad_id") != null }) return emptyMap()
+        return runCatching {
+            get("/rest/v1/comunidades_autonomas?select=id,codigo").mapNotNull { row ->
+                val id = row.str("id") ?: return@mapNotNull null
+                val codigo = row.str("codigo")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                id to codigo
+            }.toMap()
+        }.getOrDefault(emptyMap())
+    }
 
     private fun JsonObject.toIntentoDto() = AppIntentoDto(
         id = str("id")!!,

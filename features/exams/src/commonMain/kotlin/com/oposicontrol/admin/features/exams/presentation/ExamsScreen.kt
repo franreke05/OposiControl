@@ -131,7 +131,7 @@ fun ExamsContent(
     // Especialidad (pendingDeleteTarget + ConfirmPendingDelete en el ViewModel)
     // — no uno nuevo sólo para Exámenes, para no duplicar el mensaje y el estado
     // de "hay un borrado pendiente" en dos sitios. Esta pantalla puede producir
-    // dos de esos targets: archivar el examen y quitar su portada.
+    // dos de esos targets: archivar el examen y borrarlo para siempre.
     when (state.pendingDeleteTarget) {
         PendingDeleteTarget.ArchiveExam -> ConfirmDialog(
             title = "Archivar examen",
@@ -148,13 +148,6 @@ fun ExamsContent(
             message = state.pendingDeleteMessage,
             confirmLabel = "Sí, eliminar",
             dismissLabel = "No eliminar",
-            onConfirm = { onIntent(ExamsIntent.ConfirmPendingDelete) },
-            onDismiss = { onIntent(ExamsIntent.DismissPendingDelete) },
-        )
-        PendingDeleteTarget.ExamCover -> ConfirmDialog(
-            title = "Quitar portada",
-            message = state.pendingDeleteMessage,
-            confirmLabel = "Quitar",
             onConfirm = { onIntent(ExamsIntent.ConfirmPendingDelete) },
             onDismiss = { onIntent(ExamsIntent.DismissPendingDelete) },
         )
@@ -734,10 +727,9 @@ private fun ExamConfigurationTab(
                 )
             }
         }
-        // Sin HelpTopic propio: no hay una regla de negocio no obvia que explicar
-        // aqui (formatos y tamano maximo ya se ven en el propio uploader).
+        // Sin HelpTopic propio: la portada es una elección de un catálogo cerrado.
         FormSection(title = "Portada") {
-            CoverEditor(state = state, onIntent = onIntent)
+            ExamCoverPreview(state = state)
         }
     }
 }
@@ -926,87 +918,6 @@ private fun ExamFormActions(
                 enabled = canSave,
                 loading = saving,
             )
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Portada
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun CoverEditor(
-    state: ExamsState,
-    onIntent: (ExamsIntent) -> Unit,
-) {
-    val tokens = GlassTheme.tokens
-    val picker = rememberContentFilePickerLauncher(mimeType = "image/*") { picked ->
-        onIntent(ExamsIntent.SelectExamCoverFile(picked.uri, picked.name, picked.mimeType))
-    }
-    val hasCover = state.editorCoverUrl.isNotBlank() || state.editorCoverLocalUri.isNotBlank()
-    val uploading = state.coverUploadState is UiAsync.Loading
-
-    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-        Box(modifier = Modifier.width(220.dp)) {
-            GlassSurface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = Radius.md,
-                tint = tokens.surfaceMuted,
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(Spacing.md),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (hasCover) {
-                        Text(
-                            text = state.editorCoverFileName.ifBlank { "Portada guardada" },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = tokens.textSecondary,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    } else {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            AppIconImage(AppIcon.EXAMS, size = 22.dp, tint = tokens.textSecondary)
-                            Text(
-                                text = "Sin portada",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = tokens.textSecondary,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-            SecondaryButton(
-                text = if (hasCover) "Sustituir" else "Subir imagen",
-                size = ButtonSize.COMPACT,
-                onClick = { picker.open() },
-            )
-            if (state.editorCoverLocalUri.isNotBlank()) {
-                PrimaryButton(
-                    text = "Guardar portada",
-                    size = ButtonSize.COMPACT,
-                    loading = uploading,
-                    onClick = { onIntent(ExamsIntent.UploadExamCover) },
-                )
-            }
-            if (state.editorCoverUrl.isNotBlank()) {
-                GhostButton(
-                    text = "Quitar",
-                    size = ButtonSize.COMPACT,
-                    onClick = { onIntent(ExamsIntent.RequestClearExamCover) },
-                )
-            }
-        }
-        Text(
-            text = "JPG, PNG o WEBP. Tamaño máximo 10 MB.",
-            style = MaterialTheme.typography.bodySmall,
-            color = tokens.textSecondary,
-        )
-        (state.coverUploadState as? UiAsync.Error)?.let { error ->
-            Text(error.error.humanMessage(), style = MaterialTheme.typography.bodySmall, color = tokens.danger)
         }
     }
 }

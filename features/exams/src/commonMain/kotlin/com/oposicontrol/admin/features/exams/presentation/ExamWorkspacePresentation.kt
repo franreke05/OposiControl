@@ -5,11 +5,14 @@ import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.SemanticRole
 import com.oposicontrol.admin.domain.model.Community
 import com.oposicontrol.admin.domain.model.Exam
+import com.oposicontrol.admin.domain.model.ExamCover
+import com.oposicontrol.admin.domain.model.ExamCoverKind
+import com.oposicontrol.admin.domain.model.ExamCoverResolver
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamStatus
+import com.oposicontrol.admin.domain.model.ExamType
 import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.QuestionType
-import com.oposicontrol.admin.core.ui.components.humanMessage
 import com.oposicontrol.admin.domain.model.Specialty
 import com.oposicontrol.admin.domain.model.SpecialtyCapabilities
 
@@ -691,211 +694,62 @@ enum class ExamCheckId {
 // ---------------------------------------------------------------------------
 
 /**
- * En qué punto está la portada del examen.
- *
- * Siete situaciones y no dos. El editor anterior distinguía «hay» y «no hay», y
- * con eso ofrecía «Guardar portada» también en un examen que todavía no existe —
- * un botón que sólo podía producir «Guarda el examen antes de subir portada».
- *
- * El camino de examen nuevo **ya funciona y no hay que inventarlo** (D3, opción
- * B): `saveExam` captura la selección local, crea el examen y encadena la subida
- * con el id recién creado. Lo que faltaba no era almacenamiento temporal, era
- * **decirlo**: en un examen nuevo la imagen se sube al crearlo, y la interfaz
- * tiene que prometer eso y no otra cosa.
+ * Subtítulo del bloque de portada. La portada ya no se sube ni se elige ni se guarda: se deduce
+ * del tipo y de la comunidad del examen (`ExamCoverResolver`), y el bloque es una previsualización.
  */
-enum class ExamCoverStage {
-    /** Ni portada guardada ni fichero elegido. */
-    EMPTY,
-
-    /** Examen nuevo con fichero elegido: se subirá al crear el examen. */
-    PENDING_ON_CREATE,
-
-    /** Examen existente sin portada, con fichero elegido: se sube ahora. */
-    PENDING_UPLOAD,
-
-    /** Portada guardada en el servidor, sin cambios pendientes. */
-    STORED,
-
-    /** Portada guardada y un fichero nuevo elegido que la sustituirá. */
-    REPLACING,
-
-    /** Subida en curso. */
-    UPLOADING,
-
-    /**
-     * Retirada en curso.
-     *
-     * Existe aparte de [UPLOADING] porque las dos comparten el mismo estado de
-     * carga (`coverUploadState`) y antes se pintaban igual: quitar una portada
-     * decía «Subiendo…».
-     */
-    REMOVING,
-}
+const val EXAM_COVER_SUBTITLE: String =
+    "La portada se asigna automáticamente según el tipo de examen y la comunidad autónoma."
 
 /**
- * Subtítulo del bloque de portada (D3).
+ * Lo que la previsualización de portada tiene que pintar, decidido fuera del composable.
  *
- * El anterior —«Imagen con la que el examen se presenta en la app»— era falso:
- * `AppExamenDto` no incluye la portada, así que hoy la app no la recibe. La
- * imagen se guarda con el examen y eso es todo lo que se puede afirmar.
- */
-const val EXAM_COVER_SUBTITLE: String = "Imagen guardada con el examen. La API de la app todavía no la envía."
-
-/**
- * Formatos y tamaño (D3). Son EXACTAMENTE los que filtra el selector de fichero
- * y los que cortan cliente y servidor.
- */
-const val EXAM_COVER_FORMATS: String = "JPG, PNG o WEBP · Máximo 10 MB"
-
-/**
- * El aviso antes de quitar la portada (K5-3).
- *
- * Desde PW-8 quitarla pone a null sus columnas y DESPUÉS borra el objeto del
- * bucket (`clearExamenPortada`). El aviso anterior decía que el archivo no se
- * borraba, que era verdad entonces y ya no lo es: sin subirla otra vez, no hay
- * vuelta atrás.
- */
-const val EXAM_COVER_CLEAR_WARNING: String =
-    "La portada deja de estar asociada a este examen y su archivo se borra del almacenamiento."
-
-/**
- * Lo que el bloque de portada tiene que pintar, decidido fuera del composable.
- *
- * [fileName] es el nombre del fichero y nunca un identificador. Sólo lo tiene una
- * portada ELEGIDA: el nombre que dio el selector o el último segmento de su ruta
- * local — nunca la ruta entera, que es el escritorio de quien administra. Una
- * portada GUARDADA no tiene nombre que enseñar (K5-3): desde PW-8 el servidor la
- * guarda como `exam-covers/<examen_id>/<uuid>.<ext>` y su último segmento es un
- * uuid, así que el marcador dice el formato ([storedCoverLabel]) y nada más.
- *
- * [previewPath] es la **vista previa**, y sólo existe para el fichero LOCAL
- * recién elegido: la plataforma de escritorio sí sabe decodificarlo
- * (`NewsBackgroundImage.jvm.kt`, Skia, fuera del hilo de interfaz). La portada ya
- * guardada NO se previsualiza: cargar la remota pediría red desde un Composable y
- * un caché de imágenes que no existe. En su sitio va un marcador honesto,
- * «Portada guardada (PNG)».
- *
- * Lo que NO lleva, y no por olvido: «Cómo se mostrará». Ninguna parte de la app
- * pinta hoy portadas y ningún contrato fija su proporción (D3).
+ * [headline] dice qué portada corresponde y [detail] por qué (o qué falta para que sea la
+ * definitiva). Ninguno de los dos habla de subir, elegir ni guardar: no hay nada que hacer aquí.
  */
 data class ExamCoverPresentation(
-    val stage: ExamCoverStage,
-    val fileName: String?,
-    /**
-     * La línea de estado de la zona de acciones, o `null` si no hay nada que el
-     * marcador no diga ya (P2-4).
-     *
-     * Sin portada, guardada o quitándose, la zona de imagen ya lo dice —«Sin
-     * portada», «Portada guardada», «Quitando…»— y repetirlo al lado era leer lo
-     * mismo dos veces: «Sin portada» dos veces seguidas, o «Portada guardada» y
-     * «Portada guardada con el examen.».
-     */
-    val statusText: String?,
-    /** Qué dice la zona de imagen cuando no hay vista previa que enseñar. */
-    val placeholderText: String,
-    /** Ruta LOCAL del fichero elegido, para la vista previa. Nunca una URL. */
-    val previewPath: String?,
-    val canPick: Boolean,
-    val canUploadNow: Boolean,
-    val canCancelSelection: Boolean,
-    val canRemove: Boolean,
-    val pickLabel: String,
-    val errorMessage: String?,
+    val cover: ExamCover,
+    val headline: String,
+    val detail: String,
 )
 
+/** Cuando sólo hay comunidad por resolver: el catálogo aún no ha llegado (o falló) y no se inventa nombre. */
+private const val EXAM_COVER_COMMUNITY_UNKNOWN: String = "la comunidad elegida"
+
 fun examCoverPresentation(state: ExamsState): ExamCoverPresentation {
-    val isNew = state.selectedExamId == null
-    // Guardada = hay RUTA de objeto (K5-3). La URL ya no vale como señal: es una
-    // firma efímera que el servidor genera en cada lectura, y puede faltar aunque
-    // la portada exista si la firma falló en ese momento.
-    val stored = state.editorCoverStoragePath.isNotBlank()
-    val picked = state.editorCoverLocalUri.isNotBlank()
-    val busy = state.coverUploadState is UiAsync.Loading
-    val pickedName = state.editorCoverFileName.ifBlank { state.editorCoverLocalUri.resourceFileName() }
-
-    val stage = when {
-        // Con fichero elegido, lo que está en curso es su subida; sin él, sólo
-        // puede ser la retirada de la guardada.
-        busy && picked -> ExamCoverStage.UPLOADING
-        busy -> ExamCoverStage.REMOVING
-        picked && stored -> ExamCoverStage.REPLACING
-        picked && isNew -> ExamCoverStage.PENDING_ON_CREATE
-        picked -> ExamCoverStage.PENDING_UPLOAD
-        stored -> ExamCoverStage.STORED
-        else -> ExamCoverStage.EMPTY
+    val community = state.communities.let { it as? UiAsync.Success }?.value
+        ?.firstOrNull { it.id == state.editorCommunityId }
+    val cover = ExamCoverResolver.resolve(state.editorTypeExam, community?.code)
+    val type = ExamType.fromExternal(state.editorTypeExam)
+    return when (cover.kind) {
+        ExamCoverKind.RAFAGA -> ExamCoverPresentation(
+            cover, "Portada de Ráfaga", "Todas las comunidades comparten la portada de Ráfaga.",
+        )
+        ExamCoverKind.RAZONADO -> ExamCoverPresentation(
+            cover, "Portada de Razonado", "Todas las comunidades comparten la portada de Razonado.",
+        )
+        ExamCoverKind.COMMUNITY_VECTOR -> ExamCoverPresentation(
+            cover,
+            "Vector de ${community?.name ?: EXAM_COVER_COMMUNITY_UNKNOWN}",
+            "Un examen Inmersivo usa el vector de su comunidad.",
+        )
+        ExamCoverKind.GENERIC -> ExamCoverPresentation(
+            cover,
+            "Portada provisional",
+            when {
+                type == ExamType.INMERSIVO && state.editorCommunityId == null ->
+                    "Un examen Inmersivo usa el vector de su comunidad: elige una comunidad para verlo."
+                type == ExamType.INMERSIVO -> "Todavía no hay vector para esta comunidad."
+                else -> "El tipo de examen no es reconocible, así que no hay portada que asignar."
+            },
+        )
     }
-
-    return ExamCoverPresentation(
-        stage = stage,
-        fileName = when (stage) {
-            // La guardada no tiene nombre legible: su fichero es un uuid (K5-3).
-            ExamCoverStage.EMPTY, ExamCoverStage.REMOVING, ExamCoverStage.STORED -> null
-            else -> pickedName.ifBlank { null }
-        },
-        statusText = when (stage) {
-            // Lo dice el marcador. Al lado quedan la acción y los formatos.
-            ExamCoverStage.EMPTY, ExamCoverStage.STORED, ExamCoverStage.REMOVING -> null
-            // La frase que faltaba. El botón de subir no aparece aquí porque no
-            // hay a qué examen subirla todavía, y eso hay que decirlo en vez de
-            // ofrecer una acción que devolvería un error de validación.
-            ExamCoverStage.PENDING_ON_CREATE -> "Se subirá al crear el examen."
-            ExamCoverStage.PENDING_UPLOAD -> "Seleccionada. Todavía no está en el servidor."
-            ExamCoverStage.REPLACING -> "Sustituirá a la portada actual al subirla."
-            ExamCoverStage.UPLOADING -> "Subiendo…"
-        },
-        placeholderText = when (stage) {
-            ExamCoverStage.EMPTY -> "Sin portada"
-            ExamCoverStage.STORED -> storedCoverLabel(state.editorCoverMimeType)
-            ExamCoverStage.REMOVING -> "Quitando…"
-            // Sólo se ve si la vista previa no ha podido decodificar el fichero.
-            else -> "Imagen seleccionada"
-        },
-        previewPath = state.editorCoverLocalUri.takeIf { picked && it.isLocalPath() },
-        canPick = !busy,
-        // «Subir ahora» y no «Guardar portada»: el botón primario de la pantalla
-        // se llama «Guardar cambios» y dos «guardar» que hacen cosas distintas en
-        // el mismo formulario es una forma segura de que se pulse el que no era.
-        canUploadNow = stage == ExamCoverStage.PENDING_UPLOAD || stage == ExamCoverStage.REPLACING,
-        // En TODA selección pendiente, no sólo al sustituir (D3). Antes, con una
-        // imagen elegida en un examen nuevo o sin portada, la única salida era
-        // elegir otra: no había forma de volver a «sin portada».
-        canCancelSelection = stage == ExamCoverStage.PENDING_ON_CREATE ||
-            stage == ExamCoverStage.PENDING_UPLOAD ||
-            stage == ExamCoverStage.REPLACING,
-        canRemove = stage == ExamCoverStage.STORED,
-        pickLabel = when (stage) {
-            ExamCoverStage.EMPTY -> "Elegir imagen"
-            ExamCoverStage.STORED -> "Cambiar imagen"
-            else -> "Elegir otra"
-        },
-        errorMessage = (state.coverUploadState as? UiAsync.Error)?.error?.humanMessage(),
-    )
-}
-
-/**
- * El marcador de una portada guardada: «Portada guardada (PNG)» (K5-3).
- *
- * Sustituye al nombre de fichero sacado de la ruta. Desde PW-8 el servidor guarda
- * la portada como `exam-covers/<examen_id>/<uuid>.<ext>` —el CHECK de M6 lo exige—
- * y la URL es una firma efímera, así que de ninguna de las dos sale un nombre que
- * oriente a nadie: sólo un uuid. Lo que sí es un dato es el formato, que viene de
- * `portada_mime_type`. Un tipo que no se reconoce no se adivina: sin paréntesis.
- */
-internal fun storedCoverLabel(mimeType: String): String {
-    val format = when (mimeType.trim().lowercase()) {
-        "image/jpeg", "image/jpg" -> "JPG"
-        "image/png" -> "PNG"
-        "image/webp" -> "WEBP"
-        else -> null
-    }
-    return if (format == null) "Portada guardada" else "Portada guardada ($format)"
 }
 
 /**
  * Si una ruta es LOCAL y por tanto se puede leer sin red.
  *
  * Una URL `http(s)` nunca lo es: la vista previa no descarga nada desde un
- * Composable.
+ * Composable. Ya no la usa la portada (V1.1); sigue usándola `NewsBackgroundImage`.
  */
 internal fun String.isLocalPath(): Boolean {
     val normalized = trim().lowercase()
@@ -943,12 +797,7 @@ fun hasUnsavedExamChanges(state: ExamsState, exam: Exam?): Boolean {
         state.editorPriceTickets.trim().toIntOrNull() != exam.priceTickets ||
         state.editorYear != exam.year?.toString().orEmpty() ||
         state.editorDurationMinutes != exam.durationMinutes?.toString().orEmpty() ||
-        state.editorIsOfficial != exam.isOfficial ||
-        // La RUTA y no la URL (K5-3): la URL es una firma que cambia en cada
-        // lectura del servidor, y compararla anunciaba «cambios sin guardar» en
-        // un examen que nadie había tocado.
-        state.editorCoverStoragePath != exam.coverStoragePath.orEmpty() ||
-        state.editorCoverLocalUri.isNotBlank()
+        state.editorIsOfficial != exam.isOfficial
 }
 
 /**
@@ -1052,15 +901,7 @@ fun examChecks(
                 id = ExamCheckId.UNSAVED_CHANGES,
                 label = "Cambios sin guardar",
                 status = ExamCheckStatus.WARNING,
-                // La portada se separa porque **no viaja con «Guardar cambios»**:
-                // tiene su propia ruta y su propio botón. Decir sólo «lo que se ve
-                // en el editor no está en el servidor» dejaba creer que el botón
-                // primario también la subía.
-                detail = if (state.editorCoverLocalUri.isNotBlank()) {
-                    "Hay una portada elegida que todavía no se ha subido."
-                } else {
-                    "Lo que se ve en el editor todavía no está en el servidor."
-                },
+                detail = "Lo que se ve en el editor todavía no está en el servidor.",
             ),
         )
     }

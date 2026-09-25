@@ -159,7 +159,7 @@ class ExamBasicInfoVisualHarness {
         estados.forEach { (id, state) ->
             // Las dos de portada bajan hasta el bloque: con el alto de 1080 el
             // editor enseña Identificación y Ámbito, y la portada queda debajo.
-            val scroll = EXAM_COVER_FORMATS.takeIf { id.contains("portada") }
+            val scroll = EXAM_COVER_SUBTITLE.takeIf { id.contains("portada") }
             render(Capture("exams-$id-light.png", 1920, 1080, dark = false, scrollTo = scroll), state)
             render(Capture("exams-$id-dark.png", 1920, 1080, dark = true, scrollTo = scroll), state)
         }
@@ -222,9 +222,7 @@ class ExamBasicInfoVisualHarness {
                 creacionRechazadaPorElRecuento(),
             )
         }
-        // Examen nuevo con imagen elegida: vista previa LOCAL real, decodificada
-        // de un PNG de verdad, y «Se subirá al crear el examen».
-        val portada = portadaDePrueba()
+        // Examen nuevo Inmersivo sin comunidad: la portada provisional y su explicación.
         listOf(false, true).forEach { dark ->
             render(
                 Capture(
@@ -232,9 +230,9 @@ class ExamBasicInfoVisualHarness {
                     1920,
                     1080,
                     dark = dark,
-                    scrollTo = EXAM_COVER_FORMATS,
+                    scrollTo = EXAM_COVER_SUBTITLE,
                 ),
-                examenNuevoConPortadaElegida(portada.absolutePath),
+                examenNuevoConPortadaElegida(),
             )
         }
     }
@@ -462,37 +460,6 @@ class ExamBasicInfoVisualHarness {
         File(override ?: "build/visual-harness").also { it.mkdirs() }
     }
 
-    /**
-     * Un PNG de verdad para la vista previa de portada.
-     *
-     * Se genera aquí, en el directorio de salida, y no se versiona: es un
-     * fixture de test. La vista previa lee un fichero local, así que para
-     * comprobar que decodifica hace falta un fichero local que decodificar.
-     */
-    private fun portadaDePrueba(): File {
-        val file = File(outputDir, "fixtures/portada-tcae-mayo.png")
-        if (file.exists()) return file
-        file.parentFile.mkdirs()
-        val width = 880
-        val height = 496
-        val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
-        val graphics = image.createGraphics()
-        graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-        graphics.paint = GradientPaint(
-            0f, 0f, AwtColor(0x1F, 0x5F, 0x9E),
-            width.toFloat(), height.toFloat(), AwtColor(0x2E, 0x9E, 0x6B),
-        )
-        graphics.fillRect(0, 0, width, height)
-        graphics.color = AwtColor.WHITE
-        graphics.font = Font(Font.SANS_SERIF, Font.BOLD, 60)
-        graphics.drawString("TCAE · Simulacro", 56, height - 132)
-        graphics.font = Font(Font.SANS_SERIF, Font.PLAIN, 38)
-        graphics.drawString("Convocatoria mayo 2026", 56, height - 72)
-        graphics.dispose()
-        ImageIO.write(image, "png", file)
-        return file
-    }
-
 }
 
 /**
@@ -688,9 +655,6 @@ private fun abierto(
     editorYear = exam.year?.toString().orEmpty(),
     editorDurationMinutes = exam.durationMinutes?.toString().orEmpty(),
     editorIsOfficial = exam.isOfficial,
-    editorCoverUrl = exam.coverUrl.orEmpty(),
-    editorCoverStoragePath = exam.coverStoragePath.orEmpty(),
-    editorCoverMimeType = exam.coverMimeType.orEmpty(),
 )
 
 /** BASIC-02 · examen guardado, con comunidad real, preguntas y sin nada pendiente. */
@@ -833,41 +797,24 @@ private fun comunidadNoDisponible(): ExamsState = abierto(
 )
 
 /**
- * BASIC-06 · portada ya subida: marcador «Portada guardada (PNG)» y acciones de
- * cambiar y quitar. Sin nombre de fichero: desde PW-8 la ruta es
- * `exam-covers/<examen_id>/<uuid>.<ext>` y la URL una firma efímera (K5-3).
+ * BASIC-06 · portada automática de un examen Inmersivo (vector de su comunidad si la tiene).
  *
- * El examen modificado se REEMPLAZA dentro del catalogo, no solo se abre. Un
- * `copy()` suelto deja el catalogo con la portada a null y el editor con la ruta,
- * asi que `hasUnsavedExamChanges` lo declara sucio y la captura sale con la barra
- * avisando de cambios que nadie ha hecho — un fallo del fixture disfrazado de
- * fallo de la pantalla, que es peor que no tener la captura.
+ * El examen modificado se REEMPLAZA dentro del catalogo, no solo se abre: un `copy()` suelto
+ * deja el catalogo con el tipo anterior y el editor con el nuevo, así que `hasUnsavedExamChanges`
+ * lo declara sucio y la captura sale con la barra avisando de cambios que nadie ha hecho.
  */
 private fun conPortadaGuardada(): ExamsState {
-    val path = "exam-covers/ex-1/3b0e8f7a-52c4-4e1d-9a6b-1f2d3c4b5a69.png"
-    val url = "https://cdn.oposicontrol.dev/storage/v1/object/sign/exam-resources/$path?token=firma"
-    val conPortada = CATALOGO[0].copy(
-        coverUrl = url,
-        coverStoragePath = path,
-        coverMimeType = "image/png",
-    )
+    val conPortada = CATALOGO[0].copy(typeExam = "inmersivo")
     val catalogo = CATALOGO.map { if (it.id == conPortada.id) conPortada else it }
     return abierto(conPortada).copy(exams = UiAsync.Success(catalogo), catalogExams = catalogo)
 }
 
-/**
- * Examen nuevo con imagen elegida.
- *
- * Aquí NO se ofrece «Subir ahora»: no hay examen al que subirla. Lo que se dice
- * es lo que de verdad va a pasar —se subirá al crear el examen— y la imagen se
- * ve: es un fichero local y la plataforma lo decodifica.
- */
-private fun examenNuevoConPortadaElegida(localPath: String): ExamsState = examenNuevoVacio().copy(
+/** Examen nuevo de tipo Inmersivo: la previsualización de portada avisa de que falta la comunidad. */
+private fun examenNuevoConPortadaElegida(): ExamsState = examenNuevoVacio().copy(
     editorTitle = "TCAE · Simulacro mayo",
     editorSpecialtyId = "esp-tcae",
     specialtyCapabilities = UiAsync.Success(CAPACIDADES),
-    editorCoverLocalUri = localPath,
-    editorCoverFileName = File(localPath).name,
+    editorTypeExam = "inmersivo",
 )
 
 /** Especialidades caídas en un examen NUEVO: sin catálogo no hay forma de elegir una. */

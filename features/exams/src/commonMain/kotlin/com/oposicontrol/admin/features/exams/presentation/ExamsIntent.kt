@@ -49,7 +49,6 @@ sealed interface ExamsIntent {
     data object DeleteSelectedRafagaQuestion : ExamsIntent
     data object RequestDeleteSelectedQuestion : ExamsIntent
     data object RequestDeleteSelectedRafagaQuestion : ExamsIntent
-    data object RequestClearExamCover : ExamsIntent
     data object PublishExam : ExamsIntent
     data object UnpublishExam : ExamsIntent
     data object ConfirmPendingDelete : ExamsIntent
@@ -119,20 +118,6 @@ sealed interface ExamsIntent {
     data class UpdateYear(val value: String) : ExamsIntent
     data class ToggleIsOfficial(val value: Boolean) : ExamsIntent
     data class UpdateDurationMinutes(val value: String) : ExamsIntent
-    data class SelectExamCoverFile(val uri: String, val suggestedName: String, val mimeType: String?) : ExamsIntent
-    data object UploadExamCover : ExamsIntent
-
-    /**
-     * Deshacer la ELECCIÓN local de portada, no la portada guardada.
-     *
-     * Sólo tiene sentido cuando hay una imagen en el servidor y otra elegida
-     * encima: sin esto, la única forma de arrepentirse de haber pinchado el
-     * fichero equivocado era subirlo y luego quitarlo, que sí toca el servidor.
-     * No confundir con `RequestClearExamCover`, que borra la portada de verdad y
-     * por eso pasa por un diálogo.
-     */
-    data object CancelExamCoverSelection : ExamsIntent
-    data object ClearExamCover : ExamsIntent
     data class UpdateQuestionTitle(val value: String) : ExamsIntent
     data class UpdateQuestionStatement(val value: String) : ExamsIntent
     data class UpdateOptionContent(val optionId: String, val value: String) : ExamsIntent

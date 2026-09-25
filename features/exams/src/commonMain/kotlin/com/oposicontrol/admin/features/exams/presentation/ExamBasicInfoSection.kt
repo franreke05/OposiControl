@@ -14,7 +14,7 @@ import com.oposicontrol.admin.core.ui.components.SemanticRole
 import com.oposicontrol.admin.core.ui.theme.Spacing
 
 /**
- * Quién es este examen: identidad, dónde vive y con qué imagen se guarda.
+ * Quién es este examen: identidad, dónde vive y qué portada le corresponde.
  *
  * Tres bloques, cada uno con su icono, su título y su descripción, y ninguno de
  * adorno. Los campos son exactamente los que la tabla `examenes` guarda y el
@@ -27,10 +27,8 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
  *  - **Comunidad** es opcional: sin ella el examen es nacional. El identificador
  *    de comunidad no se enseña jamás, sólo su nombre — y cuando el catálogo no
  *    se ha podido leer, tampoco se inventa uno (ver [ExamCommunityPicker]).
- *  - **Portada** vive aquí y no en Recursos porque es lo único que un examen
- *    tiene colgando de sí mismo: `portada_url` es una columna de `examenes`. Los
- *    recursos cuelgan de cada pregunta, que es otra cosa, y se suben por otro
- *    camino.
+ *  - **Portada** es una previsualización automática (`ExamCoverPreview`): se deduce del tipo y de
+ *    la comunidad del examen y no se sube, ni se elige, ni se guarda.
  *
  * Lo que NO está, y no por olvido:
  *
@@ -40,8 +38,6 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
  *  - Un contador de caracteres en la descripción. **No hay límite real** (D7):
  *    ni la columna ni el backend imponen uno, así que un «0/500» sería una
  *    restricción inventada que además se leería como oficial.
- *  - «Cómo se mostrará» encima de la portada (D3): ninguna parte de la app pinta
- *    hoy portadas y la proporción no está en ningún contrato.
  *
  * **Por qué sigue usando [FormSection] y no el contenedor de cristal.** El
  * contenido de una pestaña ya vive dentro del `GlassSectionSurface` del marco del
@@ -202,7 +198,7 @@ internal fun ExamBasicInfoSection(
             icon = AppIcon.ASSETS,
             iconRole = SemanticRole.INFO,
         ) {
-            ExamWorkspaceCoverEditor(state = state, onIntent = onIntent)
+            ExamCoverPreview(state = state)
         }
     }
 }

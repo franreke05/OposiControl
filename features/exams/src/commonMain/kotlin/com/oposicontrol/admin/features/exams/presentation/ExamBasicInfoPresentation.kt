@@ -845,7 +845,7 @@ internal fun examCatalogQuestionsLabel(state: ExamsState, exam: Exam): String = 
 val examInformationLines: List<String> = listOf(
     "El tipo de examen lo limitan las capacidades de la especialidad.",
     "Los recursos pertenecen a cada pregunta, no al examen: se gestionan desde el banco de Preguntas.",
-    "La portada elegida se sube al pulsar «Subir ahora» o al guardar el examen.",
+    "La portada se asigna sola según el tipo y la comunidad del examen: no se sube ni se guarda.",
     "Las preguntas de este examen se gestionan desde el banco de Preguntas. Crear o editar preguntas todavía no funciona.",
 )
 

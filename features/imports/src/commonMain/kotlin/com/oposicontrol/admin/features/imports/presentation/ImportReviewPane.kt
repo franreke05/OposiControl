@@ -387,6 +387,7 @@ private fun ImportStagingDetail(
                         onIntent(ImportIntent.UpdateEditDraft(updated))
                     },
                     placeholder = "Opción $label",
+                    singleLine = false,
                     enabled = editable,
                 )
             }

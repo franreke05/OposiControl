@@ -73,7 +73,7 @@ Common: Domain `admin`; Authorization `ADMIN_REQUIRED`; Route implementation `Ad
 | `ADMIN-004` | PATCH | `/api/v1/admin/examenes/{id}/preguntas/orden` | `SOURCE_VERIFIED` |
 | `ADMIN-005` | POST | `/api/v1/admin/examenes/{id}/publicar` | `SOURCE_VERIFIED` |
 | `ADMIN-006` | POST | `/api/v1/admin/examenes/{id}/despublicar` | `SOURCE_VERIFIED` |
-| `ADMIN-007` | POST/DELETE | `/api/v1/admin/examenes/{id}/portada` | `SOURCE_VERIFIED` |
+| `ADMIN-007` | POST/DELETE | `/api/v1/admin/examenes/{id}/portada` | `SOURCE_VERIFIED` · LEGACY sin uso desde la UI desde Exam cover V1.1 (DEBT-071) |
 | `ADMIN-008` | GET/POST/PATCH/DELETE | `/api/v1/admin/preguntas[/{id}]` | `SOURCE_VERIFIED` |
 | `ADMIN-009` | GET/POST | `/api/v1/admin/preguntas/{id}/recursos` | `SOURCE_VERIFIED` |
 | `ADMIN-010` | PATCH/DELETE | `/api/v1/admin/preguntas/{id}/recursos/{recursoId}` | `SOURCE_VERIFIED` |
@@ -124,7 +124,7 @@ Common: Domain `app`; Authorization `JWT_REQUIRED`, with documented dev fallback
 | Endpoint ID | Method | Path | Status |
 |---|---|---|---|
 | `APP-001` | GET | `/api/v1/app/home` | `SOURCE_VERIFIED` |
-| `APP-002` | GET | `/api/v1/app/examenes` | `SOURCE_VERIFIED` |
+| `APP-002` | GET | `/api/v1/app/examenes` | `SOURCE_VERIFIED` · cada examen trae `tipoExamen` y `comunidadCodigo` (ISO 3166-2:ES, `null` = nacional) para resolver su portada en el cliente |
 | `APP-003` | GET | `/api/v1/app/examenes/{id}` | `SOURCE_VERIFIED` |
 | `APP-004` | POST | `/api/v1/app/examenes/{id}/iniciar` | `SOURCE_VERIFIED` |
 | `APP-005` | POST | `/api/v1/app/intentos/{id}/responder` | `SOURCE_VERIFIED` |
