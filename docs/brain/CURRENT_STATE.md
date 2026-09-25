@@ -1117,3 +1117,30 @@ Rama `feature/question-resources-audio-video` (sin merge ni push).
 - **Inmersiva utilizable = al menos un audio activo**: `vincularPreguntaExamen` (422 `QUESTION_IMMERSIVE_REQUIRES_AUDIO`) y `publicarExamen` (422 `EXAM_PUBLISH_IMMERSIVE_WITHOUT_AUDIO`) lo imponen; la pregunta se guarda igualmente. El editor avisa con `lacksRequiredAudio()`. Ráfaga y razonada no piden nada.
 - **Riesgo**: los exámenes con inmersivas ya vinculadas SIN audio no podrán publicarse hasta añadirles uno (no se ha auditado el dato real en MAIN). La RPC `admin_link_question_to_exam` no se ha tocado: la regla vive en Ktor, por lo que otra vía que llame directamente a la RPC la esquivaría.
 - **Pruebas**: `:features:questions:jvmTest`, `:data:jvmTest`, `:domain:jvmTest`, `:features:exams:jvmTest`, `:backend:ktor:test` (incluye `ImmersiveAudioRuleTest`) en verde; `:composeApp:compileKotlinJvm` correcto. NOT_VERIFIED: recorrido en ventana real del popup.
+### OposiMarket: escaparate de exámenes publicados (2026-09-25)
+
+Rama `feature/oposimarket-published-exams`, desde `main` (`4530b73`). Nueva
+sección **«Exámenes publicados»** en OposiMarket, primera pestaña y la que abre
+por defecto: rejilla con todos los exámenes PUBLICADOS (ráfaga, razonado e
+inmersivo) y su portada, con búsqueda (título, especialidad, código) y filtro
+por tipo con recuento. Solo consulta; los datos se editan en Exámenes.
+
+- `CURRENT_IMPLEMENTATION`: el estado se filtra en cliente
+  (`publishedExams`: `PUBLISHED` y no borrado) sobre `refreshAllExams()`, que
+  devuelve el catálogo completo. Un fallo de carga es error con reintento, no un
+  escaparate vacío; sin publicados es `Empty` con su mensaje.
+- La portada se **compone** en la app (`ExamCoverArt`, 264×148, 16:9): fondo oscuro
+  `#131313` del diseño de Figma (nodo `59527:25808`, «icono/card») con la
+  ilustración vectorial dorada de la comunidad para los inmersivos, el viento
+  para las ráfagas y la brújula para los razonados. 21 vectores en
+  `features/store/src/commonMain/composeResources/drawable/cover_*.xml`
+  (convertidos de SVG a vector drawable para que carguen igual en escritorio,
+  Android e iOS; `cover_rafagas_xs` queda sin usar, es el tamaño compacto).
+  La ilustración sale de `coverArtworkFor` (pura y testeada: seed canónico de 19
+  comunidades; Cataluña usa Barcelona y Ceuta/Melilla comparten). Un inmersivo
+  sin comunidad, o con una que el diseño no cubre, usa el icono genérico:
+  no se inventa la de otra comunidad.
+- `PRODUCT_DECISION_PENDING`: pantalla por revisar por el producto tras ver las
+  portadas; falta el diseño de los inmersivos sin comunidad (examen nacional).
+- Tests: 13 nuevos en `features/store` (lógica pura + `MarketViewModel`) y un
+  banco visual (`PublishedExamsVisualHarness`, 7 capturas claro/oscuro/estados).
