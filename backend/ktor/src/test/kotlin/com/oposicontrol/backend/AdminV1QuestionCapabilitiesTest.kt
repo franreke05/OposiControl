@@ -191,14 +191,12 @@ class AdminV1QuestionCapabilitiesTest {
         assertTrue(!cuerpo.contains("examen") && !cuerpo.contains("posicion"), cuerpo)
     }
 
-    /** La regla, por la ruta de recursos: afirmada sobre la ausencia del INSERT y no sobre el 422. */
+    /** La regla, por la puerta que queda (la subida): una ráfaga no admite recursos y no se toca nada. */
     @Test fun unaPreguntaDeRafagaNoGanaUnRecursoNuevo() {
         val upstream = mutableListOf<HttpRequest>()
         val gateway = gatewayWith(upstream, preguntaRows = preguntaRow(tipo = "rafaga"))
 
-        val error = assertFailsWith<BackendDomainException> {
-            gateway.addRecurso(preguntaId, AdminRecursoDto(tipoRecurso = "texto", titulo = "a", contenidoTexto = "t"))
-        }
+        val error = assertFailsWith<BackendDomainException> { gateway.requireQuestionAcceptsResources(preguntaId) }
 
         assertEquals("QUESTION_TYPE_REJECTS_RESOURCES", error.errorCode)
         assertTrue(
@@ -208,16 +206,11 @@ class AdminV1QuestionCapabilitiesTest {
     }
 
     /** Control obligatorio: sin el, «rechazar todo recurso» pasaria el anterior. */
-    @Test fun unaPreguntaInmersivaSiGanaSuRecurso() {
+    @Test fun unaPreguntaInmersivaSiAdmiteRecursos() {
         val upstream = mutableListOf<HttpRequest>()
         val gateway = gatewayWith(upstream, preguntaRows = preguntaRow(tipo = "inmersiva"))
 
-        gateway.addRecurso(preguntaId, AdminRecursoDto(tipoRecurso = "texto", titulo = "a", contenidoTexto = "t"))
-
-        assertTrue(
-            upstream.any { it.method() == "POST" && it.uri().rawPath.contains("recursos_pregunta") },
-            "la inmersiva tiene que poder adjuntar: " + upstream.describe(),
-        )
+        gateway.requireQuestionAcceptsResources(preguntaId)
     }
 
     /**

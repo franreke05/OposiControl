@@ -1107,3 +1107,13 @@ Detalle completo, con fichero:línea de lo aplicado y de lo registrado, en
 Los hallazgos Tier 2/3 restantes de los 8 informes tampoco se aplicaron
 (cambian comportamiento observable, piden un test que no existe o son decisión
 de producto/arquitectura); quedan documentados con precisión de línea.
+
+## Recursos de pregunta: sólo imagen, audio y vídeo; inmersiva exige audio (2026-09-25)
+
+Rama `feature/question-resources-audio-video` (sin merge ni push).
+
+- **Tipos**: los únicos recursos son `imagen`, `audio` y `video`, siempre con archivo. Se eliminan `pdf`, `texto` y `enlace` del cliente (`QuestionResourceKind`, formulario, selector de archivos, repositorio) y del backend (`QUESTION_RESOURCE_MIME` sin `application/pdf`; `POST /preguntas/{id}/recursos` por JSON rechaza todo con 422). Los recursos históricos de otros tipos siguen leyéndose.
+- **Sin tope de producto**: desaparece el «Máximo 50 MB» del popup y el `require` de cliente. El servidor conserva un techo TÉCNICO de 300 MB (el archivo se carga en memoria para comprimirlo; no puede ser ilimitado) y comprime antes de subir a Storage. NOT_VERIFIED: el límite por objeto del bucket `recursos-pregunta` en Supabase aplica al archivo ya comprimido; un archivo que siga por encima fallará en `storagePut` con error genérico.
+- **Inmersiva utilizable = al menos un audio activo**: `vincularPreguntaExamen` (422 `QUESTION_IMMERSIVE_REQUIRES_AUDIO`) y `publicarExamen` (422 `EXAM_PUBLISH_IMMERSIVE_WITHOUT_AUDIO`) lo imponen; la pregunta se guarda igualmente. El editor avisa con `lacksRequiredAudio()`. Ráfaga y razonada no piden nada.
+- **Riesgo**: los exámenes con inmersivas ya vinculadas SIN audio no podrán publicarse hasta añadirles uno (no se ha auditado el dato real en MAIN). La RPC `admin_link_question_to_exam` no se ha tocado: la regla vive en Ktor, por lo que otra vía que llame directamente a la RPC la esquivaría.
+- **Pruebas**: `:features:questions:jvmTest`, `:data:jvmTest`, `:domain:jvmTest`, `:features:exams:jvmTest`, `:backend:ktor:test` (incluye `ImmersiveAudioRuleTest`) en verde; `:composeApp:compileKotlinJvm` correcto. NOT_VERIFIED: recorrido en ventana real del popup.

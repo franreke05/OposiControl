@@ -568,7 +568,8 @@ class BackendErrorsTest {
             "QUESTION_RESOURCE_TYPE_INVALID" to HttpStatusCode.UnprocessableEntity,
             "QUESTION_RESOURCE_TOO_LARGE" to HttpStatusCode.PayloadTooLarge,
             "QUESTION_RESOURCE_UPLOAD_REQUIRED" to HttpStatusCode.UnprocessableEntity,
-            "QUESTION_RESOURCE_URL_INVALID" to HttpStatusCode.UnprocessableEntity,
+            "QUESTION_IMMERSIVE_REQUIRES_AUDIO" to HttpStatusCode.UnprocessableEntity,
+            "EXAM_PUBLISH_IMMERSIVE_WITHOUT_AUDIO" to HttpStatusCode.UnprocessableEntity,
             // IM2 / IM3 · importaciones (KI0-6)
             "IMPORT_LOTE_ID_REQUIRED" to HttpStatusCode.BadRequest,
             "IMPORT_LOTE_NOT_FOUND" to HttpStatusCode.NotFound,

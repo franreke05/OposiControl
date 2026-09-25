@@ -50,18 +50,12 @@ sealed interface QuestionsIntent {
     data object RequestAddResource : QuestionsIntent
     data object CancelResourceDialog : QuestionsIntent
 
-    /** Cambiar de tipo VACÍA lo que ese tipo no admite; ver `QuestionResourceForm.withKind`. */
+    /** Los tres tipos que se pueden crear: imagen, audio y vídeo. Ver [QuestionResourceKind]. */
     data class UpdateResourceKind(val kind: QuestionResourceKind) : QuestionsIntent
     data class UpdateResourceTitle(val value: String) : QuestionsIntent
     data class UpdateResourceDescription(val value: String) : QuestionsIntent
 
-    /** Sólo `enlace`. */
-    data class UpdateResourceUrl(val value: String) : QuestionsIntent
-
-    /** Sólo `texto`. */
-    data class UpdateResourceText(val value: String) : QuestionsIntent
-
-    /** Sólo `imagen`, `audio`, `video` y `pdf`: los bytes ya leídos por el selector. */
+    /** Los bytes ya leídos por el selector de la plataforma. */
     data class PickResourceFile(val file: QuestionResourceFile) : QuestionsIntent
     data object ClearResourceFile : QuestionsIntent
     data object ConfirmAddResource : QuestionsIntent

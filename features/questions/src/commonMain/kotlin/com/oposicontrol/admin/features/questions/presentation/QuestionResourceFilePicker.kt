@@ -30,7 +30,7 @@ class QuestionResourceFilePicker(
 
 /**
  * [kind] elige el filtro del diálogo y el MIME que se declara: son los mismos
- * cuatro tipos de archivo que el servidor admite. La AUTORIDAD sigue siendo suya —
+ * tres tipos de archivo que se pueden crear. La AUTORIDAD sigue siendo suya —
  * un MIME que no case con el tipo es un `QUESTION_RESOURCE_TYPE_INVALID` que él
  * redacta—; esto sólo evita ofrecer un `.docx` para un recurso de tipo `imagen`.
  */

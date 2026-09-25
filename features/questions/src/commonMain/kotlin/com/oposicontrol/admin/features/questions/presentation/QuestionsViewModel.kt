@@ -195,21 +195,8 @@ class QuestionsViewModel(
             is QuestionsIntent.UpdateResourceDescription -> updateState {
                 it.copy(resourceForm = it.resourceForm.copy(description = intent.value))
             }
-            is QuestionsIntent.UpdateResourceUrl -> updateState {
-                it.copy(resourceForm = it.resourceForm.copy(externalUrl = intent.value))
-            }
-            is QuestionsIntent.UpdateResourceText -> updateState {
-                it.copy(resourceForm = it.resourceForm.copy(textBody = intent.value))
-            }
-            // Un archivo elegido sobre un tipo que no lo admite se descarta aquí: el
-            // selector sólo se ofrece para los cuatro de archivo, pero el intent es
-            // público y no puede ser la única red.
             is QuestionsIntent.PickResourceFile -> updateState {
-                if (!it.resourceForm.kind.requiresFile) {
-                    it
-                } else {
-                    it.copy(resourceForm = it.resourceForm.copy(file = intent.file), resourceSaveState = UiAsync.Idle)
-                }
+                it.copy(resourceForm = it.resourceForm.copy(file = intent.file), resourceSaveState = UiAsync.Idle)
             }
             QuestionsIntent.ClearResourceFile -> updateState {
                 it.copy(resourceForm = it.resourceForm.copy(file = null))
@@ -536,18 +523,16 @@ class QuestionsViewModel(
             return updateState { it.copy(resourceSaveState = UiAsync.Error(AppError.Validation(reason))) }
         }
         updateState { it.copy(resourceSaveState = UiAsync.Loading) }
-        val draft = form.toDraft()
-        val file = form.file
-        val result = if (form.kind.requiresFile && file != null) {
-            questionsRepository.uploadQuestionResourceFile(
-                questionId = questionId,
-                resourceId = state.resourceDraftId,
-                draft = draft,
-                file = file,
-            )
-        } else {
-            questionsRepository.createQuestionResource(questionId, draft)
+        // `validationError()` ya garantiza que hay archivo: los tres tipos lo exigen.
+        val file = form.file ?: return updateState {
+            it.copy(resourceSaveState = UiAsync.Error(AppError.Validation("Elige el archivo que quieres subir.")))
         }
+        val result = questionsRepository.uploadQuestionResourceFile(
+            questionId = questionId,
+            resourceId = state.resourceDraftId,
+            draft = form.toDraft(),
+            file = file,
+        )
         when (result) {
             is AppResult.Failure -> updateState { it.copy(resourceSaveState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {

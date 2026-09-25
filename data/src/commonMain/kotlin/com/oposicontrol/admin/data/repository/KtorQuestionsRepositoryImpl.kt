@@ -240,26 +240,6 @@ class KtorQuestionsRepositoryImpl(
         response.body<QRecursosResponse>().data.map { it.toResource() }.sortedBy { it.sortOrder }
     }
 
-    /**
-     * Alta por referencia. Sólo viaja el campo que corresponde al tipo
-     * ([QuestionResourceDraft] ya los trae excluyentes), así que este cuerpo no
-     * puede llevar una `urlExterna` en un `imagen` ni un `contenidoTexto` en un
-     * `enlace` — combinaciones que el `CHECK` de la base rechaza.
-     */
-    override suspend fun createQuestionResource(
-        questionId: String,
-        draft: QuestionResourceDraft,
-    ) = adapter.safeCall {
-        val endpoint = BackendRoutes.adminV1PreguntaRecursos(questionId)
-        val response = client.post(url(endpoint)) {
-            adminAuthHeaders(appConfig, sessionLocalDataSource)
-            contentType(ContentType.Application.Json)
-            setBody(draft.toCreateDto())
-            expectSuccess = false
-        }
-        response.requireSuccess(endpoint)
-        response.body<QRecursoResponse>().data.toResource()
-    }
 
     /**
      * Subida del archivo, con el MISMO patrón multipart que `uploadExamCover` y que
@@ -283,7 +263,6 @@ class KtorQuestionsRepositoryImpl(
         draft: QuestionResourceDraft,
         file: QuestionResourceFile,
     ) = adapter.safeCall {
-        require(file.bytes.size <= QUESTION_RESOURCE_MAX_BYTES) { "El archivo del recurso supera el límite de 50 MB." }
         val endpoint = adminV1PreguntaRecursosArchivo(questionId)
         val response = client.post(url(endpoint)) {
             adminAuthHeaders(appConfig, sessionLocalDataSource)
@@ -595,8 +574,9 @@ private data class QRecursoResponse(val data: QRecursoDto)
  *
  * Sin `id`, sin `preguntaId` —van en la ruta— y sin los tres campos de sólo
  * lectura (`rutaStorage`, `mimeType`, `urlAcceso`): no existen en el tipo, así que
- * ningún guardado puede mandarlos. `urlExterna` y `contenidoTexto` son nulables y
- * se omiten cuando no aplican, que es justo lo que el `CHECK` por tipo exige.
+ * ningún guardado puede mandarlos. Ya no lleva `urlExterna` ni `contenidoTexto`:
+ * los recursos que se crean son archivos, y esos dos campos son de `enlace` y
+ * `texto`.
  *
  * `titulo`, `descripcion` y `posicion` van marcados `@EncodeDefault`: con el `Json`
  * del cliente sin `encodeDefaults`, vaciar una descripción no viajaría y el PATCH
@@ -607,8 +587,6 @@ private data class QRecursoWriteDto(
     val tipoRecurso: String,
     @EncodeDefault(EncodeDefault.Mode.ALWAYS) val titulo: String = "",
     @EncodeDefault(EncodeDefault.Mode.ALWAYS) val descripcion: String = "",
-    val urlExterna: String? = null,
-    val contenidoTexto: String? = null,
     @EncodeDefault(EncodeDefault.Mode.ALWAYS) val posicion: Int = 0,
 )
 
@@ -617,8 +595,6 @@ private fun QuestionResourceDraft.toCreateDto() = QRecursoWriteDto(
     tipoRecurso = kind.wireValue,
     titulo = title.trim(),
     descripcion = description.trim(),
-    urlExterna = externalUrl?.trim()?.takeIf { it.isNotEmpty() },
-    contenidoTexto = textBody?.takeIf { it.isNotBlank() },
     posicion = position?.takeIf { it > 0 } ?: 0,
 )
 
@@ -646,8 +622,6 @@ private fun QRecursoDto.toResource() = QuestionResource(
 private fun String.sanitizeQuestionResourceFilename(): String =
     replace("\"", "").trim().ifBlank { "recurso.bin" }
 
-/** El mismo límite que impone el servidor; aquí evita mandar 60 MB para que los rechace. */
-private const val QUESTION_RESOURCE_MAX_BYTES = 50 * 1024 * 1024
 
 /**
  * Presupuesto de tiempo de la subida: 50 MB no caben en los 30 s por defecto del

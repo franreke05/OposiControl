@@ -2080,8 +2080,12 @@ private const val QUESTION_TYPE_WITH_RESOURCES = "inmersiva"
 /** Bucket PRIVADO del material de preguntas (Q3). Privado: se lee con URL firmada, nunca pública. */
 private const val QUESTION_RESOURCES_BUCKET = "recursos-pregunta"
 
-/** 50 MB. Una clase de audio larga cabe; un vídeo de media hora no, y tiene que fallar ANTES de subirse. */
-private const val QUESTION_RESOURCE_MAX_BYTES = 50 * 1024 * 1024
+/**
+ * Techo TÉCNICO de lo que se admite recibir, no un límite de producto: el archivo se
+ * carga entero en memoria para comprimirlo y el servidor no puede aceptar una
+ * cantidad ilimitada. Lo que se sube a Storage es el archivo YA comprimido.
+ */
+private const val QUESTION_RESOURCE_MAX_BYTES = 300 * 1024 * 1024
 
 /** Una hora: suficiente para abrir el material desde la consola y lo bastante corto para que un enlace filtrado caduque. */
 private const val QUESTION_RESOURCE_URL_TTL_SECONDS = 3600
@@ -2098,10 +2102,9 @@ private val QUESTION_RESOURCE_MIME: Map<String, Map<String, String>> = mapOf(
     "imagen" to mapOf("image/png" to "png", "image/jpeg" to "jpg", "image/webp" to "webp", "image/gif" to "gif"),
     "audio" to mapOf("audio/mpeg" to "mp3", "audio/mp4" to "m4a", "audio/wav" to "wav"),
     "video" to mapOf("video/mp4" to "mp4"),
-    "pdf" to mapOf("application/pdf" to "pdf"),
 )
 
-/** Los tipos que EXIGEN archivo: por JSON no se pueden crear (no habría nada que reproducir). */
+/** Los únicos tipos de recurso: los tres llevan archivo, así que por JSON no se pueden crear. */
 private val QUESTION_RESOURCE_FILE_TYPES: Set<String> = QUESTION_RESOURCE_MIME.keys
 
 /**
@@ -3769,6 +3772,7 @@ class AdminV1Gateway private constructor(
      * del banco; lo decide DEC-Q-04 (Q4), no esta función.
      */
     fun publicarExamen(id: String): AdminExamenDto? {
+        requireExamImmersivesHaveAudio(id)
         val saved = request(
             "PATCH",
             "/rest/v1/examenes?id=eq.$id&total_preguntas=gt.0",
@@ -4236,6 +4240,7 @@ class AdminV1Gateway private constructor(
      * de insertar, y recoloca el resto en la misma transacción.
      */
     internal fun vincularPreguntaExamen(examenId: String, preguntaId: String, posicion: Int?) {
+        requireImmersiveHasAudio(preguntaId)
         rpcOrUnavailable(
             "admin_link_question_to_exam",
             buildJsonObject {
@@ -4339,6 +4344,45 @@ class AdminV1Gateway private constructor(
                     "a inmersiva antes de adjuntar material.",
             )
         }
+    }
+
+    /**
+     * Una inmersiva sin ningún audio ACTIVO se guarda pero no se puede usar: ni entrar en
+     * un examen ni publicarse en uno. El resto de tipos no piden nada.
+     *
+     * Una pregunta que no existe pasa de largo: su 404 lo da quien la use después.
+     */
+    private fun requireImmersiveHasAudio(preguntaId: String) {
+        val tipo = request(
+            "GET",
+            "/rest/v1/preguntas?select=tipo_pregunta&id=eq.$preguntaId&limit=1",
+            null,
+        ).decodeList<AdminPreguntaTipoRow>().firstOrNull()?.tipoPregunta ?: return
+        if (!tipo.trim().equals(QUESTION_TYPE_WITH_RESOURCES, ignoreCase = true)) return
+        val conAudio = request(
+            "GET",
+            "/rest/v1/recursos_pregunta?select=id&pregunta_id=eq.$preguntaId&activo=eq.true&tipo_recurso=eq.audio&limit=1",
+            null,
+        ).decodeList<JsonObject>().isNotEmpty()
+        if (!conAudio) throw domainError("QUESTION_IMMERSIVE_REQUIRES_AUDIO")
+    }
+
+    /** Lo mismo sobre un examen entero: no se publica con una inmersiva vinculada que no tenga audio. */
+    private fun requireExamImmersivesHaveAudio(examenId: String) {
+        val inmersivas = request(
+            "GET",
+            "/rest/v1/preguntas_examen?select=pregunta_id,preguntas!inner(tipo_pregunta,activa)" +
+                "&examen_id=eq.$examenId&preguntas.tipo_pregunta=eq.$QUESTION_TYPE_WITH_RESOURCES&preguntas.activa=eq.true",
+            null,
+        ).decodeList<JsonObject>().mapNotNull { (it["pregunta_id"] as? JsonPrimitive)?.content }
+        if (inmersivas.isEmpty()) return
+        val conAudio = request(
+            "GET",
+            "/rest/v1/recursos_pregunta?select=pregunta_id&pregunta_id=in.(${inmersivas.joinToString(",")})" +
+                "&activo=eq.true&tipo_recurso=eq.audio",
+            null,
+        ).decodeList<JsonObject>().mapNotNull { (it["pregunta_id"] as? JsonPrimitive)?.content }.toSet()
+        if (inmersivas.any { it !in conAudio }) throw domainError("EXAM_PUBLISH_IMMERSIVE_WITHOUT_AUDIO")
     }
 
     fun listRecursos(preguntaId: String): List<AdminRecursoDto> =
@@ -4499,38 +4543,14 @@ class AdminV1Gateway private constructor(
     fun addRecurso(preguntaId: String, input: AdminRecursoDto): AdminRecursoDto {
         require(input.tipoRecurso.isNotBlank()) { "El recurso necesita tipo." }
         val tipo = input.tipoRecurso.trim().lowercase()
-        // Un `imagen` sin archivo es una fila que la app no puede pintar: lo que llegaba
-        // por aquí era la RUTA LOCAL del disco del administrador metida en `url_externa`.
-        if (tipo in QUESTION_RESOURCE_FILE_TYPES) throw domainError("QUESTION_RESOURCE_UPLOAD_REQUIRED")
-        if (tipo == "enlace") {
-            val url = input.urlExterna?.trim().orEmpty()
-            if (!url.startsWith("http://") && !url.startsWith("https://")) {
-                throw domainError("QUESTION_RESOURCE_URL_INVALID")
-            }
-        }
-        requireStoredQuestionAcceptsResources(preguntaId)
-        val saved = request(
-            "POST", "/rest/v1/recursos_pregunta",
-            sbJson.encodeToString(
-                listOf(
-                    AdminRecursoRow(
-                        id = UUID.randomUUID().toString(),
-                        preguntaId = preguntaId,
-                        codigoRecurso = "R-" + shortId(),
-                        tipoRecurso = input.tipoRecurso,
-                        titulo = input.titulo,
-                        descripcion = input.descripcion,
-                        urlExterna = input.urlExterna,
-                        contenidoTexto = input.contenidoTexto,
-                        // CHECK recursos_pregunta posicion > 0.
-                        posicion = if (input.posicion > 0) input.posicion else 1,
-                    ),
-                ),
-            ),
-            prefer = "return=representation",
-        ).decodeList<AdminRecursoRow>().let { listOf(it.first()).firmados().first() }
-        registrarAuditoria("recurso_pregunta_creado", "recursos_pregunta", saved.id)
-        return saved
+        // Imagen, audio y vídeo son los únicos tipos y los tres llevan archivo: un `imagen`
+        // sin archivo es una fila que la app no puede pintar (antes llegaba por aquí la RUTA
+        // LOCAL del disco del administrador metida en `url_externa`). Enlace, texto y PDF ya
+        // no existen: no se crean por ninguna vía.
+        throw domainError(
+            if (tipo in QUESTION_RESOURCE_FILE_TYPES) "QUESTION_RESOURCE_UPLOAD_REQUIRED"
+            else "QUESTION_RESOURCE_TYPE_INVALID",
+        )
     }
 
     /**

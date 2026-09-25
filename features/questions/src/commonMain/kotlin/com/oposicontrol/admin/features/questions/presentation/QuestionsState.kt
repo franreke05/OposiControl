@@ -108,13 +108,11 @@ data class QuestionsState(
 )
 
 /**
- * El formulario de alta de un recurso.
+ * El formulario de alta de un recurso: imagen, audio o vídeo, siempre con archivo.
  *
- * **Los campos exclusivos se vacían al cambiar de tipo** ([withKind]). No es un
- * detalle cosmético: la base tiene un `CHECK` por tipo —`texto` sólo con contenido,
- * `enlace` sólo con URL, el resto sólo con archivo en Storage— y guardar un estado
- * donde conviven una URL y un archivo elegido significa que *algún* camino del
- * código puede acabar mandando los dos. Vaciando, no hay ninguno.
+ * Los tres tipos se suben a Storage (ver [QuestionResourceKind]); ya no hay
+ * recursos por referencia —enlace o texto—, así que no hay campos que se vacíen
+ * al cambiar de tipo ni combinaciones que la base rechazaría.
  *
  * `file` lleva los BYTES ya leídos por el selector de la plataforma. Vive aquí sólo
  * mientras el diálogo está abierto; [QuestionResourceForm] se reinicia al cerrarlo.
@@ -123,59 +121,35 @@ data class QuestionResourceForm(
     val kind: QuestionResourceKind = QuestionResourceKind.IMAGEN,
     val title: String = "",
     val description: String = "",
-    /** Sólo [QuestionResourceKind.ENLACE]. */
-    val externalUrl: String = "",
-    /** Sólo [QuestionResourceKind.TEXTO]. */
-    val textBody: String = "",
-    /** Sólo los cuatro tipos de archivo. */
     val file: QuestionResourceFile? = null,
 )
 
 /**
- * Cambia el tipo y SUELTA lo que el nuevo tipo no admite.
- *
- * Título y descripción sobreviven porque valen para los seis; lo demás no. Elegir
- * un PDF, cambiar a «enlace» y guardar no puede mandar el archivo.
+ * Cambia el tipo y SUELTA el archivo elegido: un `.mp3` no vale como imagen, y
+ * dejarlo elegido sólo llevaría a un rechazo del servidor al final de la subida.
+ * Título y descripción sobreviven porque valen para los tres.
  */
-fun QuestionResourceForm.withKind(next: QuestionResourceKind): QuestionResourceForm = copy(
-    kind = next,
-    externalUrl = if (next == QuestionResourceKind.ENLACE) externalUrl else "",
-    textBody = if (next == QuestionResourceKind.TEXTO) textBody else "",
-    file = if (next.requiresFile) file else null,
-)
+fun QuestionResourceForm.withKind(next: QuestionResourceKind): QuestionResourceForm =
+    if (next == kind) this else copy(kind = next, file = null)
 
 /**
  * Por qué este formulario todavía no se puede guardar, o `null` si ya se puede.
  *
- * Comprueba lo que la BASE rechazaría —un `enlace` sin `https://`, un `texto` sin
- * cuerpo, un `imagen` sin archivo— para no gastar una petición en un no seguro. No
- * comprueba el tipo de la pregunta: esa regla es del servidor y su mensaje es el
- * que se enseña.
+ * Comprueba lo que la BASE rechazaría —un recurso sin archivo— para no gastar una
+ * petición en un no seguro. No comprueba el tipo de la pregunta: esa regla es del
+ * servidor y su mensaje es el que se enseña.
  */
 fun QuestionResourceForm.validationError(): String? = when {
     title.isBlank() -> "El recurso necesita un título."
-    kind.requiresFile && file == null -> "Elige el archivo que quieres subir."
-    kind == QuestionResourceKind.ENLACE && !isPublicHttpUrl(externalUrl) ->
-        "El enlace tiene que empezar por http:// o https://."
-    kind == QuestionResourceKind.TEXTO && textBody.isBlank() ->
-        "Escribe el contenido del recurso de texto."
+    file == null -> "Elige el archivo que quieres subir."
     else -> null
 }
 
-/**
- * El borrador que viaja, con SÓLO el campo de su tipo.
- *
- * Es la segunda barrera, después de [withKind]: aunque el estado llevara restos de
- * otro tipo, aquí no salen. `externalUrl` y `textBody` van `null` —no `""`— para
- * que el cuerpo JSON ni siquiera incluya la clave.
- */
+/** El borrador que viaja. La posición la decide el servidor: al final de la lista. */
 fun QuestionResourceForm.toDraft(): QuestionResourceDraft = QuestionResourceDraft(
     kind = kind,
     title = title.trim(),
     description = description.trim(),
-    externalUrl = if (kind == QuestionResourceKind.ENLACE) externalUrl.trim().takeIf { it.isNotEmpty() } else null,
-    textBody = if (kind == QuestionResourceKind.TEXTO) textBody.takeIf { it.isNotBlank() } else null,
-    // Al final de la lista: la posición la decide el servidor, no esta pantalla.
     position = null,
 )
 
@@ -188,11 +162,6 @@ fun QuestionResourceForm.toDraft(): QuestionResourceDraft = QuestionResourceDraf
 const val QUESTION_RESOURCES_STALE_NOTE: String =
     "El recurso se ha guardado, pero no hemos podido releer la lista. Vuelve a abrir la pregunta."
 
-/** El mismo prefijo que exige el servidor antes de aceptar un `enlace`. */
-private fun isPublicHttpUrl(value: String): Boolean {
-    val url = value.trim()
-    return url.startsWith("http://") || url.startsWith("https://")
-}
 
 /**
  * Si la pregunta abierta puede recibir recursos AHORA MISMO.
