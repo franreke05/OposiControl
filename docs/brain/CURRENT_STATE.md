@@ -1107,3 +1107,26 @@ Detalle completo, con fichero:línea de lo aplicado y de lo registrado, en
 Los hallazgos Tier 2/3 restantes de los 8 informes tampoco se aplicaron
 (cambian comportamiento observable, piden un test que no existe o son decisión
 de producto/arquitectura); quedan documentados con precisión de línea.
+
+### OposiMarket: escaparate de exámenes publicados (2026-09-25)
+
+Rama `feature/oposimarket-published-exams`, desde `main` (`4530b73`). Nueva
+sección **«Exámenes publicados»** en OposiMarket, primera pestaña y la que abre
+por defecto: rejilla con todos los exámenes PUBLICADOS (ráfaga, razonado e
+inmersivo) y su portada, con búsqueda (título, especialidad, código) y filtro
+por tipo con recuento. Solo consulta; los datos se editan en Exámenes.
+
+- `CURRENT_IMPLEMENTATION`: el estado se filtra en cliente
+  (`publishedExams`: `PUBLISHED` y no borrado) sobre `refreshAllExams()`, que
+  devuelve el catálogo completo. Un fallo de carga es error con reintento, no un
+  escaparate vacío; sin publicados es `Empty` con su mensaje.
+- La portada se **compone** en la app (`ExamCoverArt`, 264×148, 16:9) a partir
+  de los datos del examen, sin subir imagen (decisión de producto 2026-09-23).
+  Colores fijos por tipo (no dependen del tema del panel). La ilustración es un
+  icono translúcido por tipo: **marcador de sitio** hasta que lleguen los
+  vectores propios de cada tipo. Medidas en `ExamCoverSpec`.
+- `PRODUCT_DECISION_PENDING`: instrucciones y vectores de las portadas
+  (inmersivos y demás tipos) los aporta el producto; hasta entonces la portada
+  actual es provisional.
+- Tests: 13 nuevos en `features/store` (lógica pura + `MarketViewModel`) y un
+  banco visual (`PublishedExamsVisualHarness`, 7 capturas claro/oscuro/estados).

@@ -31,9 +31,10 @@ import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.domain.model.formatPriceCents
 
 /**
- * OposiMarket: packs de OposiTickets, servicios, promociones y reglas de pop-up.
+ * OposiMarket: escaparate de exámenes publicados, packs de OposiTickets,
+ * servicios, promociones y reglas de pop-up.
  *
- * Cuatro tablas distintas en una pantalla con secciones, no cuatro entradas de
+ * Cinco vistas distintas en una pantalla con secciones, no cinco entradas de
  * menú: quien ajusta precios suele mirarlas juntas, y separarlas obligaría a
  * navegar de un lado a otro para comparar.
  *
@@ -89,6 +90,11 @@ fun MarketScreen(
         }
 
         when (state.section) {
+            MarketSection.EXAMS -> PublishedExamsSection(
+                state = state,
+                onIntent = viewModel::dispatch,
+                modifier = Modifier.weight(1f),
+            )
             MarketSection.PACKS -> PacksSection(state)
             MarketSection.SERVICES -> ServicesSection(state)
             MarketSection.PROMOTIONS -> PromotionsSection(state)
@@ -287,6 +293,7 @@ private fun PopupRulesSection(state: MarketState) {
 }
 
 private fun MarketSection.label(): String = when (this) {
+    MarketSection.EXAMS -> "Exámenes publicados"
     MarketSection.PACKS -> "Packs OT"
     MarketSection.SERVICES -> "Servicios"
     MarketSection.PROMOTIONS -> "Promociones"
@@ -294,6 +301,7 @@ private fun MarketSection.label(): String = when (this) {
 }
 
 private fun MarketSection.icon(): AppIcon = when (this) {
+    MarketSection.EXAMS -> AppIcon.EXAMS
     MarketSection.PACKS -> AppIcon.CATALOG
     MarketSection.SERVICES -> AppIcon.MARKET
     MarketSection.PROMOTIONS -> AppIcon.PLANS

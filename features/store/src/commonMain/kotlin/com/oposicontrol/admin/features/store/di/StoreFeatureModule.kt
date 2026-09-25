@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.features.store.di
 
+import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.usecase.commerce.ObserveBurstCampaignsUseCase
 import com.oposicontrol.admin.domain.usecase.commerce.ObserveLimitedResourcesUseCase
 import com.oposicontrol.admin.domain.usecase.commerce.ObserveStoreItemsUseCase
@@ -11,12 +12,20 @@ import com.oposicontrol.admin.domain.usecase.commerce.UpsertStoreItemUseCase
 import com.oposicontrol.admin.domain.usecase.commerce.UpsertStoreOfferUseCase
 import com.oposicontrol.admin.features.store.presentation.CommercialCatalogViewModel
 import com.oposicontrol.admin.features.store.presentation.MarketViewModel
+import com.oposicontrol.admin.features.store.presentation.PublishedExamsSource
 import com.oposicontrol.admin.features.store.presentation.StoreViewModel
 import org.koin.dsl.module
 
 val storeFeatureModule = module {
     factory { CommercialCatalogViewModel(dispatcherProvider = get(), repository = get(), analyticsTracker = get()) }
-    factory { MarketViewModel(dispatcherProvider = get(), repository = get(), analyticsTracker = get()) }
+    factory {
+        MarketViewModel(
+            dispatcherProvider = get(),
+            repository = get(),
+            examsSource = PublishedExamsSource { get<ContentRepository>().refreshAllExams() },
+            analyticsTracker = get(),
+        )
+    }
     factory { ObserveStoreItemsUseCase(get()) }
     factory { ObserveStoreOffersUseCase(get()) }
     factory { ObserveLimitedResourcesUseCase(get()) }
