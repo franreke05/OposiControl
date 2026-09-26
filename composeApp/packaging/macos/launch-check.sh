@@ -37,9 +37,9 @@ log show --start "$SINCE" --style compact --predicate 'process == "kernel" OR se
   | grep -iE 'OposiControl|libjli|Team ID' > "$OUT/system-$LABEL.log" || true
 for pattern in "different Team IDs" "code signature not valid for use in process"; do
   if grep -q "$pattern" "$LOG" "$OUT/system-$LABEL.log"; then
-    echo "::error::[$LABEL] aparece «$pattern»"; FAIL=1
+    echo "::error::[$LABEL] aparece «${pattern}»"; FAIL=1
   else
-    echo "[$LABEL] sin «$pattern»"
+    echo "[$LABEL] sin «${pattern}»"
   fi
 done
 if grep -E 'Exception|Error:' "$LOG" | grep -v '^\s*at ' | head -20; then

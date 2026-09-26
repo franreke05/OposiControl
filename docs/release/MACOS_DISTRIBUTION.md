@@ -36,6 +36,28 @@ El DMG se llama `OposiControl-macOS-<versión>-<arch>-UNSIGNED_INTERNAL_BUILD.dm
 con Developer ID ni notarizado**: sólo para pruebas internas. `jpackage` puede dejarle una firma
 *ad-hoc* (requisito técnico de arm64); eso no es una firma de desarrollador.
 
+#### Firma ad-hoc coherente (por qué existe)
+
+`jpackage` deja el lanzador firmado *ad-hoc* (sin Team ID) mientras el runtime Java embebido conserva
+la firma de su proveedor, con Team ID propio. En un Mac real eso impide arrancar:
+
+```
+libjli.dylib: code signature not valid for use in process
+mapping process and mapped file (non-platform) have different Team IDs
+```
+
+Por eso la build interna se vuelve a firmar entera en ad-hoc con
+[`composeApp/packaging/macos/adhoc-sign.sh`](../../composeApp/packaging/macos/adhoc-sign.sh), **de dentro
+hacia fuera** (cada Mach-O del más profundo al menos profundo, luego el runtime como bundle, la app al
+final; nunca `codesign --deep` para firmar) y **sin Hardened Runtime**, que sólo exige la notarización.
+El workflow comprueba `codesign --verify --deep --strict`, que lanzador y `libjli.dylib` compartan Team ID
+y que la app copiada fuera del DMG siga viva a los 40 s sin esos dos errores
+([`inspect-signatures.sh`](../../composeApp/packaging/macos/inspect-signatures.sh),
+[`launch-check.sh`](../../composeApp/packaging/macos/launch-check.sh)).
+
+Es una solución **temporal para la build interna**. La definitiva es Developer ID + Hardened Runtime +
+firma coherente del código anidado + notarización (sección siguiente).
+
 ### Qué hará Gatekeeper con la build sin firma
 
 Al abrirla por primera vez macOS dirá que *no se puede verificar el desarrollador* / *Apple no
