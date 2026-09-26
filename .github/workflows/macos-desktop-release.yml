@@ -138,6 +138,21 @@ jobs:
           [ -d "$APP" ] || { echo "::error::No existe $APP"; exit 1; }
           echo "APP=$APP" >> "$GITHUB_ENV"
 
+      # ---------------- Firmas anidadas ----------------
+      - name: Inspect signatures (tal como las deja jpackage)
+        run: bash composeApp/packaging/macos/inspect-signatures.sh "$APP" | tee "$RUNNER_TEMP/signatures-as-built.txt"
+
+      - name: Launch as built (diagnóstico, no bloquea)
+        if: env.SIGNING == 'unsigned'
+        continue-on-error: true
+        run: bash composeApp/packaging/macos/launch-check.sh "$APP" "$RUNNER_TEMP/diagnostics" "${ARCH}-as-built"
+
+      - name: Ad-hoc re-sign, de dentro hacia fuera (build interna)
+        if: env.SIGNING == 'unsigned'
+        run: |
+          bash composeApp/packaging/macos/adhoc-sign.sh "$APP" composeApp/packaging/macos/entitlements.plist
+          bash composeApp/packaging/macos/inspect-signatures.sh "$APP" | tee "$RUNNER_TEMP/signatures-final.txt"
+
       - name: Inspect bundle
         run: |
           set -euo pipefail
@@ -183,9 +198,16 @@ jobs:
             codesign -dv --verbose=4 "$APP" 2>&1 | grep -q '^Timestamp=' || { echo "::error::Sin secure timestamp"; exit 1; }
             codesign -d --entitlements - --xml "$APP" 2>/dev/null | plutil -p - || true
           else
-            echo "UNSIGNED_INTERNAL_BUILD: sin firma Developer ID (a lo sumo firma ad-hoc de jpackage)."
-            codesign --verify --deep --strict --verbose=2 "$APP" && echo "Firma ad-hoc coherente" || echo "Sin firma verificable"
+            set -e
+            echo "UNSIGNED_INTERNAL_BUILD: firma ad-hoc coherente, sin Developer ID."
+            codesign --verify --deep --strict --verbose=2 "$APP"
           fi
+          # Lanzador y libjli.dylib tienen que compartir Team ID (o ninguno de los dos tenerlo).
+          team() { codesign -d -vvv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p'; }
+          LIBJLI="$(find "$APP/Contents/runtime" -name libjli.dylib | head -1)"
+          T_MAIN="$(team "$APP/Contents/MacOS/OposiControl")"; T_JLI="$(team "$LIBJLI")"
+          echo "TeamIdentifier lanzador=${T_MAIN:-none} libjli=${T_JLI:-none} (${LIBJLI#"$APP"/})"
+          [ "${T_MAIN:-none}" = "${T_JLI:-none}" ] || { echo "::error::Team ID distinto entre lanzador y libjli.dylib"; exit 1; }
 
       # ---------------- Notarización de la app ----------------
       - name: Write App Store Connect API key
@@ -233,27 +255,7 @@ jobs:
       # ---------------- Arranque controlado ----------------
       - name: Launch smoke test (sin Java externo)
         run: |
-          set -uo pipefail
-          LOG="$RUNNER_TEMP/launch.log"
-          # Entorno vacío: ni JAVA_HOME ni java en PATH. Si arranca, usa su runtime embebido.
-          env -i HOME="$HOME" PATH=/usr/bin:/bin TMPDIR="$TMPDIR" "$APP/Contents/MacOS/OposiControl" > "$LOG" 2>&1 &
-          PID=$!
-          sleep 40
-          mkdir -p "$RUNNER_TEMP/diagnostics"
-          screencapture -x "$RUNNER_TEMP/diagnostics/launch-${ARCH}.png" || true
-          if kill -0 "$PID" 2>/dev/null; then
-            echo "Proceso vivo tras 40 s (pid $PID)"
-            JVM="$(lsof -p "$PID" 2>/dev/null | grep -m1 libjvm.dylib | awk '{print $NF}')"
-            echo "libjvm cargada desde: $JVM"
-            case "$JVM" in "$APP"/*) echo "Usa el runtime embebido" ;; *) echo "::error::No usa el runtime embebido"; kill "$PID"; exit 1 ;; esac
-            lsof -a -p "$PID" -i TCP 2>/dev/null | grep -E ':(80|8080|443) ' || echo "Sin conexiones TCP abiertas en este instante (la app no llama a la API antes del login)"
-            if lsof -a -p "$PID" -i TCP 2>/dev/null | grep -qE 'localhost:8080|127\.0\.0\.1:8080'; then echo "::error::Intenta hablar con un Ktor local"; kill "$PID"; exit 1; fi
-            kill "$PID"; sleep 3; kill -9 "$PID" 2>/dev/null || true
-          else
-            wait "$PID"; echo "::error::La app terminó al arrancar (código $?)"; cat "$LOG"; exit 1
-          fi
-          cp "$LOG" "$RUNNER_TEMP/diagnostics/launch-${ARCH}.log"
-          if grep -E 'Exception|Error:' "$LOG" | grep -v '^\s*at ' | head -20; then echo "::warning::El arranque escribió excepciones (ver diagnostics)"; fi
+          bash composeApp/packaging/macos/launch-check.sh "$APP" "$RUNNER_TEMP/diagnostics" "$ARCH"
           echo "API de producción desde el runner: HTTP $(curl -sS -m 15 -o /dev/null -w '%{http_code}' https://api.oposibots.es/health)"
 
       # ---------------- DMG ----------------
@@ -301,7 +303,13 @@ jobs:
             codesign --verify --deep --strict --verbose=2 "$MNT/OposiControl.app"
             xcrun stapler validate "$MNT/OposiControl.app"
           fi
+          # Lo que recibe Arturo: la app copiada fuera del DMG, arrancada desde ahí.
+          INSTALLED="$RUNNER_TEMP/installed"
+          rm -rf "$INSTALLED"; mkdir -p "$INSTALLED"
+          ditto "$MNT/OposiControl.app" "$INSTALLED/OposiControl.app"
           hdiutil detach "$MNT" >/dev/null
+          codesign --verify --deep --strict --verbose=2 "$INSTALLED/OposiControl.app"
+          bash composeApp/packaging/macos/launch-check.sh "$INSTALLED/OposiControl.app" "$RUNNER_TEMP/diagnostics" "${ARCH}-from-dmg"
           cd "$(dirname "$DMG")"
           shasum -a 256 "$DMG_NAME" | tee "$DMG_NAME.sha256"
           ls -lh
@@ -321,7 +329,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: diagnostics-macos-${{ matrix.arch }}
-          path: ${{ runner.temp }}/diagnostics
+          path: |
+            ${{ runner.temp }}/diagnostics
+            ${{ runner.temp }}/signatures-*.txt
           if-no-files-found: ignore
           retention-days: 14
 
