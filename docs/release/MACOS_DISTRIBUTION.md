@@ -29,8 +29,8 @@ nativa de los JAR, y volver a firmarlo todo. No está soportado por el tooling y
 ## Build interna sin firma (`UNSIGNED_INTERNAL_BUILD`)
 
 GitHub → *Actions* → **macOS desktop release** → *Run workflow* → `signing = unsigned`.
-(Mientras el workflow no esté en `main`, se ejecuta con cada push a la rama
-`feature/macos-desktop-distribution` que toque el packaging.)
+(Mientras el workflow no esté en `main`, se ejecuta con cada push a
+`feature/macos-desktop-distribution` o a cualquier rama `release/desktop-*`.)
 
 El DMG se llama `OposiControl-macOS-<versión>-<arch>-UNSIGNED_INTERNAL_BUILD.dmg`. **No está firmado
 con Developer ID ni notarizado**: sólo para pruebas internas. `jpackage` puede dejarle una firma

@@ -19,12 +19,11 @@ on:
         description: "Versión MAJOR.MINOR.PATCH (MAJOR > 0)"
         type: string
         default: "1.0.0"
+  # Cada push a estas ramas genera los DMG (sin firma) descargables en Actions.
   push:
-    branches: [feature/macos-desktop-distribution]
-    paths:
-      - ".github/workflows/macos-desktop-release.yml"
-      - "composeApp/build.gradle.kts"
-      - "composeApp/packaging/macos/**"
+    branches:
+      - feature/macos-desktop-distribution
+      - "release/desktop-*"
 
 permissions:
   contents: read
