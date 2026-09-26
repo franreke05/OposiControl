@@ -29,7 +29,6 @@ import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCa
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
-import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamResourceAuditUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetExamQuestionsUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetRafagaQuestionsUseCase
@@ -51,7 +50,6 @@ import com.oposicontrol.admin.domain.usecase.content.UpsertQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
-import com.oposicontrol.admin.domain.usecase.content.UploadExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadQuestionResourceUseCase
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -108,8 +106,6 @@ class ExamsViewModel(
     private val upsertRafagaQuestionUseCase: UpsertRafagaQuestionUseCase,
     private val deleteRafagaQuestionUseCase: DeleteRafagaQuestionUseCase,
     private val moveRafagaQuestionUseCase: MoveRafagaQuestionUseCase,
-    private val uploadExamCoverUseCase: UploadExamCoverUseCase,
-    private val clearExamCoverUseCase: ClearExamCoverUseCase,
     private val uploadQuestionResourceUseCase: UploadQuestionResourceUseCase,
     private val deleteQuestionResourceUseCase: DeleteQuestionResourceUseCase,
     private val analyticsTracker: AnalyticsTracker,
@@ -252,13 +248,6 @@ class ExamsViewModel(
             )
             ExamsIntent.RequestDeleteSelectedRafagaQuestion -> requestDelete(PendingDeleteTarget.RafagaQuestion, "Eliminar esta pregunta de rafaga?")
             ExamsIntent.RequestDeleteSelectedSpecialty -> requestDelete(PendingDeleteTarget.Specialty, "Eliminar esta especialidad?")
-            // Quitar la portada la desasocia del examen y DESPUÉS borra su objeto
-            // de Storage (`clearExamenPortada`, PW-8 opción A, K5-3): el aviso
-            // dice lo que ahora ocurre de verdad.
-            ExamsIntent.RequestClearExamCover -> requestDelete(
-                PendingDeleteTarget.ExamCover,
-                EXAM_COVER_CLEAR_WARNING,
-            )
             ExamsIntent.PublishExam -> publishExam()
             ExamsIntent.UnpublishExam -> unpublishExam()
             ExamsIntent.ConfirmPendingDelete -> confirmPendingDelete()
@@ -271,11 +260,6 @@ class ExamsViewModel(
             ExamsIntent.SaveRafaga -> saveRafaga()
             ExamsIntent.SaveRafagaQuestion -> saveRafagaQuestion()
             ExamsIntent.SaveSpecialty -> saveSpecialty()
-            ExamsIntent.UploadExamCover -> uploadExamCover()
-            ExamsIntent.CancelExamCoverSelection -> updateState {
-                it.copy(editorCoverLocalUri = "", editorCoverFileName = "", coverUploadState = UiAsync.Idle)
-            }
-            ExamsIntent.ClearExamCover -> clearExamCover()
             is ExamsIntent.MoveQuestionDown -> moveQuestion(intent.id, QuestionMoveDirection.DOWN)
             is ExamsIntent.MoveQuestionUp -> moveQuestion(intent.id, QuestionMoveDirection.UP)
             is ExamsIntent.MoveRafagaQuestionDown -> moveRafagaQuestion(intent.id, QuestionMoveDirection.DOWN)
@@ -304,7 +288,6 @@ class ExamsViewModel(
             is ExamsIntent.UpdatePriceTickets -> editExamForm { it.copy(editorPriceTickets = intent.value.filter { char -> char.isDigit() }.take(9)) }
             is ExamsIntent.UpdateOptionContent -> updateOption(intent.optionId, intent.value)
             is ExamsIntent.UpdatePublishFrom -> editExamForm { it.copy(editorPublishFrom = intent.value) }
-            is ExamsIntent.SelectExamCoverFile -> selectExamCoverFile(intent.uri, intent.suggestedName, intent.mimeType)
             is ExamsIntent.UpdateQuestionResourceFilter -> updateState { it.copy(questionResourceFilter = intent.value) }
             is ExamsIntent.UpdateQuestionStatement -> updateState { it.copy(editorQuestionStatement = intent.value) }
             is ExamsIntent.UpdateQuestionTitle -> updateState { it.copy(editorQuestionTitle = intent.value) }
@@ -514,7 +497,6 @@ class ExamsViewModel(
             state.editorYear.isNotBlank() ||
             state.editorDurationMinutes.isNotBlank() ||
             state.editorCommunityId != null ||
-            state.editorCoverLocalUri.isNotBlank() ||
             state.editorTypeExam != NewExamDefaults.TYPE_EXAM ||
             state.editorTypeAccess != NewExamDefaults.TYPE_ACCESS ||
             state.editorPriceTickets != NewExamDefaults.PRICE_TICKETS ||
@@ -530,7 +512,6 @@ class ExamsViewModel(
             PendingDeleteTarget.Question -> deleteSelectedQuestion()
             PendingDeleteTarget.RafagaQuestion -> deleteSelectedRafagaQuestion()
             PendingDeleteTarget.Specialty -> deleteSelectedSpecialty()
-            PendingDeleteTarget.ExamCover -> clearExamCover()
             is PendingDeleteTarget.Resource -> deleteResource(target.resourceId)
             is PendingDeleteTarget.UnlinkQuestion -> unlinkQuestion(target.questionId)
             is PendingDeleteTarget.ArchiveQuestion -> archiveQuestion(target.questionId)
@@ -763,12 +744,6 @@ class ExamsViewModel(
                 editorYear = exam.year?.toString().orEmpty(),
                 editorIsOfficial = exam.isOfficial,
                 editorDurationMinutes = exam.durationMinutes?.toString().orEmpty(),
-                editorCoverUrl = exam.coverUrl.orEmpty(),
-                editorCoverStoragePath = exam.coverStoragePath.orEmpty(),
-                editorCoverMimeType = exam.coverMimeType.orEmpty(),
-                editorCoverLocalUri = "",
-                editorCoverFileName = "",
-                coverUploadState = UiAsync.Idle,
                 selectedQuestionId = null,
                 selectedRafagaQuestionId = null,
                 editorQuestionId = null,
@@ -826,12 +801,6 @@ class ExamsViewModel(
                 editorYear = "",
                 editorIsOfficial = false,
                 editorDurationMinutes = "",
-                editorCoverUrl = "",
-                editorCoverStoragePath = "",
-                editorCoverMimeType = "",
-                editorCoverLocalUri = "",
-                editorCoverFileName = "",
-                coverUploadState = UiAsync.Idle,
                 questions = UiAsync.Empty,
                 resourceAudit = UiAsync.Idle,
                 selectedQuestionId = null,
@@ -916,29 +885,6 @@ class ExamsViewModel(
     }
 
     /**
-     * Refleja en el catálogo en memoria un cambio de portada, y sólo eso.
-     *
-     * Si sólo cambiaba el editor, `hasUnsavedExamChanges` comparaba la URL nueva
-     * con la vieja del catálogo y anunciaba «Hay cambios sin guardar» justo
-     * después de una subida correcta; «Descartar» resucitaba entonces la portada
-     * vieja (o hacía desaparecer una que el servidor ya tenía).
-     */
-    private fun mergeCoverIntoCatalog(saved: Exam) {
-        allExams = allExams.map { exam ->
-            if (exam.id == saved.id) {
-                exam.copy(
-                    coverUrl = saved.coverUrl,
-                    coverStoragePath = saved.coverStoragePath,
-                    coverMimeType = saved.coverMimeType,
-                )
-            } else {
-                exam
-            }
-        }
-        publishExams()
-    }
-
-    /**
      * «Reintentar» de Preguntas y Recursos: vuelve a pedir las preguntas del
      * examen abierto y NADA MÁS.
      *
@@ -999,12 +945,6 @@ class ExamsViewModel(
                 editorYear = "",
                 editorIsOfficial = NewExamDefaults.IS_OFFICIAL,
                 editorDurationMinutes = "",
-                editorCoverUrl = "",
-                editorCoverStoragePath = "",
-                editorCoverMimeType = "",
-                editorCoverLocalUri = "",
-                editorCoverFileName = "",
-                coverUploadState = UiAsync.Idle,
                 questions = UiAsync.Empty,
                 rafagaQuestions = UiAsync.Empty,
                 resourceAudit = UiAsync.Idle,
@@ -1162,9 +1102,11 @@ class ExamsViewModel(
             durationMinutes = durationMinutes,
             year = year,
             isOfficial = currentState().editorIsOfficial,
-            coverUrl = currentState().editorCoverUrl.ifBlank { existing?.coverUrl },
-            coverStoragePath = currentState().editorCoverStoragePath.ifBlank { existing?.coverStoragePath },
-            coverMimeType = currentState().editorCoverMimeType.ifBlank { existing?.coverMimeType },
+            // La portada ya no se sube ni se elige: se deduce del tipo y de la comunidad
+            // (`ExamCoverResolver`). Las columnas legacy de Storage se conservan tal cual.
+            coverUrl = existing?.coverUrl,
+            coverStoragePath = existing?.coverStoragePath,
+            coverMimeType = existing?.coverMimeType,
             createdAt = existing?.createdAt ?: now,
             updatedAt = now,
             deletedAt = existing?.deletedAt,
@@ -1174,10 +1116,6 @@ class ExamsViewModel(
             is AppResult.Success -> {
                 val saved = result.value
                 analyticsTracker.trackAction("exam_save", mapOf("exam_id" to saved.id))
-                // capturar antes de que selectExam limpie el estado del editor
-                val pendingUri = currentState().editorCoverLocalUri
-                val pendingName = currentState().editorCoverFileName
-                val pendingMime = currentState().editorCoverMimeType
                 // El examen guardado entra en el catálogo en memoria ANTES de
                 // reabrirlo. `selectExam` lee de `allExams`, y el `Flow` del
                 // repositorio que lo actualiza vive en otra corrutina —en
@@ -1191,10 +1129,6 @@ class ExamsViewModel(
                 // Reabrir conserva el `Success`: es la confirmación que ve quien
                 // guarda. La retira la siguiente edición (`editExamForm`).
                 selectExam(saved.id, keepSaveResult = true)
-                if (pendingUri.isNotBlank()) {
-                    updateState { it.copy(editorCoverLocalUri = pendingUri, editorCoverFileName = pendingName, editorCoverMimeType = pendingMime) }
-                    uploadExamCover()
-                }
             }
         }
     }
@@ -1805,90 +1739,6 @@ class ExamsViewModel(
             )
         }
         setResourceUploadState(resourceId, UiAsync.Success("Archivo seleccionado"))
-    }
-
-    private fun selectExamCoverFile(uri: String, suggestedName: String, mimeType: String?) {
-        if (mimeType?.startsWith("image/") != true) {
-            updateState {
-                it.copy(coverUploadState = UiAsync.Error(AppError.Validation("Selecciona una imagen para la portada.")))
-            }
-            return
-        }
-        editExamForm {
-            it.copy(
-                editorCoverLocalUri = uri,
-                editorCoverFileName = suggestedName.ifBlank { "portada" },
-                editorCoverMimeType = mimeType,
-                coverUploadState = UiAsync.Success("Archivo seleccionado"),
-            )
-        }
-    }
-
-    private suspend fun uploadExamCover() {
-        val examId = currentState().selectedExamId
-            ?: return updateState {
-                it.copy(coverUploadState = UiAsync.Error(AppError.Validation("Guarda el examen antes de subir portada.")))
-            }
-        val localUri = currentState().editorCoverLocalUri
-        if (localUri.isBlank()) {
-            updateState {
-                it.copy(coverUploadState = UiAsync.Error(AppError.Validation("Selecciona una portada antes de subir.")))
-            }
-            return
-        }
-        updateState { it.copy(coverUploadState = UiAsync.Loading) }
-        when (val result = uploadExamCoverUseCase(examId, localUri)) {
-            is AppResult.Failure -> updateState { it.copy(coverUploadState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> {
-                analyticsTracker.trackAction("exam_cover_upload", mapOf("exam_id" to examId))
-                mergeCoverIntoCatalog(result.value)
-                updateState {
-                    it.copy(
-                        editorCoverUrl = result.value.coverUrl.orEmpty(),
-                        editorCoverStoragePath = result.value.coverStoragePath.orEmpty(),
-                        editorCoverMimeType = result.value.coverMimeType.orEmpty(),
-                        editorCoverLocalUri = "",
-                        editorCoverFileName = "",
-                        coverUploadState = UiAsync.Success("Portada subida"),
-                    )
-                }
-            }
-        }
-    }
-
-    private suspend fun clearExamCover() {
-        val examId = currentState().selectedExamId
-        if (examId.isNullOrBlank()) {
-            updateState {
-                it.copy(
-                    editorCoverUrl = "",
-                    editorCoverStoragePath = "",
-                    editorCoverMimeType = "",
-                    editorCoverLocalUri = "",
-                    editorCoverFileName = "",
-                    coverUploadState = UiAsync.Idle,
-                )
-            }
-            return
-        }
-        updateState { it.copy(coverUploadState = UiAsync.Loading) }
-        when (val result = clearExamCoverUseCase(examId)) {
-            is AppResult.Failure -> updateState { it.copy(coverUploadState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> {
-                analyticsTracker.trackAction("exam_cover_clear", mapOf("exam_id" to examId))
-                mergeCoverIntoCatalog(result.value)
-                updateState {
-                    it.copy(
-                        editorCoverUrl = result.value.coverUrl.orEmpty(),
-                        editorCoverStoragePath = result.value.coverStoragePath.orEmpty(),
-                        editorCoverMimeType = result.value.coverMimeType.orEmpty(),
-                        editorCoverLocalUri = "",
-                        editorCoverFileName = "",
-                        coverUploadState = UiAsync.Success("Portada eliminada"),
-                    )
-                }
-            }
-        }
     }
 
     private suspend fun importQuestionsFromText(fileName: String, content: String) {

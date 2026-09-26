@@ -154,8 +154,11 @@ class ExamBasicInfoVisualHarness {
         // archivo desde aquí. No se sustituyen por capturas equivalentes porque
         // no hay nada equivalente que capturar.
         estados.forEach { (id, state) ->
-            render(Capture("exams-$id-light.png", 1920, 1080, dark = false), state)
-            render(Capture("exams-$id-dark.png", 1920, 1080, dark = true), state)
+            // Las dos de portada bajan hasta el bloque: con el alto de 1080 el
+            // editor enseña Identificación y Ámbito, y la portada queda debajo.
+            val scroll = EXAM_COVER_SUBTITLE.takeIf { id.contains("portada") }
+            render(Capture("exams-$id-light.png", 1920, 1080, dark = false, scrollTo = scroll), state)
+            render(Capture("exams-$id-dark.png", 1920, 1080, dark = true, scrollTo = scroll), state)
         }
         render(Capture("exams-BASIC-08-dark-nuevo.png", 1920, 1080, dark = true), examenNuevoVacio())
         render(Capture("exams-BASIC-09-dark-existente.png", 1920, 1080, dark = true), existenteCompleto())
@@ -216,9 +219,19 @@ class ExamBasicInfoVisualHarness {
                 creacionRechazadaPorElRecuento(),
             )
         }
-        // La captura de «portada elegida» se retira con la sección (2026-09-23).
-        // La portada se compone con los componentes de la app; ya no hay
-        // selector de archivo que capturar en esta pantalla.
+        // Examen nuevo Inmersivo sin comunidad: la portada provisional y su explicación.
+        listOf(false, true).forEach { dark ->
+            render(
+                Capture(
+                    "exams-basic-1920-${if (dark) "dark" else "light"}-portada-nueva.png",
+                    1920,
+                    1080,
+                    dark = dark,
+                    scrollTo = EXAM_COVER_SUBTITLE,
+                ),
+                examenNuevoConPortadaElegida(),
+            )
+        }
     }
 
     /**
@@ -444,13 +457,6 @@ class ExamBasicInfoVisualHarness {
         File(override ?: "build/visual-harness").also { it.mkdirs() }
     }
 
-    /**
-     * Un PNG de verdad para la vista previa de portada.
-     *
-     * Se genera aquí, en el directorio de salida, y no se versiona: es un
-     * fixture de test. La vista previa lee un fichero local, así que para
-     * comprobar que decodifica hace falta un fichero local que decodificar.
-     */
 }
 
 /**
@@ -646,9 +652,6 @@ private fun abierto(
     editorYear = exam.year?.toString().orEmpty(),
     editorDurationMinutes = exam.durationMinutes?.toString().orEmpty(),
     editorIsOfficial = exam.isOfficial,
-    editorCoverUrl = exam.coverUrl.orEmpty(),
-    editorCoverStoragePath = exam.coverStoragePath.orEmpty(),
-    editorCoverMimeType = exam.coverMimeType.orEmpty(),
 )
 
 /** BASIC-02 · examen guardado, con comunidad real, preguntas y sin nada pendiente. */
@@ -791,16 +794,26 @@ private fun comunidadNoDisponible(): ExamsState = abierto(
 )
 
 /**
- * BASIC-06 · portada ya subida: marcador «Portada guardada (PNG)» y acciones de
- * cambiar y quitar. Sin nombre de fichero: desde PW-8 la ruta es
- * `exam-covers/<examen_id>/<uuid>.<ext>` y la URL una firma efímera (K5-3).
+ * BASIC-06 · portada automática de un examen Inmersivo (vector de su comunidad si la tiene).
  *
- * El examen modificado se REEMPLAZA dentro del catalogo, no solo se abre. Un
- * `copy()` suelto deja el catalogo con la portada a null y el editor con la ruta,
- * asi que `hasUnsavedExamChanges` lo declara sucio y la captura sale con la barra
- * avisando de cambios que nadie ha hecho — un fallo del fixture disfrazado de
- * fallo de la pantalla, que es peor que no tener la captura.
+ * El examen modificado se REEMPLAZA dentro del catalogo, no solo se abre: un `copy()` suelto
+ * deja el catalogo con el tipo anterior y el editor con el nuevo, así que `hasUnsavedExamChanges`
+ * lo declara sucio y la captura sale con la barra avisando de cambios que nadie ha hecho.
  */
+private fun conPortadaGuardada(): ExamsState {
+    val conPortada = CATALOGO[0].copy(typeExam = "inmersivo")
+    val catalogo = CATALOGO.map { if (it.id == conPortada.id) conPortada else it }
+    return abierto(conPortada).copy(exams = UiAsync.Success(catalogo), catalogExams = catalogo)
+}
+
+/** Examen nuevo de tipo Inmersivo: la previsualización de portada avisa de que falta la comunidad. */
+private fun examenNuevoConPortadaElegida(): ExamsState = examenNuevoVacio().copy(
+    editorTitle = "TCAE · Simulacro mayo",
+    editorSpecialtyId = "esp-tcae",
+    specialtyCapabilities = UiAsync.Success(CAPACIDADES),
+    editorTypeExam = "inmersivo",
+)
+
 /** Especialidades caídas en un examen NUEVO: sin catálogo no hay forma de elegir una. */
 private fun nuevoConEspecialidadesCaidas(): ExamsState = examenNuevoVacio().copy(
     specialties = UiAsync.Error(AppError.Network("No se ha podido conectar con el servidor.")),

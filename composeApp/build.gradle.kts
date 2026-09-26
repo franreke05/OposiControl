@@ -59,6 +59,26 @@ val desktopSentryRelease =
         ?.trim()
         .orEmpty()
 
+// Versión de la distribución de escritorio. macOS exige MAJOR.MINOR.PATCH con MAJOR > 0;
+// sin -PoposiVersion se mantiene la 1.0.0 de siempre (MSI/DEB no cambian).
+val desktopPackageVersion =
+    providers.gradleProperty("oposiVersion").orNull?.trim()?.takeIf { it.isNotEmpty() } ?: "1.0.0"
+
+// Número de build de macOS (CFBundleVersion). En CI, el número de ejecución del workflow.
+val desktopBuildNumber =
+    providers.gradleProperty("oposiBuildNumber").orNull?.trim()?.takeIf { it.isNotEmpty() } ?: desktopPackageVersion
+
+// Firma macOS (Developer ID). Desactivada por defecto: la build interna sin firma no
+// necesita nada. Identidad y keychain llegan por variables de entorno que crea el
+// workflow en un keychain temporal; nunca hay credenciales en Gradle ni en el repo.
+val macSigningEnabled =
+    providers.gradleProperty("oposiMacSign").orNull?.toBooleanStrictOrNull() ?: false
+val macSigningIdentity = providers.environmentVariable("OPOSI_MACOS_SIGNING_IDENTITY").orNull.orEmpty()
+val macSigningKeychain = providers.environmentVariable("OPOSI_MACOS_KEYCHAIN").orNull.orEmpty()
+
+// jpackage sólo empaqueta para el sistema en el que corre.
+val isMacHost = System.getProperty("os.name").orEmpty().startsWith("Mac", ignoreCase = true)
+
 kotlin {
     androidTarget {
         compilerOptions {
@@ -240,8 +260,65 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "OposiControlAdmin"
-            packageVersion = "1.0.0"
+            // El nombre de la carpeta `.app` sale de ESTE packageName, no del de `macOS {}`:
+            // en macOS la app es `OposiControl.app`; Windows/Linux siguen como OposiControlAdmin.
+            packageName = if (isMacHost) "OposiControl" else "OposiControlAdmin"
+            packageVersion = desktopPackageVersion
+
+            // Runtime embebido (jlink): lo que sugiere `suggestRuntimeModules`
+            // (java.sql para SQLite, java.management/java.instrument para Sentry,
+            // jdk.unsupported para Skiko/coroutines) más jdk.crypto.ec, que en JDK 21
+            // sigue siendo un módulo aparte y sin él fallan los handshakes TLS ECDHE.
+            modules("java.instrument", "java.management", "java.sql", "jdk.unsupported", "jdk.crypto.ec")
+
+            windows {
+                iconFile.set(project.file("packaging/windows/OposiControl.ico"))
+            }
+            linux {
+                iconFile.set(project.file("packaging/linux/OposiControl.png"))
+            }
+
+            macOS {
+                // Sólo macOS: `OposiControl.app`. MSI y DEB conservan su nombre.
+                packageName = "OposiControl"
+                dockName = "OposiControl"
+                bundleID = "com.oposicontrol.admin"
+                appCategory = "public.app-category.productivity"
+                packageBuildVersion = desktopBuildNumber
+                iconFile.set(project.file("packaging/macos/OposiControl.icns"))
+                entitlementsFile.set(project.file("packaging/macos/entitlements.plist"))
+                runtimeEntitlementsFile.set(project.file("packaging/macos/entitlements.plist"))
+                signing {
+                    sign.set(macSigningEnabled)
+                    if (macSigningIdentity.isNotEmpty()) identity.set(macSigningIdentity)
+                    if (macSigningKeychain.isNotEmpty()) keychain.set(macSigningKeychain)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Falla si la distribución NO apunta a producción. La ejecuta el workflow de macOS
+ * antes de empaquetar: una build para Arturo sin `-PoposiProduction=true` apuntaría a
+ * `localhost:8080`, y sin las claves públicas de Supabase el login no funcionaría.
+ * No imprime ningún valor.
+ */
+val verifyProductionDesktopConfig by tasks.registering {
+    val production = productionDesktopBuild
+    val baseUrl = desktopBaseUrl
+    val appEnv = desktopAppEnv
+    val supabaseUrl = localSupabaseUrl
+    val supabaseKey = localSupabasePublicKey
+    doLast {
+        check(production) { "Falta -PoposiProduction=true." }
+        check(baseUrl == "https://api.oposibots.es") { "BASE_URL de producción inesperada." }
+        check(appEnv == "prod") { "APP_ENV no es prod." }
+        check(supabaseUrl.startsWith("https://") && supabaseUrl.endsWith(".supabase.co")) {
+            "SUPABASE_URL ausente o no es un proyecto Supabase (defínelo en el entorno)."
+        }
+        check(supabaseKey.isNotBlank()) {
+            "Falta la clave PÚBLICA de Supabase (SUPABASE_ANON_KEY o SUPABASE_PUBLISHABLE_KEY; nunca sb_secret_)."
         }
     }
 }

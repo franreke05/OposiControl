@@ -86,12 +86,6 @@ data class ExamsState(
     val communities: UiAsync<List<Community>> = UiAsync.Idle,
     /** Acción de publicar/despublicar en curso — distinta de [actionState], que es la del guardado general. */
     val lifecycleActionState: UiAsync<Unit> = UiAsync.Idle,
-    val editorCoverUrl: String = "",
-    val editorCoverStoragePath: String = "",
-    val editorCoverMimeType: String = "",
-    val editorCoverLocalUri: String = "",
-    val editorCoverFileName: String = "",
-    val coverUploadState: UiAsync<String> = UiAsync.Idle,
     val selectedQuestionId: String? = null,
     val selectedRafagaQuestionId: String? = null,
     val editorQuestionId: String? = null,

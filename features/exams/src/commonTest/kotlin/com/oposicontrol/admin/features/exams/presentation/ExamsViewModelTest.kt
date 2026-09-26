@@ -24,7 +24,6 @@ import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.usecase.communities.ObserveCommunitiesUseCase
 import com.oposicontrol.admin.domain.usecase.communities.RefreshCommunitiesUseCase
-import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.ArchiveExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteExamUseCase
 import com.oposicontrol.admin.domain.usecase.content.ArchiveQuestionUseCase
@@ -53,7 +52,6 @@ import com.oposicontrol.admin.domain.usecase.content.UpsertQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
-import com.oposicontrol.admin.domain.usecase.content.UploadExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadQuestionResourceUseCase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -106,8 +104,6 @@ class ExamsViewModelTest {
             upsertRafagaQuestionUseCase = UpsertRafagaQuestionUseCase(repository),
             deleteRafagaQuestionUseCase = DeleteRafagaQuestionUseCase(repository),
             moveRafagaQuestionUseCase = MoveRafagaQuestionUseCase(repository),
-            uploadExamCoverUseCase = UploadExamCoverUseCase(repository),
-            clearExamCoverUseCase = ClearExamCoverUseCase(repository),
             uploadQuestionResourceUseCase = UploadQuestionResourceUseCase(repository),
             deleteQuestionResourceUseCase = DeleteQuestionResourceUseCase(repository),
             analyticsTracker = NoOpAnalyticsTracker,
@@ -751,43 +747,6 @@ class ExamsViewModelTest {
     // -----------------------------------------------------------------------
 
     /**
-     * Subir o quitar la portada con éxito no deja «cambios sin guardar».
-     *
-     * El repositorio real sólo actualizaba `examsFlow`, y el workspace observa
-     * `observeAllExams`: el editor tenía la portada nueva y el catálogo la vieja.
-     * Este fake lo ocultaba porque `observeAllExams` delegaba por defecto en
-     * `observeExams`. Aquí el cambio de portada NO llega a la fuente observada: lo
-     * único que puede alinear catálogo y editor es el propio ViewModel.
-     */
-    @Test
-    fun `subir y quitar la portada con exito no deja cambios sin guardar`() = runTest {
-        val repository = ExamsTestRepository().apply { coverChangesReachObservedCatalog = false }
-        val viewModel = buildViewModel(repository)
-        advanceUntilIdle()
-        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
-        advanceUntilIdle()
-
-        viewModel.dispatch(ExamsIntent.SelectExamCoverFile("C:/tmp/portada.png", "portada.png", "image/png"))
-        viewModel.dispatch(ExamsIntent.UploadExamCover)
-        advanceUntilIdle()
-
-        var state = viewModel.state.value
-        var guardado = state.catalogExams.first { it.id == "exam-tcae-marzo" }
-        assertEquals("https://storage.local/exam-covers/exam-tcae-marzo/cover.png", state.editorCoverUrl)
-        assertEquals(state.editorCoverUrl, guardado.coverUrl.orEmpty())
-        assertFalse(hasUnsavedExamChanges(state, guardado), "Tras subir la portada no hay nada pendiente")
-
-        viewModel.dispatch(ExamsIntent.ClearExamCover)
-        advanceUntilIdle()
-
-        state = viewModel.state.value
-        guardado = state.catalogExams.first { it.id == "exam-tcae-marzo" }
-        assertEquals("", state.editorCoverUrl)
-        assertNull(guardado.coverUrl)
-        assertFalse(hasUnsavedExamChanges(state, guardado), "Tras quitar la portada no hay nada pendiente")
-    }
-
-    /**
      * Al abrir otro examen, las preguntas del anterior no se quedan en pantalla.
      *
      * `selectExam` pedía las capacidades de la especialidad ANTES de pedir las
@@ -1105,28 +1064,6 @@ class ExamsViewModelTest {
             (action.error as AppError.Validation).message,
         )
         assertNull(repository.lastUpsertedExam)
-    }
-
-    /**
-     * Desde PW-8 quitar la portada SÍ borra su objeto de Storage (K5-3), y el aviso
-     * tiene que decirlo: el anterior prometía lo contrario, que ya no es verdad.
-     */
-    @Test
-    fun `el aviso de quitar la portada dice que su archivo se borra`() = runTest {
-        val viewModel = buildViewModel(ExamsTestRepository())
-        advanceUntilIdle()
-        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
-        advanceUntilIdle()
-
-        viewModel.dispatch(ExamsIntent.RequestClearExamCover)
-        advanceUntilIdle()
-
-        assertEquals(PendingDeleteTarget.ExamCover, viewModel.state.value.pendingDeleteTarget)
-        assertEquals(EXAM_COVER_CLEAR_WARNING, viewModel.state.value.pendingDeleteMessage)
-        assertEquals(
-            "La portada deja de estar asociada a este examen y su archivo se borra del almacenamiento.",
-            EXAM_COVER_CLEAR_WARNING,
-        )
     }
 
     // -----------------------------------------------------------------------

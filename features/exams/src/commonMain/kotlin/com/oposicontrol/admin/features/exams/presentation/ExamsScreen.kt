@@ -131,7 +131,7 @@ fun ExamsContent(
     // Especialidad (pendingDeleteTarget + ConfirmPendingDelete en el ViewModel)
     // — no uno nuevo sólo para Exámenes, para no duplicar el mensaje y el estado
     // de "hay un borrado pendiente" en dos sitios. Esta pantalla puede producir
-    // dos de esos targets: archivar el examen y quitar su portada.
+    // dos de esos targets: archivar el examen y borrarlo para siempre.
     when (state.pendingDeleteTarget) {
         PendingDeleteTarget.ArchiveExam -> ConfirmDialog(
             title = "Archivar examen",
@@ -148,13 +148,6 @@ fun ExamsContent(
             message = state.pendingDeleteMessage,
             confirmLabel = "Sí, eliminar",
             dismissLabel = "No eliminar",
-            onConfirm = { onIntent(ExamsIntent.ConfirmPendingDelete) },
-            onDismiss = { onIntent(ExamsIntent.DismissPendingDelete) },
-        )
-        PendingDeleteTarget.ExamCover -> ConfirmDialog(
-            title = "Quitar portada",
-            message = state.pendingDeleteMessage,
-            confirmLabel = "Quitar",
             onConfirm = { onIntent(ExamsIntent.ConfirmPendingDelete) },
             onDismiss = { onIntent(ExamsIntent.DismissPendingDelete) },
         )
@@ -734,9 +727,10 @@ private fun ExamConfigurationTab(
                 )
             }
         }
-        // Portada RETIRADA (decisión de producto, 2026-09-23): se compone con
-        // los componentes de la app, no se sube un archivo. Ver el comentario
-        // equivalente en `ExamBasicInfoSection`.
+        // Sin HelpTopic propio: la portada es una elección de un catálogo cerrado.
+        FormSection(title = "Portada") {
+            ExamCoverPreview(state = state)
+        }
     }
 }
 
@@ -927,10 +921,6 @@ private fun ExamFormActions(
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Portada
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Selectores

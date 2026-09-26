@@ -227,13 +227,6 @@ internal fun ExamWorkspaceContent(
             onConfirm = { onIntent(ExamsIntent.ConfirmPendingDelete) },
             onDismiss = { onIntent(ExamsIntent.DismissPendingDelete) },
         )
-        PendingDeleteTarget.ExamCover -> ConfirmDialog(
-            title = "Quitar portada",
-            message = state.pendingDeleteMessage,
-            confirmLabel = "Quitar",
-            onConfirm = { onIntent(ExamsIntent.ConfirmPendingDelete) },
-            onDismiss = { onIntent(ExamsIntent.DismissPendingDelete) },
-        )
         // Dos diálogos y no uno, porque son dos operaciones distintas: quitar del
         // examen deshace un vínculo y se puede rehacer desde Preguntas; archivar
         // saca la pregunta del banco entero. El texto del mensaje lo pone el

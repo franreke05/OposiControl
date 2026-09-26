@@ -1006,7 +1006,7 @@ private fun SolucionarioEditor(
                 placeholder = "Publicar desde ISO",
             )
             MobileSectionLabel("Portada")
-            ExamCoverEditor(state = state, onIntent = onIntent)
+            ExamCoverPreview(state = state)
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(UiSpacing.compact),
@@ -1016,11 +1016,7 @@ private fun SolucionarioEditor(
                 StatusChip(status = state.editorStatus.ifBlank { "draft" }.toReadableStatus())
                 StatusChip(status = state.editorTypeAccess.toAccessLabel())
                 StatusChip(status = if (state.editorIsOfficial) "oficial" else "no oficial")
-                StatusChip(status = when {
-                    state.editorCoverUrl.isNotBlank() -> "con portada"
-                    state.editorCoverLocalUri.isNotBlank() -> "portada al guardar"
-                    else -> "sin portada"
-                })
+                StatusChip(status = examCoverPresentation(state).cover.assetKey)
             }
             MobileSectionLabel("Acciones")
             ResponsiveActionRow(
@@ -1137,139 +1133,6 @@ private fun RafagaEditor(
     }
 }
 
-@Composable
-private fun ExamCoverEditor(
-    state: ExamsState,
-    onIntent: (ExamsIntent) -> Unit,
-) {
-    val coverPicker = rememberContentFilePickerLauncher(mimeType = "image/*") { picked ->
-        onIntent(ExamsIntent.SelectExamCoverFile(picked.uri, picked.name, picked.mimeType))
-    }
-    val hasRemoteCover = state.editorCoverUrl.isNotBlank() || state.editorCoverStoragePath.isNotBlank()
-    val hasLocalCover = state.editorCoverLocalUri.isNotBlank()
-    val isUploading = state.coverUploadState is UiAsync.Loading
-    val coverPreviewPath = when {
-        hasLocalCover -> state.editorCoverLocalUri
-        state.editorCoverUrl.isNotBlank() -> state.editorCoverUrl
-        else -> ""
-    }
-    GlassSurface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .defaultMinSize(minHeight = 164.dp),
-        shape = RoundedCornerShape(18.dp),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(UiSpacing.normal),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Portada",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                StatusChip(
-                    status = when {
-                        isUploading -> "subiendo"
-                        hasRemoteCover -> "subida"
-                        hasLocalCover -> "seleccionada"
-                        else -> "pendiente"
-                    },
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(118.dp)
-                    .background(GlassTheme.tokens.glassFillStrong, RoundedCornerShape(14.dp))
-                    .padding(10.dp),
-                contentAlignment = Alignment.BottomStart,
-            ) {
-                if (coverPreviewPath.isNotBlank()) {
-                    NewsBackgroundImage(
-                        backgroundPath = coverPreviewPath,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(GlassTheme.tokens.glassFill, RoundedCornerShape(12.dp)),
-                    )
-                }
-                if (isUploading) {
-                    Box(modifier = Modifier.align(Alignment.Center)) {
-                        StatusChip("subiendo")
-                    }
-                }
-                Text(
-                    text = when {
-                        hasLocalCover -> state.editorCoverFileName
-                        hasRemoteCover -> "Portada subida"
-                        else -> "Sin archivo seleccionado"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (coverPreviewPath.isBlank()) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        Color.White
-                    },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .background(Color.Black.copy(alpha = if (coverPreviewPath.isBlank()) 0f else 0.42f), RoundedCornerShape(10.dp))
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-            }
-            CoverUploadStatus(state.coverUploadState)
-            ResponsiveActionRow(
-                actions = listOf(
-                    MobileActionSpec(
-                        icon = MobileIcon.Import,
-                        label = if (hasLocalCover || hasRemoteCover) "Cambiar imagen" else "Elegir imagen",
-                        minWidth = 160,
-                        enabled = !isUploading,
-                        onClick = { coverPicker.open() },
-                    ),
-                    MobileActionSpec(
-                        icon = MobileIcon.Remove,
-                        label = "Quitar",
-                        minWidth = 114,
-                        enabled = (hasRemoteCover || hasLocalCover) && !isUploading,
-                        onClick = { onIntent(ExamsIntent.RequestClearExamCover) },
-                    ),
-                ),
-            )
-        }
-    }
-}
-
-@Composable
-private fun CoverUploadStatus(uploadState: UiAsync<String>) {
-    val message = when (uploadState) {
-        is UiAsync.Error -> uploadState.error.message
-        is UiAsync.Success -> uploadState.value
-        UiAsync.Loading -> "Subiendo portada..."
-        UiAsync.Empty -> "Sin portada"
-        UiAsync.Idle -> "Elige una imagen — se subirá al guardar"
-    }
-    val color = if (uploadState is UiAsync.Error) {
-        MaterialTheme.colorScheme.error
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Text(
-        text = message,
-        style = MaterialTheme.typography.bodySmall,
-        color = color,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
-}
 
 private fun String.toReadableStatus(): String {
     return when (trim().lowercase()) {

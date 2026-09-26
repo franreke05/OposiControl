@@ -5,8 +5,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.unit.Density
 import com.oposicontrol.admin.core.ui.components.AppIcon
@@ -63,6 +66,26 @@ class ImportVisualHarness {
         render(Capture("imports-duplicate.png", 1920, 1080, dark = false), fx.revisionConDuplicado())
         render(Capture("imports-published.png", 1920, 1080, dark = false), fx.publicado())
         render(Capture("imports-duplicates-annulled.png", 1920, 1080, dark = false), fx.revisionConDuplicadosYAnulada())
+    }
+
+    @Test
+    fun capturaRevisionConTextoLargo() {
+        render(Capture("imports-review-long-text.png", 1920, 1400, dark = false), fx.revisionConTextoLargo())
+        render(Capture("imports-review-long-text-dark.png", 1920, 1400, dark = true), fx.revisionConTextoLargo())
+    }
+
+    @Test
+    fun revisionConTextoLargoMantieneAccionesAccesiblesEnVentanaBaja() {
+        runDesktopComposeUiTest(width = 1366, height = 768) {
+            setContent {
+                CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 1f)) {
+                    HarnessShell(state = fx.revisionConTextoLargo(), dark = false)
+                }
+            }
+            waitForIdle()
+
+            onNodeWithText("Guardar fila").performScrollTo().assertIsDisplayed()
+        }
     }
 
     @Test

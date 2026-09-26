@@ -113,7 +113,6 @@ sealed interface PendingDeleteTarget {
     data object Question : PendingDeleteTarget
     data object RafagaQuestion : PendingDeleteTarget
     data object Specialty : PendingDeleteTarget
-    data object ExamCover : PendingDeleteTarget
     data class Resource(val resourceId: String) : PendingDeleteTarget
 
     /** Quitar el vínculo de esta pregunta con el examen abierto. La pregunta sigue en el banco. */
