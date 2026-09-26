@@ -34,7 +34,7 @@ concurrency:
 
 jobs:
   package:
-    name: macOS ${{ matrix.arch }} (${{ inputs.signing || 'unsigned' }})
+    name: macOS ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -46,7 +46,8 @@ jobs:
           - arch: x64
             runner: macos-15-intel
     env:
-      SIGNING: ${{ inputs.signing || 'unsigned' }}
+      # Manual: lo que se elija. Push: firmada en cuanto exista el certificado en los secretos.
+      SIGNING: ${{ inputs.signing || (secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && 'signed' || 'unsigned') }}
       APP_VERSION: ${{ inputs.version || '1.0.0' }}
       ARCH: ${{ matrix.arch }}
       # Valores PÚBLICOS que viajan dentro de la app (URL del proyecto y clave publishable).

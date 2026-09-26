@@ -48,7 +48,8 @@ puede comprobar que no contenga software malicioso*. Para abrirla igualmente:
 
 ## Build firmada y notarizada
 
-`Run workflow` → `signing = signed`. El job:
+`Run workflow` → `signing = signed`, o simplemente un push a `release/desktop-*`: en cuanto existe
+el secreto `MACOS_CERTIFICATE_P12_BASE64`, los push generan la build firmada. El job:
 
 1. Crea un **keychain temporal** con contraseña aleatoria, importa el `.p12` y lo borra al terminar
    (paso `if: always()`), igual que la clave `.p8`.
