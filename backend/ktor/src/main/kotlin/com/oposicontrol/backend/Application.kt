@@ -17,6 +17,12 @@ import io.ktor.server.auth.principal
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.plugins.CannotTransformContentToTypeException
+import io.ktor.server.plugins.PayloadTooLargeException
+import io.ktor.server.plugins.UnsupportedMediaTypeException
+import io.ktor.server.response.ApplicationSendPipeline
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.origin
 import io.ktor.server.plugins.statuspages.StatusPages
@@ -158,6 +164,10 @@ internal fun unconfiguredSupabaseGateways(json: Json, environment: (String) -> S
  * extiende `IllegalArgumentException`, tiene su propio handler y no cae en el 400.
  */
 internal fun Application.installBackendStatusPages() {
+    // Sobre canonico (SLICE 0): cualquier `ErrorDto` que responda una ruta
+    // directamente —sin pasar por una excepcion— sale tambien con `requestId`, el
+    // mismo valor que la cabecera `X-Request-Id`.
+    installErrorEnvelopeRequestId()
     install(StatusPages) {
         exception<AppUnauthorized> { call, cause ->
             logStrategicEvent(
@@ -168,10 +178,9 @@ internal fun Application.installBackendStatusPages() {
                 durationMs = call.elapsedMsOrNull(),
                 errorType = cause::class.simpleName,
             )
-            call.respond(
-                HttpStatusCode.Unauthorized,
-                ErrorDto(error = "unauthorized", message = cause.message ?: "No autorizado."),
-            )
+            // El mensaje de la excepcion NO se publica: puede llevar el texto del
+            // verificador JWT. El 401 dice siempre lo mismo.
+            call.respondErrorEnvelope(CanonicalErrorCode.UNAUTHENTICATED)
         }
         exception<AppForbidden> { call, cause ->
             logStrategicEvent(
@@ -182,15 +191,15 @@ internal fun Application.installBackendStatusPages() {
                 durationMs = call.elapsedMsOrNull(),
                 errorType = cause::class.simpleName,
             )
-            call.respond(
-                HttpStatusCode.Forbidden,
-                ErrorDto(error = "forbidden", message = cause.message ?: "No tienes permisos para realizar esta acción."),
+            call.respondErrorEnvelope(
+                CanonicalErrorCode.FORBIDDEN,
+                message = cause.message ?: CanonicalErrorCode.FORBIDDEN.defaultMessage,
             )
         }
         exception<OposiBotsUserAdminNotFoundException> { call, cause ->
-            call.respond(
-                HttpStatusCode.NotFound,
-                ErrorDto(error = "not_found", message = cause.message ?: "Usuario no encontrado."),
+            call.respondErrorEnvelope(
+                CanonicalErrorCode.NOT_FOUND,
+                message = cause.message ?: "Usuario no encontrado.",
             )
         }
         exception<BackendDomainException> { call, cause ->
@@ -199,19 +208,28 @@ internal fun Application.installBackendStatusPages() {
             // tiene sentido y cuándo. Es un problema de infraestructura, no una regla
             // de negocio, y por eso —sólo éste— deja evento en el log.
             cause.retryAfterSeconds?.let { seconds ->
-                logStrategicEvent(
-                    StrategicEvent.SUPABASE_REQUEST_FAILED,
-                    requestId = call.requestIdOrNull(),
-                    operation = call.request.path(),
-                    result = cause.status.value.toString(),
-                    durationMs = call.elapsedMsOrNull(),
-                    errorType = cause.errorCode,
-                )
+                if (cause.status.value >= 500) {
+                    logStrategicEvent(
+                        StrategicEvent.SUPABASE_REQUEST_FAILED,
+                        requestId = call.requestIdOrNull(),
+                        operation = call.request.path(),
+                        result = cause.status.value.toString(),
+                        durationMs = call.elapsedMsOrNull(),
+                        errorType = cause.errorCode,
+                    )
+                }
                 call.response.header(HttpHeaders.RetryAfter, seconds.toString())
             }
-            call.respond(
-                cause.status,
-                ErrorDto(error = cause.errorCode.lowercase(), message = cause.message),
+            // `code` es `errorCode` tal cual (ya es UPPER_SNAKE), salvo los
+            // transitorios de la base, que son el generico DB_BUSY. `error` legacy
+            // = `errorCode.lowercase()`, como hasta ahora: OC lo lee por regex.
+            val code = if (cause.errorCode in TRANSIENT_DB_ERROR_CODES) CanonicalErrorCode.DB_BUSY.name else cause.errorCode
+            call.respondErrorEnvelope(
+                status = cause.status,
+                code = code,
+                message = cause.message,
+                details = cause.details,
+                legacyError = cause.errorCode.lowercase(),
             )
         }
         // Un cuerpo JSON mal formado llega como BadRequestException, que NO extiende
@@ -219,10 +237,20 @@ internal fun Application.installBackendStatusPages() {
         // payload inválido de cualquier endpoint devolvía un 500 con el nombre de
         // la clase interna esperada. Es un 400 del cliente, y no se filtra el DTO.
         exception<BadRequestException> { call, _ ->
-            call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorDto(error = "bad_request", message = "El cuerpo de la petición no es válido."),
-            )
+            call.respondErrorEnvelope(CanonicalErrorCode.MALFORMED_BODY)
+        }
+        // Ktor responde 415 sin cuerpo cuando ningun conversor acepta el Content-Type.
+        status(HttpStatusCode.UnsupportedMediaType) { call, _ ->
+            call.respondErrorEnvelope(CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE)
+        }
+        exception<CannotTransformContentToTypeException> { call, _ ->
+            call.respondErrorEnvelope(CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE)
+        }
+        exception<UnsupportedMediaTypeException> { call, _ ->
+            call.respondErrorEnvelope(CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE)
+        }
+        exception<PayloadTooLargeException> { call, _ ->
+            call.respondErrorEnvelope(CanonicalErrorCode.PAYLOAD_TOO_LARGE)
         }
         // F-08. `SerializationException` extiende `IllegalArgumentException`, así que
         // una respuesta de Supabase que no casaba con el DTO —columna renombrada,
@@ -233,7 +261,7 @@ internal fun Application.installBackendStatusPages() {
         // Los cuerpos de PETICIÓN mal formados no pasan por aquí: Ktor los convierte
         // en `BadRequestException` (handler de arriba).
         exception<SerializationException> { call, cause ->
-            val requestId = call.requestIdOrNull()
+            val requestId = call.ensureRequestId()
             logStrategicEvent(
                 StrategicEvent.SUPABASE_REQUEST_FAILED,
                 requestId = requestId,
@@ -248,25 +276,23 @@ internal fun Application.installBackendStatusPages() {
                 requestId,
                 cause.redactedMessage("Upstream contract error"),
             )
-            call.respond(
-                HttpStatusCode.BadGateway,
-                ErrorDto(
-                    error = "backend_contract_error",
-                    message = requestId
-                        ?.let { "No se pudo interpretar la respuesta del servicio de datos. Referencia: $it" }
-                        ?: "No se pudo interpretar la respuesta del servicio de datos.",
-                ),
+            call.respondErrorEnvelope(
+                CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR,
+                message = "No se pudo interpretar la respuesta del servicio de datos. Referencia: $requestId",
             )
         }
         exception<IllegalArgumentException> { call, cause ->
-            call.respond(
-                HttpStatusCode.BadRequest,
-                ErrorDto(error = "bad_request", message = cause.safeBackendMessage("Invalid request")),
+            call.respondErrorEnvelope(
+                CanonicalErrorCode.VALIDATION,
+                message = cause.safeBackendMessage("Invalid request"),
             )
         }
+        // Fallo del upstream (Supabase/PostgREST): 502 UPSTREAM_ERROR, o 504
+        // UPSTREAM_TIMEOUT si fue un timeout. Antes era un 500
+        // `backend_supabase_error`; el adaptador de OC trata todos los 5xx igual.
         exception<IllegalStateException> { call, cause ->
             val isTimeout = cause.looksLikeUpstreamTimeout()
-            val requestId = call.requestIdOrNull()
+            val requestId = call.ensureRequestId()
             logStrategicEvent(
                 if (isTimeout) StrategicEvent.UPSTREAM_TIMEOUT else StrategicEvent.SUPABASE_REQUEST_FAILED,
                 requestId = requestId,
@@ -286,18 +312,14 @@ internal fun Application.installBackendStatusPages() {
                 requestId,
                 cause.redactedMessage("Backend error"),
             )
-            call.respond(
-                HttpStatusCode.InternalServerError,
-                ErrorDto(
-                    error = "backend_supabase_error",
-                    message = requestId
-                        ?.let { "Error al consultar el servicio de datos. Referencia: $it" }
-                        ?: "Error al consultar el servicio de datos.",
-                ),
+            val code = if (isTimeout) CanonicalErrorCode.UPSTREAM_TIMEOUT else CanonicalErrorCode.UPSTREAM_ERROR
+            call.respondErrorEnvelope(
+                code,
+                message = "${code.defaultMessage} Referencia: $requestId",
             )
         }
         exception<Throwable> { call, cause ->
-            val requestId = call.requestIdOrNull()
+            val requestId = call.ensureRequestId()
             logStrategicEvent(
                 StrategicEvent.UNCAUGHT_EXCEPTION,
                 requestId = requestId,
@@ -307,9 +329,7 @@ internal fun Application.installBackendStatusPages() {
                 errorType = cause::class.simpleName,
             )
             Sentry.withScope { scope ->
-                requestId?.let {
-                    scope.setTag("request_id", it)
-                }
+                scope.setTag("request_id", requestId)
 
                 scope.setTag(
                     "operation",
@@ -335,14 +355,9 @@ internal fun Application.installBackendStatusPages() {
                 cause::class.simpleName,
                 cause.redactedMessage("Unexpected backend error", 200),
             )
-            call.respond(
-                HttpStatusCode.InternalServerError,
-                ErrorDto(
-                    error = "backend_internal_error",
-                    message = requestId
-                        ?.let { "Error interno del servidor. Referencia: $it" }
-                        ?: "Error interno del servidor.",
-                ),
+            call.respondErrorEnvelope(
+                CanonicalErrorCode.INTERNAL,
+                message = "${CanonicalErrorCode.INTERNAL.defaultMessage} Referencia: $requestId",
             )
         }
     }
@@ -686,9 +701,7 @@ internal fun Application.configureConsumerAuthOnly(runtime: OposiBotsAuthRuntime
     }
     routing {
         prometheusMetricsRoute()
-        get("/health/live") {
-            call.respond(mapOf("status" to "ok"))
-        }
+        healthLiveRoute()
         oposiBotsAuthRoutes(runtime)
     }
 }
@@ -776,8 +789,85 @@ fun io.ktor.server.application.ApplicationCall.requiredPath(name: String): Strin
         ?: throw IllegalArgumentException("Missing path parameter $name")
 }
 
+/**
+ * El sobre canonico de error (SLICE 0, `specs.errors`): `{code!, message!,
+ * requestId!, details?}` + campos LEGACY aditivos.
+ *
+ * - `code`: UPPER_SNAKE estable. Si una ruta legacy construye `ErrorDto(error =
+ *   "bad_request", ...)`, `code` sale de [canonicalCodeForLegacyError].
+ * - `requestId`: lo rellena [installErrorEnvelopeRequestId] con el mismo valor
+ *   que la cabecera `X-Request-Id` cuando la ruta no lo pone.
+ * - `error` (legacy, deprecated): `code.lowercase()` en lo canonico; OC lo lee
+ *   por regex. En /v1/auth es el nombre del enum `OposiBotsErrorCode`.
+ * - `issues` (legacy, deprecated): solo /v1/auth (OB `AuthErrorWire`).
+ *
+ * No hay un segundo DTO de error: este es el unico cuerpo non-2xx JSON.
+ */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
-data class ErrorDto(val error: String, val message: String)
+data class ErrorDto(
+    val error: String,
+    val message: String,
+    @EncodeDefault val code: String = canonicalCodeForLegacyError(error),
+    val requestId: String? = null,
+    val details: ErrorDetails? = null,
+    val issues: List<String>? = null,
+) {
+    companion object {
+        /** Un error canonico: `error` legacy = `code.lowercase()` salvo que se indique otro. */
+        fun canonical(
+            code: String,
+            message: String,
+            requestId: String?,
+            details: ErrorDetails? = null,
+            legacyError: String = code.lowercase(),
+        ): ErrorDto = ErrorDto(
+            error = legacyError,
+            message = message,
+            code = code,
+            requestId = requestId,
+            details = details,
+        )
+    }
+}
+
+/**
+ * Rellena `requestId` en cualquier [ErrorDto] que salga sin el (rutas legacy que
+ * responden `ErrorDto` a mano). Mismo valor que la cabecera `X-Request-Id`.
+ */
+internal fun Application.installErrorEnvelopeRequestId() {
+    sendPipeline.intercept(ApplicationSendPipeline.Before) { message ->
+        if (message is ErrorDto && message.requestId == null) {
+            proceedWith(message.copy(requestId = call.ensureRequestId()))
+        }
+    }
+}
+
+/** Responde el sobre canonico con [code] del catalogo. */
+internal suspend fun ApplicationCall.respondErrorEnvelope(
+    code: CanonicalErrorCode,
+    message: String = code.defaultMessage,
+    details: ErrorDetails? = null,
+    legacyError: String = code.name.lowercase(),
+) = respondErrorEnvelope(code.status, code.name, message, details, legacyError)
+
+/**
+ * Responde el sobre canonico. Un 401 lleva `WWW-Authenticate: Bearer`; el
+ * `requestId` del cuerpo es SIEMPRE el de la cabecera `X-Request-Id`.
+ */
+internal suspend fun ApplicationCall.respondErrorEnvelope(
+    status: HttpStatusCode,
+    code: String,
+    message: String,
+    details: ErrorDetails? = null,
+    legacyError: String = code.lowercase(),
+) {
+    val requestId = ensureRequestId()
+    if (status == HttpStatusCode.Unauthorized && response.headers[HttpHeaders.WWWAuthenticate] == null) {
+        response.header(HttpHeaders.WWWAuthenticate, "Bearer")
+    }
+    respond(status, ErrorDto.canonical(code, message, requestId, details, legacyError))
+}
 
 private class BackendRestartRequest(
     private val projectRoot: File,
@@ -911,22 +1001,16 @@ private suspend inline fun <reified T : Any> ApplicationCall.respondBackendSupab
     routeName: String,
     block: () -> T,
 ) {
+    // SLICE 0 (sobre canonico): antes este `try` respondia su propio 500 con el
+    // mensaje del upstream dentro (`safeBackendMessage`), saltandose la
+    // redaccion de `StatusPages`. Ahora solo registra y RELANZA: el cuerpo lo
+    // decide `installBackendStatusPages()` como en cualquier otra ruta.
     try {
         respond(block())
-    } catch (cause: IllegalArgumentException) {
-        val message = cause.safeBackendMessage("Supabase backend request error")
-        System.err.println("[ktor] $routeName request failure ${cause::class.simpleName}: $message")
-        respond(
-            HttpStatusCode.BadRequest,
-            ErrorDto(error = "bad_request", message = message),
-        )
     } catch (cause: Throwable) {
-        val message = cause.safeBackendMessage("Supabase backend error")
-        System.err.println("[ktor] $routeName supabase failure ${cause::class.simpleName}: $message")
-        respond(
-            HttpStatusCode.InternalServerError,
-            ErrorDto(error = "backend_supabase_error", message = message),
-        )
+        if (cause is kotlinx.coroutines.CancellationException) throw cause
+        System.err.println("[ktor] $routeName failure ${cause::class.simpleName}: ${cause.safeBackendMessage("Supabase backend error")}")
+        throw cause
     }
 }
 
@@ -2038,7 +2122,7 @@ internal fun Route.newsContentRoutes(
                     offset = sanitizeNewsOffset(call.request.queryParameters["offset"]),
                 ),
             )
-        }
+        }.legacyRoute(LegacyEndpoints.EP_111)
         // Releer una noticia sin arrastrar la biblioteca entera.
         get("/{noticiaId}") {
             val noticia = newsGateway.findNoticia(call.requiredPath("noticiaId"))
@@ -2063,22 +2147,22 @@ internal fun Route.newsContentRoutes(
                     ),
                 )
             }
-        }
+        }.legacyRoute(LegacyEndpoints.EP_200)
         post {
             val saved = newsGateway.saveNoticia(call.receive())
             onIndexed(saved)
             call.respond(HttpStatusCode.Created, saved)
-        }
+        }.legacyRoute(LegacyEndpoints.EP_199)
         put {
             val saved = newsGateway.saveNoticia(call.receive())
             onIndexed(saved)
             call.respond(saved)
-        }
+        }.legacyRoute(LegacyEndpoints.EP_229)
         delete("/{noticiaId}") {
             val id = call.requiredPath("noticiaId")
             newsGateway.deleteNoticia(id)
             onRemoved(id)
             call.respond(HttpStatusCode.NoContent)
-        }
+        }.legacyRoute(LegacyEndpoints.EP_015)
     }
 }

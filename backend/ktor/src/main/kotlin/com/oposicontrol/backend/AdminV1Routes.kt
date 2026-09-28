@@ -1290,7 +1290,7 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         }
         get("/dashboard") {
             call.respond(withUpstreamIo { gateway.getDashboardMetrics() })
-        }
+        }.legacyRoute(LegacyEndpoints.EP_046)
         // Catálogo comercial data-driven: planes, packs de OT y sus precios.
         // Es lo que consume `/v1/comercial/catalogo` en OposiBot, así que editar
         // aquí cambia la app sin desplegar nada.

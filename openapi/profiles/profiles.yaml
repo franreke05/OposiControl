@@ -1,0 +1,1283 @@
+# PROFILE contracts (FROZEN): D1-11..D1-19, D1-21..D1-30.
+# Identity is always the JWT sub (auth.users.id = perfiles_usuario.usuario_id); no request
+# body carries the caller id. Reads come from perfiles_usuario only (never public.usuario).
+components:
+  pathItems:
+    Me:
+      get:
+        operationId: getMe
+        summary: 'Get the current user'
+        tags: [profiles]
+        x-contract-id: D1-11
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Current user.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Me'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED or ACCOUNT_DELETION_PENDING.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+      delete:
+        operationId: requestMyAccountDeletion
+        summary: 'Request deletion of the current account'
+        tags: [profiles]
+        x-contract-id: D1-19
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, REAUTH_FAILED, STALE_AUTH, ALREADY_PENDING, RATE_LIMITED]
+        description: 'State-idempotent: a repeat returns 202 with the same requestedAt. Password accounts send currentPassword; OAuth accounts need authentication within the last 5 minutes. Purge and anonymisation effects follow DEC-008.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDeletionRequest'
+        responses:
+          '202':
+            description: 'Deletion pending.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AccountDeletionAccepted'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION (issue BAD_CONFIRMATION).'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+            description: 'UNAUTHENTICATED, REAUTH_FAILED or STALE_AUTH.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ALREADY_PENDING.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    MeOnboarding:
+      post:
+        operationId: completeMyOnboarding
+        summary: 'Complete onboarding'
+        tags: [profiles]
+        x-contract-id: D1-12
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, USERNAME_TAKEN, ALREADY_ONBOARDED_CONFLICT, UNKNOWN_SPECIALTY, LEGAL_VERSION_NOT_ACTIVE, INVALID_REFERRAL_CODE, SELF_REFERRAL, RATE_LIMITED]
+        description: 'Idempotent upsert on usuario_id (JWT sub); attribution and referral are write-once (ignored on repeat). No Idempotency-Key.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingRequest'
+        responses:
+          '200':
+            description: 'Current user (D1-11 shape).'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Me'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'USERNAME_TAKEN or ALREADY_ONBOARDED_CONFLICT.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'UNKNOWN_SPECIALTY, LEGAL_VERSION_NOT_ACTIVE, INVALID_REFERRAL_CODE or SELF_REFERRAL.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    MeProfile:
+      patch:
+        operationId: updateMyProfile
+        summary: 'Update the current user profile'
+        tags: [profiles]
+        x-contract-id: D1-13
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, USERNAME_TAKEN, PRECONDITION_FAILED, UNKNOWN_SPECIALTY, UNKNOWN_COMMUNITY, RATE_LIMITED]
+        description: 'Partial update with set semantics (same body, same state). Unknown fields return 400 VALIDATION with issue UNKNOWN_FIELD.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: If-Match
+            in: header
+            required: false
+            description: 'Optional profile version (ETag).'
+            schema:
+              type: string
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfilePatchRequest'
+        responses:
+          '200':
+            description: 'Current user (D1-11 shape).'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Me'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'USERNAME_TAKEN.'
+          '412':
+            $ref: '../common/errors.yaml#/components/responses/PreconditionFailed'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'UNKNOWN_SPECIALTY or UNKNOWN_COMMUNITY.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    MeAvatar:
+      put:
+        operationId: replaceMyAvatar
+        summary: 'Upload or replace the avatar'
+        tags: [profiles]
+        x-contract-id: D1-14
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [MALFORMED_BODY, UNAUTHENTICATED, ACCOUNT_BLOCKED, PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE, RATE_LIMITED]
+        description: 'PUT replaces. Stored at avatars/{uid}/{sha256}, so an identical upload is a no-op. Technical default size limit 2 MiB.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            multipart/form-data:
+              schema:
+                $ref: '#/components/schemas/AvatarUpload'
+              encoding:
+                file:
+                  contentType: 'image/jpeg, image/png, image/webp'
+        responses:
+          '200':
+            description: 'Avatar stored.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AvatarResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'MALFORMED_BODY.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED.'
+          '413':
+            $ref: '../common/errors.yaml#/components/responses/PayloadTooLarge'
+          '415':
+            $ref: '../common/errors.yaml#/components/responses/UnsupportedMediaType'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+      delete:
+        operationId: deleteMyAvatar
+        summary: 'Delete the avatar'
+        tags: [profiles]
+        x-contract-id: D1-15
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, RATE_LIMITED]
+        description: 'Idempotent: an absent avatar also returns 204.'
+        security:
+          - bearerAuth: []
+        responses:
+          '204':
+            description: 'Avatar removed.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    LegalDocuments:
+      get:
+        operationId: listActiveLegalDocuments
+        summary: 'List active legal documents'
+        tags: [profiles]
+        x-contract-id: D1-16
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Active documents only (bounded list).'
+        security: []
+        parameters:
+          - name: tipo
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/LegalDocumentType'
+        responses:
+          '200':
+            description: 'Active legal documents.'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/LegalDocument'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    MeLegalAcceptances:
+      post:
+        operationId: acceptLegalDocuments
+        summary: 'Accept legal documents'
+        tags: [profiles]
+        x-contract-id: D1-17
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, DOCUMENT_NOT_ACTIVE, RATE_LIMITED]
+        description: 'Idempotent via unique (usuario_id, documento_id); a repeat is a no-op. Append-only aceptaciones_legales.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegalAcceptanceRequest'
+        responses:
+          '200':
+            description: 'Documents still pending acceptance.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/LegalAcceptanceResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'DOCUMENT_NOT_ACTIVE.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    MeCredentials:
+      post:
+        operationId: changeMyCredentials
+        summary: 'Change password or email'
+        tags: [profiles]
+        x-contract-id: D1-18
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, REAUTH_FAILED, OAUTH_ONLY_ACCOUNT, ACCOUNT_BLOCKED, EMAIL_IN_USE, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
+        description: 'Exactly one of newPassword or newEmail (otherwise 400 VALIDATION issue NONE_OR_BOTH). A password change revokes the other sessions.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CredentialsChangeRequest'
+        responses:
+          '200':
+            description: 'Credentials changed.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/CredentialsChangeResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+            description: 'UNAUTHENTICATED or REAUTH_FAILED.'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'OAUTH_ONLY_ACCOUNT or ACCOUNT_BLOCKED.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EMAIL_IN_USE or IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'IDEMPOTENCY_KEY_REUSED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    AdminMe:
+      get:
+        operationId: getAdminMe
+        summary: 'Get the current staff member'
+        tags: [profiles-admin]
+        x-contract-id: D1-21
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [MODERATOR, ADMIN, SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN]
+        description: 'Permissions are derived in Ktor from roles_usuario JOIN roles_app.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Staff identity.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminMe'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'FORBIDDEN (no staff role).'
+    AdminUsers:
+      get:
+        operationId: listAdminUsers
+        summary: 'List users'
+        tags: [profiles-admin]
+        x-contract-id: D1-22
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, INTERNAL, UPSTREAM_ERROR]
+        description: 'OFFSET is justified by the OC data grid (total and jump-to-page). The legacy data array duplicates items until OC migrates.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitOffset200Default50'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+          - name: q
+            in: query
+            required: false
+            description: 'Prefix of username, nombre or email.'
+            schema:
+              type: string
+          - name: roleCode
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/RoleCode'
+          - name: accountStatus
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/AccountStatus'
+          - name: sort
+            in: query
+            required: false
+            schema:
+              type: string
+              enum: [creadoEn_desc, username_asc]
+              default: creadoEn_desc
+        responses:
+          '200':
+            description: 'User page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/AdminUserSummary'
+                        data:
+                          type: array
+                          deprecated: true
+                          description: 'LEGACY duplicate of items until OC migrates.'
+                          items:
+                            $ref: '#/components/schemas/AdminUserSummary'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminUser:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/UserIdPath'
+      get:
+        operationId: getAdminUser
+        summary: 'Get a user'
+        tags: [profiles-admin]
+        x-contract-id: D1-23
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, INTERNAL]
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'User.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminUserResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION (issue NON_UUID).'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+      patch:
+        operationId: updateAdminUser
+        summary: 'Update a user display name or username'
+        tags: [profiles-admin]
+        x-contract-id: D1-25
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, USERNAME_TAKEN, INTERNAL]
+        description: 'Set semantics; an audit row (actor = JWT sub) only when values change. Unknown fields (including isActive) return 400 VALIDATION with issue UNKNOWN_FIELD.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserPatchRequest'
+        responses:
+          '200':
+            description: 'User (D1-23 shape).'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminUserResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'USERNAME_TAKEN.'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+    AdminUserDetail:
+      get:
+        operationId: getAdminUserDetail
+        summary: 'Get the composite user detail'
+        tags: [profiles-admin]
+        x-contract-id: D1-24
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, INTERNAL]
+        description: 'Composite admin-only read; sections are individually capped. economia is derived on read from transacciones_cartera, compras_usuario and atribucion_usuario (no summary cache).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/UserIdPath'
+          - name: sections
+            in: query
+            required: false
+            description: 'Comma-separated sections; default all.'
+            style: form
+            explode: false
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminUserDetailSection'
+        responses:
+          '200':
+            description: 'User detail.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminUserDetail'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+    AdminUserRoles:
+      post:
+        operationId: replaceAdminUserRoles
+        summary: 'Replace the roles of a user'
+        tags: [profiles-admin]
+        x-contract-id: D1-26
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, SUPERADMIN_REQUIRED, ROLE_SYNC_LAST_SUPERADMIN, ROLE_SYNC_EMPTY_ROLES, ROLE_SYNC_UNKNOWN_ROLE, ROLE_SYNC_INVALID_USER, INTERNAL]
+        description: 'Idempotent full replace via rpc admin_sync_roles; granting or removing admin or superadmin requires SUPERADMIN.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/UserIdPath'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleIdsBody'
+        responses:
+          '200':
+            description: 'Resulting roles.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/RoleIdsBody'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'FORBIDDEN or SUPERADMIN_REQUIRED.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ROLE_SYNC_LAST_SUPERADMIN.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'ROLE_SYNC_EMPTY_ROLES, ROLE_SYNC_UNKNOWN_ROLE or ROLE_SYNC_INVALID_USER.'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+    AdminUserBlock:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/UserIdPath'
+      post:
+        operationId: blockAdminUser
+        summary: 'Block a user'
+        tags: [profiles-admin]
+        x-contract-id: D1-27
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, CANNOT_BLOCK_SELF, SUPERADMIN_REQUIRED, NOT_FOUND, DELETION_PENDING, INTERNAL, UPSTREAM_ERROR]
+        description: 'State-idempotent: an already blocked user returns 200 with no new audit row. Blocking staff requires SUPERADMIN. Applies the GoTrue ban.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminBlockRequest'
+        responses:
+          '200':
+            description: 'User blocked.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminBlockResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'FORBIDDEN, CANNOT_BLOCK_SELF or SUPERADMIN_REQUIRED.'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'DELETION_PENDING.'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+            description: 'UPSTREAM_ERROR (GoTrue).'
+      delete:
+        operationId: unblockAdminUser
+        summary: 'Unblock a user'
+        tags: [profiles-admin]
+        x-contract-id: D1-28
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, DELETION_PENDING, UPSTREAM_ERROR]
+        description: 'State-idempotent: an already active user returns 200. Lifts the GoTrue ban.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'User active.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminUnblockResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'DELETION_PENDING.'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminRoles:
+      get:
+        operationId: listAdminRoles
+        summary: 'List roles'
+        tags: [profiles-admin]
+        x-contract-id: D1-29
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, INTERNAL]
+        description: 'Fixed 4-code catalog (bounded by CHECK).'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Roles.'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Role'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+    AdminLegalDocuments:
+      post:
+        operationId: createAdminLegalDocument
+        summary: 'Create a legal document version'
+        tags: [profiles-admin]
+        x-contract-id: D1-30
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, VERSION_EXISTS, INTERNAL]
+        description: 'Natural key (tipo, version) is unique; a repeat returns 409.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminLegalDocumentCreateRequest'
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Location:
+                description: 'URI of the created resource.'
+                required: false
+                schema:
+                  type: string
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminLegalDocumentCreated'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'VERSION_EXISTS.'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+  schemas:
+    AuthProvider:
+      type: string
+      enum: [email, apple, google]
+    Me:
+      type: object
+      description: 'Current user. Additional sections may be added (DEC-002 may only ADD fields); clients ignore unknown properties.'
+      required: [id, authProviders, registeredAt, profile]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        email:
+          type: [string, 'null']
+          format: email
+        authProviders:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuthProvider'
+        registeredAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        profile:
+          $ref: '#/components/schemas/MeProfile'
+    MeProfile:
+      type: object
+      required: [onboardingCompleted, accountStatus]
+      properties:
+        username:
+          type: [string, 'null']
+        nombreMostrar:
+          type: [string, 'null']
+        nombre:
+          type: [string, 'null']
+        apellidos:
+          type: [string, 'null']
+        especialidadPrincipalId:
+          type: [string, 'null']
+          format: uuid
+          description: 'Single FK (DEC-001 adopted; DEC-002 may only add fields).'
+        comunidadPrincipalId:
+          type: [string, 'null']
+          format: uuid
+        avatarUrl:
+          type: [string, 'null']
+          format: uri
+          description: 'Signed URL.'
+        onboardingCompleted:
+          type: boolean
+        accountStatus:
+          $ref: '../common/identifiers.yaml#/components/schemas/AccountStatus'
+        introSeenAt:
+          type: [string, 'null']
+          format: date-time
+    Username:
+      type: string
+      pattern: '^[A-Za-z0-9._-]{3,30}$'
+    OnboardingRequest:
+      type: object
+      required: [username, nombre, apellidos, acceptedLegalDocumentIds]
+      additionalProperties: false
+      properties:
+        username:
+          $ref: '#/components/schemas/Username'
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 100
+        apellidos:
+          type: string
+          minLength: 1
+          maxLength: 100
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        acceptedLegalDocumentIds:
+          type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        attribution:
+          $ref: '#/components/schemas/AttributionHints'
+        referralCode:
+          type: string
+    AttributionHints:
+      type: object
+      description: 'Write-once, server-validated hints.'
+      required: []
+      additionalProperties: false
+      properties:
+        fuente:
+          type: string
+        canal:
+          type: string
+        campania:
+          type: string
+        plataforma:
+          type: string
+          enum: [android, ios, web]
+        installReferrer:
+          type: string
+    ProfilePatchRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        username:
+          $ref: '#/components/schemas/Username'
+        nombre:
+          type: string
+          maxLength: 100
+        apellidos:
+          type: string
+          maxLength: 100
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        comunidadPrincipalId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        detail:
+          $ref: '#/components/schemas/ProfileDetailPatch'
+        targetCommunityIds:
+          type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        introSeen:
+          type: boolean
+    ProfileDetailPatch:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        edad:
+          type: integer
+          minimum: 0
+        ciudad:
+          type: string
+        estadoLaboral:
+          type: string
+        centroTrabajo:
+          type: string
+        tiempoEstudioMin:
+          type: integer
+          minimum: 0
+        franja:
+          type: string
+        fechaExamenObjetivo:
+          $ref: '../common/identifiers.yaml#/components/schemas/LocalDate'
+    AvatarUpload:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          description: 'image/jpeg, image/png or image/webp; technical default limit 2 MiB.'
+    AvatarResponse:
+      type: object
+      required: [avatarUrl, expiresAt]
+      properties:
+        avatarUrl:
+          $ref: '../common/identifiers.yaml#/components/schemas/SignedUrl'
+        expiresAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    LegalDocument:
+      type: object
+      required: [id, tipo, version, titulo, contenido, publicadoEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipo:
+          $ref: '../common/identifiers.yaml#/components/schemas/LegalDocumentType'
+        version:
+          type: string
+        titulo:
+          type: string
+        contenido:
+          $ref: '../common/identifiers.yaml#/components/schemas/Markdown'
+        publicadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    LegalAcceptanceRequest:
+      type: object
+      required: [documentIds, plataforma]
+      additionalProperties: false
+      properties:
+        documentIds:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        plataforma:
+          type: string
+          enum: [android, ios]
+    LegalAcceptanceResponse:
+      type: object
+      required: [pendingLegalDocuments]
+      properties:
+        pendingLegalDocuments:
+          type: array
+          items:
+            type: object
+            required: [id, tipo, version]
+            properties:
+              id:
+                $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+              tipo:
+                $ref: '../common/identifiers.yaml#/components/schemas/LegalDocumentType'
+              version:
+                type: string
+    CredentialsChangeRequest:
+      type: object
+      required: [currentPassword]
+      additionalProperties: false
+      properties:
+        currentPassword:
+          type: string
+          minLength: 1
+        newPassword:
+          type: string
+          minLength: 12
+          maxLength: 128
+          format: password
+        newEmail:
+          type: string
+          format: email
+      oneOf:
+        - required: [newPassword]
+        - required: [newEmail]
+    CredentialsChangeResponse:
+      type: object
+      required: [emailChangePending]
+      properties:
+        emailChangePending:
+          type: boolean
+    AccountDeletionRequest:
+      type: object
+      required: [confirmation]
+      additionalProperties: false
+      properties:
+        confirmation:
+          type: string
+          const: ELIMINAR
+        currentPassword:
+          type: string
+          description: 'Required for password accounts.'
+    AccountDeletionAccepted:
+      type: object
+      required: [accountStatus, requestedAt]
+      properties:
+        accountStatus:
+          type: string
+          const: eliminacion_pendiente
+        requestedAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    AdminMe:
+      type: object
+      required: [id, email, roles, permissions]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        email:
+          type: string
+          format: email
+        nombreMostrar:
+          type: [string, 'null']
+        roles:
+          type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/StaffRoleCode'
+        permissions:
+          type: array
+          items:
+            type: string
+    AdminUserSummary:
+      type: object
+      required: [id, roleIds, accountStatus, createdAt]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        username:
+          type: [string, 'null']
+        fullName:
+          type: [string, 'null']
+        email:
+          type: [string, 'null']
+          format: email
+        roleIds:
+          type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        accountStatus:
+          $ref: '../common/identifiers.yaml#/components/schemas/AccountStatus'
+        createdAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        ticketsBalance:
+          type: [integer, 'null']
+    AdminUser:
+      type: object
+      required: [id, roleIds, accountStatus, onboardingCompleted, createdAt, authProviders]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        username:
+          type: [string, 'null']
+        fullName:
+          type: [string, 'null']
+        email:
+          type: [string, 'null']
+          format: email
+        roleIds:
+          type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        accountStatus:
+          $ref: '../common/identifiers.yaml#/components/schemas/AccountStatus'
+        bloqueo:
+          type: [object, 'null']
+          required: []
+          properties:
+            motivo:
+              type: [string, 'null']
+            en:
+              type: [string, 'null']
+              format: date-time
+            por:
+              type: [string, 'null']
+              format: uuid
+        onboardingCompleted:
+          type: boolean
+        createdAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        authProviders:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuthProvider'
+    AdminUserResponse:
+      description: 'D1-23 shape. The legacy data wrapper duplicates the same object until OC migrates.'
+      allOf:
+        - $ref: '#/components/schemas/AdminUser'
+        - type: object
+          required: []
+          properties:
+            data:
+              deprecated: true
+              allOf:
+                - $ref: '#/components/schemas/AdminUser'
+    AdminUserDetailSection:
+      type: string
+      enum: [perfil, rendimiento, competitivo, racha, economia, suscripciones, opositester, debilidades]
+    AdminUserDetail:
+      type: object
+      description: 'Sections not requested or not available are null (or empty) and listed in seccionesNoDisponibles. Section internals other than economia are read models not frozen field by field.'
+      required: [perfil, suscripciones, debilidades, seccionesNoDisponibles]
+      properties:
+        perfil:
+          $ref: '#/components/schemas/AdminUser'
+        detalle:
+          type: [object, 'null']
+        rendimiento:
+          type: [object, 'null']
+        competitivo:
+          type: [object, 'null']
+        racha:
+          type: [object, 'null']
+        economia:
+          $ref: '#/components/schemas/AdminUserEconomy'
+        suscripciones:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+        opositester:
+          type: [object, 'null']
+        debilidades:
+          type: array
+          maxItems: 15
+          items:
+            type: object
+        seccionesNoDisponibles:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUserDetailSection'
+    AdminUserEconomy:
+      type: [object, 'null']
+      required: [saldo, totalGastadoCentimos, numeroCompras, ticketsComprados, ticketsGanados, ticketsGastados, purchases]
+      properties:
+        saldo:
+          type: integer
+        totalGastadoCentimos:
+          type: integer
+        numeroCompras:
+          type: integer
+        ticketsComprados:
+          type: integer
+        ticketsGanados:
+          type: integer
+        ticketsGastados:
+          type: integer
+        costeCaptacionCentimos:
+          type: [integer, 'null']
+          description: 'Null until attribution or marketing cost data exists (GAP-041).'
+        rentabilidadCentimos:
+          type: [integer, 'null']
+          description: 'Null until attribution or marketing cost data exists (GAP-041).'
+        purchases:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+    AdminUserPatchRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        nombreMostrar:
+          type: string
+          maxLength: 100
+        username:
+          $ref: '#/components/schemas/Username'
+    RoleIdsBody:
+      type: object
+      required: [roleIds]
+      additionalProperties: false
+      properties:
+        roleIds:
+          type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+    AdminBlockRequest:
+      type: object
+      required: [motivo]
+      additionalProperties: false
+      properties:
+        motivo:
+          type: string
+          minLength: 3
+          maxLength: 500
+    AdminBlockResponse:
+      type: object
+      required: [accountStatus, bloqueadoEn, bloqueadoPor]
+      properties:
+        accountStatus:
+          type: string
+          const: bloqueada
+        bloqueadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        bloqueadoPor:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+    AdminUnblockResponse:
+      type: object
+      required: [accountStatus]
+      properties:
+        accountStatus:
+          type: string
+          const: activa
+    Role:
+      type: object
+      required: [id, code, name, permissions]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        code:
+          $ref: '../common/identifiers.yaml#/components/schemas/RoleCode'
+        name:
+          type: string
+        description:
+          type: [string, 'null']
+        permissions:
+          type: array
+          items:
+            type: string
+    AdminLegalDocumentCreateRequest:
+      type: object
+      required: [tipo, version, titulo, contenido, activar]
+      additionalProperties: false
+      properties:
+        tipo:
+          $ref: '../common/identifiers.yaml#/components/schemas/LegalDocumentType'
+        version:
+          type: string
+          minLength: 1
+        titulo:
+          type: string
+          minLength: 1
+        contenido:
+          $ref: '../common/identifiers.yaml#/components/schemas/Markdown'
+        activar:
+          type: boolean
+    AdminLegalDocumentCreated:
+      type: object
+      required: [id, tipo, version, activo]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipo:
+          $ref: '../common/identifiers.yaml#/components/schemas/LegalDocumentType'
+        version:
+          type: string
+        activo:
+          type: boolean
+        publicadoEn:
+          type: [string, 'null']
+          format: date-time

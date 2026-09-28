@@ -1,0 +1,3070 @@
+# CATALOG contracts (FROZEN): D2-01, D2-02, D2-13, D2-15, D2-16, D2-17, D2-20..D2-60.
+# Specialty (especialidadId) belongs to the EXAM only; question schemas never carry it.
+components:
+  pathItems:
+    AppExams:
+      get:
+        operationId: listAppExams
+        summary: 'List published exams for the app'
+        tags: [catalog]
+        x-contract-id: D2-01
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, RATE_LIMITED, INTERNAL, UPSTREAM_ERROR]
+        description: 'Keyset (publicado_en desc, id). accessState comes from CheckExamAccess. The tipoExamen filter also accepts the legacy synonym of razonado on reads (normalized server-side, never emitted).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: tipoExamen
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+          - name: especialidadId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: comunidadId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: anio
+            in: query
+            required: false
+            schema:
+              type: integer
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+          - name: includeFacets
+            in: query
+            required: false
+            schema:
+              type: boolean
+              default: false
+        responses:
+          '200':
+            description: 'Exam page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/AppExamSummary'
+                        facets:
+                          $ref: '#/components/schemas/AppExamFacets'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AppExam:
+      get:
+        operationId: getAppExam
+        summary: 'Get a published exam for the app'
+        tags: [catalog]
+        x-contract-id: D2-02
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, EXAM_NOT_FOUND, INTERNAL, UPSTREAM_ERROR]
+        description: 'No question bodies. precio values are pending DEC-035 (nullable). Cache private, no-store for accessState.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+        responses:
+          '200':
+            description: 'Exam.'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [examen]
+                  properties:
+                    examen:
+                      $ref: '#/components/schemas/AppExamDetail'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND (also draft or archived).'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    MyExams:
+      get:
+        operationId: listMyExams
+        summary: 'List the current user exams by view'
+        tags: [catalog]
+        x-contract-id: D2-13
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED]
+        description: 'Self from JWT sub. Projection over intentos_examen, contenido_desbloqueado_usuario and examenes.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: vista
+            in: query
+            required: true
+            schema:
+              type: string
+              enum: [EN_CURSO, ADQUIRIDOS, COLECCION]
+          - name: tipoExamen
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+          - name: comunidadId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: anio
+            in: query
+            required: false
+            schema:
+              type: integer
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'My exams page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/MyExamItem'
+                        grupos:
+                          type: [array, 'null']
+                          items:
+                            type: object
+                            required: [comunidadCodigo, total]
+                            properties:
+                              comunidadCodigo:
+                                type: string
+                              total:
+                                type: integer
+                                minimum: 0
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+    PublicExams:
+      get:
+        operationId: listPublicExams
+        summary: 'List published exams (public)'
+        tags: [catalog]
+        x-contract-id: D2-15
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ANON]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, RATE_LIMITED, INTERNAL, UPSTREAM_ERROR]
+        description: 'Published metadata only. Was OFFSET; a public list has no jump-to-page need.'
+        security: []
+        parameters:
+          - name: especialidadId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: comunidadId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: tipoExamen
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+          - name: tipoAcceso
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'Public exam page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/PublicExamSummary'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    PublicExam:
+      get:
+        operationId: getPublicExam
+        summary: 'Get a published exam (public)'
+        tags: [catalog]
+        x-contract-id: D2-16
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, EXAM_NOT_FOUND, RATE_LIMITED]
+        description: 'No questions. Cache public, max-age 300.'
+        security: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+        responses:
+          '200':
+            description: 'Exam.'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [examen]
+                  properties:
+                    examen:
+                      $ref: '#/components/schemas/PublicExamDetail'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    PublicSpecialties:
+      get:
+        operationId: listPublicSpecialties
+        summary: 'List active specialties (public)'
+        tags: [catalog]
+        x-contract-id: D2-17
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [RATE_LIMITED, INTERNAL, UPSTREAM_ERROR]
+        description: 'Bounded catalog of active specialties with their capabilities.'
+        security: []
+        responses:
+          '200':
+            description: 'Specialties.'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/PublicSpecialty'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminExams:
+      get:
+        operationId: listAdminExams
+        summary: 'List exams (admin grid)'
+        tags: [catalog-admin]
+        x-contract-id: D2-20
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN]
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: q
+            in: query
+            required: false
+            schema:
+              type: string
+          - name: estado
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/ExamEstado'
+          - name: tipoExamen
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+          - name: especialidadId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: comunidadId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: etiquetaId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitOffset100Default25'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'Exam page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/AdminExamen'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+      post:
+        operationId: createAdminExam
+        summary: 'Create an exam'
+        tags: [catalog-admin]
+        x-contract-id: D2-22
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, FORBIDDEN, EXAM_CODE_DUPLICATE, IDEMPOTENCY_KEY_IN_PROGRESS, SPECIALTY_TYPE_NOT_ALLOWED, IDEMPOTENCY_KEY_REUSED]
+        description: 'Idempotency-Key (canonical store); codigoExamen is unique.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminExamenCreateRequest'
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Location:
+                description: 'URI of the created exam.'
+                required: true
+                schema:
+                  type: string
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamen'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EXAM_CODE_DUPLICATE or IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'SPECIALTY_TYPE_NOT_ALLOWED or IDEMPOTENCY_KEY_REUSED.'
+    AdminExam:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+      get:
+        operationId: getAdminExam
+        summary: 'Get an exam (admin)'
+        tags: [catalog-admin]
+        x-contract-id: D2-21
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND]
+        description: 'All fields including drafts, creadoPor and signed portadaUrl.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Exam.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamen'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+      patch:
+        operationId: updateAdminExam
+        summary: 'Update exam metadata'
+        tags: [catalog-admin]
+        x-contract-id: D2-23
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND, EXAM_TYPE_LOCKED_BY_QUESTIONS, SPECIALTY_TYPE_NOT_ALLOWED]
+        description: 'Partial metadata update; tipoExamen is locked once questions are linked. Publication state changes only through the publicar/despublicar/archivar commands.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminExamenPatchRequest'
+        responses:
+          '200':
+            description: 'Exam.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamen'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EXAM_TYPE_LOCKED_BY_QUESTIONS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+      delete:
+        operationId: deleteAdminExam
+        summary: 'Delete an exam without user data'
+        tags: [catalog-admin]
+        x-contract-id: D2-24
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND, EXAM_HAS_USER_DATA, EXAM_DELETE_GUARD_UNAVAILABLE]
+        description: 'A 404 on retry is treated as done. Exams with user data must be archived instead.'
+        security:
+          - bearerAuth: []
+        responses:
+          '204':
+            description: 'Deleted.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EXAM_HAS_USER_DATA (use archivar) or EXAM_DELETE_GUARD_UNAVAILABLE.'
+    AdminExamPublish:
+      post:
+        operationId: publishAdminExam
+        summary: 'Publish an exam'
+        tags: [catalog-admin]
+        x-contract-id: D2-25
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND, EXAM_PUBLISH_REQUIRES_QUESTIONS, EXAM_PUBLISH_IMMERSIVE_WITHOUT_AUDIO]
+        description: 'Idempotent by state.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+        requestBody:
+          required: false
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminExamPublishRequest'
+        responses:
+          '200':
+            description: 'Exam.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamen'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EXAM_PUBLISH_REQUIRES_QUESTIONS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'EXAM_PUBLISH_IMMERSIVE_WITHOUT_AUDIO.'
+    AdminExamUnpublish:
+      post:
+        operationId: unpublishAdminExam
+        summary: 'Unpublish an exam'
+        tags: [catalog-admin]
+        x-contract-id: D2-26
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND]
+        description: 'Idempotent by state.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+        responses:
+          '200':
+            description: 'Exam.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamen'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+    AdminExamArchive:
+      post:
+        operationId: archiveAdminExam
+        summary: 'Archive an exam'
+        tags: [catalog-admin]
+        x-contract-id: D2-27
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND]
+        description: 'Idempotent by state.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+        responses:
+          '200':
+            description: 'Exam.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamen'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+    AdminExamCover:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+      post:
+        operationId: uploadAdminExamCover
+        summary: 'Upload or replace the exam cover'
+        tags: [catalog-admin]
+        x-contract-id: D2-28
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [NO_FILE, PAYLOAD_TOO_LARGE, UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND, EXAM_COVER_CHANGED_CONCURRENTLY, EXAM_COVER_TYPE_INVALID]
+        description: 'Conditional path update (If-Match with the current storage path) makes retries safe. image/jpeg, image/png or image/webp up to 10 MB.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: If-Match
+            in: header
+            required: false
+            description: 'Current cover path.'
+            schema:
+              type: string
+        requestBody:
+          required: true
+          content:
+            multipart/form-data:
+              schema:
+                $ref: '#/components/schemas/FileUpload'
+              encoding:
+                file:
+                  contentType: 'image/jpeg, image/png, image/webp'
+        responses:
+          '200':
+            description: 'Exam with signed portadaUrl.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamen'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'NO_FILE.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EXAM_COVER_CHANGED_CONCURRENTLY.'
+          '413':
+            $ref: '../common/errors.yaml#/components/responses/PayloadTooLarge'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'EXAM_COVER_TYPE_INVALID.'
+      delete:
+        operationId: deleteAdminExamCover
+        summary: 'Remove the exam cover'
+        tags: [catalog-admin]
+        x-contract-id: D2-29
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND]
+        description: 'Idempotent.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Exam.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamen'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+    AdminExamQuestions:
+      get:
+        operationId: listAdminExamQuestions
+        summary: 'List the questions linked to an exam'
+        tags: [catalog-admin]
+        x-contract-id: D2-30
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND]
+        description: 'Bounded by the exam question count (<= 200).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+        responses:
+          '200':
+            description: 'Linked questions in order.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamQuestionList'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+    AdminQuestionExams:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/PreguntaIdPath'
+      get:
+        operationId: listAdminQuestionExams
+        summary: 'List the exams a question is linked to'
+        tags: [catalog-admin]
+        x-contract-id: D2-37
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, QUESTION_NOT_FOUND]
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitOffset100Default50'
+        responses:
+          '200':
+            description: 'Link page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/QuestionExamLinkDetail'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'QUESTION_NOT_FOUND.'
+      post:
+        operationId: linkAdminQuestionToExam
+        summary: 'Link a question to an exam'
+        tags: [catalog-admin]
+        x-contract-id: D2-31
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, ALREADY_LINKED, QUESTION_EXAM_TYPE_MISMATCH, EXAM_QUESTION_LIMIT_REACHED, QUESTION_IMMERSIVE_REQUIRES_AUDIO]
+        description: 'Natural key (examen, pregunta): a repeat returns 409 ALREADY_LINKED. Uses admin_link_question_to_exam.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionExamLinkRequest'
+        responses:
+          '201':
+            description: 'Current links of the question.'
+            headers:
+              Location:
+                description: 'URI of the created link.'
+                required: false
+                schema:
+                  type: string
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/QuestionExamLinks'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ALREADY_LINKED.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'QUESTION_EXAM_TYPE_MISMATCH, EXAM_QUESTION_LIMIT_REACHED or QUESTION_IMMERSIVE_REQUIRES_AUDIO.'
+    AdminQuestionExamLink:
+      delete:
+        operationId: unlinkAdminQuestionFromExam
+        summary: 'Unlink a question from an exam'
+        tags: [catalog-admin]
+        x-contract-id: D2-32
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, EXAM_PUBLISHED_WOULD_BE_EMPTY]
+        description: 'Idempotent.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/PreguntaIdPath'
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+        responses:
+          '200':
+            description: 'Remaining links of the question.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/QuestionExamLinks'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EXAM_PUBLISHED_WOULD_BE_EMPTY.'
+    AdminExamQuestionAnnulment:
+      patch:
+        operationId: setAdminExamQuestionAnnulment
+        summary: 'Annul or restore a question within an exam'
+        tags: [catalog-admin]
+        x-contract-id: D2-33
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, QUESTION_NOT_LINKED_TO_EXAM, ANNULMENT_REASON_REQUIRED]
+        description: 'Idempotent (set state). motivoAnulacion is required when anulada is true.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+          - $ref: '../common/identifiers.yaml#/components/parameters/PreguntaIdPath'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnnulmentRequest'
+        responses:
+          '200':
+            description: 'Link state.'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [link]
+                  properties:
+                    link:
+                      $ref: '#/components/schemas/ExamQuestionLinkState'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'QUESTION_NOT_LINKED_TO_EXAM.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'ANNULMENT_REASON_REQUIRED.'
+    AdminExamQuestionOrder:
+      patch:
+        operationId: reorderAdminExamQuestions
+        summary: 'Reorder the questions of an exam'
+        tags: [catalog-admin]
+        x-contract-id: D2-34
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, EXAM_NOT_FOUND, EXAM_REORDER_SET_MISMATCH]
+        description: 'Idempotent full replacement of the ordered set. The literal segment orden takes precedence over the {preguntaId} template.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionOrderRequest'
+        responses:
+          '200':
+            description: 'Linked questions in the new order (D2-30 shape).'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminExamQuestionList'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EXAM_REORDER_SET_MISMATCH.'
+    AdminQuestions:
+      get:
+        operationId: listAdminQuestions
+        summary: 'List questions (admin grid)'
+        tags: [catalog-admin]
+        x-contract-id: D2-35
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN]
+        description: 'The especialidadId filter resolves through the linked exams; questions themselves carry no specialty.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: q
+            in: query
+            required: false
+            schema:
+              type: string
+              maxLength: 100
+          - name: tipo
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/TipoPregunta'
+          - name: activa
+            in: query
+            required: false
+            schema:
+              type: boolean
+          - name: examenId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: etiquetaId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: especialidadId
+            in: query
+            required: false
+            description: 'Filter via the linked exams.'
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: orden
+            in: query
+            required: false
+            schema:
+              type: string
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitOffset100Default25'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'Question page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/AdminPreguntaResumen'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+      post:
+        operationId: createAdminQuestion
+        summary: 'Create a question'
+        tags: [catalog-admin]
+        x-contract-id: D2-38
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, FORBIDDEN, IDEMPOTENCY_KEY_IN_PROGRESS, QUESTION_OPTIONS_INVALID, QUESTION_CORRECT_ANSWER_INVALID, IDEMPOTENCY_KEY_REUSED]
+        description: 'codigoPregunta is server-generated.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPreguntaCreateRequest'
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Location:
+                description: 'URI of the created question.'
+                required: true
+                schema:
+                  type: string
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminPregunta'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'QUESTION_OPTIONS_INVALID, QUESTION_CORRECT_ANSWER_INVALID or IDEMPOTENCY_KEY_REUSED.'
+    AdminQuestion:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/PreguntaIdPath'
+      get:
+        operationId: getAdminQuestion
+        summary: 'Get a question (admin)'
+        tags: [catalog-admin]
+        x-contract-id: D2-36
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, QUESTION_NOT_FOUND]
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Question aggregate.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminPregunta'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'QUESTION_NOT_FOUND.'
+      patch:
+        operationId: updateAdminQuestion
+        summary: 'Update a question'
+        tags: [catalog-admin]
+        x-contract-id: D2-39
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, QUESTION_NOT_FOUND, QUESTION_TYPE_LOCKED_BY_EXAMS, QUESTION_TYPE_LOCKED_BY_RESOURCES, QUESTION_OPTIONS_INVALID, QUESTION_CORRECT_ANSWER_INVALID]
+        description: 'Set semantics; etiquetaIds is a full replace. tipoPregunta is locked while the question is linked to exams or owns resources.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPreguntaPatchRequest'
+        responses:
+          '200':
+            description: 'Question aggregate.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminPregunta'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'QUESTION_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'QUESTION_TYPE_LOCKED_BY_EXAMS or QUESTION_TYPE_LOCKED_BY_RESOURCES.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+      delete:
+        operationId: deleteAdminQuestion
+        summary: 'Delete or deactivate a question'
+        tags: [catalog-admin]
+        x-contract-id: D2-40
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, QUESTION_NOT_FOUND, QUESTION_HAS_ANSWERS]
+        description: 'Hard delete (204) when unreferenced; otherwise deactivated (200).'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Deactivated.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminPregunta'
+          '204':
+            description: 'Deleted.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'QUESTION_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'QUESTION_HAS_ANSWERS.'
+    AdminSpecialties:
+      get:
+        operationId: listAdminSpecialties
+        summary: 'List specialties (admin)'
+        tags: [catalog-admin]
+        x-contract-id: D2-41
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN]
+        description: 'Keyset (posicion asc, nombre asc, id).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: incluirInactivas
+            in: query
+            required: false
+            schema:
+              type: boolean
+              default: false
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitAdminCursor'
+        responses:
+          '200':
+            description: 'Specialty page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/Especialidad'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+      post:
+        operationId: createAdminSpecialty
+        summary: 'Create a specialty'
+        tags: [catalog-admin]
+        x-contract-id: D2-42
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, DUPLICATE_CODE_OR_SLUG]
+        description: 'Natural unique codigo and slug (409 on retry).'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EspecialidadCreateRequest'
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Location:
+                description: 'URI of the created specialty.'
+                required: false
+                schema:
+                  type: string
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Especialidad'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'DUPLICATE_CODE_OR_SLUG.'
+    AdminSpecialty:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/EspecialidadIdPath'
+      patch:
+        operationId: updateAdminSpecialty
+        summary: 'Update a specialty'
+        tags: [catalog-admin]
+        x-contract-id: D2-43
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT]
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EspecialidadPatchRequest'
+        responses:
+          '200':
+            description: 'Specialty.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Especialidad'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+      delete:
+        operationId: deleteAdminSpecialty
+        summary: 'Delete a specialty'
+        tags: [catalog-admin]
+        x-contract-id: D2-44
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, SPECIALTY_IN_USE]
+        description: 'Idempotent. RESTRICT: a referenced specialty returns 409.'
+        security:
+          - bearerAuth: []
+        responses:
+          '204':
+            description: 'Deleted.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'SPECIALTY_IN_USE.'
+    AdminSpecialtyCapabilities:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/EspecialidadIdPath'
+      get:
+        operationId: getAdminSpecialtyCapabilities
+        summary: 'Get specialty capabilities'
+        tags: [catalog-admin]
+        x-contract-id: D2-45
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, NOT_FOUND]
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Capabilities.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/CapacidadesResponse'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+      put:
+        operationId: replaceAdminSpecialtyCapabilities
+        summary: 'Replace specialty capabilities'
+        tags: [catalog-admin]
+        x-contract-id: D2-46
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND]
+        description: 'Idempotent full replacement.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capacidades'
+        responses:
+          '200':
+            description: 'Capabilities.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/CapacidadesResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+    AdminCommunities:
+      get:
+        operationId: listAdminCommunities
+        summary: 'List autonomous communities'
+        tags: [catalog-admin]
+        x-contract-id: D2-47
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN]
+        description: '19-row catalog.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Communities.'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      maxItems: 19
+                      items:
+                        $ref: '#/components/schemas/Comunidad'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+      post:
+        operationId: createAdminCommunity
+        summary: 'Create an autonomous community'
+        tags: [catalog-admin]
+        x-contract-id: D2-48
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, DUPLICATE]
+        description: 'Natural unique codigo and slug. An unknown code returns 400 VALIDATION with issue INVALID_COMMUNITY_CODE.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComunidadCreateRequest'
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Location:
+                description: 'URI of the created community.'
+                required: false
+                schema:
+                  type: string
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Comunidad'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'DUPLICATE.'
+    AdminCommunity:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/ComunidadIdPath'
+      patch:
+        operationId: updateAdminCommunity
+        summary: 'Update an autonomous community'
+        tags: [catalog-admin]
+        x-contract-id: D2-49
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT]
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComunidadPatchRequest'
+        responses:
+          '200':
+            description: 'Community.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Comunidad'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+      delete:
+        operationId: deleteAdminCommunity
+        summary: 'Delete an autonomous community'
+        tags: [catalog-admin]
+        x-contract-id: D2-50
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, COMMUNITY_IN_USE]
+        description: 'Idempotent.'
+        security:
+          - bearerAuth: []
+        responses:
+          '204':
+            description: 'Deleted.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'COMMUNITY_IN_USE.'
+    AdminTags:
+      get:
+        operationId: listAdminTags
+        summary: 'List tags (admin grid)'
+        tags: [catalog-admin]
+        x-contract-id: D2-51
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN]
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: q
+            in: query
+            required: false
+            schema:
+              type: string
+          - name: activa
+            in: query
+            required: false
+            schema:
+              type: boolean
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitOffset200Default100'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'Tag page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/Etiqueta'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+      post:
+        operationId: createAdminTag
+        summary: 'Create a tag'
+        tags: [catalog-admin]
+        x-contract-id: D2-52
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, DUPLICATE_SLUG]
+        description: 'Natural unique slug.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EtiquetaCreateRequest'
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Location:
+                description: 'URI of the created tag.'
+                required: false
+                schema:
+                  type: string
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Etiqueta'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'DUPLICATE_SLUG.'
+    AdminTag:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/EtiquetaIdPath'
+      patch:
+        operationId: updateAdminTag
+        summary: 'Update a tag'
+        tags: [catalog-admin]
+        x-contract-id: D2-53
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, CONFLICT]
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EtiquetaPatchRequest'
+        responses:
+          '200':
+            description: 'Tag.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Etiqueta'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+      delete:
+        operationId: deleteAdminTag
+        summary: 'Delete a tag'
+        tags: [catalog-admin]
+        x-contract-id: D2-54
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, TAG_IN_USE]
+        description: 'Idempotent. A tag in use must be deactivated instead.'
+        security:
+          - bearerAuth: []
+        responses:
+          '204':
+            description: 'Deleted.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'TAG_IN_USE.'
+    AdminQuestionImports:
+      get:
+        operationId: listAdminQuestionImports
+        summary: 'List question import batches (admin grid)'
+        tags: [catalog-admin]
+        x-contract-id: D2-55
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN]
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: examenId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: estado
+            in: query
+            required: false
+            schema:
+              type: string
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitOffset100Default25'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'Batch page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/AdminLote'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+      post:
+        operationId: createAdminQuestionImport
+        summary: 'Create an import batch from parsed questions'
+        tags: [catalog-admin]
+        x-contract-id: D2-57
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, FORBIDDEN, IMPORT_EXAM_NOT_FOUND, IDEMPOTENCY_KEY_IN_PROGRESS, IMPORT_TYPE_MISMATCH, IDEMPOTENCY_KEY_REUSED]
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminImportCreateRequest'
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Location:
+                description: 'URI of the created batch.'
+                required: true
+                schema:
+                  type: string
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminLote'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'IMPORT_EXAM_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'IMPORT_TYPE_MISMATCH or IDEMPOTENCY_KEY_REUSED.'
+    AdminQuestionImportPdf:
+      post:
+        operationId: createAdminQuestionImportFromPdf
+        summary: 'Create an import batch from a PDF'
+        tags: [catalog-admin]
+        x-contract-id: D2-58
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, FORBIDDEN, IMPORT_EXAM_NOT_FOUND, IDEMPOTENCY_KEY_IN_PROGRESS, PAYLOAD_TOO_LARGE, PDF_UNPROCESSABLE, IMPORT_TYPE_MISMATCH, IDEMPOTENCY_KEY_REUSED]
+        description: 'Multipart fingerprint (ordered part names plus sha256 of each part). The source file is kept in private Storage. application/pdf up to 20 MB.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            multipart/form-data:
+              schema:
+                $ref: '#/components/schemas/AdminImportPdfUpload'
+              encoding:
+                file:
+                  contentType: application/pdf
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Location:
+                description: 'URI of the created batch.'
+                required: true
+                schema:
+                  type: string
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminLote'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'IMPORT_EXAM_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '413':
+            $ref: '../common/errors.yaml#/components/responses/PayloadTooLarge'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'PDF_UNPROCESSABLE, IMPORT_TYPE_MISMATCH or IDEMPOTENCY_KEY_REUSED.'
+    AdminQuestionImport:
+      get:
+        operationId: getAdminQuestionImport
+        summary: 'Get an import batch with staging rows'
+        tags: [catalog-admin]
+        x-contract-id: D2-56
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: CURSOR_NESTED
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN, IMPORT_LOTE_NOT_FOUND]
+        description: 'staging and duplicados are cursor-paged independently (each a CursorPage); totales are unpaged.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/LoteIdPath'
+          - name: stagingCursor
+            in: query
+            required: false
+            schema:
+              type: string
+              minLength: 1
+          - name: duplicadosCursor
+            in: query
+            required: false
+            schema:
+              type: string
+              minLength: 1
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitAdminCursor'
+        responses:
+          '200':
+            description: 'Batch detail.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminLoteDetail'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'IMPORT_LOTE_NOT_FOUND.'
+    AdminImportStagingRow:
+      patch:
+        operationId: updateAdminImportStagingRow
+        summary: 'Review a staging row'
+        tags: [catalog-admin]
+        x-contract-id: D2-59
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, STAGING_ALREADY_IMPORTED]
+        description: 'Idempotent partial update.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/StagingIdPath'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminStagingPatchRequest'
+        responses:
+          '200':
+            description: 'Staging row.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminStagingItem'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'STAGING_ALREADY_IMPORTED.'
+    AdminImportRun:
+      post:
+        operationId: runAdminQuestionImport
+        summary: 'Import a reviewed batch'
+        tags: [catalog-admin]
+        x-contract-id: D2-60
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, IMPORT_LOTE_NOT_FOUND, IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED, IMPORT_PENDING_REVIEW, ALREADY_IMPORTED]
+        description: 'Idempotent by batch state: an imported batch returns the stored result. Runs admin_import_lote_preguntas.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/LoteIdPath'
+        requestBody:
+          required: false
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminImportRunRequest'
+        responses:
+          '200':
+            description: 'Import result.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AdminImportRunResponse'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'IMPORT_LOTE_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED, IMPORT_PENDING_REVIEW or ALREADY_IMPORTED.'
+  schemas:
+    AppExamSummary:
+      type: object
+      required: [id, titulo, tipoExamen, tipoAcceso, especialidadId, totalPreguntas, accessState]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: string
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        tipoAcceso:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        comunidadCodigo:
+          type: [string, 'null']
+        totalPreguntas:
+          type: integer
+          minimum: 0
+        anio:
+          type: [integer, 'null']
+        duracionMinutos:
+          type: [integer, 'null']
+          minimum: 0
+        portadaUrl:
+          type: [string, 'null']
+          format: uri
+        accessState:
+          $ref: '../common/identifiers.yaml#/components/schemas/AccessState'
+    AppExamFacets:
+      type: [object, 'null']
+      description: 'Present only when includeFacets=true.'
+      required: [comunidades, anios, tipos]
+      properties:
+        comunidades:
+          type: array
+          items:
+            type: string
+        anios:
+          type: array
+          items:
+            type: integer
+        tipos:
+          type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+    ExamPrice:
+      type: [object, 'null']
+      description: 'Values pending DEC-035; null until decided.'
+      required: [tickets, diasAcceso]
+      properties:
+        tickets:
+          type: integer
+          minimum: 0
+        diasAcceso:
+          type: integer
+          minimum: 0
+    AppExamDetail:
+      type: object
+      required: [id, codigoExamen, titulo, tipoExamen, tipoAcceso, especialidadId, totalPreguntas, accessState]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigoExamen:
+          type: string
+        titulo:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        tipoAcceso:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        comunidadCodigo:
+          type: [string, 'null']
+        duracionMinutos:
+          type: [integer, 'null']
+          minimum: 0
+        totalPreguntas:
+          type: integer
+          minimum: 0
+        anio:
+          type: [integer, 'null']
+        portadaUrl:
+          type: [string, 'null']
+          format: uri
+        accessState:
+          $ref: '../common/identifiers.yaml#/components/schemas/AccessState'
+        intentoAbiertoId:
+          type: [string, 'null']
+          format: uuid
+        precio:
+          $ref: '#/components/schemas/ExamPrice'
+    MyExamItem:
+      type: object
+      required: [examen, accessState]
+      properties:
+        examen:
+          type: object
+          required: [id, titulo, tipoExamen]
+          properties:
+            id:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+            titulo:
+              type: string
+            tipoExamen:
+              $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+            comunidadCodigo:
+              type: [string, 'null']
+            portadaUrl:
+              type: [string, 'null']
+              format: uri
+        accessState:
+          $ref: '../common/identifiers.yaml#/components/schemas/AccessState'
+        intentoId:
+          type: [string, 'null']
+          format: uuid
+        estadoIntento:
+          type: [string, 'null']
+          enum: [en_progreso, finalizado, abandonado, null]
+        progreso:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 1
+        nota:
+          type: [number, 'null']
+        calificacion:
+          type: [string, 'null']
+    PublicExamSummary:
+      type: object
+      required: [id, codigoExamen, especialidadId, titulo, tipoExamen, tipoAcceso, totalPreguntas, esOficial, publicadoEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigoExamen:
+          type: string
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        comunidadCodigo:
+          type: [string, 'null']
+        titulo:
+          type: string
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        tipoAcceso:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+        totalPreguntas:
+          type: integer
+          minimum: 0
+        anio:
+          type: [integer, 'null']
+        esOficial:
+          type: boolean
+        publicadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    PublicExamDetail:
+      type: object
+      required: [id, codigoExamen, titulo, tipoExamen, tipoAcceso, totalPreguntas]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigoExamen:
+          type: string
+        titulo:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        tipoAcceso:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+        totalPreguntas:
+          type: integer
+          minimum: 0
+        duracionMinutos:
+          type: [integer, 'null']
+          minimum: 0
+        comunidadCodigo:
+          type: [string, 'null']
+    PublicSpecialty:
+      type: object
+      required: [id, codigo, nombre, slug, capacidades]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo:
+          type: string
+        nombre:
+          type: string
+        slug:
+          type: string
+        capacidades:
+          type: object
+          required: [permiteRafagas, permiteRazonados, permiteInmersivos]
+          properties:
+            permiteRafagas:
+              type: boolean
+            permiteRazonados:
+              type: boolean
+            permiteInmersivos:
+              type: boolean
+    AdminExamen:
+      type: object
+      description: 'AdminExamenDto. Pricing is owned by the Economy node and is not part of this DTO contract.'
+      required: [id, codigoExamen, especialidadId, titulo, tipoExamen, tipoAcceso, esOficial, estado, totalPreguntas]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigoExamen:
+          type: string
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        comunidadId:
+          type: [string, 'null']
+          format: uuid
+        titulo:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        tipoAcceso:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+        duracionMinutos:
+          type: [integer, 'null']
+          minimum: 0
+        anio:
+          type: [integer, 'null']
+        esOficial:
+          type: boolean
+        demoDisponible:
+          type: [boolean, 'null']
+        requierePlanCodigo:
+          type: [string, 'null']
+        estado:
+          $ref: '../common/identifiers.yaml#/components/schemas/ExamEstado'
+        publicadoEn:
+          type: [string, 'null']
+          format: date-time
+        totalPreguntas:
+          type: integer
+          minimum: 0
+          description: 'Active linked questions, maintained by the database (read-only).'
+        portadaUrl:
+          type: [string, 'null']
+          format: uri
+          description: 'Signed URL; null when Storage could not sign it.'
+        creadoPor:
+          type: [string, 'null']
+          format: uuid
+        creadoEn:
+          type: [string, 'null']
+          format: date-time
+    AdminExamenCreateRequest:
+      type: object
+      required: [codigoExamen, especialidadId, titulo, tipoExamen, tipoAcceso]
+      additionalProperties: false
+      properties:
+        codigoExamen:
+          type: string
+          minLength: 1
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        comunidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: string
+          minLength: 1
+        descripcion:
+          type: string
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        tipoAcceso:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+        duracionMinutos:
+          type: integer
+          minimum: 1
+        anio:
+          type: integer
+        esOficial:
+          type: boolean
+        demoDisponible:
+          type: boolean
+        requierePlanCodigo:
+          type: string
+    AdminExamenPatchRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        titulo:
+          type: string
+          minLength: 1
+        descripcion:
+          type: string
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        tipoAcceso:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        comunidadId:
+          type: [string, 'null']
+          format: uuid
+          description: 'null clears the community.'
+        duracionMinutos:
+          type: [integer, 'null']
+          minimum: 1
+        anio:
+          type: [integer, 'null']
+        esOficial:
+          type: boolean
+        demoDisponible:
+          type: boolean
+        requierePlanCodigo:
+          type: [string, 'null']
+    AdminExamPublishRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        publicarDesde:
+          type: string
+          format: date-time
+          description: 'Accepted but ignored until DEC-020 (shape fixed).'
+    FileUpload:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+    AdminOpcion:
+      type: object
+      required: [id, letra, texto, esCorrecta]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        letra:
+          $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+        texto:
+          type: string
+        esCorrecta:
+          type: boolean
+    AdminSolucion:
+      type: object
+      required: [opcionCorrecta]
+      properties:
+        opcionCorrecta:
+          $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+        razonamiento:
+          type: [string, 'null']
+          description: 'Markdown.'
+    EtiquetaRef:
+      type: object
+      required: [id, nombre]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        nombre:
+          type: string
+    RecursoTipo:
+      type: string
+      enum: [imagen, audio, video, texto, pdf, enlace]
+    AdminRecurso:
+      type: object
+      required: [id, tipo]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipo:
+          $ref: '#/components/schemas/RecursoTipo'
+        titulo:
+          type: [string, 'null']
+        url:
+          type: [string, 'null']
+          format: uri
+          description: 'Signed URL.'
+    AdminExamQuestionItem:
+      type: object
+      required: [posicion, numeroEnExamen, anulada, pregunta]
+      properties:
+        posicion:
+          type: integer
+          minimum: 1
+        numeroEnExamen:
+          type: integer
+          minimum: 1
+        anulada:
+          type: boolean
+        motivoAnulacion:
+          type: [string, 'null']
+        pregunta:
+          type: object
+          x-entity: pregunta
+          required: [id, codigo, tipo, titulo, opciones, solucion, etiquetas, recursos]
+          properties:
+            id:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+            codigo:
+              type: string
+            tipo:
+              $ref: '../common/identifiers.yaml#/components/schemas/TipoPregunta'
+            titulo:
+              type: string
+            opciones:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminOpcion'
+            solucion:
+              $ref: '#/components/schemas/AdminSolucion'
+            etiquetas:
+              type: array
+              items:
+                $ref: '#/components/schemas/EtiquetaRef'
+            recursos:
+              type: array
+              items:
+                $ref: '#/components/schemas/AdminRecurso'
+    AdminExamQuestionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/AdminExamQuestionItem'
+    QuestionExamLinkRequest:
+      type: object
+      required: [examenId]
+      additionalProperties: false
+      properties:
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        posicion:
+          type: integer
+          minimum: 1
+        anulada:
+          type: boolean
+        motivoAnulacion:
+          type: string
+    QuestionExamLink:
+      type: object
+      required: [examenId, posicion, anulada]
+      properties:
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        posicion:
+          type: integer
+          minimum: 1
+        anulada:
+          type: boolean
+    QuestionExamLinks:
+      type: object
+      required: [links]
+      properties:
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionExamLink'
+    QuestionExamLinkDetail:
+      type: object
+      required: [examenId, titulo, posicion, anulada]
+      properties:
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: string
+        posicion:
+          type: integer
+          minimum: 1
+        anulada:
+          type: boolean
+    AnnulmentRequest:
+      type: object
+      required: [anulada]
+      additionalProperties: false
+      properties:
+        anulada:
+          type: boolean
+        motivoAnulacion:
+          type: string
+          minLength: 1
+          description: 'Required when anulada is true (422 ANNULMENT_REASON_REQUIRED).'
+    ExamQuestionLinkState:
+      type: object
+      required: [posicion, anulada]
+      properties:
+        posicion:
+          type: integer
+          minimum: 1
+        anulada:
+          type: boolean
+        motivoAnulacion:
+          type: [string, 'null']
+    QuestionOrderRequest:
+      type: object
+      required: [preguntaIds]
+      additionalProperties: false
+      properties:
+        preguntaIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+    AdminPreguntaResumen:
+      type: object
+      x-entity: pregunta
+      required: [id, codigoPregunta, tipoPregunta, titulo, activa, etiquetas]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigoPregunta:
+          type: string
+        tipoPregunta:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoPregunta'
+        titulo:
+          type: string
+        activa:
+          type: boolean
+        dificultad:
+          type: [string, 'null']
+        etiquetas:
+          type: array
+          items:
+            $ref: '#/components/schemas/EtiquetaRef'
+        totalExamenes:
+          type: [integer, 'null']
+          minimum: 0
+    AdminPregunta:
+      type: object
+      x-entity: pregunta
+      description: 'AdminPreguntaDto (question aggregate). No specialty: it belongs to the exam.'
+      required: [id, codigoPregunta, tipoPregunta, titulo, activa, opciones, solucion, etiquetas, recursos]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigoPregunta:
+          type: string
+          description: 'Server-generated, immutable.'
+        tipoPregunta:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoPregunta'
+        titulo:
+          type: string
+        fuenteTexto:
+          type: [string, 'null']
+        dificultad:
+          type: [string, 'null']
+        activa:
+          type: boolean
+        opciones:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminOpcion'
+        solucion:
+          $ref: '#/components/schemas/AdminSolucion'
+        etiquetas:
+          type: array
+          items:
+            $ref: '#/components/schemas/EtiquetaRef'
+        recursos:
+          type: array
+          description: 'Read-only; resources are managed only through their own routes.'
+          items:
+            $ref: '#/components/schemas/AdminRecurso'
+    OptionInput:
+      type: object
+      required: [letra, texto]
+      additionalProperties: false
+      properties:
+        letra:
+          $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+        texto:
+          type: string
+          minLength: 1
+    AdminPreguntaCreateRequest:
+      type: object
+      x-entity: pregunta
+      required: [tipoPregunta, titulo, opciones, opcionCorrecta]
+      additionalProperties: false
+      properties:
+        tipoPregunta:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoPregunta'
+        titulo:
+          type: string
+          minLength: 1
+        fuenteTexto:
+          type: string
+        dificultad:
+          type: string
+        opciones:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/OptionInput'
+        opcionCorrecta:
+          $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+        razonamiento:
+          type: string
+        etiquetaIds:
+          type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+    AdminPreguntaPatchRequest:
+      type: object
+      x-entity: pregunta
+      required: []
+      additionalProperties: false
+      properties:
+        tipoPregunta:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoPregunta'
+        titulo:
+          type: string
+          minLength: 1
+        fuenteTexto:
+          type: string
+        dificultad:
+          type: string
+        activa:
+          type: boolean
+        opciones:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/OptionInput'
+        opcionCorrecta:
+          $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+        razonamiento:
+          type: string
+        etiquetaIds:
+          type: array
+          description: 'Full replace.'
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+    Capacidades:
+      type: object
+      required: [permiteRafagas, permiteRazonados, permiteInmersivos, permiteDemos, permiteOposimarket]
+      additionalProperties: false
+      properties:
+        permiteRafagas:
+          type: boolean
+        permiteRazonados:
+          type: boolean
+        permiteInmersivos:
+          type: boolean
+        permiteDemos:
+          type: boolean
+        permiteOposimarket:
+          type: boolean
+        mensajeLimitacion:
+          type: [string, 'null']
+    CapacidadesResponse:
+      type: object
+      required: [capacidades]
+      properties:
+        capacidades:
+          $ref: '#/components/schemas/Capacidades'
+    Especialidad:
+      type: object
+      required: [id, codigo, nombre, slug, activa, posicion]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo:
+          type: string
+        nombre:
+          type: string
+        slug:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        activa:
+          type: boolean
+        posicion:
+          type: integer
+        capacidades:
+          oneOf:
+            - $ref: '#/components/schemas/Capacidades'
+            - type: 'null'
+    EspecialidadCreateRequest:
+      type: object
+      required: [codigo, nombre, slug]
+      additionalProperties: false
+      properties:
+        codigo:
+          type: string
+          minLength: 1
+        nombre:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          minLength: 1
+        descripcion:
+          type: string
+        activa:
+          type: boolean
+        posicion:
+          type: integer
+    EspecialidadPatchRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          minLength: 1
+        descripcion:
+          type: [string, 'null']
+        activa:
+          type: boolean
+        posicion:
+          type: integer
+    ComunidadCodigo:
+      type: string
+      description: 'ISO 3166-2:ES autonomous community or autonomous city code (DB CHECK).'
+      enum: [ES-AN, ES-AR, ES-AS, ES-CN, ES-CB, ES-CM, ES-CL, ES-CT, ES-EX, ES-GA, ES-IB, ES-RI, ES-MD, ES-MC, ES-NC, ES-PV, ES-VC, ES-CE, ES-ML]
+    Comunidad:
+      type: object
+      required: [id, codigo, nombre, slug, activa, posicion]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo:
+          $ref: '#/components/schemas/ComunidadCodigo'
+        nombre:
+          type: string
+        slug:
+          type: string
+        activa:
+          type: boolean
+        posicion:
+          type: integer
+    ComunidadCreateRequest:
+      type: object
+      required: [codigo, nombre, slug]
+      additionalProperties: false
+      properties:
+        codigo:
+          $ref: '#/components/schemas/ComunidadCodigo'
+        nombre:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          minLength: 1
+        activa:
+          type: boolean
+        posicion:
+          type: integer
+    ComunidadPatchRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          minLength: 1
+        activa:
+          type: boolean
+        posicion:
+          type: integer
+    Etiqueta:
+      type: object
+      required: [id, nombre, slug, activa]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        nombre:
+          type: string
+        slug:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        colorHex:
+          type: [string, 'null']
+          pattern: '^#[0-9A-Fa-f]{6}$'
+        activa:
+          type: boolean
+        totalPreguntas:
+          type: [integer, 'null']
+          minimum: 0
+    EtiquetaCreateRequest:
+      type: object
+      required: [nombre, slug]
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          minLength: 1
+        descripcion:
+          type: string
+        colorHex:
+          type: string
+          pattern: '^#[0-9A-Fa-f]{6}$'
+        activa:
+          type: boolean
+    EtiquetaPatchRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          minLength: 1
+        descripcion:
+          type: [string, 'null']
+        colorHex:
+          type: [string, 'null']
+          pattern: '^#[0-9A-Fa-f]{6}$'
+        activa:
+          type: boolean
+    LoteResumen:
+      type: [object, 'null']
+      description: 'Row count per parse state; null when it could not be computed (never a fake 0).'
+      required: [listas, conError, advertencias, omitidas, importadas]
+      properties:
+        listas:
+          type: integer
+          minimum: 0
+        conError:
+          type: integer
+          minimum: 0
+        advertencias:
+          type: integer
+          minimum: 0
+        omitidas:
+          type: integer
+          minimum: 0
+        importadas:
+          type: integer
+          minimum: 0
+    AdminLote:
+      type: object
+      description: 'AdminLoteDto summary.'
+      required: [id, examenId, nombreArchivo, tipoExamen, estado, totalDetectadas, totalImportadas, duplicadosComprobados]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        nombreArchivo:
+          type: string
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        estado:
+          type: string
+        totalDetectadas:
+          type: integer
+          minimum: 0
+        totalImportadas:
+          type: integer
+          minimum: 0
+        duplicadosComprobados:
+          type: boolean
+          description: 'false when duplicate detection could not run.'
+        resumenPorEstado:
+          $ref: '#/components/schemas/LoteResumen'
+    AdminStagingItem:
+      type: object
+      x-entity: pregunta
+      required: [id, posicion, titulo, opciones, estadoParseo, anulada]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        posicion:
+          type: integer
+          minimum: 0
+        titulo:
+          type: string
+        opciones:
+          type: array
+          items:
+            $ref: '#/components/schemas/OptionInput'
+        respuestaCorrecta:
+          oneOf:
+            - $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+            - type: 'null'
+        razonamiento:
+          type: [string, 'null']
+        fuenteTexto:
+          type: [string, 'null']
+        etiquetaTexto:
+          type: [string, 'null']
+        estadoParseo:
+          type: string
+          enum: [ok, advertencia, error, aprobada, omitida, importada]
+        errorParseo:
+          type: [string, 'null']
+        preguntaId:
+          type: [string, 'null']
+          format: uuid
+        vincularPreguntaId:
+          type: [string, 'null']
+          format: uuid
+        anulada:
+          type: boolean
+        motivoAnulacion:
+          type: [string, 'null']
+    StagingDuplicate:
+      type: object
+      required: [stagingId, preguntaId]
+      properties:
+        stagingId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        preguntaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigoPregunta:
+          type: [string, 'null']
+        similitud:
+          type: [number, 'null']
+    AdminLoteDetail:
+      allOf:
+        - $ref: '#/components/schemas/AdminLote'
+        - type: object
+          required: [staging, duplicados, totales]
+          properties:
+            staging:
+              allOf:
+                - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                - type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/AdminStagingItem'
+            duplicados:
+              allOf:
+                - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                - type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/StagingDuplicate'
+            totales:
+              $ref: '#/components/schemas/LoteResumen'
+            archivoUrl:
+              type: [string, 'null']
+              format: uri
+              description: 'Signed URL of the source file.'
+    AdminStagingItemInput:
+      type: object
+      x-entity: pregunta
+      required: [titulo, opciones, respuestaCorrecta]
+      additionalProperties: false
+      properties:
+        posicion:
+          type: integer
+          minimum: 0
+        titulo:
+          type: string
+          minLength: 1
+        opciones:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/OptionInput'
+        respuestaCorrecta:
+          $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+        razonamiento:
+          type: string
+        fuenteTexto:
+          type: string
+        etiquetaTexto:
+          type: string
+        anulada:
+          type: boolean
+        motivoAnulacion:
+          type: string
+    AdminImportCreateRequest:
+      type: object
+      required: [examenId, nombreArchivo, tipoExamen, preguntas]
+      additionalProperties: false
+      properties:
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        nombreArchivo:
+          type: string
+          minLength: 1
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        preguntas:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/AdminStagingItemInput'
+    AdminImportPdfUpload:
+      type: object
+      required: [examenId, tipoExamen, file]
+      properties:
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        file:
+          type: string
+          contentMediaType: application/pdf
+    AdminStagingPatchRequest:
+      type: object
+      x-entity: pregunta
+      required: []
+      additionalProperties: false
+      properties:
+        enunciado:
+          type: string
+          minLength: 1
+        opciones:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            $ref: '#/components/schemas/OptionInput'
+        correcta:
+          $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+        estadoParseo:
+          type: string
+          enum: [aprobada, omitida]
+        anulada:
+          type: boolean
+        motivo:
+          type: string
+    AdminImportRunRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        confirmarExamenPublicado:
+          type: boolean
+          default: false
+    AdminImportRunResponse:
+      type: object
+      required: [lote, resultado]
+      properties:
+        lote:
+          $ref: '#/components/schemas/AdminLote'
+        resultado:
+          type: object
+          required: [ejecutado, nuevas, vinculadas, omitidas, totalImportadas, anuladas]
+          properties:
+            ejecutado:
+              type: boolean
+            nuevas:
+              type: integer
+              minimum: 0
+            vinculadas:
+              type: integer
+              minimum: 0
+            omitidas:
+              type: integer
+              minimum: 0
+            totalImportadas:
+              type: integer
+              minimum: 0
+            anuladas:
+              type: integer
+              minimum: 0

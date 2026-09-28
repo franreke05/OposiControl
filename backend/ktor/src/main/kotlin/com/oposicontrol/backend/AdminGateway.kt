@@ -46,8 +46,10 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
             gateway.appendAudit(call.receive())
             call.respond(HttpStatusCode.Created, mapOf("status" to "created"))
         }
-        get("/news-types") { call.respond(gateway.listNewsTypes()) }
-        post("/news-types") { call.respond(HttpStatusCode.Created, gateway.saveNewsType(call.receive())) }
+        get("/news-types") { call.respond(gateway.listNewsTypes()) }.legacyRoute(LegacyEndpoints.EP_025)
+        post("/news-types") {
+            call.respond(HttpStatusCode.Created, gateway.saveNewsType(call.receive()))
+        }.legacyRoute(LegacyEndpoints.EP_145)
         post("/news-types/{newsTypeId}") { call.respond(HttpStatusCode.Created, gateway.saveNewsType(call.receive())) }
         put("/news-types/{newsTypeId}") { call.respond(gateway.saveNewsType(call.receive())) }
         get("/exam-access") { call.respond(gateway.listExamAccess()) }
@@ -75,7 +77,7 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
         get("/moderation/actions") { call.respond(gateway.listModerationActions()) }
         post("/moderation/actions") {
             call.respond(HttpStatusCode.Created, gateway.appendModerationAction(call.receive()))
-        }
+        }.legacyRoute(LegacyEndpoints.EP_144)
     }
     get("/dashboard/metrics") {
         call.respond(gateway.dashboardMetrics())

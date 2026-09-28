@@ -445,6 +445,24 @@ fun ApplicationCall.elapsedMsOrNull(): Long? = attributes.getOrNull(RequestStart
 
 fun ApplicationCall.requestIdOrNull(): String? = attributes.getOrNull(RequestIdKey)
 
+/**
+ * El request id de la llamada, garantizado (sobre canonico de error, SLICE 0).
+ *
+ * Con [installRequestCorrelation] instalado es exactamente [requestIdOrNull].
+ * Sin el (perfil `consumer`, que solo monta /v1/auth), aplica la MISMA regla:
+ * un `X-Request-Id` entrante valido o un UUID nuevo, lo guarda en [RequestIdKey]
+ * y lo publica en la cabecera, para que `requestId` del cuerpo y cabecera
+ * coincidan siempre.
+ */
+fun ApplicationCall.ensureRequestId(): String {
+    requestIdOrNull()?.let { return it }
+    val requestId = request.headers[REQUEST_ID_HEADER]?.takeIf { it.matches(REQUEST_ID_PATTERN) }
+        ?: UUID.randomUUID().toString()
+    attributes.put(RequestIdKey, requestId)
+    if (response.headers[REQUEST_ID_HEADER] == null) response.header(REQUEST_ID_HEADER, requestId)
+    return requestId
+}
+
 // ---------------------------------------------------------------------
 // Salto al pool IO conservando la correlacion
 // ---------------------------------------------------------------------
@@ -627,7 +645,7 @@ internal fun checkSupabaseReachable(
     // exactamente el mismo valor que antes.
     apiKey: String? = SupabaseRequestAuthPolicy.secretFromEnvironment(),
 ): String {
-    if (url.isNullOrBlank() || apiKey.isNullOrBlank()) return "unknown"
+    if (url.isNullOrBlank() || apiKey.isNullOrBlank()) return "UNKNOWN"
     return try {
         val builder = HttpRequest.newBuilder(URI.create("$url/rest/v1/"))
             .timeout(READINESS_TIMEOUT)
@@ -654,12 +672,12 @@ internal fun checkSupabaseReachable(
         // El rango y las cabeceras se mueven JUNTOS. Si alguna vez la sonda deja
         // de mandar lo que manda el trafico real, este rango vuelve a ser una
         // apuesta sobre una combinacion que nadie ejerce y hay que ensancharlo.
-        if (response.statusCode() in 200..299) "up" else "down"
+        if (response.statusCode() in 200..299) "UP" else "DOWN"
     } catch (error: Exception) {
         if (error.looksLikeUpstreamTimeout()) {
             logStrategicEvent(StrategicEvent.UPSTREAM_TIMEOUT, operation = "health_ready_supabase_check", errorType = error::class.simpleName)
         }
-        "down"
+        "DOWN"
     }
 }
 
@@ -674,7 +692,12 @@ internal fun checkSupabaseReachable(
  * `testApplication`, que no cambia de hilo (ver `UpstreamIoSeamTest`).
  */
 internal suspend fun readinessChecks(supabaseCheck: () -> String): Map<String, String> =
-    mapOf("ktor" to "up", "supabase" to withUpstreamIo(supabaseCheck))
+    mapOf("ktor" to "UP", "supabase" to withUpstreamIo(supabaseCheck))
+
+/** D8-07 (openapi/foundation LivenessStatus): `{"status":"UP"}`. Unica definicion, usada por ambos perfiles. */
+fun Route.healthLiveRoute() = get("/health/live") {
+    call.respond(mapOf("status" to "UP"))
+}
 
 /**
  * `/health/live`: el proceso esta vivo y sirviendo. Nunca depende de
@@ -687,16 +710,15 @@ internal suspend fun readinessChecks(supabaseCheck: () -> String): Map<String, S
  * externos (load balancer, k8s) no pueden mandar un Bearer token.
  */
 fun Route.observabilityHealthRoutes(supabaseCheck: () -> String = ::checkSupabaseReachable) {
-    get("/health/live") {
-        call.respond(mapOf("status" to "ok"))
-    }
+    healthLiveRoute()
     get("/health/ready") {
         val checks = readinessChecks(supabaseCheck)
-        val ready = checks.values.all { it == "up" }
+        // D8-08 (openapi/foundation ReadinessStatus): status UP|DOWN; checks UP|DOWN|UNKNOWN.
+        val ready = checks["supabase"] == "UP"
         call.respond(
             if (ready) HttpStatusCode.OK else HttpStatusCode.ServiceUnavailable,
             ReadinessResponse(
-                status = if (ready) "ready" else "not_ready",
+                status = if (ready) "UP" else "DOWN",
                 checks = checks,
                 timestamp = Instant.now().toString(),
             ),

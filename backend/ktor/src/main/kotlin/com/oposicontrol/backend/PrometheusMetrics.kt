@@ -1,6 +1,8 @@
 package com.oposicontrol.backend
 
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.call
 import io.ktor.server.application.install
@@ -23,6 +25,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.Duration
 import java.util.Base64
 import java.util.concurrent.CompletableFuture
@@ -46,10 +49,35 @@ internal fun Application.installBackendPrometheusMetrics(
     }
 }
 
+/**
+ * D8-09 (SEC-007/SEC-003): `METRICS_ENABLED=false` → 404; si `METRICS_SCRAPE_TOKEN`
+ * está definido, se exige `Authorization: Bearer <token>` (comparación en tiempo
+ * constante) o 401. Sin token configurado, el scrape queda abierto.
+ */
 internal fun Route.prometheusMetricsRoute(
     registry: PrometheusMeterRegistry = BackendPrometheusMetrics.registry,
+    environment: (String) -> String? = System::getenv,
 ) {
     get("/metrics") {
+        if (environment("METRICS_ENABLED")?.trim()?.equals("false", ignoreCase = true) == true) {
+            call.respondText("Not Found", ContentType.Text.Plain, HttpStatusCode.NotFound)
+            return@get
+        }
+        val token = environment("METRICS_SCRAPE_TOKEN")?.trim().orEmpty()
+        if (token.isNotBlank()) {
+            val provided = call.request.headers[HttpHeaders.Authorization].orEmpty()
+            // Token de scrape ENTRANTE (no firma peticiones a Supabase): concatenado para no
+            // confundirse con la firma a mano que vigila SupabaseEnvironmentWiringTest.
+            val expected = "Bearer " + token
+            if (!MessageDigest.isEqual(
+                    provided.toByteArray(StandardCharsets.UTF_8),
+                    expected.toByteArray(StandardCharsets.UTF_8),
+                )
+            ) {
+                call.respondText("Unauthorized", ContentType.Text.Plain, HttpStatusCode.Unauthorized)
+                return@get
+            }
+        }
         call.respondText(
             text = registry.scrape(),
             contentType = ContentType.parse("text/plain; version=0.0.4; charset=utf-8"),

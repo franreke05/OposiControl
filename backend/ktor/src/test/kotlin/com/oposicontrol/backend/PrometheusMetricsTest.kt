@@ -2,6 +2,8 @@ package com.oposicontrol.backend
 
 import com.sun.net.httpserver.HttpServer
 import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
@@ -49,6 +51,44 @@ class PrometheusMetricsTest {
         assertTrue(body.contains("route=\"/probe\""))
         assertTrue(body.contains("status=\"200\""))
         assertTrue(body.contains("jvm_memory_used_bytes"))
+    }
+
+    private fun metricsApp(env: Map<String, String>, block: suspend io.ktor.server.testing.ApplicationTestBuilder.() -> Unit) =
+        testApplication {
+            val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
+            application {
+                routing { prometheusMetricsRoute(registry) { env[it] } }
+            }
+            block()
+        }
+
+    @Test
+    fun metricsReturns200WithoutConfiguredTokenAndWithCorrectBearer() {
+        metricsApp(emptyMap()) {
+            assertEquals(HttpStatusCode.OK, client.get("/metrics").status)
+        }
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
+            val response = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer scrape-secret") }
+            assertEquals(HttpStatusCode.OK, response.status)
+        }
+    }
+
+    @Test
+    fun metricsReturns401WithWrongOrMissingBearerWhenTokenConfigured() {
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/metrics").status)
+            val wrong = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer nope") }
+            assertEquals(HttpStatusCode.Unauthorized, wrong.status)
+            assertFalse(wrong.bodyAsText().contains("jvm_"))
+        }
+    }
+
+    @Test
+    fun metricsReturns404WhenDisabled() {
+        metricsApp(mapOf("METRICS_ENABLED" to "false", "METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
+            val response = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer scrape-secret") }
+            assertEquals(HttpStatusCode.NotFound, response.status)
+        }
     }
 
     @Test

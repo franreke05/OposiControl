@@ -49,7 +49,7 @@ class ReadinessProbeContractTest {
         withProbeServer(status = 200) { baseUrl, calls ->
             val status = checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey)
 
-            assertEquals("up", status)
+            assertEquals("UP", status)
             val headers = calls.single().headers
             assertEquals(
                 listOf(legacyJwtShapedKey),
@@ -71,7 +71,7 @@ class ReadinessProbeContractTest {
         withProbeServer(status = 200) { baseUrl, calls ->
             val status = checkSupabaseReachable(url = baseUrl, apiKey = modernSecretKey)
 
-            assertEquals("up", status)
+            assertEquals("UP", status)
             val headers = calls.single().headers
             assertEquals(listOf(modernSecretKey), headers["apikey"])
             assertNull(
@@ -106,7 +106,7 @@ class ReadinessProbeContractTest {
     fun onlyA2xxIsUp() {
         listOf(200, 204).forEach { status ->
             withProbeServer(status = status) { baseUrl, _ ->
-                assertEquals("up", checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey), "$status")
+                assertEquals("UP", checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey), "$status")
             }
         }
     }
@@ -118,7 +118,7 @@ class ReadinessProbeContractTest {
         // rechazada. Para este backend eso es indistinguible de estar caido.
         listOf(401, 403).forEach { status ->
             withProbeServer(status = status) { baseUrl, _ ->
-                assertEquals("down", checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey), "$status")
+                assertEquals("DOWN", checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey), "$status")
             }
         }
     }
@@ -127,7 +127,7 @@ class ReadinessProbeContractTest {
     fun anUpstreamErrorIsDown() {
         listOf(500, 502, 503).forEach { status ->
             withProbeServer(status = status) { baseUrl, _ ->
-                assertEquals("down", checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey), "$status")
+                assertEquals("DOWN", checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey), "$status")
             }
         }
     }
@@ -167,7 +167,7 @@ class ReadinessProbeContractTest {
     @Test
     fun aDisabledPostgrestRootSpecIsReportedAsDown_knownResidue() {
         withProbeServer(status = 404) { baseUrl, _ ->
-            assertEquals("down", checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey))
+            assertEquals("DOWN", checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey))
         }
     }
 
@@ -175,9 +175,9 @@ class ReadinessProbeContractTest {
     fun anUnconfiguredProbeIsUnknownAndNeverDown() {
         // "No se ha configurado" y "no responde" son dos frases distintas y no
         // pueden llegar iguales: la primera no debe sacar el proceso de rotacion.
-        assertEquals("unknown", checkSupabaseReachable(url = null, apiKey = legacyJwtShapedKey))
-        assertEquals("unknown", checkSupabaseReachable(url = "http://127.0.0.1:1", apiKey = null))
-        assertEquals("unknown", checkSupabaseReachable(url = "http://127.0.0.1:1", apiKey = "   "))
+        assertEquals("UNKNOWN", checkSupabaseReachable(url = null, apiKey = legacyJwtShapedKey))
+        assertEquals("UNKNOWN", checkSupabaseReachable(url = "http://127.0.0.1:1", apiKey = null))
+        assertEquals("UNKNOWN", checkSupabaseReachable(url = "http://127.0.0.1:1", apiKey = "   "))
     }
 
     // -----------------------------------------------------------------

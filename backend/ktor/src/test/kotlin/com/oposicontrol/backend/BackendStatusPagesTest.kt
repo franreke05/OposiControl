@@ -53,7 +53,7 @@ class BackendStatusPagesTest {
 
         assertEquals(HttpStatusCode.BadGateway, response.status)
         val body = response.bodyAsText()
-        assertTrue(body.contains("backend_contract_error"), body)
+        assertTrue(body.contains("\"code\":\"UPSTREAM_CONTRACT_ERROR\""), body)
         assertTrue(body.contains("Referencia: $requestId"), body)
         listOf("StatusPagesProbe", "required", "Field", "kotlinx", "Exception", "x-probe-c").forEach { leak ->
             assertFalse(body.contains(leak), "el 502 filtra '$leak': $body")
@@ -69,7 +69,7 @@ class BackendStatusPagesTest {
         }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertTrue(response.bodyAsText().contains("bad_request"))
+        assertTrue(response.bodyAsText().contains("\"code\":\"MALFORMED_BODY\""))
     }
 
     /** Un rechazo transitorio de la base (40P01/55P03/57014) es 503 con `Retry-After`. */
@@ -95,10 +95,10 @@ class BackendStatusPagesTest {
     }
 
     @Test
-    fun anUpstreamFailureIsStillA500WithReferenceAndWithoutTheUpstreamBody() = statusPagesApp {
+    fun anUpstreamFailureIsA502WithReferenceAndWithoutTheUpstreamBody() = statusPagesApp {
         val response = client.get("/upstream") { header("X-Request-Id", requestId) }
 
-        assertEquals(HttpStatusCode.InternalServerError, response.status)
+        assertEquals(HttpStatusCode.BadGateway, response.status)
         val body = response.bodyAsText()
         assertTrue(body.contains("Referencia: $requestId"), body)
         assertFalse(body.contains("x-hint-c"), body)

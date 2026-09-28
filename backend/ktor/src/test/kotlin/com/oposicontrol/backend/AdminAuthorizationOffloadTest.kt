@@ -273,9 +273,9 @@ class AdminAuthorizationOffloadTest {
             header("X-Request-Id", requestId)
         }
 
-        assertEquals(HttpStatusCode.InternalServerError, response.status)
+        assertEquals(HttpStatusCode.BadGateway, response.status)
         val body = response.bodyAsText()
-        assertTrue(body.contains("backend_supabase_error"), body)
+        assertTrue(body.contains("\"code\":\"UPSTREAM_ERROR\""), body)
         assertTrue(body.contains("Referencia: $requestId"), body)
         assertFalse(body.contains("x-hint-c"), body)
         assertFalse(body.contains("roles_usuario"), body)

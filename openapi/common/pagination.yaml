@@ -1,0 +1,132 @@
+# Canonical pagination (FROZEN specs.pagination).
+# CURSOR: request cursor? + limit?; response {items, nextCursor?}; no total.
+#   Cursor = base64url(JSON {v:1, k:[sort keys..., id], f:first 16 hex of sha256(filters+sort)}),
+#   unsigned (owner/authorization filters re-applied every request). Undecodable, wrong v
+#   or f mismatch -> 400 INVALID_CURSOR. limit missing -> default; non-integer or < 1 ->
+#   400 VALIDATION (OUT_OF_RANGE); > max -> clamped to max.
+# OFFSET: only for the OC admin grids D1-22, D2-20, D2-35, D2-37, D2-51, D2-55, D2-61.
+#   Response {items, total?, limit, offset}; total null when the count fails, never a fake 0.
+# Operations declare x-pagination: CURSOR | OFFSET | NONE and compose the page envelope
+# with allOf (items are typed per operation).
+components:
+  schemas:
+    CursorPageEnvelope:
+      type: object
+      description: 'Cursor page metadata. nextCursor absent or null means the last page.'
+      required: []
+      properties:
+        nextCursor:
+          type: [string, 'null']
+    OffsetPageEnvelope:
+      type: object
+      description: 'Offset page metadata for OC admin data grids.'
+      required: [limit, offset]
+      properties:
+        total:
+          type: [integer, 'null']
+          minimum: 0
+          description: 'count=exact on the same filter; null when the count fails.'
+        limit:
+          type: integer
+          minimum: 1
+        offset:
+          type: integer
+          minimum: 0
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: 'Opaque cursor from a previous nextCursor.'
+      schema:
+        type: string
+        minLength: 1
+    LimitApp:
+      name: limit
+      in: query
+      required: false
+      description: 'App list page size 1..50, default 20; values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+    LimitAttemptQuestions:
+      name: limit
+      in: query
+      required: false
+      description: 'Attempt question page size 1..20, default 10; values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 20
+        default: 10
+    LimitAdminCursor:
+      name: limit
+      in: query
+      required: false
+      description: 'Admin cursor page size 1..100, default 50; values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    LimitAudit:
+      name: limit
+      in: query
+      required: false
+      description: 'Audit log page size 1..200, default 50; values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    LimitOffset200Default50:
+      name: limit
+      in: query
+      required: false
+      description: 'AdminPageRequest limit 1..200, default 50; values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    LimitOffset100Default25:
+      name: limit
+      in: query
+      required: false
+      description: 'Admin grid limit 1..100, default 25; values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    LimitOffset100Default50:
+      name: limit
+      in: query
+      required: false
+      description: 'Admin grid limit 1..100, default 50; values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    LimitOffset200Default100:
+      name: limit
+      in: query
+      required: false
+      description: 'Admin grid limit 1..200, default 100; values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 100
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: 'Zero-based offset; negative values are treated as 0.'
+      schema:
+        type: integer
+        minimum: 0
+        default: 0

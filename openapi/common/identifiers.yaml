@@ -1,0 +1,131 @@
+# Shared identifiers, scalar formats and canonical enums.
+# Canonical vocabulary: exam types rafaga|razonado|inmersivo, question types
+# rafaga|razonada|inmersiva. Legacy synonyms are accepted by the server on reads
+# only (exam_engine vocabulary) and are never written nor emitted, so they are not
+# part of any enum here. Specialty belongs to the EXAM only.
+components:
+  schemas:
+    Uuid:
+      type: string
+      format: uuid
+    Instant:
+      type: string
+      format: date-time
+      description: 'RFC 3339 UTC instant.'
+    LocalDate:
+      type: string
+      format: date
+    EpochSeconds:
+      type: integer
+      format: int64
+      minimum: 0
+    SignedUrl:
+      type: string
+      format: uri
+      description: 'Short-lived signed Storage URL; never persisted by clients.'
+    Markdown:
+      type: string
+      description: 'Markdown text.'
+    TipoExamen:
+      type: string
+      description: 'Canonical exam type.'
+      enum: [rafaga, razonado, inmersivo]
+    TipoPregunta:
+      type: string
+      description: 'Canonical question type.'
+      enum: [rafaga, razonada, inmersiva]
+    TipoAcceso:
+      type: string
+      enum: [gratuito, premium]
+    AccessState:
+      type: string
+      enum: [FREE, GRANTED, SUBSCRIPTION, DEMO, LOCKED]
+    AccountStatus:
+      type: string
+      enum: [activa, bloqueada, eliminacion_pendiente]
+    OptionLetter:
+      type: string
+      enum: [A, B, C, D]
+    AttemptOrigin:
+      type: string
+      enum: [EXAM, QUICK_QUIZ, DAILY_CHALLENGE]
+    RoleCode:
+      type: string
+      enum: [superadmin, admin, moderador, usuario]
+    StaffRoleCode:
+      type: string
+      enum: [superadmin, admin, moderador]
+    LegalDocumentType:
+      type: string
+      enum: [terminos, privacidad]
+    ExamEstado:
+      type: string
+      enum: [borrador, publicado, archivado]
+  parameters:
+    ExamIdPath:
+      name: examId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    AttemptIdPath:
+      name: attemptId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    PreguntaIdPath:
+      name: preguntaId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    UserIdPath:
+      name: id
+      in: path
+      required: true
+      description: 'Target user id (auth.users.id). A non-uuid value returns 400 VALIDATION with issue NON_UUID.'
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    EspecialidadIdPath:
+      name: especialidadId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    ComunidadIdPath:
+      name: comunidadId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    EtiquetaIdPath:
+      name: etiquetaId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    LoteIdPath:
+      name: loteId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    StagingIdPath:
+      name: stagingId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    GrantIdPath:
+      name: grantId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+    RetoIdPath:
+      name: retoId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
