@@ -11,4 +11,9 @@ data class UserDto(
     val isActive: Boolean,
     val createdAt: String,
     val ticketsBalance: Int = 0,
+    /** Wire `AccountStatus` (activa|bloqueada|eliminacion_pendiente); null si el backend no lo emite. */
+    val accountStatus: String? = null,
+    val username: String? = null,
+    val authProviders: List<String> = emptyList(),
+    val onboardingCompleted: Boolean? = null,
 )

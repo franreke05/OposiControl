@@ -36,6 +36,8 @@ data class UserProfile(
     val isGuest: Boolean = false,
     val onboardingCompleted: Boolean = false,
     val createdAt: String? = null,
+    val accountStatus: AccountStatus = AccountStatus.UNKNOWN,
+    val authProviders: List<String> = emptyList(),
 )
 
 /** Perfil ampliado; se rellena tras el onboarding, así que suele faltar al principio. */

@@ -2,6 +2,7 @@ package com.oposicontrol.admin.data.remote.api
 
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
+import com.oposicontrol.admin.domain.model.AccountStatus
 import com.oposicontrol.admin.domain.model.UserCompetitiveState
 import com.oposicontrol.admin.domain.model.UserDetail
 import com.oposicontrol.admin.domain.model.UserEconomy
@@ -45,10 +46,10 @@ class UserDetailApi(
 }
 
 @Serializable
-private data class UserDetailEnvelope(val data: UserDetailDto)
+internal data class UserDetailEnvelope(val data: UserDetailDto)
 
 @Serializable
-private data class UserDetailDto(
+internal data class UserDetailDto(
     val perfil: UserProfileDto,
     val detalle: UserExtendedProfileDto? = null,
     val rendimiento: UserPerformanceDto? = null,
@@ -62,7 +63,7 @@ private data class UserDetailDto(
 )
 
 @Serializable
-private data class UserProfileDto(
+internal data class UserProfileDto(
     @SerialName("usuario_id") val usuarioId: String = "",
     @SerialName("nombre_mostrar") val nombreMostrar: String? = null,
     val username: String? = null,
@@ -71,10 +72,14 @@ private data class UserProfileDto(
     @SerialName("es_invitado") val esInvitado: Boolean = false,
     @SerialName("onboarding_completado") val onboardingCompletado: Boolean = false,
     @SerialName("creado_en") val creadoEn: String? = null,
+    // D1-24: `perfil` es un AdminUser; `accountStatus` manda, `estado_cuenta` es el legacy. Ausente o desconocido = UNKNOWN.
+    val accountStatus: String? = null,
+    @SerialName("estado_cuenta") val estadoCuenta: String? = null,
+    val authProviders: List<String> = emptyList(),
 )
 
 @Serializable
-private data class UserExtendedProfileDto(
+internal data class UserExtendedProfileDto(
     @SerialName("nombre_completo") val nombreCompleto: String? = null,
     val edad: Int? = null,
     val ciudad: String? = null,
@@ -87,7 +92,7 @@ private data class UserExtendedProfileDto(
 )
 
 @Serializable
-private data class UserPerformanceDto(
+internal data class UserPerformanceDto(
     @SerialName("examenes_finalizados") val examenesFinalizados: Int = 0,
     @SerialName("preguntas_respondidas") val preguntasRespondidas: Int = 0,
     @SerialName("respuestas_correctas") val respuestasCorrectas: Int = 0,
@@ -98,7 +103,7 @@ private data class UserPerformanceDto(
 )
 
 @Serializable
-private data class UserCompetitiveDto(
+internal data class UserCompetitiveDto(
     val ligaCodigo: String? = null,
     val ligaNombre: String? = null,
     @SerialName("ventana_calculo") val ventanaCalculo: Int? = null,
@@ -114,14 +119,14 @@ private data class UserCompetitiveDto(
 )
 
 @Serializable
-private data class UserStreakDto(
+internal data class UserStreakDto(
     @SerialName("racha_actual_dias") val rachaActualDias: Int = 0,
     @SerialName("mejor_racha_dias") val mejorRachaDias: Int = 0,
     @SerialName("ultima_actividad_fecha") val ultimaActividadFecha: String? = null,
 )
 
 @Serializable
-private data class UserEconomyDto(
+internal data class UserEconomyDto(
     @SerialName("saldo_tickets") val saldoTickets: Int = 0,
     @SerialName("es_premium") val esPremium: Boolean = false,
     @SerialName("estado_suscripcion") val estadoSuscripcion: String? = null,
@@ -132,7 +137,7 @@ private data class UserEconomyDto(
 )
 
 @Serializable
-private data class UserSubscriptionDto(
+internal data class UserSubscriptionDto(
     val id: String = "",
     val proveedor: String = "",
     @SerialName("producto_codigo") val productoCodigo: String = "",
@@ -143,7 +148,7 @@ private data class UserSubscriptionDto(
 )
 
 @Serializable
-private data class UserTesterDto(
+internal data class UserTesterDto(
     @SerialName("reportes_enviados") val reportesEnviados: Int = 0,
     @SerialName("reportes_validados") val reportesValidados: Int = 0,
     @SerialName("tickets_ganados_reportes") val ticketsGanadosReportes: Int = 0,
@@ -151,7 +156,7 @@ private data class UserTesterDto(
 )
 
 @Serializable
-private data class UserWeaknessDto(
+internal data class UserWeaknessDto(
     @SerialName("etiqueta_id") val etiquetaId: String = "",
     val etiqueta: String = "",
     @SerialName("preguntas_respondidas") val preguntasRespondidas: Int = 0,
@@ -162,7 +167,7 @@ private data class UserWeaknessDto(
     @SerialName("ultima_practica_en") val ultimaPracticaEn: String? = null,
 )
 
-private fun UserDetailDto.toDomain() = UserDetail(
+internal fun UserDetailDto.toDomain() = UserDetail(
     profile = UserProfile(
         userId = perfil.usuarioId,
         displayName = perfil.nombreMostrar,
@@ -172,6 +177,8 @@ private fun UserDetailDto.toDomain() = UserDetail(
         isGuest = perfil.esInvitado,
         onboardingCompleted = perfil.onboardingCompletado,
         createdAt = perfil.creadoEn,
+        accountStatus = AccountStatus.fromWire(perfil.accountStatus ?: perfil.estadoCuenta),
+        authProviders = perfil.authProviders,
     ),
     extendedProfile = detalle?.let {
         UserExtendedProfile(

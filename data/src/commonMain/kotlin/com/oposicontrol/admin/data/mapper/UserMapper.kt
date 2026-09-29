@@ -1,6 +1,7 @@
 package com.oposicontrol.admin.data.mapper
 
 import com.oposicontrol.admin.data.remote.dto.UserDto
+import com.oposicontrol.admin.domain.model.AccountStatus
 import com.oposicontrol.admin.domain.model.User
 import kotlinx.datetime.Instant
 
@@ -13,6 +14,10 @@ fun UserDto.toDomain(): User {
         isActive = isActive,
         createdAt = runCatching { Instant.parse(createdAt) }.getOrElse { Instant.DISTANT_PAST },
         ticketsBalance = ticketsBalance,
+        accountStatus = AccountStatus.fromWire(accountStatus),
+        username = username,
+        authProviders = authProviders,
+        onboardingCompleted = onboardingCompleted,
     )
 }
 
@@ -25,5 +30,9 @@ fun User.toDto(): UserDto {
         isActive = isActive,
         createdAt = createdAt.toString(),
         ticketsBalance = ticketsBalance,
+        accountStatus = accountStatus.wire,
+        username = username,
+        authProviders = authProviders,
+        onboardingCompleted = onboardingCompleted,
     )
 }
