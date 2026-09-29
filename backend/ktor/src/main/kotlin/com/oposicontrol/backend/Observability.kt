@@ -141,15 +141,16 @@ object ObservabilityConfig {
 internal val sentryIntegrationDoc: String get() = "" // ver KDoc arriba -- sin uso real, solo ancla la doc a un simbolo compilable.
 
 /**
- * future Prometheus: nada de esto existe todavia (no hay
- * `micrometer-registry-prometheus` ni endpoint `/metrics`). Puntos donde
+ * Prometheus: `/metrics` (D8-09) y `installBackendPrometheusMetrics` YA existen
+ * (`PrometheusMetrics.kt`); lo de abajo es lo que sigue SIN instrumentar (no hay
+ * gauge de health ni metricas de negocio). Puntos donde
  * se instrumentaria cuando llegue el momento, sin fingir metricas ahora:
  *   - [installRequestCorrelation]: contador de requests y latencia
  *     (p50/p95/p99) por method+path+status -- ya mide duracion, solo falta
  *     alimentar un `Timer`/`Counter` de Micrometer ahi mismo.
  *   - Los handlers de `StatusPages`: contador 4xx/5xx por tipo de error.
- *   - [observabilityHealthRoutes]: gauge de health (1/0) por check
- *     (`ktor`, `supabase`, `worker` cuando exista).
+ *   - [observabilityHealthRoutes]: NO hay gauge de health (1/0); solo el estado
+ *     `UP`/`DOWN`/`UNKNOWN` por check (`ktor`, `supabase`, `worker` cuando exista).
  *   - JVM: heap/GC/threads via `JvmMemoryMetrics`/`JvmGcMetrics` de
  *     Micrometer, sin codigo propio.
  *   - worker queue: no aplica -- no existe ningun worker en este backend.

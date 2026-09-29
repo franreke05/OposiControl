@@ -281,10 +281,15 @@ internal fun Application.installBackendStatusPages() {
                 message = "No se pudo interpretar la respuesta del servicio de datos. Referencia: $requestId",
             )
         }
+        // RB-1-05: el mensaje solo se refleja si lo escribio NUESTRO codigo
+        // (`require`/`throw IllegalArgumentException("...")` en com.oposicontrol.*).
+        // Una IAE que nace en la JDK o en una libreria (UUID.fromString,
+        // NumberFormatException...) trae texto con eco de la entrada del cliente:
+        // mensaje generico.
         exception<IllegalArgumentException> { call, cause ->
             call.respondErrorEnvelope(
                 CanonicalErrorCode.VALIDATION,
-                message = cause.safeBackendMessage("Invalid request"),
+                message = if (cause.isThrownByBackendCode()) cause.safeBackendMessage("Invalid request") else CanonicalErrorCode.VALIDATION.defaultMessage,
             )
         }
         // Fallo del upstream (Supabase/PostgREST): 502 UPSTREAM_ERROR, o 504
@@ -1016,6 +1021,10 @@ private suspend inline fun <reified T : Any> ApplicationCall.respondBackendSupab
 
 // internal (no private): Observability.kt reutiliza esta redaccion
 // (Bearer/apikey + truncado) para logs estrategicos en vez de duplicarla.
+/** ¿La excepcion se lanzo desde codigo del backend (primer frame en `com.oposicontrol.`)? Sin traza -> `false`. */
+internal fun Throwable.isThrownByBackendCode(): Boolean =
+    stackTrace.firstOrNull()?.className?.startsWith("com.oposicontrol.") == true
+
 internal fun Throwable.safeBackendMessage(defaultMessage: String, maxLength: Int = 300): String {
     return message
         ?.replace(Regex("Bearer\\s+[A-Za-z0-9._~+/-]+=*"), "Bearer [redacted]")

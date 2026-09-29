@@ -104,6 +104,25 @@ class BackendStatusPagesTest {
         assertFalse(body.contains("x-hint-c"), body)
     }
 
+    /**
+     * RB-1-05: la IAE lanzada por codigo del backend conserva su mensaje (contrato
+     * legacy); la que nace en la JDK (UUID.fromString...) hace eco de la entrada
+     * del cliente y sale con el mensaje generico.
+     */
+    @Test
+    fun anIllegalArgumentFromTheJdkNeverEchoesItsMessage() = statusPagesApp {
+        val own = client.get("/own-iae")
+        assertEquals(HttpStatusCode.BadRequest, own.status)
+        assertTrue(own.bodyAsText().contains("Usuario no encontrado."), own.bodyAsText())
+
+        val jdk = client.get("/jdk-iae")
+        assertEquals(HttpStatusCode.BadRequest, jdk.status)
+        val body = jdk.bodyAsText()
+        assertTrue(body.contains("\"code\":\"VALIDATION\""), body)
+        assertFalse(body.contains("x-probe-c"), body)
+        assertFalse(body.contains("UUID"), body)
+    }
+
     // -----------------------------------------------------------------
 
     private fun statusPagesApp(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
@@ -128,6 +147,8 @@ class BackendStatusPagesTest {
                     val body = """{"code":"22P02","message":"invalid input syntax for type uuid: \"x-probe-c\""}"""
                     throw checkNotNull(mapSupabaseDomainError(400, body))
                 }
+                get("/own-iae") { throw IllegalArgumentException("Usuario no encontrado.") }
+                get("/jdk-iae") { java.util.UUID.fromString("x-probe-c") }
                 get("/upstream") {
                     throw IllegalStateException("""Supabase GET /rest/v1/examenes -> 400: {"hint":"x-hint-c"}""")
                 }

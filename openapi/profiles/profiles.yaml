@@ -43,8 +43,17 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NATURAL
-        x-error-codes: [VALIDATION, UNAUTHENTICATED, REAUTH_FAILED, STALE_AUTH, ALREADY_PENDING, RATE_LIMITED]
-        description: 'State-idempotent: a repeat returns 202 with the same requestedAt. Password accounts send currentPassword; OAuth accounts need authentication within the last 5 minutes. Purge and anonymisation effects follow DEC-008.'
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, REAUTH_FAILED, STALE_AUTH, ACCOUNT_BLOCKED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        x-deletion-classes:
+          perfiles_usuario: ANONYMIZE
+          auth: ANONYMIZE
+          preferences: DELETE
+          attempts_answers: RETAIN_ANONYMIZED
+          analytics_events: ANONYMIZE
+          social_content: ANONYMIZE
+          wallet_ledger_purchases: RETENTION_POLICY_PENDING
+          audit: RETENTION_POLICY_PENDING
+        description: 'Canonical account deletion (DEC-008), the canonical equivalent of the redesign DELETE /v1/auth/account: same JWT sub as every /me route, no id in the body. Asynchronous: the only atomic part is the DB commit of step 1 (state + requestedAt + audit row in one transaction); 202 Accepted is returned only after that commit, and steps 2 to 9 run afterwards in a server-side executor (SLICE 1) because they call the Auth admin API and touch several data families, so the response never promises they are finished. A GoTrue call cannot share a Postgres transaction, so session revocation is deliberately not part of the atomic commit. There is no indiscriminate cascade. Ordered semantics: (1) in one DB transaction set estado_cuenta eliminacion_pendiente, store requestedAt and write the audit row (accountStatus eliminacion_pendiente, so login and /me answer 403 ACCOUNT_DELETION_PENDING; the AccountStatus guard already denies the account, so a later revoke failure does not reopen access); (2) then revoke all sessions and refresh tokens through the Auth admin API, idempotent and retried by the executor; (3) disable the Auth identity (ban and revoke) and scrub it through the Auth admin API while it stays banned: email set to a non-deliverable tombstone deleted+<uuid>@invalid, phone cleared, user_metadata cleared, identities unlinked or deleted; a hard delete of auth.users is forbidden until the FK contract migration lands, because perfiles_usuario, attempts and answers, purchases, wallet and ledger still have ON DELETE CASCADE toward auth.users and a delete would destroy the retained classes (the auth class is ANONYMIZE, hard delete deferred until the FK contract migration). After step 3 refresh fails with 401 from GoTrue; a still-held access token keeps verifying locally against the JWKS until it expires (default 1h) and answers 403 ACCOUNT_DELETION_PENDING on the other canonical routes (direct PostgREST writes to perfiles_usuario are rejected by the DB guard while the account is not activa; the legacy /api/app/v1 routes and other tables reached through PostgREST are not covered until the Slice 1 cutover); (4) anonymize perfiles_usuario PII, keeping the row only as the anchor of retained data; (5) delete preferences and private data that need no retention; (6) unlink identifiable analytics; (7) keep attempts and results only anonymized and only when needed, still tied to their original exam and specialty; (8) social content keeps its structure with the author shown as deleted user; (9) economic and audit data are separated from identity and kept under a specific retention policy (periods are RETENTION_POLICY_PENDING, none is defined here). Data classes: DELETE, ANONYMIZE, RETAIN_ANONYMIZED, RETENTION_POLICY_PENDING (per family in x-deletion-classes). Re-authentication is mandatory: password accounts send currentPassword (wrong value is 401 REAUTH_FAILED); OAuth accounts need authentication within the last 5 minutes (older is 401 STALE_AUTH); confirmation must be the literal ELIMINAR. Idempotency is by state, no Idempotency-Key: a repeat while the account is eliminacion_pendiente and the token is still valid returns 202 with the original requestedAt and never restarts the executor; there is no ALREADY_PENDING conflict. A repeat while the row is eliminacion_pendiente and the token has not expired returns 202; 401 appears only after token expiry or a failed refresh. The client treats 202 or ACCOUNT_DELETION_PENDING as deletion in progress, signs out and clears local data. A blocked account gets 403 ACCOUNT_BLOCKED and must use the support channel. V1 defines no cancel operation and no grace period. If the DB transaction fails nothing changes and the call can be retried; revoke failures are retried by the executor.'
         security:
           - bearerAuth: []
         requestBody:
@@ -55,22 +64,25 @@ components:
                 $ref: '#/components/schemas/AccountDeletionRequest'
         responses:
           '202':
-            description: 'Deletion pending.'
+            description: 'Account eliminacion_pendiente (DB committed); session revocation and the remaining steps run asynchronously. Same body on a repeat.'
             content:
               application/json:
                 schema:
                   $ref: '#/components/schemas/AccountDeletionAccepted'
           '400':
             $ref: '../common/errors.yaml#/components/responses/BadRequest'
-            description: 'VALIDATION (issue BAD_CONFIRMATION).'
+            description: 'VALIDATION (issue BAD_CONFIRMATION, or CURRENT_PASSWORD_REQUIRED for a password account).'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
             description: 'UNAUTHENTICATED, REAUTH_FAILED or STALE_AUTH.'
-          '409':
-            $ref: '../common/errors.yaml#/components/responses/Conflict'
-            description: 'ALREADY_PENDING.'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED.'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+            description: 'UPSTREAM_UNAVAILABLE: the Auth provider could not verify the re-authentication; nothing changed.'
     MeOnboarding:
       post:
         operationId: completeMyOnboarding
@@ -83,7 +95,7 @@ components:
         x-pagination: NONE
         x-idempotency: NATURAL
         x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, USERNAME_TAKEN, ALREADY_ONBOARDED_CONFLICT, UNKNOWN_SPECIALTY, LEGAL_VERSION_NOT_ACTIVE, INVALID_REFERRAL_CODE, SELF_REFERRAL, RATE_LIMITED]
-        description: 'Idempotent upsert on usuario_id (JWT sub); attribution and referral are write-once (ignored on repeat). No Idempotency-Key.'
+        description: 'Idempotent upsert on usuario_id (JWT sub); attribution and referral are write-once (ignored on repeat). No Idempotency-Key. Registration sets at most ONE active specialty (especialidadId, optional, a scalar and never a list; DEC-002).'
         security:
           - bearerAuth: []
         requestBody:
@@ -126,7 +138,7 @@ components:
         x-pagination: NONE
         x-idempotency: NATURAL
         x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, USERNAME_TAKEN, PRECONDITION_FAILED, UNKNOWN_SPECIALTY, UNKNOWN_COMMUNITY, RATE_LIMITED]
-        description: 'Partial update with set semantics (same body, same state). Unknown fields return 400 VALIDATION with issue UNKNOWN_FIELD.'
+        description: 'Partial update with set semantics (same body, same state). Unknown fields return 400 VALIDATION with issue UNKNOWN_FIELD. This is also the change-specialty operation (DEC-002): especialidadId REPLACES the single active specialty (perfiles_usuario.especialidad_principal_id, returned as profile.especialidadPrincipalId); there is no add, no remove and no list, and the field cannot be cleared here. Changing it never reinterprets history: attempts and results stay tied to their original exam and that exam specialty.'
         security:
           - bearerAuth: []
         parameters:
@@ -819,7 +831,7 @@ components:
         especialidadPrincipalId:
           type: [string, 'null']
           format: uuid
-          description: 'Single FK (DEC-001 adopted; DEC-002 may only add fields).'
+          description: 'The ONE active specialty of the user (DEC-002, DEC-001 adopted): a single FK, changeable through PATCH /api/v1/app/me/profile, never an array. History is not reinterpreted when it changes; attempts and results keep the specialty of their exam. A future secondary-interests extension would be a separate additive field and is not part of V1.'
         comunidadPrincipalId:
           type: [string, 'null']
           format: uuid
@@ -854,6 +866,7 @@ components:
           maxLength: 100
         especialidadId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          description: 'Optional single active specialty (DEC-002); stored as perfiles_usuario.especialidad_principal_id.'
         acceptedLegalDocumentIds:
           type: array
           items:
@@ -894,6 +907,7 @@ components:
           maxLength: 100
         especialidadId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          description: 'New single active specialty (DEC-002); replaces the previous one and leaves attempt history untouched.'
         comunidadPrincipalId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         detail:
@@ -1022,7 +1036,7 @@ components:
           const: ELIMINAR
         currentPassword:
           type: string
-          description: 'Required for password accounts.'
+          description: 'Required for password accounts (re-authentication); ignored for OAuth accounts, which need a session authenticated within the last 5 minutes.'
     AccountDeletionAccepted:
       type: object
       required: [accountStatus, requestedAt]

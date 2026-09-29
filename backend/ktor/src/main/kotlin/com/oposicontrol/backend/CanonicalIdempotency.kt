@@ -374,7 +374,8 @@ class PostgrestIdempotencyStore(
             put("p_body", response.body?.let(::bodyAsJson) ?: JsonNull)
             put("p_headers", JsonObject(response.headers.mapValues { JsonPrimitive(it.value) }))
         }
-        withUpstreamIo { transport.rpc("idem_complete", body.toString()) }
+        val raw = withUpstreamIo { transport.rpc("idem_complete", body.toString()) }
+        warnIfFencedNoOp("idem_complete", claim, raw)
     }
 
     override suspend fun release(claim: IdempotencyClaim) {
@@ -382,7 +383,8 @@ class PostgrestIdempotencyStore(
             put("p_record_id", claim.id)
             put("p_claim_token", claim.token)
         }
-        withUpstreamIo { transport.rpc("idem_release", body.toString()) }
+        val raw = withUpstreamIo { transport.rpc("idem_release", body.toString()) }
+        warnIfFencedNoOp("idem_release", claim, raw)
     }
 
     /** Acepta objeto o array de una fila (funcion que devuelve tabla). */
@@ -494,6 +496,18 @@ class CanonicalIdempotencyConfig {
 private val IdempotencyClaimKey = AttributeKey<IdempotencyClaim>("canonical-idempotency-claim")
 private val IdempotencyFinishedKey = AttributeKey<Boolean>("canonical-idempotency-finished")
 private val IdempotencyLogger = LoggerFactory.getLogger("com.oposicontrol.backend.Idempotency")
+
+/**
+ * PF2-2-04: `idem_complete` / `idem_release` devuelven `false` cuando la fila ya
+ * no es nuestra (claim_token rotado por un STALE takeover, fila expirada o ya
+ * completada). Es un no-op correcto por diseno (fencing), pero no debe ser
+ * silencioso: se registra sin contenido de la peticion. Devuelve `true` si fue no-op.
+ */
+internal fun warnIfFencedNoOp(function: String, claim: IdempotencyClaim, rawResult: String): Boolean {
+    if (rawResult.trim() != "false") return false
+    IdempotencyLogger.warn("{} was a fenced no-op (record {} no longer owned by this claim)", function, claim.id)
+    return true
+}
 
 private val TEMPLATE_PARAM = Regex("\\{([A-Za-z0-9_]+)}")
 

@@ -7,6 +7,7 @@ import io.ktor.server.application.Application
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.metrics.micrometer.MicrometerMetrics
+import io.ktor.server.response.header
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -59,6 +60,8 @@ internal fun Route.prometheusMetricsRoute(
     environment: (String) -> String? = System::getenv,
 ) {
     get("/metrics") {
+        // PF3-3-02: nunca cacheable por un proxy intermedio (200, 401 ni 404).
+        call.response.header(HttpHeaders.CacheControl, "no-store")
         if (environment("METRICS_ENABLED")?.trim()?.equals("false", ignoreCase = true) == true) {
             call.respondText("Not Found", ContentType.Text.Plain, HttpStatusCode.NotFound)
             return@get

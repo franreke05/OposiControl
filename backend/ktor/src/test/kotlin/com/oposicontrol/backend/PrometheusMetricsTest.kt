@@ -91,6 +91,49 @@ class PrometheusMetricsTest {
         }
     }
 
+    /** PF3-3-03: `METRICS_ENABLED` se normaliza (trim + sin mayusculas); solo "false" apaga, cualquier otro valor no. */
+    @Test
+    fun metricsEnabledFlagIsTrimmedAndCaseInsensitive() {
+        listOf(" false ", "FALSE", "False\t").forEach { value ->
+            metricsApp(mapOf("METRICS_ENABLED" to value)) {
+                assertEquals(HttpStatusCode.NotFound, client.get("/metrics").status, "'$value'")
+            }
+        }
+        listOf("true", "", "0", "no").forEach { value ->
+            metricsApp(mapOf("METRICS_ENABLED" to value)) {
+                assertEquals(HttpStatusCode.OK, client.get("/metrics").status, "'$value'")
+            }
+        }
+    }
+
+    /** PF3-3-03: el token se compara ya con trim; uno solo de espacios equivale a NO configurado (documentado, SEC-007). */
+    @Test
+    fun scrapeTokenIsTrimmedAndABlankTokenMeansNotConfigured() {
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "  scrape-secret  ")) {
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/metrics").status)
+            val ok = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer scrape-secret") }
+            assertEquals(HttpStatusCode.OK, ok.status)
+            val untrimmed = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer   scrape-secret  ") }
+            assertEquals(HttpStatusCode.Unauthorized, untrimmed.status)
+        }
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "   ")) {
+            assertEquals(HttpStatusCode.OK, client.get("/metrics").status, "token en blanco = sin token (bind interno)")
+        }
+    }
+
+    /** PF3-3-02: ni el scrape, ni el 401, ni el 404 son cacheables. */
+    @Test
+    fun metricsResponsesAreNeverCacheable() {
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
+            assertEquals("no-store", client.get("/metrics").headers[HttpHeaders.CacheControl])
+            val ok = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer scrape-secret") }
+            assertEquals("no-store", ok.headers[HttpHeaders.CacheControl])
+        }
+        metricsApp(mapOf("METRICS_ENABLED" to "false")) {
+            assertEquals("no-store", client.get("/metrics").headers[HttpHeaders.CacheControl])
+        }
+    }
+
     @Test
     fun parsesOneFiniteInstantVectorValue() {
         assertEquals(

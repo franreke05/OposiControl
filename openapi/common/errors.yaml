@@ -39,6 +39,7 @@ components:
       properties:
         issues:
           type: array
+          maxItems: 20
           items:
             $ref: '#/components/schemas/ValidationIssue'
         accessState:
@@ -74,6 +75,7 @@ components:
         - FORBIDDEN
         - ACCOUNT_BLOCKED
         - ACCOUNT_DELETION_PENDING
+        - PROFILE_MISSING
         - NOT_FOUND
         - CONFLICT
         - VERSION_CONFLICT
@@ -147,7 +149,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
     Forbidden:
-      description: 'FORBIDDEN, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING or a contract-specific 403 code: authenticated but not allowed.'
+      description: 'FORBIDDEN, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING (authenticated JWT with no perfiles_usuario row; deny, never auto-create) or a contract-specific 403 code: authenticated but not allowed.'
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'

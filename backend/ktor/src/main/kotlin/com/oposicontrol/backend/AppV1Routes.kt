@@ -120,6 +120,8 @@ private fun ApplicationCall.usuarioId(verifier: SupabaseJwtVerifier, allowDevUse
 
 // ---------- Verificador JWT (ES256 contra el JWKS publico de Supabase) ----------
 
+private const val JWKS_MIN_REFETCH_MS = 5_000L
+
 /**
  * Verifica la firma ES256 contra el JWKS público y devuelve el `sub`.
  *
@@ -129,31 +131,78 @@ private fun ApplicationCall.usuarioId(verifier: SupabaseJwtVerifier, allowDevUse
  * compartido: un `HttpClient` propio era un pool y un executor más contra el
  * mismo host sin ninguna ganancia.
  */
-class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
+class SupabaseJwtVerifier(
+    supabaseUrl: String,
+    private val json: Json,
+    private val client: HttpClient = sharedUpstreamHttpClient,
+    private val clock: () -> Long = System::currentTimeMillis,
+) {
     private val issuer = "$supabaseUrl/auth/v1"
     private val jwksUrl = "$issuer/.well-known/jwks.json"
-    private val client = sharedUpstreamHttpClient
 
     @Volatile private var keys: Map<String, ECPublicKey> = emptyMap()
     @Volatile private var fetchedAt = 0L
+    @Volatile private var lastAttemptAt = 0L
+    @Volatile private var lastFailure: java.io.IOException? = null
 
+    /**
+     * RB-1-06: un JWKS que no se puede obtener o leer (red, timeout, HTTP no 2xx, cuerpo que no es
+     * un JWKS, sin claves) lanza [java.io.IOException]: el llamador canonico lo traduce a 503
+     * reintentable. Un token que no verifica (firma, emisor, `kid` desconocido con un JWKS sano)
+     * lanza otra excepcion: 401.
+     */
     fun subFrom(token: String): String {
         val decoded = JWT.decode(token)
         val kid = decoded.keyId ?: error("token sin kid")
-        val key = keys[kid] ?: run { refresh(); keys[kid] } ?: error("kid no encontrado en JWKS")
+        val key = keys[kid] ?: run { refresh(); keys[kid] } ?: run {
+            // Sin ninguna clave no se puede afirmar que el kid sea desconocido: JWKS no disponible.
+            if (keys.isEmpty()) throw java.io.IOException("JWKS sin claves")
+            error("kid no encontrado en JWKS")
+        }
         val verified = JWT.require(Algorithm.ECDSA256(key, null)).withIssuer(issuer).build().verify(token)
         return verified.subject ?: error("token sin sub")
     }
 
+    /**
+     * PF3-3-04: el anti-tormenta cubre TAMBIEN los intentos fallidos (cache negativa). Con el JWKS caido
+     * o la cache vacia, [fetchedAt] nunca avanzaba y cada peticion volvia a bloquear hasta
+     * UPSTREAM_REQUEST_TIMEOUT dentro del lock, agotando el pool de IO. Dentro de la ventana se reutiliza
+     * el ultimo fallo (un [java.io.IOException] -> 503) sin tocar la red.
+     */
     @Synchronized
     private fun refresh() {
-        if (keys.isNotEmpty() && System.currentTimeMillis() - fetchedAt < 60_000) return
-        val body = client.send(
+        // Anti-tormenta corto (no 60s): una rotacion de claves no debe dejar 401 durante un minuto.
+        val now = clock()
+        if (lastAttemptAt != 0L && now - lastAttemptAt < JWKS_MIN_REFETCH_MS) {
+            lastFailure?.let { throw java.io.IOException(it.message, it) }
+            return
+        }
+        lastAttemptAt = now
+        val parsed = try {
+            fetchJwks()
+        } catch (io: java.io.IOException) {
+            lastFailure = io
+            throw io
+        } catch (bad: Exception) {
+            val wrapped = java.io.IOException(bad.message ?: "JWKS no disponible", bad)
+            lastFailure = wrapped
+            throw wrapped
+        }
+        lastFailure = null
+        keys = parsed
+        fetchedAt = clock()
+    }
+
+    private fun fetchJwks(): Map<String, ECPublicKey> {
+        val response = client.send(
             HttpRequest.newBuilder(URI.create(jwksUrl)).timeout(UPSTREAM_REQUEST_TIMEOUT).GET().build(),
             HttpResponse.BodyHandlers.ofString(),
-        ).body()
-        keys = json.parseToJsonElement(body).jsonObject["keys"]!!.jsonArray
-            .mapNotNull { el ->
+        )
+        if (response.statusCode() !in 200..299) throw java.io.IOException("JWKS HTTP ${response.statusCode()}")
+        return try {
+            val array = json.parseToJsonElement(response.body()).jsonObject["keys"]?.jsonArray
+                ?: throw java.io.IOException("JWKS malformado")
+            array.mapNotNull { el ->
                 val k = el.jsonObject
                 if (k["kty"]?.jsonPrimitive?.contentOrNull != "EC") return@mapNotNull null
                 val kid = k["kid"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
@@ -161,9 +210,12 @@ class SupabaseJwtVerifier(supabaseUrl: String, private val json: Json) {
                     k["x"]!!.jsonPrimitive.content,
                     k["y"]!!.jsonPrimitive.content,
                 )
-            }
-            .toMap()
-        fetchedAt = System.currentTimeMillis()
+            }.toMap()
+        } catch (io: java.io.IOException) {
+            throw io
+        } catch (bad: Exception) {
+            throw java.io.IOException("JWKS malformado", bad)
+        }
     }
 
     private fun ecPublicKey(xB64Url: String, yB64Url: String): ECPublicKey {

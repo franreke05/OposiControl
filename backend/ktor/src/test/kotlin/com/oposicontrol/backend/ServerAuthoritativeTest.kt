@@ -193,4 +193,47 @@ class ServerAuthoritativeTest {
 
         assertEquals(IdemProbeCommand("NORMAL"), decodeCanonicalCommand(serializer<IdemProbeCommand>(), ByteArray(0)), "cuerpo vacio = {}")
     }
+
+    // --- Gate C: bolsas opacas y tope de issues ---
+
+    @Serializable
+    data class OpaqueBagCommand(
+        val username: String,
+        val extra: Map<String, String>? = null,
+        val blob: kotlinx.serialization.json.JsonObject? = null,
+        val any: kotlinx.serialization.json.JsonElement? = null,
+        val lista: List<Map<String, Int>>? = null,
+    )
+
+    /** RB-1-03: Map / JsonObject / JsonElement dejan pasar cualquier campo del servidor: el escaneo por nombre no los ve. */
+    @Test
+    fun opaqueStructuresAreForbiddenInCanonicalCommands() {
+        listOf(CommandAudience.APP, CommandAudience.ADMIN).forEach { audience ->
+            val fields = ServerAuthoritativeRules.violations(serializer<OpaqueBagCommand>().descriptor, audience)
+            assertEquals(
+                listOf("extra (OPAQUE_STRUCTURE)", "blob (OPAQUE_STRUCTURE)", "any (OPAQUE_STRUCTURE)", "lista (OPAQUE_STRUCTURE)"),
+                fields,
+                "$audience",
+            )
+        }
+    }
+
+    @Serializable
+    data class ManyFieldsCommand(val a: Int, val b: Int, val c: Int)
+
+    /** RB-1-09: 1000 campos desconocidos o ausentes no se amplifican en `details.issues`. */
+    @Test
+    fun validationIssuesAreCapped() {
+        val body = (1..1000).joinToString(",", "{", "}") { "\"f$it\":1" }
+        val unknown = assertFailsWith<BackendDomainException> {
+            decodeCanonicalCommand(serializer<GoodAppCommand>(), body.toByteArray())
+        }
+        assertEquals(MAX_VALIDATION_ISSUES, unknown.details?.issues?.size)
+        assertEquals(20, MAX_VALIDATION_ISSUES, "igual que maxItems en openapi/common/errors.yaml")
+
+        val missing = assertFailsWith<BackendDomainException> {
+            decodeCanonicalCommand(serializer<ManyFieldsCommand>(), "{}".toByteArray())
+        }
+        assertEquals(3, missing.details?.issues?.size, "por debajo del tope no se recorta")
+    }
 }

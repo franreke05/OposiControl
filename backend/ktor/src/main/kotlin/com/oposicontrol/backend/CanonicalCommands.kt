@@ -5,7 +5,9 @@ import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.MissingFieldException
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.descriptors.PolymorphicKind
 import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.SerialKind
 import kotlinx.serialization.descriptors.StructureKind
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -138,6 +140,12 @@ object ServerAuthoritativeRules {
                 if (!isAllowed(name, audience)) out += "$fieldPath (${categoryOf(name)})"
                 var child = current.getElementDescriptor(index)
                 while (child.kind == StructureKind.LIST) child = child.getElementDescriptor(0)
+                // RB-1-03: un Map / JsonObject / JsonElement / sealed / contextual es una bolsa
+                // opaca: el escaneo por nombre no ve dentro, asi que un cliente podria colar
+                // cualquier campo del servidor. Prohibido en un comando canonico.
+                if (child.kind == StructureKind.MAP || child.kind is PolymorphicKind || child.kind == SerialKind.CONTEXTUAL) {
+                    out += "$fieldPath (OPAQUE_STRUCTURE)"
+                }
                 walk(child, fieldPath)
             }
         }
@@ -184,8 +192,20 @@ internal fun requireCanonicalCommandType(type: Class<*>) {
     check(type.isAnnotationPresent(CanonicalCommand::class.java)) { "${type.name} must be @CanonicalCommand" }
 }
 
+/**
+ * Tope de `details.issues` en una respuesta 400 (RB-1-09): un cuerpo con miles de
+ * campos desconocidos o ausentes no se amplifica en la respuesta. Igual que
+ * `maxItems` de `ErrorDetails.issues` en `openapi/common/errors.yaml`.
+ */
+internal const val MAX_VALIDATION_ISSUES = 20
+
+/**
+ * `internal` (PF2-2-02): la unica entrada publica es [receiveCanonicalCommand],
+ * que exige la marca [CanonicalCommand]; asi la decodificacion estricta no evita
+ * el test de arquitectura.
+ */
 @OptIn(ExperimentalSerializationApi::class)
-fun <T> decodeCanonicalCommand(strategy: DeserializationStrategy<T>, rawBody: ByteArray): T {
+internal fun <T> decodeCanonicalCommand(strategy: DeserializationStrategy<T>, rawBody: ByteArray): T {
     val text = String(rawBody, Charsets.UTF_8).ifBlank { "{}" }
     val element = try {
         CanonicalCommandJson.parseToJsonElement(text)
@@ -197,12 +217,12 @@ fun <T> decodeCanonicalCommand(strategy: DeserializationStrategy<T>, rawBody: By
     if (element !is JsonObject) throw CanonicalErrorCode.MALFORMED_BODY.exception()
     val unknown = unknownFields(strategy.descriptor, element, "")
     if (unknown.isNotEmpty()) {
-        throw validationError(*unknown.map { ErrorIssue(it, CanonicalIssue.UNKNOWN_FIELD) }.toTypedArray())
+        throw validationError(*unknown.take(MAX_VALIDATION_ISSUES).map { ErrorIssue(it, CanonicalIssue.UNKNOWN_FIELD) }.toTypedArray())
     }
     return try {
         CanonicalCommandJson.decodeFromJsonElement(strategy, element)
     } catch (missing: MissingFieldException) {
-        throw validationError(*missing.missingFields.map { ErrorIssue(it, CanonicalIssue.REQUIRED) }.toTypedArray())
+        throw validationError(*missing.missingFields.take(MAX_VALIDATION_ISSUES).map { ErrorIssue(it, CanonicalIssue.REQUIRED) }.toTypedArray())
     } catch (_: SerializationException) {
         throw validationError(ErrorIssue("body", CanonicalIssue.INVALID_FORMAT))
     } catch (_: IllegalArgumentException) {

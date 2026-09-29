@@ -442,6 +442,22 @@ class CanonicalIdempotencyTest {
         assertEquals("i1", completeBody["p_body"]!!.jsonObject["id"]!!.jsonPrimitive.content)
     }
 
+    /** PF2-2-04: `idem_complete/idem_release` = false (claim rotado) es un no-op fenced que se registra, no se traga. */
+    @Test
+    fun aFencedNoOpOfCompleteOrReleaseIsDetectedNotSilentlyDropped() = runBlocking {
+        val claim = IdempotencyClaim("9d7c", "t0k3n")
+        assertEquals(true, warnIfFencedNoOp("idem_complete", claim, "false"))
+        assertEquals(true, warnIfFencedNoOp("idem_release", claim, " false\n"))
+        assertEquals(false, warnIfFencedNoOp("idem_complete", claim, "true"))
+        assertEquals(false, warnIfFencedNoOp("idem_release", claim, ""))
+        // Y ninguna de las dos operaciones lanza cuando el fencing las descarta: el efecto (no tocar la fila de otro) es el correcto.
+        val store = PostgrestIdempotencyStore(
+            SupabaseRequestTransport.forTesting("https://stub.supabase.test", "sb_secret_test_only", V1StubHttpClient({}) { V1StubResponse(200, "false") }),
+        )
+        store.complete(claim, created)
+        store.release(claim)
+    }
+
     @Test
     fun anUnexpectedRpcShapeIsAnUpstreamContractErrorNotASilentExecute() {
         val store = PostgrestIdempotencyStore(

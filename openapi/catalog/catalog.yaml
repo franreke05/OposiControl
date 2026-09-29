@@ -14,7 +14,7 @@ components:
         x-pagination: CURSOR
         x-idempotency: NONE
         x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, RATE_LIMITED, INTERNAL, UPSTREAM_ERROR]
-        description: 'Keyset (publicado_en desc, id). accessState comes from CheckExamAccess. The tipoExamen filter also accepts the legacy synonym of razonado on reads (normalized server-side, never emitted).'
+        description: 'Keyset (publicado_en desc, id). accessState comes from CheckExamAccess. The tipoExamen filter also accepts the legacy synonym of razonado on reads (normalized server-side, never emitted). especialidadId is a single-id filter, never a list; the specialty of an exam is fixed by the exam, and the user has exactly one active specialty (DEC-002).'
         security:
           - bearerAuth: []
         parameters:

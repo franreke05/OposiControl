@@ -28,13 +28,18 @@ object Slice0Db {
         return f.readText().replace("\r\n", "\n")
     }
 
-    fun rollbackDe(ruta: String): String {
+    fun rollbackDe(ruta: String): String = bloqueComentado(ruta, "ROLLBACK")
+
+    /** SQL de solo lectura documentado en la cabecera (bloque `VERIFY-BEGIN/END`), no una funcion con grants. */
+    fun verifyDe(ruta: String): String = bloqueComentado(ruta, "VERIFY")
+
+    private fun bloqueComentado(ruta: String, nombre: String): String {
         val lineas = leer(ruta).lines()
-        val ini = lineas.indexOfFirst { it.trim() == "-- ROLLBACK-BEGIN" }
-        val fin = lineas.indexOfFirst { it.trim() == "-- ROLLBACK-END" }
-        check(ini >= 0 && fin > ini) { "$ruta no tiene bloque ROLLBACK-BEGIN/END" }
+        val ini = lineas.indexOfFirst { it.trim() == "-- $nombre-BEGIN" }
+        val fin = lineas.indexOfFirst { it.trim() == "-- $nombre-END" }
+        check(ini >= 0 && fin > ini) { "$ruta no tiene bloque $nombre-BEGIN/END" }
         return lineas.subList(ini + 1, fin).joinToString("\n") { l ->
-            check(l.startsWith("--")) { "Linea de rollback sin comentar: $l" }
+            check(l.startsWith("--")) { "Linea de $nombre sin comentar: $l" }
             l.removePrefix("--").removePrefix(" ")
         }
     }
@@ -49,6 +54,9 @@ object Slice0Db {
     val PREREQUISITOS = """
         alter table auth.users add column if not exists raw_user_meta_data jsonb;
         grant usage on schema auth to anon, authenticated, service_role;
+        -- MAIN: service_role/anon/authenticated have NO privilege on auth.users (Gate A' D1);
+        -- explicit so the harness models it whatever the default privileges are.
+        revoke all on table auth.users from anon, authenticated, service_role;
 
         create or replace function auth.jwt() returns jsonb
         language sql stable

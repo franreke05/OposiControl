@@ -14,14 +14,33 @@
 --      estado_cuenta. It is ADMIN_DERIVED/SERVER_DERIVED; MAIN grants table-level
 --      UPDATE on perfiles_usuario to authenticated and the update_propio RLS policy
 --      would otherwise let a blocked user unblock themselves. Ktor (service_role)
---      and SECURITY DEFINER RPCs are unaffected.
+--      and SECURITY DEFINER RPCs are unaffected. The same guard also makes a profile
+--      whose estado_cuenta is not 'activa' (eliminacion_pendiente, bloqueada) READ-ONLY
+--      for anon/authenticated (UPDATE -> 42501 ESTADO_CUENTA_NOT_ACTIVE, PF3-3-02), so a
+--      still-valid access token cannot rewrite it through PostgREST. SCOPE: only
+--      perfiles_usuario. Legacy /api/app/v1 routes and other own-data tables are not
+--      covered until Slice 1 (see A1/SLICE_0 docs).
 --   3. private.identity_backfill_report (usuario_id, legacy_usuario_id, field,
---      outcome, detail) -- holds the LATEST run only.
---   4. private.identity_backfill_run(): idempotent, re-runnable backfill. It is
---      CREATED here but NOT executed: run it on local or a branch; on MAIN only
---      with explicit later authorization.
---   5. private.identity_backfill_verify(): read-only VERIFY; every row must
---      report failures = 0.
+--      outcome, detail) -- holds the LATEST run only. Owner-only: no grant to
+--      service_role/anon/authenticated (operators read it as the migration role).
+--   4. The identity BACKFILL, executed INSIDE this migration as an anonymous DO
+--      block under the migration's privileged role (postgres). It is idempotent
+--      and atomic with the migration transaction. It is NOT a function: there is
+--      NO runtime backfill routine (Gate A' D1 / FIX-D1). Rationale: it reads
+--      auth.users, which service_role cannot SELECT (MAIN included), and nothing
+--      at runtime needs it (no Ktor/OpenAPI/OposiBot caller; only this file, the
+--      dbtest suite and docs mention it). Making it a service_role-callable
+--      routine would need either SELECT on auth.users for service_role (rejected)
+--      or a SECURITY DEFINER surface that is unnecessary at runtime. On MAIN
+--      public.usuario is expected to hold 0 rows, so the block is a no-op there;
+--      it does not touch auth.users at all when public.usuario is empty.
+--   5. VERIFY is a plain, documented, read-only SQL snippet (VERIFY-BEGIN/END
+--      below), run by an operator as the migration role; every row must report
+--      failures = 0. It is not a granted function. The dbtest suite executes it
+--      verbatim.
+--   Legacy draft objects private.identity_backfill_run()/identity_backfill_verify()
+--   /identity_norm_text(text) (never applied to MAIN) are dropped if present, so
+--   a local/branch database that received the draft ends up in the same state.
 --
 -- BACKFILL RULES
 --   Eligible = public.usuario rows with deleted_at null AND auth_user_id present
@@ -37,15 +56,19 @@
 --   in auth.users, or deleted_at set) are report-only.
 --   Accent folding uses translate(), not the unaccent extension (not installed
 --   on MAIN; adding an extension is out of scope for SLICE 0).
+--   The block serializes with pg_advisory_xact_lock and takes a row lock per
+--   profile (FOR UPDATE); it emits one NOTICE per outcome with its count.
 --
 -- FORWARD PLAN
---   SLICE 0: this EXPAND + backfill function (+ verify) on local/branch.
---   SLICE 1 (one deploy): final delta re-run of identity_backfill_run() just
---   before the deploy; EP-218/EP-124 become thin adapters over the canonical
---   profile service (D1-12/D1-11) reading/writing perfiles_usuario only;
---   oposibots_upsert_own_profile is no longer called. NO DUAL-WRITE: a single
---   legacy writer switched atomically in one deploy; the re-runnable backfill
---   closes the window.
+--   SLICE 0: this EXPAND + in-migration backfill (+ VERIFY snippet) on local/branch.
+--   SLICE 1 (one deploy): final delta re-run just before the deploy = re-execute
+--   this same idempotent DO block as the migration role (a follow-up migration
+--   or operator script that repeats the block verbatim; re-applying this file
+--   is also safe). Still NO runtime routine and NO grant for it. EP-218/EP-124
+--   become thin adapters over the canonical profile service (D1-12/D1-11)
+--   reading/writing perfiles_usuario only; oposibots_upsert_own_profile is no
+--   longer called. NO DUAL-WRITE: a single legacy writer switched atomically in
+--   one deploy; the re-runnable backfill closes the window.
 --   CONTRACT (later, gated): once the OB release using D1-11/D1-12 is the
 --   minimum supported version, legacy_route_requests_total = 0 for EP-124/218
 --   and VERIFY is green -> 008_legacy_cleanup_final_gate drops
@@ -56,7 +79,15 @@
 --   public.usuario, its RLS, grants and oposibots_upsert_own_profile are NOT
 --   touched; legacy reads/writes keep working until the SLICE 1 cutover. New
 --   columns are nullable or defaulted, so existing inserts (handle_new_auth_user
---   trigger, Ktor, OC) are unaffected. No FK or ON DELETE change (DEC-008 open).
+--   trigger, Ktor, OC) are unaffected. No FK or ON DELETE change.
+--   DEC-008 decided: the deletion executor (Slice 1) must DISABLE the Auth identity
+--   (ban / revoke sessions) and SCRUB it while banned (email to a non-deliverable
+--   tombstone, phone and user_metadata cleared, identities unlinked; auth class
+--   ANONYMIZE), and never DELETE FROM auth.users while retained-class
+--   tables still have ON DELETE CASCADE to auth.users. Retained tables are
+--   perfiles_usuario, intentos_examen and answers, compras_usuario, carteras_usuario
+--   and the wallet ledger. A contract migration must change those FKs before any
+--   hard delete.
 --
 -- LOCKING RISK
 --   ADD COLUMN with a constant default is metadata-only (PG11+) but takes an
@@ -64,16 +95,31 @@
 --   transaction, plus one validation scan for the two CHECKs on estado_cuenta
 --   and name lengths (all rows are 'activa'/null, so the scan cannot fail).
 --   lock_timeout = 5s makes the migration fail fast instead of queueing behind
---   long transactions; simply retry. The backfill function takes row locks only
---   (FOR UPDATE per profile) and no table locks.
+--   long transactions; simply retry. The backfill block takes row locks only
+--   (FOR UPDATE per profile, plus one transaction-scoped advisory lock) and no
+--   table locks beyond the ACCESS EXCLUSIVE above; it runs in the same
+--   transaction, so on MAIN (0 legacy rows) it adds no lock time.
 --
 -- DATA-LOSS RISK
 --   Migration: none (additive). Backfill: none -- it only fills NULL targets and
---   never deletes or downgrades; public.usuario is read-only for it.
+--   never deletes or downgrades; public.usuario is read-only for it. The whole
+--   file is one transaction: any error rolls back columns, trigger and backfill.
 --   Rollback: drops the four new columns; nombre/apellidos copied from legacy can
---   be re-derived by re-running the backfill while public.usuario exists, but
+--   be re-derived by re-applying this file while public.usuario exists, but
 --   values written natively after cutover and estado_cuenta states WOULD be lost.
 --   Do not roll back after the SLICE 1 cutover without exporting them first.
+--   EXPORT estado_cuenta BEFORE ANY ROLLBACK (Gate A' D2): dropping the column and
+--   re-applying this file resets every account to 'activa', so bloqueada and
+--   eliminacion_pendiente would silently become active again. Export
+--   (usuario_id, estado_cuenta) where estado_cuenta <> 'activa' first and restore
+--   it after re-applying (as service_role/postgres; clients cannot write it).
+--
+-- LEGACY SOFT-DELETED ROWS (Gate A' D3)
+--   public.usuario rows with deleted_at set are REPORT-ONLY (orphan_deleted): the
+--   backfill does not copy their data and does NOT map them to
+--   estado_cuenta = 'eliminacion_pendiente'. Whether a legacy soft-delete means a
+--   pending DEC-008 deletion (anonymize/retain classes, DELETE /api/v1/app/me,
+--   D1-19, 202 async) is a SLICE 1 decision; nothing here pre-empts it.
 --
 -- INDEXES
 --   None added. Backfill/verify scan public.usuario (expected 0 rows on MAIN,
@@ -83,24 +129,36 @@
 -- RLS AND GRANTS
 --   perfiles_usuario RLS/policies/grants unchanged; the new columns inherit the
 --   existing table-level grants, hence the estado_cuenta guard trigger.
---   private.identity_backfill_report: RLS enabled with no policies; revoked from
---   public/anon/authenticated; service_role only. All new functions: execute
---   revoked from public/anon/authenticated, granted to service_role; they live in
---   schema private (usage = service_role only), so PostgREST never exposes them.
+--   private.identity_backfill_report: RLS enabled with no policies; ALL privileges
+--   revoked from public/anon/authenticated/service_role (owner-only; nobody at
+--   runtime reads or writes it). The only new function is the estado_cuenta guard
+--   trigger function (SECURITY INVOKER, execute revoked from public/anon/
+--   authenticated; trigger functions need no EXECUTE grant to fire).
+--   GRANTS IMPACT (Gate A' D1 / FIX-D1): NONE on auth.users. service_role has no
+--   SELECT on auth.users in MAIN and this migration neither grants it nor creates
+--   any SECURITY DEFINER routine (SERVICE_ROLE_AUTH_USERS_BROAD_SELECT = DENIED;
+--   asserted by dbtest). There is no backfill EXECUTE grant for anyone: the
+--   backfill ran as the migration role. Requirement: the migration role must be
+--   able to SELECT auth.users (postgres in Supabase); the block checks it and
+--   aborts the migration with a clear error if public.usuario has rows and the
+--   privilege is missing.
+--   If a RUNTIME need for the backfill ever appears, it must be a narrow SECURITY
+--   DEFINER (owner postgres, search_path '', PUBLIC execute revoked, execute only
+--   for the one actor, no parameters, no broad auth.users SELECT) with privilege-
+--   boundary tests -- not a grant of SELECT on auth.users.
 --
 -- IDEMPOTENCY OF THIS FILE
 --   Re-applying is safe: add column if not exists (the CHECK is part of the
 --   column clause), create table if not exists, create or replace function,
---   drop trigger if exists + create trigger.
+--   drop trigger if exists + create trigger, drop function if exists for the
+--   legacy draft routines, and the backfill DO block is idempotent (fills only
+--   NULL targets; a second run reports the same conflicts and changes nothing).
 --
 -- ROLLBACK (manual, local/branch; executed verbatim by the dbtest suite)
 -- ROLLBACK-BEGIN
 -- begin;
 -- drop trigger if exists trg_perfiles_usuario_estado_cuenta_guard on public.perfiles_usuario;
 -- drop function if exists private.guard_perfiles_estado_cuenta();
--- drop function if exists private.identity_backfill_verify();
--- drop function if exists private.identity_backfill_run();
--- drop function if exists private.identity_norm_text(text);
 -- drop table if exists private.identity_backfill_report;
 -- alter table public.perfiles_usuario
 --     drop column if exists perfil_intro_visto_en,
@@ -109,6 +167,79 @@
 --     drop column if exists nombre;
 -- commit;
 -- ROLLBACK-END
+--
+-- VERIFY (read-only SQL for an operator running as the migration role; NOT a
+-- function, NO grant; run after the migration and again before the Slice 1
+-- cutover. Every check must report failures = 0. Executed verbatim by dbtest.)
+-- VERIFY-BEGIN
+-- with nrm as (
+--     select 'ÁÀÄÂÃÉÈËÊÍÌÏÎÓÒÖÔÕÚÙÜÛÑÇáàäâãéèëêíìïîóòöôõúùüûñç'::text as f,
+--            'AAAAAEEEEIIIIOOOOOUUUUNCaaaaaeeeeiiiiooooouuuunc'::text as t
+-- ),
+-- eligible as (
+--     select u.id as legacy_id, u.auth_user_id as uid,
+--            nullif(btrim(u.nombre), '') as l_nombre,
+--            nullif(btrim(u.apellidos), '') as l_apellidos,
+--            nullif(btrim(u.username), '') as l_username,
+--            nullif(btrim(u.especialidad_registro), '') as l_especialidad,
+--            u.perfil_completo as l_completo
+--     from public.usuario u
+--     join auth.users a on a.id = u.auth_user_id
+--     where u.deleted_at is null
+-- ),
+-- joined as (
+--     select e.*, p.usuario_id as p_uid, p.nombre as p_nombre, p.apellidos as p_apellidos,
+--            p.username as p_username, p.especialidad_principal_id as p_esp,
+--            p.onboarding_completado as p_onb,
+--            (select array_agg(s.id) from public.especialidades s, nrm
+--              where lower(translate(btrim(s.nombre), nrm.f, nrm.t)) = lower(translate(btrim(e.l_especialidad), nrm.f, nrm.t))
+--                 or lower(translate(btrim(s.slug), nrm.f, nrm.t)) = lower(translate(btrim(e.l_especialidad), nrm.f, nrm.t))) as esp_ids
+--     from eligible e
+--     left join public.perfiles_usuario p on p.usuario_id = e.uid
+-- ),
+-- reported as (
+--     select b.legacy_usuario_id, b.field, b.outcome from private.identity_backfill_report b
+-- )
+-- select 'eligible_without_profile' as check_name, count(*) filter (where p_uid is null) as failures, null::text as info from joined
+-- union all
+-- select 'nombre_diff', count(*) filter (
+--     where l_nombre is not null and p_nombre is distinct from l_nombre
+--       and not exists (select 1 from reported x where x.legacy_usuario_id = legacy_id
+--                        and x.field = 'nombre' and x.outcome = 'conflict_kept_existing')), null from joined
+-- union all
+-- select 'apellidos_diff', count(*) filter (
+--     where l_apellidos is not null and p_apellidos is distinct from l_apellidos
+--       and not exists (select 1 from reported x where x.legacy_usuario_id = legacy_id
+--                        and x.field = 'apellidos' and x.outcome = 'conflict_kept_existing')), null from joined
+-- union all
+-- select 'username_diff', count(*) filter (
+--     where l_username is not null and p_username is distinct from l_username
+--       and not exists (select 1 from reported x where x.legacy_usuario_id = legacy_id
+--                        and x.field = 'username'
+--                        and x.outcome in ('conflict_kept_existing', 'skipped_username_collision'))), null from joined
+-- union all
+-- select 'especialidad_diff', count(*) filter (
+--     where l_especialidad is not null
+--       and (coalesce(cardinality(esp_ids), 0) <> 1 or p_esp is distinct from esp_ids[1])
+--       and not exists (select 1 from reported x where x.legacy_usuario_id = legacy_id
+--                        and x.field = 'especialidad_principal_id'
+--                        and x.outcome in ('conflict_kept_existing', 'specialty_unmatched', 'specialty_ambiguous'))), null from joined
+-- union all
+-- select 'onboarding_diff', count(*) filter (where l_completo and not coalesce(p_onb, false)), null from joined
+-- union all
+-- select 'orphans_unreported', count(*), null
+-- from public.usuario u
+-- left join auth.users a on a.id = u.auth_user_id
+-- where (u.deleted_at is not null or a.id is null)
+--   and not exists (select 1 from reported x where x.legacy_usuario_id = u.id and x.field = 'row')
+-- union all
+-- -- Cutover evidence: compare this watermark before/after the SLICE 1 deploy;
+-- -- it must stay identical (0 new public.usuario writes).
+-- select 'legacy_write_watermark', 0::bigint,
+--        'rows=' || count(*) || ';max_created_at=' || coalesce(max(u.created_at)::text, '-')
+--            || ';max_updated_at=' || coalesce(max(u.updated_at)::text, '-')
+-- from public.usuario u;
+-- VERIFY-END
 -- =============================================================================
 
 begin;
@@ -144,6 +275,13 @@ begin
         if tg_op = 'INSERT' and new.estado_cuenta is distinct from 'activa' then
             raise exception using errcode = '42501', message = 'ESTADO_CUENTA_NOT_CLIENT_WRITABLE';
         end if;
+        -- PF3-3-02: a held access token keeps working against PostgREST for up to ~1h, so a
+        -- profile that is not 'activa' (eliminacion_pendiente = DEC-008 anonymization in
+        -- progress, bloqueada) is read-only for clients: the user cannot rewrite it (undoing
+        -- the anonymization or editing a blocked profile). Server roles are unaffected.
+        if tg_op = 'UPDATE' and old.estado_cuenta <> 'activa' then
+            raise exception using errcode = '42501', message = 'ESTADO_CUENTA_NOT_ACTIVE';
+        end if;
         if tg_op = 'UPDATE' and new.estado_cuenta is distinct from old.estado_cuenta then
             raise exception using errcode = '42501', message = 'ESTADO_CUENTA_NOT_CLIENT_WRITABLE';
         end if;
@@ -160,6 +298,12 @@ before insert or update on public.perfiles_usuario
 for each row execute function private.guard_perfiles_estado_cuenta();
 
 -- 3. Backfill report ------------------------------------------------------------
+-- Legacy draft routines (never applied to MAIN): the backfill is no longer a
+-- runtime function (FIX-D1). Dropped if a local/branch database received them.
+drop function if exists private.identity_backfill_verify();
+drop function if exists private.identity_backfill_run();
+drop function if exists private.identity_norm_text(text);
+
 create table if not exists private.identity_backfill_report (
     id bigint generated always as identity primary key,
     run_id uuid not null,
@@ -179,40 +323,40 @@ create table if not exists private.identity_backfill_report (
 );
 
 alter table private.identity_backfill_report enable row level security;
-revoke all on table private.identity_backfill_report from public, anon, authenticated;
-grant select, insert, delete on table private.identity_backfill_report to service_role;
+-- Owner-only: no runtime actor (service_role included) reads or writes the report.
+revoke all on table private.identity_backfill_report from public, anon, authenticated, service_role;
 
--- 4. Helpers + backfill -----------------------------------------------------------
+-- 4. Backfill (runs NOW, as the migration role; idempotent; no function) ------------
 -- Trim, fold Spanish accents (upper and lower, so it works under C collation),
--- then lower-case.
-create or replace function private.identity_norm_text(p text)
-returns text
-language sql
-immutable
-set search_path = ''
-as $$
-    select lower(translate(
-        btrim(p),
-        'ÁÀÄÂÃÉÈËÊÍÌÏÎÓÒÖÔÕÚÙÜÛÑÇáàäâãéèëêíìïîóòöôõúùüûñç',
-        'AAAAAEEEEIIIIOOOOOUUUUNCaaaaaeeeeiiiiooooouuuunc'
-    ))
-$$;
-
-create or replace function private.identity_backfill_run()
-returns table (outcome text, total bigint)
-language plpgsql
-security invoker
-set search_path = ''
-as $$
+-- then lower-case: lower(translate(btrim(x), c_from, c_to)).
+do $backfill$
 declare
+    c_from constant text := 'ÁÀÄÂÃÉÈËÊÍÌÏÎÓÒÖÔÕÚÙÜÛÑÇáàäâãéèëêíìïîóòöôõúùüûñç';
+    c_to constant text := 'AAAAAEEEEIIIIOOOOOUUUUNCaaaaaeeeeiiiiooooouuuunc';
     v_run uuid := gen_random_uuid();
     r record;
+    o record;
     p public.perfiles_usuario%rowtype;
     v_val text;
     v_ids uuid[];
     v_n integer;
+    v_legacy bigint;
 begin
+    perform pg_advisory_xact_lock(hashtext('private.identity_backfill'));
+
+    -- The report holds the LATEST run only.
     delete from private.identity_backfill_report;
+
+    select count(*) into v_legacy from public.usuario;
+    if v_legacy = 0 then
+        raise notice 'identity backfill: public.usuario is empty, nothing to do';
+        return;
+    end if;
+    -- auth.users is read under the migration role only; service_role has no SELECT on it.
+    if not has_table_privilege(current_user, 'auth.users', 'select') then
+        raise exception using errcode = '42501',
+            message = 'IDENTITY_BACKFILL_NEEDS_AUTH_USERS_SELECT_FOR_MIGRATION_ROLE';
+    end if;
 
     -- Orphans: report only.
     insert into private.identity_backfill_report (run_id, usuario_id, legacy_usuario_id, field, outcome)
@@ -279,8 +423,8 @@ begin
         if r.l_username is not null then
             if p.username is null then
                 if exists (
-                    select 1 from public.perfiles_usuario o
-                    where o.usuario_id <> r.uid and lower(o.username) = lower(r.l_username)
+                    select 1 from public.perfiles_usuario x
+                    where x.usuario_id <> r.uid and lower(x.username) = lower(r.l_username)
                 ) then
                     insert into private.identity_backfill_report (run_id, usuario_id, legacy_usuario_id, field, outcome)
                     values (v_run, r.uid, r.legacy_id, 'username', 'skipped_username_collision');
@@ -302,11 +446,11 @@ begin
 
         -- especialidad_registro -> especialidad_principal_id
         if r.l_especialidad is not null then
-            v_val := private.identity_norm_text(r.l_especialidad);
+            v_val := lower(translate(btrim(r.l_especialidad), c_from, c_to));
             select coalesce(array_agg(e.id order by e.id), array[]::uuid[]) into v_ids
             from public.especialidades e
-            where private.identity_norm_text(e.nombre) = v_val
-               or private.identity_norm_text(e.slug) = v_val;
+            where lower(translate(btrim(e.nombre), c_from, c_to)) = v_val
+               or lower(translate(btrim(e.slug), c_from, c_to)) = v_val;
 
             if cardinality(v_ids) = 0 then
                 insert into private.identity_backfill_report (run_id, usuario_id, legacy_usuario_id, field, outcome, detail)
@@ -332,92 +476,15 @@ begin
         end if;
     end loop;
 
-    return query
-        select b.outcome, count(*)::bigint
+    for o in
+        select b.outcome as outcome, count(*) as total
         from private.identity_backfill_report b
         group by b.outcome
-        order by b.outcome;
-end;
-$$;
-
--- 5. VERIFY (read-only) -------------------------------------------------------------
-create or replace function private.identity_backfill_verify()
-returns table (check_name text, failures bigint, info text)
-language sql
-stable
-security invoker
-set search_path = ''
-as $$
-    with eligible as (
-        select u.id as legacy_id, u.auth_user_id as uid,
-               nullif(btrim(u.nombre), '') as l_nombre,
-               nullif(btrim(u.apellidos), '') as l_apellidos,
-               nullif(btrim(u.username), '') as l_username,
-               nullif(btrim(u.especialidad_registro), '') as l_especialidad,
-               u.perfil_completo as l_completo
-        from public.usuario u
-        join auth.users a on a.id = u.auth_user_id
-        where u.deleted_at is null
-    ),
-    joined as (
-        select e.*, p.usuario_id as p_uid, p.nombre as p_nombre, p.apellidos as p_apellidos,
-               p.username as p_username, p.especialidad_principal_id as p_esp,
-               p.onboarding_completado as p_onb,
-               (select array_agg(s.id) from public.especialidades s
-                 where private.identity_norm_text(s.nombre) = private.identity_norm_text(e.l_especialidad)
-                    or private.identity_norm_text(s.slug) = private.identity_norm_text(e.l_especialidad)) as esp_ids
-        from eligible e
-        left join public.perfiles_usuario p on p.usuario_id = e.uid
-    ),
-    reported as (
-        select b.legacy_usuario_id, b.field, b.outcome from private.identity_backfill_report b
-    )
-    select 'eligible_without_profile', count(*) filter (where p_uid is null), null::text from joined
-    union all
-    select 'nombre_diff', count(*) filter (
-        where l_nombre is not null and p_nombre is distinct from l_nombre
-          and not exists (select 1 from reported x where x.legacy_usuario_id = legacy_id
-                           and x.field = 'nombre' and x.outcome = 'conflict_kept_existing')), null from joined
-    union all
-    select 'apellidos_diff', count(*) filter (
-        where l_apellidos is not null and p_apellidos is distinct from l_apellidos
-          and not exists (select 1 from reported x where x.legacy_usuario_id = legacy_id
-                           and x.field = 'apellidos' and x.outcome = 'conflict_kept_existing')), null from joined
-    union all
-    select 'username_diff', count(*) filter (
-        where l_username is not null and p_username is distinct from l_username
-          and not exists (select 1 from reported x where x.legacy_usuario_id = legacy_id
-                           and x.field = 'username'
-                           and x.outcome in ('conflict_kept_existing', 'skipped_username_collision'))), null from joined
-    union all
-    select 'especialidad_diff', count(*) filter (
-        where l_especialidad is not null
-          and (coalesce(cardinality(esp_ids), 0) <> 1 or p_esp is distinct from esp_ids[1])
-          and not exists (select 1 from reported x where x.legacy_usuario_id = legacy_id
-                           and x.field = 'especialidad_principal_id'
-                           and x.outcome in ('conflict_kept_existing', 'specialty_unmatched', 'specialty_ambiguous'))), null from joined
-    union all
-    select 'onboarding_diff', count(*) filter (where l_completo and not coalesce(p_onb, false)), null from joined
-    union all
-    select 'orphans_unreported', count(*), null
-    from public.usuario u
-    left join auth.users a on a.id = u.auth_user_id
-    where (u.deleted_at is not null or a.id is null)
-      and not exists (select 1 from reported x where x.legacy_usuario_id = u.id and x.field = 'row')
-    union all
-    -- Cutover evidence: compare this watermark before/after the SLICE 1 deploy;
-    -- it must stay identical (0 new public.usuario writes).
-    select 'legacy_write_watermark', 0::bigint,
-           'rows=' || count(*) || ';max_created_at=' || coalesce(max(u.created_at)::text, '-')
-               || ';max_updated_at=' || coalesce(max(u.updated_at)::text, '-')
-    from public.usuario u
-$$;
-
-revoke all on function private.identity_norm_text(text) from public, anon, authenticated;
-revoke all on function private.identity_backfill_run() from public, anon, authenticated;
-revoke all on function private.identity_backfill_verify() from public, anon, authenticated;
-grant execute on function private.identity_norm_text(text) to service_role;
-grant execute on function private.identity_backfill_run() to service_role;
-grant execute on function private.identity_backfill_verify() to service_role;
+        order by b.outcome
+    loop
+        raise notice 'identity backfill: % = %', o.outcome, o.total;
+    end loop;
+end
+$backfill$;
 
 commit;

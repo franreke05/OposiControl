@@ -883,6 +883,7 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     FORBIDDEN(HttpStatusCode.Forbidden, "No tienes permisos para realizar esta accion."),
     ACCOUNT_BLOCKED(HttpStatusCode.Forbidden, "Tu cuenta esta bloqueada."),
     ACCOUNT_DELETION_PENDING(HttpStatusCode.Forbidden, "Tu cuenta esta pendiente de eliminacion."),
+    PROFILE_MISSING(HttpStatusCode.Forbidden, "No se encontro el perfil de tu cuenta."),
     NOT_FOUND(HttpStatusCode.NotFound, "El recurso solicitado no existe."),
     CONFLICT(HttpStatusCode.Conflict, "La operacion entra en conflicto con el estado actual."),
     VERSION_CONFLICT(HttpStatusCode.Conflict, "El recurso ha cambiado mientras lo editabas. Recarga y vuelve a intentarlo."),

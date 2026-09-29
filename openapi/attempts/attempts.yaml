@@ -17,7 +17,7 @@ components:
         x-pagination: NONE
         x-idempotency: REQUIRED
         x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, EXAM_LOCKED, SPECIALTY_TYPE_NOT_ALLOWED, EXAM_NOT_FOUND, EXAM_EMPTY, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
-        description: 'One transaction: lazy deadline check, CheckExamAccess, partial unique index (usuario_id, examen_id) WHERE estado=en_progreso plus INSERT ON CONFLICT, then preguntas_intento is frozen. Concurrent or new-key calls converge on the single open attempt (200, reanudado=true). A prior finalizado or abandonado attempt means a new attempt (retake). usuario_id is never accepted from the client. DEMO semantics are an open exam_engine question.'
+        description: 'One transaction: lazy deadline check, CheckExamAccess, partial unique index (usuario_id, examen_id) WHERE estado=en_progreso plus INSERT ON CONFLICT, then preguntas_intento is frozen. Concurrent or new-key calls converge on the single open attempt (200, reanudado=true). A prior finalizado or abandonado attempt means a new attempt (retake). usuario_id is never accepted from the client. The attempt is tied to the exam and to that exam specialty (returned as intento.especialidadId), never to the user current specialty (DEC-002). DEMO semantics are an open exam_engine question.'
         security:
           - bearerAuth: []
         parameters:
@@ -476,6 +476,10 @@ components:
         examenId:
           type: [string, 'null']
           format: uuid
+        especialidadId:
+          type: [string, 'null']
+          format: uuid
+          description: 'Specialty of the EXAM the attempt belongs to, fixed at start (DEC-002). Never the specialty the user has now: changing the profile specialty does not reinterpret past attempts. null only when the attempt has no exam.'
         tipoExamen:
           $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
         estado:
@@ -696,6 +700,10 @@ components:
             examenId:
               type: [string, 'null']
               format: uuid
+            especialidadId:
+              type: [string, 'null']
+              format: uuid
+              description: 'Specialty of the exam the result belongs to (DEC-002); stays fixed when the user later changes specialty.'
             modo:
               type: string
               description: 'Value set pending DEC-018.'
@@ -787,6 +795,10 @@ components:
         examenId:
           type: [string, 'null']
           format: uuid
+        especialidadId:
+          type: [string, 'null']
+          format: uuid
+          description: 'Specialty of the exam of this attempt at start (DEC-002), not the user current specialty.'
         origen:
           $ref: '../common/identifiers.yaml#/components/schemas/AttemptOrigin'
         tipoExamen:

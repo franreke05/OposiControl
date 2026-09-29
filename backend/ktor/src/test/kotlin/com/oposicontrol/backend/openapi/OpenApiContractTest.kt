@@ -534,6 +534,172 @@ class OpenApiContractTest {
         assertTrue(noStore != null, "D2-65 is Cache-Control: no-store")
     }
 
+    // --- DEC-002: one active specialty per user ---------------------------------------------------
+
+    private fun schemaProps(ref: String): Map<*, *> {
+        val schema = docs.resolveRef(ref, docs.rootFile).value as Map<*, *>
+        return schema["properties"] as Map<*, *>
+    }
+
+    @Test
+    fun userHasExactlyOneActiveSpecialtyAndNoSpecialtyArray() {
+        // Existing canonical field: perfiles_usuario.especialidad_principal_id -> profile.especialidadPrincipalId.
+        val profile = schemaProps("profiles/profiles.yaml#/components/schemas/MeProfile")
+        val active = profile["especialidadPrincipalId"] as? Map<*, *> ?: fail("MeProfile must expose especialidadPrincipalId")
+        assertEquals(listOf("string", "null"), active["type"], "single nullable uuid, never an array")
+        assertEquals("uuid", active["format"])
+        assertTrue((active["description"] as String).contains("DEC-002"), "MeProfile.especialidadPrincipalId documents DEC-002")
+
+        // Registration (D1-12) and change-specialty (D1-13) send one scalar id.
+        listOf("D1-12", "D1-13").forEach { id ->
+            val op = operations.single { it.contractId == id }
+            val body = docs.deref(docs.requestSchemas(op).getValue("application/json")).value as Map<*, *>
+            val prop = (body["properties"] as Map<*, *>)["especialidadId"] as? Map<*, *> ?: fail("$id must accept especialidadId")
+            val resolved = docs.deref(OpenApiDocs.Node(prop, op.file)).value as Map<*, *>
+            assertEquals("string", resolved["type"], "$id especialidadId is one uuid, not a list")
+            assertEquals("uuid", resolved["format"], "$id especialidadId is a uuid")
+            assertEquals(false, body["additionalProperties"], "$id is strict: a specialties array would be rejected")
+        }
+        assertTrue(
+            (operations.single { it.contractId == "D1-13" }.op["description"] as String).contains("REPLACES the single active specialty"),
+            "D1-13 is the change-specialty operation and says it replaces the single specialty",
+        )
+
+        // No specialty list anywhere: no array-typed property or parameter named after a specialty.
+        val problems = mutableListOf<String>()
+        val specialty = Regex("(?i)especialidad|specialt")
+        docs.walkAllMaps { map, file ->
+            (map["properties"] as? Map<*, *>)?.forEach { (name, raw) ->
+                if (!specialty.containsMatchIn(name as String)) return@forEach
+                val type = (docs.deref(OpenApiDocs.Node(raw, file)).value as? Map<*, *>)?.get("type")
+                if (type == "array" || (type is List<*> && "array" in type)) problems += "${file.name}: '$name' is an array"
+            }
+        }
+        operations.forEach { op ->
+            docs.parameters(op).filter { specialty.containsMatchIn((it.value as Map<*, *>)["name"] as String) }.forEach { p ->
+                val param = p.value as Map<*, *>
+                val type = (param["schema"] as? Map<*, *>)?.let { docs.deref(OpenApiDocs.Node(it, p.file)).value as? Map<*, *> }?.get("type")
+                if (type == "array") problems += "${op.label}: parameter ${param["name"]} is an array"
+            }
+        }
+        assertTrue(problems.isEmpty(), problems.joinToString("\n"))
+    }
+
+    @Test
+    fun attemptsAndResultsCarryTheExamSpecialtyAndNeverAcceptOne() {
+        fun assertExamSpecialty(where: String, props: Map<*, *>) {
+            val p = props["especialidadId"] as? Map<*, *> ?: fail("$where must carry the exam especialidadId")
+            assertEquals(listOf("string", "null"), p["type"], where)
+            assertEquals("uuid", p["format"], where)
+            assertTrue("examenId" in props, "$where keeps examenId beside the specialty")
+            val text = p["description"] as String
+            assertTrue(text.contains("DEC-002") && text.contains("exam"), "$where documents that it is the exam specialty (DEC-002)")
+        }
+        assertExamSpecialty("Attempt", schemaProps("attempts/attempts.yaml#/components/schemas/Attempt"))
+        assertExamSpecialty("ReviewAttempt", schemaProps("attempts/attempts.yaml#/components/schemas/ReviewAttempt"))
+        val resumen = schemaProps("attempts/attempts.yaml#/components/schemas/AttemptResult")["resumen"] as Map<*, *>
+        assertExamSpecialty("AttemptResult.resumen", resumen["properties"] as Map<*, *>)
+
+        // The client never chooses the specialty of an attempt: it derives from the exam.
+        operations.filter { it.path.startsWith("/api/v1/app/") && (it.path.contains("/intentos") || it.path.contains("/reto-diario")) }.forEach { op ->
+            docs.requestSchemas(op).values.forEach { schema ->
+                docs.walkSchema(schema) { m, _ ->
+                    val names = (m["properties"] as? Map<*, *>)?.keys.orEmpty().map { it as String }
+                    assertTrue(names.none { it.contains("especialidad", ignoreCase = true) }, "${op.label} request must not carry a specialty")
+                }
+            }
+            assertTrue(docs.parameters(op).none { (it.value as Map<*, *>)["name"].toString().contains("especialidad", ignoreCase = true) })
+        }
+    }
+
+    // --- DEC-008: account deletion ----------------------------------------------------------------
+
+    @Test
+    fun accountDeletionContractIsFrozen() {
+        val op = operations.single { it.contractId == "D1-19" }
+        assertEquals("DELETE /api/v1/app/me", "${op.method.uppercase()} ${op.path}")
+        assertEquals("TARGET", op.op["x-implementation"])
+        assertEquals(1L, op.op["x-slice"])
+        assertEquals("NATURAL", op.op["x-idempotency"], "state-idempotent, no Idempotency-Key")
+        assertEquals(listOf("USER"), op.op["x-roles"])
+
+        val responses = docs.responses(op)
+        assertTrue("202" in responses, "asynchronous acknowledgement")
+        assertTrue("200" !in responses && "204" !in responses, "deletion is never reported as finished synchronously")
+        assertTrue("409" !in responses, "repeat is 202 with the same requestedAt: no ALREADY_PENDING conflict")
+        listOf("400", "401", "403", "429", "503").forEach { assertTrue(it in responses, "D1-19 documents $it") }
+        val codes = op.op["x-error-codes"] as List<*>
+        listOf("VALIDATION", "UNAUTHENTICATED", "REAUTH_FAILED", "STALE_AUTH", "ACCOUNT_BLOCKED", "RATE_LIMITED", "UPSTREAM_UNAVAILABLE")
+            .forEach { assertTrue(it in codes, "D1-19 lists $it") }
+        assertTrue("ALREADY_PENDING" !in codes)
+
+        val request = docs.deref(docs.requestSchemas(op).getValue("application/json")).value as Map<*, *>
+        assertEquals(listOf("confirmation"), request["required"])
+        val requestProps = request["properties"] as Map<*, *>
+        assertEquals(setOf("confirmation", "currentPassword"), requestProps.keys, "no caller id and no extra input")
+        assertEquals("ELIMINAR", (requestProps["confirmation"] as Map<*, *>)["const"])
+
+        val accepted = docs.deref(successSchema(responses.getValue("202"))).value as Map<*, *>
+        assertEquals(listOf("accountStatus", "requestedAt"), accepted["required"])
+        assertEquals("eliminacion_pendiente", ((accepted["properties"] as Map<*, *>)["accountStatus"] as Map<*, *>)["const"])
+
+        // The nine DEC-008 steps are spelled out, in order, in the description.
+        val description = op.op["description"] as String
+        assertTrue(description.contains("DEC-008") && description.contains("no indiscriminate cascade"))
+        var last = -1
+        (1..9).forEach { n ->
+            val at = description.indexOf("($n) ")
+            assertTrue(at > last, "description must list step ($n) after step (${n - 1})")
+            last = at
+        }
+        // Atomicity (RB-1-01): the GoTrue revoke cannot share a Postgres transaction, so the DB commit
+        // (state + requestedAt + audit) is step 1 and the revoke is step 2, after it.
+        val step1 = description.substring(description.indexOf("(1) "), description.indexOf("(2) "))
+        val step2 = description.substring(description.indexOf("(2) "), description.indexOf("(3) "))
+        assertTrue(step1.contains("DB transaction") && step1.contains("estado_cuenta eliminacion_pendiente") && step1.contains("requestedAt") && step1.contains("audit"), "step (1) is the atomic DB commit")
+        assertTrue(step2.contains("revoke all sessions") && step2.contains("Auth admin API") && step2.contains("retried by the executor"), "step (2) is the idempotent post-commit revoke")
+        assertTrue(description.contains("the only atomic part is the DB commit"), "only the DB part is atomic")
+        assertTrue(!description.contains("steps 1 and 2"), "no atomic claim over the revoke")
+        assertTrue(description.contains("If the DB transaction fails nothing changes"), "retry promise matches the atomic part")
+        assertTrue(description.contains("revoke failures are retried by the executor"))
+        assertTrue((responses.getValue("202").value as Map<*, *>)["description"].toString().contains("DB committed"), "202 is returned after the DB commit")
+        // RA-1-01: step (3) disables the Auth identity; a hard delete is forbidden while FKs still cascade.
+        val step3 = description.substring(description.indexOf("(3) "), description.indexOf("(4) "))
+        assertTrue(step3.contains("disable the Auth identity") && step3.contains("hard delete of auth.users is forbidden") && step3.contains("ON DELETE CASCADE"), "step (3) disables, never hard-deletes")
+        assertTrue(!description.contains("delete or disable"), "no hard-delete alternative")
+        // PF2-2-02: the banned Auth identity is scrubbed of PII (auth class ANONYMIZE), not left intact.
+        assertTrue(step3.contains("scrub") && step3.contains("tombstone") && step3.contains("phone cleared") && step3.contains("user_metadata cleared") && step3.contains("identities"), "step (3) scrubs the Auth identity PII")
+        assertTrue(!description.contains("satisfied by disabling"), "disabling alone does not satisfy a DELETE class")
+        // PF2-2-01: access tokens verify locally against the JWKS, so a ban does not turn them into 401.
+        assertTrue(!step3.contains("answers 401 UNAUTHENTICATED") && !description.contains("a repeat is 401"), "no false immediate-401 claim")
+        assertTrue(step3.contains("refresh fails with 401 from GoTrue") && step3.contains("keeps verifying locally") && step3.contains("403 ACCOUNT_DELETION_PENDING"), "step (3) states the real token behavior")
+        assertTrue(description.contains("returns 202; 401 appears only after token expiry or a failed refresh"), "repeat semantics match the local JWKS verifier")
+        // No legal retention period is invented (only the 5-minute re-auth window is a duration here).
+        assertTrue(!Regex("(?i)\\b\\d+\\s*(days?|months?|years?|dias|meses|anos)\\b").containsMatchIn(description), "no invented retention period")
+        assertTrue(description.contains("RETENTION_POLICY_PENDING"))
+
+        val classes = op.op["x-deletion-classes"] as? Map<*, *> ?: fail("D1-19 must declare x-deletion-classes")
+        assertEquals(
+            mapOf(
+                "perfiles_usuario" to "ANONYMIZE",
+                "auth" to "ANONYMIZE",
+                "preferences" to "DELETE",
+                "attempts_answers" to "RETAIN_ANONYMIZED",
+                "analytics_events" to "ANONYMIZE",
+                "social_content" to "ANONYMIZE",
+                "wallet_ledger_purchases" to "RETENTION_POLICY_PENDING",
+                "audit" to "RETENTION_POLICY_PENDING",
+            ),
+            classes.entries.associate { it.key as String to it.value as String },
+        )
+        val allowed = setOf("DELETE", "ANONYMIZE", "RETAIN_ANONYMIZED", "RETENTION_POLICY_PENDING")
+        assertTrue(classes.values.all { it in allowed }, "data classes are one of $allowed")
+        allowed.forEach { assertTrue(description.contains(it), "description names data class $it") }
+
+        // The only deletion route: no legacy or duplicate account-deletion path.
+        assertTrue(operations.count { it.method == "delete" && (it.path == "/api/v1/app/me" || it.path.contains("/account")) } == 1)
+    }
+
     // --- Helpers --------------------------------------------------------------------------------
 
     private fun enumOf(node: OpenApiDocs.Node): Pair<List<Any?>?, String> {

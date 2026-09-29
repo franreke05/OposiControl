@@ -13,9 +13,10 @@ import kotlin.test.assertTrue
 
 /**
  * Migracion EXPAND + BACKFILL de identidad canonica sobre PostgreSQL embebido.
- * Cubre: expand, backfill con cada politica de conflicto, VERIFY, re-ejecucion,
- * delta tras nuevas escrituras legacy, guardia de estado_cuenta, grants,
- * re-aplicacion del fichero y rollback.
+ * Cubre: expand, backfill (bloque DO dentro de la migracion, rol de la migracion, sin
+ * funcion runtime) con cada politica de conflicto, VERIFY (SQL documentado), re-ejecucion,
+ * delta tras nuevas escrituras legacy, guardia de estado_cuenta, grants
+ * (SERVICE_ROLE_AUTH_USERS_BROAD_SELECT = DENIED), re-aplicacion del fichero y rollback.
  */
 class IdentityExpandBackfillMigrationTest {
 
@@ -70,9 +71,14 @@ class IdentityExpandBackfillMigrationTest {
                 "from private.identity_backfill_report",
         ).map { it[0]!! }.toSet()
 
+    /** VERIFY = SQL documentado de la cabecera de la migracion, ejecutado tal cual (rol de la migracion). */
+    private fun Connection.verifyFilas(): List<List<String?>> = filas(Slice0Db.verifyDe(Slice0Db.IDENTITY))
+
     private fun Connection.fallosVerify(): Map<String, Long> =
-        filas("select check_name, failures from private.identity_backfill_verify()")
-            .associate { it[0]!! to it[1]!!.toLong() }
+        verifyFilas().associate { it[0]!! to it[1]!!.toLong() }
+
+    private fun Connection.marcaLegacy(): String? =
+        verifyFilas().single { it[0] == "legacy_write_watermark" }[2]
 
     private fun Connection.verifyVerde() {
         val f = fallosVerify()
@@ -80,7 +86,13 @@ class IdentityExpandBackfillMigrationTest {
         assertTrue(f.values.all { it == 0L }, "VERIFY no esta verde: $f")
     }
 
-    private fun Connection.backfill() = ejecutar("select * from private.identity_backfill_run()")
+    /**
+     * El backfill vive DENTRO de la migracion (bloque DO, rol de la migracion): no hay funcion runtime.
+     * Ejecutarlo = (re)aplicar el fichero, que es idempotente. Es tambien el "delta re-run" de Slice 1.
+     */
+    private fun Connection.backfill() = aplicar(Slice0Db.IDENTITY)
+
+    private val ROLES_API = listOf("anon", "authenticated", "service_role")
 
     private fun Connection.instantanea(): List<List<String?>> =
         filas("select * from public.perfiles_usuario order by usuario_id")
@@ -115,8 +127,45 @@ class IdentityExpandBackfillMigrationTest {
         // public.usuario y su RPC legacy siguen en pie.
         assertEquals("1", c.unico("select count(*) from pg_class where oid = to_regclass('public.usuario')"))
         assertEquals("1", c.unico("select count(*) from pg_proc where proname = 'oposibots_upsert_own_profile'"))
-        // La migracion NO ejecuta el backfill.
+        // Con public.usuario vacio el backfill de la migracion es un no-op (caso MAIN esperado).
         assertEquals("0", c.unico("select count(*) from private.identity_backfill_report"))
+    }
+
+    @Test
+    fun laMigracionEjecutaElBackfillAtomicamenteAlAplicarseConDatosLegacy(): Unit = Slice0Db.escenario { c ->
+        c.ejecutar(
+            """
+            insert into public.especialidades (id, codigo, nombre, slug) values ('$EF', 'EF', 'Educación Física', 'educacion-fisica');
+            insert into public.usuario (auth_user_id, email, nombre, apellidos, username, especialidad_registro, perfil_completo)
+            values ('$USER_A', 'a@test.local', ' Ana ', 'García', 'ana_g', 'EDUCACION FISICA', true);
+            """.trimIndent(),
+        )
+        // Primera y unica aplicacion: columnas + trigger + backfill en la misma transaccion, sin funcion runtime.
+        c.aplicar(Slice0Db.IDENTITY)
+        assertEquals(listOf("Ana", "García", "ana_g", EF, "true", "activa"), c.perfil(USER_A))
+        assertEquals(
+            setOf("$USER_A|profile|profile_created", "$USER_A|nombre|filled", "$USER_A|apellidos|filled", "$USER_A|username|filled",
+                "$USER_A|especialidad_principal_id|filled", "$USER_A|onboarding_completado|filled"),
+            c.reporte(),
+        )
+        c.verifyVerde()
+    }
+
+    @Test
+    fun laMigracionEliminaLasRutinasBorradorDelBackfillSiExisten(): Unit = Slice0Db.escenario { c ->
+        c.ejecutar(
+            """
+            create schema if not exists private;
+            grant usage on schema private to service_role;
+            create function private.identity_backfill_run() returns void language sql security definer as 'select 1';
+            create function private.identity_backfill_verify() returns void language sql security definer as 'select 1';
+            create function private.identity_norm_text(text) returns text language sql as 'select ${'$'}1';
+            grant execute on function private.identity_backfill_run() to service_role;
+            grant execute on function private.identity_backfill_verify() to service_role;
+            """.trimIndent(),
+        )
+        c.aplicar(Slice0Db.IDENTITY)
+        assertEquals("0", c.unico("select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.proname like 'identity_%'"))
     }
 
     @Test
@@ -172,7 +221,7 @@ class IdentityExpandBackfillMigrationTest {
         c.backfill()
         val reporte1 = c.reporte()
         val datos1 = c.instantanea()
-        val marca1 = c.unico("select info from private.identity_backfill_verify() where check_name = 'legacy_write_watermark'")
+        val marca1 = c.marcaLegacy()
 
         c.backfill()
         assertEquals(datos1, c.instantanea(), "la re-ejecucion cambio datos")
@@ -181,7 +230,7 @@ class IdentityExpandBackfillMigrationTest {
             c.reporte(),
         )
         c.verifyVerde()
-        assertEquals(marca1, c.unico("select info from private.identity_backfill_verify() where check_name = 'legacy_write_watermark'"))
+        assertEquals(marca1, c.marcaLegacy())
 
         // Escrituras legacy posteriores (ventana previa al cutover).
         c.ejecutar("update public.usuario set nombre = 'Anita', updated_at = now() + interval '1 second' where auth_user_id = '$USER_A'")
@@ -190,7 +239,7 @@ class IdentityExpandBackfillMigrationTest {
         val f = c.fallosVerify()
         assertEquals(2L, f["nombre_diff"], "VERIFY debe ver ambos deltas (A cambiado, G nuevo): $f")
         assertEquals(1L, f["onboarding_diff"], "VERIFY debe ver ambos deltas: $f")
-        assertTrue(marca1 != c.unico("select info from private.identity_backfill_verify() where check_name = 'legacy_write_watermark'"))
+        assertTrue(marca1 != c.marcaLegacy())
 
         c.backfill() // delta re-run
         c.verifyVerde()
@@ -246,20 +295,152 @@ class IdentityExpandBackfillMigrationTest {
         )
     }
 
+    /** PF3-3-02: un perfil no activo es de solo lectura para clientes (token aun valido via PostgREST). */
     @Test
-    fun objetosNuevosSoloParaServiceRole(): Unit = Slice0Db.escenario { c ->
+    fun perfilNoActivoEsSoloLecturaParaClientes(): Unit = Slice0Db.escenario { c ->
         c.aplicar(Slice0Db.IDENTITY)
-        for (f in listOf("private.identity_backfill_run()", "private.identity_backfill_verify()", "private.identity_norm_text(text)")) {
-            assertEquals("false", c.unico("select has_function_privilege('anon', '$f', 'execute')::text"), f)
-            assertEquals("false", c.unico("select has_function_privilege('authenticated', '$f', 'execute')::text"), f)
-            assertEquals("true", c.unico("select has_function_privilege('service_role', '$f', 'execute')::text"), f)
+        c.ejecutar("insert into public.perfiles_usuario (usuario_id, nombre) values ('$USER_A', 'Ana')")
+
+        fun comoCliente(rol: String, sql: String): String? =
+            c.sqlStateDe("begin; set local role $rol; set local request.jwt.claim.sub = '$USER_A'; $sql; commit;")
+                .also { runCatching { c.ejecutar("rollback") } }
+
+        val editar = "update public.perfiles_usuario set nombre = 'Mallory', perfil_intro_visto_en = now() where usuario_id = '$USER_A'"
+
+        // activa: sigue siendo editable por su dueno.
+        assertNull(comoCliente("authenticated", editar))
+        assertEquals("Mallory", c.unico("select nombre from public.perfiles_usuario where usuario_id = '$USER_A'"))
+
+        for (estado in listOf("eliminacion_pendiente", "bloqueada")) {
+            // El servidor (rol propietario / service_role) fija el estado; los clientes no pueden.
+            c.ejecutar("update public.perfiles_usuario set estado_cuenta = '$estado', nombre = 'Anon' where usuario_id = '$USER_A'")
+            assertEquals("42501", comoCliente("authenticated", editar), estado)
+            assertEquals("42501", comoCliente("authenticated", "update public.perfiles_usuario set estado_cuenta = 'activa' where usuario_id = '$USER_A'"), estado)
+            assertEquals("42501", comoCliente("authenticated", "update public.perfiles_usuario set username = 'x_$estado' where usuario_id = '$USER_A'"), estado)
+            assertEquals("Anon", c.unico("select nombre from public.perfiles_usuario where usuario_id = '$USER_A'"), estado)
+            assertEquals(estado, c.unico("select estado_cuenta from public.perfiles_usuario where usuario_id = '$USER_A'"))
+            // El servidor si puede seguir escribiendo (p. ej. paso de anonimizacion, DEC-008).
+            assertNull(comoCliente("service_role", "update public.perfiles_usuario set nombre = 'Anon2' where usuario_id = '$USER_A'"))
+            assertEquals("Anon2", c.unico("select nombre from public.perfiles_usuario where usuario_id = '$USER_A'"), estado)
+        }
+
+        // El mensaje distingue "no activa" de "estado no escribible".
+        val msg = try {
+            c.ejecutar("begin; set local role authenticated; set local request.jwt.claim.sub = '$USER_A'; $editar; commit;")
+            null
+        } catch (e: java.sql.SQLException) {
+            e.message
+        } finally {
+            runCatching { c.ejecutar("rollback") }
+        }
+        assertTrue(msg?.contains("ESTADO_CUENTA_NOT_ACTIVE") == true, "mensaje: $msg")
+    }
+
+    @Test
+    fun noExisteNingunaRutinaRuntimeDeBackfillNiGrantsParaRolesDeApi(): Unit = Slice0Db.escenario { c ->
+        c.aplicar(Slice0Db.IDENTITY)
+        c.sembrar()
+        c.backfill()
+
+        // FIX-D1: el backfill NO es una funcion. Ninguna rutina identity_* ni SECURITY DEFINER en private.
+        assertEquals("0", c.unico("select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.proname like 'identity_%'"))
+        assertEquals("0", c.unico("select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.prosecdef"))
+        assertEquals("0", c.unico("select count(*) from pg_proc where prosrc ilike '%identity_backfill%'"))
+
+        for (rol in ROLES_API) {
+            // Sin EXECUTE utilizable: la rutina no existe (42883) o el esquema private no es accesible (42501).
+            for (f in listOf("identity_backfill_run", "identity_backfill_verify")) {
+                val st = c.sqlStateDe("begin; set local role $rol; select * from private.$f(); commit").also { runCatching { c.ejecutar("rollback") } }
+                assertTrue(st == "42883" || st == "42501", "$rol $f -> $st")
+            }
+            // El informe es solo del propietario: ningun rol de API lo lee ni lo escribe.
+            for (p in listOf("select", "insert", "update", "delete")) {
+                assertEquals("false", c.unico("select has_table_privilege('$rol', 'private.identity_backfill_report', '$p')::text"), "$rol $p")
+            }
+            assertEquals(
+                "42501",
+                c.sqlStateDe("begin; set local role $rol; select count(*) from private.identity_backfill_report; commit").also { runCatching { c.ejecutar("rollback") } },
+                rol,
+            )
+            assertEquals(
+                "42501",
+                c.sqlStateDe("begin; set local role $rol; delete from private.identity_backfill_report where true; commit").also { runCatching { c.ejecutar("rollback") } },
+                rol,
+            )
         }
         for (rol in listOf("anon", "authenticated")) {
-            assertEquals("false", c.unico("select has_table_privilege('$rol', 'private.identity_backfill_report', 'select')::text"))
             assertEquals("false", c.unico("select has_schema_privilege('$rol', 'private', 'usage')::text"))
         }
         assertEquals("true", c.unico("select relrowsecurity::text from pg_class where oid = 'private.identity_backfill_report'::regclass"))
         assertEquals("0", c.unico("select count(*) from pg_policies where schemaname = 'private' and tablename = 'identity_backfill_report'"))
+        // La funcion trigger del guard sigue siendo SECURITY INVOKER y sin EXECUTE para anon/authenticated.
+        assertEquals("false", c.unico("select prosecdef::text from pg_proc where oid = 'private.guard_perfiles_estado_cuenta()'::regprocedure"))
+        for (rol in listOf("anon", "authenticated")) {
+            assertEquals("false", c.unico("select has_function_privilege('$rol', 'private.guard_perfiles_estado_cuenta()', 'execute')::text"), rol)
+        }
+    }
+
+    /** SERVICE_ROLE_AUTH_USERS_BROAD_SELECT = DENIED: la migracion no concede ni abre ninguna via de lectura de auth.users. */
+    @Test
+    fun serviceRoleAuthUsersBroadSelectDenied(): Unit = Slice0Db.escenario { c ->
+        val aclAntes = c.unico("select coalesce(relacl::text, '') from pg_class where oid = 'auth.users'::regclass")
+        val aclColumnasAntes = c.unico("select coalesce(string_agg(attname || ':' || attacl::text, ',' order by attname), '') from pg_attribute where attrelid = 'auth.users'::regclass and attacl is not null")
+
+        // El harness modela MAIN: ningun rol de API tiene privilegio alguno sobre auth.users.
+        fun assertDenegado() {
+            for (rol in ROLES_API) {
+                for (p in listOf("select", "insert", "update", "delete", "references", "trigger")) {
+                    assertEquals("false", c.unico("select has_table_privilege('$rol', 'auth.users', '$p')::text"), "$rol $p")
+                }
+                assertEquals("false", c.unico("select has_any_column_privilege('$rol', 'auth.users', 'select')::text"), "$rol columnas")
+                assertEquals("42501", c.sqlStateDe("begin; set local role $rol; select count(*) from auth.users; commit").also { runCatching { c.ejecutar("rollback") } }, rol)
+                assertEquals("42501", c.sqlStateDe("begin; set local role $rol; select id from auth.users limit 1; commit").also { runCatching { c.ejecutar("rollback") } }, rol)
+            }
+        }
+        assertDenegado()
+
+        // Expand con public.usuario vacio, luego datos legacy y backfill real dentro de la migracion (aplicar + delta).
+        c.aplicar(Slice0Db.IDENTITY)
+        val definerPublicAntes = c.unico("select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prosecdef and p.prosrc ilike '%auth.users%'")
+        c.sembrar()
+        c.aplicar(Slice0Db.IDENTITY)
+        c.aplicar(Slice0Db.IDENTITY)
+
+        assertDenegado()
+        assertEquals(aclAntes, c.unico("select coalesce(relacl::text, '') from pg_class where oid = 'auth.users'::regclass"), "la migracion no cambia la ACL de auth.users")
+        assertEquals(aclColumnasAntes, c.unico("select coalesce(string_agg(attname || ':' || attacl::text, ',' order by attname), '') from pg_attribute where attrelid = 'auth.users'::regclass and attacl is not null"))
+        // Y ninguna rutina SECURITY DEFINER nueva (en private/public) toca auth.users por otra via.
+        assertEquals("0", c.unico("select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.prosecdef"))
+        assertEquals(definerPublicAntes, c.unico("select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.prosecdef and p.prosrc ilike '%auth.users%'"))
+    }
+
+    /** El mecanismo canonico (backfill bajo el rol de la migracion) funciona aunque service_role no tenga SELECT en auth.users. */
+    @Test
+    fun elBackfillCanonicoFuncionaSinPrivilegiosDeServiceRoleYEsIdempotente(): Unit = Slice0Db.escenario { c ->
+        c.aplicar(Slice0Db.IDENTITY)
+        c.sembrar()
+        assertEquals("false", c.unico("select has_table_privilege('service_role', 'auth.users', 'select')::text"))
+        val marca = c.unico("select md5(string_agg(t::text, '|' order by id)) from public.usuario t")
+
+        c.backfill()
+        assertEquals("Ana", c.perfil(USER_A)[0])
+        assertEquals("1", c.unico("select count(*) from private.identity_backfill_report where outcome = 'orphan_deleted'"))
+        assertEquals("1", c.unico("select count(*) from private.identity_backfill_report where outcome = 'orphan_no_auth_user'"))
+        assertEquals("1", c.unico("select count(*) from private.identity_backfill_report where outcome = 'skipped_username_collision'"))
+        assertEquals("1", c.unico("select count(*) from private.identity_backfill_report where outcome = 'specialty_ambiguous'"))
+        c.verifyVerde()
+        val datos = c.instantanea()
+
+        // Idempotente: re-ejecutar no cambia datos, no sobrescribe canonico y public.usuario queda intacto.
+        repeat(2) { c.backfill() }
+        assertEquals(datos, c.instantanea())
+        assertEquals("Beatriz", c.perfil(USER_B)[0])
+        assertEquals("bea", c.perfil(USER_B)[2])
+        assertEquals(marca, c.unico("select md5(string_agg(t::text, '|' order by id)) from public.usuario t"), "public.usuario no cambia")
+        c.verifyVerde()
+
+        // service_role sigue sin poder leer auth.users tras el backfill, y no puede invocarlo ni releerlo.
+        assertEquals("false", c.unico("select has_table_privilege('service_role', 'auth.users', 'select')::text"))
     }
 
     @Test

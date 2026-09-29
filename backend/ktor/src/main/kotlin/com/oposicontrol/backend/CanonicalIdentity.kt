@@ -37,18 +37,28 @@ value class CanonicalUserId private constructor(val value: String) {
     }
 }
 
-/** `perfiles_usuario.estado_cuenta`. Una fila sin la columna aun (antes de la expansion) es `activa`. */
+/**
+ * `perfiles_usuario.estado_cuenta`. DENY BY DEFAULT (Gate B): solo un `activa`
+ * explicito y exacto deja operar. `bloqueada` y `eliminacion_pendiente` son los
+ * estados congelados (CHECK de la migracion de SLICE 0) y tienen su 403
+ * especifico. Cualquier otra cosa -- `null`, ausente, vacio, mayusculas,
+ * `disabled`/`deleted`/`anonymized` u otro valor futuro -- es [UNRECOGNIZED]:
+ * denegado con 403 FORBIDDEN, nunca "activa" por defecto (DEC-008: una cuenta
+ * borrada/anonimizada no recupera acceso).
+ */
 enum class AccountStatus(val wire: String) {
     ACTIVA("activa"),
     BLOQUEADA("bloqueada"),
     ELIMINACION_PENDIENTE("eliminacion_pendiente"),
+
+    /** Sentinela interno: no es un valor de la base ni se serializa. */
+    UNRECOGNIZED("\u0000unrecognized"),
     ;
 
     companion object {
-        /** Desconocido -> fallo de contrato con la base (502), nunca "activa" por defecto. */
+        /** Coincidencia EXACTA (sin trim ni case-folding). Todo lo demas es [UNRECOGNIZED]. */
         fun fromWire(value: String?): AccountStatus =
-            if (value == null) ACTIVA else entries.firstOrNull { it.wire == value }
-                ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+            entries.firstOrNull { it != UNRECOGNIZED && it.wire == value } ?: UNRECOGNIZED
     }
 }
 
@@ -128,19 +138,32 @@ class CanonicalIdentityResolver(
             withUpstreamIo { verifySubject(token) }
         } catch (domain: BackendDomainException) {
             throw domain
+        } catch (_: java.io.IOException) {
+            // RB-1-06: JWKS caido / timeout no es un token invalido: 503 (reintentable), no 401 (que cerraria sesion).
+            throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
         } catch (_: Exception) {
             throw CanonicalErrorCode.UNAUTHENTICATED.exception()
         }
         return CanonicalUserId.fromJwtSubject(subject)
     }
 
-    /** La identidad completa. Sin fila de perfil -> 403 FORBIDDEN (el trigger la garantiza; si falta, no se opera). */
+    /**
+     * La identidad completa, SIN comprobar el estado (para operar usa [activeIdentity]).
+     *
+     * Sin fila de perfil -> 403 PROFILE_MISSING. El contrato congelado calla este
+     * caso (el trigger `handle_new_auth_user` garantiza la fila), asi que se
+     * deniega con un codigo propio: ni se autocrea la fila ni se opera como activo.
+     */
     suspend fun identity(call: ApplicationCall): CanonicalUserIdentity {
         val userId = userId(call)
-        return directory.find(userId) ?: throw CanonicalErrorCode.FORBIDDEN.exception()
+        return directory.find(userId) ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
     }
 
-    /** Identidad de una cuenta ACTIVA; bloqueada -> 403 ACCOUNT_BLOCKED, pendiente de borrado -> 403 ACCOUNT_DELETION_PENDING. */
+    /**
+     * Identidad de una cuenta ACTIVA explicita. Bloqueada -> 403 ACCOUNT_BLOCKED,
+     * pendiente de borrado -> 403 ACCOUNT_DELETION_PENDING, cualquier otro estado
+     * o estado ausente -> 403 FORBIDDEN.
+     */
     suspend fun activeIdentity(call: ApplicationCall): CanonicalUserIdentity = identity(call).requireActive()
 }
 
@@ -148,4 +171,5 @@ fun CanonicalUserIdentity.requireActive(): CanonicalUserIdentity = when (account
     AccountStatus.ACTIVA -> this
     AccountStatus.BLOQUEADA -> throw CanonicalErrorCode.ACCOUNT_BLOCKED.exception()
     AccountStatus.ELIMINACION_PENDIENTE -> throw CanonicalErrorCode.ACCOUNT_DELETION_PENDING.exception()
+    AccountStatus.UNRECOGNIZED -> throw CanonicalErrorCode.FORBIDDEN.exception()
 }
