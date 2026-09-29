@@ -290,6 +290,8 @@ internal fun Application.installBackendStatusPages() {
             call.respondErrorEnvelope(
                 CanonicalErrorCode.VALIDATION,
                 message = if (cause.isThrownByBackendCode()) cause.safeBackendMessage("Invalid request") else CanonicalErrorCode.VALIDATION.defaultMessage,
+                // SLICE 1 (D1-23/24): un id de ruta que no es UUID lleva `details.issues[{field, NON_UUID}]`.
+                details = (cause as? NonUuidPathException)?.let { ErrorDetails(issues = listOf(ErrorIssue(it.field, "NON_UUID"))) },
             )
         }
         // Fallo del upstream (Supabase/PostgREST): 502 UPSTREAM_ERROR, o 504
@@ -440,8 +442,19 @@ fun Application.module() {
         // u orquestador no puede mandar el Bearer de gateway-auth.
         observabilityHealthRoutes()
         v1Routes(v1Gateway)
-        appV1Routes(appV1Gateway, jwtVerifier, allowDevUser)
-        authRuntime?.let(::oposiBotsAuthRoutes)
+        appV1Routes(
+            appV1Gateway,
+            jwtVerifier,
+            allowDevUser,
+            identityResolver = PostgrestCanonicalProfileDirectory.fromEnvironment()?.let {
+                CanonicalIdentityResolver(jwtVerifier::subFrom, it)
+            },
+        )
+        authRuntime?.let {
+            oposiBotsAuthRoutes(it)
+            // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).
+            if (it.canonical != null) canonicalProfileRoutes(it)
+        }
         authenticate("gateway-auth") {
             // Confina el token estático a superficies legacy locales y exige rol
             // admin a cualquier JWT. Sustituye a un intercept en fase Plugins que
@@ -704,10 +717,14 @@ internal fun Application.configureConsumerAuthOnly(runtime: OposiBotsAuthRuntime
     install(ContentNegotiation) {
         json(runtime.json)
     }
+    // SLICE 1: las rutas canonicas de perfil responden con el sobre canonico (StatusPages) y X-Request-Id.
+    installRequestCorrelation()
+    installBackendStatusPages()
     routing {
         prometheusMetricsRoute()
         healthLiveRoute()
         oposiBotsAuthRoutes(runtime)
+        if (runtime.canonical != null) canonicalProfileRoutes(runtime)
     }
 }
 

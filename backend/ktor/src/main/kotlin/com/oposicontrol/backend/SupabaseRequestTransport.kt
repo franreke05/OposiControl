@@ -207,6 +207,22 @@ class SupabaseRequestTransport internal constructor(
         scope = scope,
     )
 
+    /**
+     * RPC que DEVUELVE la respuesta tal cual, tambien las de error (SLICE 1).
+     *
+     * Los RPC de comando de perfil y de borrado de cuenta levantan claves estables
+     * en `message` y el campo con el problema en `hint`; el llamante los traduce al
+     * sobre canonico, cosa que [rpc] no permite porque convierte todo error en
+     * excepcion antes de que se pueda leer el `hint`. Un fallo de RED sigue siendo
+     * `IllegalStateException`, como en el resto del transporte.
+     */
+    fun rpcRaw(function: String, body: String): SupabaseRawResponse {
+        val path = "/rest/v1/rpc/$function"
+        val builder = newPathBuilder(path, SupabaseAuthScope.Elevated).header("Content-Type", "application/json")
+        val response = exchange("POST", path) { builder.POST(HttpRequest.BodyPublishers.ofString(body)).build() }
+        return SupabaseRawResponse(response.statusCode(), response.body())
+    }
+
     // -----------------------------------------------------------------
     // Storage
     // -----------------------------------------------------------------
@@ -534,3 +550,8 @@ class SupabaseRequestTransport internal constructor(
  * [body] es el cuerpo crudo: decodificar es del llamante, igual que con `get`.
  */
 data class SupabasePage(val body: String, val total: Int)
+
+/** Respuesta cruda de [SupabaseRequestTransport.rpcRaw]: estado y cuerpo, sin traducir errores. */
+data class SupabaseRawResponse(val status: Int, val body: String) {
+    val ok: Boolean get() = status in 200..299
+}

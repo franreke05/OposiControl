@@ -15,11 +15,13 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,6 +41,10 @@ internal data class OposiBotsAuthContext(
     val clientIp: String,
 )
 
+/**
+ * Las operaciones de `/v1/auth` contra Supabase Auth (GoTrue). Perfil (`/me`, `/register/profile`) ya NO esta
+ * aqui: desde SLICE 1 lo sirve el servicio canonico ([CanonicalProfileService]) sobre `perfiles_usuario`.
+ */
 internal interface OposiBotsAuthGateway {
     suspend fun register(request: OposiBotsRegisterRequest, context: OposiBotsAuthContext): OposiBotsRegisterResponse
     suspend fun resend(request: OposiBotsEmailResendRequest, context: OposiBotsAuthContext)
@@ -46,25 +52,37 @@ internal interface OposiBotsAuthGateway {
     suspend fun login(request: OposiBotsLoginRequest, context: OposiBotsAuthContext): OposiBotsAuthSessionDto
     suspend fun refresh(request: OposiBotsRefreshRequest, context: OposiBotsAuthContext): OposiBotsAuthSessionDto
     suspend fun logout(accessToken: String, context: OposiBotsAuthContext)
-    suspend fun me(accessToken: String, context: OposiBotsAuthContext): OposiBotsMeResponse
-    suspend fun saveProfile(accessToken: String, request: OposiBotsProfileRequest, context: OposiBotsAuthContext)
     suspend fun recover(request: OposiBotsRecoverRequest, context: OposiBotsAuthContext)
     suspend fun reset(request: OposiBotsResetPasswordRequest, context: OposiBotsAuthContext)
     suspend fun google(request: OposiBotsGoogleRequest, context: OposiBotsAuthContext): OposiBotsOAuthResponse
     suspend fun apple(request: OposiBotsAppleRequest, context: OposiBotsAuthContext): OposiBotsOAuthResponse
 }
 
+/**
+ * GoTrue + la PUERTA DE ESTADO de cuenta.
+ *
+ * Toda operacion que ACUÑA tokens (login, refresh, exchange, google, apple) lee despues `perfiles_usuario`
+ * con la clave de servicio ([CanonicalProfileDirectory]) y aplica `requireActive()` (deny-by-default): si la
+ * cuenta no es `activa` explicita, o no hay fila, se REVOCA la sesion recien acuñada y se responde 403.
+ * [profileDirectory] existe para inyectarlo en pruebas; sin el se lee `perfiles_usuario` con el cliente de este gateway.
+ */
 internal class SupabaseOposiBotsAuthGateway(
     private val configuration: OposiBotsAuthConfiguration,
     private val json: Json,
     private val client: HttpClient = defaultAuthHttpClient(),
-) : OposiBotsAuthGateway {
+    private val profileDirectory: CanonicalProfileDirectory? = null,
+) : OposiBotsAuthGateway, AuthProviderClient {
     override suspend fun register(
         request: OposiBotsRegisterRequest,
         context: OposiBotsAuthContext,
     ): OposiBotsRegisterResponse {
-        val body = credentialBody(request.identifier, request.password, request.captchaToken)
+        val body = credentialBody(request.resolvedIdentifier(), request.password, request.captchaToken)
         val response = authRequest(HttpMethod.Post, "/auth/v1/signup", body, context = context)
+        // Enumeration-safe (D1-01): con autoconfirm GoTrue contesta 422 user_already_exists en vez del 200 ofuscado;
+        // un duplicado se contesta igual que un alta nueva (202) y nunca revela que el email existe.
+        if (response.status.value == 422 && response.error().normalizedCode in DUPLICATE_SIGNUP_CODES) {
+            return OposiBotsRegisterResponse()
+        }
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = false)
         return OposiBotsRegisterResponse()
     }
@@ -98,7 +116,7 @@ internal class SupabaseOposiBotsAuthGateway(
             },
             context = context,
         )
-        if (!response.status.isSuccessStatus()) throw mapCredentialError(response)
+        if (!response.status.isSuccessStatus()) throw mapCredentialError(response, purpose = AuthPurpose.EXCHANGE)
         return response.toSession(context)
     }
 
@@ -109,10 +127,10 @@ internal class SupabaseOposiBotsAuthGateway(
         val response = authRequest(
             HttpMethod.Post,
             "/auth/v1/token?grant_type=password",
-            credentialBody(request.identifier, request.password, null),
+            credentialBody(request.resolvedIdentifier(), request.password, null),
             context = context,
         )
-        if (!response.status.isSuccessStatus()) throw mapCredentialError(response)
+        if (!response.status.isSuccessStatus()) throw mapCredentialError(response, purpose = AuthPurpose.LOGIN)
         return response.toSession(context)
     }
 
@@ -143,42 +161,6 @@ internal class SupabaseOposiBotsAuthGateway(
         }
     }
 
-    override suspend fun me(accessToken: String, context: OposiBotsAuthContext): OposiBotsMeResponse {
-        val user = currentUser(accessToken, context)
-        val profile = profile(accessToken, user.id, context)
-        if (profile?.deletedAt != null) throw OposiBotsAuthProblem.accessDenied()
-        return OposiBotsMeResponse(
-            OposiBotsAuthUserDto(user.id, user.email, profile?.profileComplete == true),
-        )
-    }
-
-    override suspend fun saveProfile(
-        accessToken: String,
-        request: OposiBotsProfileRequest,
-        context: OposiBotsAuthContext,
-    ) {
-        currentUser(accessToken, context)
-        val response = dataRequest(
-            method = HttpMethod.Post,
-            path = "/rest/v1/rpc/oposibots_upsert_own_profile",
-            body = buildJsonObject {
-                put("p_first_name", request.firstName.trim())
-                put("p_last_name", request.lastName.trim())
-                request.username?.trim()?.takeIf(String::isNotBlank)?.let { put("p_username", it) }
-                    ?: put("p_username", JsonNull)
-                put("p_specialty", request.specialty.trim())
-            },
-            accessToken = accessToken,
-            context = context,
-        )
-        if (!response.status.isSuccessStatus()) {
-            if (response.status == HttpStatusCode.Conflict || response.body.contains("23505")) {
-                throw OposiBotsAuthProblem.conflict()
-            }
-            throw mapCredentialError(response)
-        }
-    }
-
     override suspend fun recover(request: OposiBotsRecoverRequest, context: OposiBotsAuthContext) {
         val redirect = configuration.passwordRecoveryRedirectUrl
             ?.let { "?redirect_to=${it.urlEncode()}" }
@@ -187,7 +169,7 @@ internal class SupabaseOposiBotsAuthGateway(
             HttpMethod.Post,
             "/auth/v1/recover$redirect",
             buildJsonObject {
-                put("email", request.identifier.trim())
+                put("email", request.resolvedIdentifier().trim())
                 request.captchaToken?.takeIf(String::isNotBlank)?.let { put("captcha_token", it) }
             },
             context = context,
@@ -221,19 +203,23 @@ internal class SupabaseOposiBotsAuthGateway(
     override suspend fun google(
         request: OposiBotsGoogleRequest,
         context: OposiBotsAuthContext,
-    ): OposiBotsOAuthResponse = oauth("google", request.idToken, context)
+    ): OposiBotsOAuthResponse = oauth("google", request.idToken, request.nonce, context)
 
     override suspend fun apple(
         request: OposiBotsAppleRequest,
         context: OposiBotsAuthContext,
     ): OposiBotsOAuthResponse {
         verifyAppleCode(request, context)
-        return oauth("apple", request.identityToken, context)
+        val response = oauth("apple", request.identityToken, request.nonce, context)
+        // Solo tras pasar la puerta de estado y el replay guard: los nombres de la primera autenticacion.
+        persistFirstAuthNames(response.session.user.id, request.firstAuthNames(), context)
+        return response
     }
 
     private suspend fun oauth(
         provider: String,
         idToken: String,
+        nonce: String?,
         context: OposiBotsAuthContext,
     ): OposiBotsOAuthResponse {
         val response = authRequest(
@@ -242,6 +228,7 @@ internal class SupabaseOposiBotsAuthGateway(
             buildJsonObject {
                 put("provider", provider)
                 put("id_token", idToken)
+                nonce?.takeIf(String::isNotBlank)?.let { put("nonce", it) }
             },
             context = context,
         )
@@ -250,29 +237,32 @@ internal class SupabaseOposiBotsAuthGateway(
         try {
             claimOAuthCredential(provider, idToken, context)
         } catch (cancelled: CancellationException) {
-            revokeMintedOAuthSession(mintedSession.accessToken, context)
+            revokeMintedSession(mintedSession.accessToken, context)
             throw cancelled
         } catch (problem: OposiBotsAuthProblem) {
-            revokeMintedOAuthSession(mintedSession.accessToken, context)
+            revokeMintedSession(mintedSession.accessToken, context)
             throw problem
         }
         val session = response.toSession(context, mintedSession)
-        return OposiBotsOAuthResponse(session, isNewAccount = !session.user.profileComplete)
+        return OposiBotsOAuthResponse(session, isNewAccount = !session.user.onboardingCompleted)
     }
 
-    private suspend fun revokeMintedOAuthSession(accessToken: String, context: OposiBotsAuthContext) {
-        try {
-            authRequest(
-                method = HttpMethod.Post,
-                path = "/auth/v1/logout?scope=global",
-                body = null,
-                accessToken = accessToken,
-                context = context,
-            )
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            // Best effort compensation: never replace the original replay/claim failure.
+    /** Revoca (logout global) la sesion recien acuñada. Mejor esfuerzo: nunca sustituye al error original. */
+    private suspend fun revokeMintedSession(accessToken: String, context: OposiBotsAuthContext, scope: String = "global") {
+        withContext(NonCancellable) {
+            try {
+                authRequest(
+                    method = HttpMethod.Post,
+                    path = "/auth/v1/logout?scope=$scope",
+                    body = null,
+                    accessToken = accessToken,
+                    context = context,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Best effort compensation: never replace the original replay/claim/gate failure.
+            }
         }
     }
 
@@ -324,6 +314,39 @@ internal class SupabaseOposiBotsAuthGateway(
         }
     }
 
+    /**
+     * Nombre y apellidos de la primera autenticacion de Apple -> `perfiles_usuario.nombre/apellidos`, SOLO si estan
+     * vacios (escritura del servidor con la clave de servicio, tras la puerta de estado). Un fallo no niega el acceso.
+     */
+    private suspend fun persistFirstAuthNames(
+        userId: String,
+        names: Pair<String?, String?>,
+        context: OposiBotsAuthContext,
+    ) {
+        val id = CanonicalUserId.fromJwtSubject(userId).value
+        listOf("nombre" to names.first, "apellidos" to names.second).forEach { (column, value) ->
+            val text = value?.trim()?.take(100)?.takeIf(String::isNotEmpty) ?: return@forEach
+            try {
+                val response = supabaseRequest(
+                    method = HttpMethod.Patch,
+                    path = "/rest/v1/perfiles_usuario?usuario_id=eq.$id&or=($column.is.null,$column.eq.)",
+                    body = buildJsonObject { put(column, text) },
+                    accessToken = null,
+                    apiKey = configuration.secretKey,
+                    context = context,
+                    prefer = "return=minimal",
+                )
+                if (!response.status.isSuccessStatus()) {
+                    GatewayLogger.warn("first-auth {} not persisted status={}", column, response.status.value)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                GatewayLogger.warn("first-auth {} not persisted: {}", column, failure.toString())
+            }
+        }
+    }
+
     private suspend fun AuthResponse.toSession(
         context: OposiBotsAuthContext,
         decodedSession: SupabaseSession? = null,
@@ -332,8 +355,7 @@ internal class SupabaseOposiBotsAuthGateway(
         if (session.accessToken.isBlank() || session.refreshToken.isBlank()) {
             throw OposiBotsAuthProblem.unavailable()
         }
-        val profile = profile(session.accessToken, session.user.id, context)
-        if (profile?.deletedAt != null) throw OposiBotsAuthProblem.accessDenied()
+        val identity = enforceAccountGate(session, context)
         return OposiBotsAuthSessionDto(
             accessToken = session.accessToken,
             refreshToken = session.refreshToken,
@@ -342,38 +364,109 @@ internal class SupabaseOposiBotsAuthGateway(
             user = OposiBotsAuthUserDto(
                 id = session.user.id,
                 email = session.user.email,
-                profileComplete = profile?.profileComplete == true,
+                profileComplete = identity.onboardingCompleted,
+                onboardingCompleted = identity.onboardingCompleted,
+                accountStatus = AccountStatus.ACTIVA.wire,
             ),
         )
     }
 
-    private suspend fun currentUser(accessToken: String, context: OposiBotsAuthContext): SupabaseUser {
-        val response = authRequest(
-            HttpMethod.Get,
-            "/auth/v1/user",
-            body = null,
-            accessToken = accessToken,
-            context = context,
-        )
-        if (!response.status.isSuccessStatus()) throw mapCredentialError(response)
-        return response.decode()
+    /**
+     * Puerta de estado tras acuñar tokens. Solo `activa` explicita pasa; cualquier denegacion o fallo de lectura
+     * (fallo CERRADO) revoca la sesion acuñada y sube: 403 ACCOUNT_BLOCKED / ACCOUNT_DELETION_PENDING /
+     * FORBIDDEN / PROFILE_MISSING, o 503 si no se pudo leer el estado.
+     */
+    private suspend fun enforceAccountGate(session: SupabaseSession, context: OposiBotsAuthContext): CanonicalUserIdentity {
+        try {
+            val userId = CanonicalUserId.fromJwtSubject(session.user.id)
+            val identity = findProfile(userId, context) ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
+            return identity.requireActive()
+        } catch (cancelled: CancellationException) {
+            revokeMintedSession(session.accessToken, context)
+            throw cancelled
+        } catch (denied: BackendDomainException) {
+            revokeMintedSession(session.accessToken, context)
+            throw denied
+        } catch (problem: OposiBotsAuthProblem) {
+            revokeMintedSession(session.accessToken, context)
+            throw problem
+        } catch (unexpected: Exception) {
+            GatewayLogger.warn("account gate could not read the profile: {}", unexpected.toString())
+            revokeMintedSession(session.accessToken, context)
+            throw OposiBotsAuthProblem.unavailable()
+        }
     }
 
-    private suspend fun profile(
-        accessToken: String,
-        userId: String,
-        context: OposiBotsAuthContext,
-    ): ProfileRow? {
-        val response = dataRequest(
-            HttpMethod.Get,
-            "/rest/v1/usuario?select=perfil_completo,deleted_at&auth_user_id=eq.${userId.urlEncode()}&limit=1",
+    private suspend fun findProfile(userId: CanonicalUserId, context: OposiBotsAuthContext): CanonicalUserIdentity? {
+        profileDirectory?.let { return it.find(userId) }
+        val response = supabaseRequest(
+            method = HttpMethod.Get,
+            path = "/rest/v1/perfiles_usuario?select=usuario_id,estado_cuenta,onboarding_completado" +
+                "&usuario_id=eq.${userId.value}&limit=1",
             body = null,
-            accessToken = accessToken,
+            accessToken = null,
+            apiKey = configuration.secretKey,
             context = context,
         )
-        if (!response.status.isSuccessStatus()) throw mapCredentialError(response)
-        return response.decode<List<ProfileRow>>().firstOrNull()
+        if (!response.status.isSuccessStatus()) throw OposiBotsAuthProblem.unavailable()
+        val row = json.decodeFromString(ListSerializer(PostgrestCanonicalProfileDirectory.ProfileRow.serializer()), response.body)
+            .firstOrNull() ?: return null
+        if (!row.usuarioId.equals(userId.value, ignoreCase = true)) throw OposiBotsAuthProblem.unavailable()
+        return CanonicalUserIdentity(
+            userId = userId,
+            accountStatus = AccountStatus.fromWire(row.estadoCuenta),
+            onboardingCompleted = row.onboardingCompletado ?: false,
+        )
     }
+
+    // ---------- AuthProviderClient (servicio canonico de perfil y borrado de cuenta) ----------
+
+    override suspend fun user(accessToken: String, context: OposiBotsAuthContext): AuthProviderUser = providerCall {
+        val response = authRequest(HttpMethod.Get, "/auth/v1/user", body = null, accessToken = accessToken, context = context)
+        if (!response.status.isSuccessStatus()) throw providerFailure(response)
+        val user = response.decode<GoTrueUser>()
+        AuthProviderUser(
+            id = user.id,
+            email = user.email,
+            providers = (user.appMetadata.providers + user.identities.mapNotNull { it.provider }).distinct(),
+            createdAt = user.createdAt,
+        )
+    }
+
+    override suspend fun verifyPassword(email: String, password: String, context: OposiBotsAuthContext) = providerCall {
+        val response = authRequest(
+            HttpMethod.Post,
+            "/auth/v1/token?grant_type=password",
+            credentialBody(email, password, null),
+            context = context,
+        )
+        when {
+            response.status.isSuccessStatus() -> {
+                // La verificacion mintio una sesion: se revoca SOLO esa (local), no las demas del usuario.
+                runCatching { response.decode<SupabaseSession>().accessToken }
+                    .getOrNull()
+                    ?.let { revokeMintedSession(it, context, scope = "local") }
+            }
+            response.status == HttpStatusCode.TooManyRequests || response.status.value >= 500 -> throw providerFailure(response)
+            else -> throw CanonicalErrorCode.REAUTH_FAILED.exception()
+        }
+        Unit
+    }
+
+    /** Fallos de red / decodificacion del gateway -> 503 canonico (nada cambio). Los canonicos suben tal cual. */
+    private suspend fun <T> providerCall(block: suspend () -> T): T = try {
+        block()
+    } catch (problem: OposiBotsAuthProblem) {
+        throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(retryAfterSeconds = problem.retryAfterSeconds?.toInt())
+    }
+
+    private fun providerFailure(response: AuthResponse): BackendDomainException = when {
+        response.status == HttpStatusCode.TooManyRequests -> CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 60)
+        response.status.value >= 500 -> CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
+        else -> CanonicalErrorCode.UNAUTHENTICATED.exception()
+    }
+
+    // ---------- transporte ----------
 
     private suspend fun authRequest(
         method: HttpMethod,
@@ -388,23 +481,6 @@ internal class SupabaseOposiBotsAuthGateway(
         accessToken = accessToken,
         apiKey = configuration.secretKey,
         context = context,
-    )
-
-    private suspend fun dataRequest(
-        method: HttpMethod,
-        path: String,
-        body: JsonObject?,
-        accessToken: String,
-        context: OposiBotsAuthContext,
-        prefer: String? = null,
-    ): AuthResponse = supabaseRequest(
-        method = method,
-        path = path,
-        body = body,
-        accessToken = accessToken,
-        apiKey = configuration.publishableKey,
-        context = context,
-        prefer = prefer,
     )
 
     private suspend fun supabaseRequest(
@@ -447,7 +523,7 @@ internal class SupabaseOposiBotsAuthGateway(
             // silencio -- cualquier fallo de red/TLS/DNS hacia Supabase se
             // veia identico a un 5xx real de Supabase, sin forma de saber
             // cual de los dos pasaba.
-            GatewayLogger.warn("supabaseRequest path={} failed", path, unexpected)
+            GatewayLogger.warn("supabaseRequest path={} failed", path.substringBefore('?'), unexpected)
             throw OposiBotsAuthProblem.unavailable()
         }
     }
@@ -471,10 +547,13 @@ internal class SupabaseOposiBotsAuthGateway(
         }
     }
 
+    private enum class AuthPurpose { GENERIC, LOGIN, EXCHANGE }
+
     private fun mapCredentialError(
         response: AuthResponse,
         conflictAllowed: Boolean = false,
-    ): OposiBotsAuthProblem {
+        purpose: AuthPurpose = AuthPurpose.GENERIC,
+    ): Exception {
         val error = response.error()
         val fingerprint = "${error.normalizedCode} ${error.msg}".lowercase()
         // Logueado (S1D1/DAY_02, 2026-08-13): la respuesta real de Supabase
@@ -487,6 +566,11 @@ internal class SupabaseOposiBotsAuthGateway(
             response.status.value >= 500 -> OposiBotsAuthProblem.unavailable()
             conflictAllowed && ("already" in fingerprint || response.status == HttpStatusCode.Conflict) ->
                 OposiBotsAuthProblem.conflict()
+            purpose == AuthPurpose.LOGIN && error.normalizedCode == "invalid_credentials" ->
+                CanonicalErrorCode.INVALID_CREDENTIALS.exception()
+            purpose == AuthPurpose.LOGIN && error.normalizedCode == "email_not_confirmed" ->
+                CanonicalErrorCode.EMAIL_UNVERIFIED.exception()
+            purpose == AuthPurpose.EXCHANGE -> CanonicalErrorCode.AUTH_CODE_INVALID.exception()
             else -> OposiBotsAuthProblem.authentication()
         }
     }
@@ -529,11 +613,21 @@ private data class SupabaseUser(
     val email: String? = null,
 )
 
+/** `GET /auth/v1/user`: solo lo que el servicio de perfil necesita. */
 @Serializable
-private data class ProfileRow(
-    @SerialName("perfil_completo") val profileComplete: Boolean = false,
-    @SerialName("deleted_at") val deletedAt: String? = null,
+private data class GoTrueUser(
+    val id: String,
+    val email: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("app_metadata") val appMetadata: GoTrueAppMetadata = GoTrueAppMetadata(),
+    val identities: List<GoTrueIdentity> = emptyList(),
 )
+
+@Serializable
+private data class GoTrueAppMetadata(val providers: List<String> = emptyList())
+
+@Serializable
+private data class GoTrueIdentity(val provider: String? = null)
 
 @Serializable
 private data class SupabaseError(
@@ -607,3 +701,5 @@ private fun String.sha256(): String =
     MessageDigest.getInstance("SHA-256")
         .digest(toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
+
+private val DUPLICATE_SIGNUP_CODES = setOf("user_already_exists", "email_exists")

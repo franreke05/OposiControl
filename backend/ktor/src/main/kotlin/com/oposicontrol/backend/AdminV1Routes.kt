@@ -1102,21 +1102,25 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 // `limit`/`offset` opcionales: sin ellos se sirve la primera página
                 // con el tamaño por defecto, así que los consumidores anteriores
                 // siguen funcionando sin cambios.
+                // D1-22 (SLICE 1): q, roleCode, accountStatus y sort, validados antes de tocar la base.
+                val query = call.request.queryParameters
                 val page = gateway.listUsuarios(
-                    limit = call.request.queryParameters["limit"]?.toIntOrNull(),
-                    offset = call.request.queryParameters["offset"]?.toIntOrNull(),
+                    limit = query["limit"]?.toIntOrNull(),
+                    offset = query["offset"]?.toIntOrNull(),
+                    filter = AdminUserListFilter.parse(query["q"], query["roleCode"], query["accountStatus"], query["sort"]),
                 )
                 call.respond(page)
             }
             get("/{id}") {
-                val user = gateway.getUsuario(call.requiredPath("id"))
+                // D1-23 (SLICE 1): AdminUser + el duplicado legacy `data`. Un id que no es UUID -> 400 NON_UUID.
+                val user = gateway.getUsuarioAdmin(call.userPathId())
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
-                call.respond(AdminUserResponse(user))
+                call.respond(user)
             }
             // Ficha completa: perfil, rendimiento, estado competitivo, racha,
             // economía, suscripciones, OposiTester y debilidades por etiqueta.
             get("/{id}/detalle") {
-                val detail = gateway.getUsuarioDetalle(call.requiredPath("id"))
+                val detail = gateway.getUsuarioDetalle(call.userPathId())
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
                 call.respond(AdminUserDetailResponse(detail))
             }
@@ -1146,11 +1150,13 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 // significando «la invariante saltó» no debe depender de una sola.
                 // `AdminV1UserIdValidationOrderTest` fija que no sale ni una
                 // petición cuando el identificador no es un UUID.
+                val userId = call.requiredPath("id")
                 gateway.syncRoles(
-                    call.requiredPath("id"),
+                    userId,
                     body.roleIds.map { it.validatedUuid("roleIds") },
                 )
-                call.respond(OkDto())
+                // D1-26 (SLICE 1): los roles RESULTANTES (re-leidos tras la sincronizacion). `ok` se conserva para OC.
+                call.respond(AdminUserRolesResponse(roleIds = gateway.roleIdsOf(userId)))
             }
             post("/{id}/tickets") {
                 val body = call.receive<GrantTicketsBody>()
@@ -3015,7 +3021,16 @@ data class AdminV1RoleDto(
 @Serializable
 data class AdminV1PermissionDto(val key: String, val label: String)
 
+/** `{id}` de `/usuarios/{id}`: un UUID o 400 VALIDATION con el issue NON_UUID, antes de tocar la base. */
+private fun io.ktor.server.application.ApplicationCall.userPathId(): String =
+    requiredPath("id").also { if (!it.isUuid()) throw NonUuidPathException("id") }
+
 @Serializable data class AdminUserResponse(val data: AdminV1UserDto)
+
+/** D1-26: `{roleIds}` resultante + `ok` LEGACY (aditivo) hasta que OC migre. */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class AdminUserRolesResponse(val roleIds: List<String>, @EncodeDefault val ok: Boolean = true)
 @Serializable data class AdminRolesV1Response(val data: List<AdminV1RoleDto>)
 @Serializable data class OkDto(val ok: Boolean = true)
 // `RafagaImportResponse`, `RafagaParseErrorDto` y `RafagaImportErrorResponse` se
@@ -3354,6 +3369,8 @@ private data class PerfilUsuarioRow(
     @SerialName("especialidad_principal_id") val especialidadPrincipalId: String? = null,
     @SerialName("es_invitado") val esInvitado: Boolean = false,
     @SerialName("creado_en") val creadoEn: String? = null,
+    @SerialName("estado_cuenta") val estadoCuenta: String? = null,
+    @SerialName("onboarding_completado") val onboardingCompletado: Boolean = false,
 )
 
 @Serializable
@@ -3364,6 +3381,15 @@ private data class RolAppRow(
     val descripcion: String? = null,
     @SerialName("creado_en") val creadoEn: String? = null,
 )
+
+@Serializable
+private data class RolIdRow(val id: String)
+
+@Serializable
+private data class RolUsuarioIdRow(@SerialName("usuario_id") val usuarioId: String)
+
+/** roleCode filtra por los usuarios que tienen el rol: por encima de esta cota el filtro se rechaza en vez de truncarse. */
+private const val ROLE_FILTER_MAX_HOLDERS = 500
 
 @Serializable
 private data class RolUsuarioRow(
@@ -5237,16 +5263,36 @@ class AdminV1Gateway private constructor(
      * El total se pide aparte con un conteo exacto para que la UI pueda paginar
      * de verdad en lugar de adivinar si hay más.
      */
-    fun listUsuarios(limit: Int?, offset: Int?): AdminUsersPage {
+    fun listUsuarios(limit: Int?, offset: Int?, filter: AdminUserListFilter = AdminUserListFilter()): AdminUsersPage {
         val page = AdminPageRequest.of(limit, offset)
+        // roleCode: los usuarios con ese rol (acotado). Sin coincidencias, pagina vacia; demasiadas, 400 explicito
+        // en vez de un filtro silenciosamente truncado.
+        val roleUserIds = filter.roleCode?.let { code ->
+            val roleId = request("GET", "/rest/v1/roles_app?select=id&codigo=eq.$code&limit=1", null)
+                .decodeList<RolIdRow>().firstOrNull()?.id
+            val holders = if (roleId == null) {
+                emptyList()
+            } else {
+                request("GET", "/rest/v1/roles_usuario?select=usuario_id&rol_id=eq.$roleId&limit=${ROLE_FILTER_MAX_HOLDERS + 1}", null)
+                    .decodeList<RolUsuarioIdRow>().map { it.usuarioId }
+            }
+            if (holders.size > ROLE_FILTER_MAX_HOLDERS) {
+                throw validationError(ErrorIssue("roleCode", "TOO_MANY_MATCHES"))
+            }
+            holders
+        }
+        if (roleUserIds != null && roleUserIds.isEmpty()) {
+            return AdminUsersPage(data = emptyList(), total = 0, limit = page.limit, offset = page.offset)
+        }
+        val filters = filter.postgrestFilters(roleUserIds)
         val perfiles = request(
             "GET",
-            "/rest/v1/perfiles_usuario?select=*&order=creado_en.desc" +
+            "/rest/v1/perfiles_usuario?select=*$filters&order=${filter.order()}" +
                 "&limit=${page.limit}&offset=${page.offset}",
             null,
         ).decodeList<PerfilUsuarioRow>()
 
-        val total = runCatching { exactCount("/rest/v1/perfiles_usuario?select=usuario_id") }.getOrNull()
+        val total = runCatching { exactCount("/rest/v1/perfiles_usuario?select=usuario_id$filters") }.getOrNull()
 
         if (perfiles.isEmpty()) {
             return AdminUsersPage(data = emptyList(), total = total, limit = page.limit, offset = page.offset)
@@ -5265,6 +5311,7 @@ class AdminV1Gateway private constructor(
         ).decodeList<CarteraRow>().associate { it.usuarioId to it.saldoTickets }
 
         return AdminUsersPage(
+            // LEGACY (deprecated): el cuerpo de siempre, `email` = username incluido, hasta que OC migre a `items`.
             data = perfiles.map { p ->
                 AdminV1UserDto(
                     id = p.usuarioId,
@@ -5279,6 +5326,17 @@ class AdminV1Gateway private constructor(
             total = total,
             limit = page.limit,
             offset = page.offset,
+            items = perfiles.mapNotNull { p ->
+                AdminUserProfileMapper.summary(
+                    usuarioId = p.usuarioId,
+                    username = p.username,
+                    nombreMostrar = p.nombreMostrar,
+                    estadoCuenta = p.estadoCuenta,
+                    creadoEn = p.creadoEn,
+                    roleIds = rolesByUser[p.usuarioId].orEmpty(),
+                    ticketsBalance = balanceByUser[p.usuarioId],
+                )
+            },
         )
     }
 
@@ -5299,6 +5357,49 @@ class AdminV1Gateway private constructor(
             isActive = !perfil.esInvitado,
             createdAt = perfil.creadoEn.orEmpty(),
         )
+    }
+
+    /**
+     * D1-23 `AdminUser` + el duplicado legacy `data`. Email y proveedores de UNA lectura a GoTrue admin
+     * (`GET /auth/v1/admin/users/{id}`); si GoTrue no responde, degradan a `null` y `[]` en vez de tumbar la ficha.
+     */
+    fun getUsuarioAdmin(usuarioId: String): AdminCanonicalUserDto? {
+        usuarioId.validatedUuid("usuarioId")
+        val perfil = request("GET", "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$usuarioId&limit=1", null)
+            .decodeList<PerfilUsuarioRow>().firstOrNull() ?: return null
+        val roleIds = request("GET", "/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId", null)
+            .decodeList<RolUsuarioRow>().map { it.rolId }
+        return AdminUserProfileMapper.user(
+            usuarioId = perfil.usuarioId,
+            username = perfil.username,
+            nombreMostrar = perfil.nombreMostrar,
+            estadoCuenta = perfil.estadoCuenta,
+            onboardingCompleted = perfil.onboardingCompletado,
+            creadoEn = perfil.creadoEn,
+            roleIds = roleIds,
+            auth = readAuthInfo(usuarioId),
+            legacy = AdminV1UserDto(
+                id = perfil.usuarioId,
+                fullName = perfil.nombreMostrar.orEmpty(),
+                email = perfil.username.orEmpty(),
+                roleIds = roleIds,
+                isActive = !perfil.esInvitado,
+                createdAt = perfil.creadoEn.orEmpty(),
+            ),
+        )
+    }
+
+    /** Los roles actuales de un usuario (D1-26: respuesta re-leida tras `syncRoles`). */
+    fun roleIdsOf(usuarioId: String): List<String> {
+        usuarioId.validatedUuid("usuarioId")
+        return request("GET", "/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId", null)
+            .decodeList<RolUsuarioRow>().map { it.rolId }
+    }
+
+    private fun readAuthInfo(usuarioId: String): AdminAuthInfo? = try {
+        AdminUserProfileMapper.authInfo(request("GET", "/auth/v1/admin/users/$usuarioId", null), json)
+    } catch (_: Exception) {
+        null
     }
 
     fun updateUsuario(usuarioId: String, input: AdminV1UserDto): AdminV1UserDto {
@@ -6128,6 +6229,38 @@ class AdminV1Gateway private constructor(
 
         val unavailable = linkedSetOf<String>()
 
+        // D1-24: `perfil` con la forma AdminUser (cuenta, roles, email y proveedores). Si la lectura de roles falla la
+        // seccion se marca no disponible y se conserva el perfil de siempre; GoTrue caido degrada a email null y [].
+        val perfilAdmin = runCatching {
+            val roleIds = request("GET", "/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId", null)
+                .decodeList<RolUsuarioRow>().map { it.rolId }
+            val auth = readAuthInfo(usuarioId)
+            val user = AdminUserProfileMapper.user(
+                usuarioId = perfil.usuarioId,
+                username = perfil.username,
+                nombreMostrar = perfil.nombreMostrar,
+                estadoCuenta = perfil.estadoCuenta,
+                onboardingCompleted = perfil.onboardingCompletado,
+                creadoEn = perfil.creadoEn,
+                roleIds = roleIds,
+                auth = auth,
+            )
+            perfil.copy(
+                id = user.id,
+                fullName = user.fullName,
+                email = user.email,
+                roleIds = user.roleIds,
+                accountStatus = user.accountStatus,
+                bloqueo = user.bloqueo,
+                onboardingCompleted = user.onboardingCompleted,
+                createdAt = user.createdAt,
+                authProviders = user.authProviders,
+            )
+        }.getOrElse {
+            unavailable += "perfil"
+            perfil
+        }
+
         /** Lee una sección; si falla, la marca y devuelve null en vez de tumbar la ficha. */
         fun <T> section(key: String, read: () -> T?): T? =
             runCatching(read).getOrElse {
@@ -6231,7 +6364,7 @@ class AdminV1Gateway private constructor(
         }.orEmpty()
 
         return AdminUserDetailDto(
-            perfil = perfil,
+            perfil = perfilAdmin,
             detalle = detalle,
             rendimiento = rendimiento,
             competitivo = competitivo,

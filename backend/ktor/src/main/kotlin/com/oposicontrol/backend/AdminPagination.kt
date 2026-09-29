@@ -60,11 +60,13 @@ data class AdminPageRequest private constructor(
 @Serializable
 data class AdminUsersPage(
     /** DEPRECATED: duplicado de [items] hasta que OC migre a `items` (specs.pagination). */
-    val data: List<AdminV1UserDto> = emptyList(),
+    @EncodeDefault val data: List<AdminV1UserDto> = emptyList(),
     val total: Int? = null,
-    val limit: Int = AdminPageRequest.DEFAULT_LIMIT,
-    val offset: Int = 0,
-    @EncodeDefault val items: List<AdminV1UserDto> = data,
+    /** `limit` y `offset` son obligatorios en `OffsetPageEnvelope`: se emiten aunque valgan su defecto (con el Json del modulo se omitian). */
+    @EncodeDefault val limit: Int = AdminPageRequest.DEFAULT_LIMIT,
+    @EncodeDefault val offset: Int = 0,
+    /** D1-22 (SLICE 1): AdminUserSummary. Un estado de cuenta no reconocido no se lista (nunca se presenta como activa). */
+    @EncodeDefault val items: List<AdminUserSummaryDto> = emptyList(),
 )
 
 // =====================================================================

@@ -59,6 +59,17 @@ object LegacyEndpoints {
     val EP_144 = LegacyEndpoint("EP-144", "POST", "/admin/moderation/actions", "/api/v1/admin/moderacion/actions", SLICE_0_DEPRECATED_AT)
 
     val SLICE_0: List<LegacyEndpoint> = listOf(EP_046, EP_015, EP_025, EP_111, EP_145, EP_199, EP_200, EP_229, EP_144)
+
+    /** Fecha de entrada de SLICE 1: EP-124 y EP-218 quedan deprecadas al cortar perfil/onboarding al servicio canonico. */
+    val SLICE_1_DEPRECATED_AT: Instant = Instant.parse("2026-09-30T00:00:00Z")
+
+    /** `GET /v1/auth/me`: la lectura ahora es `perfiles_usuario` via el servicio canonico, no `public.usuario`. */
+    val EP_124 = LegacyEndpoint("EP-124", "GET", "/v1/auth/me", "/api/v1/app/me", SLICE_1_DEPRECATED_AT)
+
+    /** `POST /v1/auth/register/profile`: escribe `perfiles_usuario` via `app_completar_onboarding`, nunca `public.usuario`. */
+    val EP_218 = LegacyEndpoint("EP-218", "POST", "/v1/auth/register/profile", "/api/v1/app/me/onboarding", SLICE_1_DEPRECATED_AT)
+
+    val SLICE_1: List<LegacyEndpoint> = listOf(EP_124, EP_218)
 }
 
 /** Nombre Micrometer; Prometheus lo publica como `legacy_route_requests_total`. */

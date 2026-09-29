@@ -24,9 +24,13 @@ class ServerAuthoritativeTest {
     @Test
     fun everyCanonicalCommandDtoInMainCarriesOnlyAllowedFields() {
         val commands = mainClasses().filter { it.isAnnotationPresent(CanonicalCommand::class.java) }
-        // Tripwire de SLICE 0: aun no hay DTOs de comando en main, asi que este
-        // test es vacuo HOY. En SLICE 1 se sustituye por assertTrue(commands.isNotEmpty()).
-        if (commands.isEmpty()) println("WARN: 0 @CanonicalCommand DTOs in main (expected until Slice 1)")
+        // SLICE 1: ya hay comandos canonicos; el tripwire de SLICE 0 es ahora una asercion.
+        assertTrue(commands.isNotEmpty(), "se esperaban DTOs @CanonicalCommand en main (SLICE 1)")
+        assertEquals(
+            setOf("OnboardingRequest", "ProfilePatchRequest", "LegalAcceptanceRequest", "AccountDeletionRequest"),
+            commands.map { it.simpleName }.toSet(),
+            "comandos canonicos de SLICE 1 (D1-12, D1-13, D1-17, D1-19)",
+        )
         val violations = commands.flatMap { type ->
             val annotation = type.getAnnotation(CanonicalCommand::class.java)
             val descriptor = runCatching { serializer(type).descriptor }

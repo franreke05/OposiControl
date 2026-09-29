@@ -26,6 +26,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import java.math.BigInteger
 import java.net.URI
@@ -47,65 +48,80 @@ class AppUnauthorized(message: String) : RuntimeException(message)
 
 class AppForbidden(message: String) : RuntimeException(message)
 
-fun Route.appV1Routes(gateway: AppV1Gateway, verifier: SupabaseJwtVerifier, allowDevUser: Boolean) {
+/**
+ * [identityResolver] (SLICE 1, obligacion de corte de SLICE 0): con el, toda ruta legacy de `/api/v1/app` con JWT pasa
+ * por `activeIdentity` (deny-by-default): solo una cuenta `activa` explicita opera; bloqueada / eliminacion pendiente /
+ * desconocida / sin perfil -> 403. Para una cuenta activa la respuesta no cambia. `null` solo en pruebas aisladas.
+ */
+fun Route.appV1Routes(
+    gateway: AppV1Gateway,
+    verifier: SupabaseJwtVerifier,
+    allowDevUser: Boolean,
+    identityResolver: CanonicalIdentityResolver? = null,
+) {
     route("/api/v1/app") {
         get("/home") {
-            call.respond(gateway.home(call.usuarioId(verifier, allowDevUser)))
+            call.respond(gateway.home(call.usuarioId(verifier, allowDevUser, identityResolver)))
         }
         get("/examenes") {
-            call.usuarioId(verifier, allowDevUser) // requiere sesion
+            call.usuarioId(verifier, allowDevUser, identityResolver) // requiere sesion
             call.respond(AppExamenesResponse(gateway.listExamenes()))
         }
         get("/examenes/{id}") {
-            call.usuarioId(verifier, allowDevUser)
+            call.usuarioId(verifier, allowDevUser, identityResolver)
             val detalle = gateway.examenDetalle(call.requiredPath("id"))
                 ?: return@get call.respond(io.ktor.http.HttpStatusCode.NotFound, ErrorDto("not_found", "Examen no encontrado."))
             call.respond(detalle)
         }
         post("/examenes/{id}/iniciar") {
-            val uid = call.usuarioId(verifier, allowDevUser)
+            val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(io.ktor.http.HttpStatusCode.Created, AppIntentoResponse(gateway.iniciar(uid, call.requiredPath("id"))))
         }
         post("/intentos/{id}/responder") {
-            val uid = call.usuarioId(verifier, allowDevUser)
+            val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(gateway.responder(uid, call.requiredPath("id"), call.receive()))
         }
         post("/intentos/{id}/finalizar") {
-            val uid = call.usuarioId(verifier, allowDevUser)
+            val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(AppIntentoResponse(gateway.finalizar(uid, call.requiredPath("id"))))
         }
         get("/estadisticas") {
-            call.respond(AppEstadisticasResponse(gateway.estadisticas(call.usuarioId(verifier, allowDevUser))))
+            call.respond(AppEstadisticasResponse(gateway.estadisticas(call.usuarioId(verifier, allowDevUser, identityResolver))))
         }
         get("/commercial/catalog") {
-            call.usuarioId(verifier, allowDevUser)
+            call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(gateway.commercialCatalog())
         }
         get("/commercial/purchases") {
-            call.respond(gateway.commercialPurchases(call.usuarioId(verifier, allowDevUser)))
+            call.respond(gateway.commercialPurchases(call.usuarioId(verifier, allowDevUser, identityResolver)))
         }
         get("/commercial/subscriptions") {
-            call.respond(gateway.commercialSubscriptions(call.usuarioId(verifier, allowDevUser)))
+            call.respond(gateway.commercialSubscriptions(call.usuarioId(verifier, allowDevUser, identityResolver)))
         }
         get("/reto-diario") {
-            call.usuarioId(verifier, allowDevUser)
+            call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(AppRetoResponse(gateway.retoDiario()))
         }
         post("/feedback/pregunta") {
-            val uid = call.usuarioId(verifier, allowDevUser)
+            val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(io.ktor.http.HttpStatusCode.Created, OkResponse(id = gateway.crearFeedback(uid, call.receive())))
         }
         post("/eventos") {
-            val uid = call.usuarioId(verifier, allowDevUser)
+            val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(io.ktor.http.HttpStatusCode.Created, OkResponse(id = gateway.registrarEvento(uid, call.receive())))
         }
     }
 }
 
 /** Resuelve el usuario: JWT de Supabase (produccion) o cabecera X-Usuario-Id (solo dev). */
-private fun ApplicationCall.usuarioId(verifier: SupabaseJwtVerifier, allowDevUser: Boolean): String {
+private suspend fun ApplicationCall.usuarioId(
+    verifier: SupabaseJwtVerifier,
+    allowDevUser: Boolean,
+    identityResolver: CanonicalIdentityResolver?,
+): String {
     val bearer = request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
     if (!bearer.isNullOrBlank() && bearer.count { it == '.' } == 2) {
+        if (identityResolver != null) return identityResolver.activeIdentity(this).userId.value
         return try {
             verifier.subFrom(bearer)
         } catch (error: Exception) {
@@ -151,7 +167,13 @@ class SupabaseJwtVerifier(
      * reintentable. Un token que no verifica (firma, emisor, `kid` desconocido con un JWKS sano)
      * lanza otra excepcion: 401.
      */
-    fun subFrom(token: String): String {
+    fun subFrom(token: String): String = claimsFrom(token).subject
+
+    /**
+     * Misma verificacion que [subFrom], devolviendo ademas `iat` y las marcas de
+     * `amr` (SLICE 1, reautenticacion OAuth del borrado de cuenta).
+     */
+    fun claimsFrom(token: String): VerifiedJwtClaims {
         val decoded = JWT.decode(token)
         val kid = decoded.keyId ?: error("token sin kid")
         val key = keys[kid] ?: run { refresh(); keys[kid] } ?: run {
@@ -160,8 +182,19 @@ class SupabaseJwtVerifier(
             error("kid no encontrado en JWKS")
         }
         val verified = JWT.require(Algorithm.ECDSA256(key, null)).withIssuer(issuer).build().verify(token)
-        return verified.subject ?: error("token sin sub")
+        val subject = verified.subject ?: error("token sin sub")
+        return VerifiedJwtClaims(
+            subject = subject,
+            issuedAt = verified.issuedAt?.toInstant()?.epochSecond,
+            authTimes = amrTimestamps(verified.payload),
+        )
     }
+
+    /** `amr: [{method, timestamp}]` del payload (base64url JSON). Cualquier forma inesperada = sin marcas. */
+    private fun amrTimestamps(payloadB64: String): List<Long> = runCatching {
+        val payload = json.parseToJsonElement(String(Base64.getUrlDecoder().decode(payloadB64), Charsets.UTF_8)).jsonObject
+        payload["amr"]?.jsonArray.orEmpty().mapNotNull { (it as? JsonObject)?.get("timestamp")?.jsonPrimitive?.longOrNull }
+    }.getOrDefault(emptyList())
 
     /**
      * PF3-3-04: el anti-tormenta cubre TAMBIEN los intentos fallidos (cache negativa). Con el JWKS caido

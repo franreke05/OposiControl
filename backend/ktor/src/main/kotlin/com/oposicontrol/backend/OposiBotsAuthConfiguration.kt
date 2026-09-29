@@ -109,15 +109,49 @@ internal class OposiBotsAuthRuntime(
     val gateway: OposiBotsAuthGateway,
     val rateLimiter: OposiBotsAuthRateLimiter,
     val json: Json,
+    /** SLICE 1: perfil canonico, borrado de cuenta y adaptadores legacy. `null` solo en pruebas de rutas de auth aisladas. */
+    val canonical: CanonicalProfileRuntime? = null,
 ) {
     companion object {
-        fun fromEnvironment(json: Json, required: Boolean): OposiBotsAuthRuntime? {
+        fun fromEnvironment(json: Json, required: Boolean, jwtVerifier: SupabaseJwtVerifier? = null): OposiBotsAuthRuntime? {
             val configuration = OposiBotsAuthConfiguration.fromEnvironment(required) ?: return null
+            val gateway = SupabaseOposiBotsAuthGateway(configuration, json)
             return OposiBotsAuthRuntime(
                 configuration = configuration,
-                gateway = SupabaseOposiBotsAuthGateway(configuration, json),
+                gateway = gateway,
                 rateLimiter = OposiBotsAuthRateLimiterFactory.create(configuration),
                 json = json,
+                canonical = canonicalProfileRuntime(
+                    configuration = configuration,
+                    authProvider = gateway,
+                    verifier = jwtVerifier ?: SupabaseJwtVerifier(configuration.supabaseUrl, json),
+                    json = json,
+                ),
+            )
+        }
+
+        /**
+         * El servicio canonico de perfil con la clave de servicio (`SupabaseRequestTransport`) y el mismo
+         * `SupabaseJwtVerifier` que el resto del backend. Identidad = solo el `sub` del JWT.
+         */
+        internal fun canonicalProfileRuntime(
+            configuration: OposiBotsAuthConfiguration,
+            authProvider: AuthProviderClient,
+            verifier: SupabaseJwtVerifier,
+            json: Json,
+        ): CanonicalProfileRuntime {
+            val transport = SupabaseRequestTransport(configuration.supabaseUrl, SupabaseRequestAuthPolicy(configuration.secretKey))
+            val upstream = TransportCanonicalUpstream(transport)
+            val profiles = SupabaseCanonicalProfileService(upstream, authProvider, json)
+            return CanonicalProfileRuntime(
+                resolver = CanonicalIdentityResolver(
+                    verifySubject = verifier::subFrom,
+                    directory = PostgrestCanonicalProfileDirectory(transport),
+                    verifyClaims = verifier::claimsFrom,
+                ),
+                profiles = profiles,
+                deletion = AccountDeletionService(upstream, authProvider, json = json),
+                legacy = LegacyProfileAdapter(profiles, PostgrestSpecialtyResolver(upstream, json)),
             )
         }
     }

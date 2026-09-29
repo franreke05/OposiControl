@@ -1,0 +1,135 @@
+package com.oposicontrol.backend
+
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.slf4j.LoggerFactory
+import java.time.Instant
+
+/**
+ * D1-19 `DELETE /api/v1/app/me`: SOLICITUD de borrado, no borrado.
+ *
+ * Lo unico que hace es lo que el contrato marca como sincrono (pasos 1 y 2):
+ *
+ * 0. valida `confirmation`;
+ * 1. reautentica ANTES de tocar nada (contrasena via GoTrue, u OAuth con autenticacion reciente);
+ * 2. UNA transaccion en la base ([RPC_REQUEST]): estado `eliminacion_pendiente` + fila de
+ *    solicitud + auditoria; repetir devuelve el `requestedAt` ORIGINAL sin volver a escribir;
+ * 3. tras el commit, logout global de GoTrue con el bearer del llamante, en mejor esfuerzo
+ *    (su resultado se anota en la fila; un fallo NUNCA cambia el 202).
+ *
+ * Los pasos fisicos (banear y limpiar la identidad de Auth, anonimizar el perfil, borrar
+ * preferencias, desvincular analitica) son DEFERRED_EXECUTION: NO hay worker, cron ni cascada
+ * destructiva aqui, y la respuesta jamas dice que el borrado este completado. La cuenta queda
+ * inutilizable por la puerta de estado (auth 403, rutas canonicas 403, guarda de la base).
+ */
+internal class AccountDeletionService(
+    private val upstream: CanonicalUpstream,
+    private val authProvider: AuthProviderClient,
+    private val clock: () -> Instant = Instant::now,
+    private val json: Json = Json { ignoreUnknownKeys = true },
+) {
+    @Serializable
+    private data class RequestRow(
+        @SerialName("estado_cuenta") val estadoCuenta: String,
+        @SerialName("solicitada_en") val solicitadaEn: String,
+        @SerialName("ya_pendiente") val yaPendiente: Boolean = false,
+    )
+
+    suspend fun request(
+        identity: CanonicalUserIdentity,
+        accessToken: String,
+        claims: VerifiedJwtClaims,
+        request: AccountDeletionRequest,
+        context: OposiBotsAuthContext,
+    ): AccountDeletionAccepted {
+        if (request.confirmation != CONFIRMATION_LITERAL) {
+            throw validationError(ErrorIssue("confirmation", ISSUE_BAD_CONFIRMATION))
+        }
+        if ((request.currentPassword?.length ?: 0) > MAX_PASSWORD_LENGTH) {
+            throw validationError(ErrorIssue("currentPassword", CanonicalIssue.OUT_OF_RANGE))
+        }
+        // Una cuenta que YA esta pendiente no cambia de estado: no hay nada que proteger con una
+        // reautenticacion (y su sesion de GoTrue puede haber sido revocada por el primer intento).
+        if (identity.accountStatus == AccountStatus.ACTIVA) reauthenticate(accessToken, claims, request, context)
+
+        val row = requestDeletion(identity)
+        if (!row.yaPendiente) revokeSessionsBestEffort(identity, accessToken, context)
+        return AccountDeletionAccepted(accountStatus = STATUS_PENDING, requestedAt = normalizeInstant(row.solicitadaEn))
+    }
+
+    private suspend fun reauthenticate(
+        accessToken: String,
+        claims: VerifiedJwtClaims,
+        request: AccountDeletionRequest,
+        context: OposiBotsAuthContext,
+    ) {
+        val user = authProvider.user(accessToken, context)
+        if (user.hasPassword) {
+            val password = request.currentPassword?.takeIf { it.isNotEmpty() }
+                ?: throw validationError(ErrorIssue("currentPassword", ISSUE_CURRENT_PASSWORD_REQUIRED))
+            val email = user.email ?: throw CanonicalErrorCode.REAUTH_FAILED.exception()
+            authProvider.verifyPassword(email, password, context)
+        } else {
+            // OAuth: la ultima autenticacion (amr) tiene que ser de los ultimos 5 minutos. Sin marca
+            // conocida se falla CERRADO (R6): nunca se asume reciente.
+            val latest = claims.authTimes.maxOrNull()
+            if (latest == null || clock().epochSecond - latest > RECENT_AUTH_SECONDS) throw CanonicalErrorCode.STALE_AUTH.exception()
+        }
+    }
+
+    private suspend fun requestDeletion(identity: CanonicalUserIdentity): RequestRow {
+        val args = buildJsonObject { put("p_usuario_id", identity.userId.value) }
+        val response = withUpstreamIo { upstream.rpc(RPC_REQUEST, args.toString()) }
+        if (!response.ok) throw ProfileRpcErrors.failure(RPC_REQUEST, response)
+        val row = try {
+            json.decodeFromString(ListSerializer(RequestRow.serializer()), response.body).singleOrNull()
+        } catch (_: Exception) {
+            null
+        }
+        // Nunca se finge exito: sin la fila confirmada por la base, o con otro estado, es un error de contrato.
+        if (row == null || row.estadoCuenta != STATUS_PENDING) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        return row
+    }
+
+    private suspend fun revokeSessionsBestEffort(identity: CanonicalUserIdentity, accessToken: String, context: OposiBotsAuthContext) {
+        val outcome = try {
+            authProvider.logout(accessToken, context)
+            REVOKE_DONE
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Logger.warn("session revocation after deletion request failed requestId={} type={}", context.requestId, failure::class.simpleName)
+            REVOKE_FAILED
+        }
+        try {
+            val args = buildJsonObject {
+                put("p_usuario_id", identity.userId.value)
+                put("p_resultado", outcome)
+            }
+            withUpstreamIo { upstream.rpc(RPC_RECORD_REVOCATION, args.toString()) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            Logger.warn("recording session revocation failed requestId={} type={}", context.requestId, failure::class.simpleName)
+        }
+    }
+
+    companion object {
+        const val CONFIRMATION_LITERAL = "ELIMINAR"
+        const val ISSUE_BAD_CONFIRMATION = "BAD_CONFIRMATION"
+        const val ISSUE_CURRENT_PASSWORD_REQUIRED = "CURRENT_PASSWORD_REQUIRED"
+        const val STATUS_PENDING = "eliminacion_pendiente"
+        const val RPC_REQUEST = "app_solicitar_eliminacion_cuenta"
+        const val RPC_RECORD_REVOCATION = "app_registrar_revocacion_sesiones"
+        const val RECENT_AUTH_SECONDS = 300L
+        private const val MAX_PASSWORD_LENGTH = 1_024
+        private const val REVOKE_DONE = "hecha"
+        private const val REVOKE_FAILED = "fallida"
+        private val Logger = LoggerFactory.getLogger("OC-KTOR-ACCOUNT-DELETION")
+    }
+}

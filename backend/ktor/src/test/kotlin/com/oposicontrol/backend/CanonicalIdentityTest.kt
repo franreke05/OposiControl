@@ -233,4 +233,98 @@ class CanonicalIdentityTest {
         assertEquals("UNAUTHENTICATED", body["code"]!!.jsonPrimitive.content)
         assertTrue(!badSignature.bodyAsText().contains("x-leak"))
     }
+
+    // ---------------- SLICE 1: deletionIdentity (D1-19) ----------------
+
+    /** Tabla deny-by-default de la ruta de borrado: solo `activa` y `eliminacion_pendiente` pasan. */
+    @Test
+    fun deletionIdentityAcceptsOnlyActiveAndDeletionPendingAndDeniesEverythingElse() = testApplication {
+        var current: String? = "activa"
+        var exists = true
+        val resolver = CanonicalIdentityResolver(
+            verifySubject = { uid },
+            directory = { id -> if (exists) CanonicalUserIdentity(id, AccountStatus.fromWire(current), true) else null },
+            verifyClaims = { VerifiedJwtClaims(uid, issuedAt = 10, authTimes = listOf(1_000L, 2_000L)) },
+        )
+        application {
+            install(ContentNegotiation) { json() }
+            installRequestCorrelation()
+            installBackendStatusPages()
+            routing {
+                get("/probe") {
+                    val subject = resolver.deletionIdentity(call)
+                    call.respondText("${subject.identity.accountStatus}|${subject.claims.authTimes.max()}|${subject.identity.userId.value}")
+                }
+            }
+        }
+        suspend fun probe() = client.get("/probe") { header(HttpHeaders.Authorization, "Bearer $token") }
+        fun code(text: String) = Json.parseToJsonElement(text).jsonObject["code"]!!.jsonPrimitive.content
+
+        assertEquals("ACTIVA|2000|${uid.lowercase()}", probe().bodyAsText())
+        current = "eliminacion_pendiente"
+        assertEquals("ELIMINACION_PENDIENTE|2000|${uid.lowercase()}", probe().bodyAsText())
+
+        mapOf("bloqueada" to "ACCOUNT_BLOCKED").forEach { (state, expected) ->
+            current = state
+            val response = probe()
+            assertEquals(HttpStatusCode.Forbidden, response.status, state)
+            assertEquals(expected, code(response.bodyAsText()), state)
+        }
+        listOf("DISABLED", "disabled", "DELETED", "deleted", "ANONYMIZED", "anonymized", "", "otro", "ACTIVA", " activa", null).forEach { state ->
+            current = state
+            val response = probe()
+            assertEquals(HttpStatusCode.Forbidden, response.status, "'$state'")
+            assertEquals("FORBIDDEN", code(response.bodyAsText()), "'$state'")
+        }
+        current = "activa"
+        exists = false
+        val missing = probe()
+        assertEquals(HttpStatusCode.Forbidden, missing.status)
+        assertEquals("PROFILE_MISSING", code(missing.bodyAsText()))
+        exists = true
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/probe").status)
+    }
+
+    @Test
+    fun deletionIdentityKeepsTheJwksOutageAs503AndWithoutClaimsVerificationTheAmrIsUnknown() = testApplication {
+        var failure: (() -> Nothing)? = { throw java.io.IOException("jwks down") }
+        val resolver = CanonicalIdentityResolver(
+            verifySubject = { uid },
+            directory = { CanonicalUserIdentity(it, AccountStatus.ACTIVA, true) },
+            verifyClaims = { failure?.invoke() ?: VerifiedJwtClaims(uid) },
+        )
+        val plain = CanonicalIdentityResolver(verifySubject = { uid }, directory = { CanonicalUserIdentity(it, AccountStatus.ACTIVA, true) })
+        application {
+            install(ContentNegotiation) { json() }
+            installRequestCorrelation()
+            installBackendStatusPages()
+            routing {
+                get("/probe") { call.respondText(resolver.deletionIdentity(call).identity.userId.value) }
+                get("/plain") { call.respondText(plain.deletionIdentity(call).claims.authTimes.size.toString()) }
+            }
+        }
+        assertEquals(HttpStatusCode.ServiceUnavailable, client.get("/probe") { header(HttpHeaders.Authorization, "Bearer $token") }.status)
+        failure = null
+        assertEquals(HttpStatusCode.OK, client.get("/probe") { header(HttpHeaders.Authorization, "Bearer $token") }.status)
+        // Sin verificador de claims, el amr es desconocido (lista vacia): la reautenticacion OAuth fallara cerrada.
+        assertEquals("0", client.get("/plain") { header(HttpHeaders.Authorization, "Bearer $token") }.bodyAsText())
+    }
+
+    @Test
+    fun requireActiveOrDeletionPendingIsExhaustiveOverTheStatuses() {
+        val id = CanonicalUserId.fromJwtSubject(uid)
+        val results = AccountStatus.entries.associateWith { status ->
+            runCatching { CanonicalUserIdentity(id, status, true).requireActiveOrDeletionPending() }
+                .fold({ "OK" }, { (it as BackendDomainException).errorCode })
+        }
+        assertEquals(
+            mapOf(
+                AccountStatus.ACTIVA to "OK",
+                AccountStatus.ELIMINACION_PENDIENTE to "OK",
+                AccountStatus.BLOQUEADA to "ACCOUNT_BLOCKED",
+                AccountStatus.UNRECOGNIZED to "FORBIDDEN",
+            ),
+            results,
+        )
+    }
 }

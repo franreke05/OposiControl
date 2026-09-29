@@ -264,4 +264,29 @@ class SupabaseJwtVerifierJwksTest {
         now += 60_000
         assertEquals(uid, verifier.subFrom(tokenFor("k1", kp)))
     }
+
+    /** SLICE 1 (D1-19): claimsFrom expone iat y las marcas amr (reautenticacion OAuth); nada mas cambia respecto de subFrom. */
+    @Test
+    fun claimsFromExposesTheAmrTimestampsAndIatWhileSubFromStaysTheSame() {
+        val kp = newKey()
+        serve(200, jwks("k1" to kp))
+        val algorithm = Algorithm.ECDSA256(kp.public as ECPublicKey, kp.private as ECPrivateKey)
+        val withAmr = JWT.create().withKeyId("k1").withIssuer(issuer).withSubject(uid)
+            .withIssuedAt(java.util.Date(1_700_000_000_000L))
+            .withClaim("amr", listOf(mapOf("method" to "oauth", "timestamp" to 1_699_999_000L), mapOf("method" to "password", "timestamp" to 1_699_999_500L)))
+            .sign(algorithm)
+
+        val claims = verifier.claimsFrom(withAmr)
+        assertEquals(uid, claims.subject)
+        assertEquals(1_700_000_000L, claims.issuedAt)
+        assertEquals(listOf(1_699_999_000L, 1_699_999_500L), claims.authTimes)
+        assertEquals(uid, verifier.subFrom(withAmr))
+
+        // Sin amr (o con una forma inesperada) las marcas son desconocidas: la reautenticacion falla CERRADA.
+        assertEquals(emptyList(), verifier.claimsFrom(tokenFor("k1", kp)).authTimes)
+        val weird = JWT.create().withKeyId("k1").withIssuer(issuer).withSubject(uid).withClaim("amr", "password").sign(algorithm)
+        assertEquals(emptyList(), verifier.claimsFrom(weird).authTimes)
+        // Un token que no verifica sigue sin verificar.
+        assertFailsWith<Exception> { verifier.claimsFrom(tokenFor("k1", newKey())) }
+    }
 }

@@ -27,6 +27,11 @@ internal enum class OposiBotsAuthOperation(
     RESET(10, 5, 900),
     GOOGLE(30, 10, 300),
     APPLE(30, 10, 300),
+
+    // SLICE 1 (SEC-008): rutas canonicas de perfil. Limite por usuario (JWT sub); el de IP solo cuenta en las publicas.
+    PROFILE_WRITE(60, 20, 300),
+    LEGAL_LIST(60, 60, 300),
+    ACCOUNT_DELETION(10, 3, 3_600),
 }
 
 internal data class OposiBotsRateLimitDecision(

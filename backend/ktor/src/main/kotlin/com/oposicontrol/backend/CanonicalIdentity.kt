@@ -127,15 +127,24 @@ class PostgrestCanonicalProfileDirectory(
 class CanonicalIdentityResolver(
     private val verifySubject: (String) -> String,
     private val directory: CanonicalProfileDirectory,
+    /**
+     * SLICE 1 (D1-19): variante que devuelve tambien las marcas de autenticacion
+     * (`amr`). Sin ella el `amr` es desconocido y la reautenticacion OAuth falla
+     * cerrada (STALE_AUTH). Si se da, sustituye a [verifySubject].
+     */
+    private val verifyClaims: ((String) -> VerifiedJwtClaims)? = null,
 ) {
     /** 401 UNAUTHENTICATED si falta el Bearer o no verifica. */
-    suspend fun userId(call: ApplicationCall): CanonicalUserId {
+    suspend fun userId(call: ApplicationCall): CanonicalUserId = verifiedClaims(call).let { CanonicalUserId.fromJwtSubject(it.subject) }
+
+    /** Claims del JWT ya verificado (misma verificacion y mismos errores que [userId]). */
+    suspend fun verifiedClaims(call: ApplicationCall): VerifiedJwtClaims {
         val header = call.request.headers[HttpHeaders.Authorization].orEmpty()
         if (!header.startsWith("Bearer ", ignoreCase = true)) throw CanonicalErrorCode.UNAUTHENTICATED.exception()
         val token = header.substring("Bearer ".length).trim()
         if (token.count { it == '.' } != 2) throw CanonicalErrorCode.UNAUTHENTICATED.exception()
-        val subject = try {
-            withUpstreamIo { verifySubject(token) }
+        return try {
+            withUpstreamIo { verifyClaims?.invoke(token) ?: VerifiedJwtClaims(verifySubject(token)) }
         } catch (domain: BackendDomainException) {
             throw domain
         } catch (_: java.io.IOException) {
@@ -144,7 +153,6 @@ class CanonicalIdentityResolver(
         } catch (_: Exception) {
             throw CanonicalErrorCode.UNAUTHENTICATED.exception()
         }
-        return CanonicalUserId.fromJwtSubject(subject)
     }
 
     /**
@@ -165,6 +173,40 @@ class CanonicalIdentityResolver(
      * o estado ausente -> 403 FORBIDDEN.
      */
     suspend fun activeIdentity(call: ApplicationCall): CanonicalUserIdentity = identity(call).requireActive()
+
+    /**
+     * SLICE 1 (D1-19, borrado de cuenta): identidad de una cuenta ACTIVA o ya
+     * ELIMINACION_PENDIENTE (la repeticion es idempotente por estado). `bloqueada`
+     * -> 403 ACCOUNT_BLOCKED, cualquier otro estado o estado ausente -> 403
+     * FORBIDDEN, sin fila -> 403 PROFILE_MISSING. Devuelve tambien los claims
+     * para la reautenticacion OAuth (una sola verificacion del JWT).
+     */
+    suspend fun deletionIdentity(call: ApplicationCall): DeletionIdentity {
+        val claims = verifiedClaims(call)
+        val userId = CanonicalUserId.fromJwtSubject(claims.subject)
+        val identity = directory.find(userId) ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
+        return DeletionIdentity(identity.requireActiveOrDeletionPending(), claims)
+    }
+}
+
+/** Identidad de la ruta de borrado + los claims del JWT que la autenticaron. */
+data class DeletionIdentity(val identity: CanonicalUserIdentity, val claims: VerifiedJwtClaims)
+
+/**
+ * Claims verificados de un JWT de Supabase. [authTimes] son los `amr[].timestamp`
+ * (epoch segundos): el instante de cada metodo de autenticacion, que NO cambia con
+ * un refresh (a diferencia de `iat`). Vacio = desconocido.
+ */
+data class VerifiedJwtClaims(
+    val subject: String,
+    val issuedAt: Long? = null,
+    val authTimes: List<Long> = emptyList(),
+)
+
+fun CanonicalUserIdentity.requireActiveOrDeletionPending(): CanonicalUserIdentity = when (accountStatus) {
+    AccountStatus.ACTIVA, AccountStatus.ELIMINACION_PENDIENTE -> this
+    AccountStatus.BLOQUEADA -> throw CanonicalErrorCode.ACCOUNT_BLOCKED.exception()
+    AccountStatus.UNRECOGNIZED -> throw CanonicalErrorCode.FORBIDDEN.exception()
 }
 
 fun CanonicalUserIdentity.requireActive(): CanonicalUserIdentity = when (accountStatus) {

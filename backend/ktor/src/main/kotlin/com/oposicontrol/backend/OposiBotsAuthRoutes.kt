@@ -31,7 +31,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
             call.authEndpoint(runtime, OposiBotsAuthOperation.REGISTER) {
                 val request = receiveAuthJson<OposiBotsRegisterRequest>(runtime.json)
                 request.validate(runtime.configuration)
-                requireSubjectLimit(runtime, request.identifier.normalizedIdentifier())
+                requireSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())
                 respond(HttpStatusCode.Accepted, runtime.gateway.register(request, authContext(runtime.configuration)))
             }
         }
@@ -56,7 +56,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
             call.authEndpoint(runtime, OposiBotsAuthOperation.LOGIN) {
                 val request = receiveAuthJson<OposiBotsLoginRequest>(runtime.json)
                 request.validate()
-                requireSubjectLimit(runtime, request.identifier.normalizedIdentifier())
+                requireSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())
                 respond(runtime.gateway.login(request, authContext(runtime.configuration)))
             }
         }
@@ -76,28 +76,34 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 respond(HttpStatusCode.NoContent)
             }
         }
+        // DEPRECADA (EP-124): traduce al servicio canonico de perfil (perfiles_usuario); nunca lee public.usuario.
         get("/me") {
             call.authEndpoint(runtime, OposiBotsAuthOperation.ME) {
                 val token = requiredBearerToken()
+                val canonical = runtime.canonical ?: throw OposiBotsAuthProblem.unavailable()
                 requireSubjectLimit(runtime, token)
-                respond(runtime.gateway.me(token, authContext(runtime.configuration)))
+                val identity = canonical.resolver.activeIdentity(this)
+                respond(canonical.legacy.me(identity, token, authContext(runtime.configuration)))
             }
-        }
+        }.legacyRoute(LegacyEndpoints.EP_124)
+        // DEPRECADA (EP-218): traduce a POST /api/v1/app/me/onboarding; nunca escribe public.usuario.
         post("/register/profile") {
             call.authEndpoint(runtime, OposiBotsAuthOperation.PROFILE) {
                 val token = requiredBearerToken()
                 val request = receiveAuthJson<OposiBotsProfileRequest>(runtime.json)
                 request.validate()
+                val canonical = runtime.canonical ?: throw OposiBotsAuthProblem.unavailable()
                 requireSubjectLimit(runtime, token)
-                runtime.gateway.saveProfile(token, request, authContext(runtime.configuration))
+                val identity = canonical.resolver.activeIdentity(this)
+                canonical.legacy.saveProfile(identity, token, request, authContext(runtime.configuration))
                 respond(HttpStatusCode.NoContent)
             }
-        }
+        }.legacyRoute(LegacyEndpoints.EP_218)
         post("/recover") {
             call.authEndpoint(runtime, OposiBotsAuthOperation.RECOVER) {
                 val request = receiveAuthJson<OposiBotsRecoverRequest>(runtime.json)
                 request.validate(runtime.configuration)
-                requireSubjectLimit(runtime, request.identifier.normalizedIdentifier())
+                requireSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())
                 runtime.gateway.recover(request, authContext(runtime.configuration))
                 respond(HttpStatusCode.NoContent)
             }
@@ -151,6 +157,12 @@ private suspend fun ApplicationCall.authEndpoint(
         problem.retryAfterSeconds?.let { response.headers.append(HttpHeaders.RetryAfter, it.toString()) }
         logAuthResult(operation, requestId, problem.status.value)
         respondAuthProblem(problem, requestId)
+    } catch (domain: BackendDomainException) {
+        // SLICE 1: errores canonicos (INVALID_CREDENTIALS, ACCOUNT_BLOCKED, USERNAME_TAKEN...) con `code` propio y el
+        // `error` legacy de OB (AuthErrorWire) derivado del estado HTTP.
+        domain.retryAfterSeconds?.let { response.headers.append(HttpHeaders.RetryAfter, it.toString()) }
+        logAuthResult(operation, requestId, domain.status.value)
+        respondAuthDomain(domain, requestId)
     } catch (unexpected: Exception) {
         val problem = OposiBotsAuthProblem.unavailable()
         // Logueado (S1D1/DAY_02, 2026-08-13): antes esta causa se descartaba
@@ -161,6 +173,22 @@ private suspend fun ApplicationCall.authEndpoint(
         logAuthResult(operation, requestId, problem.status.value)
         respondAuthProblem(problem, requestId)
     }
+}
+
+private suspend fun ApplicationCall.respondAuthDomain(domain: BackendDomainException, requestId: String) {
+    if (domain.status == HttpStatusCode.Unauthorized && response.headers[HttpHeaders.WWWAuthenticate] == null) {
+        response.headers.append(HttpHeaders.WWWAuthenticate, "Bearer")
+    }
+    respond(
+        domain.status,
+        ErrorDto(
+            error = legacyAuthErrorFor(domain.status).name,
+            message = domain.message,
+            code = domain.errorCode,
+            requestId = requestId,
+            details = domain.details,
+        ),
+    )
 }
 
 private suspend fun ApplicationCall.respondAuthProblem(problem: OposiBotsAuthProblem, requestId: String) {
@@ -225,7 +253,7 @@ private fun ApplicationCall.authContext(configuration: OposiBotsAuthConfiguratio
     clientIp = trustedClientIp(configuration),
 )
 
-private fun ApplicationCall.trustedClientIp(configuration: OposiBotsAuthConfiguration): String =
+internal fun ApplicationCall.trustedClientIp(configuration: OposiBotsAuthConfiguration): String =
     resolveTrustedClientIp(
         configuration = configuration,
         peerHost = request.origin.remoteHost,
@@ -248,7 +276,7 @@ internal fun resolveTrustedClientIp(
 }
 
 private fun OposiBotsRegisterRequest.validate(configuration: OposiBotsAuthConfiguration) {
-    validateIdentifierAndPassword(identifier, password)
+    validateIdentifierAndPassword(resolvedIdentifier(), password)
     validateCaptcha(captchaToken, configuration)
 }
 
@@ -261,10 +289,11 @@ private fun OposiBotsEmailResendRequest.validate(configuration: OposiBotsAuthCon
 }
 
 private fun OposiBotsLoginRequest.validate() {
-    validateIdentifierAndPassword(identifier, password)
+    validateIdentifierAndPassword(resolvedIdentifier(), password)
 }
 
 private fun OposiBotsRecoverRequest.validate(configuration: OposiBotsAuthConfiguration) {
+    val identifier = resolvedIdentifier()
     if (identifier.isBlank()) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.BLANK_IDENTIFIER)
     if (!identifier.isValidEmail()) {
         throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)

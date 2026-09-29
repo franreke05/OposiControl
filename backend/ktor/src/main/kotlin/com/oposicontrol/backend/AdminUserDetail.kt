@@ -1,5 +1,7 @@
 package com.oposicontrol.backend
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -34,6 +36,7 @@ data class AdminUserDetailDto(
     val seccionesNoDisponibles: List<String> = emptyList(),
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminUserProfileDto(
     @SerialName("usuario_id") val usuarioId: String = "",
@@ -45,6 +48,18 @@ data class AdminUserProfileDto(
     @SerialName("es_invitado") val esInvitado: Boolean = false,
     @SerialName("onboarding_completado") val onboardingCompletado: Boolean = false,
     @SerialName("creado_en") val creadoEn: String? = null,
+    @SerialName("estado_cuenta") val estadoCuenta: String? = null,
+    // D1-24 (SLICE 1): `perfil` pasa a ser `AdminUser`. Se anaden sus campos (camelCase) a los legacy de arriba: ninguno
+    // de los dos conjuntos se solapa, asi OC sigue leyendo lo de siempre. Los rellena `AdminUserProfileMapper`.
+    @EncodeDefault val id: String = "",
+    val fullName: String? = null,
+    val email: String? = null,
+    @EncodeDefault val roleIds: List<String> = emptyList(),
+    @EncodeDefault val accountStatus: String = "",
+    val bloqueo: AdminUserBlockDto? = null,
+    @EncodeDefault val onboardingCompleted: Boolean = false,
+    @EncodeDefault val createdAt: String = "",
+    @EncodeDefault val authProviders: List<String> = emptyList(),
 )
 
 /** Perfil ampliado (`perfiles_usuario_detalle`). Se rellena tras el onboarding. */

@@ -201,4 +201,17 @@ class LegacyRouteTest {
         assertEquals(HttpStatusCode.BadRequest, created.status)
         assertEquals("@${LegacyEndpoints.SLICE_0_DEPRECATED_AT.epochSecond}", created.headers[LegacyHeaders.DEPRECATION])
     }
+
+    /** SLICE 1: EP-124 y EP-218 reciben la deprecacion en su corte, aparte del lote de SLICE 0, con su sucesor canonico y sin Sunset. */
+    @Test
+    fun slice1DeprecatesEp124AndEp218SeparatelyWithTheirCanonicalSuccessors() {
+        assertEquals(setOf("EP-124", "EP-218"), LegacyEndpoints.SLICE_1.map { it.endpointId }.toSet())
+        assertEquals("/api/v1/app/me", LegacyEndpoints.EP_124.successorPath)
+        assertEquals("/v1/auth/me", LegacyEndpoints.EP_124.legacyPath)
+        assertEquals("/api/v1/app/me/onboarding", LegacyEndpoints.EP_218.successorPath)
+        assertEquals("/v1/auth/register/profile", LegacyEndpoints.EP_218.legacyPath)
+        assertTrue(LegacyEndpoints.SLICE_1.all { it.sunsetAt == null })
+        assertTrue(LegacyEndpoints.SLICE_1.all { it.successorPath.startsWith("/api/v1/") })
+        assertTrue(LegacyEndpoints.SLICE_0.map { it.endpointId }.intersect(LegacyEndpoints.SLICE_1.map { it.endpointId }.toSet()).isEmpty())
+    }
 }

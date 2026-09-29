@@ -66,6 +66,11 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
         HttpStatusCode.UnprocessableEntity,
         "El usuario indicado no es válido.",
     ),
+    // D1-26: conceder o retirar admin/superadmin exige superadmin.
+    "SUPERADMIN_REQUIRED" to DomainErrorDefinition(
+        HttpStatusCode.Forbidden,
+        "Esta acción requiere un superadministrador.",
+    ),
     // ------------------------------------------------------------------
     // Exámenes y preguntas (K0-4 / KQ0-1). Los levantan con `raise exception
     // '<CÓDIGO>'` las migraciones M3 (guardas de tipo en los padres), M4 (RPC de
@@ -884,6 +889,22 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     ACCOUNT_BLOCKED(HttpStatusCode.Forbidden, "Tu cuenta esta bloqueada."),
     ACCOUNT_DELETION_PENDING(HttpStatusCode.Forbidden, "Tu cuenta esta pendiente de eliminacion."),
     PROFILE_MISSING(HttpStatusCode.Forbidden, "No se encontro el perfil de tu cuenta."),
+
+    // SLICE 1: auth, perfil, especialidad y borrado de cuenta.
+    INVALID_CREDENTIALS(HttpStatusCode.Unauthorized, "El email o la contrasena no son correctos."),
+    AUTH_CODE_INVALID(HttpStatusCode.Unauthorized, "El codigo de verificacion no es valido o ya se uso."),
+    REAUTH_FAILED(HttpStatusCode.Unauthorized, "No se ha podido confirmar tu identidad."),
+    STALE_AUTH(HttpStatusCode.Unauthorized, "Tu sesion es demasiado antigua para esta accion. Vuelve a iniciar sesion."),
+    EMAIL_UNVERIFIED(HttpStatusCode.Forbidden, "Tienes que verificar tu email antes de entrar."),
+    SUPERADMIN_REQUIRED(HttpStatusCode.Forbidden, "Esta accion requiere un superadministrador."),
+    USERNAME_TAKEN(HttpStatusCode.Conflict, "Ese nombre de usuario ya esta en uso."),
+    ALREADY_ONBOARDED_CONFLICT(HttpStatusCode.Conflict, "Tu perfil ya estaba completado con otros datos."),
+    UNKNOWN_SPECIALTY(HttpStatusCode.UnprocessableEntity, "La especialidad elegida no existe o no esta activa."),
+    UNKNOWN_COMMUNITY(HttpStatusCode.UnprocessableEntity, "La comunidad elegida no existe."),
+    LEGAL_VERSION_NOT_ACTIVE(HttpStatusCode.UnprocessableEntity, "La version del documento legal ya no esta vigente."),
+    DOCUMENT_NOT_ACTIVE(HttpStatusCode.UnprocessableEntity, "Alguno de los documentos legales no existe o no esta vigente."),
+    INVALID_REFERRAL_CODE(HttpStatusCode.UnprocessableEntity, "El codigo de referido no es valido."),
+    SELF_REFERRAL(HttpStatusCode.UnprocessableEntity, "No puedes usar tu propio codigo de referido."),
     NOT_FOUND(HttpStatusCode.NotFound, "El recurso solicitado no existe."),
     CONFLICT(HttpStatusCode.Conflict, "La operacion entra en conflicto con el estado actual."),
     VERSION_CONFLICT(HttpStatusCode.Conflict, "El recurso ha cambiado mientras lo editabas. Recarga y vuelve a intentarlo."),
