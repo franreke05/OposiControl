@@ -1,0 +1,277 @@
+# FOUNDATION contracts (FROZEN): D8-01, D8-06, D8-07, D8-08, D8-09.
+components:
+  pathItems:
+    AdminAuditLog:
+      get:
+        operationId: listAdminAuditLog
+        summary: 'List admin audit log entries'
+        tags: [foundation]
+        x-contract-id: D8-01
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_UNAVAILABLE]
+        description: 'Keyset (creado_en desc, id). Source of truth: auditoria_log.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitAudit'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - name: actorId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: accion
+            in: query
+            required: false
+            schema:
+              type: string
+          - name: entityType
+            in: query
+            required: false
+            schema:
+              type: string
+          - name: desde
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+          - name: hasta
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        responses:
+          '200':
+            description: 'Audit log page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/AuditLogEntry'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    AdminSystemStatus:
+      get:
+        operationId: getAdminSystemStatus
+        summary: 'Get system status'
+        tags: [foundation]
+        x-contract-id: D8-06
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN, SUPERADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN]
+        description: 'Never 5xx for a failed probe: a failed probe is reported as level CAIDO.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'System status.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/SystemStatus'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+    HealthLive:
+      get:
+        operationId: getHealthLive
+        summary: 'Liveness probe'
+        tags: [foundation]
+        x-contract-id: D8-07
+        x-implementation: LIVE
+        x-slice: 0
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: []
+        description: 'Process down means no response. Probes use the status code only.'
+        security: []
+        responses:
+          '200':
+            description: 'Process is up.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/LivenessStatus'
+    HealthReady:
+      get:
+        operationId: getHealthReady
+        summary: 'Readiness probe'
+        tags: [foundation]
+        x-contract-id: D8-08
+        x-implementation: LIVE
+        x-slice: 0
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: []
+        x-error-envelope-exempt: 'The 503 body is the readiness document itself, not an error envelope.'
+        description: 'Dedicated lightweight PostgREST ping exercising the real credential. No versions, hosts or restart flags are exposed.'
+        security: []
+        responses:
+          '200':
+            description: 'Ready.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ReadinessStatus'
+          '503':
+            description: 'Not ready: the supabase check is DOWN.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ReadinessStatus'
+    Metrics:
+      get:
+        operationId: getMetrics
+        summary: 'Prometheus metrics scrape'
+        tags: [foundation]
+        x-contract-id: D8-09
+        x-implementation: LIVE
+        x-slice: 0
+        x-roles: [SYSTEM]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED]
+        x-error-envelope-exempt: '/metrics answers in plain text by design (401 plain text; 404 when disabled).'
+        description: 'Bearer METRICS_SCRAPE_TOKEN (constant-time compare) when the secret is configured; while unset the current open behaviour stays until the scraper config is deployed.'
+        security:
+          - metricsToken: []
+          - {}
+        responses:
+          '200':
+            description: 'Prometheus exposition format 0.0.4.'
+            content:
+              text/plain:
+                schema:
+                  type: string
+          '401':
+            description: 'UNAUTHENTICATED: token configured and missing or invalid (plain text).'
+            content:
+              text/plain:
+                schema:
+                  type: string
+          '404':
+            description: 'Metrics disabled.'
+            content:
+              text/plain:
+                schema:
+                  type: string
+  schemas:
+    AuditLogEntry:
+      type: object
+      required: [id, actorId, accion, entityType, creadoEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        actorId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        actorName:
+          type: [string, 'null']
+        accion:
+          type: string
+        entityType:
+          type: string
+        entityId:
+          type: [string, 'null']
+        antes:
+          description: 'JSON snapshot before the change, or null.'
+        despues:
+          description: 'JSON snapshot after the change, or null.'
+        ip:
+          type: [string, 'null']
+        userAgent:
+          type: [string, 'null']
+        creadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    SystemLevel:
+      type: string
+      enum: [OPERATIVO, DEGRADADO, CAIDO]
+    ProbeCheck:
+      type: object
+      required: [level]
+      properties:
+        level:
+          $ref: '#/components/schemas/SystemLevel'
+        latencyMs:
+          type: [integer, 'null']
+          format: int64
+    SystemStatus:
+      type: object
+      required: [overall, checks, checkedAt]
+      properties:
+        overall:
+          $ref: '#/components/schemas/SystemLevel'
+        checks:
+          type: object
+          required: [ktor, supabase]
+          properties:
+            ktor:
+              $ref: '#/components/schemas/ProbeCheck'
+            supabase:
+              $ref: '#/components/schemas/ProbeCheck'
+        cpu:
+          type: [number, 'null']
+          format: double
+        ramMb:
+          type: [integer, 'null']
+          format: int64
+        diskFreeMb:
+          type: [integer, 'null']
+          format: int64
+        errorRate5m:
+          type: [number, 'null']
+          format: double
+        p95LatencyMs:
+          type: [integer, 'null']
+          format: int64
+        checkedAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    LivenessStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [UP]
+          description: 'SLICE 0: Ktor emits UP (healthLiveRoute).'
+    ReadinessStatus:
+      type: object
+      required: [status, checks, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [UP, DEGRADED, DOWN]
+        checks:
+          type: object
+          required: [ktor, supabase]
+          properties:
+            ktor:
+              type: string
+              enum: [UP, DOWN]
+            supabase:
+              type: string
+              enum: [UP, DOWN, UNKNOWN]
+        timestamp:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'

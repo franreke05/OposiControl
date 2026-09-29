@@ -1,6 +1,7 @@
 package com.oposicontrol.backend
 
 import io.ktor.http.HttpStatusCode
+import kotlinx.serialization.Serializable
 
 class BackendDomainException(
     val errorCode: String,
@@ -17,6 +18,11 @@ class BackendDomainException(
      * repetirlo daría exactamente el mismo 409.
      */
     val retryAfterSeconds: Int? = null,
+    /**
+     * Detalle TIPADO del sobre canonico (`details`), o `null`. Solo admite las
+     * claves de [ErrorDetails]; nunca PII ni trazas. Ver `specs.errors`.
+     */
+    val details: ErrorDetails? = null,
 ) : RuntimeException(message)
 
 private data class DomainErrorDefinition(
@@ -820,3 +826,137 @@ private fun supabaseErrorField(body: String, field: String): String? =
         ?.groupValues
         ?.getOrNull(1)
         ?.replace("\\\"", "\"")
+
+// =====================================================================
+// SOBRE CANONICO DE ERROR (SLICE 0, `specs.errors`, FROZEN)
+//
+// Todo non-2xx JSON de app, admin y /v1/auth es
+// `{code!, message!, requestId!, details?}` (+ campos legacy aditivos). Aqui
+// vive el VOCABULARIO: el catalogo generico, los codigos de intento congelados
+// (se implementan en SLICE 3) y el detalle tipado. La traduccion de excepciones
+// sigue siendo `installBackendStatusPages()`; no hay un segundo DTO: el cuerpo
+// es `ErrorDto` extendido.
+// =====================================================================
+
+/** Un problema de validacion de un campo: `details.issues[]`. */
+@Serializable
+data class ErrorIssue(val field: String, val issue: String)
+
+/**
+ * `details` del sobre. Solo estas claves (tipadas por codigo); nunca PII ni
+ * trazas. Los nulos no se serializan con el `Json` del modulo.
+ */
+@Serializable
+data class ErrorDetails(
+    val issues: List<ErrorIssue>? = null,
+    val accessState: String? = null,
+    val currentRevision: Long? = null,
+    val allowedValues: List<String>? = null,
+)
+
+/** Valores canonicos de `ErrorIssue.issue` genericos. Un contrato puede anadir los suyos (UPPER_SNAKE). */
+object CanonicalIssue {
+    const val UNKNOWN_FIELD = "UNKNOWN_FIELD"
+    const val OUT_OF_RANGE = "OUT_OF_RANGE"
+    const val REQUIRED = "REQUIRED"
+    const val INVALID_FORMAT = "INVALID_FORMAT"
+}
+
+/**
+ * Catalogo generico + codigos de intento congelados.
+ *
+ * Un estado HTTP "desnudo" en un contrato FROZEN significa el codigo generico de
+ * ese estado. Los codigos especificos de entidad (`*_NOT_FOUND`) y los de
+ * dominio de [SUPABASE_DOMAIN_ERRORS] conviven con este catalogo: el `code` de
+ * un [BackendDomainException] sale tal cual.
+ *
+ * Sinonimos RETIRADOS (no se emiten nunca): EXAM_ACCESS_DENIED, OPTION_MISMATCH,
+ * ATTEMPT_NOT_OPEN, ATTEMPT_FINISHED ([RETIRED_ERROR_CODES]).
+ */
+enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: String) {
+    VALIDATION(HttpStatusCode.BadRequest, "Algun dato de la peticion no es valido."),
+    MALFORMED_BODY(HttpStatusCode.BadRequest, "El cuerpo de la peticion no es valido."),
+    INVALID_CURSOR(HttpStatusCode.BadRequest, "El cursor de paginacion no es valido. Vuelve a cargar la lista desde el principio."),
+    IDEMPOTENCY_KEY_REQUIRED(HttpStatusCode.BadRequest, "Falta la cabecera Idempotency-Key."),
+    IDEMPOTENCY_KEY_INVALID(HttpStatusCode.BadRequest, "La cabecera Idempotency-Key tiene que ser un UUID."),
+    UNAUTHENTICATED(HttpStatusCode.Unauthorized, "Tu sesion no es valida o ha caducado. Vuelve a iniciar sesion."),
+    FORBIDDEN(HttpStatusCode.Forbidden, "No tienes permisos para realizar esta accion."),
+    ACCOUNT_BLOCKED(HttpStatusCode.Forbidden, "Tu cuenta esta bloqueada."),
+    ACCOUNT_DELETION_PENDING(HttpStatusCode.Forbidden, "Tu cuenta esta pendiente de eliminacion."),
+    PROFILE_MISSING(HttpStatusCode.Forbidden, "No se encontro el perfil de tu cuenta."),
+    NOT_FOUND(HttpStatusCode.NotFound, "El recurso solicitado no existe."),
+    CONFLICT(HttpStatusCode.Conflict, "La operacion entra en conflicto con el estado actual."),
+    VERSION_CONFLICT(HttpStatusCode.Conflict, "El recurso ha cambiado mientras lo editabas. Recarga y vuelve a intentarlo."),
+    IDEMPOTENCY_KEY_IN_PROGRESS(HttpStatusCode.Conflict, "Ya se esta procesando una peticion con esta clave. Vuelve a intentarlo en un momento."),
+    PRECONDITION_FAILED(HttpStatusCode.PreconditionFailed, "El recurso ha cambiado desde la ultima lectura."),
+    PAYLOAD_TOO_LARGE(HttpStatusCode.PayloadTooLarge, "La peticion es demasiado grande."),
+    UNSUPPORTED_MEDIA_TYPE(HttpStatusCode.UnsupportedMediaType, "El tipo de contenido de la peticion no esta admitido."),
+    IDEMPOTENCY_KEY_REUSED(HttpStatusCode.UnprocessableEntity, "Esta clave de idempotencia ya se uso con una peticion distinta."),
+    RATE_LIMITED(HttpStatusCode.TooManyRequests, "Demasiadas peticiones. Vuelve a intentarlo en unos segundos."),
+    INTERNAL(HttpStatusCode.InternalServerError, "Error interno del servidor."),
+    UPSTREAM_ERROR(HttpStatusCode.BadGateway, "Error al consultar el servicio de datos."),
+    UPSTREAM_CONTRACT_ERROR(HttpStatusCode.BadGateway, "No se pudo interpretar la respuesta del servicio de datos."),
+    UPSTREAM_UNAVAILABLE(HttpStatusCode.ServiceUnavailable, "El servicio no esta disponible ahora mismo. Vuelve a intentarlo en unos segundos."),
+    DB_BUSY(HttpStatusCode.ServiceUnavailable, "La base de datos esta ocupada. Vuelve a intentarlo en unos segundos."),
+    UPSTREAM_TIMEOUT(HttpStatusCode.GatewayTimeout, "El servicio de datos tardo demasiado en responder."),
+
+    // Intentos: congelados en SLICE 0, implementados en SLICE 3.
+    EXAM_NOT_FOUND(HttpStatusCode.NotFound, "El examen no existe."),
+    EXAM_LOCKED(HttpStatusCode.Forbidden, "No tienes acceso a este examen."),
+    SPECIALTY_TYPE_NOT_ALLOWED(HttpStatusCode.Forbidden, "Este tipo de examen no esta disponible para la especialidad."),
+    EXAM_EMPTY(HttpStatusCode.Conflict, "El examen no tiene preguntas."),
+    ATTEMPT_NOT_FOUND(HttpStatusCode.NotFound, "El intento no existe."),
+    ATTEMPT_NOT_IN_PROGRESS(HttpStatusCode.Conflict, "El intento no esta en curso."),
+    ATTEMPT_EXPIRED(HttpStatusCode.Conflict, "El tiempo del intento ha terminado."),
+    ATTEMPT_ABANDONED(HttpStatusCode.Conflict, "El intento se abandono."),
+    ATTEMPT_ALREADY_FINISHED(HttpStatusCode.Conflict, "El intento ya esta finalizado."),
+    ATTEMPT_NOT_FINISHED(HttpStatusCode.Conflict, "El intento todavia no esta finalizado."),
+    ANSWER_LOCKED(HttpStatusCode.Conflict, "La respuesta ya no se puede cambiar."),
+    REVISION_CONFLICT(HttpStatusCode.Conflict, "La respuesta ha cambiado en otro dispositivo. Recarga el intento."),
+    QUESTION_NOT_IN_ATTEMPT(HttpStatusCode.UnprocessableEntity, "La pregunta no pertenece al intento."),
+    OPTION_NOT_IN_QUESTION(HttpStatusCode.UnprocessableEntity, "La opcion no pertenece a la pregunta."),
+    ;
+
+    fun exception(
+        message: String = defaultMessage,
+        details: ErrorDetails? = null,
+        retryAfterSeconds: Int? = null,
+    ): BackendDomainException = BackendDomainException(name, status, message, retryAfterSeconds, details)
+}
+
+/** Sinonimos retirados por el rediseno: no pueden emitirse. */
+val RETIRED_ERROR_CODES: Set<String> = setOf("EXAM_ACCESS_DENIED", "OPTION_MISMATCH", "ATTEMPT_NOT_OPEN", "ATTEMPT_FINISHED")
+
+/** 400 VALIDATION con `details.issues`. */
+fun validationError(vararg issues: ErrorIssue): BackendDomainException =
+    CanonicalErrorCode.VALIDATION.exception(details = ErrorDetails(issues = issues.toList()))
+
+/**
+ * Codigos que el `StatusPages` publica como el generico [CanonicalErrorCode.DB_BUSY]:
+ * los rechazos TRANSITORIOS de la base ya mapeados con `retryAfterSeconds`.
+ * Su `error` legacy (`database_deadlock`, ...) se conserva porque el adaptador de
+ * OC lo reconoce por nombre para enseñar el mensaje de reintento.
+ */
+internal val TRANSIENT_DB_ERROR_CODES: Set<String> =
+    setOf("DATABASE_DEADLOCK", "DATABASE_LOCK_TIMEOUT", "DATABASE_STATEMENT_TIMEOUT")
+
+private val UPPER_SNAKE = Regex("^[A-Z][A-Z0-9_]*$")
+
+/**
+ * `error` legacy -> `code` canonico. Los valores legacy conocidos tienen su
+ * traduccion congelada; cualquier otro se normaliza a UPPER_SNAKE.
+ */
+fun canonicalCodeForLegacyError(error: String): String = when (error) {
+    "unauthorized" -> CanonicalErrorCode.UNAUTHENTICATED.name
+    "forbidden" -> CanonicalErrorCode.FORBIDDEN.name
+    "not_found" -> CanonicalErrorCode.NOT_FOUND.name
+    "bad_request" -> CanonicalErrorCode.VALIDATION.name
+    "backend_contract_error" -> CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.name
+    "backend_supabase_error" -> CanonicalErrorCode.UPSTREAM_ERROR.name
+    "backend_internal_error" -> CanonicalErrorCode.INTERNAL.name
+    else -> error.uppercase().replace(Regex("[^A-Z0-9_]"), "_")
+        .takeIf { it.isUpperSnakeCode() }
+        ?: CanonicalErrorCode.INTERNAL.name
+}
+
+internal fun String.isUpperSnakeCode(): Boolean = UPPER_SNAKE.matches(this)

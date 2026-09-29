@@ -53,7 +53,7 @@ class BackendStatusPagesTest {
 
         assertEquals(HttpStatusCode.BadGateway, response.status)
         val body = response.bodyAsText()
-        assertTrue(body.contains("backend_contract_error"), body)
+        assertTrue(body.contains("\"code\":\"UPSTREAM_CONTRACT_ERROR\""), body)
         assertTrue(body.contains("Referencia: $requestId"), body)
         listOf("StatusPagesProbe", "required", "Field", "kotlinx", "Exception", "x-probe-c").forEach { leak ->
             assertFalse(body.contains(leak), "el 502 filtra '$leak': $body")
@@ -69,7 +69,7 @@ class BackendStatusPagesTest {
         }
 
         assertEquals(HttpStatusCode.BadRequest, response.status)
-        assertTrue(response.bodyAsText().contains("bad_request"))
+        assertTrue(response.bodyAsText().contains("\"code\":\"MALFORMED_BODY\""))
     }
 
     /** Un rechazo transitorio de la base (40P01/55P03/57014) es 503 con `Retry-After`. */
@@ -95,13 +95,32 @@ class BackendStatusPagesTest {
     }
 
     @Test
-    fun anUpstreamFailureIsStillA500WithReferenceAndWithoutTheUpstreamBody() = statusPagesApp {
+    fun anUpstreamFailureIsA502WithReferenceAndWithoutTheUpstreamBody() = statusPagesApp {
         val response = client.get("/upstream") { header("X-Request-Id", requestId) }
 
-        assertEquals(HttpStatusCode.InternalServerError, response.status)
+        assertEquals(HttpStatusCode.BadGateway, response.status)
         val body = response.bodyAsText()
         assertTrue(body.contains("Referencia: $requestId"), body)
         assertFalse(body.contains("x-hint-c"), body)
+    }
+
+    /**
+     * RB-1-05: la IAE lanzada por codigo del backend conserva su mensaje (contrato
+     * legacy); la que nace en la JDK (UUID.fromString...) hace eco de la entrada
+     * del cliente y sale con el mensaje generico.
+     */
+    @Test
+    fun anIllegalArgumentFromTheJdkNeverEchoesItsMessage() = statusPagesApp {
+        val own = client.get("/own-iae")
+        assertEquals(HttpStatusCode.BadRequest, own.status)
+        assertTrue(own.bodyAsText().contains("Usuario no encontrado."), own.bodyAsText())
+
+        val jdk = client.get("/jdk-iae")
+        assertEquals(HttpStatusCode.BadRequest, jdk.status)
+        val body = jdk.bodyAsText()
+        assertTrue(body.contains("\"code\":\"VALIDATION\""), body)
+        assertFalse(body.contains("x-probe-c"), body)
+        assertFalse(body.contains("UUID"), body)
     }
 
     // -----------------------------------------------------------------
@@ -128,6 +147,8 @@ class BackendStatusPagesTest {
                     val body = """{"code":"22P02","message":"invalid input syntax for type uuid: \"x-probe-c\""}"""
                     throw checkNotNull(mapSupabaseDomainError(400, body))
                 }
+                get("/own-iae") { throw IllegalArgumentException("Usuario no encontrado.") }
+                get("/jdk-iae") { java.util.UUID.fromString("x-probe-c") }
                 get("/upstream") {
                     throw IllegalStateException("""Supabase GET /rest/v1/examenes -> 400: {"hint":"x-hint-c"}""")
                 }

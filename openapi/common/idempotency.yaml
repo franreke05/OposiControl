@@ -1,0 +1,34 @@
+# Canonical idempotency (FROZEN specs.idempotency).
+# Store key (actor_id = JWT sub, scope = '<METHOD> <route template>', idem_key).
+# Fingerprint = sha256(METHOD \n route template \n sorted path params \n JCS body).
+# Outcomes: NEW -> execute; REPLAY -> stored 2xx status/body/headers + Idempotent-Replayed: true;
+# MISMATCH -> 422 IDEMPOTENCY_KEY_REUSED; IN_PROGRESS -> 409 IDEMPOTENCY_KEY_IN_PROGRESS +
+# Retry-After: 1; STALE -> lease takeover. Only 2xx results are stored; TTL 24h.
+# Operations declare x-idempotency: REQUIRED | OPTIONAL | NATURAL | NONE.
+components:
+  parameters:
+    IdempotencyKeyRequired:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: 'UUID (case-insensitive, stored lowercase). Missing -> 400 IDEMPOTENCY_KEY_REQUIRED; malformed -> 400 IDEMPOTENCY_KEY_INVALID.'
+      schema:
+        $ref: '#/components/schemas/IdempotencyKey'
+    IdempotencyKeyOptional:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: 'Optional UUID; the natural key of the command already makes it idempotent. Malformed -> 400 IDEMPOTENCY_KEY_INVALID.'
+      schema:
+        $ref: '#/components/schemas/IdempotencyKey'
+  schemas:
+    IdempotencyKey:
+      type: string
+      pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+  headers:
+    IdempotentReplayed:
+      description: 'true when the response is a stored replay and the command was not executed again.'
+      required: false
+      schema:
+        type: string
+        enum: ['true']

@@ -136,9 +136,9 @@ private suspend fun ApplicationCall.authEndpoint(
     operation: OposiBotsAuthOperation,
     block: suspend ApplicationCall.() -> Unit,
 ) {
-    val requestId = request.headers["X-Request-Id"]
-        ?.takeIf { it.matches(Regex("[A-Za-z0-9._-]{8,128}")) }
-        ?: UUID.randomUUID().toString()
+    // SLICE 0: el mismo id que Observability (misma regla de validacion), para
+    // que la cabecera X-Request-Id y el `requestId` del sobre de error coincidan.
+    val requestId = ensureRequestId()
     attributes.put(AuthRequestIdKey, requestId)
     try {
         val decision = runtime.rateLimiter.checkIp(operation, trustedClientIp(runtime.configuration))
@@ -150,7 +150,7 @@ private suspend fun ApplicationCall.authEndpoint(
     } catch (problem: OposiBotsAuthProblem) {
         problem.retryAfterSeconds?.let { response.headers.append(HttpHeaders.RetryAfter, it.toString()) }
         logAuthResult(operation, requestId, problem.status.value)
-        respond(problem.status, problem.response())
+        respondAuthProblem(problem, requestId)
     } catch (unexpected: Exception) {
         val problem = OposiBotsAuthProblem.unavailable()
         // Logueado (S1D1/DAY_02, 2026-08-13): antes esta causa se descartaba
@@ -159,8 +159,15 @@ private suspend fun ApplicationCall.authEndpoint(
         // forma de diagnosticarlo. No se expone al cliente, solo al log.
         AuthLogger.warn("auth operation={} requestId={} unexpected={}", operation.name, requestId, unexpected.toString())
         logAuthResult(operation, requestId, problem.status.value)
-        respond(problem.status, problem.response())
+        respondAuthProblem(problem, requestId)
     }
+}
+
+private suspend fun ApplicationCall.respondAuthProblem(problem: OposiBotsAuthProblem, requestId: String) {
+    if (problem.status == HttpStatusCode.Unauthorized && response.headers[HttpHeaders.WWWAuthenticate] == null) {
+        response.headers.append(HttpHeaders.WWWAuthenticate, "Bearer")
+    }
+    respond(problem.status, problem.response(requestId))
 }
 
 private suspend fun ApplicationCall.requireSubjectLimit(

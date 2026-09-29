@@ -1,0 +1,272 @@
+# Canonical error envelope (FROZEN specs.errors). Every non-2xx JSON response of
+# app, admin and /v1/auth routes uses ErrorEnvelope. Exceptions are declared per
+# operation with x-error-envelope-exempt (/metrics 401 plain text, readiness 503).
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      description: 'Canonical error body. Implemented by extending ErrorDto and the existing StatusPages branches (no second DTO). message never carries upstream text, SQL, table or constraint names, or an echo of client input.'
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Z][A-Z0-9_]*$'
+          description: 'Stable UPPER_SNAKE machine code. Generic codes are listed in GenericErrorCode, attempt codes in AttemptErrorCode; entity-specific *_NOT_FOUND and per-contract codes are listed on each operation in x-error-codes.'
+        message:
+          type: string
+          description: 'Spanish human-readable text. For 500 it is redacted and ends with Referencia: <requestId>.'
+        requestId:
+          type: string
+          description: 'Same value as the X-Request-Id response header (Observability.installRequestCorrelation).'
+        details:
+          $ref: '#/components/schemas/ErrorDetails'
+        error:
+          type: string
+          deprecated: true
+          description: 'LEGACY additive field. On /api/v1 routes it is the pre-Slice-0 legacy string (OC NetworkResultAdapter reads it by regex): usually code.lowercase(), but for transient DB errors (code DB_BUSY) it is the original error code lowercased (database_deadlock|database_lock_timeout|database_statement_timeout), and for hand-built legacy ErrorDto it is the legacy value (e.g. bad_request with code VALIDATION). On /v1/auth routes it is the OposiBotsErrorCode enum name (OB AuthErrorWire). Clients must read code. Removed in a later versioned change once both clients read code.'
+        issues:
+          type: array
+          deprecated: true
+          description: 'LEGACY additive field emitted only on /v1/auth routes (OB AuthErrorWire Set<String>) until the OB client reads details.issues. Items are issue enum names (Kotlin ErrorDto.issues: List<String>), not ValidationIssue objects.'
+          items:
+            type: string
+            pattern: '^[A-Z][A-Z0-9_]*$'
+    ErrorDetails:
+      type: [object, 'null']
+      description: 'Typed per code. Only these keys are allowed; never PII or stack traces.'
+      required: []
+      additionalProperties: false
+      properties:
+        issues:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+        accessState:
+          $ref: 'identifiers.yaml#/components/schemas/AccessState'
+        currentRevision:
+          type: integer
+          minimum: 0
+        allowedValues:
+          type: array
+          items:
+            type: string
+    ValidationIssue:
+      type: object
+      required: [field, issue]
+      additionalProperties: false
+      properties:
+        field:
+          type: string
+        issue:
+          type: string
+          description: 'UPPER_SNAKE issue value such as UNKNOWN_FIELD, OUT_OF_RANGE, REQUIRED, INVALID_FORMAT, or a contract-specific issue (for example NONE_OR_BOTH, BAD_CONFIRMATION, NON_UUID).'
+          pattern: '^[A-Z][A-Z0-9_]*$'
+    GenericErrorCode:
+      type: string
+      description: 'Generic code catalog. A bare status in a frozen contract means the generic code for that status.'
+      enum:
+        - VALIDATION
+        - MALFORMED_BODY
+        - INVALID_CURSOR
+        - IDEMPOTENCY_KEY_REQUIRED
+        - IDEMPOTENCY_KEY_INVALID
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - ACCOUNT_BLOCKED
+        - ACCOUNT_DELETION_PENDING
+        - PROFILE_MISSING
+        - NOT_FOUND
+        - CONFLICT
+        - VERSION_CONFLICT
+        - IDEMPOTENCY_KEY_IN_PROGRESS
+        - PRECONDITION_FAILED
+        - PAYLOAD_TOO_LARGE
+        - UNSUPPORTED_MEDIA_TYPE
+        - IDEMPOTENCY_KEY_REUSED
+        - RATE_LIMITED
+        - INTERNAL
+        - UPSTREAM_ERROR
+        - UPSTREAM_CONTRACT_ERROR
+        - UPSTREAM_UNAVAILABLE
+        - DB_BUSY
+        - UPSTREAM_TIMEOUT
+    AttemptErrorCode:
+      type: string
+      description: 'Attempt codes frozen in SLICE 0, implemented in SLICE 3.'
+      enum:
+        - EXAM_NOT_FOUND
+        - EXAM_LOCKED
+        - SPECIALTY_TYPE_NOT_ALLOWED
+        - EXAM_EMPTY
+        - ATTEMPT_NOT_FOUND
+        - ATTEMPT_NOT_IN_PROGRESS
+        - ATTEMPT_EXPIRED
+        - ATTEMPT_ABANDONED
+        - ATTEMPT_ALREADY_FINISHED
+        - ATTEMPT_NOT_FINISHED
+        - ANSWER_LOCKED
+        - REVISION_CONFLICT
+        - QUESTION_NOT_IN_ATTEMPT
+        - OPTION_NOT_IN_QUESTION
+  headers:
+    XRequestId:
+      description: 'Request correlation id; equals ErrorEnvelope.requestId.'
+      required: true
+      schema:
+        type: string
+    RetryAfter:
+      description: 'Seconds to wait before retrying.'
+      required: true
+      schema:
+        type: integer
+        minimum: 0
+    WWWAuthenticate:
+      description: 'Bearer challenge.'
+      required: true
+      schema:
+        type: string
+        example: Bearer
+  responses:
+    BadRequest:
+      description: 'VALIDATION (details.issues), MALFORMED_BODY, INVALID_CURSOR, IDEMPOTENCY_KEY_REQUIRED or IDEMPOTENCY_KEY_INVALID.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unauthenticated:
+      description: 'UNAUTHENTICATED: missing, invalid or expired JWT.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWWAuthenticate'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Forbidden:
+      description: 'FORBIDDEN, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING (authenticated JWT with no perfiles_usuario row; deny, never auto-create) or a contract-specific 403 code: authenticated but not allowed.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    NotFound:
+      description: 'NOT_FOUND or an entity-specific *_NOT_FOUND. Also returned for resources the caller does not own (never 403).'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Conflict:
+      description: 'CONFLICT, VERSION_CONFLICT, IDEMPOTENCY_KEY_IN_PROGRESS (with Retry-After 1) or a contract-specific 409 code.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          description: 'Present (value 1) only for IDEMPOTENCY_KEY_IN_PROGRESS.'
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    PreconditionFailed:
+      description: 'PRECONDITION_FAILED: If-Match did not match.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    PayloadTooLarge:
+      description: 'PAYLOAD_TOO_LARGE.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    UnsupportedMediaType:
+      description: 'UNSUPPORTED_MEDIA_TYPE.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    UnprocessableEntity:
+      description: 'Well-formed input that breaks a business rule or reference, or IDEMPOTENCY_KEY_REUSED.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    RateLimited:
+      description: 'RATE_LIMITED.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Internal:
+      description: 'INTERNAL: unexpected error, redacted message with Referencia: <requestId>.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    UpstreamError:
+      description: 'UPSTREAM_ERROR (bad upstream response) or UPSTREAM_CONTRACT_ERROR (unparsable upstream response).'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    UpstreamUnavailable:
+      description: 'UPSTREAM_UNAVAILABLE or DB_BUSY (transient SQLSTATE), with Retry-After from BackendDomainException.retryAfterSeconds.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+        Retry-After:
+          description: 'Present when the failure carries a retry hint.'
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    UpstreamTimeout:
+      description: 'UPSTREAM_TIMEOUT.'
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'

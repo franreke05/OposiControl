@@ -130,7 +130,7 @@ class AdminV1QuestionResourceUploadTest {
             setBody(multipart("audio/mpeg", tipoRecurso = "audio", recursoId = recursoId))
         }
 
-        assertEquals(HttpStatusCode.InternalServerError, response.status, response.bodyAsText())
+        assertEquals(HttpStatusCode.BadGateway, response.status, response.bodyAsText())
         val borrado = upstream.single { it.method() == "DELETE" && it.uri().rawPath.startsWith("/storage/v1/object/recursos-pregunta/") }
         assertEquals("/storage/v1/object/recursos-pregunta/preguntas/$preguntaId/$recursoId.mp3", borrado.uri().rawPath)
     }

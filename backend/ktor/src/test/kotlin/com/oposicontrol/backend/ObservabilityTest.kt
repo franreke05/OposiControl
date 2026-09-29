@@ -16,6 +16,8 @@ import io.ktor.server.routing.routing
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.slf4j.LoggerFactory
 import java.net.URI
 import java.net.http.HttpClient
@@ -184,9 +186,9 @@ class ObservabilityTest {
 
     @Test
     fun checkSupabaseReachable_unknown_whenConfigIsMissing() {
-        assertEquals("unknown", checkSupabaseReachable(url = null, apiKey = "key"))
-        assertEquals("unknown", checkSupabaseReachable(url = "https://example.invalid", apiKey = null))
-        assertEquals("unknown", checkSupabaseReachable(url = "", apiKey = ""))
+        assertEquals("UNKNOWN", checkSupabaseReachable(url = null, apiKey = "key"))
+        assertEquals("UNKNOWN", checkSupabaseReachable(url = "https://example.invalid", apiKey = null))
+        assertEquals("UNKNOWN", checkSupabaseReachable(url = "", apiKey = ""))
     }
 
     @Test
@@ -195,7 +197,7 @@ class ObservabilityTest {
         // depender de red externa ni de Supabase real.
         val status = checkSupabaseReachable(url = "http://127.0.0.1:1", apiKey = "fake-key")
 
-        assertEquals("down", status)
+        assertEquals("DOWN", status)
     }
 
     // ----- request correlation: generation + propagation -----
@@ -275,30 +277,50 @@ class ObservabilityTest {
     }
 
     @Test
+    fun healthLive_andReady_bodiesMatchOpenApiD807D808Enums() = testApplication {
+        // openapi/foundation/foundation.yaml LivenessStatus / ReadinessStatus.
+        application {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            routing { observabilityHealthRoutes(supabaseCheck = { "UP" }) }
+        }
+
+        val live = Json.parseToJsonElement(client.get("/health/live").bodyAsText()).jsonObject
+        assertEquals(mapOf("status" to "UP"), live.mapValues { it.value.jsonPrimitive.content })
+
+        val ready = Json.parseToJsonElement(client.get("/health/ready").bodyAsText()).jsonObject
+        assertEquals(setOf("status", "checks", "timestamp"), ready.keys)
+        assertTrue(ready["status"]!!.jsonPrimitive.content in setOf("UP", "DEGRADED", "DOWN"))
+        val checks = ready["checks"]!!.jsonObject
+        assertEquals(setOf("ktor", "supabase"), checks.keys)
+        assertTrue(checks["ktor"]!!.jsonPrimitive.content in setOf("UP", "DOWN"))
+        assertTrue(checks["supabase"]!!.jsonPrimitive.content in setOf("UP", "DOWN", "UNKNOWN"))
+    }
+
+    @Test
     fun healthReady_ok_whenSupabaseCheckReportsUp() = testApplication {
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-            routing { observabilityHealthRoutes(supabaseCheck = { "up" }) }
+            routing { observabilityHealthRoutes(supabaseCheck = { "UP" }) }
         }
 
         val response = client.get("/health/ready")
 
         assertEquals(HttpStatusCode.OK, response.status)
-        assertTrue(response.bodyAsText().contains("\"status\":\"ready\""))
+        assertTrue(response.bodyAsText().contains("\"status\":\"UP\""))
     }
 
     @Test
     fun healthReady_serviceUnavailable_whenSupabaseCheckReportsDown() = testApplication {
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
-            routing { observabilityHealthRoutes(supabaseCheck = { "down" }) }
+            routing { observabilityHealthRoutes(supabaseCheck = { "DOWN" }) }
         }
 
         val response = client.get("/health/ready")
 
         assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
-        assertTrue(response.bodyAsText().contains("\"status\":\"not_ready\""))
-        assertTrue(response.bodyAsText().contains("\"supabase\":\"down\""))
+        assertTrue(response.bodyAsText().contains("\"status\":\"DOWN\""))
+        assertTrue(response.bodyAsText().contains("\"supabase\":\"DOWN\""))
     }
 
     @Test

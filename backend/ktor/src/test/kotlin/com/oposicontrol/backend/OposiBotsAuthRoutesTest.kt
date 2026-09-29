@@ -16,6 +16,9 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -57,6 +60,72 @@ class OposiBotsAuthRoutesTest {
         assertEquals(HttpStatusCode.BadRequest, wrongType.status)
         assertEquals(HttpStatusCode.BadRequest, oversized.status)
         assertEquals(0, fake.loginCalls)
+    }
+
+    // --- SLICE 0: sobre canonico en /v1/auth, con los campos legacy de OB ---
+
+    @Test
+    fun authValidationErrorUsesCanonicalEnvelopeAndKeepsLegacyFields() = testApplication {
+        application { authTestModule(FakeGateway()) }
+
+        val response = client.post("/v1/auth/login") {
+            header("X-Request-Id", "auth-envelope-0001")
+            contentType(ContentType.Application.Json)
+            setBody("""{"identifier":"","password":"safe-password"}""")
+        }
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+        assertEquals("VALIDATION", body["code"]!!.jsonPrimitive.content)
+        assertEquals("auth-envelope-0001", body["requestId"]!!.jsonPrimitive.content)
+        assertEquals("auth-envelope-0001", response.headers["X-Request-Id"])
+        assertTrue(body["message"]!!.jsonPrimitive.content.isNotBlank())
+        // Legacy OB (AuthErrorWire): `error` = nombre del enum + `issues`.
+        assertEquals("Validation", body["error"]!!.jsonPrimitive.content)
+        assertEquals(listOf("BLANK_IDENTIFIER"), body["issues"]!!.jsonArray.map { it.jsonPrimitive.content })
+        val issue = body["details"]!!.jsonObject["issues"]!!.jsonArray.single().jsonObject
+        assertEquals("identifier", issue["field"]!!.jsonPrimitive.content)
+        assertEquals("BLANK_IDENTIFIER", issue["issue"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun authMissingBearerIs401UnauthenticatedWithWwwAuthenticate() = testApplication {
+        application { authTestModule(FakeGateway()) }
+
+        val response = client.get("/v1/auth/me")
+
+        assertEquals(HttpStatusCode.Unauthorized, response.status)
+        assertEquals("Bearer", response.headers[HttpHeaders.WWWAuthenticate])
+        val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+        assertEquals("UNAUTHENTICATED", body["code"]!!.jsonPrimitive.content)
+        assertEquals("AuthenticationRequired", body["error"]!!.jsonPrimitive.content)
+        assertEquals(response.headers["X-Request-Id"], body["requestId"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun authRateLimitIsRateLimitedCodeWithRetryAfter() = testApplication {
+        application { authTestModule(FakeGateway(), rateLimiter = RejectingRateLimiter) }
+
+        val response = client.post("/v1/auth/login") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"identifier":"a@b.es","password":"safe-password"}""")
+        }
+
+        assertEquals(HttpStatusCode.TooManyRequests, response.status)
+        assertEquals("42", response.headers[HttpHeaders.RetryAfter])
+        val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+        assertEquals("RATE_LIMITED", body["code"]!!.jsonPrimitive.content)
+        assertEquals("TemporarilyUnavailable", body["error"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun authProblemCanonicalCodesFollowTheFrozenMapping() {
+        assertEquals(CanonicalErrorCode.VALIDATION, OposiBotsAuthProblem.validation().canonicalCode())
+        assertEquals(CanonicalErrorCode.UNAUTHENTICATED, OposiBotsAuthProblem.authentication().canonicalCode())
+        assertEquals(CanonicalErrorCode.FORBIDDEN, OposiBotsAuthProblem.accessDenied().canonicalCode())
+        assertEquals(CanonicalErrorCode.CONFLICT, OposiBotsAuthProblem.conflict().canonicalCode())
+        assertEquals(CanonicalErrorCode.UPSTREAM_UNAVAILABLE, OposiBotsAuthProblem.unavailable().canonicalCode())
+        assertEquals(CanonicalErrorCode.RATE_LIMITED, OposiBotsAuthProblem.unavailable(5).canonicalCode())
     }
 
     @Test

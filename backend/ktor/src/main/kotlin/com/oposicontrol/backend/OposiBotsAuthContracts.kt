@@ -108,11 +108,20 @@ enum class OposiBotsErrorCode {
     TemporarilyUnavailable,
 }
 
-@Serializable
-data class OposiBotsErrorResponse(
-    val error: OposiBotsErrorCode,
-    val issues: Set<OposiBotsValidationIssue> = emptySet(),
-)
+/**
+ * Campo del DTO de peticion al que se refiere cada problema de validacion
+ * (`details.issues[].field` del sobre canonico).
+ */
+internal fun OposiBotsValidationIssue.field(): String = when (this) {
+    OposiBotsValidationIssue.BLANK_IDENTIFIER, OposiBotsValidationIssue.INVALID_IDENTIFIER -> "identifier"
+    OposiBotsValidationIssue.BLANK_PASSWORD, OposiBotsValidationIssue.INVALID_PASSWORD -> "password"
+    OposiBotsValidationIssue.BLANK_FIRST_NAME -> "firstName"
+    OposiBotsValidationIssue.BLANK_LAST_NAME -> "lastName"
+    OposiBotsValidationIssue.INVALID_USERNAME -> "username"
+    OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED -> "specialty"
+    OposiBotsValidationIssue.INVALID_CREDENTIAL -> "credential"
+    OposiBotsValidationIssue.INVALID_CAPTCHA -> "captchaToken"
+}
 
 internal class OposiBotsAuthProblem(
     val status: HttpStatusCode,
@@ -120,7 +129,38 @@ internal class OposiBotsAuthProblem(
     val issues: Set<OposiBotsValidationIssue> = emptySet(),
     val retryAfterSeconds: Long? = null,
 ) : RuntimeException(code.name) {
-    fun response() = OposiBotsErrorResponse(code, issues)
+    /**
+     * Codigo canonico (SLICE 0): Validation->VALIDATION,
+     * AuthenticationRequired->UNAUTHENTICATED, AccessDenied->FORBIDDEN,
+     * Conflict->CONFLICT, TemporarilyUnavailable->UPSTREAM_UNAVAILABLE. El
+     * limite de peticiones reutiliza TemporarilyUnavailable con 429: ahi el
+     * codigo canonico es RATE_LIMITED, que es el del estado.
+     */
+    fun canonicalCode(): CanonicalErrorCode = when (code) {
+        OposiBotsErrorCode.Validation -> CanonicalErrorCode.VALIDATION
+        OposiBotsErrorCode.AuthenticationRequired -> CanonicalErrorCode.UNAUTHENTICATED
+        OposiBotsErrorCode.AccessDenied -> CanonicalErrorCode.FORBIDDEN
+        OposiBotsErrorCode.Conflict -> CanonicalErrorCode.CONFLICT
+        OposiBotsErrorCode.TemporarilyUnavailable ->
+            if (status == HttpStatusCode.TooManyRequests) CanonicalErrorCode.RATE_LIMITED else CanonicalErrorCode.UPSTREAM_UNAVAILABLE
+    }
+
+    /**
+     * El sobre canonico con los campos LEGACY de OB (`error` = nombre del enum,
+     * `issues`) hasta que ambos clientes lean `code`.
+     */
+    fun response(requestId: String): ErrorDto {
+        val canonical = canonicalCode()
+        return ErrorDto(
+            error = code.name,
+            message = canonical.defaultMessage,
+            code = canonical.name,
+            requestId = requestId,
+            details = issues.takeIf { it.isNotEmpty() }
+                ?.let { set -> ErrorDetails(issues = set.map { ErrorIssue(it.field(), it.name) }) },
+            issues = issues.map { it.name },
+        )
+    }
 
     companion object {
         fun validation(vararg issues: OposiBotsValidationIssue) =

@@ -106,12 +106,12 @@ class RequestCorrelationSuspensionTest {
             val checks = probe.onRequestThread {
                 readinessChecks {
                     probe.record("sonda de Supabase")
-                    "up"
+                    "UP"
                 }
             }
 
             probe.assertRanOffTheRequestThread("readinessChecks")
-            assertEquals(mapOf("ktor" to "up", "supabase" to "up"), checks)
+            assertEquals(mapOf("ktor" to "UP", "supabase" to "UP"), checks)
         }
     }
 
@@ -134,7 +134,7 @@ class RequestCorrelationSuspensionTest {
                     routing {
                         observabilityHealthRoutes {
                             probe.record("sonda de /health/ready")
-                            "up"
+                            "UP"
                         }
                     }
                 }

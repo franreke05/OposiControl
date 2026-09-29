@@ -2,6 +2,8 @@ package com.oposicontrol.backend
 
 import com.sun.net.httpserver.HttpServer
 import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
@@ -49,6 +51,87 @@ class PrometheusMetricsTest {
         assertTrue(body.contains("route=\"/probe\""))
         assertTrue(body.contains("status=\"200\""))
         assertTrue(body.contains("jvm_memory_used_bytes"))
+    }
+
+    private fun metricsApp(env: Map<String, String>, block: suspend io.ktor.server.testing.ApplicationTestBuilder.() -> Unit) =
+        testApplication {
+            val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
+            application {
+                routing { prometheusMetricsRoute(registry) { env[it] } }
+            }
+            block()
+        }
+
+    @Test
+    fun metricsReturns200WithoutConfiguredTokenAndWithCorrectBearer() {
+        metricsApp(emptyMap()) {
+            assertEquals(HttpStatusCode.OK, client.get("/metrics").status)
+        }
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
+            val response = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer scrape-secret") }
+            assertEquals(HttpStatusCode.OK, response.status)
+        }
+    }
+
+    @Test
+    fun metricsReturns401WithWrongOrMissingBearerWhenTokenConfigured() {
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/metrics").status)
+            val wrong = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer nope") }
+            assertEquals(HttpStatusCode.Unauthorized, wrong.status)
+            assertFalse(wrong.bodyAsText().contains("jvm_"))
+        }
+    }
+
+    @Test
+    fun metricsReturns404WhenDisabled() {
+        metricsApp(mapOf("METRICS_ENABLED" to "false", "METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
+            val response = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer scrape-secret") }
+            assertEquals(HttpStatusCode.NotFound, response.status)
+        }
+    }
+
+    /** PF3-3-03: `METRICS_ENABLED` se normaliza (trim + sin mayusculas); solo "false" apaga, cualquier otro valor no. */
+    @Test
+    fun metricsEnabledFlagIsTrimmedAndCaseInsensitive() {
+        listOf(" false ", "FALSE", "False\t").forEach { value ->
+            metricsApp(mapOf("METRICS_ENABLED" to value)) {
+                assertEquals(HttpStatusCode.NotFound, client.get("/metrics").status, "'$value'")
+            }
+        }
+        listOf("true", "", "0", "no").forEach { value ->
+            metricsApp(mapOf("METRICS_ENABLED" to value)) {
+                assertEquals(HttpStatusCode.OK, client.get("/metrics").status, "'$value'")
+            }
+        }
+    }
+
+    /** PF3-3-03: el token se compara ya con trim; uno solo de espacios equivale a NO configurado (documentado, SEC-007). */
+    @Test
+    fun scrapeTokenIsTrimmedAndABlankTokenMeansNotConfigured() {
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "  scrape-secret  ")) {
+            assertEquals(HttpStatusCode.Unauthorized, client.get("/metrics").status)
+            val ok = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer scrape-secret") }
+            assertEquals(HttpStatusCode.OK, ok.status)
+            val untrimmed = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer   scrape-secret  ") }
+            assertEquals(HttpStatusCode.Unauthorized, untrimmed.status)
+        }
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "   ")) {
+            assertEquals(HttpStatusCode.OK, client.get("/metrics").status, "token en blanco = sin token (bind interno)")
+        }
+    }
+
+    /** PF3-3-02: ni el scrape, ni el 401, ni el 404 son cacheables. */
+    @Test
+    fun metricsResponsesAreNeverCacheable() {
+        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
+            assertEquals("no-store", client.get("/metrics").headers[HttpHeaders.CacheControl])
+            val ok = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer scrape-secret") }
+            assertEquals("no-store", ok.headers[HttpHeaders.CacheControl])
+        }
+        metricsApp(mapOf("METRICS_ENABLED" to "false")) {
+            assertEquals("no-store", client.get("/metrics").headers[HttpHeaders.CacheControl])
+        }
     }
 
     @Test

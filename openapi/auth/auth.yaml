@@ -1,0 +1,503 @@
+# AUTH contracts (FROZEN): D1-01..D1-10. Errors use the canonical envelope and keep the
+# legacy additive fields error (OposiBotsErrorCode enum name) and issues until the OB
+# client reads code (ErrorEnvelope.error / ErrorEnvelope.issues).
+components:
+  pathItems:
+    Register:
+      post:
+        operationId: authRegister
+        summary: 'Register with email and password'
+        tags: [auth]
+        x-contract-id: D1-01
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Enumeration-safe: a duplicate email also returns 202. Natural key email; GoTrue dedupes pending signups. The handle_new_auth_user trigger creates the perfiles_usuario row.'
+        security: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterRequest'
+        responses:
+          '202':
+            description: 'Accepted; email verification required.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/RegisterAccepted'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    EmailExchange:
+      post:
+        operationId: authExchangeEmailCode
+        summary: 'Exchange an email verification code for a session'
+        tags: [auth]
+        x-contract-id: D1-02
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, AUTH_CODE_INVALID, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Single-use token upstream; a replay returns 401. Flags come from perfiles_usuario (never public.usuario).'
+        security: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailExchangeRequest'
+        responses:
+          '200':
+            description: 'Session.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AuthSession'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+            description: 'AUTH_CODE_INVALID.'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED or ACCOUNT_DELETION_PENDING.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    EmailResend:
+      post:
+        operationId: authResendVerificationEmail
+        summary: 'Resend the verification email'
+        tags: [auth]
+        x-contract-id: D1-03
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Always 204; the side effect is rate-limited per IP and email.'
+        security: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailWithCaptchaRequest'
+        responses:
+          '204':
+            description: 'Accepted.'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    Login:
+      post:
+        operationId: authLogin
+        summary: 'Log in with email and password'
+        tags: [auth]
+        x-contract-id: D1-04
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CREDENTIALS, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, EMAIL_UNVERIFIED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Not idempotent by design (each success mints a session; no economic effect). No automatic retry after 5xx.'
+        security: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginRequest'
+        responses:
+          '200':
+            description: 'Session.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AuthSession'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+            description: 'INVALID_CREDENTIALS.'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING or EMAIL_UNVERIFIED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    OAuthApple:
+      post:
+        operationId: authSignInWithApple
+        summary: 'Sign in with Apple'
+        tags: [auth]
+        x-contract-id: D1-05
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, CONFLICT, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Replay guard (provider, credential_hash) one-time claim; the authorization code is single-use at Apple. First-auth names are persisted to perfiles_usuario only when empty.'
+        security: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppleSignInRequest'
+        responses:
+          '200':
+            description: 'Session.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/OAuthSessionResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+            description: 'UNAUTHENTICATED (invalid, sub mismatch or replayed credential).'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    OAuthGoogle:
+      post:
+        operationId: authSignInWithGoogle
+        summary: 'Sign in with Google'
+        tags: [auth]
+        x-contract-id: D1-06
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, CONFLICT, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Replay guard: one-time claim of the id_token hash.'
+        security: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoogleSignInRequest'
+        responses:
+          '200':
+            description: 'Session.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/OAuthSessionResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+            description: 'UNAUTHENTICATED (invalid or replayed id token).'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    Refresh:
+      post:
+        operationId: authRefreshSession
+        summary: 'Refresh a session'
+        tags: [auth]
+        x-contract-id: D1-07
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Idempotent within the GoTrue reuse interval; rotation decided by GoTrue.'
+        security: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshRequest'
+        responses:
+          '200':
+            description: 'Session.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AuthSession'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+            description: 'UNAUTHENTICATED (invalid or revoked refresh token).'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'ACCOUNT_BLOCKED or ACCOUNT_DELETION_PENDING.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    Logout:
+      post:
+        operationId: authLogout
+        summary: 'Log out (revoke sessions)'
+        tags: [auth]
+        x-contract-id: D1-08
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Idempotent by effect (sessions revoked); a repeat returns 401 or 204.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: false
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutRequest'
+        responses:
+          '204':
+            description: 'Sessions revoked.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    Recover:
+      post:
+        operationId: authRequestPasswordRecovery
+        summary: 'Request a password recovery email'
+        tags: [auth]
+        x-contract-id: D1-09
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Enumeration-safe; always 204. The side effect is rate-limited per IP and email.'
+        security: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmailWithCaptchaRequest'
+        responses:
+          '204':
+            description: 'Accepted.'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ResetPassword:
+      post:
+        operationId: authResetPassword
+        summary: 'Reset the password with a recovery token'
+        tags: [auth]
+        x-contract-id: D1-10
+        x-implementation: TARGET
+        x-slice: 1
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Recovery token is single-use; a replay returns 401.'
+        security: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetPasswordRequest'
+        responses:
+          '204':
+            description: 'Password changed.'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+            description: 'UNAUTHENTICATED (invalid or replayed reset token).'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  schemas:
+    Password:
+      type: string
+      minLength: 12
+      maxLength: 128
+      format: password
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          $ref: '#/components/schemas/Password'
+        captchaToken:
+          type: string
+    RegisterAccepted:
+      type: object
+      required: [verificationRequired]
+      properties:
+        verificationRequired:
+          type: boolean
+          const: true
+    EmailExchangeRequest:
+      type: object
+      required: [code]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 16384
+          description: 'token_hash from the verification link.'
+    EmailWithCaptchaRequest:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        captchaToken:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          $ref: '#/components/schemas/Password'
+    AppleSignInRequest:
+      type: object
+      required: [identityToken, authorizationCode]
+      additionalProperties: false
+      properties:
+        identityToken:
+          type: string
+          minLength: 1
+        authorizationCode:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        nonce:
+          type: string
+        firstAuthGivenName:
+          type: string
+        firstAuthFamilyName:
+          type: string
+        firstAuthEmail:
+          type: string
+          format: email
+    GoogleSignInRequest:
+      type: object
+      required: [idToken]
+      additionalProperties: false
+      properties:
+        idToken:
+          type: string
+          minLength: 1
+        nonce:
+          type: string
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      additionalProperties: false
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+    LogoutRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        scope:
+          type: string
+          enum: [global]
+          default: global
+    ResetPasswordRequest:
+      type: object
+      required: [resetToken, newPassword]
+      additionalProperties: false
+      properties:
+        resetToken:
+          type: string
+          minLength: 1
+        newPassword:
+          $ref: '#/components/schemas/Password'
+    AuthUser:
+      type: object
+      required: [id, onboardingCompleted, accountStatus]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        email:
+          type: [string, 'null']
+          format: email
+        onboardingCompleted:
+          type: boolean
+        accountStatus:
+          $ref: '../common/identifiers.yaml#/components/schemas/AccountStatus'
+    AuthSession:
+      type: object
+      required: [accessToken, refreshToken, expiresAt, user]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/EpochSeconds'
+        user:
+          $ref: '#/components/schemas/AuthUser'
+    OAuthSessionResponse:
+      type: object
+      required: [session, isNewAccount]
+      properties:
+        session:
+          $ref: '#/components/schemas/AuthSession'
+        isNewAccount:
+          type: boolean

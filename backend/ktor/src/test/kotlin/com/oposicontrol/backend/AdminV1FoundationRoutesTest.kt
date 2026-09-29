@@ -224,10 +224,10 @@ class AdminV1FoundationRoutesTest {
     ) { _ ->
         val response = postPdf(bytes = "esto no es un pdf".encodeToByteArray())
 
-        assertEquals(HttpStatusCode.InternalServerError, response.status)
+        assertEquals(HttpStatusCode.BadGateway, response.status)
         val body = response.bodyAsText()
-        assertTrue(body.contains("backend_supabase_error"), body)
-        listOf("x-probe-c", "x-hint-c", "/rest/v1/", "Failing row", "\"code\"", "constraint").forEach { leak ->
+        assertTrue(body.contains("\"code\":\"UPSTREAM_ERROR\""), body)
+        listOf("x-probe-c", "x-hint-c", "/rest/v1/", "Failing row", "XX000", "constraint").forEach { leak ->
             assertFalse(body.contains(leak), "el error de importación filtra '$leak': $body")
         }
     }
@@ -290,7 +290,7 @@ class AdminV1FoundationRoutesTest {
 
         val response = client.post("/api/v1/admin/importaciones/$loteId/importar")
 
-        assertEquals(HttpStatusCode.InternalServerError, response.status)
+        assertEquals(HttpStatusCode.BadGateway, response.status)
         val body = response.bodyAsText()
         listOf("x-probe-c", "x-hint-c", "Failing row", "/rest/v1/", "XX000").forEach { leak ->
             assertFalse(body.contains(leak), "la respuesta filtra '$leak': $body")

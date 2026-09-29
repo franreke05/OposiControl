@@ -1,0 +1,17 @@
+# Redocly lint configuration for the canonical OpenAPI subset.
+# Run from the repository root:
+#   npx --yes @redocly/cli@latest lint openapi/root.yaml --config openapi/redocly.yaml
+# Justified exceptions live in openapi/.redocly.lint-ignore.yaml:
+#   - no-ambiguous-paths: /importaciones/preguntas/{loteId} vs /importaciones/{loteId}/importar
+#     are both FROZEN (D2-56, D2-60); loteId is a uuid, so the literal segment preguntas
+#     can never match it and Ktor literal routes win.
+#   - operation-4xx-response: /health/live (D8-07) and /health/ready (D8-08) are frozen
+#     without 4xx responses (probes read the status code only).
+extends:
+  - recommended
+rules:
+  operation-operationId-unique: error
+  operation-parameters-unique: error
+  path-parameters-defined: error
+  no-unresolved-refs: error
+  security-defined: error

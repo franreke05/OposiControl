@@ -1,0 +1,928 @@
+# ATTEMPTS contracts (FROZEN): D2-03, D2-05..D2-12, D2-65 (CF-02 D2_65_OPENAPI_READY = YES).
+# CF-01: the canonical start is POST /api/v1/app/examenes/{examId}/intentos. There is no
+# resume endpoint (re-POST returns the open attempt with reanudado=true, or rehydrate with
+# D2-07 + D2-08); pause/resume stays BLOCKED_PRODUCT_DECISION on DEC-014. No legacy start
+# route or alias is described here. Implementation of these routes is SLICE 3.
+components:
+  pathItems:
+    ExamAttempts:
+      post:
+        operationId: startOrResumeExamAttempt
+        summary: 'Start an exam attempt or return the open one'
+        tags: [attempts]
+        x-contract-id: D2-03
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, EXAM_LOCKED, SPECIALTY_TYPE_NOT_ALLOWED, EXAM_NOT_FOUND, EXAM_EMPTY, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
+        description: 'One transaction: lazy deadline check, CheckExamAccess, partial unique index (usuario_id, examen_id) WHERE estado=en_progreso plus INSERT ON CONFLICT, then preguntas_intento is frozen. Concurrent or new-key calls converge on the single open attempt (200, reanudado=true). A prior finalizado or abandonado attempt means a new attempt (retake). usuario_id is never accepted from the client. The attempt is tied to the exam and to that exam specialty (returned as intento.especialidadId), never to the user current specialty (DEC-002). DEMO semantics are an open exam_engine question.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: false
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttemptStartRequest'
+        responses:
+          '200':
+            description: 'An en_progreso attempt already exists for (usuario, examen); reanudado=true.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptStartResponse'
+          '201':
+            description: 'Attempt created; reanudado=false.'
+            headers:
+              Location:
+                description: '/api/v1/app/intentos/{id}'
+                required: true
+                schema:
+                  type: string
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptStartResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, IDEMPOTENCY_KEY_REQUIRED or IDEMPOTENCY_KEY_INVALID.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+            description: 'EXAM_LOCKED (details.accessState) or SPECIALTY_TYPE_NOT_ALLOWED.'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND (also draft or archived).'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EXAM_EMPTY or IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'IDEMPOTENCY_KEY_REUSED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    DailyChallenge:
+      get:
+        operationId: getTodayDailyChallenge
+        summary: 'Get today daily challenge'
+        tags: [attempts]
+        x-contract-id: D2-05
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, INTERNAL, UPSTREAM_ERROR]
+        description: 'The date is resolved server-side in the fixed product timezone (DEC-006 fixes the value only).'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Today challenge and participation, each null when absent.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/DailyChallengeView'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    DailyChallengeAttempts:
+      post:
+        operationId: startOrResumeDailyChallengeAttempt
+        summary: 'Start the daily challenge attempt or return the existing one'
+        tags: [attempts]
+        x-contract-id: D2-06
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: OPTIONAL
+        x-error-codes: [IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, CHALLENGE_NOT_FOUND, CHALLENGE_NOT_ACTIVE, CHALLENGE_ALREADY_COMPLETED, RATE_LIMITED]
+        description: 'Natural key: one participation per (usuario, reto); returns the existing attempt. The Idempotency-Key header is optional (a malformed key is 400 IDEMPOTENCY_KEY_INVALID).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/RetoIdPath'
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyOptional'
+        responses:
+          '200':
+            description: 'Existing attempt; reanudado=true.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptStartResponse'
+          '201':
+            description: 'Attempt created; reanudado=false.'
+            headers:
+              Location:
+                description: '/api/v1/app/intentos/{id}'
+                required: true
+                schema:
+                  type: string
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptStartResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'IDEMPOTENCY_KEY_INVALID.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'CHALLENGE_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'CHALLENGE_NOT_ACTIVE or CHALLENGE_ALREADY_COMPLETED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    Attempt:
+      get:
+        operationId: getAttempt
+        summary: 'Get an attempt and its grid'
+        tags: [attempts]
+        x-contract-id: D2-07
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ATTEMPT_NOT_FOUND]
+        description: 'Owner only; a foreign attempt is 404. May lazily finalize (TIMEOUT) first. Grid bounded by the attempt question count.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
+        responses:
+          '200':
+            description: 'Attempt state.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptView'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND (also not owner).'
+    AttemptQuestions:
+      get:
+        operationId: listAttemptQuestions
+        summary: 'List the frozen questions of an attempt'
+        tags: [attempts]
+        x-contract-id: D2-08
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND]
+        description: 'Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. No solutions.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitAttemptQuestions'
+        responses:
+          '200':
+            description: 'Question page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/AttemptQuestion'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND.'
+    AttemptAnswer:
+      put:
+        operationId: recordAttemptAnswer
+        summary: 'Record or revise the answer to a question'
+        tags: [attempts]
+        x-contract-id: D2-09
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_IN_PROGRESS, ATTEMPT_EXPIRED, ANSWER_LOCKED, REVISION_CONFLICT, IDEMPOTENCY_KEY_IN_PROGRESS, QUESTION_NOT_IN_ATTEMPT, OPTION_NOT_IN_QUESTION, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
+        description: 'A replay returns the stored body with Idempotent-Replayed true. The same option with a new key is a no-op; a different option takes the revision path or 409 REVISION_CONFLICT (details.currentRevision). primera_* are immutable, final_* mutable. Via record_answer plus trigger.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
+          - $ref: '../common/identifiers.yaml#/components/parameters/PreguntaIdPath'
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnswerRequest'
+        responses:
+          '200':
+            description: 'Answer recorded.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AnswerResult'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, IDEMPOTENCY_KEY_REQUIRED or IDEMPOTENCY_KEY_INVALID.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ATTEMPT_NOT_IN_PROGRESS, ATTEMPT_EXPIRED, ANSWER_LOCKED, REVISION_CONFLICT (details.currentRevision) or IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'QUESTION_NOT_IN_ATTEMPT, OPTION_NOT_IN_QUESTION or IDEMPOTENCY_KEY_REUSED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    AttemptFinish:
+      post:
+        operationId: finishAttempt
+        summary: 'Finish an attempt'
+        tags: [attempts]
+        x-contract-id: D2-10
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: OPTIONAL
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_ABANDONED, RATE_LIMITED]
+        description: 'Idempotent: an already finalizado attempt returns the stored result (200). One RPC with FOR UPDATE. Empty body.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyOptional'
+        responses:
+          '200':
+            description: 'Result (D2-12 schema).'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptResult'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ATTEMPT_ABANDONED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    AttemptAbandon:
+      post:
+        operationId: abandonAttempt
+        summary: 'Abandon an attempt'
+        tags: [attempts]
+        x-contract-id: D2-11
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_ALREADY_FINISHED, RATE_LIMITED]
+        description: 'Idempotent by state: an already abandonado attempt returns 204 with no new abandonos_examen row. Elapsed time is computed server-side; the inactividad reason is reserved server-only pending DEC-014.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AbandonRequest'
+        responses:
+          '204':
+            description: 'Abandoned.'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ATTEMPT_ALREADY_FINISHED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    AttemptResult:
+      get:
+        operationId: getAttemptResult
+        summary: 'Get the result of a finished attempt'
+        tags: [attempts]
+        x-contract-id: D2-12
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_FINISHED]
+        description: 'Owner only, finalizado only. Immutable; private cache allowed. Bounded by the attempt question count.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
+        responses:
+          '200':
+            description: 'Result.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptResult'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ATTEMPT_NOT_FINISHED.'
+    AttemptReview:
+      get:
+        operationId: getAttemptReview
+        summary: 'Review a finished attempt question by question'
+        tags: [attempts]
+        x-contract-id: D2-65
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_FINISHED, RATE_LIMITED]
+        description: 'Available only when estado=finalizado (motivoFin USER or TIMEOUT; the lazy TIMEOUT runs first). Owner by JWT sub only, no entitlement re-check. Items in attempt order (preguntas_intento.posicion), keyset posicion, bounded by attempt size (<= 200). Read-only (repeating is D2-03). Per-question status comes from the snapshot frozen at finish; statement, options, explanation and resource refs are read live. Policy-dependent content (explanation, resources) is nullable or empty (DEC-025, DEC-040). Totals, nota and band stay in D2-12.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'Review page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [attempt, items]
+                      properties:
+                        attempt:
+                          $ref: '#/components/schemas/ReviewAttempt'
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/ReviewItem'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND (also not owner).'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ATTEMPT_NOT_FINISHED (en_progreso or abandonado).'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: [no-store]
+  schemas:
+    AttemptEstado:
+      type: string
+      description: 'pausado is reserved for DEC-014; clients tolerate unknown values.'
+      enum: [en_progreso, finalizado, abandonado]
+    MotivoFin:
+      type: string
+      enum: [USER, TIMEOUT]
+    AttemptStartRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        modo:
+          type: string
+          enum: [NORMAL, DEMO]
+          default: NORMAL
+    Attempt:
+      type: object
+      description: 'D2-07 intento shape.'
+      required: [id, origen, tipoExamen, estado, iniciadoEn, serverNow, totalPreguntas, respondidas, sinResponder]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        origen:
+          $ref: '../common/identifiers.yaml#/components/schemas/AttemptOrigin'
+        examenId:
+          type: [string, 'null']
+          format: uuid
+        especialidadId:
+          type: [string, 'null']
+          format: uuid
+          description: 'Specialty of the EXAM the attempt belongs to, fixed at start (DEC-002). Never the specialty the user has now: changing the profile specialty does not reinterpret past attempts. null only when the attempt has no exam.'
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        estado:
+          $ref: '#/components/schemas/AttemptEstado'
+        motivoFin:
+          oneOf:
+            - $ref: '#/components/schemas/MotivoFin'
+            - type: 'null'
+        iniciadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        deadline:
+          type: [string, 'null']
+          format: date-time
+        serverNow:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        totalPreguntas:
+          type: integer
+          minimum: 0
+        respondidas:
+          type: integer
+          minimum: 0
+        correctas:
+          type: [integer, 'null']
+          minimum: 0
+        falladas:
+          type: [integer, 'null']
+          minimum: 0
+        sinResponder:
+          type: integer
+          minimum: 0
+        ultimaPreguntaPosicion:
+          type: [integer, 'null']
+          minimum: 1
+    AttemptGridItem:
+      type: object
+      required: [posicion, preguntaId, revision, estado]
+      properties:
+        posicion:
+          type: integer
+          minimum: 1
+        preguntaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        revision:
+          type: integer
+          minimum: 0
+        estado:
+          type: string
+          description: 'correcta or incorrecta before finish only if DEC-015 allows it; otherwise respondida.'
+          enum: [sin_responder, respondida, correcta, incorrecta, anulada]
+    AttemptView:
+      type: object
+      required: [intento, grid]
+      properties:
+        intento:
+          $ref: '#/components/schemas/Attempt'
+        grid:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/AttemptGridItem'
+    AttemptStartResponse:
+      type: object
+      required: [intento, reanudado]
+      properties:
+        intento:
+          $ref: '#/components/schemas/Attempt'
+        reanudado:
+          type: boolean
+    DailyChallengeView:
+      type: object
+      required: []
+      properties:
+        reto:
+          type: [object, 'null']
+          required: [id, fecha, titulo, objetivoPreguntas, aciertosNecesarios, terminaEn]
+          properties:
+            id:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+            fecha:
+              $ref: '../common/identifiers.yaml#/components/schemas/LocalDate'
+            titulo:
+              type: string
+            descripcion:
+              type: [string, 'null']
+            objetivoPreguntas:
+              type: integer
+              minimum: 1
+            aciertosNecesarios:
+              type: integer
+              minimum: 0
+            recompensaPuntos:
+              type: [integer, 'null']
+            terminaEn:
+              $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        participacion:
+          type: [object, 'null']
+          required: [progreso, aciertos, completado, superado]
+          properties:
+            intentoId:
+              type: [string, 'null']
+              format: uuid
+            progreso:
+              type: integer
+              minimum: 0
+            aciertos:
+              type: integer
+              minimum: 0
+            completado:
+              type: boolean
+            superado:
+              type: boolean
+    QuestionOption:
+      type: object
+      required: [id, letra, texto]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        letra:
+          $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+        texto:
+          type: string
+    AttemptQuestion:
+      type: object
+      x-entity: pregunta
+      required: [posicion, preguntaId, codigoPregunta, tipoPregunta, titulo, anulada, opciones]
+      properties:
+        posicion:
+          type: integer
+          minimum: 1
+        preguntaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigoPregunta:
+          type: string
+        tipoPregunta:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoPregunta'
+        titulo:
+          type: string
+        anulada:
+          type: boolean
+        opciones:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionOption'
+        respuesta:
+          type: [object, 'null']
+          required: [revision, respondidaEn]
+          properties:
+            opcionId:
+              type: [string, 'null']
+              format: uuid
+            revision:
+              type: integer
+              minimum: 0
+            respondidaEn:
+              $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    AnswerRequest:
+      type: object
+      x-entity: pregunta
+      required: [tiempoRespuestaMs, baseRevision]
+      additionalProperties: false
+      properties:
+        opcionSeleccionadaId:
+          type: [string, 'null']
+          format: uuid
+          description: 'null or absent means skip.'
+        tiempoRespuestaMs:
+          type: integer
+          minimum: 0
+          description: 'Client-measured, advisory; the server clamps it to the server-side gap.'
+        nivelConfianza:
+          type: integer
+        baseRevision:
+          type: integer
+          minimum: 0
+          description: '0 for the first answer.'
+    AnswerResult:
+      type: object
+      required: [revision, estado, esPrimeraRespuesta, respondidas]
+      properties:
+        revision:
+          type: integer
+          minimum: 0
+        estado:
+          type: string
+          enum: [ANSWERED, SKIPPED, ANNULLED]
+        esCorrecta:
+          type: [boolean, 'null']
+          description: 'null unless DEC-015 reveals before finish.'
+        opcionCorrectaId:
+          type: [string, 'null']
+          format: uuid
+          description: 'null unless DEC-015 reveals before finish.'
+        esPrimeraRespuesta:
+          type: boolean
+        respondidas:
+          type: integer
+          minimum: 0
+    AbandonRequest:
+      type: object
+      required: [posicionPregunta, motivo]
+      additionalProperties: false
+      properties:
+        posicionPregunta:
+          type: integer
+          minimum: 1
+        motivo:
+          type: string
+          enum: [salida_usuario, otro]
+    AttemptResult:
+      type: object
+      description: 'Single result DTO shared by D2-10 and D2-12.'
+      required: [resumen, preguntas, porEtiqueta]
+      properties:
+        resumen:
+          type: object
+          required: [modo, nota, calificacion, duracionSegundos, correctas, falladas, sinResponder]
+          properties:
+            examenId:
+              type: [string, 'null']
+              format: uuid
+            especialidadId:
+              type: [string, 'null']
+              format: uuid
+              description: 'Specialty of the exam the result belongs to (DEC-002); stays fixed when the user later changes specialty.'
+            modo:
+              type: string
+              description: 'Value set pending DEC-018.'
+            nota:
+              type: number
+              description: 'Formula pending DEC-013 (value, not shape).'
+            calificacion:
+              type: string
+            duracionSegundos:
+              type: integer
+              minimum: 0
+            correctas:
+              type: integer
+              minimum: 0
+            falladas:
+              type: integer
+              minimum: 0
+            sinResponder:
+              type: integer
+              minimum: 0
+        preguntas:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [posicion, tiempoSeg]
+            properties:
+              posicion:
+                type: integer
+                minimum: 1
+              opcionElegida:
+                type: [string, 'null']
+                format: uuid
+              opcionCorrecta:
+                type: [string, 'null']
+                format: uuid
+              razonamiento:
+                type: [string, 'null']
+                description: 'Markdown.'
+              tiempoSeg:
+                type: integer
+                minimum: 0
+              pctAciertoGlobal:
+                type: [number, 'null']
+                description: 'null until DEC-019 and DEC-004.'
+        porEtiqueta:
+          type: array
+          items:
+            type: object
+            required: [etiquetaId, nombre, correctas, falladas, sinResponder, tiempoTotalSeg]
+            properties:
+              etiquetaId:
+                $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+              nombre:
+                type: string
+              correctas:
+                type: integer
+                minimum: 0
+              falladas:
+                type: integer
+                minimum: 0
+              sinResponder:
+                type: integer
+                minimum: 0
+              tiempoTotalSeg:
+                type: integer
+                minimum: 0
+        comparativa:
+          type: [object, 'null']
+          description: 'null until DEC-019 and DEC-004.'
+        probabilidadPlaza:
+          type: [object, 'null']
+          description: 'null until DEC-016.'
+          required: [porcentaje, totalComparables]
+          properties:
+            porcentaje:
+              type: number
+              minimum: 0
+              maximum: 100
+            totalComparables:
+              type: integer
+              minimum: 0
+    ReviewAttempt:
+      type: object
+      required: [id, origen, tipoExamen, estado, motivoFin, iniciadoEn, finalizadoEn, duracionSegundos]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        examenId:
+          type: [string, 'null']
+          format: uuid
+        especialidadId:
+          type: [string, 'null']
+          format: uuid
+          description: 'Specialty of the exam of this attempt at start (DEC-002), not the user current specialty.'
+        origen:
+          $ref: '../common/identifiers.yaml#/components/schemas/AttemptOrigin'
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        estado:
+          type: string
+          const: finalizado
+        motivoFin:
+          $ref: '#/components/schemas/MotivoFin'
+        iniciadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        finalizadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        duracionSegundos:
+          type: integer
+          minimum: 0
+    ReviewItem:
+      type: object
+      x-entity: pregunta
+      required: [posicion, preguntaId, codigoPregunta, tipoPregunta, enunciado, opciones, status, cambioRespuesta, esPrimeraRespuesta, resources, timings, etiquetas]
+      properties:
+        posicion:
+          type: integer
+          minimum: 1
+        preguntaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigoPregunta:
+          type: string
+        tipoPregunta:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoPregunta'
+        enunciado:
+          type: string
+        opciones:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuestionOption'
+        status:
+          type: string
+          description: 'Frozen at finish. ANNULLED only for questions annulled between start and finish (excluded from evaluables).'
+          enum: [CORRECT, WRONG, SKIPPED, UNANSWERED, ANNULLED]
+        firstAnswer:
+          type: [object, 'null']
+          description: 'primera_opcion_id / primera_es_correcta, immutable; null when never answered or ANNULLED.'
+          required: [respondidaEn]
+          properties:
+            opcionId:
+              type: [string, 'null']
+              format: uuid
+              description: 'null means skip.'
+            esCorrecta:
+              type: [boolean, 'null']
+            respondidaEn:
+              $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        finalAnswer:
+          type: [object, 'null']
+          description: 'opcion_seleccionada_id / es_correcta; drives the grade; equals firstAnswer when there was no change.'
+          required: [actualizadaEn, revision]
+          properties:
+            opcionId:
+              type: [string, 'null']
+              format: uuid
+            esCorrecta:
+              type: [boolean, 'null']
+            actualizadaEn:
+              $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+            revision:
+              type: integer
+              minimum: 0
+        cambioRespuesta:
+          type: boolean
+        esPrimeraRespuesta:
+          type: boolean
+          description: 'The user first-ever response to the question (PDF 2.1-05).'
+        correctAnswer:
+          type: [object, 'null']
+          description: 'Non-null for every non-ANNULLED item; null for ANNULLED.'
+          required: [opcionId, letra]
+          properties:
+            opcionId:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+            letra:
+              $ref: '../common/identifiers.yaml#/components/schemas/OptionLetter'
+        explanation:
+          type: [object, 'null']
+          description: 'Visibility is product policy (DEC-025, DEC-040); technical default returns it to the owner.'
+          required: [razonamiento]
+          properties:
+            razonamiento:
+              $ref: '../common/identifiers.yaml#/components/schemas/Markdown'
+        resources:
+          type: array
+          description: 'Refs only; signed URLs via D4-19. Empty when none or hidden by policy.'
+          items:
+            type: object
+            required: [id, tipo, titulo]
+            properties:
+              id:
+                $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+              tipo:
+                type: string
+                enum: [imagen, audio, video, texto, pdf, enlace]
+              titulo:
+                type: string
+        timings:
+          type: object
+          required: []
+          properties:
+            tiempoRespuestaMs:
+              type: [integer, 'null']
+              minimum: 0
+              description: 'Client-measured, server-clamped.'
+            respondidaEn:
+              type: [string, 'null']
+              format: date-time
+            actualizadaEn:
+              type: [string, 'null']
+              format: date-time
+        etiquetas:
+          type: array
+          items:
+            type: object
+            required: [id, nombre]
+            properties:
+              id:
+                $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+              nombre:
+                type: string

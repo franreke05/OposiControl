@@ -1,0 +1,293 @@
+# ENTITLEMENTS contracts (FROZEN): D2-61, D2-62, D2-63, D7-02.
+# D7-25 (EntitlementPolicy.check) is in-process with no HTTP route, so it has no
+# operation; callers surface a DENY as 403 EXAM_LOCKED with details.accessState.
+components:
+  pathItems:
+    AdminGrants:
+      get:
+        operationId: listAdminExamGrants
+        summary: 'List exam access grants (admin grid)'
+        tags: [entitlements-admin]
+        x-contract-id: D2-61
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN]
+        description: 'usuarioQuery (email or name) is resolved server-side.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: usuarioQuery
+            in: query
+            required: false
+            schema:
+              type: string
+          - name: usuarioId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: examenId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: activo
+            in: query
+            required: false
+            schema:
+              type: boolean
+          - name: motivo
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/GrantMotivo'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitOffset100Default25'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'Grant page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/ExamGrant'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+      post:
+        operationId: createAdminExamGrant
+        summary: 'Grant exam access to a user'
+        tags: [entitlements-admin]
+        x-contract-id: D2-62
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, FORBIDDEN, USER_NOT_FOUND, EXAM_NOT_FOUND, IDEMPOTENCY_KEY_IN_PROGRESS, GRANT_REASON_NOT_ALLOWED, IDEMPOTENCY_KEY_REUSED]
+        description: 'Idempotency-Key (canonical store) plus upsert on (usuario, examen, motivo). compra grants come only from Economy. The actor is the JWT sub; usuarioId is the target user.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamGrantCreateRequest'
+        responses:
+          '201':
+            description: 'Grant (D2-61 item).'
+            headers:
+              Location:
+                description: 'URI of the grant.'
+                required: true
+                schema:
+                  type: string
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ExamGrant'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'USER_NOT_FOUND or EXAM_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'GRANT_REASON_NOT_ALLOWED or IDEMPOTENCY_KEY_REUSED.'
+    AdminGrantRevoke:
+      post:
+        operationId: revokeAdminExamGrant
+        summary: 'Revoke an exam access grant'
+        tags: [entitlements-admin]
+        x-contract-id: D2-63
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, FORBIDDEN, GRANT_NOT_FOUND, GRANT_IS_PURCHASE]
+        description: 'Idempotent: an already revoked grant returns 200 with the same grant. Purchase revocation goes through Economy.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/GrantIdPath'
+        requestBody:
+          required: false
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamGrantRevokeRequest'
+        responses:
+          '200':
+            description: 'Grant.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ExamGrant'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'GRANT_NOT_FOUND.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'GRANT_IS_PURCHASE.'
+    MeEntitlement:
+      get:
+        operationId: getMyEntitlement
+        summary: 'Get the current user entitlement'
+        tags: [entitlements]
+        x-contract-id: D7-02
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, INTERNAL, UPSTREAM_ERROR]
+        description: 'Bare object (no data wrapper). User from JWT sub. Reads the estado_premium_usuario projection and creditos_contenido_usuario.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Entitlement.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Entitlement'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '500':
+            $ref: '../common/errors.yaml#/components/responses/Internal'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+  schemas:
+    GrantMotivo:
+      type: string
+      enum: [compra, premium, regalo, admin, promocion]
+    ExamGrant:
+      type: object
+      required: [id, usuarioId, usuarioNombre, examenId, examenTitulo, motivo, validoDesde, activo]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        usuarioId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        usuarioNombre:
+          type: string
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        examenTitulo:
+          type: string
+        motivo:
+          $ref: '#/components/schemas/GrantMotivo'
+        validoDesde:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        validoHasta:
+          type: [string, 'null']
+          format: date-time
+        activo:
+          type: boolean
+        otorgadoPor:
+          type: [string, 'null']
+          format: uuid
+        revocadoEn:
+          type: [string, 'null']
+          format: date-time
+    ExamGrantCreateRequest:
+      type: object
+      required: [usuarioId, examenId, motivo]
+      additionalProperties: false
+      properties:
+        usuarioId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        motivo:
+          type: string
+          description: 'compra is excluded (422 GRANT_REASON_NOT_ALLOWED).'
+          enum: [premium, regalo, admin, promocion]
+        validoHasta:
+          type: string
+          format: date-time
+    ExamGrantRevokeRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        motivoRevocacion:
+          type: string
+    EntitlementStatus:
+      type: string
+      enum: [activa, pausada, cancelada, caducada, periodo_prueba, sin_suscripcion]
+    Entitlement:
+      type: object
+      required: [isPremium, status, credits]
+      properties:
+        isPremium:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/EntitlementStatus'
+        planCodigo:
+          type: [string, 'null']
+        planNivel:
+          type: [integer, 'null']
+        proveedor:
+          type: [string, 'null']
+        startsAt:
+          type: [string, 'null']
+          format: date-time
+        renewsAt:
+          type: [string, 'null']
+          format: date-time
+        endsAt:
+          type: [string, 'null']
+          format: date-time
+        credits:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentCredit'
+    ContentCredit:
+      type: object
+      required: [tipoExamen, total, usados, restantes]
+      properties:
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+        total:
+          type: integer
+          minimum: 0
+        usados:
+          type: integer
+          minimum: 0
+        restantes:
+          type: integer
+          minimum: 0
+        validoHasta:
+          type: [string, 'null']
+          format: date-time
