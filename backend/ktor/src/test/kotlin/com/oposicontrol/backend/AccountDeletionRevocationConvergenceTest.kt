@@ -16,7 +16,8 @@ import kotlin.test.assertEquals
 
 /**
  * MASTER2-AUTH-009: la revocacion de sesiones del borrado de cuenta converge. En un REINTENTO (la solicitud ya estaba
- * pendiente y la revocacion no consta `hecha`), un logout respondido 401/403 significa que la sesion YA no existe: se
+ * pendiente y la revocacion no consta `hecha`), un logout respondido 401/403 con `error_code=session_not_found`
+ * (MASTER3-AUTH-001: no cualquier 401/403) significa que la sesion YA no existe: se
  * anota `hecha`, no `fallida` (antes nunca convergia). Un fallo transitorio sigue anotando `fallida`, y en el PRIMER
  * intento (sesion recien reautenticada) un 401 no se interpreta como revocada. La base (20260930101500) impide ademas
  * que un `fallida` tardio pise un `hecha` (dbtest Slice1SessionRevocationMonotonicMigrationTest).
@@ -44,19 +45,43 @@ class AccountDeletionRevocationConvergenceTest {
         e.upstream.lastArgs("app_registrar_revocacion_sesiones")["p_resultado"]!!.jsonPrimitive.content
 
     @Test
-    fun aRetryWhoseLogoutFindsTheSessionAlreadyGoneRecordsHecha() {
+    fun aRetryWhoseLogoutFindsTheSessionAlreadyGoneRecordsHecha() = testApplication {
+        // MASTER3-AUTH-001: SOLO la evidencia explicita del proveedor (session_not_found) cuenta como "ya revocada".
+        val e = env(alreadyPending = true, stored = "fallida", logoutFailure = OposiBotsAuthProblem.sessionGone())
+        application { e.mount(this) }
+        assertEquals(HttpStatusCode.Accepted, deleteMe("""{"confirmation":"ELIMINAR"}""").status)
+        assertEquals(listOf("logout"), e.auth.calls.toList())
+        assertEquals("hecha", recorded(e), "sesion ya revocada = hecha")
+    }
+
+    /**
+     * MASTER3-AUTH-001 (cambio DELIBERADO de esta prueba): antes afirmaba `hecha` para un 401/403 generico
+     * (`authentication()`, `FORBIDDEN`). Eso era el defecto: un 400/422/apikey mala acaba mapeado a 401 y no prueba que
+     * la sesion este revocada. Un 401/403 sin la marca `upstreamSessionGone` sigue siendo `fallida`.
+     */
+    @Test
+    fun aRetryWithAGeneric401Or403WithoutEvidenceStaysFallida() {
         listOf<Exception>(
             OposiBotsAuthProblem.authentication(),
+            OposiBotsAuthProblem.accessDenied(),
             CanonicalErrorCode.FORBIDDEN.exception(),
-        ).forEach { gone ->
+            CanonicalErrorCode.UNAUTHENTICATED.exception(),
+        ).forEach { generic ->
             testApplication {
-                val e = env(alreadyPending = true, stored = "fallida", logoutFailure = gone)
+                val e = env(alreadyPending = true, stored = "fallida", logoutFailure = generic)
                 application { e.mount(this) }
                 assertEquals(HttpStatusCode.Accepted, deleteMe("""{"confirmation":"ELIMINAR"}""").status)
-                assertEquals(listOf("logout"), e.auth.calls.toList())
-                assertEquals("hecha", recorded(e), "${gone::class.simpleName}: sesion ya revocada = hecha")
+                assertEquals("fallida", recorded(e), "${generic::class.simpleName}/${generic.message}: sin evidencia = fallida")
             }
         }
+    }
+
+    @Test
+    fun onTheFirstAttemptEvenAnExplicitSessionNotFoundIsNotTakenAsRevoked() = testApplication {
+        val e = env(alreadyPending = false, stored = null, logoutFailure = OposiBotsAuthProblem.sessionGone())
+        application { e.mount(this) }
+        assertEquals(HttpStatusCode.Accepted, deleteMe("""{"confirmation":"ELIMINAR","currentPassword":"safe-password-12"}""").status)
+        assertEquals("fallida", recorded(e))
     }
 
     @Test

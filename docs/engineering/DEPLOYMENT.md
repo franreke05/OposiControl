@@ -11,13 +11,13 @@ El despliegue lo ejecuta un humano con el gate de produccion; nada de esto corre
 3. Verificar la version desplegada por la imagen, no por `/health` (hoy devuelve una cadena `build` fija):
    `docker inspect <contenedor> --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'`
    debe dar `oposicontrol-backend:<sha12>` y el commit completo esperado; ademas `/health/ready` = 200.
-   Slice 1 (migraciones `20260930100000..100900`): orden, hashes y clase de rollback en
+   Slice 1 (migraciones `20260930100000..101730`): orden, hashes y clase de rollback en
    `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` del repo OposiBot.
 
 ## Construir
 
 ```bash
-bash scripts/build-backend-image.sh   # exige arbol limpio (tambien sin archivos sin rastrear); etiqueta oposicontrol-backend:<sha12>
+bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin archivos sin rastrear y sin archivos IGNORADOS en backend/core/domain/data/build-logic salvo build/.gradle/.kotlin: `scripts/assert-clean-tree.sh`); etiqueta oposicontrol-backend:<sha12>
 ```
 
 - `ops/deploy/Dockerfile.backend` copia `backend/ktor/build/install/ktor` (resultado de `installDist`);
@@ -39,8 +39,9 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (tambien sin archivos
    MASTER2-AUTH-002: el backend corre detras de Caddy, asi que fuera de desarrollo el arranque FALLA sin
    `TRUST_PROXY_HEADERS=true` y `TRUSTED_PROXY_HOSTS=<IP literal de Caddy en la red de Docker>` (fijarla con
    una IP estatica en la red). Sin ello la IP de cliente seria la del proxy: un unico cupo de limite para todos.
-   Migraciones antes del Ktor de loop 2: `20260930101600_admin_sync_roles_actor_guard.sql` (el Ktor nuevo
-   llama a `admin_sync_roles` con `p_actor_id`); en rollback, primero el Ktor y despues la migracion.
+   Migraciones antes del Ktor de loop 2: `20260930101500_slice1_session_revocation_monotonic.sql` (sin ella un `fallida`
+   tardio puede sobrescribir un `hecha`) y `20260930101600_admin_sync_roles_actor_guard.sql` (el Ktor nuevo
+   llama a `admin_sync_roles` con `p_actor_id`; sin ella recibe PGRST202); en rollback, primero el Ktor y despues las migraciones 101600/101500.
 3. `/health/ready` debe dar 200. Desde el host publico
    `curl -s -o /dev/null -w '%{http_code}' https://<host>/metrics` debe dar `404` (Caddy,
    `ops/caddy/metrics-block.caddy`); un `200` sin token significa que el bloqueo no esta activo y es un fallo del despliegue.
@@ -54,7 +55,7 @@ Reejecutar el contenedor con la imagen `rollback-<fecha>` (solo valido mientras 
 contract de Slice 1 no esten aplicadas). Las migraciones de Slice 1 NO son todas expand: `20260930100500`
 redefine funciones (rollback manual verbatim) y `20260930100800` retira el indice unico global de
 `eventos_app` (contract; el rollback de BD solo es posible mientras `cross_user_shared_keys = 0`, si no,
-roll forward). `20260930100900` es compatible y reversible. Clasificacion por fichero, orden y hashes:
+roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compatibles y reversibles (la 101600 solo anade un overload: se revierte el Ktor de loop 2 ANTES de retirarla). `20260930101730` (indice unico parcial de `tickets_grant`, MASTER3-OBS-002) es aditiva y compatible con cualquier Ktor; su rollback solo borra el indice. Clasificacion por fichero, orden y hashes:
 `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` (repo OposiBot). Ninguna se revierte automaticamente.
 
 ## Pendiente (registrado, no ejercitado)

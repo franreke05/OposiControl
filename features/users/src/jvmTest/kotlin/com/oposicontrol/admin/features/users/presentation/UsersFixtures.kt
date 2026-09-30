@@ -234,9 +234,9 @@ internal object UsersFixtures {
     /** Han pulsado «Nuevo usuario»: el alta no se hace aquí y se explica. */
     fun avisoDeAlta(): UsersState = base().copy(createNoticeVisible = true)
 
-    /** Página llena: son los primeros 50, no el censo entero. */
+    /** Lista larga (50 filas, antes el tope de página): se lee completa, sin aviso de truncamiento. */
     fun paginaLlena(): UsersState {
-        val relleno = (CENSO.size until USER_PAGE_LIMIT).map { index ->
+        val relleno = (CENSO.size until 50).map { index ->
             user("u-r$index", "Usuario de relleno $index", "relleno$index", daysAgo = index)
         }
         return base().copy(users = UiAsync.Success(CENSO + relleno))

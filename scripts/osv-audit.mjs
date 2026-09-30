@@ -76,9 +76,10 @@ async function post(body) {
   throw new Error(`OSV no disponible tras ${RETRIES} intentos: ${last?.message ?? last}`);
 }
 
-/** Devuelve, por coordenada, la lista de ids de aviso (sigue next_page_token). */
+/** Devuelve, por coordenada, la lista de avisos { id, aliases } (sigue next_page_token). MASTER3-CICD-008: los alias
+ *  (CVE-..., GHSA-...) se conservan para que una ignorada por CVE tambien suprima el aviso publicado con id GHSA. */
 export async function queryAll(coordinates) {
-  const ids = coordinates.map(() => new Set());
+  const ids = coordinates.map(() => new Map());
   for (let start = 0; start < coordinates.length; start += BATCH_SIZE) {
     let pending = coordinates.slice(start, start + BATCH_SIZE).map((c, i) => ({ index: start + i, token: undefined, c }));
     while (pending.length > 0) {
@@ -87,13 +88,18 @@ export async function queryAll(coordinates) {
       if (!Array.isArray(results) || results.length !== queries.length) throw new Error('respuesta OSV inesperada');
       const next = [];
       results.forEach((r, i) => {
-        for (const v of r.vulns ?? []) ids[pending[i].index].add(v.id);
+        for (const v of r.vulns ?? []) ids[pending[i].index].set(v.id, { id: v.id, aliases: Array.isArray(v.aliases) ? v.aliases : [] });
         if (r.next_page_token) next.push({ ...pending[i], token: r.next_page_token });
       });
       pending = next;
     }
   }
-  return ids.map((s) => [...s]);
+  return ids.map((m) => [...m.values()]);
+}
+
+/** Un aviso queda ignorado si su id O CUALQUIERA de sus alias esta en la lista de ignoradas. */
+export function isIgnored(vuln, ignores) {
+  return ignores.has(vuln.id) || (vuln.aliases ?? []).some((a) => ignores.has(a));
 }
 
 export function loadIgnores(path, now = new Date()) {
@@ -128,8 +134,8 @@ async function main() {
   const results = await queryAll(coordinates);
   let failed = false;
   coordinates.forEach((c, i) => {
-    const open = results[i].filter((id) => !ignores.has(id));
-    if (open.length > 0) { failed = true; console.log(`${c.name}@${c.version}: ${open.join(', ')}`); }
+    const open = results[i].filter((v) => !isIgnored(v, ignores));
+    if (open.length > 0) { failed = true; console.log(`${c.name}@${c.version}: ${open.map((v) => v.id).join(', ')}`); }
   });
   console.log(`${coordinates.length} coordenadas resueltas auditadas`);
   if (failed) {

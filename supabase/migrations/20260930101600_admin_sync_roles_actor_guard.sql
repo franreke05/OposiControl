@@ -40,7 +40,8 @@
 --
 -- LOCKING
 --   Function DDL only (catalog locks). Runtime: the existing global transaction advisory lock of role sync.
---   lock_timeout 5s: fails fast, retry.
+--   The `set local lock_timeout = '5s'` below applies to the DDL of THIS migration only (it ends at commit and the
+--   functions carry no setting): the runtime advisory lock waits up to statement_timeout, not 5s (MASTER3-DB-003).
 --
 -- DATA LOSS
 --   None.

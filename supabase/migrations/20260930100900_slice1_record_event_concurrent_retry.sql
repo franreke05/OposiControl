@@ -33,7 +33,8 @@
 --
 -- LOCKING
 --   Function replacement only (brief lock on pg_proc entry). At runtime: one advisory xact lock per call,
---   scoped to (user, key). lock_timeout 5s for the DDL.
+--   scoped to (user, key). The `set local lock_timeout = '5s'` applies to the DDL only (it ends at commit and the
+--   function carries no setting): the runtime advisory lock waits up to statement_timeout (MASTER3-DB-003).
 --
 -- DATA LOSS
 --   None. No row, table or index is touched.

@@ -484,15 +484,26 @@ class KtorRestPart2AuditTest {
         val path = "/api/v1/admin/usuarios/$u1"
         val canonical = client.patch(path) { contentType(ContentType.Application.Json); setBody("""{"nombreMostrar":"Ada Nueva"}""") }
         assertEquals(HttpStatusCode.OK, canonical.status)
+        // MASTER3-API-001: el 200 es el AdminUser canonico (campos de nivel superior obligatorios) + `data` legacy, como GET.
+        val patched = Json.parseToJsonElement(canonical.bodyAsText()).jsonObject
+        listOf("id", "accountStatus", "onboardingCompleted", "authProviders", "createdAt", "data").forEach {
+            assertTrue(it in patched, "PATCH 200 sin $it: ${patched.keys}")
+        }
         // MASTER2-API-001 (cambio deliberado): D1-25 es `additionalProperties: false`; el `fullName` legacy y cualquier campo
         // extra ya NO se aceptan en silencio (el unico cliente, UsersApi de OC, envia solo `nombreMostrar`).
         val legacy = client.patch(path) { contentType(ContentType.Application.Json); setBody("""{"id":"$u1","fullName":"Ada Legacy","email":"a@x.es","roleIds":[],"isActive":true}""") }
         assertEquals(HttpStatusCode.BadRequest, legacy.status)
         assertEquals(1, sent.count { it.method == "PATCH" })
 
+        // MASTER3-API-001 (cambio deliberado): `AdminUserPatchRequest.required: []` -> `{}` es un no-op 200 con el usuario actual,
+        // ya no 400 REQUIRED. Un nombre presente pero vacio sigue siendo 400 REQUIRED.
         val neither = client.patch(path) { contentType(ContentType.Application.Json); setBody("""{}""") }
-        assertEquals(HttpStatusCode.BadRequest, neither.status)
-        assertEquals(listOf("nombreMostrar" to "REQUIRED"), issuesOf(neither.bodyAsText()))
+        assertEquals(HttpStatusCode.OK, neither.status, neither.bodyAsText())
+        assertTrue("accountStatus" in Json.parseToJsonElement(neither.bodyAsText()).jsonObject)
         assertEquals(1, sent.count { it.method == "PATCH" }, "sin nombre no se escribe nada")
+        val blank = client.patch(path) { contentType(ContentType.Application.Json); setBody("""{"nombreMostrar":"   "}""") }
+        assertEquals(HttpStatusCode.BadRequest, blank.status)
+        assertEquals(listOf("nombreMostrar" to "REQUIRED"), issuesOf(blank.bodyAsText()))
+        assertEquals(1, sent.count { it.method == "PATCH" }, "un nombre vacio tampoco escribe")
     }
 }

@@ -6,7 +6,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 
@@ -166,17 +165,6 @@ class UserPresentationTest {
     }
 
     // --- Paginación --------------------------------------------------------
-
-    @Test
-    fun conLaPaginaLlenaSeAvisaDeQuePuedeHaberMas() {
-        // El cliente no pide páginas siguientes ni lee el total del backend, así
-        // que 50 filas NO son «todos los usuarios».
-        assertNull(userListTruncationNote(49))
-
-        val aviso = userListTruncationNote(USER_PAGE_LIMIT)
-        assertNotNull(aviso)
-        assertTrue(aviso.contains("$USER_PAGE_LIMIT"))
-    }
 
     @Test
     fun elRecuentoHablaDeUsuariosCargadosNoDelTotalDelSistema() {

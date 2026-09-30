@@ -33,7 +33,9 @@
 --
 -- LOCKING
 --   Function DDL only (catalog locks). Runtime: one row lock (SELECT ... FOR UPDATE) on the caller's own
---   solicitudes_eliminacion_cuenta row for the duration of the RPC. lock_timeout 5s: fails fast, retry.
+--   solicitudes_eliminacion_cuenta row for the duration of the RPC. The `set local lock_timeout = '5s'` below
+--   applies to the DDL of THIS migration only (it ends at commit and the function carries no setting), so the
+--   runtime row lock waits up to statement_timeout, not 5s (MASTER3-DB-003).
 --
 -- DATA LOSS
 --   None.

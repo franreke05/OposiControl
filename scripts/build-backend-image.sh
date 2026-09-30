@@ -5,10 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ -n "$(git status --porcelain)" ]; then
-  echo "ERROR: arbol de trabajo con cambios o archivos sin rastrear (installDist compilaria codigo no versionado); la etiqueta SHA no identificaria la imagen." >&2
-  exit 1
-fi
+bash scripts/assert-clean-tree.sh
 SHA="$(git rev-parse --short=12 HEAD)"
 IMAGE="oposicontrol-backend"
 

@@ -18,6 +18,7 @@ jobs:
         with: { persist-credentials: false }
       - run: bash scripts/verify-ops-config.sh
       - run: bash scripts/verify-ops-config.test.sh
+      - run: bash scripts/assert-clean-tree.test.sh
   # MASTER-SEC-014 / MASTER2-CICD-001: SCA del grafo RESUELTO de runtimeClasspath (BOMs, alias del catalogo y transitivas)
   # contra OSV; falla si el arbol no se puede interpretar o OSV no responde (sin secretos, sin dependencias nuevas).
   dependency-audit:
@@ -34,7 +35,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
       - run: node --test scripts/osv-audit.test.mjs
       - run: ./gradlew :backend:ktor:dependencies --configuration runtimeClasspath -q > "$RUNNER_TEMP/runtime-deps.txt"
+      # MASTER3-CICD-008: el self-test depende de api.osv.dev en vivo (flake); es informativo y NO bloquea. La auditoria real
+      # de la linea siguiente sigue siendo fail-closed y el parser tiene su prueba unitaria sin red arriba.
       - run: node scripts/osv-audit.mjs --self-test
+        continue-on-error: true
       - run: node scripts/osv-audit.mjs "$RUNNER_TEMP/runtime-deps.txt"
   openapi-lint:
     runs-on: ubuntu-latest

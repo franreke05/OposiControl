@@ -69,9 +69,8 @@ private enum class AccountFilter(val label: String) {
  * - El tipo de cuenta dice **Registrado/Invitado** y no Activo/Bloqueado. No existe
  *   bloqueo editable desde el panel: el estado de cuenta se muestra en su pastilla. Ver [USER_ACCOUNT_STATUS_READ_ONLY_NOTE].
  *
- * No hay paginación de cliente: el backend sirve el catálogo paginado de 50 en 50 y
- * la pantalla enseña las filas cargadas y dice que son las primeras. Ver
- * [userListTruncationNote].
+ * El cliente lee todas las páginas del backend (`UsersApi.getUsers`), así que la lista
+ * es el censo completo y no lleva aviso de truncamiento.
  *
  * Los filtros son los que YA existían —población, cuenta y rol—, con el mismo estado
  * local y la misma lógica; sólo cambia cómo se presentan (selectores en línea en vez
@@ -182,16 +181,6 @@ internal fun UsersListPane(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 ) {
-                    // El aviso de truncamiento va ENCIMA de la lista: debajo no se leía
-                    // nunca, y es justo la corrección de que el catálogo se quedaba en 50
-                    // usuarios sin decirlo.
-                    userListTruncationNote(users.size)?.let { note ->
-                        Text(
-                            text = note,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = tokens.warningInk,
-                        )
-                    }
                     if (filtered.isEmpty()) {
                         EmptyStateCard(
                             title = "Sin resultados",

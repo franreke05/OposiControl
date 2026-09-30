@@ -189,6 +189,12 @@ internal class OposiBotsAuthProblem(
     val code: OposiBotsErrorCode,
     val issues: Set<OposiBotsValidationIssue> = emptySet(),
     val retryAfterSeconds: Long? = null,
+    /**
+     * MASTER3-AUTH-001: `true` SOLO cuando GoTrue dijo explicitamente (401/403 + `error_code` `session_not_found`) que la
+     * sesion del bearer ya no existe. El estado mapeado (401) no basta: tambien lo producen 400/404/422, una apikey
+     * mala o un 403 ajeno a la sesion.
+     */
+    val upstreamSessionGone: Boolean = false,
 ) : RuntimeException(code.name) {
     /**
      * Codigo canonico (SLICE 0): Validation->VALIDATION,
@@ -229,6 +235,10 @@ internal class OposiBotsAuthProblem(
 
         fun authentication() =
             OposiBotsAuthProblem(HttpStatusCode.Unauthorized, OposiBotsErrorCode.AuthenticationRequired)
+
+        /** Igual que [authentication] hacia el cliente; marca que GoTrue confirmo que la sesion ya no existe. */
+        fun sessionGone() =
+            OposiBotsAuthProblem(HttpStatusCode.Unauthorized, OposiBotsErrorCode.AuthenticationRequired, upstreamSessionGone = true)
 
         fun accessDenied() =
             OposiBotsAuthProblem(HttpStatusCode.Forbidden, OposiBotsErrorCode.AccessDenied)

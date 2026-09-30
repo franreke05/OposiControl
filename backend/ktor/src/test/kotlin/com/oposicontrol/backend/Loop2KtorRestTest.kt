@@ -94,13 +94,24 @@ class Loop2KtorRestTest {
 
     // ------------------------------------------------------------------ MASTER2-API-001
 
-    private fun patchResponder(current: String?, written: String = "[${perfil("Ada Nueva")}]"): (String) -> V1StubResponse = { uri ->
+    private fun patchResponder(
+        current: String?,
+        written: String = "[${perfil("Ada Nueva")}]",
+        vanishAfterFirstRead: Boolean = false,
+    ): (String) -> V1StubResponse {
+        val reads = java.util.concurrent.atomic.AtomicInteger()
+        return { uri -> patchResponse(uri, if (vanishAfterFirstRead && reads.get() > 0) null else current, written, reads) }
+    }
+
+    private fun patchResponse(uri: String, current: String?, written: String, reads: java.util.concurrent.atomic.AtomicInteger): V1StubResponse =
         when {
-            "/rest/v1/perfiles_usuario" in uri && "select=" in uri -> V1StubResponse(200, if (current == null) "[]" else "[$current]")
+            "/rest/v1/perfiles_usuario" in uri && "select=" in uri -> {
+                reads.incrementAndGet()
+                V1StubResponse(200, if (current == null) "[]" else "[$current]")
+            }
             "/rest/v1/perfiles_usuario" in uri -> V1StubResponse(200, written)
             else -> V1StubResponse(200, "[]")
         }
-    }
 
     private suspend fun io.ktor.client.HttpClient.patchUser(body: String): HttpResponse =
         patch("/api/v1/admin/usuarios/$u1") { contentType(ContentType.Application.Json); setBody(body) }
@@ -141,7 +152,9 @@ class Loop2KtorRestTest {
     @Test
     fun patchWhoseRowVanishedBetweenReadAndWriteIs404AndUnaudited() = testApplication {
         val sent = CopyOnWriteArrayList<Sent>()
-        application { adminModule(sent, patchResponder(perfil("Ada"), written = "[]")) }
+        // MASTER3-API-004 (cambio DELIBERADO del stub): la escritura es condicionada y 0 filas ya no implica "no existe"
+        // (puede ser otra version); se relee. "Desaparecio" = la relectura tampoco la encuentra.
+        application { adminModule(sent, patchResponder(perfil("Ada"), written = "[]", vanishAfterFirstRead = true)) }
         val response = client.patchUser("""{"nombreMostrar":"Ada Nueva"}""")
         assertEquals(HttpStatusCode.NotFound, response.status)
         assertTrue(sent.audits().isEmpty(), "sin fila escrita no hay auditoria")
@@ -160,7 +173,15 @@ class Loop2KtorRestTest {
     @Test
     fun aRealChangeWritesActualizadoEnAndAuditsBeforeAndAfter() = testApplication {
         val sent = CopyOnWriteArrayList<Sent>()
-        application { adminModule(sent, patchResponder(perfil("Ada"))) }
+        // MASTER3-API-001: el 200 relee el perfil tras escribir; el stub devuelve el nombre nuevo solo despues del PATCH.
+        var patched = false
+        val base = patchResponder(perfil("Ada"))
+        application {
+            adminModule(sent) { uri ->
+                if ("/rest/v1/perfiles_usuario" in uri && "select=" !in uri) patched = true
+                if (patched && "/rest/v1/perfiles_usuario" in uri && "select=" in uri) V1StubResponse(200, "[${perfil("Ada Nueva")}]") else base(uri)
+            }
+        }
         val response = client.patchUser("""{"nombreMostrar":"  Ada Nueva "}""")
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("Ada Nueva", Json.parseToJsonElement(response.bodyAsText()).jsonObject["data"]!!.jsonObject["fullName"]!!.jsonPrimitive.content)
@@ -278,6 +299,7 @@ class Loop2KtorRestTest {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
             installRequestCorrelation()
             installBackendStatusPages()
+            installRequestBodyLimit()
             routing { post("/echo") { reached++; call.respond(call.receiveText().length.toString()) } }
         }
         val ok = client.post("/echo") { contentType(ContentType.Application.Json); setBody("x".repeat(1024)) }
@@ -294,10 +316,32 @@ class Loop2KtorRestTest {
     }
 
     @Test
+    fun installingTheStatusPagesAloneDoesNotSilentlyInstallTheBodyCap() = testApplication {
+        // MASTER3-OBS-003: el tope de cuerpo es una instalacion explicita (module()/configureConsumerAuthOnly), no un efecto
+        // lateral de installBackendStatusPages().
+        application {
+            installRequestCorrelation()
+            installBackendStatusPages()
+            routing { post("/echo") { call.respond("ok") } }
+        }
+        val big = client.post("/echo") { contentType(ContentType.Application.Json); setBody("x".repeat((REQUEST_BODY_MAX_BYTES + 1).toInt())) }
+        assertEquals(HttpStatusCode.OK, big.status)
+    }
+
+    @Test
+    fun observabilityEnvironmentUsesTheSingleAppEnvironmentResolver() {
+        // MASTER3-OBS-003: los logs y Sentry no pueden discrepar (antes logs "unknown" y Sentry "production" con APP_ENV vacio).
+        assertEquals(AppEnvironment.fromSystemEnvironment(), ObservabilityConfig.environment)
+        assertEquals("production", sentryEnvironment { null })
+        assertEquals("staging", sentryEnvironment { if (it == "APP_ENV") " Staging " else null })
+    }
+
+    @Test
     fun multipartUploadsAreOutsideTheGlobalCapBecauseTheirRoutesBoundTheirOwnReads() = testApplication {
         application {
             installRequestCorrelation()
             installBackendStatusPages()
+            installRequestBodyLimit()
             routing { post("/upload") { call.respond("ok") } }
         }
         val response = client.post("/upload") {
@@ -325,12 +369,14 @@ class Loop2KtorRestTest {
             AppEventoRequest(nombreEvento = "ok", occurredEn = "ayer por la tarde", idempotencyKey = "k"),
             AppEventoRequest(nombreEvento = "ok", occurredEn = "2026-09-30T10:00:00Z" + "0".repeat(EVENT_TEXT_MAX), idempotencyKey = "k"),
             AppEventoRequest(nombreEvento = "ok", especialidadId = "no-uuid", idempotencyKey = "k"),
+            // MASTER3-API-005: entidadId viaja como uuid a la RPC; un no-UUID se rechaza aqui, no como 422 de Postgres.
+            AppEventoRequest(nombreEvento = "ok", entidadId = "exam-1", idempotencyKey = "k"),
         ).forEach { request -> assertFailsWith<IllegalArgumentException>(request.toString().take(90)) { gateway.registrarEvento(u1, request) } }
         assertTrue(sent.isEmpty(), "nada sale hacia Supabase")
 
         // Formas validas: Z, con offset, y sin fecha (la pone el servidor).
         listOf("2026-09-30T10:00:00Z", "2026-09-30T12:00:00+02:00", null).forEach { at ->
-            assertEquals("ev-1", gateway.registrarEvento(u1, AppEventoRequest(nombreEvento = "ok", occurredEn = at, entidadId = "exam-1", idempotencyKey = "k")))
+            assertEquals("ev-1", gateway.registrarEvento(u1, AppEventoRequest(nombreEvento = "ok", occurredEn = at, entidadId = "44444444-4444-4444-8444-444444444444", idempotencyKey = "k")))
         }
     }
 
@@ -371,8 +417,9 @@ class Loop2KtorRestTest {
             assertEquals(expectedDeprecation, response.headers[LegacyHeaders.DEPRECATION], "$method $path")
             links[path] = response.headers[HttpHeaders.Link]
         }
-        assertEquals("</api/v1/app/examenes>; rel=\"successor-version\"", links["/api/v1/app/examenes/$attempt/iniciar"])
-        assertEquals("</api/v1/app/intentos>; rel=\"successor-version\"", links["/api/v1/app/intentos/$attempt/responder"])
+        // MASTER3-API-003: las sucesoras (Slice 3) aun no existen como ruta: ninguna ruta APP-* anuncia un Link.
+        assertTrue(links.values.all { it == null }, links.toString())
+        assertTrue(LegacyEndpoints.SLICE_1_APP.all { it.successorPath == null })
         assertNull(links["/api/v1/app/home"], "sin sucesora congelada no se anuncia un Link")
         assertTrue(LegacyEndpoints.SLICE_1_APP.all { it.sunsetAt == null })
         assertEquals(LegacyEndpoints.SLICE_1_APP.size, LegacyEndpoints.SLICE_1_APP.map { it.endpointId }.toSet().size)

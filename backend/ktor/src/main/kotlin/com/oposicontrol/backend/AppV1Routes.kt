@@ -156,6 +156,12 @@ internal const val JWKS_MAX_AGE_MS = 10 * 60 * 1_000L
 internal val JWKS_FETCH_TIMEOUT: java.time.Duration = java.time.Duration.ofSeconds(4)
 
 /**
+ * MASTER3-AUTH-006: espera tras un refresco POR CADUCIDAD fallido antes de volver a intentarlo en el camino de una
+ * peticion (fail-soft: mientras tanto se sirven las claves en cache). No afecta al refresco por `kid` desconocido.
+ */
+internal const val JWKS_STALE_REFRESH_BACKOFF_MS = 60_000L
+
+/**
  * Verifica la firma ES256 contra el JWKS público y devuelve el `sub`.
  *
  * [subFrom] BLOQUEA cuando tiene que descargar el JWKS (arranque, `kid` nuevo o
@@ -186,6 +192,9 @@ class SupabaseJwtVerifier(
     @Volatile private var fetchedAt = 0L
     @Volatile private var lastAttemptAt = 0L
     @Volatile private var lastFailure: java.io.IOException? = null
+
+    /** MASTER3-AUTH-006: hasta cuando se salta el refresco POR CADUCIDAD tras un fallo (el de `kid` desconocido no). */
+    @Volatile private var staleRefreshBackoffUntil = 0L
 
     /**
      * RB-1-06: un JWKS que no se puede obtener o leer (red, timeout, HTTP no 2xx, cuerpo que no es
@@ -232,12 +241,16 @@ class SupabaseJwtVerifier(
      */
     private fun refreshIfStale() {
         if (fetchedAt == 0L || clock() - fetchedAt < JWKS_MAX_AGE_MS) return
+        // MASTER3-AUTH-006: tras un refresco por caducidad fallido no se vuelve a intentar hasta pasado el backoff;
+        // antes, con el JWKS caido, una peticion de usuario cada JWKS_MIN_REFETCH_MS pagaba hasta fetchTimeout.
+        if (clock() < staleRefreshBackoffUntil) return
         // MASTER2-AUTH-004: no bloquear peticiones con token valido detras de un refresco en curso.
         if (!refreshLock.tryLock()) return
         try {
             refreshLocked()
         } catch (_: java.io.IOException) {
             // Fail-soft: se siguen usando las claves ya verificadas.
+            staleRefreshBackoffUntil = clock() + JWKS_STALE_REFRESH_BACKOFF_MS
         } finally {
             refreshLock.unlock()
         }
@@ -922,6 +935,8 @@ class AppV1Gateway private constructor(
             }
         }
         req.especialidadId?.validatedUuid("especialidadId")
+        // MASTER3-API-005: `p_entidad_id` es uuid en la RPC; un no-UUID llegaria a Postgres (22P02 -> 422) en vez de 400.
+        req.entidadId?.validatedUuid("entidadId")
         require(req.propiedades.toString().toByteArray(Charsets.UTF_8).size <= EVENT_PROPERTIES_MAX_BYTES) {
             "propiedades supera el tamaño maximo."
         }

@@ -96,7 +96,7 @@ class KtorRestPart3AuditTest {
         assertEquals("</api/v1/admin/noticias>; rel=\"successor-version\"", LegacyHeaders.successorLink("/api/v1/admin/noticias/{noticiaId}"))
         assertEquals("</api/v1/app/me>; rel=\"successor-version\"", LegacyHeaders.successorLink("/api/v1/app/me"))
         (LegacyEndpoints.SLICE_0 + LegacyEndpoints.SLICE_1).forEach {
-            val link = LegacyHeaders.successorLink(it.successorPath)
+            val link = LegacyHeaders.successorLink(it.successorPath!!)
             assertFalse('{' in link || '}' in link, "${it.endpointId}: $link")
         }
     }

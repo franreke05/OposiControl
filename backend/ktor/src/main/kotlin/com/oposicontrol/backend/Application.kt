@@ -73,8 +73,8 @@ private fun initializeSentry() {
     val dsn = System.getenv("SENTRY_DSN").orEmpty().trim()
     if (dsn.isBlank()) return
 
-    // MASTER2-OBS-005: misma resolucion que `ObservabilityConfig` (SENTRY_ENVIRONMENT, luego APP_ENV via AppEnvironment);
-    // antes caia a "development" aunque la imagen de produccion fija APP_ENV=production.
+    // MASTER2-OBS-005 / MASTER3-OBS-003: SENTRY_ENVIRONMENT explicito, si no [AppEnvironment] (APP_ENV, falla cerrado), que es
+    // tambien lo que usa `ObservabilityConfig.environment` para los logs: un solo resolvedor.
     val environment = sentryEnvironment { System.getenv(it) }
 
     val tracesSampleRate = System.getenv("SENTRY_TRACES_SAMPLE_RATE")
@@ -460,9 +460,6 @@ internal fun Application.installBackendStatusPages() {
             )
         }
     }
-    // MASTER2-SEC-002: tope global de cuerpo (no multipart) junto al traductor de errores: cualquier modulo que monte
-    // `installBackendStatusPages()` lo hereda y el 413 sale con el sobre canonico.
-    installRequestBodyLimit()
 }
 
 fun Application.module() {
@@ -517,6 +514,9 @@ fun Application.module() {
     // estrategicos, health/readiness. No toca OposiBot -- ver KDoc del archivo.
     installRequestCorrelation()
     installBackendStatusPages()
+    // MASTER2-SEC-002 / MASTER3-OBS-003: tope global de cuerpo (no multipart), explicito aqui (ya no es un efecto lateral de
+    // `installBackendStatusPages()`); el 413 sale con el sobre canonico de StatusPages.
+    installRequestBodyLimit()
     install(Authentication) {
         gatewayBearerAuth(appEnv, jwtVerifier::subFrom)
     }
@@ -837,6 +837,7 @@ internal fun Application.configureConsumerAuthOnly(runtime: OposiBotsAuthRuntime
     // SLICE 1: las rutas canonicas de perfil responden con el sobre canonico (StatusPages) y X-Request-Id.
     installRequestCorrelation()
     installBackendStatusPages()
+    installRequestBodyLimit()
     routing {
         prometheusMetricsRoute()
         healthLiveRoute()

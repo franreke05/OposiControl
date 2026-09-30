@@ -96,9 +96,13 @@ class SupabaseOposiBotsAuthGatewayTest {
         })
         val gateway = SupabaseOposiBotsAuthGateway(testAuthConfiguration(), Json { ignoreUnknownKeys = true }, client)
 
-        assertFailsWith<OposiBotsAuthProblem> {
+        // MASTER3-AUTH-002: un rechazo de la contraseña por GoTrue es 400 VALIDATION/INVALID_PASSWORD, no 401.
+        val problem = assertFailsWith<OposiBotsAuthProblem> {
             gateway.register(OposiBotsRegisterRequest(email = "x@example.com", password = "safe-password-12"), context)
         }
+        assertEquals(HttpStatusCode.BadRequest, problem.status)
+        assertEquals(CanonicalErrorCode.VALIDATION, problem.canonicalCode())
+        assertEquals(setOf(OposiBotsValidationIssue.INVALID_PASSWORD), problem.issues)
     }
 
     @Test

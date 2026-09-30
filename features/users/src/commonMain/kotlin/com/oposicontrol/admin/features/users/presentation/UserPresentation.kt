@@ -323,38 +323,14 @@ fun userUnavailableCapabilities(): List<UserCapability> =
         .sortedBy { it.level.ordinal }
 
 // ---------------------------------------------------------------------------
-// Paginación: cuántos usuarios se están viendo de verdad
+// Recuento: cuántos usuarios se están viendo de verdad
 // ---------------------------------------------------------------------------
-
-/**
- * Tamaño de página que sirve el backend cuando no se le pide otro.
- *
- * `AdminPageRequest.DEFAULT_LIMIT`. El cliente no envía `limit` ni `offset` y
- * descarta el `total` que el backend sí devuelve, así que la lista se queda en
- * los primeros [USER_PAGE_LIMIT] usuarios **sin decirlo**: con más de cincuenta,
- * el contador «N usuarios» de la pantalla anterior era sencillamente falso.
- */
-const val USER_PAGE_LIMIT: Int = 50
-
-/**
- * Aviso de truncamiento, o null si no hace falta.
- *
- * Se enseña cuando la lista cargada llega justo al tope, que es la señal de que
- * es una página y no el censo completo.
- */
-fun userListTruncationNote(loadedCount: Int): String? =
-    if (loadedCount < USER_PAGE_LIMIT) {
-        null
-    } else {
-        "Se están mostrando los primeros $USER_PAGE_LIMIT usuarios. El panel todavía no " +
-            "puede pedir las páginas siguientes, así que puede haber más."
-    }
 
 /**
  * Recuento honesto de lo que hay debajo de los filtros.
  *
- * Habla de «de los N cargados» y no «de N usuarios» a propósito: N es el tamaño
- * de la página, no el del sistema.
+ * Habla de «de los N cargados»: N son los usuarios que el cliente ha leído (todas
+ * las páginas del backend), y los filtros los reducen a un subconjunto de ellos.
  */
 fun userCountLabel(shown: Int, loaded: Int): String = when {
     loaded == 0 -> "Sin usuarios"

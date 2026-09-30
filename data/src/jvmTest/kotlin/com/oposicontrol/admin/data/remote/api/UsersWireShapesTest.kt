@@ -30,6 +30,51 @@ class UsersWireShapesTest {
         assertEquals(3, u.ticketsBalance)
     }
 
+    // MASTER3-OC-001: el servidor de produccion omitia `isActive` cuando era true (Json sin encodeDefaults).
+    @Test fun `list legacy row that omits isActive is registered`() {
+        val u = list(
+            """{"data":[{"id":"$id","fullName":"Ana","email":"ana","roleIds":[],"createdAt":"2026-01-01T00:00:00Z"}],
+               "items":[{"id":"$id","username":"ana","roleIds":[],"accountStatus":"activa","createdAt":"2026-01-01T00:00:00Z"}]}""",
+        ).single().toDomain()
+        assertEquals(true, u.isRegistered)
+    }
+
+    @Test fun `list legacy row that emits isActive false is guest and a row without legacy stays unknown`() {
+        val users = list(
+            """{"data":[{"id":"$id","isActive":false},{"id":"$id2"}],
+               "items":[{"id":"$id2","roleIds":[],"accountStatus":"activa","createdAt":"x"},{"id":"33333333-3333-4333-8333-333333333333","roleIds":[],"accountStatus":"activa","createdAt":"x"}]}""",
+        ).map { it.toDomain() }
+        assertEquals(false, users[0].isRegistered)
+        assertEquals(true, users[1].isRegistered)
+        val itemsOnly = list("""{"items":[{"id":"$id","roleIds":[],"accountStatus":"activa","createdAt":"x"}]}""").single().toDomain()
+        assertNull(itemsOnly.isRegistered, "sin fila legacy no se fabrica")
+    }
+
+    @Test fun `detail legacy data that omits isActive is registered and canonical alone stays unknown`() {
+        val u = one(
+            """{"id":"$id","roleIds":[],"accountStatus":"activa","createdAt":"2026-01-01T00:00:00Z",
+               "data":{"id":"$id","fullName":"Ana","email":"ana","roleIds":[],"createdAt":"2026-01-01T00:00:00Z"}}""",
+        ).toDomain()
+        assertEquals(true, u.isRegistered)
+    }
+
+    // MASTER3-OC-004: el legacy ya no fabrica 0 sin cartera, asi que "Sin dato" (null) es alcanzable.
+    @Test fun `list without wallet on both payloads is null not zero`() {
+        val u = list(
+            """{"data":[{"id":"$id","fullName":"Ana","email":"ana","roleIds":[],"createdAt":"x"}],
+               "items":[{"id":"$id","roleIds":[],"accountStatus":"activa","createdAt":"x"}]}""",
+        ).single().toDomain()
+        assertNull(u.ticketsBalance)
+    }
+
+    @Test fun `list with wallet keeps a genuine zero`() {
+        val u = list(
+            """{"data":[{"id":"$id","isActive":true,"ticketsBalance":0}],
+               "items":[{"id":"$id","roleIds":[],"accountStatus":"activa","createdAt":"x","ticketsBalance":0}]}""",
+        ).single().toDomain()
+        assertEquals(0, u.ticketsBalance)
+    }
+
     @Test fun `legacy only list never reports active`() {
         val u = list("""{"data":[{"id":"$id","fullName":"Ana","email":"a@x.es","roleIds":[],"isActive":true,"createdAt":"2026-01-01T00:00:00Z"}]}""").single().toDomain()
         assertEquals(AccountStatus.UNKNOWN, u.accountStatus)

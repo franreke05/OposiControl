@@ -15,9 +15,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -38,10 +40,20 @@ import org.slf4j.LoggerFactory
 private val GatewayLogger = LoggerFactory.getLogger("OC-KTOR-AUTH-GATEWAY")
 
 /**
- * MASTER2-AUTH-003: esperas entre reintentos de la lectura de la puerta en refresh (3 intentos, ~1 s de espera total,
- * muy por debajo del timeout de la peticion y de la ventana de reutilizacion de GoTrue, 10 s por defecto).
+ * MASTER2-AUTH-003: esperas entre reintentos de la lectura de la puerta en refresh (3 intentos, ~1 s de espera total).
+ * La duracion TOTAL la acotan [REFRESH_GATE_ATTEMPT_TIMEOUT_MS] y [REFRESH_GATE_DEADLINE_MS] (MASTER3-AUTH-005), por
+ * debajo del timeout del cliente (15 s) y de la ventana de reutilizacion de GoTrue (10 s por defecto).
  */
 internal val REFRESH_GATE_RETRY_DELAYS_MS: List<Long> = listOf(250L, 750L)
+
+/**
+ * MASTER3-AUTH-005: las esperas solas no acotaban nada: cada intento podia durar hasta el timeout del cliente HTTP
+ * (15 s), ~46 s en total con un PostgREST lento, mas que el timeout del cliente movil (15 s), que reintentaba entonces
+ * con un refresh token ya rotado. Ahora cada lectura tiene su propio limite y la puerta entera un plazo global; al
+ * agotarse se trata como fallo transitorio (503, nunca fail-open).
+ */
+internal const val REFRESH_GATE_ATTEMPT_TIMEOUT_MS: Long = 1_500L
+internal const val REFRESH_GATE_DEADLINE_MS: Long = 5_000L
 
 internal data class OposiBotsAuthContext(
     val requestId: String,
@@ -95,7 +107,7 @@ internal class SupabaseOposiBotsAuthGateway(
         if (response.status.value == 422 && response.error().normalizedCode in DUPLICATE_SIGNUP_CODES) {
             return OposiBotsRegisterResponse()
         }
-        if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = false)
+        if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = false, purpose = AuthPurpose.PASSWORD_SET)
         return OposiBotsRegisterResponse()
     }
 
@@ -179,6 +191,15 @@ internal class SupabaseOposiBotsAuthGateway(
             context = context,
         )
         if (!response.status.isSuccessStatus() && response.status != HttpStatusCode.NoContent) {
+            // MASTER3-AUTH-001: solo un 401/403 con `error_code=session_not_found` prueba que la sesion ya no existe.
+            // Cualquier otro fallo (400/404/422, apikey mala, un 403 por otra causa) se mapea como antes y NO lo marca.
+            if (
+                (response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.Forbidden) &&
+                response.error().normalizedCode in SESSION_GONE_CODES
+            ) {
+                GatewayLogger.info("logout: upstream reports the session no longer exists status={}", response.status.value)
+                throw OposiBotsAuthProblem.sessionGone()
+            }
             throw mapCredentialError(response)
         }
     }
@@ -232,7 +253,9 @@ internal class SupabaseOposiBotsAuthGateway(
         if (!updated.status.isSuccessStatus()) {
             // MASTER-AUTH-006: la contraseña NO cambio -> solo muere la sesion de recuperacion, no las demas.
             revokeMintedSession(recovery.accessToken, context, scope = "local")
-            throw mapCredentialError(updated)
+            // MASTER3-AUTH-002: /verify ya consumio el token de recuperacion (un solo uso); un rechazo de la contraseña por
+            // GoTrue (weak/same_password) es 400 VALIDATION, no 401, y el cliente debe pedir un enlace nuevo.
+            throw mapCredentialError(updated, purpose = AuthPurpose.PASSWORD_SET)
         }
         // MASTER-AUTH-006: contraseña cambiada -> se revocan TODAS las sesiones y refresh tokens del usuario (incluida
         // la de recuperacion). Mejor esfuerzo: la contraseña ya cambio, un fallo aqui no convierte el reset en error.
@@ -357,7 +380,7 @@ internal class SupabaseOposiBotsAuthGateway(
             path = "/rest/v1/rpc/oposibots_claim_oauth_credential",
             body = buildJsonObject {
                 put("p_provider", provider)
-                put("p_credential_hash", idToken.sha256())
+                put("p_credential_hash", idToken.oauthCredentialHash())
                 put("p_expires_at", idToken.jwtExpiry().toString())
             },
             accessToken = null,
@@ -489,10 +512,37 @@ internal class SupabaseOposiBotsAuthGateway(
         context: OposiBotsAuthContext,
         retryDelaysMillis: List<Long>,
     ): CanonicalUserIdentity? {
+        if (retryDelaysMillis.isEmpty()) return findProfile(userId, context)
+        // MASTER3-AUTH-005: plazo global. `withTimeoutOrNull` solo absorbe SU propio timeout: una cancelacion externa
+        // (cliente desconectado) se sigue propagando como cancelacion. Corre en Dispatchers.IO para que plazos y esperas
+        // sean SIEMPRE de reloj real, sea cual sea el dispatcher de quien llama.
+        val read = withContext(Dispatchers.IO) {
+            withTimeoutOrNull(REFRESH_GATE_DEADLINE_MS) {
+                GateRead(retryingGateRead(userId, context, retryDelaysMillis))
+            }
+        }
+        if (read == null) {
+            GatewayLogger.warn("account gate read exceeded its {} ms deadline requestId={}", REFRESH_GATE_DEADLINE_MS, context.requestId)
+            throw OposiBotsAuthProblem.unavailable()
+        }
+        return read.identity
+    }
+
+    /** Envoltorio: distingue "sin fila" (`identity == null`) de "se agoto el plazo" (`withTimeoutOrNull` -> null). */
+    private class GateRead(val identity: CanonicalUserIdentity?)
+
+    private suspend fun retryingGateRead(
+        userId: CanonicalUserId,
+        context: OposiBotsAuthContext,
+        retryDelaysMillis: List<Long>,
+    ): CanonicalUserIdentity? {
         var attempt = 0
         while (true) {
             try {
-                return findProfile(userId, context)
+                // Limite POR INTENTO: un intento lento cuenta como fallo transitorio y deja sitio al reintento.
+                val read = withTimeoutOrNull(REFRESH_GATE_ATTEMPT_TIMEOUT_MS) { GateRead(findProfile(userId, context)) }
+                    ?: throw OposiBotsAuthProblem.unavailable()
+                return read.identity
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (denied: BackendDomainException) {
@@ -651,7 +701,7 @@ internal class SupabaseOposiBotsAuthGateway(
         }
     }
 
-    private enum class AuthPurpose { GENERIC, LOGIN, EXCHANGE }
+    private enum class AuthPurpose { GENERIC, LOGIN, EXCHANGE, PASSWORD_SET }
 
     private fun mapCredentialError(
         response: AuthResponse,
@@ -674,6 +724,14 @@ internal class SupabaseOposiBotsAuthGateway(
                 CanonicalErrorCode.INVALID_CREDENTIALS.exception()
             purpose == AuthPurpose.LOGIN && error.normalizedCode == "email_not_confirmed" ->
                 CanonicalErrorCode.EMAIL_UNVERIFIED.exception()
+            // MASTER3-AUTH-002: register y reset envian una contraseña nueva; GoTrue la rechaza con 400/422 (politica,
+            // HIBP, misma contraseña). Es un error de validacion del cliente, no de autenticacion.
+            purpose == AuthPurpose.PASSWORD_SET && (response.status.value == 400 || response.status.value == 422) &&
+                error.normalizedCode in REJECTED_PASSWORD_CODES ->
+                OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_PASSWORD)
+            purpose == AuthPurpose.PASSWORD_SET && (response.status.value == 400 || response.status.value == 422) &&
+                error.normalizedCode == "email_address_invalid" ->
+                OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
             purpose == AuthPurpose.EXCHANGE -> CanonicalErrorCode.AUTH_CODE_INVALID.exception()
             else -> OposiBotsAuthProblem.authentication()
         }
@@ -801,9 +859,31 @@ private fun String.jwtPayload(): JsonObject {
         .getOrElse { throw OposiBotsAuthProblem.authentication() }
 }
 
+/**
+ * MASTER3-AUTH-003: huella del replay guard OAuth. Se hashea SOLO la entrada firmada (`header.payload`), nunca el token
+ * crudo: el segmento de firma es maleable (bits sobrantes del ultimo caracter base64url que los decodificadores no
+ * estrictos ignoran; en ECDSA ademas `(r, n-s)`), asi que el mismo id_token con otra firma "equivalente" daba otro hash
+ * y pasaba la unicidad `(provider, credential_hash)`. `header.payload` es exactamente lo que la firma cubre: cualquier
+ * cambio ahi invalida la firma en GoTrue. Un token sin 3 segmentos no vacios se rechaza (401).
+ */
+internal fun String.oauthCredentialHash(): String {
+    val parts = split('.')
+    if (parts.size != 3 || parts.any(String::isEmpty)) throw OposiBotsAuthProblem.authentication()
+    return "${parts[0]}.${parts[1]}".sha256()
+}
+
 private fun String.sha256(): String =
     MessageDigest.getInstance("SHA-256")
         .digest(toByteArray(StandardCharsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
 
 private val DUPLICATE_SIGNUP_CODES = setOf("user_already_exists", "email_exists")
+
+/** MASTER3-AUTH-002: codigos con los que GoTrue rechaza la contraseña nueva (register/reset). */
+private val REJECTED_PASSWORD_CODES = setOf("weak_password", "same_password", "validation_failed")
+
+/**
+ * MASTER3-AUTH-001: `error_code` con el que GoTrue dice que la sesion del JWT ya no existe (logout previo). `bad_jwt`
+ * NO entra: tambien cubre firma invalida o token caducado, que no prueban nada sobre las demas sesiones.
+ */
+private val SESSION_GONE_CODES = setOf("session_not_found")

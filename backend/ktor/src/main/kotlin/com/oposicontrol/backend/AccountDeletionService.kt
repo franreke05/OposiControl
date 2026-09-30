@@ -144,8 +144,9 @@ internal class AccountDeletionService(
             throw cancelled
         } catch (failure: Exception) {
             if (retry && failure.meansSessionAlreadyGone()) {
-                // MASTER2-AUTH-009: en un REINTENTO, GoTrue ya no reconoce la sesion (401/403): el logout anterior (o
-                // cualquier otro) ya la revoco. Anotar `fallida` aqui no convergeria nunca.
+                // MASTER2-AUTH-009: en un REINTENTO, GoTrue dice explicitamente que la sesion ya no existe
+                // (`session_not_found`, MASTER3-AUTH-001): el logout anterior ya la revoco. Anotar `fallida` aqui no
+                // convergeria nunca. Cualquier otro 4xx sigue siendo `fallida`.
                 Logger.info("session already revoked on retry requestId={}", context.requestId)
                 REVOKE_DONE
             } else {
@@ -170,12 +171,13 @@ internal class AccountDeletionService(
         }
     }
 
-    /** 401/403 del proveedor: el bearer ya no corresponde a una sesion viva. */
-    private fun Exception.meansSessionAlreadyGone(): Boolean = when (this) {
-        is OposiBotsAuthProblem -> status == io.ktor.http.HttpStatusCode.Unauthorized || status == io.ktor.http.HttpStatusCode.Forbidden
-        is BackendDomainException -> status == io.ktor.http.HttpStatusCode.Unauthorized || status == io.ktor.http.HttpStatusCode.Forbidden
-        else -> false
-    }
+    /**
+     * MASTER3-AUTH-001: SOLO cuando el proveedor dijo explicitamente que la sesion del bearer ya no existe
+     * ([OposiBotsAuthProblem.upstreamSessionGone], 401/403 + `session_not_found`). El estado HTTP mapeado no basta:
+     * un 400/422, una apikey mala o un 403 ajeno tambien acaban en 401 y NO prueban que la sesion este revocada; esos
+     * siguen anotando `fallida` para que un reintento posterior vuelva a intentarlo (`hecha` es irreversible).
+     */
+    private fun Exception.meansSessionAlreadyGone(): Boolean = this is OposiBotsAuthProblem && upstreamSessionGone
 
     companion object {
         const val CONFIRMATION_LITERAL = "ELIMINAR"

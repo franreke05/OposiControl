@@ -166,7 +166,7 @@ class LegacyRouteTest {
             LegacyEndpoints.SLICE_0.map { it.endpointId }.toSet(),
         )
         assertTrue(LegacyEndpoints.SLICE_0.all { it.sunsetAt == null })
-        assertTrue(LegacyEndpoints.SLICE_0.all { it.successorPath.startsWith("/api/v1/") })
+        assertTrue(LegacyEndpoints.SLICE_0.all { it.successorPath.orEmpty().startsWith("/api/v1/") })
         assertTrue(LegacyEndpoints.SLICE_0.none { it.endpointId in setOf("EP-124", "EP-218", "EP-192") })
     }
 
@@ -211,7 +211,7 @@ class LegacyRouteTest {
         assertEquals("/api/v1/app/me/onboarding", LegacyEndpoints.EP_218.successorPath)
         assertEquals("/v1/auth/register/profile", LegacyEndpoints.EP_218.legacyPath)
         assertTrue(LegacyEndpoints.SLICE_1.all { it.sunsetAt == null })
-        assertTrue(LegacyEndpoints.SLICE_1.all { it.successorPath.startsWith("/api/v1/") })
+        assertTrue(LegacyEndpoints.SLICE_1.all { it.successorPath.orEmpty().startsWith("/api/v1/") })
         assertTrue(LegacyEndpoints.SLICE_0.map { it.endpointId }.intersect(LegacyEndpoints.SLICE_1.map { it.endpointId }.toSet()).isEmpty())
     }
 }

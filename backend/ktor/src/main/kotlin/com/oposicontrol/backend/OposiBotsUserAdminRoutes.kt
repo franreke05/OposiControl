@@ -13,6 +13,8 @@ import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
@@ -118,16 +120,18 @@ fun Route.oposiBotsUserAdminRoutes(gateway: OposiBotsUserAdminGateway, policy: O
             val requestId = call.ensureRequestId()
             // MASTER2-OBS-006: auditoria de INTENCION antes de mutar (obligatoria: si falla, no se crea nada).
             policy.audit(ACTION_CREATE_INTENT, null, intentDetail(requestId))
-            val created = gateway.createUser(
-                OposiBotsUserAdminCreateRequest(
-                    email = body.email,
-                    password = body.password,
-                    nombre = body.nombre,
-                    apellidos = body.apellidos,
-                    username = body.username,
-                    especialidadRegistro = body.especialidadRegistro,
-                ),
-            )
+            val created = policy.auditingFailure(ACTION_CREATE_FAILED, null, intentDetail(requestId)) {
+                gateway.createUser(
+                    OposiBotsUserAdminCreateRequest(
+                        email = body.email,
+                        password = body.password,
+                        nombre = body.nombre,
+                        apellidos = body.apellidos,
+                        username = body.username,
+                        especialidadRegistro = body.especialidadRegistro,
+                    ),
+                )
+            }
             policy.auditOutcome(ACTION_CREATED, created.authUserId, created.auditDetail(requestId))
             call.respond(HttpStatusCode.Created, OposiBotsUserAdminSingleResponse(created.toResponseDto()))
         }.legacyRoute(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_001)
@@ -137,16 +141,18 @@ fun Route.oposiBotsUserAdminRoutes(gateway: OposiBotsUserAdminGateway, policy: O
             val requestId = call.ensureRequestId()
             // MASTER2-OBS-006: el PATCH tambien se audita (antes no). Intencion obligatoria antes de mutar.
             policy.audit(ACTION_UPDATE_INTENT, null, intentDetail(requestId, legacyId = id, fields = body.changedFields()))
-            val updated = gateway.updateUser(
-                id,
-                OposiBotsUserAdminUpdateRequest(
-                    nombre = body.nombre,
-                    apellidos = body.apellidos,
-                    username = body.username,
-                    especialidadRegistro = body.especialidadRegistro,
-                    perfilCompleto = body.perfilCompleto,
-                ),
-            ) ?: throw OposiBotsUserAdminNotFoundException("Usuario $id no encontrado.")
+            val updated = policy.auditingFailure(ACTION_UPDATE_FAILED, null, intentDetail(requestId, legacyId = id, fields = body.changedFields())) {
+                gateway.updateUser(
+                    id,
+                    OposiBotsUserAdminUpdateRequest(
+                        nombre = body.nombre,
+                        apellidos = body.apellidos,
+                        username = body.username,
+                        especialidadRegistro = body.especialidadRegistro,
+                        perfilCompleto = body.perfilCompleto,
+                    ),
+                ) ?: throw OposiBotsUserAdminNotFoundException("Usuario $id no encontrado.")
+            }
             policy.auditOutcome(ACTION_UPDATED, updated.authUserId, updated.auditDetail(requestId, fields = body.changedFields()))
             call.respond(OposiBotsUserAdminSingleResponse(updated.toResponseDto()))
         }.legacyRoute(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_002)
@@ -167,8 +173,9 @@ fun Route.oposiBotsUserAdminRoutes(gateway: OposiBotsUserAdminGateway, policy: O
             // MASTER2-OBS-006: la baja es IRREVERSIBLE; la auditoria obligatoria va ANTES (si falla, no se borra nada).
             // Antes iba despues: un fallo devolvia 500 tras borrar y el reintento (404) ya nunca la escribia.
             policy.audit(ACTION_DELETE_INTENT, target.authUserId, target.auditDetail(requestId))
-            val deleted = gateway.deleteUser(id)
-            if (!deleted) throw OposiBotsUserAdminNotFoundException("Usuario $id no encontrado.")
+            policy.auditingFailure(ACTION_DELETE_FAILED, target.authUserId, target.auditDetail(requestId)) {
+                if (!gateway.deleteUser(id)) throw OposiBotsUserAdminNotFoundException("Usuario $id no encontrado.")
+            }
             policy.auditOutcome(ACTION_DELETED, target.authUserId, target.auditDetail(requestId))
             call.respond(HttpStatusCode.NoContent)
         }.legacyRoute(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_002)
@@ -218,6 +225,40 @@ private suspend fun OposiBotsUserAdminPolicy.auditOutcome(accion: String, authUs
         )
     }
 }
+
+/**
+ * MASTER3-OBS-002: contrapartida de FALLO de una fila de intencion. Antes, si la mutacion fallaba, la fila
+ * `*_solicitada` quedaba huerfana y ambigua (¿se hizo o no?). Ahora cada intencion termina en `*_ado` o `*_fallida`:
+ * `resultado` = `rechazada` (el gateway respondio que no: no encontrado / error de dominio, nada cambio) o
+ * `desconocido` (transporte, 5xx o cancelacion: pudo o no aplicarse). Mejor esfuerzo como el resultado (ERROR si no
+ * se puede escribir); el error original se relanza siempre tal cual. Corre en NonCancellable: una desconexion del
+ * cliente no deja la intencion sin contrapartida.
+ */
+private suspend fun <T> OposiBotsUserAdminPolicy.auditingFailure(
+    accion: String,
+    authUserId: String?,
+    detalle: JsonObject,
+    mutation: suspend () -> T,
+): T = try {
+    mutation()
+} catch (failure: Throwable) {
+    val resultado = when (failure) {
+        is OposiBotsUserAdminNotFoundException, is BackendDomainException -> "rechazada"
+        else -> "desconocido"
+    }
+    withContext(NonCancellable) {
+        auditOutcome(
+            accion,
+            authUserId,
+            JsonObject(detalle + mapOf("resultado" to JsonPrimitive(resultado), "error" to JsonPrimitive(failure::class.simpleName))),
+        )
+    }
+    throw failure
+}
+
+internal const val ACTION_CREATE_FAILED = "oposibots_usuario_creacion_fallida"
+internal const val ACTION_UPDATE_FAILED = "oposibots_usuario_actualizacion_fallida"
+internal const val ACTION_DELETE_FAILED = "oposibots_usuario_eliminacion_fallida"
 
 internal const val ACTION_CREATE_INTENT = "oposibots_usuario_creacion_solicitada"
 internal const val ACTION_CREATED = "oposibots_usuario_creado"

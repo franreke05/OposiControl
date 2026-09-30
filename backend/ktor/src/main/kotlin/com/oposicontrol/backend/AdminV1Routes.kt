@@ -1133,15 +1133,21 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val userId = call.userPathId()
                 // MASTER-API-016 / MASTER2-API-001: cuerpo canonico estricto `AdminUserPatchRequest`
                 // (`additionalProperties: false`): un campo desconocido (incluido el `fullName` legacy) -> 400 UNKNOWN_FIELD.
-                // `nombreMostrar` se recorta y debe quedar no vacio y <= 100; sin el, 400 REQUIRED (nunca se vacia en silencio).
+                // `nombreMostrar` (opcional, `required: []`) se recorta y, si viene, debe quedar no vacio y <= 100 (nunca se vacia en
+                // silencio); `{}` es un no-op idempotente (MASTER3-API-001). `username` sigue sin soportarse: 400 UNKNOWN_FIELD
+                // (desviacion registrada en ARCHITECTURE_DELTA_S1: D1-25 es TARGET, fuera de SLICE 1).
                 val body = call.receiveCanonicalCommand<AdminUserPatchCommand>()
                 val name = body.nombreMostrar?.trim()
-                    ?: throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.REQUIRED))
-                if (name.isEmpty()) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.REQUIRED))
-                if (name.length > ADMIN_USER_NAME_MAX) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.OUT_OF_RANGE))
-                val saved = gateway.updateUsuario(userId, name)
+                if (name != null) {
+                    if (name.isEmpty()) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.REQUIRED))
+                    if (name.length > ADMIN_USER_NAME_MAX) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.OUT_OF_RANGE))
+                    gateway.updateUsuario(userId, name)
+                        ?: return@patch call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
+                }
+                // MASTER3-API-001: 200 = `AdminUserResponse` (AdminUser canonico + `data` legacy), igual que GET /{id} (D1-23).
+                val user = gateway.getUsuarioAdmin(userId)
                     ?: return@patch call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
-                call.respond(AdminUserResponse(saved))
+                call.respond(user)
             }
             post("/{id}/roles") {
                 // MASTER-API-012: el id de ruta se valida PRIMERO como `UserIdPath` (400 NON_UUID) y sin tocar la base.
@@ -2915,15 +2921,18 @@ private fun AuditoriaRow.toDto() = AdminAuditoriaDto(
 
 // ---------- Usuarios / Roles V1 DTOs (nombres en inglés para compatibilidad con KMP DTO) ----------
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminV1UserDto(
     val id: String,
     val fullName: String = "",
     val email: String = "",
     val roleIds: List<String> = emptyList(),
-    val isActive: Boolean = true,
+    // Sin @EncodeDefault el Json del modulo omite `true` y el cliente no distingue "omitido" de "desconocido".
+    @EncodeDefault val isActive: Boolean = true,
     val createdAt: String = "",
-    val ticketsBalance: Int = 0,
+    // null (omitido) = sin cartera: el panel muestra "Sin dato", nunca un 0 fabricado.
+    val ticketsBalance: Int? = null,
 )
 
 // Moderación del foro (OposiRed) + tickets manuales
@@ -3060,6 +3069,17 @@ data class AdminUserPatchCommand(val nombreMostrar: String? = null)
 
 /** `maxLength` de `AdminUserPatchRequest.nombreMostrar` en profiles.yaml. */
 internal const val ADMIN_USER_NAME_MAX = 100
+
+/** `errorCode` de un 23505 que `mapSupabaseDomainError` no atribuye a otra restriccion concreta. */
+private const val UNIQUE_VIOLATION_CODE = "UNIQUE_VIOLATION"
+
+/** MASTER3-OBS-001: filas de auditoria de D1-26 (intencion obligatoria, resultado, rechazo). */
+internal const val ACTION_ROLES_SYNC_INTENT = "roles_sincronizacion_solicitada"
+internal const val ACTION_ROLES_SYNCED = "roles_sincronizados"
+internal const val ACTION_ROLES_SYNC_FAILED = "roles_sincronizacion_fallida"
+
+/** MASTER3-API-004: intentos de lectura + escritura condicionada de `updateUsuario` ante escrituras concurrentes. */
+internal const val ADMIN_USER_UPDATE_ATTEMPTS = 3
 
 /** D1-26 `RoleIdsBody` (`additionalProperties: false`, `roleIds` obligatorio). Decodificacion estricta con [receiveCanonicalCommand]. */
 @CanonicalCommand(CommandAudience.ADMIN)
@@ -3408,6 +3428,8 @@ private data class PerfilUsuarioRow(
     @SerialName("creado_en") val creadoEn: String? = null,
     @SerialName("estado_cuenta") val estadoCuenta: String? = null,
     @SerialName("onboarding_completado") val onboardingCompletado: Boolean = false,
+    /** MASTER3-API-004: version de la fila (ETag de perfil) para la escritura condicionada de `updateUsuario`. */
+    @SerialName("actualizado_en") val actualizadoEn: String? = null,
 )
 
 @Serializable
@@ -5362,7 +5384,7 @@ class AdminV1Gateway private constructor(
                     roleIds = rolesByUser[p.usuarioId].orEmpty(),
                     isActive = !p.esInvitado,
                     createdAt = p.creadoEn.orEmpty(),
-                    ticketsBalance = balanceByUser[p.usuarioId] ?: 0,
+                    ticketsBalance = balanceByUser[p.usuarioId],
                 )
             },
             total = total,
@@ -5446,29 +5468,53 @@ class AdminV1Gateway private constructor(
      * MASTER2-API-001: lee la fila actual (sin fila -> `null` = 404, nunca un 200 fabricado), escribe
      * `nombre_mostrar` + `actualizado_en` (ETag de perfil) con `return=representation` y audita SOLO si el valor cambio,
      * con antes/despues. Un valor identico es idempotente: ni escritura ni auditoria.
+     *
+     * MASTER3-API-004: la escritura es CONDICIONADA a la version leida (`actualizado_en`, el ETag de perfil). Antes el
+     * PATCH filtraba solo por `usuario_id`: dos admins concurrentes (A escribe Y, B escribe Z tras leer X) dejaban la
+     * auditoria de B como X->Z (el `antes` rancio) y el atajo de "valor identico" se evaluaba sobre una lectura vieja.
+     * Ahora, si la fila cambio entre la lectura y la escritura (0 filas), se vuelve a leer y se repite la comparacion
+     * sobre el valor actual (set semantics: gana la ultima escritura, pero cada fila de auditoria lleva el `antes` real).
+     * Si la fila ya no existe -> `null` (404). Tras [ADMIN_USER_UPDATE_ATTEMPTS] conflictos seguidos -> 500.
      */
     fun updateUsuario(usuarioId: String, nombreMostrar: String): AdminV1UserDto? {
         // Ver `getUsuario`: se interpola en la URL de PostgREST, y aquí además en
         // un PATCH que escribe.
         usuarioId.validatedUuid("usuarioId")
-        val current = getUsuario(usuarioId) ?: return null
-        if (current.fullName == nombreMostrar) return current
-        val written = request(
-            "PATCH",
-            "/rest/v1/perfiles_usuario?usuario_id=eq.$usuarioId",
-            buildJsonObject {
-                put("nombre_mostrar", JsonPrimitive(nombreMostrar))
-                put("actualizado_en", JsonPrimitive(java.time.Instant.now().toString()))
-            }.toString(),
-            prefer = "return=representation",
-        ).decodeList<PerfilUsuarioRow>()
-        if (written.isEmpty()) return null // la fila desaparecio entre la lectura y la escritura
-        registrarAuditoria(
-            "usuario_actualizado", "perfiles_usuario", usuarioId,
-            antes = buildJsonObject { put("nombreMostrar", JsonPrimitive(current.fullName)) },
-            despues = buildJsonObject { put("nombreMostrar", JsonPrimitive(nombreMostrar)) },
-        )
-        return current.copy(fullName = nombreMostrar)
+        repeat(ADMIN_USER_UPDATE_ATTEMPTS) {
+            val perfil = request("GET", "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$usuarioId&limit=1", null)
+                .decodeList<PerfilUsuarioRow>().firstOrNull() ?: return null
+            val current = AdminV1UserDto(
+                id = perfil.usuarioId,
+                fullName = perfil.nombreMostrar.orEmpty(),
+                email = perfil.username.orEmpty(),
+                roleIds = roleIdsOf(usuarioId),
+                isActive = !perfil.esInvitado,
+                createdAt = perfil.creadoEn.orEmpty(),
+            )
+            if (current.fullName == nombreMostrar) return current
+            val version = perfil.actualizadoEn
+                ?.let { "actualizado_en=eq.${it.urlEncode()}" }
+                ?: "actualizado_en=is.null"
+            val written = request(
+                "PATCH",
+                "/rest/v1/perfiles_usuario?usuario_id=eq.$usuarioId&$version",
+                buildJsonObject {
+                    put("nombre_mostrar", JsonPrimitive(nombreMostrar))
+                    put("actualizado_en", JsonPrimitive(java.time.Instant.now().toString()))
+                }.toString(),
+                prefer = "return=representation",
+            ).decodeList<PerfilUsuarioRow>()
+            if (written.isNotEmpty()) {
+                registrarAuditoria(
+                    "usuario_actualizado", "perfiles_usuario", usuarioId,
+                    antes = buildJsonObject { put("nombreMostrar", JsonPrimitive(current.fullName)) },
+                    despues = buildJsonObject { put("nombreMostrar", JsonPrimitive(nombreMostrar)) },
+                )
+                return current.copy(fullName = nombreMostrar)
+            }
+            // 0 filas: la fila desaparecio o cambio de version entre la lectura y la escritura -> releer.
+        }
+        throw IllegalStateException("updateUsuario: la fila cambio en cada uno de los $ADMIN_USER_UPDATE_ATTEMPTS intentos.")
     }
 
     /**
@@ -5503,24 +5549,67 @@ class AdminV1Gateway private constructor(
         // La RPC de 3 argumentos (migracion 20260930101600) REPITE la regla SUPERADMIN bajo el cerrojo consultivo de
         // `admin_sync_roles`, con el actor. `p_actor_id` se envia SIEMPRE (null incluido): omitirlo resolveria a la
         // sobrecarga antigua de 2 argumentos, que no conoce al actor.
-        request(
-            "POST",
-            "/rest/v1/rpc/admin_sync_roles",
-            buildJsonObject {
-                put("p_usuario_id", JsonPrimitive(usuarioId))
-                put("p_role_ids", JsonArray(requested.map(::JsonPrimitive)))
-                put("p_actor_id", actorId?.let { JsonPrimitive(it.validatedUuid("actorId")) } ?: JsonNull)
-            }.toString(),
-            prefer = "return=minimal",
-        )
-        registrarAuditoria(
-            "roles_sincronizados",
-            "roles_usuario",
-            usuarioId,
-            antes = buildJsonObject { put("roleIds", JsonArray(before.map(::JsonPrimitive))) },
-            despues = buildJsonObject { put("roleIds", JsonArray(requested.map(::JsonPrimitive))) },
-            required = true,
-        )
+        //
+        // MASTER3-OBS-001: INTENCION antes de mutar, RESULTADO despues (mismo patron que MASTER2-OBS-006). Antes la
+        // unica fila (obligatoria) iba DESPUES de la RPC: si fallaba, la peticion daba 500 con los roles ya cambiados y
+        // el reintento auditaba antes==despues (no-op) con el actor del reintento: se perdia quien concedio
+        // admin/superadmin. Ahora la fila de intencion (actor, antes, pedidos, requestId) es OBLIGATORIA y sin ella no
+        // se llama a la RPC; el resultado es de mejor esfuerzo (ERROR con la carga) y nunca convierte en error una
+        // sincronizacion ya hecha. Un rechazo de la RPC deja una fila `roles_sincronizacion_fallida`.
+        val requestId: String? = org.slf4j.MDC.get(MDC_REQUEST_ID)
+        val antes = buildJsonObject { put("roleIds", JsonArray(before.map(::JsonPrimitive))) }
+        fun despues(extra: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit = {}) = buildJsonObject {
+            put("roleIds", JsonArray(requested.map(::JsonPrimitive)))
+            requestId?.let { put("requestId", JsonPrimitive(it)) }
+            extra()
+        }
+        registrarAuditoria(ACTION_ROLES_SYNC_INTENT, "roles_usuario", usuarioId, antes = antes, despues = despues(), required = true)
+        try {
+            request(
+                "POST",
+                "/rest/v1/rpc/admin_sync_roles",
+                buildJsonObject {
+                    put("p_usuario_id", JsonPrimitive(usuarioId))
+                    put("p_role_ids", JsonArray(requested.map(::JsonPrimitive)))
+                    put("p_actor_id", actorId?.let { JsonPrimitive(it.validatedUuid("actorId")) } ?: JsonNull)
+                }.toString(),
+                prefer = "return=minimal",
+            )
+        } catch (failure: Exception) {
+            // `rechazada`: la base rechazo la sincronizacion (error de dominio, nada cambio). `desconocido`: transporte o
+            // 5xx, la RPC pudo o no confirmarse; se dice asi en vez de afirmar un fallo.
+            registrarAuditoria(
+                ACTION_ROLES_SYNC_FAILED, "roles_usuario", usuarioId,
+                antes = antes,
+                despues = despues {
+                    put("resultado", JsonPrimitive(if (failure is BackendDomainException) "rechazada" else "desconocido"))
+                    put("error", JsonPrimitive((failure as? BackendDomainException)?.errorCode ?: failure::class.simpleName))
+                },
+            )
+            throw failure
+        }
+        registrarAuditoriaResultado(ACTION_ROLES_SYNCED, "roles_usuario", usuarioId, antes = antes, despues = despues())
+    }
+
+    /**
+     * MASTER3-OBS-001: fila de RESULTADO tras una mutacion privilegiada YA hecha (la de intencion ya existe). Su fallo
+     * NO convierte la operacion en error (un reintento no podria repetir la mutacion): se registra en ERROR con la carga
+     * completa para poder reconstruir la fila.
+     */
+    private fun registrarAuditoriaResultado(accion: String, tabla: String, registroId: String, antes: JsonElement?, despues: JsonElement?) {
+        try {
+            registrarAuditoria(accion, tabla, registroId, antes = antes, despues = despues, required = true)
+        } catch (failure: Exception) {
+            AuditLogger.error(
+                "outcome audit failed accion={} registroId={} actor={} antes={} despues={} error={}",
+                accion,
+                registroId,
+                AdminAuditActor.current(),
+                antes.toString(),
+                despues.toString(),
+                failure::class.simpleName,
+            )
+        }
     }
 
     // MODERACIÓN FORO (reportes_contenido + acciones_moderacion)
@@ -5965,13 +6054,18 @@ class AdminV1Gateway private constructor(
                 put("saldoResultante", JsonPrimitive(result.saldoResultante))
             },
             required = true,
+            // MASTER3-OBS-002: el indice unico parcial `auditoria_log_tickets_grant_tx_uq` (migracion 20260930101730)
+            // es la garantia atomica: dos repeticiones concurrentes que pasan la comprobacion de abajo a la vez chocan
+            // en el INSERT y la segunda recibe 23505 = ya auditada (no es un fallo).
+            duplicateMeansAudited = true,
         )
         return result.saldoResultante
     }
 
     /**
-     * MASTER2-OBS-009: ¿ya hay una fila `tickets_grant` de esta transaccion? Si la lectura falla se responde `false`
-     * (se escribe la fila: mejor una fila repetida, identificable por su transactionId, que una concesion sin auditar).
+     * MASTER2-OBS-009: ¿ya hay una fila `tickets_grant` de esta transaccion? Atajo, NO la garantia: es un
+     * leer-y-luego-insertar, asi que la unicidad real la da el indice unico parcial (MASTER3-OBS-002). Si la lectura
+     * falla se responde `false` y se intenta el INSERT (el indice evita el duplicado).
      */
     private fun ticketGrantAlreadyAudited(usuarioId: String, transactionId: String): Boolean = try {
         val tx = transactionId.validatedUuid("transactionId")
@@ -6933,8 +7027,14 @@ class AdminV1Gateway private constructor(
      * - [antes] / [despues] (jsonb ya existentes en `auditoria_log`) guardan el estado previo y el resultante de
      *   las mutaciones privilegiadas.
      * - [required] = cambio PRIVILEGIADO (roles, economía): si la fila no se puede escribir, la petición FALLA
-     *   (500 con referencia) en vez de quedar sin rastro. La mutación es idempotente (misma sincronización de
-     *   roles / misma clave de idempotencia), así que el reintento es seguro. El resto sigue siendo best-effort.
+     *   (500 con referencia) en vez de quedar sin rastro. El resto sigue siendo best-effort.
+     *   MASTER3-OBS-001: una fila obligatoria escrita DESPUES de mutar no es segura de reintentar para la fidelidad
+     *   de la auditoria (el reintento es un no-op con antes==despues y otro actor). Por eso D1-26 (roles) escribe la
+     *   fila OBLIGATORIA como INTENCION antes de la RPC y el resultado con [registrarAuditoriaResultado]. `tickets_grant`
+     *   si puede ir despues: la repeticion con la misma clave devuelve el mismo transactionId y la fila se escribe
+     *   entonces (una sola por transaccion, MASTER3-OBS-002).
+     * - [duplicateMeansAudited]: un 23505 (UNIQUE_VIOLATION) al insertar significa que la fila YA existe (indice unico
+     *   parcial); se registra y no es un fallo.
      */
     fun registrarAuditoria(
         accion: String,
@@ -6943,6 +7043,7 @@ class AdminV1Gateway private constructor(
         antes: JsonElement? = null,
         despues: JsonElement? = null,
         required: Boolean = false,
+        duplicateMeansAudited: Boolean = false,
     ) {
         val actorId = AdminAuditActor.current()
         // Punto unico: toda escritura admin sensible pasa por aqui, asi que
@@ -6973,26 +7074,36 @@ class AdminV1Gateway private constructor(
                 ),
                 prefer = "return=minimal",
             )
+        } catch (duplicate: BackendDomainException) {
+            if (!(duplicateMeansAudited && duplicate.errorCode == UNIQUE_VIOLATION_CODE)) {
+                auditWriteFailed(accion, tabla, registroId, duplicate, required)
+            } else {
+                AuditLogger.info("auditoria {} ya registrada (unique_violation)", accion)
+            }
         } catch (error: Exception) {
-            // F-12b: `System.err.println` no llevaba `request_id` ni evento, así
-            // que una auditoría perdida era invisible para quien buscara la
-            // referencia de la petición. El logger sale con el MDC (`%mdc`) y el
-            // evento estratégico hace que la pérdida se pueda contar.
-            AuditLogger.warn(
-                "auditoria fallida ({}): {}",
-                accion,
-                error.redactedMessage("Fallo al escribir auditoria", 160),
-            )
-            logStrategicEvent(
-                StrategicEvent.SUPABASE_REQUEST_FAILED,
-                operation = "auditoria_$accion",
-                result = "audit_write_failed",
-                entityType = tabla,
-                entityId = registroId,
-                errorType = error::class.simpleName,
-            )
-            if (required) throw IllegalStateException("No se pudo registrar la auditoria de '$accion'.", error)
+            auditWriteFailed(accion, tabla, registroId, error, required)
         }
+    }
+
+    private fun auditWriteFailed(accion: String, tabla: String?, registroId: String?, error: Exception, required: Boolean) {
+        // F-12b: `System.err.println` no llevaba `request_id` ni evento, así
+        // que una auditoría perdida era invisible para quien buscara la
+        // referencia de la petición. El logger sale con el MDC (`%mdc`) y el
+        // evento estratégico hace que la pérdida se pueda contar.
+        AuditLogger.warn(
+            "auditoria fallida ({}): {}",
+            accion,
+            error.redactedMessage("Fallo al escribir auditoria", 160),
+        )
+        logStrategicEvent(
+            StrategicEvent.SUPABASE_REQUEST_FAILED,
+            operation = "auditoria_$accion",
+            result = "audit_write_failed",
+            entityType = tabla,
+            entityId = registroId,
+            errorType = error::class.simpleName,
+        )
+        if (required) throw IllegalStateException("No se pudo registrar la auditoria de '$accion'.", error)
     }
 
     // TIENDA (Store) -- proxies what the Desktop client used to call directly

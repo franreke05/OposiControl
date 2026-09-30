@@ -95,13 +95,14 @@ class AdminV1UsersSlice1Test {
         assertEquals("3", page["total"]!!.jsonPrimitive.content)
         assertEquals("50", page["limit"]!!.jsonPrimitive.content)
 
-        // LEGACY intacto: `data` con `email` = username, `isActive`, saldo 0 por defecto.
+        // LEGACY: `data` con `email` = username, `isActive` SIEMPRE emitido (@EncodeDefault) y saldo solo con cartera.
         val data = page["data"]!!.jsonArray.map { it.jsonObject }
         assertEquals(3, data.size)
         assertEquals("ada", data.first().str("email"))
-        // Los valores por defecto del DTO legacy (isActive = true, saldo 0) no se emiten con el Json del modulo: como siempre.
-        assertEquals("true", data.first()["isActive"]?.jsonPrimitive?.content ?: "true")
-        assertEquals("0", data[1]["ticketsBalance"]?.jsonPrimitive?.content ?: "0")
+        // `isActive` se emite aunque sea true (el cliente no distingue omitido de desconocido); sin cartera no hay saldo (no un 0 fabricado).
+        assertEquals("true", data.first()["isActive"]!!.jsonPrimitive.content)
+        assertEquals("7", data.first()["ticketsBalance"]!!.jsonPrimitive.content)
+        assertNull(data[1]["ticketsBalance"], "sin cartera el legacy no fabrica 0")
     }
 
     @Test
@@ -220,7 +221,7 @@ class AdminV1UsersSlice1Test {
         // Duplicado legacy `data` (email = username, isActive...).
         val data = user["data"]!!.jsonObject
         assertEquals("ada", data.str("email"))
-        assertEquals("true", data["isActive"]?.jsonPrimitive?.content ?: "true")
+        assertEquals("true", data["isActive"]!!.jsonPrimitive.content)
         assertEquals(1, sent.count { "/auth/v1/admin/users/" in it.uri }, "UNA lectura de GoTrue admin")
     }
 

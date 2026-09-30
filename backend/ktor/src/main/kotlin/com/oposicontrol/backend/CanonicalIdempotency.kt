@@ -17,8 +17,13 @@ import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.util.AttributeKey
+import io.ktor.util.Attributes
 import io.ktor.utils.io.readRemaining
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -413,7 +418,7 @@ class CanonicalIdempotencyConfig {
 }
 
 private val IdempotencyClaimKey = AttributeKey<IdempotencyClaim>("canonical-idempotency-claim")
-private val IdempotencyFinishedKey = AttributeKey<Boolean>("canonical-idempotency-finished")
+internal val IdempotencyFinishedKey = AttributeKey<Boolean>("canonical-idempotency-finished")
 private val IdempotencyLogger = LoggerFactory.getLogger("com.oposicontrol.backend.Idempotency")
 
 /**
@@ -479,44 +484,28 @@ val CanonicalIdempotency = createRouteScopedPlugin("CanonicalIdempotency", ::Can
     // Una excepcion del handler la responde el StatusPages de la APLICACION,
     // fuera del pipeline de esta ruta: aqui se libera la clave ANTES de que salga
     // ese error, para que un reintento inmediato con la misma clave ejecute.
+    // MASTER3-IDEM-001: la finalizacion (release/complete) corre en NonCancellable -- si el cliente cierra la conexion
+    // la corrutina de la llamada esta cancelada y el almacen ni se llegaba a tocar (la CancellationException se tragaba
+    // como un fallo cualquiera), dejando la clave `in_progress` hasta que caducara el lease (409 al reintentar). La marca
+    // de "terminado" se pone SOLO si el almacen respondio: si falla, la red de seguridad de ResponseSent vuelve a liberar.
     on(CallFailed) { call, _ ->
         val claim = call.attributes.getOrNull(IdempotencyClaimKey) ?: return@on
         if (call.attributes.getOrNull(IdempotencyFinishedKey) == true) return@on
-        call.attributes.put(IdempotencyFinishedKey, true)
-        try {
-            config.store.release(claim)
-        } catch (failure: Exception) {
-            IdempotencyLogger.warn(
-                "idempotency release failed (requestId={}): {}",
-                call.requestIdOrNull(),
-                failure.redactedMessage("idempotency store failure"),
-            )
-        }
+        finalizeIdempotencyClaim(call.attributes, call.requestIdOrNull(), "release") { config.store.release(claim) }
     }
 
     on(ResponseBodyReadyForSend) { call, content ->
         val claim = call.attributes.getOrNull(IdempotencyClaimKey) ?: return@on
         if (call.attributes.getOrNull(IdempotencyFinishedKey) == true) return@on
-        call.attributes.put(IdempotencyFinishedKey, true)
         val status = content.status ?: call.response.status() ?: HttpStatusCode.OK
-        try {
+        // No 2xx, o contenido que no se puede guardar (MASTER-IDEM-003): fail-closed, se libera el claim para que
+        // el reintento re-ejecute en vez de "reproducir" un cuerpo vacio.
+        // La respuesta ya esta decidida; si el almacen falla, la red de seguridad libera y, si tampoco puede, la fila
+        // queda in_progress hasta que caduque el lease (STALE); la RPC de negocio, idempotente por si misma, cubre la
+        // re-ejecucion.
+        finalizeIdempotencyClaim(call.attributes, call.requestIdOrNull(), "finalize") {
             val stored = if (status.value in 200..299) content.toStoredResponse(status, call) else null
-            if (stored != null) {
-                config.store.complete(claim, stored)
-            } else {
-                // No 2xx, o contenido que no se puede guardar (MASTER-IDEM-003): fail-closed, se libera el claim para que
-                // el reintento re-ejecute en vez de "reproducir" un cuerpo vacio.
-                config.store.release(claim)
-            }
-        } catch (failure: Exception) {
-            // La respuesta ya esta decidida; si el almacen falla, la fila queda
-            // in_progress hasta que caduque el lease (STALE) y la RPC de negocio,
-            // idempotente por si misma, cubre la re-ejecucion.
-            IdempotencyLogger.warn(
-                "idempotency finalize failed (requestId={}): {}",
-                call.requestIdOrNull(),
-                failure.redactedMessage("idempotency store failure"),
-            )
+            if (stored != null) config.store.complete(claim, stored) else config.store.release(claim)
         }
     }
 
@@ -528,6 +517,39 @@ val CanonicalIdempotency = createRouteScopedPlugin("CanonicalIdempotency", ::Can
         // liberar en segundo plano; si falla, el lease caduca y la fila es STALE.
         call.application.launch { runCatching { config.store.release(claim) } }
     }
+}
+
+/**
+ * MASTER3-IDEM-001: ejecuta [action] contra el almacen sin que la cancelacion de la llamada lo impida
+ * ([NonCancellable]), marca el claim como terminado SOLO si el almacen respondio, y relanza una cancelacion en vez de
+ * tragarla (tras haber finalizado). Un fallo del almacen se registra y deja la marca sin poner (red de seguridad).
+ */
+internal suspend fun finalizeIdempotencyClaim(
+    attributes: Attributes,
+    requestId: String?,
+    operation: String,
+    action: suspend () -> Unit,
+) {
+    val failure: Exception? = withContext(NonCancellable) {
+        try {
+            action()
+            null
+        } catch (failure: Exception) {
+            failure
+        }
+    }
+    if (failure == null) {
+        attributes.put(IdempotencyFinishedKey, true)
+    } else {
+        IdempotencyLogger.warn(
+            "idempotency {} failed (requestId={}): {}",
+            operation,
+            requestId,
+            failure.redactedMessage("idempotency store failure"),
+        )
+    }
+    // La llamada pudo cancelarse mientras se finalizaba: se propaga la cancelacion (nunca se traga).
+    currentCoroutineContext().ensureActive()
 }
 
 /**

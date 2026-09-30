@@ -31,6 +31,8 @@ check ".gitattributes fija LF en migraciones" \
   "grep -q 'supabase/migrations/\*.sql text eol=lf' .gitattributes"
 check ".gitattributes fija LF en gradlew" \
   "grep -q '^gradlew text eol=lf' .gitattributes"
-check "script de build de imagen existe, con set -euo pipefail y guarda de arbol limpio incl. no rastreados" \
-  "test -f scripts/build-backend-image.sh && grep -q '^set -euo pipefail' scripts/build-backend-image.sh && grep -q 'git status --porcelain)' scripts/build-backend-image.sh && ! grep -q 'untracked-files=no' scripts/build-backend-image.sh"
+check "script de build de imagen existe, con set -euo pipefail y llama a la guarda de arbol limpio" \
+  "test -f scripts/build-backend-image.sh && grep -q '^set -euo pipefail' scripts/build-backend-image.sh && grep -q '^bash scripts/assert-clean-tree.sh' scripts/build-backend-image.sh"
+check "guarda de arbol limpio: cambios, no rastreados y ignorados en arboles de codigo (MASTER3-SEC-002)" \
+  "grep -q '^set -euo pipefail' scripts/assert-clean-tree.sh && grep -q 'git status --porcelain)' scripts/assert-clean-tree.sh && grep -q 'git status --porcelain --ignored' scripts/assert-clean-tree.sh && ! grep -q 'untracked-files=no' scripts/assert-clean-tree.sh"
 exit $fail

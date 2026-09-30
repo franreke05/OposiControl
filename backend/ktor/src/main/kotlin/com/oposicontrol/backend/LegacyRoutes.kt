@@ -29,14 +29,15 @@ import java.time.format.DateTimeFormatter
 // =====================================================================
 
 /**
- * Una ruta legacy con su sucesora canonica. [sunsetAt] null hasta que el propietario la apruebe. [successorPath] vacio =
- * el contrato congelado aun NO declara sucesora (no se anuncia un `Link` a una ruta que no existe).
+ * Una ruta legacy con su sucesora canonica. [sunsetAt] null hasta que el propietario la apruebe. [successorPath] null =
+ * la sucesora canonica aun NO existe como ruta (contrato congelado TARGET, Slice 3+): no se anuncia un `Link` a una
+ * ruta que no existe (MASTER3-API-003).
  */
 data class LegacyEndpoint(
     val endpointId: String,
     val method: String,
     val legacyPath: String,
-    val successorPath: String,
+    val successorPath: String?,
     val deprecatedAt: Instant,
     val sunsetAt: Instant? = null,
 )
@@ -74,22 +75,23 @@ object LegacyEndpoints {
 
     val SLICE_1: List<LegacyEndpoint> = listOf(EP_124, EP_218)
 
-    // MASTER2-OPENAPI-006: las 9 rutas vivas de `/api/v1/app` (AppV1Routes.kt) que el contrato congelado no declara. Solo
-    // `iniciar` y `responder` tienen sucesora congelada (Slice 3, TARGET); el resto no tiene sucesora hasta Slice 2+.
+    // MASTER2-OPENAPI-006: las 9 rutas vivas de `/api/v1/app` (AppV1Routes.kt) que el contrato congelado no declara. Ninguna
+    // tiene sucesora ROUTEADA todavia (MASTER3-API-003): `iniciar` -> `POST /api/v1/app/examenes/{examId}/intentos` y
+    // `responder` -> `/api/v1/app/intentos/{attemptId}/respuestas/{preguntaId}` son TARGET de Slice 3 y solo
+    // recibiran `Link` cuando existan (anunciar la coleccion truncada apuntaba a URIs inexistentes/no relacionadas).
     // Criterio de retirada: contador `legacy_route_requests_total{endpoint="APP-*"}` a cero tras la release canonica de OB.
-    val APP_HOME = LegacyEndpoint("APP-HOME", "GET", "/api/v1/app/home", "", SLICE_1_DEPRECATED_AT)
-    val APP_ESTADISTICAS = LegacyEndpoint("APP-ESTADISTICAS", "GET", "/api/v1/app/estadisticas", "", SLICE_1_DEPRECATED_AT)
-    val APP_COMMERCIAL_CATALOG = LegacyEndpoint("APP-COMMERCIAL-CATALOG", "GET", "/api/v1/app/commercial/catalog", "", SLICE_1_DEPRECATED_AT)
-    val APP_COMMERCIAL_PURCHASES = LegacyEndpoint("APP-COMMERCIAL-PURCHASES", "GET", "/api/v1/app/commercial/purchases", "", SLICE_1_DEPRECATED_AT)
-    val APP_COMMERCIAL_SUBSCRIPTIONS = LegacyEndpoint("APP-COMMERCIAL-SUBSCRIPTIONS", "GET", "/api/v1/app/commercial/subscriptions", "", SLICE_1_DEPRECATED_AT)
-    val APP_EVENTOS = LegacyEndpoint("APP-EVENTOS", "POST", "/api/v1/app/eventos", "", SLICE_1_DEPRECATED_AT)
-    val APP_FEEDBACK_PREGUNTA = LegacyEndpoint("APP-FEEDBACK-PREGUNTA", "POST", "/api/v1/app/feedback/pregunta", "", SLICE_1_DEPRECATED_AT)
+    val APP_HOME = LegacyEndpoint("APP-HOME", "GET", "/api/v1/app/home", null, SLICE_1_DEPRECATED_AT)
+    val APP_ESTADISTICAS = LegacyEndpoint("APP-ESTADISTICAS", "GET", "/api/v1/app/estadisticas", null, SLICE_1_DEPRECATED_AT)
+    val APP_COMMERCIAL_CATALOG = LegacyEndpoint("APP-COMMERCIAL-CATALOG", "GET", "/api/v1/app/commercial/catalog", null, SLICE_1_DEPRECATED_AT)
+    val APP_COMMERCIAL_PURCHASES = LegacyEndpoint("APP-COMMERCIAL-PURCHASES", "GET", "/api/v1/app/commercial/purchases", null, SLICE_1_DEPRECATED_AT)
+    val APP_COMMERCIAL_SUBSCRIPTIONS = LegacyEndpoint("APP-COMMERCIAL-SUBSCRIPTIONS", "GET", "/api/v1/app/commercial/subscriptions", null, SLICE_1_DEPRECATED_AT)
+    val APP_EVENTOS = LegacyEndpoint("APP-EVENTOS", "POST", "/api/v1/app/eventos", null, SLICE_1_DEPRECATED_AT)
+    val APP_FEEDBACK_PREGUNTA = LegacyEndpoint("APP-FEEDBACK-PREGUNTA", "POST", "/api/v1/app/feedback/pregunta", null, SLICE_1_DEPRECATED_AT)
     val APP_INICIAR = LegacyEndpoint(
-        "APP-EXAMEN-INICIAR", "POST", "/api/v1/app/examenes/{id}/iniciar", "/api/v1/app/examenes/{examId}/intentos", SLICE_1_DEPRECATED_AT,
+        "APP-EXAMEN-INICIAR", "POST", "/api/v1/app/examenes/{id}/iniciar", null, SLICE_1_DEPRECATED_AT,
     )
     val APP_RESPONDER = LegacyEndpoint(
-        "APP-INTENTO-RESPONDER", "POST", "/api/v1/app/intentos/{id}/responder",
-        "/api/v1/app/intentos/{attemptId}/respuestas/{preguntaId}", SLICE_1_DEPRECATED_AT,
+        "APP-INTENTO-RESPONDER", "POST", "/api/v1/app/intentos/{id}/responder", null, SLICE_1_DEPRECATED_AT,
     )
 
     val SLICE_1_APP: List<LegacyEndpoint> = listOf(
@@ -137,7 +139,7 @@ val LegacyRoute = createRouteScopedPlugin("LegacyRoute", ::LegacyRouteConfig) {
         .tag("endpoint", endpoint.endpointId)
         .register(pluginConfig.registry)
     val deprecation = LegacyHeaders.deprecation(endpoint.deprecatedAt)
-    val link = endpoint.successorPath.takeIf { it.isNotBlank() }?.let(LegacyHeaders::successorLink)
+    val link = endpoint.successorPath?.takeIf { it.isNotBlank() }?.let(LegacyHeaders::successorLink)
     val sunset = endpoint.sunsetAt?.let(LegacyHeaders::sunset)
 
     onCall { call ->

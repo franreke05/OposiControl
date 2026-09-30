@@ -180,7 +180,11 @@ class AdminRoleSyncSuperadminAndAuditTest {
         val stub = Stub()
         application { module(stub) }
         assertEquals(HttpStatusCode.OK, syncRoles(superActor, plainUser, roleUser, roleAdmin).status)
-        val row = stub.auditBodies().single()
+        // MASTER3-OBS-001 (cambio DELIBERADO): ahora hay DOS filas, intencion (antes de la RPC) y resultado.
+        val rows = stub.auditBodies()
+        assertEquals(listOf(ACTION_ROLES_SYNC_INTENT, ACTION_ROLES_SYNCED), rows.map { it["accion"]!!.jsonPrimitive.content })
+        assertTrue(rows.all { it["usuario_id"]!!.jsonPrimitive.content == superActor }, "ambas con el actor: $rows")
+        val row = rows.last()
         assertEquals(superActor, row["usuario_id"]!!.jsonPrimitive.content)
         assertEquals("roles_sincronizados", row["accion"]!!.jsonPrimitive.content)
         assertEquals(listOf(roleUser), row["antes"]!!.jsonObject["roleIds"]!!.jsonArray.map { it.jsonPrimitive.content })
@@ -194,6 +198,8 @@ class AdminRoleSyncSuperadminAndAuditTest {
         val response = syncRoles(superActor, plainUser, roleUser, roleAdmin)
         assertEquals(HttpStatusCode.BadGateway, response.status, response.bodyAsText())
         assertEquals("UPSTREAM_ERROR", response.code())
+        // MASTER3-OBS-001: la fila obligatoria es la de INTENCION y va antes: sin ella los roles NO cambian.
+        assertEquals(0, stub.rpcCalls(), "sin auditoria de intencion no se llama a admin_sync_roles")
     }
 
     @Test
