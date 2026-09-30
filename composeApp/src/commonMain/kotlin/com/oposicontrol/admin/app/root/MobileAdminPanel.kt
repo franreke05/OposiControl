@@ -479,7 +479,7 @@ private fun AdminUsersSection(
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 Text(
-                                    text = "${user.ticketsBalance} tks",
+                                    text = user.ticketsBalance?.let { "$it tks" } ?: "Sin dato",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = GlassTheme.tokens.accent,
