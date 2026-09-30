@@ -142,13 +142,16 @@ class AdminAuthorizationOffloadTest {
         probe.assertRanOffTheRequestThread("verificar el JWT puede descargar el JWKS")
     }
 
-    /** Firma mala, `kid` desconocido o JWKS caído: credencial no válida → `null` → 401, nunca 500. */
+    /**
+     * Firma mala o `kid` desconocido: credencial no válida → `null` → 401, nunca 500.
+     * MASTER-API-018 (cambio deliberado): el JWKS caído (`IOException`) ya NO está en esta lista; ahora es 503
+     * UPSTREAM_UNAVAILABLE, cubierto en `GatewayAuthEnvelopeWiringTest`.
+     */
     @Test
     fun anUnverifiableTokenIsNoPrincipalAndNotAnError() = onAPipelineThread {
         listOf(
             IllegalStateException("kid no encontrado en JWKS"),
             RuntimeException("The Token's Signature resulted invalid"),
-            java.io.IOException("JWKS no disponible"),
         ).forEach { failure ->
             assertNull(verifiedJwtPrincipalOrNull("header.payload.signature") { throw failure }, failure.message)
         }

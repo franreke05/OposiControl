@@ -56,6 +56,17 @@ object RoleSyncInvariants {
         LAST_SUPERADMIN("ROLE_SYNC_LAST_SUPERADMIN"),
     }
 
+    /**
+     * MASTER-AUTH-003 (D1-26): ¿la sincronización CONCEDE o RETIRA `admin`/`superadmin`? Es la diferencia
+     * simétrica entre los roles actuales y los pedidos, restringida a los roles administrativos. Si la hay, la
+     * operación exige un actor SUPERADMIN; mantener un rol administrativo que ya tenía no la exige.
+     */
+    fun changesAdministrativeRoles(currentRoleCodes: Set<String>, requestedRoleCodes: Set<String>): Boolean {
+        val current = currentRoleCodes.map { it.trim().lowercase() }.toSet()
+        val requested = requestedRoleCodes.map { it.trim().lowercase() }.toSet()
+        return ((current - requested) + (requested - current)).any { it in ADMINISTRATIVE_ROLE_CODES }
+    }
+
     /** ¿El usuario tiene hoy acceso administrativo? */
     fun isAdministrative(roleCodes: Set<String>): Boolean =
         roleCodes.any { it.trim().lowercase() in ADMINISTRATIVE_ROLE_CODES }

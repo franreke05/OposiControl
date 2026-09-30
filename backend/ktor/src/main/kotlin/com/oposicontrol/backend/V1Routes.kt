@@ -79,11 +79,10 @@ private fun io.ktor.server.application.ApplicationCall.toV1ExamenesFilter(): V1E
 }
 
 internal fun String.validatedUuid(parameterName: String): String {
-    return try {
-        UUID.fromString(this).toString()
-    } catch (_: IllegalArgumentException) {
-        throw IllegalArgumentException("$parameterName debe ser un UUID valido.")
-    }
+    // MASTER-API-012: forma canonica 8-4-4-4-12 estricta (UUID.fromString acepta formas cortas como "1-1-1-1-1") y se
+    // devuelve el valor normalizado en minusculas.
+    require(isUuid()) { "$parameterName debe ser un UUID valido." }
+    return lowercase()
 }
 
 private fun String.validatedValue(parameterName: String, allowed: Set<String>): String {

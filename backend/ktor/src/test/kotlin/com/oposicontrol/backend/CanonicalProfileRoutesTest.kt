@@ -460,7 +460,8 @@ class CanonicalProfileRoutesTest {
         assertEquals(setOf("id", "tipo", "version", "titulo", "contenido", "publicadoEn"), item.keys)
         assertEquals("terminos", item.str("tipo"))
         assertEquals("2026-09-01T00:00:00Z", item.str("publicadoEn"))
-        assertEquals("public, max-age=3600", response.headers[HttpHeaders.CacheControl])
+        // MASTER-API-007: antes "public, max-age=3600" (una hora sin revalidar texto legal); ahora se revalida a los 5 min.
+        assertEquals("public, max-age=300, must-revalidate", response.headers[HttpHeaders.CacheControl])
         val etag = response.headers[HttpHeaders.ETag]!!
         val query = env.upstream.log.single()
         assertTrue("activo=eq.true" in query && "limit=20" in query && "tipo_documento=in.(terminos,privacidad)" in query, query)

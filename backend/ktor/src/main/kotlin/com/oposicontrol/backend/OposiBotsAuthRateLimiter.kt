@@ -1,10 +1,17 @@
 package com.oposicontrol.backend
 
+import io.lettuce.core.ClientOptions
+import io.lettuce.core.protocol.ProtocolVersion
 import io.lettuce.core.RedisClient
+import io.lettuce.core.RedisException
 import io.lettuce.core.ScriptOutputType
+import io.lettuce.core.SocketOptions
+import io.lettuce.core.TimeoutOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.charset.StandardCharsets
+import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -103,11 +110,26 @@ internal class InMemoryOposiBotsAuthRateLimiter(
     private data class RateWindow(val count: Int, val expiresAtMillis: Long)
 }
 
+/**
+ * MASTER-ARCH-007: el cliente sincrono de Lettuce corre en `Dispatchers.IO`; sin tiempos limite un Valkey degradado
+ * bloqueaba hilos del pool durante los 60 s por defecto de Lettuce y, como TODA ruta canonica pasa por el limitador,
+ * dejaba sin hilos al resto del servicio. Ahora la conexion y cada comando tienen un tope corto y cualquier fallo se
+ * traduce a 503 UPSTREAM_UNAVAILABLE con Retry-After (FALLA CERRADO: sin limitador no se atiende la peticion).
+ */
 internal class ValkeyOposiBotsAuthRateLimiter(
     url: String,
     private val hasher: RateLimitKeyHasher,
+    connectTimeout: Duration = DEFAULT_CONNECT_TIMEOUT,
+    private val commandTimeout: Duration = DEFAULT_COMMAND_TIMEOUT,
 ) : OposiBotsAuthRateLimiter {
-    private val client = RedisClient.create(url)
+    private val client = RedisClient.create(url).apply {
+        setDefaultTimeout(commandTimeout)
+        options = ClientOptions.builder()
+            .protocolVersion(ProtocolVersion.RESP2)
+            .socketOptions(SocketOptions.builder().connectTimeout(connectTimeout).build())
+            .timeoutOptions(TimeoutOptions.enabled(commandTimeout))
+            .build()
+    }
     private val connection = client.connect()
 
     override suspend fun checkIp(
@@ -127,16 +149,24 @@ internal class ValkeyOposiBotsAuthRateLimiter(
         limit: Int,
     ): OposiBotsRateLimitDecision = withContext(Dispatchers.IO) {
         val key = "oposibots:auth:$scope:${operation.name.lowercase()}:${hasher.hash(rawKey)}"
-        val result = connection.sync().eval<List<Any>>(
-            RATE_LIMIT_SCRIPT,
-            ScriptOutputType.MULTI,
-            arrayOf(key),
-            limit.toString(),
-            (operation.windowSeconds * 1_000).toString(),
-        )
-        val allowed = (result[0] as Number).toLong() == 1L
-        val retryMillis = (result[1] as Number).toLong().coerceAtLeast(1)
-        OposiBotsRateLimitDecision(allowed, ceil(retryMillis / 1_000.0).toLong())
+        try {
+            val result = connection.sync().eval<List<Any>>(
+                RATE_LIMIT_SCRIPT,
+                ScriptOutputType.MULTI,
+                arrayOf(key),
+                limit.toString(),
+                (operation.windowSeconds * 1_000).toString(),
+            )
+            val allowed = (result[0] as Number).toLong() == 1L
+            val retryMillis = (result[1] as Number).toLong().coerceAtLeast(1)
+            OposiBotsRateLimitDecision(allowed, ceil(retryMillis / 1_000.0).toLong())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: RedisException) {
+            // Incluye RedisCommandTimeoutException y RedisConnectionException.
+            Logger.warn("rate limiter unavailable operation={} type={}", operation.name, failure::class.simpleName)
+            throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(retryAfterSeconds = UNAVAILABLE_RETRY_AFTER_SECONDS, cause = failure)
+        }
     }
 
     override fun close() {
@@ -145,6 +175,10 @@ internal class ValkeyOposiBotsAuthRateLimiter(
     }
 
     companion object {
+        val DEFAULT_CONNECT_TIMEOUT: Duration = Duration.ofSeconds(1)
+        val DEFAULT_COMMAND_TIMEOUT: Duration = Duration.ofSeconds(2)
+        private const val UNAVAILABLE_RETRY_AFTER_SECONDS = 5
+        private val Logger = org.slf4j.LoggerFactory.getLogger("OC-KTOR-RATE-LIMITER")
         private const val RATE_LIMIT_SCRIPT = """
             local count = redis.call('INCR', KEYS[1])
             if count == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[2]) end

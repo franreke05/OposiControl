@@ -61,15 +61,11 @@ internal data class AuthProviderUser(
 internal interface CanonicalUpstream {
     fun get(path: String): String
     fun rpc(function: String, body: String): SupabaseRawResponse
-    fun patch(path: String, body: String)
 }
 
 internal class TransportCanonicalUpstream(private val transport: SupabaseRequestTransport) : CanonicalUpstream {
     override fun get(path: String): String = transport.get(path)
     override fun rpc(function: String, body: String): SupabaseRawResponse = transport.rpcRaw(function, body)
-    override fun patch(path: String, body: String) {
-        transport.send("PATCH", path, body, prefer = "return=minimal")
-    }
 }
 
 /** `Me` + la version (ETag) del perfil. [replay] = repeticion identica de un onboarding ya completado. */
@@ -108,7 +104,7 @@ internal class SupabaseCanonicalProfileService(
 ) : CanonicalProfileService {
 
     override suspend fun me(identity: CanonicalUserIdentity, accessToken: String, context: OposiBotsAuthContext): MeResult {
-        val row = withUpstreamIo {
+        val row = canonicalUpstreamIo {
             upstream.get(
                 "/rest/v1/perfiles_usuario?select=$PROFILE_COLUMNS&usuario_id=eq.${identity.userId.value}&limit=1",
             )
@@ -176,50 +172,30 @@ internal class SupabaseCanonicalProfileService(
         ifMatch: String?,
         context: OposiBotsAuthContext,
     ): MeResult {
+        // MASTER-ARCH-006: el DTO del cable se traduce una vez; validacion y RPC trabajan con el comando interno.
+        val command = request.toCommand()
         val issues = mutableListOf<ErrorIssue>()
-        request.username?.let { if (!USERNAME_PATTERN.matches(it)) issues += ErrorIssue("username", CanonicalIssue.INVALID_FORMAT) }
-        request.nombre?.let { issues += nameIssues("nombre", it, required = true) }
-        request.apellidos?.let { issues += nameIssues("apellidos", it, required = true) }
-        request.especialidadId?.let { if (!it.isUuid()) issues += ErrorIssue("especialidadId", CanonicalIssue.INVALID_FORMAT) }
-        request.comunidadPrincipalId?.let { if (!it.isUuid()) issues += ErrorIssue("comunidadPrincipalId", CanonicalIssue.INVALID_FORMAT) }
-        request.targetCommunityIds?.let { ids ->
+        command.username?.let { if (!USERNAME_PATTERN.matches(it)) issues += ErrorIssue("username", CanonicalIssue.INVALID_FORMAT) }
+        command.nombre?.let { issues += nameIssues("nombre", it, required = true) }
+        command.apellidos?.let { issues += nameIssues("apellidos", it, required = true) }
+        command.especialidadId?.let { if (!it.isUuid()) issues += ErrorIssue("especialidadId", CanonicalIssue.INVALID_FORMAT) }
+        command.comunidadPrincipalId?.let { if (!it.isUuid()) issues += ErrorIssue("comunidadPrincipalId", CanonicalIssue.INVALID_FORMAT) }
+        command.targetCommunityIds?.let { ids ->
             if (ids.size > MAX_TARGET_COMMUNITIES) issues += ErrorIssue("targetCommunityIds", CanonicalIssue.OUT_OF_RANGE)
             ids.forEachIndexed { i, id -> if (!id.isUuid()) issues += ErrorIssue("targetCommunityIds[$i]", CanonicalIssue.INVALID_FORMAT) }
         }
-        request.detail?.fechaExamenObjetivo?.let {
+        command.detail?.fechaExamenObjetivo?.let {
             try {
                 LocalDate.parse(it)
             } catch (_: DateTimeParseException) {
                 issues += ErrorIssue("detail.fechaExamenObjetivo", CanonicalIssue.INVALID_FORMAT)
             }
         }
-        request.detail?.edad?.let { if (it < 0) issues += ErrorIssue("detail.edad", CanonicalIssue.OUT_OF_RANGE) }
-        request.detail?.tiempoEstudioMin?.let { if (it < 0) issues += ErrorIssue("detail.tiempoEstudioMin", CanonicalIssue.OUT_OF_RANGE) }
+        command.detail?.edad?.let { if (it < 0) issues += ErrorIssue("detail.edad", CanonicalIssue.OUT_OF_RANGE) }
+        command.detail?.tiempoEstudioMin?.let { if (it < 0) issues += ErrorIssue("detail.tiempoEstudioMin", CanonicalIssue.OUT_OF_RANGE) }
         if (issues.isNotEmpty()) throw validationError(*issues.take(MAX_VALIDATION_ISSUES).toTypedArray())
 
-        val patch = buildJsonObject {
-            request.username?.let { put("username", it) }
-            request.nombre?.let { put("nombre", it.trim()) }
-            request.apellidos?.let { put("apellidos", it.trim()) }
-            request.especialidadId?.let { put("especialidadId", it.lowercase()) }
-            request.comunidadPrincipalId?.let { put("comunidadPrincipalId", it.lowercase()) }
-            request.detail?.let { d ->
-                put(
-                    "detail",
-                    buildJsonObject {
-                        d.edad?.let { put("edad", it) }
-                        d.ciudad?.let { put("ciudad", it) }
-                        d.estadoLaboral?.let { put("estadoLaboral", it) }
-                        d.centroTrabajo?.let { put("centroTrabajo", it) }
-                        d.tiempoEstudioMin?.let { put("tiempoEstudioMin", it) }
-                        d.franja?.let { put("franja", it) }
-                        d.fechaExamenObjetivo?.let { put("fechaExamenObjetivo", it) }
-                    },
-                )
-            }
-            request.targetCommunityIds?.let { ids -> put("targetCommunityIds", JsonArray(ids.map { JsonPrimitive(it.lowercase()) })) }
-            request.introSeen?.let { put("introSeen", it) }
-        }
+        val patch = ProfileRpcContract.patch(command)
         val args = buildJsonObject {
             put("p_usuario_id", identity.userId.value)
             put("p_patch", patch)
@@ -235,7 +211,7 @@ internal class SupabaseCanonicalProfileService(
         }
         // Solo los tipos del contrato (`terminos|privacidad`): `cookies`/`aviso_legal` nunca salen por aqui.
         val filter = if (tipo != null) "tipo_documento=eq.$tipo" else "tipo_documento=in.(terminos,privacidad)"
-        val body = withUpstreamIo {
+        val body = canonicalUpstreamIo {
             upstream.get(
                 "/rest/v1/documentos_legales?select=id,tipo_documento,version,titulo,contenido,publicado_en" +
                     "&activo=eq.true&publicado_en=not.is.null&$filter&order=publicado_en.desc&limit=$MAX_LEGAL_DOCUMENTS",
@@ -252,8 +228,7 @@ internal class SupabaseCanonicalProfileService(
                 publicadoEn = normalizeInstant(it.publicadoEn),
             )
         }
-        val newest = items.maxOfOrNull { it.publicadoEn } ?: "none"
-        return LegalDocumentsResult(items, etag = "\"legal-$newest-${items.size}\"")
+        return LegalDocumentsResult(items, etag = legalDocumentsEtag(items))
     }
 
     override suspend fun acceptLegalDocuments(
@@ -273,12 +248,13 @@ internal class SupabaseCanonicalProfileService(
             put("p_documentos", JsonArray(request.documentIds.distinct().map { JsonPrimitive(it.lowercase()) }))
             put("p_plataforma", request.plataforma)
         }
-        val response = withUpstreamIo { upstream.rpc("app_aceptar_documentos_legales", args.toString()) }
+        val response = canonicalUpstreamIo { upstream.rpc("app_aceptar_documentos_legales", args.toString()) }
         if (!response.ok) throw ProfileRpcErrors.failure("app_aceptar_documentos_legales", response)
         return try {
             json.decodeFromString(LegalAcceptanceResponse.serializer(), response.body)
-        } catch (_: Exception) {
-            throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        } catch (e: IllegalArgumentException) {
+            // MASTER-OBS-003: la causa de decodificacion se conserva (solo log; el cliente no la ve).
+            throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = e)
         }
     }
 
@@ -289,12 +265,13 @@ internal class SupabaseCanonicalProfileService(
         args: JsonObject,
         documentNotActiveAs: CanonicalErrorCode = CanonicalErrorCode.DOCUMENT_NOT_ACTIVE,
     ): ProfileSnapshot {
-        val response = withUpstreamIo { upstream.rpc(function, args.toString()) }
+        val response = canonicalUpstreamIo { upstream.rpc(function, args.toString()) }
         if (!response.ok) throw ProfileRpcErrors.failure(function, response, documentNotActiveAs)
         return try {
             json.decodeFromString(ProfileSnapshot.serializer(), response.body)
-        } catch (_: Exception) {
-            throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        } catch (e: IllegalArgumentException) {
+            // MASTER-OBS-003: idem; `function` identifica la RPC en el log.
+            throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = IllegalStateException("decode $function failed", e))
         }
     }
 
@@ -328,7 +305,7 @@ internal class SupabaseCanonicalProfileService(
                 avatarUrl = null,
                 onboardingCompleted = snapshot.onboardingCompleted,
                 accountStatus = status.wire,
-                introSeenAt = snapshot.introSeenAt,
+                introSeenAt = snapshot.introSeenAt?.let(::normalizeInstant),
             ),
         )
         val etag = snapshot.actualizadoEn?.let { "\"${normalizeInstant(it)}\"" }
@@ -454,8 +431,22 @@ internal object ProfileRpcErrors {
         if (key == "UNKNOWN_FIELD") return validationError(ErrorIssue(hint, CanonicalIssue.UNKNOWN_FIELD))
         // Bloqueo, deadlock, timeouts: 503 DB_BUSY con Retry-After, igual que el resto del backend.
         mapSupabaseDomainError(response.status, response.body)?.let { return it }
-        return IllegalStateException("Supabase RPC $function -> ${response.status}: ${response.body.take(300)}")
+        val failure = IllegalStateException("Supabase RPC $function -> ${response.status}: ${response.body.take(300)}")
+        // MASTER-API-003: una caida de PostgREST (5xx) en una ruta canonica es 503 UPSTREAM_UNAVAILABLE (contrato), no 502/504.
+        if (response.status >= 500) return CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(cause = failure)
+        return failure
     }
+}
+
+/**
+ * MASTER-API-003: `withUpstreamIo` para las rutas canonicas. Un fallo de red o un 5xx del transporte
+ * (`IllegalStateException`) sale como 503 UPSTREAM_UNAVAILABLE (lo que documenta profiles.yaml) y conserva la causa
+ * para el log; un error de dominio ya traducido pasa tal cual.
+ */
+internal suspend fun <T> canonicalUpstreamIo(block: () -> T): T = try {
+    withUpstreamIo(block)
+} catch (failure: IllegalStateException) {
+    throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(cause = failure)
 }
 
 // ---------- utilidades ----------
@@ -463,6 +454,37 @@ internal object ProfileRpcErrors {
 private val UUID_TEXT = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 internal fun String.isUuid(): Boolean = UUID_TEXT.matches(this)
+
+/**
+ * MASTER-API-007: ETag FUERTE de la lista de documentos legales = sha256 de (id, version, publicadoEn, contenido) en
+ * orden. Editar el contenido, sustituir o revertir un documento cambia el ETag aunque la fecha mas reciente y el
+ * numero de documentos sean los mismos.
+ */
+internal fun legalDocumentsEtag(items: List<LegalDocument>): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    items.forEach { doc ->
+        listOf(doc.id, doc.version, doc.publicadoEn, doc.contenido).forEach {
+            val bytes = it.toString().toByteArray(Charsets.UTF_8)
+            digest.update(bytes.size.toString().toByteArray(Charsets.UTF_8))
+            digest.update(':'.code.toByte())
+            digest.update(bytes)
+        }
+    }
+    return "\"legal-" + digest.digest().joinToString("") { "%02x".format(it) }.take(32) + "\""
+}
+
+/**
+ * MASTER-API-007: `If-None-Match` como lo define RFC 9110: `*`, lista separada por comas, prefijo `W/` (comparacion
+ * debil). Antes solo un valor exacto producia 304.
+ */
+internal fun ifNoneMatchMatches(header: String?, etag: String): Boolean {
+    val value = header?.trim().orEmpty()
+    if (value.isEmpty()) return false
+    if (value == "*") return true
+    fun opaque(tag: String) = tag.trim().removePrefix("W/").trim()
+    val current = opaque(etag)
+    return value.split(',').any { opaque(it) == current }
+}
 
 /** Un instante ISO cualquiera (`Z` u offset, con microsegundos) a `Instant.toString()`; lo ilegible se devuelve tal cual. */
 internal fun normalizeInstant(value: String): String =

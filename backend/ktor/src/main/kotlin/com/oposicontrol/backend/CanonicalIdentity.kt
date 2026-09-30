@@ -26,12 +26,10 @@ value class CanonicalUserId private constructor(val value: String) {
     override fun toString(): String = value
 
     companion object {
-        private val UUID = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-
         /** El `sub` de un JWT ya verificado. Un `sub` que no es uuid es 401: no es una identidad canonica. */
         fun fromJwtSubject(subject: String?): CanonicalUserId {
             val trimmed = subject?.trim().orEmpty()
-            if (!UUID.matches(trimmed)) throw CanonicalErrorCode.UNAUTHENTICATED.exception()
+            if (!trimmed.isUuid()) throw CanonicalErrorCode.UNAUTHENTICATED.exception()
             return CanonicalUserId(trimmed.lowercase())
         }
     }
@@ -91,27 +89,29 @@ class PostgrestCanonicalProfileDirectory(
         @SerialName("usuario_id") val usuarioId: String,
         @SerialName("estado_cuenta") val estadoCuenta: String? = null,
         @SerialName("onboarding_completado") val onboardingCompletado: Boolean? = null,
-    )
-
-    override suspend fun find(userId: CanonicalUserId): CanonicalUserIdentity? {
-        val body = withUpstreamIo {
-            transport.get(
-                "/rest/v1/perfiles_usuario?select=usuario_id,estado_cuenta,onboarding_completado" +
-                    "&usuario_id=eq.${userId.value}&limit=1",
+    ) {
+        /** La fila como identidad; una fila de OTRO usuario es un fallo de contrato ([onMismatch] decide el error). */
+        fun toIdentity(userId: CanonicalUserId, onMismatch: () -> Nothing): CanonicalUserIdentity {
+            if (!usuarioId.equals(userId.value, ignoreCase = true)) onMismatch()
+            return CanonicalUserIdentity(
+                userId = userId,
+                accountStatus = AccountStatus.fromWire(estadoCuenta),
+                onboardingCompleted = onboardingCompletado ?: false,
             )
         }
+    }
+
+    override suspend fun find(userId: CanonicalUserId): CanonicalUserIdentity? {
+        val body = canonicalUpstreamIo { transport.get(profileStatePath(userId)) }
         val row = json.decodeFromString(ListSerializer(ProfileRow.serializer()), body).firstOrNull() ?: return null
-        if (!row.usuarioId.equals(userId.value, ignoreCase = true)) {
-            throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
-        }
-        return CanonicalUserIdentity(
-            userId = userId,
-            accountStatus = AccountStatus.fromWire(row.estadoCuenta),
-            onboardingCompleted = row.onboardingCompletado ?: false,
-        )
+        return row.toIdentity(userId) { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception() }
     }
 
     companion object {
+        /** Lectura unica del estado de cuenta (la comparten este directorio y la puerta de estado del gateway de auth). */
+        internal fun profileStatePath(userId: CanonicalUserId): String =
+            "/rest/v1/perfiles_usuario?select=usuario_id,estado_cuenta,onboarding_completado&usuario_id=eq.${userId.value}&limit=1"
+
         fun fromEnvironment(environment: (String) -> String? = System::getenv): PostgrestCanonicalProfileDirectory? =
             SupabaseRequestTransport.fromEnvironment(environment)?.let(::PostgrestCanonicalProfileDirectory)
     }
@@ -147,6 +147,9 @@ class CanonicalIdentityResolver(
             withUpstreamIo { verifyClaims?.invoke(token) ?: VerifiedJwtClaims(verifySubject(token)) }
         } catch (domain: BackendDomainException) {
             throw domain
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            // MASTER-QUALITY-003: la cancelacion no es un token invalido; se propaga (no se convierte en 401).
+            throw cancelled
         } catch (_: java.io.IOException) {
             // RB-1-06: JWKS caido / timeout no es un token invalido: 503 (reintentable), no 401 (que cerraria sesion).
             throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
@@ -175,15 +178,34 @@ class CanonicalIdentityResolver(
     suspend fun activeIdentity(call: ApplicationCall): CanonicalUserIdentity = identity(call).requireActive()
 
     /**
+     * MASTER-SEC-010: [activeIdentity] en dos fases. [beforeLookup] (el limite por usuario) corre con el `sub` ya
+     * VERIFICADO y ANTES de leer `perfiles_usuario`: los intentos de una cuenta bloqueada o pendiente tambien
+     * cuentan, y un limite agotado no paga la lectura upstream.
+     */
+    suspend fun activeIdentity(
+        call: ApplicationCall,
+        beforeLookup: suspend (CanonicalUserId) -> Unit,
+    ): CanonicalUserIdentity {
+        val userId = userId(call)
+        beforeLookup(userId)
+        return (directory.find(userId) ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()).requireActive()
+    }
+
+    /**
      * SLICE 1 (D1-19, borrado de cuenta): identidad de una cuenta ACTIVA o ya
      * ELIMINACION_PENDIENTE (la repeticion es idempotente por estado). `bloqueada`
      * -> 403 ACCOUNT_BLOCKED, cualquier otro estado o estado ausente -> 403
      * FORBIDDEN, sin fila -> 403 PROFILE_MISSING. Devuelve tambien los claims
      * para la reautenticacion OAuth (una sola verificacion del JWT).
      */
-    suspend fun deletionIdentity(call: ApplicationCall): DeletionIdentity {
+    suspend fun deletionIdentity(
+        call: ApplicationCall,
+        beforeLookup: suspend (CanonicalUserId) -> Unit = {},
+    ): DeletionIdentity {
         val claims = verifiedClaims(call)
         val userId = CanonicalUserId.fromJwtSubject(claims.subject)
+        // MASTER-SEC-010: el limite por usuario va antes de la lectura del perfil (ver [activeIdentity]).
+        beforeLookup(userId)
         val identity = directory.find(userId) ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
         return DeletionIdentity(identity.requireActiveOrDeletionPending(), claims)
     }

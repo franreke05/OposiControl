@@ -3,6 +3,11 @@ package com.oposicontrol.backend.openapi
 import com.oposicontrol.backend.AccountDeletionAccepted
 import com.oposicontrol.backend.AccountDeletionRequest
 import com.oposicontrol.backend.AdminV1Gateway
+import com.oposicontrol.backend.AppV1Gateway
+import com.oposicontrol.backend.SupabaseJwtVerifier
+import com.oposicontrol.backend.SupabaseV1Gateway
+import com.oposicontrol.backend.appV1Routes
+import com.oposicontrol.backend.v1Routes
 import com.oposicontrol.backend.AttributionHints
 import com.oposicontrol.backend.CanonicalCommand
 import com.oposicontrol.backend.CanonicalErrorCode
@@ -134,6 +139,7 @@ class Slice1ContractConformanceTest {
                 installRequestCorrelation()
                 installBackendStatusPages()
                 val runtime: OposiBotsAuthRuntime = CanonicalTestEnv().runtime()
+                val stubClient = V1StubHttpClient({ }, { V1StubResponse(200, "[]") })
                 val gateway = AdminV1Gateway.forTesting(
                     supabaseUrl = "https://stub.supabase.test",
                     serviceRoleKey = "stub-key",
@@ -144,6 +150,13 @@ class Slice1ContractConformanceTest {
                     oposiBotsAuthRoutes(runtime)
                     canonicalProfileRoutes(runtime)
                     adminV1Routes(gateway)
+                    // Cableado real de produccion (Application.kt): las rutas legacy /v1 y /api/v1/app tambien cuentan.
+                    v1Routes(SupabaseV1Gateway.forTesting("https://stub.supabase.test", "stub-key", Json { ignoreUnknownKeys = true }, stubClient))
+                    appV1Routes(
+                        AppV1Gateway.forTesting("https://stub.supabase.test", "stub-key", Json { ignoreUnknownKeys = true }, stubClient),
+                        SupabaseJwtVerifier("https://stub.supabase.test", Json { ignoreUnknownKeys = true }),
+                        allowDevUser = false,
+                    )
                     healthLiveRoute()
                     observabilityHealthRoutes()
                     prometheusMetricsRoute()
@@ -193,13 +206,36 @@ class Slice1ContractConformanceTest {
     }
 
     @Test
+    fun theRouteWalkMountsTheProductionLegacyModulesToo() {
+        // MASTER-OPENAPI-011: sin v1Routes/appV1Routes las comprobaciones de rutas no documentadas no ven el legacy real.
+        assertTrue("GET /api/v1/app/home" in registered, "appV1Routes must be mounted in the route walk")
+        assertTrue("GET /v1/especialidades" in registered, "v1Routes must be mounted in the route walk")
+    }
+
+    @Test
+    fun theCommentStripperKeepsStringsAndDropsComments() {
+        val out = stripKotlinComments("val a = \"https://x\" // \"GHOST_CODE\"\n/*\"BLOCK_CODE\" */ val b = \"REAL_CODE\"")
+        assertTrue("REAL_CODE" in out && "https://x" in out)
+        assertTrue("GHOST_CODE" !in out && "BLOCK_CODE" !in out)
+    }
+
+    @Test
     fun noUndocumentedRouteAppearsUnderTheCanonicalAuthAndAppPrefixes() {
         val documented = operations.map { key(it) }.toSet()
         // Legacy /v1/auth routes kept for the released OposiBot client (see ARCHITECTURE_DELTA_S1).
         val legacyAllowed = setOf("GET /v1/auth/me", "POST /v1/auth/register/profile")
+        // Rutas legacy vivas de /api/v1/app (AppV1Routes.kt, cableadas en Application.kt) que el contrato congelado aun no
+        // declara; deny-by-default via activeIdentity. Toda ruta nueva bajo el prefijo debe declararse o entrar aqui a proposito.
+        val legacyAppAllowed = setOf(
+            "GET /api/v1/app/commercial/catalog", "GET /api/v1/app/commercial/purchases", "GET /api/v1/app/commercial/subscriptions",
+            "GET /api/v1/app/estadisticas", "GET /api/v1/app/home", "POST /api/v1/app/eventos",
+            "POST /api/v1/app/examenes/{}/iniciar", "POST /api/v1/app/feedback/pregunta", "POST /api/v1/app/intentos/{}/responder",
+        )
+        val stale = (legacyAllowed + legacyAppAllowed).filter { it !in registered }
+        assertTrue(stale.isEmpty(), "Allowlisted legacy routes that are no longer served (remove them): $stale")
         val extra = registered
             .filter { it.substringAfter(' ').let { p -> p.startsWith("/v1/auth") || p.startsWith("/api/v1/app") } }
-            .filter { it !in documented && it !in legacyAllowed }
+            .filter { it !in documented && it !in legacyAllowed && it !in legacyAppAllowed }
         assertTrue(extra.isEmpty(), "Routes served under /v1/auth or /api/v1/app that the contract does not declare: $extra")
     }
 
@@ -383,12 +419,20 @@ class Slice1ContractConformanceTest {
 
     // ------------------------------------------------------------------ codigos de error
 
+    /**
+     * Fuentes de `main` SIN comentarios (MASTER-OPENAPI-012): un codigo citado solo en un comentario/KDoc no cuenta como
+     * existente. Las cadenas se conservan (el patron las consume enteras, asi un `//` dentro de una URL no se toma por comentario).
+     */
     private val knownSources: String by lazy {
         val root = generateSequence(File("").absoluteFile) { it.parentFile }
             .map { File(it, "backend/ktor/src/main/kotlin") }.firstOrNull { it.isDirectory }
             ?: File("src/main/kotlin")
-        root.walkTopDown().filter { it.extension == "kt" }.joinToString("\n") { it.readText() }
+        root.walkTopDown().filter { it.extension == "kt" }.joinToString("\n") { stripKotlinComments(it.readText()) }
     }
+
+    private fun stripKotlinComments(source: String): String =
+        Regex("\"\"\"[\\s\\S]*?\"\"\"|\"(?:\\\\.|[^\"\\\\\\n])*\"|'(?:\\\\.|[^'\\\\\\n])'|//[^\\n]*|/\\*[\\s\\S]*?\\*/")
+            .replace(source) { m -> if (m.value.startsWith("//") || m.value.startsWith("/*")) "" else m.value }
 
     @Test
     fun everyErrorCodeCitedBySlice1OperationsExistsInTheKotlinCatalogAndIsNotRetired() {

@@ -173,10 +173,17 @@ internal suspend fun authorizeAdminCall(
  * una rotación, [SupabaseJwtVerifier.subFrom] descarga el JWKS con una petición
  * bloqueante, y el bloque `authenticate {}` corre en el hilo de la petición.
  *
- * Cualquier fallo de verificación —firma, emisor, `kid` desconocido, JWKS caído—
- * es "credencial no válida" y acaba en 401, como hasta ahora. La cancelación NO
- * es un fallo de verificación: se relanza, porque tragársela convertiría "el
- * cliente se fue" en un 401 y dejaría la corrutina sin cancelar.
+ * Un fallo de verificación —firma, emisor, `kid` desconocido con un JWKS sano— es
+ * "credencial no válida" y acaba en 401 (sobre UNAUTHENTICATED, ver
+ * `installBackendStatusPages`). La cancelación NO es un fallo de verificación: se
+ * relanza, porque tragársela convertiría "el cliente se fue" en un 401 y dejaría la
+ * corrutina sin cancelar.
+ *
+ * MASTER-API-018: un JWKS NO DISPONIBLE ([java.io.IOException] de [SupabaseJwtVerifier],
+ * RB-1-06) ya no es un 401: decía "tu sesión no vale" por una caída de infraestructura
+ * (el cliente cerraba sesión) y no dejaba traza. Ahora es 503 UPSTREAM_UNAVAILABLE con
+ * `Retry-After`, que StatusPages publica con el sobre canónico y registra como
+ * SUPABASE_REQUEST_FAILED — el mismo criterio que ya aplican las rutas canónicas.
  */
 internal suspend fun verifiedJwtPrincipalOrNull(
     token: String,
@@ -186,9 +193,14 @@ internal suspend fun verifiedJwtPrincipalOrNull(
         UserIdPrincipal(withUpstreamIo { verify(token) })
     } catch (cancelled: CancellationException) {
         throw cancelled
+    } catch (unavailable: java.io.IOException) {
+        throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(retryAfterSeconds = JWKS_UNAVAILABLE_RETRY_AFTER_SECONDS)
     } catch (_: Exception) {
         null
     }
+
+/** Segundos de `Retry-After` cuando el JWKS no responde (la ventana anti-tormenta del verificador es de 5 s). */
+internal const val JWKS_UNAVAILABLE_RETRY_AFTER_SECONDS = 5
 
 /** Nombre del principal que representa al token estático, no a una persona. */
 internal const val STATIC_TOKEN_PRINCIPAL = "oposicontrol-admin"

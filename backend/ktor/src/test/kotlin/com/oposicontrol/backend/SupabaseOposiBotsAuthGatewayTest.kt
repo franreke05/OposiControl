@@ -138,6 +138,12 @@ class SupabaseOposiBotsAuthGatewayTest {
                     HttpStatusCode.OK,
                     headersOf(HttpHeaders.ContentType, "application/json"),
                 )
+                // MASTER-AUTH-011: la puerta de estado corre ANTES del reclamo de la credencial.
+                "/rest/v1/perfiles_usuario" -> respond(
+                    ByteReadChannel(profileRow("activa")),
+                    HttpStatusCode.OK,
+                    headersOf(HttpHeaders.ContentType, "application/json"),
+                )
                 "/rest/v1/rpc/oposibots_claim_oauth_credential" -> respond(
                     ByteReadChannel("""{"code":"23505"}"""),
                     HttpStatusCode.Conflict,
@@ -165,11 +171,13 @@ class SupabaseOposiBotsAuthGatewayTest {
         }
 
         assertEquals(
-            listOf("/auth/v1/token", "/rest/v1/rpc/oposibots_claim_oauth_credential", "/auth/v1/logout"),
+            listOf("/auth/v1/token", "/rest/v1/perfiles_usuario", "/rest/v1/rpc/oposibots_claim_oauth_credential", "/auth/v1/logout"),
             requests.map { it.url.encodedPath },
         )
         assertEquals("Bearer minted-access", requests.last().headers[HttpHeaders.Authorization])
-        assertEquals("scope=global", requests.last().url.encodedQuery)
+        // MASTER-AUTH-005 (cambio deliberado de la asercion previa `scope=global`): un replay revoca SOLO la sesion
+        // acuñada; en global cerraba todas las sesiones del usuario real.
+        assertEquals("scope=local", requests.last().url.encodedQuery)
     }
 
     // ---------------- SLICE 1: puerta de estado de cuenta ----------------

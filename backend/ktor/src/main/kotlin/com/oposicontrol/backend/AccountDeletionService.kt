@@ -1,6 +1,8 @@
 package com.oposicontrol.backend
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -58,9 +60,37 @@ internal class AccountDeletionService(
         if (identity.accountStatus == AccountStatus.ACTIVA) reauthenticate(accessToken, claims, request, context)
 
         val row = requestDeletion(identity)
-        if (!row.yaPendiente) revokeSessionsBestEffort(identity, accessToken, context)
+        // MASTER-AUTH-015: una repeticion vuelve a intentar la revocacion si la anterior NO consta como `hecha`
+        // (fallo, o el intento se corto antes de registrarse). Toda la revocacion corre en NonCancellable: que el
+        // cliente cierre la conexion ya no deja la sesion viva sin anotar.
+        withContext(NonCancellable) {
+            if (!row.yaPendiente || revocationPending(identity, context)) revokeSessionsBestEffort(identity, accessToken, context)
+        }
         return AccountDeletionAccepted(accountStatus = STATUS_PENDING, requestedAt = normalizeInstant(row.solicitadaEn))
     }
+
+    /**
+     * ¿La revocacion de sesiones de la solicitud sigue sin constar como `hecha`? Lectura con la clave de servicio
+     * (la tabla solo concede SELECT a service_role). Si no se puede leer, no se reintenta: reintentar sobre una
+     * sesion ya revocada anotaria `fallida` encima de un `hecha` real.
+     */
+    private suspend fun revocationPending(identity: CanonicalUserIdentity, context: OposiBotsAuthContext): Boolean = try {
+        val body = canonicalUpstreamIo {
+            upstream.get(
+                "/rest/v1/solicitudes_eliminacion_cuenta?select=revocacion_sesiones&usuario_id=eq.${identity.userId.value}&limit=1",
+            )
+        }
+        val estado = json.decodeFromString(ListSerializer(RevocationRow.serializer()), body).singleOrNull()?.revocacionSesiones
+        estado != null && estado != REVOKE_DONE
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Exception) {
+        Logger.warn("reading session revocation state failed requestId={} type={}", context.requestId, failure::class.simpleName)
+        false
+    }
+
+    @Serializable
+    private data class RevocationRow(@SerialName("revocacion_sesiones") val revocacionSesiones: String? = null)
 
     private suspend fun reauthenticate(
         accessToken: String,
@@ -84,11 +114,12 @@ internal class AccountDeletionService(
 
     private suspend fun requestDeletion(identity: CanonicalUserIdentity): RequestRow {
         val args = buildJsonObject { put("p_usuario_id", identity.userId.value) }
-        val response = withUpstreamIo { upstream.rpc(RPC_REQUEST, args.toString()) }
+        val response = canonicalUpstreamIo { upstream.rpc(RPC_REQUEST, args.toString()) }
         if (!response.ok) throw ProfileRpcErrors.failure(RPC_REQUEST, response)
         val row = try {
             json.decodeFromString(ListSerializer(RequestRow.serializer()), response.body).singleOrNull()
-        } catch (_: Exception) {
+        } catch (e: IllegalArgumentException) {
+            Logger.warn("deletion request row could not be decoded: {}", e.redactedMessage("decode error"))
             null
         }
         // Nunca se finge exito: sin la fila confirmada por la base, o con otro estado, es un error de contrato.
@@ -111,7 +142,11 @@ internal class AccountDeletionService(
                 put("p_usuario_id", identity.userId.value)
                 put("p_resultado", outcome)
             }
-            withUpstreamIo { upstream.rpc(RPC_RECORD_REVOCATION, args.toString()) }
+            val recorded = withUpstreamIo { upstream.rpc(RPC_RECORD_REVOCATION, args.toString()) }
+            // MASTER-OBS-006: un 4xx/5xx de la RPC (p. ej. sin solicitud de borrado) ya no pasa en silencio.
+            if (!recorded.ok) {
+                Logger.warn("recording session revocation rejected requestId={} status={}", context.requestId, recorded.status)
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {

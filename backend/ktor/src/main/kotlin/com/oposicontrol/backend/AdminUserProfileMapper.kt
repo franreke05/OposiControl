@@ -91,7 +91,9 @@ data class AdminUserListFilter(
     fun postgrestFilters(userIds: List<String>? = null): String = buildString {
         accountStatus?.let { append("&estado_cuenta=eq.").append(it) }
         q?.let {
-            val pattern = URLEncoder.encode(it, StandardCharsets.UTF_8).replace("+", "%20")
+            // `_` es comodin de un caracter en ilike: se escapa con `\` para que case solo el guion bajo literal
+            // (`%` y `\` no pasan Q_ALLOWED, asi que no hay doble escape ni comodines del cliente).
+            val pattern = URLEncoder.encode(it.replace("_", "\\_"), StandardCharsets.UTF_8).replace("+", "%20")
             append("&or=(username.ilike.").append(pattern).append("*,nombre_mostrar.ilike.").append(pattern).append("*)")
         }
         userIds?.let { append("&usuario_id=in.(").append(it.joinToString(",")).append(")") }

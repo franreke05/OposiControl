@@ -1104,9 +1104,11 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 // siguen funcionando sin cambios.
                 // D1-22 (SLICE 1): q, roleCode, accountStatus y sort, validados antes de tocar la base.
                 val query = call.request.queryParameters
+                // MASTER-API-008: limit/offset estrictos (400 OUT_OF_RANGE), no un defecto silencioso.
+                val (limit, offset) = AdminPageRequest.parseStrict(query["limit"], query["offset"])
                 val page = gateway.listUsuarios(
-                    limit = query["limit"]?.toIntOrNull(),
-                    offset = query["offset"]?.toIntOrNull(),
+                    limit = limit,
+                    offset = offset,
                     filter = AdminUserListFilter.parse(query["q"], query["roleCode"], query["accountStatus"], query["sort"]),
                 )
                 call.respond(page)
@@ -1120,17 +1122,28 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             // Ficha completa: perfil, rendimiento, estado competitivo, racha,
             // economía, suscripciones, OposiTester y debilidades por etiqueta.
             get("/{id}/detalle") {
-                val detail = gateway.getUsuarioDetalle(call.userPathId())
+                val userId = call.userPathId()
+                val sections = AdminUserDetailSection.parse(call.request.queryParameters["sections"])
+                val detail = gateway.getUsuarioDetalle(userId, sections)
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
                 call.respond(AdminUserDetailResponse(detail))
             }
             patch("/{id}") {
-                val saved = gateway.updateUsuario(call.requiredPath("id"), call.receive())
+                val userId = call.userPathId()
+                // MASTER-API-016: el cuerpo de D1-25 es `{nombreMostrar}`; `fullName` (legacy) se acepta en la ventana de
+                // compatibilidad. Sin ninguno de los dos, 400 REQUIRED en vez de vaciar el nombre en silencio.
+                val body = call.receive<AdminUserPatchBody>()
+                val name = body.nombreMostrar ?: body.fullName
+                    ?: throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.REQUIRED))
+                val saved = gateway.updateUsuario(userId, AdminV1UserDto(id = userId, fullName = name))
                 call.respond(AdminUserResponse(saved))
             }
             post("/{id}/roles") {
-                @kotlinx.serialization.Serializable data class RolesBody(val roleIds: List<String>)
-                val body = call.receive<RolesBody>()
+                // MASTER-API-012: el id de ruta se valida PRIMERO como `UserIdPath` (400 NON_UUID) y sin tocar la base.
+                val userId = call.userPathId()
+                // MASTER-API-005: cuerpo canonico estricto (campo desconocido, `roleIds` ausente, tope de tamano).
+                val body = call.receiveCanonicalCommand<AdminRoleIdsCommand>()
+                if (body.roleIds.size > ADMIN_ROLE_IDS_MAX) throw validationError(ErrorIssue("roleIds", CanonicalIssue.OUT_OF_RANGE))
                 // Cuerpo Y path se validan como UUID. No es cosmético, y el
                 // motivo histórico importa: `mapSupabaseDomainError` buscaba sus
                 // códigos como subcadena DENTRO del cuerpo que devuelve Supabase,
@@ -1150,10 +1163,12 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 // significando «la invariante saltó» no debe depender de una sola.
                 // `AdminV1UserIdValidationOrderTest` fija que no sale ni una
                 // petición cuando el identificador no es un UUID.
-                val userId = call.requiredPath("id")
+                // MASTER-AUTH-003: el actor (sub del JWT) decide si puede tocar roles administrativos.
+                val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
                 gateway.syncRoles(
                     userId,
                     body.roleIds.map { it.validatedUuid("roleIds") },
+                    actorId = actorId,
                 )
                 // D1-26 (SLICE 1): los roles RESULTANTES (re-leidos tras la sincronizacion). `ok` se conserva para OC.
                 call.respond(AdminUserRolesResponse(roleIds = gateway.roleIdsOf(userId)))
@@ -2864,7 +2879,13 @@ private data class AuditoriaRow(
     @SerialName("tabla_afectada") val tablaAfectada: String? = null,
     @SerialName("registro_id") val registroId: String? = null,
     @SerialName("creado_en") val creadoEn: String? = null,
+    // MASTER-OBS-002: columnas jsonb ya existentes en `auditoria_log`.
+    val antes: JsonElement? = null,
+    val despues: JsonElement? = null,
 )
+
+/** MASTER-OBS-002: longitud maxima de un texto libre (motivo) guardado en la auditoria. */
+private const val AUDIT_TEXT_MAX = 1_000
 
 private fun FeedbackRow.toDto(autorNombre: String = "") = AdminFeedbackDto(
     id = id.orEmpty(),
@@ -3026,6 +3047,18 @@ private fun io.ktor.server.application.ApplicationCall.userPathId(): String =
     requiredPath("id").also { if (!it.isUuid()) throw NonUuidPathException("id") }
 
 @Serializable data class AdminUserResponse(val data: AdminV1UserDto)
+
+/** PATCH /usuarios/{id}: `nombreMostrar` (D1-25) o el `fullName` legacy. Los demas campos que envie un cliente antiguo se ignoran. */
+@Serializable
+data class AdminUserPatchBody(val nombreMostrar: String? = null, val fullName: String? = null)
+
+/** D1-26 `RoleIdsBody` (`additionalProperties: false`, `roleIds` obligatorio). Decodificacion estricta con [receiveCanonicalCommand]. */
+@CanonicalCommand(CommandAudience.ADMIN)
+@Serializable
+data class AdminRoleIdsCommand(val roleIds: List<String>)
+
+/** Tope de `roleIds` en D1-26 (hay 4 roles canonicos; 50 deja margen sin permitir cuerpos arbitrarios). */
+internal const val ADMIN_ROLE_IDS_MAX = 50
 
 /** D1-26: `{roleIds}` resultante + `ok` LEGACY (aditivo) hasta que OC migre. */
 @OptIn(ExperimentalSerializationApi::class)
@@ -3389,7 +3422,7 @@ private data class RolIdRow(val id: String)
 private data class RolUsuarioIdRow(@SerialName("usuario_id") val usuarioId: String)
 
 /** roleCode filtra por los usuarios que tienen el rol: por encima de esta cota el filtro se rechaza en vez de truncarse. */
-private const val ROLE_FILTER_MAX_HOLDERS = 500
+private const val ROLE_FILTER_MAX_HOLDERS = 100
 
 @Serializable
 private data class RolUsuarioRow(
@@ -3808,7 +3841,12 @@ class AdminV1Gateway private constructor(
             if (!existe) return null
             throw examPublishRequiresQuestionsException()
         }
-        registrarAuditoria("examen_publicado", "examenes", id)
+        registrarAuditoria(
+            "examen_publicado",
+            "examenes",
+            id,
+            despues = buildJsonObject { put("publicadoEn", saved.publicadoEn?.let(::JsonPrimitive) ?: JsonNull) },
+        )
         return saved.withSignedCover()
     }
 
@@ -3915,7 +3953,7 @@ class AdminV1Gateway private constructor(
         if (conDatos.isNotEmpty()) throw examHasUserDataException(conDatos)
 
         request("DELETE", "/rest/v1/examenes?id=eq.$id", null)
-        registrarAuditoria("examen_eliminado", "examenes", id)
+        registrarAuditoria("examen_eliminado", "examenes", id, antes = buildJsonObject { put("id", JsonPrimitive(id)) })
         return true
     }
 
@@ -5347,8 +5385,7 @@ class AdminV1Gateway private constructor(
         usuarioId.validatedUuid("usuarioId")
         val perfil = request("GET", "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$usuarioId&limit=1", null)
             .decodeList<PerfilUsuarioRow>().firstOrNull() ?: return null
-        val roleIds = request("GET", "/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId", null)
-            .decodeList<RolUsuarioRow>().map { it.rolId }
+        val roleIds = roleIdsOf(usuarioId)
         return AdminV1UserDto(
             id = perfil.usuarioId,
             fullName = perfil.nombreMostrar.orEmpty(),
@@ -5367,8 +5404,7 @@ class AdminV1Gateway private constructor(
         usuarioId.validatedUuid("usuarioId")
         val perfil = request("GET", "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$usuarioId&limit=1", null)
             .decodeList<PerfilUsuarioRow>().firstOrNull() ?: return null
-        val roleIds = request("GET", "/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId", null)
-            .decodeList<RolUsuarioRow>().map { it.rolId }
+        val roleIds = roleIdsOf(usuarioId)
         return AdminUserProfileMapper.user(
             usuarioId = perfil.usuarioId,
             username = perfil.username,
@@ -5416,20 +5452,48 @@ class AdminV1Gateway private constructor(
         return getUsuario(usuarioId) ?: input.copy(id = usuarioId)
     }
 
-    fun syncRoles(usuarioId: String, roleIds: List<String>) {
+    /**
+     * D1-26. [actorId] = `sub` del JWT de quien llama (`null` si no hay persona: token estático).
+     *
+     * MASTER-AUTH-003: conceder o retirar `admin`/`superadmin` exige SUPERADMIN (profiles.yaml D1-26). Antes
+     * nadie lo comprobaba: un admin normal podía hacerse superadmin o degradar a otros admins. La comprobación va
+     * ANTES de la RPC y falla cerrada (sin actor, o actor sin `superadmin` → 403 SUPERADMIN_REQUIRED, sin
+     * llamar a `admin_sync_roles`). Cambiar sólo `moderador`/`usuario` sigue abierto a cualquier admin.
+     */
+    fun syncRoles(usuarioId: String, roleIds: List<String>, actorId: String? = null) {
         // Misma apertura que `grantTickets`, `getUsuarioDetalle` y
         // `grantTicketsAdmin`: el identificador se valida ANTES de interpolarse
         // en ninguna URL ni de bajar a la RPC. Sin esto, el segmento del path
         // llegaba crudo a PostgREST y su eco de error se convertía en un 409 de
         // dominio falsificado desde el cliente.
         usuarioId.validatedUuid("usuarioId")
+        val requested = roleIds.distinct()
+        val codeById = listRoles().associate { it.id to it.code.trim().lowercase() }
+        val before = roleIdsOf(usuarioId)
+        val changesAdministrativeRoles = RoleSyncInvariants.changesAdministrativeRoles(
+            currentRoleCodes = before.mapNotNull(codeById::get).toSet(),
+            requestedRoleCodes = requested.mapNotNull(codeById::get).toSet(),
+        )
+        if (changesAdministrativeRoles) {
+            val actorCodes = actorId?.let { roleIdsOf(it.validatedUuid("actorId")) }.orEmpty().mapNotNull(codeById::get)
+            if (!CanonicalAuthorization.hasSuperAdmin(actorCodes)) {
+                throw CanonicalErrorCode.SUPERADMIN_REQUIRED.exception()
+            }
+        }
         request(
             "POST",
             "/rest/v1/rpc/admin_sync_roles",
-            sbJson.encodeToString(AdminSyncRolesRpc(usuarioId = usuarioId, roleIds = roleIds.distinct())),
+            sbJson.encodeToString(AdminSyncRolesRpc(usuarioId = usuarioId, roleIds = requested)),
             prefer = "return=minimal",
         )
-        registrarAuditoria("roles_sincronizados", "roles_usuario", usuarioId)
+        registrarAuditoria(
+            "roles_sincronizados",
+            "roles_usuario",
+            usuarioId,
+            antes = buildJsonObject { put("roleIds", JsonArray(before.map(::JsonPrimitive))) },
+            despues = buildJsonObject { put("roleIds", JsonArray(requested.map(::JsonPrimitive))) },
+            required = true,
+        )
     }
 
     // MODERACIÓN FORO (reportes_contenido + acciones_moderacion)
@@ -5855,7 +5919,18 @@ class AdminV1Gateway private constructor(
             sbJson.encodeToString(AdminGrantTicketsRpc(usuarioId, cantidad, motivo, key, tipo)),
         ).decodeList<AdminGrantTicketsResult>().firstOrNull()
             ?: error("La operación de cartera no devolvió resultado.")
-        registrarAuditoria("tickets_grant", "carteras_usuario", usuarioId)
+        registrarAuditoria(
+            "tickets_grant",
+            "carteras_usuario",
+            usuarioId,
+            despues = buildJsonObject {
+                put("cantidad", JsonPrimitive(cantidad))
+                put("tipo", JsonPrimitive(tipo))
+                put("motivo", JsonPrimitive(motivo.take(AUDIT_TEXT_MAX)))
+                put("saldoResultante", JsonPrimitive(result.saldoResultante))
+            },
+            required = true,
+        )
         return result.saldoResultante
     }
 
@@ -6219,8 +6294,10 @@ class AdminV1Gateway private constructor(
      * aprovisionada, esa sección se marca como no disponible y el resto de la
      * ficha se sirve igualmente. Una ficha parcial es útil; un 500 no.
      */
-    fun getUsuarioDetalle(usuarioId: String): AdminUserDetailDto? {
+    fun getUsuarioDetalle(usuarioId: String, sections: Set<String>? = null): AdminUserDetailDto? {
         usuarioId.validatedUuid("usuarioId")
+        // D1-24 `sections`: null = todas (incluida la lectura legacy `detalle`); un subconjunto lee SOLO esas secciones.
+        fun wants(key: String): Boolean = sections == null || key in sections
         val perfil = request(
             "GET",
             "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$usuarioId&limit=1",
@@ -6231,9 +6308,13 @@ class AdminV1Gateway private constructor(
 
         // D1-24: `perfil` con la forma AdminUser (cuenta, roles, email y proveedores). Si la lectura de roles falla la
         // seccion se marca no disponible y se conserva el perfil de siempre; GoTrue caido degrada a email null y [].
-        val perfilAdmin = runCatching {
-            val roleIds = request("GET", "/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId", null)
-                .decodeList<RolUsuarioRow>().map { it.rolId }
+        // El estado no reconocido NO se traga: el `runCatching` de abajo lo degradaria a un perfil con `accountStatus`
+        // vacio (fuera de esquema). Se resuelve antes: si no es uno de los tres congelados -> 502 UPSTREAM_CONTRACT_ERROR.
+        val statusWire = if (wants(AdminUserDetailSection.PERFIL)) {
+            AdminUserProfileMapper.accountStatusWire(perfil.estadoCuenta) ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        } else null
+        val perfilAdmin = if (!wants(AdminUserDetailSection.PERFIL)) perfil else runCatching {
+            val roleIds = roleIdsOf(usuarioId)
             val auth = readAuthInfo(usuarioId)
             val user = AdminUserProfileMapper.user(
                 usuarioId = perfil.usuarioId,
@@ -6258,12 +6339,19 @@ class AdminV1Gateway private constructor(
             )
         }.getOrElse {
             unavailable += "perfil"
-            perfil
+            // Fallback dentro del esquema: id, estado y alta salen de los campos legacy (los vacios no son AdminUser).
+            perfil.copy(
+                id = perfil.usuarioId,
+                accountStatus = statusWire.orEmpty(),
+                createdAt = normalizeInstant(perfil.creadoEn.orEmpty()),
+                onboardingCompleted = perfil.onboardingCompletado,
+                fullName = perfil.nombreMostrar,
+            )
         }
 
         /** Lee una sección; si falla, la marca y devuelve null en vez de tumbar la ficha. */
         fun <T> section(key: String, read: () -> T?): T? =
-            runCatching(read).getOrElse {
+            if (!wants(key)) null else runCatching(read).getOrElse {
                 unavailable += key
                 null
             }
@@ -6764,12 +6852,37 @@ class AdminV1Gateway private constructor(
 
     fun warnUser(userId: String, actionType: String, reason: String) {
         userId.validatedUuid("userId")
-        registrarAuditoria("${actionType}_usuario", "perfiles_usuario", userId)
+        // MASTER-OBS-002: el motivo ya no se descarta; queda en `despues` de la fila de auditoria.
+        registrarAuditoria(
+            "${actionType}_usuario",
+            "perfiles_usuario",
+            userId,
+            despues = buildJsonObject { put("motivo", JsonPrimitive(reason.take(AUDIT_TEXT_MAX))) },
+        )
     }
 
-    // Registro de acciones sensibles. No debe tumbar la operacion principal si falla.
-    // TODO(fase4): rellenar usuario_id desde el JWT de Supabase.
-    fun registrarAuditoria(accion: String, tabla: String?, registroId: String?) {
+    /**
+     * Registro de acciones sensibles.
+     *
+     * MASTER-OBS-002:
+     * - El ACTOR es el `sub` del JWT de la llamada ([AdminAuditActor], instalado por [installAdminAuditActor]
+     *   en toda la superficie `gateway-auth`): se escribe en `auditoria_log.usuario_id` y sale en el evento
+     *   ADMIN_ACTION (`user_id`). El token estático no es una persona: `null`, nunca un actor fabricado (HL-23).
+     * - [antes] / [despues] (jsonb ya existentes en `auditoria_log`) guardan el estado previo y el resultante de
+     *   las mutaciones privilegiadas.
+     * - [required] = cambio PRIVILEGIADO (roles, economía): si la fila no se puede escribir, la petición FALLA
+     *   (500 con referencia) en vez de quedar sin rastro. La mutación es idempotente (misma sincronización de
+     *   roles / misma clave de idempotencia), así que el reintento es seguro. El resto sigue siendo best-effort.
+     */
+    fun registrarAuditoria(
+        accion: String,
+        tabla: String?,
+        registroId: String?,
+        antes: JsonElement? = null,
+        despues: JsonElement? = null,
+        required: Boolean = false,
+    ) {
+        val actorId = AdminAuditActor.current()
         // Punto unico: toda escritura admin sensible pasa por aqui, asi que
         // es el sitio correcto para el evento estrategico generico
         // ADMIN_ACTION sin tener que tocar cada llamador (~20 sitios).
@@ -6778,12 +6891,23 @@ class AdminV1Gateway private constructor(
             operation = accion,
             entityType = tabla,
             entityId = registroId,
+            userId = actorId,
         )
         try {
             request(
                 "POST", "/rest/v1/auditoria_log",
                 sbJson.encodeToString(
-                    listOf(AuditoriaRow(id = UUID.randomUUID().toString(), accion = accion, tablaAfectada = tabla, registroId = registroId)),
+                    listOf(
+                        AuditoriaRow(
+                            id = UUID.randomUUID().toString(),
+                            usuarioId = actorId,
+                            accion = accion,
+                            tablaAfectada = tabla,
+                            registroId = registroId,
+                            antes = antes,
+                            despues = despues,
+                        ),
+                    ),
                 ),
                 prefer = "return=minimal",
             )
@@ -6805,6 +6929,7 @@ class AdminV1Gateway private constructor(
                 entityId = registroId,
                 errorType = error::class.simpleName,
             )
+            if (required) throw IllegalStateException("No se pudo registrar la auditoria de '$accion'.", error)
         }
     }
 

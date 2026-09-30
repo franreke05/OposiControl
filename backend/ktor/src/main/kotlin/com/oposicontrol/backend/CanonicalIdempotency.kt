@@ -19,8 +19,6 @@ import io.ktor.server.response.respond
 import io.ktor.util.AttributeKey
 import io.ktor.utils.io.readRemaining
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -66,8 +64,6 @@ object IdempotencyHeaders {
 @JvmInline
 value class IdempotencyKey private constructor(val value: String) {
     companion object {
-        private val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-
         /**
          * Ausente y [required] -> 400 IDEMPOTENCY_KEY_REQUIRED; ausente y opcional
          * -> null; presente y no UUID -> 400 IDEMPOTENCY_KEY_INVALID.
@@ -77,7 +73,7 @@ value class IdempotencyKey private constructor(val value: String) {
                 if (required) throw CanonicalErrorCode.IDEMPOTENCY_KEY_REQUIRED.exception()
                 return null
             }
-            if (!UUID_PATTERN.matches(raw)) throw CanonicalErrorCode.IDEMPOTENCY_KEY_INVALID.exception()
+            if (!raw.isUuid()) throw CanonicalErrorCode.IDEMPOTENCY_KEY_INVALID.exception()
             return IdempotencyKey(raw.lowercase())
         }
     }
@@ -256,83 +252,6 @@ interface IdempotencyStore {
 
     /** No 2xx o excepcion: borra la fila; se puede reintentar con la misma clave. No-op si el token ya no es el vigente. */
     suspend fun release(claim: IdempotencyClaim)
-}
-
-/**
- * Almacen en memoria para tests (y solo para tests: no sobrevive a un reinicio
- * ni se comparte entre instancias). Misma semantica que las RPC.
- */
-class InMemoryIdempotencyStore(
-    private val clock: () -> Instant = Instant::now,
-) : IdempotencyStore {
-    private data class Row(
-        val id: String,
-        val actorId: String,
-        val scope: String,
-        val key: String,
-        val fingerprint: String,
-        var completed: Boolean,
-        var response: StoredIdempotentResponse?,
-        var lockedUntil: Instant?,
-        val expiresAt: Instant,
-        var token: String = UUID.randomUUID().toString(),
-    )
-
-    private val mutex = Mutex()
-    private val rows = LinkedHashMap<Triple<String, String, String>, Row>()
-    private var sequence = 0L
-
-    override suspend fun begin(request: IdempotencyBeginRequest): IdempotencyBeginResult = mutex.withLock {
-        val now = clock()
-        val identity = Triple(request.actorId, request.scope, request.key.value)
-        rows[identity]?.takeIf { !it.expiresAt.isAfter(now) }?.let { rows.remove(identity) }
-        rows.entries.removeIf { !it.value.expiresAt.isAfter(now) }
-        val existing = rows[identity]
-        when {
-            existing == null -> {
-                val row = Row(
-                    id = "mem-${++sequence}",
-                    actorId = request.actorId,
-                    scope = request.scope,
-                    key = request.key.value,
-                    fingerprint = request.fingerprint,
-                    completed = false,
-                    response = null,
-                    lockedUntil = now.plus(request.lease),
-                    expiresAt = now.plus(request.ttl),
-                )
-                rows[identity] = row
-                IdempotencyBeginResult.Claimed(IdempotencyClaim(row.id, row.token), takeover = false)
-            }
-            existing.fingerprint != request.fingerprint -> IdempotencyBeginResult.Mismatch
-            existing.completed -> IdempotencyBeginResult.Replay(checkNotNull(existing.response))
-            existing.lockedUntil?.isAfter(now) == true -> IdempotencyBeginResult.InProgress
-            else -> {
-                existing.lockedUntil = now.plus(request.lease)
-                existing.token = UUID.randomUUID().toString()
-                IdempotencyBeginResult.Claimed(IdempotencyClaim(existing.id, existing.token), takeover = true)
-            }
-        }
-    }
-
-    override suspend fun complete(claim: IdempotencyClaim, response: StoredIdempotentResponse) {
-        require(response.status in 200..299) { "solo se guardan respuestas 2xx" }
-        mutex.withLock {
-            rows.values.firstOrNull { it.id == claim.id && it.token == claim.token && !it.completed }?.let {
-                it.completed = true
-                it.response = response
-                it.lockedUntil = null
-            }
-        }
-    }
-
-    override suspend fun release(claim: IdempotencyClaim) {
-        mutex.withLock {
-            rows.entries.removeIf { it.value.id == claim.id && it.value.token == claim.token && !it.value.completed }
-        }
-    }
-
-    internal suspend fun size(): Int = mutex.withLock { rows.size }
 }
 
 /**
@@ -581,9 +500,12 @@ val CanonicalIdempotency = createRouteScopedPlugin("CanonicalIdempotency", ::Can
         call.attributes.put(IdempotencyFinishedKey, true)
         val status = content.status ?: call.response.status() ?: HttpStatusCode.OK
         try {
-            if (status.value in 200..299) {
-                config.store.complete(claim, content.toStoredResponse(status, call))
+            val stored = if (status.value in 200..299) content.toStoredResponse(status, call) else null
+            if (stored != null) {
+                config.store.complete(claim, stored)
             } else {
+                // No 2xx, o contenido que no se puede guardar (MASTER-IDEM-003): fail-closed, se libera el claim para que
+                // el reintento re-ejecute en vez de "reproducir" un cuerpo vacio.
                 config.store.release(claim)
             }
         } catch (failure: Exception) {
@@ -608,11 +530,16 @@ val CanonicalIdempotency = createRouteScopedPlugin("CanonicalIdempotency", ::Can
     }
 }
 
-private fun OutgoingContent.toStoredResponse(status: HttpStatusCode, call: ApplicationCall): StoredIdempotentResponse {
+/**
+ * `null` = contenido que NO se puede reproducir fielmente (stream / WriteChannelContent, o un cuerpo JSON literal
+ * `null`, que la RPC guardaria como SQL NULL): el llamador libera el claim en vez de completarlo con cuerpo vacio.
+ */
+internal fun OutgoingContent.toStoredResponse(status: HttpStatusCode, call: ApplicationCall): StoredIdempotentResponse? {
     val body = when (this) {
-        is TextContent -> text
-        is ByteArrayContent -> String(bytes(), Charsets.UTF_8)
-        else -> null
+        is TextContent -> text.takeUnless { it.trim() == "null" } ?: return null
+        is ByteArrayContent -> String(bytes(), Charsets.UTF_8).takeUnless { it.trim() == "null" } ?: return null
+        is OutgoingContent.NoContent -> null
+        else -> return null
     }
     val headers = buildMap {
         call.response.headers[HttpHeaders.Location]?.let { put(HttpHeaders.Location, it) }

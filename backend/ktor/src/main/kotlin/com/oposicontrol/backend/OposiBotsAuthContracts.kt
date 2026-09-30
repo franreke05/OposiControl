@@ -26,7 +26,8 @@ data class OposiBotsRegisterRequest(
 }
 
 @Serializable
-data class OposiBotsRegisterResponse(val verificationRequired: Boolean = true)
+@OptIn(ExperimentalSerializationApi::class)
+data class OposiBotsRegisterResponse(@EncodeDefault val verificationRequired: Boolean = true)
 
 @Serializable
 data class OposiBotsEmailResendRequest(

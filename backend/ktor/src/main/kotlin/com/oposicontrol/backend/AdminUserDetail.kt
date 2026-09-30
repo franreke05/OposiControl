@@ -26,14 +26,14 @@ data class AdminUserDetailDto(
     val competitivo: AdminUserCompetitiveDto? = null,
     val racha: AdminUserStreakDto? = null,
     val economia: AdminUserEconomyDto? = null,
-    val suscripciones: List<AdminUserSubscriptionDto> = emptyList(),
+    @EncodeDefault val suscripciones: List<AdminUserSubscriptionDto> = emptyList(),
     val opositester: AdminUserTesterStateDto? = null,
-    val debilidades: List<AdminUserWeaknessDto> = emptyList(),
+    @EncodeDefault val debilidades: List<AdminUserWeaknessDto> = emptyList(),
     /**
      * Secciones que no se pudieron leer (a diferencia de "no existe la fila").
      * La UI debe distinguir un hueco honesto de un dato ausente.
      */
-    val seccionesNoDisponibles: List<String> = emptyList(),
+    @EncodeDefault val seccionesNoDisponibles: List<String> = emptyList(),
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -166,6 +166,7 @@ data class AdminUserWeaknessDto(
 
 /** Claves de sección para [AdminUserDetailDto.seccionesNoDisponibles]. */
 object AdminUserDetailSection {
+    const val PERFIL = "perfil"
     const val DETALLE = "detalle"
     const val RENDIMIENTO = "rendimiento"
     const val COMPETITIVO = "competitivo"
@@ -174,6 +175,20 @@ object AdminUserDetailSection {
     const val SUSCRIPCIONES = "suscripciones"
     const val OPOSITESTER = "opositester"
     const val DEBILIDADES = "debilidades"
+
+    /** Las secciones que el contrato (`AdminUserDetailSection`) permite pedir con `?sections=`. `detalle` es legacy y no se pide. */
+    val REQUESTABLE = linkedSetOf(PERFIL, RENDIMIENTO, COMPETITIVO, RACHA, ECONOMIA, SUSCRIPCIONES, OPOSITESTER, DEBILIDADES)
+
+    /**
+     * D1-24 `sections`: lista separada por comas; ausente o vacia = todas (`null`). Un token desconocido -> 400 VALIDATION
+     * INVALID_FORMAT sobre `sections` (el valor del cliente no se repite). Mismo patron que `parseDashboardSections`.
+     */
+    fun parse(raw: String?): Set<String>? {
+        val tokens = raw.orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return null
+        if (tokens.any { it !in REQUESTABLE }) throw validationError(ErrorIssue("sections", CanonicalIssue.INVALID_FORMAT))
+        return tokens.toCollection(linkedSetOf())
+    }
 }
 
 /**

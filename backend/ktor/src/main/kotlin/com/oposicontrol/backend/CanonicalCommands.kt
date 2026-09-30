@@ -163,6 +163,7 @@ val CanonicalCommandJson: Json = Json {
 }
 
 private val SAFE_FIELD_NAME = Regex("^[A-Za-z][A-Za-z0-9_]{0,63}$")
+private val SAFE_FIELD_PATH = Regex("^[A-Za-z][A-Za-z0-9_.\\[\\]]{0,127}$")
 private const val UNKNOWN_FIELD_PLACEHOLDER = "(desconocido)"
 
 /**
@@ -215,6 +216,9 @@ internal fun <T> decodeCanonicalCommand(strategy: DeserializationStrategy<T>, ra
         throw CanonicalErrorCode.MALFORMED_BODY.exception()
     }
     if (element !is JsonObject) throw CanonicalErrorCode.MALFORMED_BODY.exception()
+    // MASTER-API-006: en estos comandos NADA se borra con `null` y los esquemas no son nullable: un `null` explicito
+    // (en cualquier nivel) es 400 VALIDATION INVALID_FORMAT con la ruta del campo, para todos los comandos.
+    firstExplicitNull(element)?.let { throw validationError(ErrorIssue(if (SAFE_FIELD_PATH.matches(it)) it else "body", CanonicalIssue.INVALID_FORMAT)) }
     val unknown = unknownFields(strategy.descriptor, element, "")
     if (unknown.isNotEmpty()) {
         throw validationError(*unknown.take(MAX_VALIDATION_ISSUES).map { ErrorIssue(it, CanonicalIssue.UNKNOWN_FIELD) }.toTypedArray())

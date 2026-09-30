@@ -19,7 +19,7 @@ internal data class OposiBotsAuthConfiguration(
     val valkeyUrl: String?,
 ) {
     val development: Boolean
-        get() = appEnvironment.lowercase() in setOf("dev", "development", "local", "test")
+        get() = AppEnvironment.isDevelopment(appEnvironment)
 
     companion object {
         fun fromEnvironment(required: Boolean): OposiBotsAuthConfiguration? {
@@ -27,7 +27,9 @@ internal data class OposiBotsAuthConfiguration(
                 System.getenv("OPOSIBOTS_AUTH_ENABLED")?.toBooleanStrictOrNull() == true
             if (!enabled) return null
 
-            val environment = System.getenv("APP_ENV").orEmpty().ifBlank { "dev" }
+            val environment = System.getenv("APP_ENV")?.trim()?.takeIf(String::isNotEmpty)
+                ?.let(AppEnvironment::resolve)
+                ?: error("APP_ENV es obligatorio (dev/test solo en desarrollo; production en el resto).")
             val serviceKey = System.getenv("SUPABASE_SECRET_KEY")
                 ?.trim()
                 ?.takeIf(String::isNotBlank)
@@ -41,7 +43,7 @@ internal data class OposiBotsAuthConfiguration(
                 ?: System.getenv("SUPABASE_ANON_KEY")
                     ?.trim()
                     ?.takeIf(String::isNotBlank)
-                ?: if (environment.lowercase() in setOf("dev", "development", "local", "test")) {
+                ?: if (AppEnvironment.isDevelopment(environment)) {
                     serviceKey
                 } else {
                     error("SUPABASE_PUBLISHABLE_KEY es obligatorio fuera de desarrollo.")
@@ -64,7 +66,7 @@ internal data class OposiBotsAuthConfiguration(
                 appleClientSecret = optionalEnvironment("APPLE_CLIENT_SECRET"),
                 captchaRequired = System.getenv("AUTH_CAPTCHA_REQUIRED")
                     ?.toBooleanStrictOrNull()
-                    ?: environment.lowercase().let { it !in setOf("dev", "development", "local", "test") },
+                    ?: !AppEnvironment.isDevelopment(environment),
                 trustProxyHeaders = System.getenv("TRUST_PROXY_HEADERS")
                     ?.toBooleanStrictOrNull()
                     ?: false,
@@ -86,6 +88,10 @@ internal data class OposiBotsAuthConfiguration(
             }
             require(rateLimitMode == "valkey" || (rateLimitMode == "memory" && configuration.development)) {
                 "El rate limiter en memoria solo está permitido en desarrollo."
+            }
+            // MASTER-SEC-001: la comparacion con el peer es solo por literal IP; un nombre de host nunca coincidiria.
+            require(configuration.trustedProxyHosts.all { isIpLiteral(normalizePeerAddress(it)) }) {
+                "TRUSTED_PROXY_HOSTS solo admite literales IP (no nombres de host)."
             }
             require(!configuration.trustProxyHeaders || configuration.trustedProxyHosts.isNotEmpty()) {
                 "TRUSTED_PROXY_HOSTS es obligatorio cuando TRUST_PROXY_HEADERS=true."
@@ -109,9 +115,18 @@ internal class OposiBotsAuthRuntime(
     val gateway: OposiBotsAuthGateway,
     val rateLimiter: OposiBotsAuthRateLimiter,
     val json: Json,
-    /** SLICE 1: perfil canonico, borrado de cuenta y adaptadores legacy. `null` solo en pruebas de rutas de auth aisladas. */
-    val canonical: CanonicalProfileRuntime? = null,
-) {
+    /** SLICE 1: perfil canonico, borrado de cuenta y adaptadores legacy. Obligatorio (MASTER-ARCH-005): sin costura nula. */
+    val canonical: CanonicalProfileRuntime,
+) : AutoCloseable {
+    /**
+     * MASTER-ARCH-008: cierre ordenado (cliente Valkey del limitador y `HttpClient` del gateway) al parar la
+     * aplicacion. Cada recurso se cierra aunque el anterior falle.
+     */
+    override fun close() {
+        runCatching { rateLimiter.close() }
+        runCatching { (gateway as? AutoCloseable)?.close() }
+    }
+
     companion object {
         fun fromEnvironment(json: Json, required: Boolean, jwtVerifier: SupabaseJwtVerifier? = null): OposiBotsAuthRuntime? {
             val configuration = OposiBotsAuthConfiguration.fromEnvironment(required) ?: return null

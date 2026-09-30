@@ -49,6 +49,17 @@ class AppUnauthorized(message: String) : RuntimeException(message)
 class AppForbidden(message: String) : RuntimeException(message)
 
 /**
+ * MASTER-API-010: un intento ajeno o inexistente es 404 ATTEMPT_NOT_FOUND (no revela si existe), nunca 401: la sesion
+ * del llamador es valida y un 401 hacia que el cliente la diera por caducada y cerrara sesion.
+ */
+internal fun attemptNotOwned(): BackendDomainException = CanonicalErrorCode.ATTEMPT_NOT_FOUND.exception()
+
+/** MASTER-SEC-007: limites de `POST /api/v1/app/eventos`. */
+internal const val EVENT_TEXT_MAX = 100
+internal const val EVENT_IDEMPOTENCY_KEY_MAX = 200
+internal const val EVENT_PROPERTIES_MAX_BYTES = 8 * 1_024
+
+/**
  * [identityResolver] (SLICE 1, obligacion de corte de SLICE 0): con el, toda ruta legacy de `/api/v1/app` con JWT pasa
  * por `activeIdentity` (deny-by-default): solo una cuenta `activa` explicita opera; bloqueada / eliminacion pendiente /
  * desconocida / sin perfil -> 403. Para una cuenta activa la respuesta no cambia. `null` solo en pruebas aisladas.
@@ -138,6 +149,9 @@ private suspend fun ApplicationCall.usuarioId(
 
 private const val JWKS_MIN_REFETCH_MS = 5_000L
 
+/** MASTER-SEC-004: edad maxima de la cache del JWKS antes de volver a descargarlo. */
+internal const val JWKS_MAX_AGE_MS = 10 * 60 * 1_000L
+
 /**
  * Verifica la firma ES256 contra el JWKS público y devuelve el `sub`.
  *
@@ -176,6 +190,7 @@ class SupabaseJwtVerifier(
     fun claimsFrom(token: String): VerifiedJwtClaims {
         val decoded = JWT.decode(token)
         val kid = decoded.keyId ?: error("token sin kid")
+        refreshIfStale()
         val key = keys[kid] ?: run { refresh(); keys[kid] } ?: run {
             // Sin ninguna clave no se puede afirmar que el kid sea desconocido: JWKS no disponible.
             if (keys.isEmpty()) throw java.io.IOException("JWKS sin claves")
@@ -195,6 +210,22 @@ class SupabaseJwtVerifier(
         val payload = json.parseToJsonElement(String(Base64.getUrlDecoder().decode(payloadB64), Charsets.UTF_8)).jsonObject
         payload["amr"]?.jsonArray.orEmpty().mapNotNull { (it as? JsonObject)?.get("timestamp")?.jsonPrimitive?.longOrNull }
     }.getOrDefault(emptyList())
+
+    /**
+     * MASTER-SEC-004: la cache del JWKS caduca a los [JWKS_MAX_AGE_MS]. Antes solo se refrescaba ante un `kid`
+     * desconocido, asi que una clave retirada o revocada por Supabase seguia verificando tokens hasta reiniciar.
+     * El refresco sustituye el mapa entero (las claves retiradas desaparecen). Fail-soft: si el JWKS no responde se
+     * conservan las claves en cache (un JWKS caido no convierte tokens validos en 503/401); el anti-tormenta de
+     * [refresh] limita los reintentos a uno cada [JWKS_MIN_REFETCH_MS].
+     */
+    private fun refreshIfStale() {
+        if (fetchedAt == 0L || clock() - fetchedAt < JWKS_MAX_AGE_MS) return
+        try {
+            refresh()
+        } catch (_: java.io.IOException) {
+            // Fail-soft: se siguen usando las claves ya verificadas.
+        }
+    }
 
     /**
      * PF3-3-04: el anti-tormenta cubre TAMBIEN los intentos fallidos (cache negativa). Con el JWKS caido
@@ -481,6 +512,35 @@ class AppV1Gateway private constructor(
 
     private data class CachedRoleDecision(val hasRole: Boolean, val expiresAtMillis: Long)
 
+    /** Caché del estado de cuenta de los administradores (mismo TTL que la del rol). */
+    private val adminAccountStatusCache = java.util.concurrent.ConcurrentHashMap<String, CachedRoleDecision>()
+
+    /**
+     * MASTER-AUTH-002: la decisión que usa `AdminAuthorizationPlugin`. Rol admin **y** cuenta `activa` explícita
+     * en `perfiles_usuario` (deny-by-default: bloqueada, eliminación pendiente, desconocida o sin perfil → `false`
+     * → 403). Antes bastaba el rol: un admin bloqueado o con borrado pendiente conservaba el panel hasta que su
+     * JWT caducaba.
+     *
+     * Misma regla de fallos que [hasAdminRole]: una lectura que falla PROPAGA (500 con referencia), nunca se
+     * convierte en `false`, y no se cachea. Residual documentado: la caché (TTL [ADMIN_ROLE_CACHE_TTL_MILLIS])
+     * puede sostener la decisión positiva unos segundos tras el bloqueo.
+     */
+    fun hasActiveAdminRole(usuarioId: String): Boolean {
+        if (!hasAdminRole(usuarioId)) return false
+        val now = clock()
+        adminAccountStatusCache[usuarioId]?.let { cached ->
+            if (now < cached.expiresAtMillis) return cached.hasRole
+        }
+        val estado = get("/rest/v1/perfiles_usuario?select=estado_cuenta&usuario_id=eq.$usuarioId&limit=1")
+            .firstOrNull()?.str("estado_cuenta")
+        val active = AccountStatus.fromWire(estado) == AccountStatus.ACTIVA
+        adminAccountStatusCache[usuarioId] = CachedRoleDecision(active, now + ADMIN_ROLE_CACHE_TTL_MILLIS)
+        if (adminAccountStatusCache.size > ADMIN_ROLE_CACHE_MAX_ENTRIES) {
+            adminAccountStatusCache.entries.removeAll { it.value.expiresAtMillis <= now }
+        }
+        return active
+    }
+
     /**
      * ¿Tiene el usuario alguno de [roleCodes]? UNA lectura (F-17), no dos.
      *
@@ -689,7 +749,7 @@ class AppV1Gateway private constructor(
         req.preguntaId.validatedUuid("preguntaId")
         req.opcionSeleccionadaId.validatedUuid("opcionSeleccionadaId")
         val intento = get("/rest/v1/intentos_examen?select=*&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1").firstOrNull()
-            ?: throw AppUnauthorized("El intento no pertenece al usuario.")
+            ?: throw attemptNotOwned()
         require(intento.str("estado") == "en_progreso") { "El intento ya no admite respuestas." }
         val examenId = intento.str("examen_id") ?: error("El intento no tiene examen asociado.")
         val relacion = get("/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId&pregunta_id=eq.${req.preguntaId}&limit=1")
@@ -739,7 +799,7 @@ class AppV1Gateway private constructor(
         usuarioId.validatedUuid("usuarioId")
         intentoId.validatedUuid("intentoId")
         val intento = get("/rest/v1/intentos_examen?select=id,estado,examen_id&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1").firstOrNull()
-            ?: throw AppUnauthorized("El intento no pertenece al usuario.")
+            ?: throw attemptNotOwned()
         require(intento.str("estado") == "en_progreso") { "El intento ya esta finalizado." }
         val examenId = intento.str("examen_id")?.validatedUuid("examenId")
         val asociaciones = examenId
@@ -801,7 +861,7 @@ class AppV1Gateway private constructor(
             intentoId.validatedUuid("intentoId")
             val examenId = get("/rest/v1/intentos_examen?select=examen_id&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1")
                 .firstOrNull()?.str("examen_id")
-                ?: throw AppUnauthorized("El intento no pertenece al usuario.")
+                ?: throw attemptNotOwned()
             require(
                 get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
             ) { "La pregunta no pertenece al examen del intento." }
@@ -821,6 +881,30 @@ class AppV1Gateway private constructor(
         usuarioId.validatedUuid("usuarioId")
         require(req.eventVersion > 0) { "eventVersion debe ser mayor que cero." }
         require(!req.idempotencyKey.isNullOrBlank()) { "idempotencyKey es obligatoria para evitar duplicados por retry." }
+        // MASTER-SEC-007: tamaños acotados (antes solo el limite global de cuerpo del servidor).
+        require(req.nombreEvento.isNotBlank() && req.nombreEvento.length <= EVENT_TEXT_MAX) { "nombreEvento invalido." }
+        require(req.idempotencyKey.trim().length <= EVENT_IDEMPOTENCY_KEY_MAX) { "idempotencyKey demasiado larga." }
+        listOf(req.pantalla, req.entidadTipo).forEach { value ->
+            require(value == null || value.length <= EVENT_TEXT_MAX) { "Campo de texto del evento demasiado largo." }
+        }
+        require(req.propiedades.toString().toByteArray(Charsets.UTF_8).size <= EVENT_PROPERTIES_MAX_BYTES) {
+            "propiedades supera el tamaño maximo."
+        }
+        // MASTER-SEC-007: un intento referenciado tiene que ser del llamador (como en crearFeedback), y una
+        // pregunta referenciada junto a un intento tiene que pertenecer a su examen.
+        req.intentoId?.let { intentoId ->
+            intentoId.validatedUuid("intentoId")
+            val examenId = get("/rest/v1/intentos_examen?select=examen_id&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1")
+                .firstOrNull()?.str("examen_id")
+                ?: throw attemptNotOwned()
+            req.preguntaId?.let { preguntaId ->
+                preguntaId.validatedUuid("preguntaId")
+                require(
+                    get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId&pregunta_id=eq.$preguntaId&limit=1").isNotEmpty(),
+                ) { "La pregunta no pertenece al examen del intento." }
+            }
+        }
+        req.preguntaId?.validatedUuid("preguntaId")
         val body = buildJsonObject {
             put("p_usuario_id", usuarioId)
             put("p_nombre_evento", req.nombreEvento)

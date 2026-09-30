@@ -35,6 +35,24 @@ data class AdminPageRequest private constructor(
          */
         const val MAX_LIMIT = 200
 
+        /** Tope de `offset` en los grids que validan estricto (D1-22): un offset gigante no se reenvia a PostgREST. */
+        const val MAX_OFFSET = 100_000
+
+        /**
+         * D1-22: `limit`/`offset` estrictos. Ausente -> null (defecto); no entero, `limit` < 1, `offset` < 0 o
+         * `offset` > [MAX_OFFSET] -> 400 VALIDATION OUT_OF_RANGE. Un `limit` por encima del tope se recorta despues en [of]
+         * (misma indulgencia que el cursor). Ningun valor del cliente se repite en el mensaje.
+         */
+        fun parseStrict(limit: String?, offset: String?): Pair<Int?, Int?> {
+            val issues = mutableListOf<ErrorIssue>()
+            val parsedLimit = limit?.trim()?.toIntOrNull()?.takeIf { it >= 1 }
+            if (limit != null && parsedLimit == null) issues += ErrorIssue("limit", CanonicalIssue.OUT_OF_RANGE)
+            val parsedOffset = offset?.trim()?.toIntOrNull()?.takeIf { it in 0..MAX_OFFSET }
+            if (offset != null && parsedOffset == null) issues += ErrorIssue("offset", CanonicalIssue.OUT_OF_RANGE)
+            if (issues.isNotEmpty()) throw validationError(*issues.toTypedArray())
+            return parsedLimit to parsedOffset
+        }
+
         /**
          * [maxLimit]: tope por contrato, nunca por encima de [MAX_LIMIT]
          * (`specs.pagination`: "per-contract lower max allowed").

@@ -31,7 +31,12 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
             call.authEndpoint(runtime, OposiBotsAuthOperation.REGISTER) {
                 val request = receiveAuthJson<OposiBotsRegisterRequest>(runtime.json)
                 request.validate(runtime.configuration)
-                requireSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())
+                // MASTER-SEC-003: el tope por email es SILENCIOSO (misma 202, sin llamar a GoTrue): un tercero que nombra
+                // el email de la victima no puede bloquearla con 429, solo deja de disparar correos.
+                if (!withinSilentSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())) {
+                    respond(HttpStatusCode.Accepted, OposiBotsRegisterResponse())
+                    return@authEndpoint
+                }
                 respond(HttpStatusCode.Accepted, runtime.gateway.register(request, authContext(runtime.configuration)))
             }
         }
@@ -39,8 +44,10 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
             call.authEndpoint(runtime, OposiBotsAuthOperation.RESEND) {
                 val request = receiveAuthJson<OposiBotsEmailResendRequest>(runtime.json)
                 request.validate(runtime.configuration)
-                requireSubjectLimit(runtime, request.email.normalizedIdentifier())
-                runtime.gateway.resend(request, authContext(runtime.configuration))
+                // MASTER-SEC-003: tope por email silencioso (misma 204, sin reenviar).
+                if (withinSilentSubjectLimit(runtime, request.email.normalizedIdentifier())) {
+                    runtime.gateway.resend(request, authContext(runtime.configuration))
+                }
                 respond(HttpStatusCode.NoContent)
             }
         }
@@ -56,7 +63,12 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
             call.authEndpoint(runtime, OposiBotsAuthOperation.LOGIN) {
                 val request = receiveAuthJson<OposiBotsLoginRequest>(runtime.json)
                 request.validate()
-                requireSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())
+                // MASTER-SEC-003: la clave por sujeto es (email, IP de cliente). Un atacante que agota el cupo de un
+                // email desde SU IP no bloquea al titular desde otra IP; el cupo por IP sigue acotando el total.
+                requireSubjectLimit(
+                    runtime,
+                    loginSubjectKey(request.resolvedIdentifier().normalizedIdentifier(), trustedClientIp(runtime.configuration)),
+                )
                 respond(runtime.gateway.login(request, authContext(runtime.configuration)))
             }
         }
@@ -80,7 +92,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
         get("/me") {
             call.authEndpoint(runtime, OposiBotsAuthOperation.ME) {
                 val token = requiredBearerToken()
-                val canonical = runtime.canonical ?: throw OposiBotsAuthProblem.unavailable()
+                val canonical = runtime.canonical
                 requireSubjectLimit(runtime, token)
                 val identity = canonical.resolver.activeIdentity(this)
                 respond(canonical.legacy.me(identity, token, authContext(runtime.configuration)))
@@ -92,7 +104,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 val token = requiredBearerToken()
                 val request = receiveAuthJson<OposiBotsProfileRequest>(runtime.json)
                 request.validate()
-                val canonical = runtime.canonical ?: throw OposiBotsAuthProblem.unavailable()
+                val canonical = runtime.canonical
                 requireSubjectLimit(runtime, token)
                 val identity = canonical.resolver.activeIdentity(this)
                 canonical.legacy.saveProfile(identity, token, request, authContext(runtime.configuration))
@@ -103,8 +115,10 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
             call.authEndpoint(runtime, OposiBotsAuthOperation.RECOVER) {
                 val request = receiveAuthJson<OposiBotsRecoverRequest>(runtime.json)
                 request.validate(runtime.configuration)
-                requireSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())
-                runtime.gateway.recover(request, authContext(runtime.configuration))
+                // MASTER-SEC-003: tope por email silencioso (misma 204, sin enviar otro correo de recuperacion).
+                if (withinSilentSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())) {
+                    runtime.gateway.recover(request, authContext(runtime.configuration))
+                }
                 respond(HttpStatusCode.NoContent)
             }
         }
@@ -146,6 +160,9 @@ private suspend fun ApplicationCall.authEndpoint(
     // que la cabecera X-Request-Id y el `requestId` del sobre de error coincidan.
     val requestId = ensureRequestId()
     attributes.put(AuthRequestIdKey, requestId)
+    // MASTER-SEC-002: sesiones/tokens y datos de usuario nunca se cachean (tambien en errores).
+    response.headers.append(HttpHeaders.CacheControl, "no-store")
+    response.headers.append("Pragma", "no-cache")
     try {
         val decision = runtime.rateLimiter.checkIp(operation, trustedClientIp(runtime.configuration))
         if (!decision.allowed) throw OposiBotsAuthProblem.unavailable(decision.retryAfterSeconds)
@@ -221,6 +238,30 @@ private suspend fun ApplicationCall.requireSubjectLimit(
     if (!decision.allowed) throw OposiBotsAuthProblem.unavailable(decision.retryAfterSeconds)
 }
 
+/**
+ * MASTER-SEC-003: tope por email para operaciones que ENVIAN correo (register, resend, recover). Devuelve `false` si se
+ * supero; la ruta contesta entonces la MISMA respuesta de exito sin llamar a GoTrue. Asi el tope sigue impidiendo el
+ * bombardeo de correos, pero un tercero que conoce el email ya no puede provocar un 429 al titular (y la respuesta no
+ * revela nada). El limite por IP de [authEndpoint] sigue devolviendo 429.
+ */
+private suspend fun ApplicationCall.withinSilentSubjectLimit(
+    runtime: OposiBotsAuthRuntime,
+    subject: String,
+): Boolean {
+    val operation = when (request.path().substringAfterLast('/')) {
+        "register" -> OposiBotsAuthOperation.REGISTER
+        "resend" -> OposiBotsAuthOperation.RESEND
+        "recover" -> OposiBotsAuthOperation.RECOVER
+        else -> throw OposiBotsAuthProblem.unavailable()
+    }
+    val allowed = runtime.rateLimiter.checkSubject(operation, subject).allowed
+    if (!allowed) AuthLogger.info("auth operation={} subject limit reached: silent success", operation.name)
+    return allowed
+}
+
+/** MASTER-SEC-003: clave de sujeto del login = email normalizado + IP de cliente de confianza. */
+internal fun loginSubjectKey(normalizedEmail: String, clientIp: String): String = "$normalizedEmail|$clientIp"
+
 private suspend inline fun <reified T : Any> ApplicationCall.receiveAuthJson(json: Json): T {
     if (!request.contentType().match(ContentType.Application.Json)) {
         throw OposiBotsAuthProblem.validation()
@@ -256,7 +297,8 @@ private fun ApplicationCall.authContext(configuration: OposiBotsAuthConfiguratio
 internal fun ApplicationCall.trustedClientIp(configuration: OposiBotsAuthConfiguration): String =
     resolveTrustedClientIp(
         configuration = configuration,
-        peerHost = request.origin.remoteHost,
+        // MASTER-SEC-001: remoteAddress (literal IP), nunca remoteHost (DNS inverso, controlable por el peer).
+        peerHost = request.origin.remoteAddress,
         forwardedFor = request.headers["X-Forwarded-For"],
     )
 
@@ -265,9 +307,9 @@ internal fun resolveTrustedClientIp(
     peerHost: String,
     forwardedFor: String?,
 ): String {
-    val peer = peerHost.take(128)
+    val peer = normalizePeerAddress(peerHost)
     if (!configuration.trustProxyHeaders) return peer
-    if (configuration.trustedProxyHosts.none { it.equals(peer, ignoreCase = true) }) return peer
+    if (configuration.trustedProxyHosts.none { normalizePeerAddress(it) == peer }) return peer
     return forwardedFor
         ?.substringAfterLast(',')
         ?.trim()
@@ -354,7 +396,11 @@ private fun String.isValidEmail(): Boolean {
         EMAIL_REGEX.matches(normalized)
 }
 
-private fun isIpLiteral(value: String): Boolean {
+/** Sin zone id (`%eth0`), sin corchetes, en minusculas y acotado: forma canonica para comparar literales IP. */
+internal fun normalizePeerAddress(raw: String): String =
+    raw.trim().substringBefore('%').trim('[', ']').lowercase().take(128)
+
+internal fun isIpLiteral(value: String): Boolean {
     if (value.length !in 2..45 || value.any(Char::isWhitespace)) return false
     val ipv4Parts = value.split('.')
     if (ipv4Parts.size == 4 && ipv4Parts.all { it.isNotEmpty() && it.length <= 3 && it.toIntOrNull() in 0..255 }) {

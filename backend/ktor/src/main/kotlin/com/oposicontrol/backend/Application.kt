@@ -7,9 +7,12 @@ import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.ApplicationCallPipeline
+import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.auth.Authentication
+import io.ktor.server.auth.AuthenticationConfig
+import io.ktor.server.auth.UnauthorizedResponse
 import io.ktor.server.auth.UserIdPrincipal
 import io.ktor.server.auth.authenticate
 import io.ktor.server.auth.bearer
@@ -87,6 +90,16 @@ private fun initializeSentry() {
         options.tracesSampleRate = tracesSampleRate
         options.isSendDefaultPii = false
         options.isAttachStacktrace = true
+        // MASTER-OBS-004: los mensajes de excepcion incluyen fragmentos de cuerpos de error de Supabase (emails,
+        // detalles "Key (col)=(valor)", JWT); se depuran antes de salir del proceso.
+        options.setBeforeSend { event, _ ->
+            event.exceptions?.forEach { exception -> exception.value = exception.value?.redactSensitiveText() }
+            event.message?.let { message ->
+                message.message = message.message?.redactSensitiveText()
+                message.formatted = message.formatted?.redactSensitiveText()
+            }
+            event
+        }
     }
 }
 
@@ -207,17 +220,28 @@ internal fun Application.installBackendStatusPages() {
             // statement timeout) lleva `Retry-After`: dice al cliente que reintentar
             // tiene sentido y cuándo. Es un problema de infraestructura, no una regla
             // de negocio, y por eso —sólo éste— deja evento en el log.
+            // MASTER-OBS-003: TODO 5xx de dominio (502 UPSTREAM_CONTRACT_ERROR, 503...) deja evento en el log con el
+            // requestId, el codigo y la causa redactada; antes solo los que llevaban Retry-After.
+            if (cause.status.value >= 500) {
+                val requestId = call.ensureRequestId()
+                logStrategicEvent(
+                    StrategicEvent.SUPABASE_REQUEST_FAILED,
+                    requestId = requestId,
+                    operation = call.request.path(),
+                    result = cause.status.value.toString(),
+                    durationMs = call.elapsedMsOrNull(),
+                    errorType = cause.errorCode,
+                )
+                UpstreamFailureLogger.warn(
+                    "domain failure {} status={} on {} (requestId={}): {}",
+                    cause.errorCode,
+                    cause.status.value,
+                    call.request.path(),
+                    requestId,
+                    (cause.cause ?: cause).redactedMessage("Upstream failure"),
+                )
+            }
             cause.retryAfterSeconds?.let { seconds ->
-                if (cause.status.value >= 500) {
-                    logStrategicEvent(
-                        StrategicEvent.SUPABASE_REQUEST_FAILED,
-                        requestId = call.requestIdOrNull(),
-                        operation = call.request.path(),
-                        result = cause.status.value.toString(),
-                        durationMs = call.elapsedMsOrNull(),
-                        errorType = cause.errorCode,
-                    )
-                }
                 call.response.header(HttpHeaders.RetryAfter, seconds.toString())
             }
             // `code` es `errorCode` tal cual (ya es UPPER_SNAKE), salvo los
@@ -227,7 +251,11 @@ internal fun Application.installBackendStatusPages() {
             call.respondErrorEnvelope(
                 status = cause.status,
                 code = code,
-                message = cause.message,
+                message = if (cause.status.value >= 500 && "Referencia" !in cause.message) {
+                    "${cause.message} Referencia: ${call.ensureRequestId()}"
+                } else {
+                    cause.message
+                },
                 details = cause.details,
                 legacyError = cause.errorCode.lowercase(),
             )
@@ -242,6 +270,22 @@ internal fun Application.installBackendStatusPages() {
         // Ktor responde 415 sin cuerpo cuando ningun conversor acepta el Content-Type.
         status(HttpStatusCode.UnsupportedMediaType) { call, _ ->
             call.respondErrorEnvelope(CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE)
+        }
+        // MASTER-API-018: el challenge del proveedor `bearer` de Ktor (sin token o con un token que no
+        // verifica en `gateway-auth`) responde un 401 DESNUDO: sin sobre, sin requestId y sin traza. Solo
+        // se sustituye ESE contenido (`UnauthorizedResponse`); un 401 que una ruta ya responde con su
+        // propio cuerpo no se toca.
+        status(HttpStatusCode.Unauthorized) { _ ->
+            if (content !is UnauthorizedResponse) return@status
+            logStrategicEvent(
+                StrategicEvent.AUTH_LOGIN_FAILED,
+                requestId = call.ensureRequestId(),
+                operation = call.request.path(),
+                result = "unauthorized",
+                durationMs = call.elapsedMsOrNull(),
+                errorType = "BearerChallenge",
+            )
+            call.respondErrorEnvelope(CanonicalErrorCode.UNAUTHENTICATED)
         }
         exception<CannotTransformContentToTypeException> { call, _ ->
             call.respondErrorEnvelope(CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE)
@@ -379,6 +423,8 @@ fun Application.module() {
     val serverProfile = System.getenv("SERVER_PROFILE").orEmpty().ifBlank { "combined" }
     val consumerOnly = serverProfile.equals("consumer", ignoreCase = true)
     val authRuntime = OposiBotsAuthRuntime.fromEnvironment(json, required = consumerOnly)
+    // MASTER-ARCH-008: cierre ordenado de los recursos del runtime de auth (Valkey, HttpClient) al parar.
+    authRuntime?.let { runtime -> monitor.subscribe(ApplicationStopped) { runtime.close() } }
     installBackendPrometheusMetrics()
     if (consumerOnly) {
         configureConsumerAuthOnly(authRuntime ?: error("Auth consumer no configurado."))
@@ -408,7 +454,7 @@ fun Application.module() {
         ?: error(missingSupabaseConfigurationMessage("servir app API V1 desde Ktor"))
     val supabaseUrl = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
     val jwtVerifier = SupabaseJwtVerifier(supabaseUrl, json)
-    val appEnv = System.getenv("APP_ENV").orEmpty()
+    val appEnv = AppEnvironment.fromSystemEnvironment()
     val allowDevUser = allowsDevBypass(
         appEnv,
         System.getenv("OPOSICONTROL_ALLOW_DEV_USER")?.toBooleanStrictOrNull() ?: false,
@@ -421,9 +467,7 @@ fun Application.module() {
     installRequestCorrelation()
     installBackendStatusPages()
     install(Authentication) {
-        bearer("gateway-auth") {
-            authenticate { credentials -> gatewayAuthPrincipal(credentials.token, appEnv, jwtVerifier::subFrom) }
-        }
+        gatewayBearerAuth(appEnv, jwtVerifier::subFrom)
     }
     routing {
         prometheusMetricsRoute()
@@ -453,7 +497,7 @@ fun Application.module() {
         authRuntime?.let {
             oposiBotsAuthRoutes(it)
             // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).
-            if (it.canonical != null) canonicalProfileRoutes(it)
+            canonicalProfileRoutes(it)
         }
         authenticate("gateway-auth") {
             // Confina el token estático a superficies legacy locales y exige rol
@@ -464,14 +508,36 @@ fun Application.module() {
                 // `this.` explícito: sin él, `appEnv` resuelve al val externo del
                 // módulo en vez de a la propiedad de configuración del plugin.
                 this.appEnv = environmentName
-                this.hasAdminRole = { appV1Gateway.hasAdminRole(it) }
+                // MASTER-AUTH-002: rol admin Y cuenta `activa` (deny-by-default).
+                this.hasAdminRole = { appV1Gateway.hasActiveAdminRole(it) }
             }
+            // MASTER-OBS-002: el `sub` del JWT como actor de toda auditoría administrativa.
+            installAdminAuditActor()
             adminRoutes(adminGateway)
             adminV1Routes(adminV1Gateway)
             adminRankingsRoutes(adminRankingsGateway)
             adminAnalyticsRoutes(adminAnalyticsGateway)
             adminDashboardOverviewRoutes(adminDashboardOverviewGateway)
-            oposiBotsUserAdminRoutes(oposiBotsUserAdminGateway)
+            // MASTER-AUTH-001: legacy public.usuario; sin borrar cuentas de administración y con auditoría obligatoria.
+            oposiBotsUserAdminRoutes(
+                oposiBotsUserAdminGateway,
+                OposiBotsUserAdminPolicy(
+                    isAdministrative = { authUserId -> withUpstreamIo { appV1Gateway.hasAdminRole(authUserId) } },
+                    audit = { accion, authUserId, detalle ->
+                        val deletion = accion.endsWith("_eliminado")
+                        withUpstreamIo {
+                            adminV1Gateway.registrarAuditoria(
+                                accion,
+                                "usuario",
+                                authUserId,
+                                antes = detalle.takeIf { deletion },
+                                despues = detalle.takeUnless { deletion },
+                                required = true,
+                            )
+                        }
+                    },
+                ),
+            )
             post("/admin/backend/restart") {
                 val restart = BackendRestartRequest.fromEnvironment()
                 if (restart == null) {
@@ -724,13 +790,36 @@ internal fun Application.configureConsumerAuthOnly(runtime: OposiBotsAuthRuntime
         prometheusMetricsRoute()
         healthLiveRoute()
         oposiBotsAuthRoutes(runtime)
-        if (runtime.canonical != null) canonicalProfileRoutes(runtime)
+        canonicalProfileRoutes(runtime)
+    }
+}
+
+/**
+ * El proveedor `gateway-auth` de producción, extraído para que las pruebas monten EXACTAMENTE
+ * este cableado (MASTER-API-018) junto con [installBackendStatusPages].
+ */
+internal fun AuthenticationConfig.gatewayBearerAuth(
+    appEnv: String,
+    verify: (String) -> String,
+    expectedStaticToken: () -> String = { System.getenv("OPOSICONTROL_BACKEND_TOKEN").orEmpty() },
+) {
+    bearer("gateway-auth") {
+        authenticate { credentials ->
+            gatewayAuthPrincipal(credentials.token, appEnv, verify, expectedStaticToken = expectedStaticToken())
+        }
     }
 }
 
 internal fun allowsDevBypass(appEnv: String, enabled: Boolean): Boolean {
     return enabled && appEnv.lowercase() in setOf("dev", "development", "test")
 }
+
+/** MASTER-SEC-013: comparacion en tiempo constante de secretos (UTF-8). */
+internal fun constantTimeEquals(provided: String, expected: String): Boolean =
+    java.security.MessageDigest.isEqual(
+        provided.toByteArray(StandardCharsets.UTF_8),
+        expected.toByteArray(StandardCharsets.UTF_8),
+    )
 
 /**
  * La IDENTIDAD de una llamada a `gateway-auth`: el token estático, un JWT verificado,
@@ -763,7 +852,7 @@ internal suspend fun gatewayAuthPrincipal(
     ),
 ): UserIdPrincipal? {
     val staticTokenAccepted = expectedStaticToken.isNotBlank() &&
-        (token == expectedStaticToken || (allowDevToken && token == "dev-local"))
+        (constantTimeEquals(token, expectedStaticToken) || (allowDevToken && constantTimeEquals(token, "dev-local")))
     if (staticTokenAccepted) return UserIdPrincipal(STATIC_TOKEN_PRINCIPAL)
     return verifiedJwtPrincipalOrNull(token, verify)
 }
@@ -975,7 +1064,7 @@ private class BackendRestartRequest(
         fun isEnabled(): Boolean {
             val explicit = System.getenv("OPOSICONTROL_ENABLE_BACKEND_RESTART")?.toBooleanStrictOrNull()
             if (explicit != null) return explicit
-            val appEnv = System.getenv("APP_ENV").orEmpty().ifBlank { "dev" }
+            val appEnv = AppEnvironment.fromSystemEnvironment()
             return !appEnv.equals("prod", ignoreCase = true) &&
                 !appEnv.equals("production", ignoreCase = true)
         }
@@ -1042,10 +1131,26 @@ private suspend inline fun <reified T : Any> ApplicationCall.respondBackendSupab
 internal fun Throwable.isThrownByBackendCode(): Boolean =
     stackTrace.firstOrNull()?.className?.startsWith("com.oposicontrol.") == true
 
+private val BEARER_PATTERN = Regex("Bearer\\s+[A-Za-z0-9._~+/-]+=*")
+private val APIKEY_PATTERN = Regex("apikey[=:]\\s*[A-Za-z0-9._~+/-]+=*")
+private val JWT_PATTERN = Regex("eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]*")
+private val EMAIL_PATTERN = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}")
+private val PG_KEY_DETAIL_PATTERN = Regex("Key \\(([^)]*)\\)=\\(([^)]*)\\)")
+
+/**
+ * MASTER-OBS-004: depuracion de texto que puede llegar a un log o a Sentry: credenciales (Bearer, apikey, JWT) y PII que
+ * PostgREST refleja en sus errores (emails y los detalles `Key (columna)=(valor)` de las violaciones de unicidad).
+ */
+internal fun String.redactSensitiveText(): String = this
+    .replace(BEARER_PATTERN, "Bearer [redacted]")
+    .replace(APIKEY_PATTERN, "apikey=[redacted]")
+    .replace(JWT_PATTERN, "[redacted-jwt]")
+    .replace(PG_KEY_DETAIL_PATTERN) { "Key (${it.groupValues[1]})=([redacted])" }
+    .replace(EMAIL_PATTERN, "[redacted-email]")
+
 internal fun Throwable.safeBackendMessage(defaultMessage: String, maxLength: Int = 300): String {
     return message
-        ?.replace(Regex("Bearer\\s+[A-Za-z0-9._~+/-]+=*"), "Bearer [redacted]")
-        ?.replace(Regex("apikey[=:]\\s*[A-Za-z0-9._~+/-]+=*"), "apikey=[redacted]")
+        ?.redactSensitiveText()
         ?.take(maxLength)
         ?.ifBlank { null }
         ?: defaultMessage

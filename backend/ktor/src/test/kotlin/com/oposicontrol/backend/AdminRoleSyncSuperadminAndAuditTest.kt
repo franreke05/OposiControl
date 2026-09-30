@@ -1,0 +1,229 @@
+package com.oposicontrol.backend
+
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.server.application.Application
+import io.ktor.server.application.install
+import io.ktor.server.auth.Authentication
+import io.ktor.server.auth.UserIdPrincipal
+import io.ktor.server.auth.authenticate
+import io.ktor.server.auth.bearer
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.routing.routing
+import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import java.net.http.HttpRequest
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/**
+ * MASTER-AUTH-003: D1-26 exige SUPERADMIN para conceder o retirar `admin`/`superadmin` (profiles.yaml), antes de
+ * llamar a `admin_sync_roles`. MASTER-OBS-002: la auditoria lleva el actor (sub del JWT), `antes`/`despues`, y en
+ * un cambio privilegiado un fallo al auditar falla la peticion.
+ */
+class AdminRoleSyncSuperadminAndAuditTest {
+    private val superActor = "5a5a5a5a-0000-4000-8000-000000000001"
+    private val adminActor = "5a5a5a5a-0000-4000-8000-000000000002"
+    private val plainUser = "5a5a5a5a-0000-4000-8000-000000000003"
+    private val otherAdmin = "5a5a5a5a-0000-4000-8000-000000000004"
+    private val roleSuper = "aaaaaaaa-0000-4000-8000-00000000000a"
+    private val roleAdmin = "aaaaaaaa-0000-4000-8000-00000000000b"
+    private val roleUser = "aaaaaaaa-0000-4000-8000-00000000000c"
+    private val roleMod = "aaaaaaaa-0000-4000-8000-00000000000d"
+
+    private val rolesOf = mapOf(
+        superActor to listOf(roleSuper),
+        adminActor to listOf(roleAdmin),
+        plainUser to listOf(roleUser),
+        otherAdmin to listOf(roleAdmin),
+    )
+
+    private class Stub {
+        val sent = CopyOnWriteArrayList<HttpRequest>()
+        var auditStatus = 201
+    }
+
+    private fun responder(stub: Stub): (String) -> V1StubResponse = { uri ->
+        when {
+            "/rest/v1/roles_app" in uri -> V1StubResponse(
+                200,
+                """[{"id":"$roleSuper","codigo":"superadmin","nombre":"Superadmin"},{"id":"$roleAdmin","codigo":" ADMIN ","nombre":"Admin"},""" +
+                    """{"id":"$roleUser","codigo":"usuario","nombre":"Usuario"},{"id":"$roleMod","codigo":"moderador","nombre":"Moderador"}]""",
+            )
+            "/rest/v1/roles_usuario?select=rol_id&usuario_id=eq." in uri -> {
+                val id = uri.substringAfter("usuario_id=eq.").substringBefore('&')
+                V1StubResponse(200, rolesOf[id].orEmpty().joinToString(",", "[", "]") { """{"usuario_id":"$id","rol_id":"$it"}""" })
+            }
+            "/rest/v1/rpc/admin_sync_roles" in uri -> V1StubResponse(204, "")
+            "/rest/v1/auditoria_log" in uri -> V1StubResponse(stub.auditStatus, if (stub.auditStatus >= 400) """{"message":"audit down"}""" else "")
+            else -> V1StubResponse(200, "[]")
+        }
+    }
+
+    private fun Application.module(stub: Stub) {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
+        installRequestCorrelation()
+        installBackendStatusPages()
+        install(Authentication) {
+            bearer("gateway-auth") { authenticate { UserIdPrincipal(it.token) } }
+        }
+        val gateway = AdminV1Gateway.forTesting(
+            supabaseUrl = "https://stub.supabase.test",
+            serviceRoleKey = "stub-key",
+            json = Json { ignoreUnknownKeys = true },
+            client = V1StubHttpClient({ stub.sent += it }, responder(stub)),
+        )
+        routing {
+            authenticate("gateway-auth") {
+                installAdminAuditActor()
+                adminV1Routes(gateway)
+            }
+        }
+    }
+
+    private suspend fun io.ktor.server.testing.ApplicationTestBuilder.syncRoles(actor: String, target: String, vararg roles: String): HttpResponse =
+        client.post("/api/v1/admin/usuarios/$target/roles") {
+            header(HttpHeaders.Authorization, "Bearer $actor")
+            contentType(ContentType.Application.Json)
+            setBody(roles.joinToString(",", """{"roleIds":[""", "]}") { "\"$it\"" })
+        }
+
+    private fun Stub.rpcCalls() = sent.count { "/rest/v1/rpc/admin_sync_roles" in it.uri().toString() }
+    private fun Stub.auditBodies() = sent.filter { "/rest/v1/auditoria_log" in it.uri().toString() }
+        .map { Json.parseToJsonElement(readRequestBody(it)).jsonArray.single().jsonObject }
+
+    private suspend fun HttpResponse.code(): String? =
+        Json.parseToJsonElement(bodyAsText()).jsonObject["code"]?.jsonPrimitive?.content
+
+    // ---------------------------------------------------------------- MASTER-AUTH-003
+
+    @Test
+    fun aPlainAdminCannotGrantSuperadminToSelfAndTheRpcIsNeverCalled() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+        val response = syncRoles(adminActor, adminActor, roleAdmin, roleSuper)
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertEquals("SUPERADMIN_REQUIRED", response.code())
+        assertEquals(0, stub.rpcCalls())
+        assertTrue(stub.auditBodies().isEmpty())
+    }
+
+    @Test
+    fun aPlainAdminCannotRemoveAdminFromAnotherUserNorGrantAdmin() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+        assertEquals(HttpStatusCode.Forbidden, syncRoles(adminActor, otherAdmin, roleUser).status)
+        assertEquals(HttpStatusCode.Forbidden, syncRoles(adminActor, plainUser, roleUser, roleAdmin).status)
+        assertEquals(0, stub.rpcCalls())
+    }
+
+    @Test
+    fun aPlainAdminMayStillChangeOnlyModeratorAndUserRoles() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+        val response = syncRoles(adminActor, plainUser, roleUser, roleMod)
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        assertEquals(1, stub.rpcCalls())
+        // Mantener el rol admin que ya tenia otro usuario tampoco exige superadmin.
+        assertEquals(HttpStatusCode.OK, syncRoles(adminActor, otherAdmin, roleAdmin, roleMod).status)
+    }
+
+    @Test
+    fun aSuperadminMayGrantAndRemoveAdministrativeRoles() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+        assertEquals(HttpStatusCode.OK, syncRoles(superActor, plainUser, roleUser, roleAdmin).status)
+        assertEquals(HttpStatusCode.OK, syncRoles(superActor, otherAdmin, roleUser).status)
+        assertEquals(2, stub.rpcCalls())
+    }
+
+    @Test
+    fun withoutAPersonActorAnAdministrativeChangeFailsClosed() {
+        val stub = Stub()
+        val gateway = AdminV1Gateway.forTesting("https://stub.supabase.test", "stub-key", Json { ignoreUnknownKeys = true }, V1StubHttpClient({ stub.sent += it }, responder(stub)))
+        val failure = runCatching { gateway.syncRoles(plainUser, listOf(roleAdmin), actorId = null) }.exceptionOrNull()
+        assertEquals("SUPERADMIN_REQUIRED", (failure as BackendDomainException).errorCode)
+        assertEquals(0, stub.rpcCalls())
+    }
+
+    @Test
+    fun theDecisionIsTheSymmetricDifferenceRestrictedToAdministrativeRoles() {
+        assertTrue(RoleSyncInvariants.changesAdministrativeRoles(setOf("usuario"), setOf("usuario", "admin")))
+        assertTrue(RoleSyncInvariants.changesAdministrativeRoles(setOf("admin"), setOf("usuario")))
+        assertTrue(RoleSyncInvariants.changesAdministrativeRoles(setOf("admin"), setOf("superadmin")))
+        assertFalse(RoleSyncInvariants.changesAdministrativeRoles(setOf("admin", "usuario"), setOf("admin", "moderador")))
+        assertFalse(RoleSyncInvariants.changesAdministrativeRoles(setOf("usuario"), setOf("moderador")))
+    }
+
+    // ---------------------------------------------------------------- MASTER-OBS-002
+
+    @Test
+    fun theRoleSyncAuditRowCarriesTheActorAndTheBeforeAndAfterRoles() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+        assertEquals(HttpStatusCode.OK, syncRoles(superActor, plainUser, roleUser, roleAdmin).status)
+        val row = stub.auditBodies().single()
+        assertEquals(superActor, row["usuario_id"]!!.jsonPrimitive.content)
+        assertEquals("roles_sincronizados", row["accion"]!!.jsonPrimitive.content)
+        assertEquals(listOf(roleUser), row["antes"]!!.jsonObject["roleIds"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(listOf(roleUser, roleAdmin), row["despues"]!!.jsonObject["roleIds"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    @Test
+    fun aPrivilegedChangeWhoseAuditCannotBeWrittenFailsTheRequest() = testApplication {
+        val stub = Stub().apply { auditStatus = 500 }
+        application { module(stub) }
+        val response = syncRoles(superActor, plainUser, roleUser, roleAdmin)
+        assertEquals(HttpStatusCode.BadGateway, response.status, response.bodyAsText())
+        assertEquals("UPSTREAM_ERROR", response.code())
+    }
+
+    @Test
+    fun aLowRiskActionStaysBestEffortAndTheWarningReasonIsKept() = testApplication {
+        val stub = Stub().apply { auditStatus = 500 }
+        application { module(stub) }
+        val failing = client.post("/api/v1/admin/moderacion/actions") {
+            header(HttpHeaders.Authorization, "Bearer $adminActor")
+            contentType(ContentType.Application.Json)
+            setBody("""{"targetUserId":"$plainUser","actionType":"advertencia","reason":"spam reiterado"}""")
+        }
+        assertEquals(HttpStatusCode.Created, failing.status, "best-effort: la advertencia no se cae por la auditoria")
+        val row = stub.auditBodies().single()
+        assertEquals(adminActor, row["usuario_id"]!!.jsonPrimitive.content)
+        assertEquals("spam reiterado", row["despues"]!!.jsonObject["motivo"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun theActorTravelsIntoTheIoPoolAndIsNeverFabricatedOutsideARequest() {
+        val stub = Stub()
+        val gateway = AdminV1Gateway.forTesting("https://stub.supabase.test", "stub-key", Json { ignoreUnknownKeys = true }, V1StubHttpClient({ stub.sent += it }, responder(stub)))
+        runBlocking {
+            withContext(AdminAuditActor.contextElement(superActor)) {
+                withUpstreamIo { gateway.registrarAuditoria("prueba", "examenes", plainUser) }
+            }
+        }
+        gateway.registrarAuditoria("sin_actor", "examenes", plainUser)
+        val rows = stub.auditBodies()
+        assertEquals(superActor, rows[0]["usuario_id"]!!.jsonPrimitive.content)
+        assertNull(rows[1]["usuario_id"], "fuera de una peticion no hay actor: ${rows[1]}")
+        assertNull(AdminAuditActor.current())
+    }
+}

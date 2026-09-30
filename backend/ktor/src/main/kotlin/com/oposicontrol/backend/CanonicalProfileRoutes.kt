@@ -46,9 +46,10 @@ internal fun Route.canonicalProfileRoutes(runtime: OposiBotsAuthRuntime) {
             val decision = runtime.rateLimiter.checkIp(OposiBotsAuthOperation.LEGAL_LIST, call.canonicalClientIp(runtime))
             if (!decision.allowed) throw rateLimited(decision)
             val result = canonical.profiles.listLegalDocuments(call.request.queryParameters["tipo"])
-            call.response.header(HttpHeaders.CacheControl, "public, max-age=3600")
+            // MASTER-API-007: revalidacion frecuente (documentado en profiles.yaml D1-16); el ETag es de contenido.
+            call.response.header(HttpHeaders.CacheControl, "public, max-age=300, must-revalidate")
             call.response.header(HttpHeaders.ETag, result.etag)
-            if (call.request.header(HttpHeaders.IfNoneMatch) == result.etag) {
+            if (ifNoneMatchMatches(call.request.header(HttpHeaders.IfNoneMatch), result.etag)) {
                 call.respond(HttpStatusCode.NotModified)
             } else {
                 call.respond(LegalDocumentList(result.items))
@@ -57,16 +58,14 @@ internal fun Route.canonicalProfileRoutes(runtime: OposiBotsAuthRuntime) {
         route("/me") {
             get {
                 call.privateNoStore()
-                val identity = canonical.resolver.activeIdentity(call)
-                call.limitUser(runtime, OposiBotsAuthOperation.ME, identity)
+                val identity = canonical.resolver.activeIdentity(call) { call.limitUser(runtime, OposiBotsAuthOperation.ME, it) }
                 val result = canonical.profiles.me(identity, call.bearerToken(), call.canonicalContext(runtime))
                 result.etag?.let { call.response.header(HttpHeaders.ETag, it) }
                 call.respond(result.me)
             }
             delete {
                 call.privateNoStore()
-                val subject = canonical.resolver.deletionIdentity(call)
-                call.limitUser(runtime, OposiBotsAuthOperation.ACCOUNT_DELETION, subject.identity)
+                val subject = canonical.resolver.deletionIdentity(call) { call.limitUser(runtime, OposiBotsAuthOperation.ACCOUNT_DELETION, it) }
                 val request = call.receiveCanonicalCommand<AccountDeletionRequest>()
                 val accepted = canonical.deletion.request(
                     subject.identity,
@@ -79,8 +78,7 @@ internal fun Route.canonicalProfileRoutes(runtime: OposiBotsAuthRuntime) {
             }
             post("/onboarding") {
                 call.privateNoStore()
-                val identity = canonical.resolver.activeIdentity(call)
-                call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, identity)
+                val identity = canonical.resolver.activeIdentity(call) { call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, it) }
                 val request = call.receiveCanonicalCommand<OnboardingRequest>()
                 val result = canonical.profiles.completeOnboarding(identity, call.bearerToken(), request, call.canonicalContext(runtime))
                 result.etag?.let { call.response.header(HttpHeaders.ETag, it) }
@@ -88,9 +86,7 @@ internal fun Route.canonicalProfileRoutes(runtime: OposiBotsAuthRuntime) {
             }
             patch("/profile") {
                 call.privateNoStore()
-                val identity = canonical.resolver.activeIdentity(call)
-                call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, identity)
-                call.rejectExplicitNulls()
+                val identity = canonical.resolver.activeIdentity(call) { call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, it) }
                 val request = call.receiveCanonicalCommand<ProfilePatchRequest>()
                 val result = canonical.profiles.updateProfile(
                     identity,
@@ -104,8 +100,7 @@ internal fun Route.canonicalProfileRoutes(runtime: OposiBotsAuthRuntime) {
             }
             post("/legal-acceptances") {
                 call.privateNoStore()
-                val identity = canonical.resolver.activeIdentity(call)
-                call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, identity)
+                val identity = canonical.resolver.activeIdentity(call) { call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, it) }
                 val request = call.receiveCanonicalCommand<LegalAcceptanceRequest>()
                 call.respond(canonical.profiles.acceptLegalDocuments(identity, request))
             }
@@ -120,9 +115,10 @@ private fun ApplicationCall.privateNoStore() {
 private suspend fun ApplicationCall.limitUser(
     runtime: OposiBotsAuthRuntime,
     operation: OposiBotsAuthOperation,
-    identity: CanonicalUserIdentity,
+    userId: CanonicalUserId,
 ) {
-    val decision = runtime.rateLimiter.checkSubject(operation, identity.userId.value)
+    // MASTER-SEC-010: se llama con el sub verificado ANTES de leer el perfil (resolver en dos fases).
+    val decision = runtime.rateLimiter.checkSubject(operation, userId.value)
     if (!decision.allowed) throw rateLimited(decision)
 }
 
@@ -136,21 +132,6 @@ private fun ApplicationCall.canonicalContext(runtime: OposiBotsAuthRuntime) =
     OposiBotsAuthContext(requestId = ensureRequestId(), clientIp = canonicalClientIp(runtime))
 
 private fun ApplicationCall.canonicalClientIp(runtime: OposiBotsAuthRuntime): String = trustedClientIp(runtime.configuration)
-
-/**
- * `null` explicito en un PATCH: en este contrato NADA se borra con `null` (`especialidadId` no se puede vaciar,
- * DEC-002), asi que un `null` es 400 VALIDATION en vez de un no-op silencioso.
- */
-private suspend fun ApplicationCall.rejectExplicitNulls() {
-    val body = canonicalRawBody()
-    requireJsonContentIfBody(body)
-    val element = try {
-        CanonicalCommandJson.parseToJsonElement(String(body, Charsets.UTF_8).ifBlank { "{}" })
-    } catch (_: SerializationException) {
-        return // receiveCanonicalCommand lo rechaza como MALFORMED_BODY
-    }
-    firstExplicitNull(element)?.let { throw validationError(ErrorIssue(it, CanonicalIssue.INVALID_FORMAT)) }
-}
 
 /** `If-Match` opcional: `*` o ausente = sin precondicion; un instante ISO (con o sin comillas / `W/`) = version. Otra cosa: 400. */
 internal fun parseIfMatch(header: String?): String? {

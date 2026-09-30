@@ -192,7 +192,7 @@ class LegacyRouteTest {
         val one = client.get("/content/noticias/x") { header(HttpHeaders.Authorization, auth) }
         assertNull(one.headers[LegacyHeaders.DEPRECATION])
         val removed = client.delete("/content/noticias/x") { header(HttpHeaders.Authorization, auth) }
-        assertEquals("</api/v1/admin/noticias/{noticiaId}>; rel=\"successor-version\"", removed.headers[HttpHeaders.Link])
+        assertEquals("</api/v1/admin/noticias>; rel=\"successor-version\"", removed.headers[HttpHeaders.Link])
         val created = client.post("/content/noticias") {
             header(HttpHeaders.Authorization, auth)
             contentType(ContentType.Application.Json)

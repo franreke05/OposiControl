@@ -85,7 +85,14 @@ internal object LegacyHeaders {
     /** RFC 8594: IMF-fixdate. */
     fun sunset(at: Instant): String = DateTimeFormatter.RFC_1123_DATE_TIME.format(at.atOffset(ZoneOffset.UTC))
 
-    fun successorLink(path: String): String = "<$path>; rel=\"successor-version\""
+    /**
+     * RFC 8288: el destino es una URI-Reference; `{noticiaId}` (plantilla OpenAPI) no lo es. Los segmentos con llaves se
+     * descartan y se anuncia la URI de la coleccion.
+     */
+    fun successorLink(path: String): String {
+        val uri = path.split("/").takeWhile { "{" !in it && "}" !in it }.joinToString("/")
+        return "<$uri>; rel=\"successor-version\""
+    }
 }
 
 class LegacyRouteConfig {
@@ -129,8 +136,10 @@ internal fun Route.legacyRoute(endpoint: LegacyEndpoint, registry: MeterRegistry
 }
 
 /**
- * El UNICO patron permitido para una ruta legacy que sigue viva: traducir,
- * llamar al servicio canonico y traducir de vuelta.
+ * Patron de REFERENCIA para una ruta legacy: traducir, llamar al servicio canonico y
+ * traducir de vuelta. NOTA: hoy NO esta cableado en produccion; solo lo instancia
+ * `LegacyRouteTest`. Los endpoints EP-124/EP-218 se sirven con `LegacyProfileAdapter`
+ * (`SpecialtyResolver.kt`) y rutas escritas a mano; unificarlos es deuda registrada.
  *
  * [canonical] es la MISMA funcion de servicio que usa la ruta canonica (no una
  * copia): las reglas de negocio, las escrituras y los errores de dominio viven

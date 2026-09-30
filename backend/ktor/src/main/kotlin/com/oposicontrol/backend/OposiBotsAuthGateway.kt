@@ -71,7 +71,12 @@ internal class SupabaseOposiBotsAuthGateway(
     private val json: Json,
     private val client: HttpClient = defaultAuthHttpClient(),
     private val profileDirectory: CanonicalProfileDirectory? = null,
-) : OposiBotsAuthGateway, AuthProviderClient {
+) : OposiBotsAuthGateway, AuthProviderClient, AutoCloseable {
+    /** MASTER-ARCH-008: libera el `HttpClient` (lo llama [OposiBotsAuthRuntime.close] al parar la aplicacion). */
+    override fun close() {
+        client.close()
+    }
+
     override suspend fun register(
         request: OposiBotsRegisterRequest,
         context: OposiBotsAuthContext,
@@ -98,7 +103,11 @@ internal class SupabaseOposiBotsAuthGateway(
             },
             context = context,
         )
-        if (response.status == HttpStatusCode.TooManyRequests) throw OposiBotsAuthProblem.unavailable(60)
+        // MASTER-AUTH-007: el 429 de GoTrue (60 s por usuario) solo existe para emails registrados; propagarlo seria un
+        // oraculo de existencia. Se registra internamente y se contesta igual que el resto (204).
+        if (response.status == HttpStatusCode.TooManyRequests) {
+            GatewayLogger.warn("auth email throttled by upstream (indistinguishable 204 returned)")
+        }
         if (response.status.value >= 500) throw OposiBotsAuthProblem.unavailable()
         // All other outcomes are intentionally indistinguishable.
     }
@@ -145,7 +154,10 @@ internal class SupabaseOposiBotsAuthGateway(
             context = context,
         )
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response)
-        return response.toSession(context)
+        // MASTER-AUTH-010: si la puerta no puede LEER el estado (fallo transitorio), la sesion rotada no se revoca: el
+        // cliente nunca recibio sus tokens y reintenta con su refresh token anterior (ventana de reutilizacion de GoTrue).
+        // Revocarla (y antes, en global) convertia una caida de PostgREST en cierre de sesion en todos los dispositivos.
+        return response.toSession(context, transientRevocation = null)
     }
 
     override suspend fun logout(accessToken: String, context: OposiBotsAuthContext) {
@@ -174,7 +186,11 @@ internal class SupabaseOposiBotsAuthGateway(
             },
             context = context,
         )
-        if (response.status == HttpStatusCode.TooManyRequests) throw OposiBotsAuthProblem.unavailable(60)
+        // MASTER-AUTH-007: el 429 de GoTrue (60 s por usuario) solo existe para emails registrados; propagarlo seria un
+        // oraculo de existencia. Se registra internamente y se contesta igual que el resto (204).
+        if (response.status == HttpStatusCode.TooManyRequests) {
+            GatewayLogger.warn("auth email throttled by upstream (indistinguishable 204 returned)")
+        }
         if (response.status.value >= 500) throw OposiBotsAuthProblem.unavailable()
     }
 
@@ -190,14 +206,27 @@ internal class SupabaseOposiBotsAuthGateway(
         )
         if (!verified.status.isSuccessStatus()) throw mapCredentialError(verified)
         val recovery = verified.decode<SupabaseSession>()
-        val updated = authRequest(
-            HttpMethod.Put,
-            "/auth/v1/user",
-            buildJsonObject { put("password", request.newPassword) },
-            accessToken = recovery.accessToken,
-            context = context,
-        )
-        if (!updated.status.isSuccessStatus()) throw mapCredentialError(updated)
+        val updated = try {
+            authRequest(
+                HttpMethod.Put,
+                "/auth/v1/user",
+                buildJsonObject { put("password", request.newPassword) },
+                accessToken = recovery.accessToken,
+                context = context,
+            )
+        } catch (failure: Exception) {
+            // Incluye la cancelacion: la sesion de recuperacion acuñada por /verify no debe quedar viva.
+            revokeMintedSession(recovery.accessToken, context, scope = "local")
+            throw failure
+        }
+        if (!updated.status.isSuccessStatus()) {
+            // MASTER-AUTH-006: la contraseña NO cambio -> solo muere la sesion de recuperacion, no las demas.
+            revokeMintedSession(recovery.accessToken, context, scope = "local")
+            throw mapCredentialError(updated)
+        }
+        // MASTER-AUTH-006: contraseña cambiada -> se revocan TODAS las sesiones y refresh tokens del usuario (incluida
+        // la de recuperacion). Mejor esfuerzo: la contraseña ya cambio, un fallo aqui no convierte el reset en error.
+        revokeMintedSession(recovery.accessToken, context, scope = "global")
     }
 
     override suspend fun google(
@@ -209,18 +238,34 @@ internal class SupabaseOposiBotsAuthGateway(
         request: OposiBotsAppleRequest,
         context: OposiBotsAuthContext,
     ): OposiBotsOAuthResponse {
-        verifyAppleCode(request, context)
-        val response = oauth("apple", request.identityToken, request.nonce, context)
+        // Credenciales de servidor ANTES de acuñar nada (sin ellas no hay forma de validar el authorizationCode).
+        if (configuration.appleClientId == null || configuration.appleClientSecret == null) {
+            throw OposiBotsAuthProblem.unavailable()
+        }
+        // MASTER-AUTH-011: el authorizationCode (de un solo uso) se canjea DESPUES de la puerta de estado, asi un 503
+        // transitorio de la puerta no lo quema y el reintento documentado funciona.
+        val response = oauth("apple", request.identityToken, request.nonce, context) {
+            verifyAppleCode(request, context)
+        }
         // Solo tras pasar la puerta de estado y el replay guard: los nombres de la primera autenticacion.
         persistFirstAuthNames(response.session.user.id, request.firstAuthNames(), context)
         return response
     }
 
+    /**
+     * Orden (MASTER-AUTH-005/011): acuñar -> PUERTA DE ESTADO -> [beforeClaim] -> reclamar la credencial.
+     *
+     * - La puerta va antes del reclamo: un 503 transitorio de la puerta deja la credencial SIN consumir y el reintento
+     *   con el mismo idToken funciona. Una denegacion (bloqueada, borrado pendiente...) es terminal igualmente.
+     * - Si [beforeClaim] o el reclamo fallan (replay, carrera concurrente), se revoca SOLO la sesion recien acuñada
+     *   (`scope=local`): un replay de un idToken ya usado no puede cerrar las demas sesiones del usuario real.
+     */
     private suspend fun oauth(
         provider: String,
         idToken: String,
         nonce: String?,
         context: OposiBotsAuthContext,
+        beforeClaim: suspend () -> Unit = {},
     ): OposiBotsOAuthResponse {
         val response = authRequest(
             HttpMethod.Post,
@@ -234,21 +279,24 @@ internal class SupabaseOposiBotsAuthGateway(
         )
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = true)
         val mintedSession = response.decode<SupabaseSession>()
-        try {
-            claimOAuthCredential(provider, idToken, context)
-        } catch (cancelled: CancellationException) {
-            revokeMintedSession(mintedSession.accessToken, context)
-            throw cancelled
-        } catch (problem: OposiBotsAuthProblem) {
-            revokeMintedSession(mintedSession.accessToken, context)
-            throw problem
-        }
         val session = response.toSession(context, mintedSession)
+        try {
+            beforeClaim()
+            claimOAuthCredential(provider, idToken, context)
+        } catch (failure: Exception) {
+            // Incluye CancellationException (se relanza tal cual) y cualquier problema del reclamo.
+            revokeMintedSession(mintedSession.accessToken, context, scope = "local")
+            throw failure
+        }
         return OposiBotsOAuthResponse(session, isNewAccount = !session.user.onboardingCompleted)
     }
 
-    /** Revoca (logout global) la sesion recien acuñada. Mejor esfuerzo: nunca sustituye al error original. */
-    private suspend fun revokeMintedSession(accessToken: String, context: OposiBotsAuthContext, scope: String = "global") {
+    /**
+     * Revoca la sesion recien acuñada. `local` (por defecto) mata SOLO esa sesion; `global` mata todas las del usuario
+     * y se reserva para decisiones definitivas (cuenta denegada por la puerta, contraseña cambiada).
+     * Mejor esfuerzo: nunca sustituye al error original.
+     */
+    private suspend fun revokeMintedSession(accessToken: String, context: OposiBotsAuthContext, scope: String = "local") {
         withContext(NonCancellable) {
             try {
                 authRequest(
@@ -317,6 +365,11 @@ internal class SupabaseOposiBotsAuthGateway(
     /**
      * Nombre y apellidos de la primera autenticacion de Apple -> `perfiles_usuario.nombre/apellidos`, SOLO si estan
      * vacios (escritura del servidor con la clave de servicio, tras la puerta de estado). Un fallo no niega el acceso.
+     *
+     * EXCEPCION DOCUMENTADA al invariante "solo las RPC app_* escriben perfiles" (MASTER-ARCH-001, ver
+     * ARCHITECTURE_DELTA_S1.md): un UPDATE unico condicionado a `nombre/apellidos` vacios; si compite con
+     * `app_actualizar_perfil` (que tiene la fila con FOR UPDATE) Postgres espera y reevalua el WHERE, asi que nunca pisa
+     * un nombre ya escrito. Solo transita vacio -> lleno, una vez, y sube `actualizado_en` (ETag).
      */
     private suspend fun persistFirstAuthNames(
         userId: String,
@@ -330,7 +383,12 @@ internal class SupabaseOposiBotsAuthGateway(
                 val response = supabaseRequest(
                     method = HttpMethod.Patch,
                     path = "/rest/v1/perfiles_usuario?usuario_id=eq.$id&or=($column.is.null,$column.eq.)",
-                    body = buildJsonObject { put(column, text) },
+                    // MASTER-ARCH-001: el ETag de perfil es `actualizado_en`; sin subirlo, un If-Match anterior a esta
+                    // escritura seguiria valiendo y un PATCH /me/profile lo pisaria (actualizacion perdida).
+                    body = buildJsonObject {
+                        put(column, text)
+                        put("actualizado_en", Instant.now().toString())
+                    },
                     accessToken = null,
                     apiKey = configuration.secretKey,
                     context = context,
@@ -350,12 +408,13 @@ internal class SupabaseOposiBotsAuthGateway(
     private suspend fun AuthResponse.toSession(
         context: OposiBotsAuthContext,
         decodedSession: SupabaseSession? = null,
+        transientRevocation: String? = "local",
     ): OposiBotsAuthSessionDto {
         val session = decodedSession ?: decode()
         if (session.accessToken.isBlank() || session.refreshToken.isBlank()) {
             throw OposiBotsAuthProblem.unavailable()
         }
-        val identity = enforceAccountGate(session, context)
+        val identity = enforceAccountGate(session, context, transientRevocation)
         return OposiBotsAuthSessionDto(
             accessToken = session.accessToken,
             refreshToken = session.refreshToken,
@@ -372,27 +431,38 @@ internal class SupabaseOposiBotsAuthGateway(
     }
 
     /**
-     * Puerta de estado tras acuñar tokens. Solo `activa` explicita pasa; cualquier denegacion o fallo de lectura
-     * (fallo CERRADO) revoca la sesion acuñada y sube: 403 ACCOUNT_BLOCKED / ACCOUNT_DELETION_PENDING /
-     * FORBIDDEN / PROFILE_MISSING, o 503 si no se pudo leer el estado.
+     * Puerta de estado tras acuñar tokens. Solo `activa` explicita pasa (fallo CERRADO: nunca se devuelve la sesion).
+     *
+     * - Denegacion DEFINITIVA (403 ACCOUNT_BLOCKED / ACCOUNT_DELETION_PENDING / FORBIDDEN / PROFILE_MISSING): se
+     *   revoca en `global`, la cuenta no debe conservar ninguna sesion.
+     * - Fallo TRANSITORIO de lectura (503, cancelacion): MASTER-AUTH-010, se revoca solo la sesion acuñada
+     *   ([transientRevocation] = `local`) o nada (`null`, refresh: el cliente reintenta con su token anterior). Una
+     *   caida de PostgREST ya no cierra la sesion en todos los dispositivos.
      */
-    private suspend fun enforceAccountGate(session: SupabaseSession, context: OposiBotsAuthContext): CanonicalUserIdentity {
+    private suspend fun enforceAccountGate(
+        session: SupabaseSession,
+        context: OposiBotsAuthContext,
+        transientRevocation: String? = "local",
+    ): CanonicalUserIdentity {
+        suspend fun revokeTransient() {
+            transientRevocation?.let { revokeMintedSession(session.accessToken, context, scope = it) }
+        }
         try {
             val userId = CanonicalUserId.fromJwtSubject(session.user.id)
             val identity = findProfile(userId, context) ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
             return identity.requireActive()
         } catch (cancelled: CancellationException) {
-            revokeMintedSession(session.accessToken, context)
+            revokeTransient()
             throw cancelled
         } catch (denied: BackendDomainException) {
-            revokeMintedSession(session.accessToken, context)
+            revokeMintedSession(session.accessToken, context, scope = "global")
             throw denied
         } catch (problem: OposiBotsAuthProblem) {
-            revokeMintedSession(session.accessToken, context)
+            revokeTransient()
             throw problem
         } catch (unexpected: Exception) {
             GatewayLogger.warn("account gate could not read the profile: {}", unexpected.toString())
-            revokeMintedSession(session.accessToken, context)
+            revokeTransient()
             throw OposiBotsAuthProblem.unavailable()
         }
     }
@@ -401,8 +471,7 @@ internal class SupabaseOposiBotsAuthGateway(
         profileDirectory?.let { return it.find(userId) }
         val response = supabaseRequest(
             method = HttpMethod.Get,
-            path = "/rest/v1/perfiles_usuario?select=usuario_id,estado_cuenta,onboarding_completado" +
-                "&usuario_id=eq.${userId.value}&limit=1",
+            path = PostgrestCanonicalProfileDirectory.profileStatePath(userId),
             body = null,
             accessToken = null,
             apiKey = configuration.secretKey,
@@ -411,12 +480,7 @@ internal class SupabaseOposiBotsAuthGateway(
         if (!response.status.isSuccessStatus()) throw OposiBotsAuthProblem.unavailable()
         val row = json.decodeFromString(ListSerializer(PostgrestCanonicalProfileDirectory.ProfileRow.serializer()), response.body)
             .firstOrNull() ?: return null
-        if (!row.usuarioId.equals(userId.value, ignoreCase = true)) throw OposiBotsAuthProblem.unavailable()
-        return CanonicalUserIdentity(
-            userId = userId,
-            accountStatus = AccountStatus.fromWire(row.estadoCuenta),
-            onboardingCompleted = row.onboardingCompletado ?: false,
-        )
+        return row.toIdentity(userId) { throw OposiBotsAuthProblem.unavailable() }
     }
 
     // ---------- AuthProviderClient (servicio canonico de perfil y borrado de cuenta) ----------

@@ -23,7 +23,9 @@ class BackendDomainException(
      * claves de [ErrorDetails]; nunca PII ni trazas. Ver `specs.errors`.
      */
     val details: ErrorDetails? = null,
-) : RuntimeException(message)
+    /** Causa tecnica (p. ej. un fallo de decodificacion): solo para el log del servidor, nunca se publica. */
+    cause: Throwable? = null,
+) : RuntimeException(message, cause)
 
 private data class DomainErrorDefinition(
     val status: HttpStatusCode,
@@ -942,7 +944,8 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
         message: String = defaultMessage,
         details: ErrorDetails? = null,
         retryAfterSeconds: Int? = null,
-    ): BackendDomainException = BackendDomainException(name, status, message, retryAfterSeconds, details)
+        cause: Throwable? = null,
+    ): BackendDomainException = BackendDomainException(name, status, message, retryAfterSeconds, details, cause)
 }
 
 /** Sinonimos retirados por el rediseno: no pueden emitirse. */

@@ -968,7 +968,7 @@ internal fun adminSettingsFromEnvironment(): AdminSettingsDto = AdminSettingsDto
     displayName = System.getenv("OPOSICONTROL_ADMIN_DISPLAY_NAME").orEmpty().ifBlank { "Administrador" },
     email = System.getenv("OPOSICONTROL_ADMIN_EMAIL").orEmpty(),
     receiveReleaseNotes = false,
-    defaultEnvironment = System.getenv("APP_ENV").orEmpty().ifBlank { "dev" },
+    defaultEnvironment = AppEnvironment.fromSystemEnvironment(),
     preferFakeData = false,
     enableVerboseLogs = System.getenv("ENABLE_VERBOSE_NETWORK_LOGS")?.toBooleanStrictOrNull() ?: false,
 )

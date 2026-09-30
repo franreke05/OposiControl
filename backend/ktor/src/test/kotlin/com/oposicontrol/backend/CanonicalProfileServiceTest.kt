@@ -142,7 +142,11 @@ class CanonicalProfileServiceTest {
         assertTrue(deadlock.retryAfterSeconds != null)
         // Sin mapeo: IllegalStateException (StatusPages lo redacta a 502); permisos revocados tambien.
         assertIs<IllegalStateException>(ProfileRpcErrors.failure("fn", rpcError(401, "42501", "permission denied for function app_x")))
-        assertIs<IllegalStateException>(ProfileRpcErrors.failure("fn", SupabaseRawResponse(502, "<html>bad gateway</html>")))
+        // MASTER-API-003 (cambio deliberado): un 5xx de PostgREST/gateway es una caida, no un 502 redactado: 503 UPSTREAM_UNAVAILABLE.
+        val outage = assertIs<BackendDomainException>(ProfileRpcErrors.failure("fn", SupabaseRawResponse(502, "<html>bad gateway</html>")))
+        assertEquals(503, outage.status.value)
+        assertEquals("UPSTREAM_UNAVAILABLE", outage.errorCode)
+        assertFalse(outage.message.contains("html"), "el cuerpo del upstream no se filtra")
     }
 
     // ------------------------------------------------------------------ lectura y degradacion

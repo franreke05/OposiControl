@@ -38,7 +38,9 @@ class OposiBotsAuthRoutesTest {
         }
 
         assertEquals(HttpStatusCode.Accepted, response.status)
-        assertTrue(testJson.decodeFromString<OposiBotsRegisterResponse>(response.bodyAsText()).verificationRequired)
+        // MASTER-API-001: el cuerpo CRUDO lleva verificationRequired (antes se decodificaba con el Json que rellena el
+        // valor por defecto y el `{}` real de produccion pasaba desapercibido).
+        assertEquals(true, Json.parseToJsonElement(response.bodyAsText()).jsonObject["verificationRequired"]?.jsonPrimitive?.content?.toBooleanStrictOrNull())
         assertEquals("person@example.com", fake.registerRequest?.identifier)
         assertFalse(response.bodyAsText().contains("accessToken"))
     }
@@ -248,6 +250,7 @@ class OposiBotsAuthRoutesTest {
                     gateway = FakeGateway(),
                     rateLimiter = AllowingRateLimiter,
                     json = testJson,
+                    canonical = CanonicalTestEnv().runtime().canonical,
                 ),
             )
         }
@@ -584,13 +587,14 @@ class OposiBotsAuthRoutesTest {
     }
 
     @Test
-    fun withoutACanonicalRuntimeNoCanonicalProfileRouteIsMounted() = testApplication {
+    fun aConsumerRuntimeAlwaysMountsTheCanonicalProfileRoutes() = testApplication {
+        // MASTER-ARCH-005: `canonical` es obligatorio; ya no existe el modo "sin perfil canonico" (antes 404 silencioso).
         application {
             configureConsumerAuthOnly(
-                OposiBotsAuthRuntime(testConfiguration(), FakeGateway(), AllowingRateLimiter, testJson),
+                OposiBotsAuthRuntime(testConfiguration(), FakeGateway(), AllowingRateLimiter, testJson, CanonicalTestEnv().runtime().canonical),
             )
         }
-        assertEquals(HttpStatusCode.NotFound, client.get("/api/v1/app/me").status)
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/app/me").status)
     }
 
     private fun io.ktor.server.application.Application.authTestModule(

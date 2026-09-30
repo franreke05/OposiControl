@@ -29,8 +29,11 @@ internal class PostgrestSpecialtyResolver(
     override suspend fun resolve(text: String): String? {
         val wanted = normalizeSpecialtyText(text)
         if (wanted.isEmpty()) return null
-        val body = withUpstreamIo { upstream.get("/rest/v1/especialidades?select=id,nombre,slug&activa=eq.true&limit=500") }
+        val body = withUpstreamIo { upstream.get("/rest/v1/especialidades?select=id,nombre,slug&activa=eq.true&limit=$SPECIALTY_FETCH_LIMIT") }
         val rows = json.decodeFromString(ListSerializer(Row.serializer()), body)
+        // MASTER-QUALITY-007: una lectura truncada podria ocultar la especialidad buscada (o una segunda coincidencia):
+        // fail-closed en vez de resolver sobre datos incompletos.
+        if (rows.size >= SPECIALTY_FETCH_LIMIT) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
         return matchSpecialty(wanted, rows.map { Triple(it.id, it.nombre, it.slug) })
     }
 }
@@ -46,16 +49,23 @@ internal fun matchSpecialty(normalizedText: String, candidates: List<Triple<Stri
     return ids.singleOrNull()
 }
 
+internal const val SPECIALTY_FETCH_LIMIT = 500
+
+// Hoisted (MASTER-QUALITY-007): antes se compilaban dos Regex por llamada, ~2000 por peticion.
+private val COMBINING_MARKS = Regex("\\p{M}+")
+private val WHITESPACE_RUN = Regex("\\s+")
+
 internal fun normalizeSpecialtyText(value: String): String =
     Normalizer.normalize(value, Normalizer.Form.NFD)
-        .replace(Regex("\\p{M}+"), "")
+        .replace(COMBINING_MARKS, "")
         .lowercase()
         .trim()
-        .replace(Regex("\\s+"), " ")
+        .replace(WHITESPACE_RUN, " ")
 
 /**
  * Los dos endpoints legacy de OB, reescritos como traduccion -> servicio canonico -> traduccion
- * ([LegacyAdapter]): sin reglas de negocio, sin tablas ni RPC propias, sin escribir `public.usuario`.
+ * (mismo espiritu que [LegacyAdapter], que es un patron de referencia aun NO cableado: esta clase
+ * es una implementacion propia y no delega en el): sin reglas de negocio, sin tablas ni RPC propias, sin escribir `public.usuario`.
  */
 internal class LegacyProfileAdapter(
     private val profiles: CanonicalProfileService,

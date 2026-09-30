@@ -71,10 +71,6 @@ internal class FakeUpstream : CanonicalUpstream {
         return onRpc(function, args)
     }
 
-    override fun patch(path: String, body: String) {
-        log += "PATCH $path"
-    }
-
     fun rpcNames(): List<String> = rpcCalls.map { it.first }
     fun lastArgs(function: String): JsonObject = rpcCalls.last { it.first == function }.second
 }

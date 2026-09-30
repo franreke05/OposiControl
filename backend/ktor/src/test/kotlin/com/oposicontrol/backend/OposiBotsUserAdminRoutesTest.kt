@@ -32,7 +32,8 @@ class OposiBotsUserAdminRoutesTest {
             exception<IllegalStateException> { call, cause -> call.respond(HttpStatusCode.InternalServerError, ErrorDto("backend_supabase_error", cause.message ?: "Backend error")) }
             exception<OposiBotsUserAdminNotFoundException> { call, cause -> call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", cause.message ?: "Not found")) }
         }
-        routing { oposiBotsUserAdminRoutes(gateway) }
+        // MASTER-AUTH-001: la politica es obligatoria; aqui ninguna cuenta es administrativa y la auditoria no falla.
+        routing { oposiBotsUserAdminRoutes(gateway, OposiBotsUserAdminPolicy(isAdministrative = { false }, audit = { _, _, _ -> })) }
     }
 
     @Test
