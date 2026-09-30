@@ -109,7 +109,9 @@ class Slice1ProfileRpcMigrationTest {
         val antes = c.escrituras()
         val etag = primera.campo("actualizadoEn")
 
-        // Repeticion identica: 200 no-op, no escribe nada, misma marca de version.
+        // Repeticion identica: 200, perfil intacto, misma marca de version. Desde 20260930100500 (MASTER-DB-008)
+        // el replay SI aplica documentos/atribucion del cuerpo; aqui DOC_TERMS ya estaba aceptado y la
+        // atribucion es write-once, asi que no hay escrituras nuevas (ver Slice1AuditHardeningMigrationTest).
         val replay = c.onboarding(USER_A, attribution = """{"fuente":"otra"}""", docs = "array['$DOC_TERMS']::uuid[]")
         assertTrue(replay.ok, replay.toString())
         assertEquals("true", replay.campo("replay"))
@@ -489,6 +491,8 @@ class Slice1ProfileRpcMigrationTest {
         verde()
         assertEquals("true", c.onboarding(USER_A).campo("replay"), "sigue funcionando y los datos permanecen")
 
+        // Rollback en orden inverso: primero la migracion posterior que re-crea estas RPCs (20260930100500).
+        c.ejecutar(com.oposicontrol.dbtest.slice0.Slice0Db.rollbackDe(Slice1Db.HARDENING))
         c.ejecutar(com.oposicontrol.dbtest.slice0.Slice0Db.rollbackDe(Slice1Db.RPCS))
         assertEquals(0L, c.n("select count(*) from pg_proc where proname like 'app\\_%' and proname not like 'app\\_solicitar%' and proname not like 'app\\_registrar%'"))
         assertEquals(0L, c.n("select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'private' and p.proname like 'slice1\\_%'"))

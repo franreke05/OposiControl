@@ -199,9 +199,11 @@ class Slice1SpecialtyMigrationTest {
                 "no activa no se repuebla: $uid",
             )
         }
-        // Activa: comportamiento MAIN intacto (coalesce sobre NULL).
+        // Activa: coalesce sobre NULL para nombre_mostrar/avatar. CAMBIO DELIBERADO (audit MASTER-DB-001,
+        // migracion 20260930100500): el username de raw_user_meta_data (controlable por el cliente via
+        // GoTrue) ya NO se copia; antes este test afirmaba "volvio", que era el defecto.
         assertEquals(
-            listOf("Vuelve", "volvio", "http://x/a.png"),
+            listOf("Vuelve", null, "http://x/a.png"),
             c.filas("select nombre_mostrar, username, avatar_url from public.perfiles_usuario where usuario_id = '$USER_A'").single(),
         )
         // Alta nueva: crea perfil activa normalmente.
