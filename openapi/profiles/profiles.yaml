@@ -426,6 +426,7 @@ components:
           - name: roleCode
             in: query
             required: false
+            description: 'Users holding the role. The holder set is resolved server-side and capped at 100 holders: a role with more holders is rejected with 400 VALIDATION issue roleCode/TOO_MANY_MATCHES (never silently truncated).'
             schema:
               $ref: '../common/identifiers.yaml#/components/schemas/RoleCode'
           - name: accountStatus
@@ -463,6 +464,7 @@ components:
                             $ref: '#/components/schemas/AdminUserSummary'
           '400':
             $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION (including roleCode/TOO_MANY_MATCHES when the role has more than 100 holders).'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '403':

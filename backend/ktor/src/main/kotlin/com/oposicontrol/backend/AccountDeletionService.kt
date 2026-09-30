@@ -64,7 +64,11 @@ internal class AccountDeletionService(
         // (fallo, o el intento se corto antes de registrarse). Toda la revocacion corre en NonCancellable: que el
         // cliente cierre la conexion ya no deja la sesion viva sin anotar.
         withContext(NonCancellable) {
-            if (!row.yaPendiente || revocationPending(identity, context)) revokeSessionsBestEffort(identity, accessToken, context)
+            if (!row.yaPendiente) {
+                revokeSessionsBestEffort(identity, accessToken, context, retry = false)
+            } else if (revocationPending(identity, context)) {
+                revokeSessionsBestEffort(identity, accessToken, context, retry = true)
+            }
         }
         return AccountDeletionAccepted(accountStatus = STATUS_PENDING, requestedAt = normalizeInstant(row.solicitadaEn))
     }
@@ -127,15 +131,27 @@ internal class AccountDeletionService(
         return row
     }
 
-    private suspend fun revokeSessionsBestEffort(identity: CanonicalUserIdentity, accessToken: String, context: OposiBotsAuthContext) {
+    private suspend fun revokeSessionsBestEffort(
+        identity: CanonicalUserIdentity,
+        accessToken: String,
+        context: OposiBotsAuthContext,
+        retry: Boolean,
+    ) {
         val outcome = try {
             authProvider.logout(accessToken, context)
             REVOKE_DONE
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
-            Logger.warn("session revocation after deletion request failed requestId={} type={}", context.requestId, failure::class.simpleName)
-            REVOKE_FAILED
+            if (retry && failure.meansSessionAlreadyGone()) {
+                // MASTER2-AUTH-009: en un REINTENTO, GoTrue ya no reconoce la sesion (401/403): el logout anterior (o
+                // cualquier otro) ya la revoco. Anotar `fallida` aqui no convergeria nunca.
+                Logger.info("session already revoked on retry requestId={}", context.requestId)
+                REVOKE_DONE
+            } else {
+                Logger.warn("session revocation after deletion request failed requestId={} type={}", context.requestId, failure::class.simpleName)
+                REVOKE_FAILED
+            }
         }
         try {
             val args = buildJsonObject {
@@ -152,6 +168,13 @@ internal class AccountDeletionService(
         } catch (failure: Exception) {
             Logger.warn("recording session revocation failed requestId={} type={}", context.requestId, failure::class.simpleName)
         }
+    }
+
+    /** 401/403 del proveedor: el bearer ya no corresponde a una sesion viva. */
+    private fun Exception.meansSessionAlreadyGone(): Boolean = when (this) {
+        is OposiBotsAuthProblem -> status == io.ktor.http.HttpStatusCode.Unauthorized || status == io.ktor.http.HttpStatusCode.Forbidden
+        is BackendDomainException -> status == io.ktor.http.HttpStatusCode.Unauthorized || status == io.ktor.http.HttpStatusCode.Forbidden
+        else -> false
     }
 
     companion object {

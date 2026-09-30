@@ -21,6 +21,7 @@ import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.CannotTransformContentToTypeException
+import io.ktor.server.http.content.HttpStatusCodeContent
 import io.ktor.server.plugins.PayloadTooLargeException
 import io.ktor.server.plugins.UnsupportedMediaTypeException
 import io.ktor.server.response.ApplicationSendPipeline
@@ -72,9 +73,9 @@ private fun initializeSentry() {
     val dsn = System.getenv("SENTRY_DSN").orEmpty().trim()
     if (dsn.isBlank()) return
 
-    val environment = System.getenv("SENTRY_ENVIRONMENT")
-        .orEmpty()
-        .ifBlank { "development" }
+    // MASTER2-OBS-005: misma resolucion que `ObservabilityConfig` (SENTRY_ENVIRONMENT, luego APP_ENV via AppEnvironment);
+    // antes caia a "development" aunque la imagen de produccion fija APP_ENV=production.
+    val environment = sentryEnvironment { System.getenv(it) }
 
     val tracesSampleRate = System.getenv("SENTRY_TRACES_SAMPLE_RATE")
         ?.toDoubleOrNull()
@@ -92,15 +93,47 @@ private fun initializeSentry() {
         options.isAttachStacktrace = true
         // MASTER-OBS-004: los mensajes de excepcion incluyen fragmentos de cuerpos de error de Supabase (emails,
         // detalles "Key (col)=(valor)", JWT); se depuran antes de salir del proceso.
-        options.setBeforeSend { event, _ ->
-            event.exceptions?.forEach { exception -> exception.value = exception.value?.redactSensitiveText() }
-            event.message?.let { message ->
-                message.message = message.message?.redactSensitiveText()
-                message.formatted = message.formatted?.redactSensitiveText()
-            }
-            event
-        }
+        options.setBeforeSend { event, _ -> scrubSentryEvent(event) }
+        // Los logs de nivel INFO+ se convierten en breadcrumbs (logback `minimumBreadcrumbLevel`): tambien se depuran.
+        options.setBeforeBreadcrumb { breadcrumb, _ -> scrubBreadcrumb(breadcrumb) }
     }
+}
+
+/** MASTER2-OBS-005: `SENTRY_ENVIRONMENT` explicito, si no `AppEnvironment` (APP_ENV, con su fallback unico). */
+internal fun sentryEnvironment(env: (String) -> String?): String =
+    env("SENTRY_ENVIRONMENT")?.trim()?.takeIf { it.isNotEmpty() }
+        ?: AppEnvironment.resolve(env("APP_ENV"))
+
+/**
+ * MASTER-OBS-004 / MASTER2-OBS-004: depura el evento completo (excepciones, mensaje, extras, request y breadcrumbs), no
+ * solo excepciones y mensaje.
+ */
+internal fun scrubSentryEvent(event: io.sentry.SentryEvent): io.sentry.SentryEvent {
+    event.exceptions?.forEach { exception -> exception.value = exception.value?.redactSensitiveText() }
+    event.message?.let { message ->
+        message.message = message.message?.redactSensitiveText()
+        message.formatted = message.formatted?.redactSensitiveText()
+    }
+    event.extras?.toMap()?.forEach { (key, value) ->
+        if (value is String) event.setExtra(key, value.redactSensitiveText())
+    }
+    event.request?.let { request ->
+        request.url = request.url?.redactSensitiveText()
+        request.queryString = request.queryString?.redactSensitiveText()
+        request.data = null
+        request.cookies = null
+        request.headers = null
+    }
+    event.breadcrumbs?.forEach { scrubBreadcrumb(it) }
+    return event
+}
+
+internal fun scrubBreadcrumb(breadcrumb: io.sentry.Breadcrumb): io.sentry.Breadcrumb {
+    breadcrumb.message = breadcrumb.message?.redactSensitiveText()
+    breadcrumb.data.toMap().forEach { (key, value) ->
+        if (value is String) breadcrumb.setData(key, value.redactSensitiveText())
+    }
+    return breadcrumb
 }
 
 fun main() {
@@ -271,6 +304,21 @@ internal fun Application.installBackendStatusPages() {
         status(HttpStatusCode.UnsupportedMediaType) { call, _ ->
             call.respondErrorEnvelope(CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE)
         }
+        // MASTER2-API-004: una ruta inexistente (o un metodo no soportado) responde en Ktor un 404/405 DESNUDO, sin sobre ni
+        // requestId. Solo se sustituye el contenido "de estado" (`HttpStatusCodeContent`); un 404 que una ruta ya responde
+        // con su propio cuerpo (p. ej. `ErrorDto("not_found", ...)`) no se toca.
+        status(HttpStatusCode.NotFound) { _ ->
+            if (content !is HttpStatusCodeContent) return@status
+            call.respondErrorEnvelope(CanonicalErrorCode.NOT_FOUND)
+        }
+        status(HttpStatusCode.MethodNotAllowed) { _ ->
+            if (content !is HttpStatusCodeContent) return@status
+            call.respondErrorEnvelope(
+                HttpStatusCode.MethodNotAllowed,
+                "METHOD_NOT_ALLOWED",
+                "El metodo HTTP no esta admitido en este recurso.",
+            )
+        }
         // MASTER-API-018: el challenge del proveedor `bearer` de Ktor (sin token o con un token que no
         // verifica en `gateway-auth`) responde un 401 DESNUDO: sin sobre, sin requestId y sin traza. Solo
         // se sustituye ESE contenido (`UnauthorizedResponse`); un 401 que una ruta ya responde con su
@@ -412,6 +460,9 @@ internal fun Application.installBackendStatusPages() {
             )
         }
     }
+    // MASTER2-SEC-002: tope global de cuerpo (no multipart) junto al traductor de errores: cualquier modulo que monte
+    // `installBackendStatusPages()` lo hereda y el 413 sale con el sobre canonico.
+    installRequestBodyLimit()
 }
 
 fun Application.module() {
@@ -811,7 +862,8 @@ internal fun AuthenticationConfig.gatewayBearerAuth(
 }
 
 internal fun allowsDevBypass(appEnv: String, enabled: Boolean): Boolean {
-    return enabled && appEnv.lowercase() in setOf("dev", "development", "test")
+    // MASTER2-SEC-001: un unico criterio de "desarrollo" (AppEnvironment), fail-closed.
+    return enabled && AppEnvironment.isDevelopment(appEnv)
 }
 
 /** MASTER-SEC-013: comparacion en tiempo constante de secretos (UTF-8). */
@@ -878,7 +930,7 @@ internal suspend fun gatewayAuthPrincipal(
  * token estático no puede ser la única defensa de nada sensible.
  */
 internal fun isLocalDevelopmentPeer(appEnv: String, remoteHost: String): Boolean {
-    if (appEnv.lowercase() !in setOf("dev", "development", "test")) return false
+    if (!AppEnvironment.isDevelopment(appEnv)) return false
     val literal = remoteHost.substringBefore('%').trim('[', ']')
     if (literal.isEmpty()) return false
     // Un nombre de host (no una IP literal) se rechaza: sólo se confía en lo que
@@ -890,6 +942,14 @@ internal fun isLocalDevelopmentPeer(appEnv: String, remoteHost: String): Boolean
         // IPv4 mapeada en IPv6, como la entrega Netty en algunos stacks duales.
         literal.startsWith("::ffff:127.", ignoreCase = true)
 }
+
+/**
+ * MASTER2-SEC-001: el reinicio (lanza powershell/gradlew) solo se habilita en un entorno EXPLICITO de desarrollo o
+ * con `OPOSICONTROL_ENABLE_BACKEND_RESTART=true`. Antes cualquier valor distinto de prod/production (p. ej.
+ * `staging` o uno desconocido) lo dejaba abierto: fail-open.
+ */
+internal fun backendRestartEnabled(appEnv: String?, explicitFlag: String?): Boolean =
+    explicitFlag?.trim()?.toBooleanStrictOrNull() ?: AppEnvironment.isDevelopment(appEnv)
 
 internal fun isLegacyStaticTokenPath(path: String): Boolean =
     path == "/admin" || path.startsWith("/admin/") ||
@@ -1061,13 +1121,10 @@ private class BackendRestartRequest(
                 ?.let { BackendRestartRequest(projectRoot = it, ngrokHost = ngrokHost) }
         }
 
-        fun isEnabled(): Boolean {
-            val explicit = System.getenv("OPOSICONTROL_ENABLE_BACKEND_RESTART")?.toBooleanStrictOrNull()
-            if (explicit != null) return explicit
-            val appEnv = AppEnvironment.fromSystemEnvironment()
-            return !appEnv.equals("prod", ignoreCase = true) &&
-                !appEnv.equals("production", ignoreCase = true)
-        }
+        fun isEnabled(): Boolean = backendRestartEnabled(
+            appEnv = System.getenv("APP_ENV"),
+            explicitFlag = System.getenv("OPOSICONTROL_ENABLE_BACKEND_RESTART"),
+        )
 
         private fun findProjectRoot(start: File): File? {
             var current: File? = start.absoluteFile
@@ -1134,8 +1191,14 @@ internal fun Throwable.isThrownByBackendCode(): Boolean =
 private val BEARER_PATTERN = Regex("Bearer\\s+[A-Za-z0-9._~+/-]+=*")
 private val APIKEY_PATTERN = Regex("apikey[=:]\\s*[A-Za-z0-9._~+/-]+=*")
 private val JWT_PATTERN = Regex("eyJ[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]{5,}\\.[A-Za-z0-9_-]*")
-private val EMAIL_PATTERN = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}")
-private val PG_KEY_DETAIL_PATTERN = Regex("Key \\(([^)]*)\\)=\\(([^)]*)\\)")
+// Acotados (MASTER2-OBS-004): un texto largo sin '@' ya no da backtracking cuadratico.
+private val EMAIL_PATTERN = Regex("[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\\.[A-Za-z]{2,24}")
+// MASTER2-OBS-002: la columna puede ser una expresion con parentesis anidados (`Key (lower(username::text))=(bob)`) y el
+// valor acaba en el `)` seguido de espacio, fin o puntuacion.
+private val PG_KEY_DETAIL_PATTERN = Regex("Key \\((.{1,300}?)\\)=\\((.{0,500}?)\\)(?=\\s|$|[.,;])")
+private val PG_FAILING_ROW_PATTERN = Regex("Failing row contains \\([^\\n]{0,2000}\\)")
+private val SB_KEY_PATTERN = Regex("sb_(?:secret|publishable)_[A-Za-z0-9_-]{8,}")
+private val TOKEN_FIELD_PATTERN = Regex("(?i)(refresh_token|access_token|id_token)([\"']?\\s*[:=]\\s*[\"']?)[A-Za-z0-9._~+/-]{8,}")
 
 /**
  * MASTER-OBS-004: depuracion de texto que puede llegar a un log o a Sentry: credenciales (Bearer, apikey, JWT) y PII que
@@ -1146,6 +1209,9 @@ internal fun String.redactSensitiveText(): String = this
     .replace(APIKEY_PATTERN, "apikey=[redacted]")
     .replace(JWT_PATTERN, "[redacted-jwt]")
     .replace(PG_KEY_DETAIL_PATTERN) { "Key (${it.groupValues[1]})=([redacted])" }
+    .replace(PG_FAILING_ROW_PATTERN, "Failing row contains ([redacted])")
+    .replace(SB_KEY_PATTERN, "[redacted-key]")
+    .replace(TOKEN_FIELD_PATTERN) { "${it.groupValues[1]}${it.groupValues[2]}[redacted]" }
     .replace(EMAIL_PATTERN, "[redacted-email]")
 
 internal fun Throwable.safeBackendMessage(defaultMessage: String, maxLength: Int = 300): String {

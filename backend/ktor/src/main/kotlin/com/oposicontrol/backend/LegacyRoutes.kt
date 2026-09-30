@@ -28,7 +28,10 @@ import java.time.format.DateTimeFormatter
 // 4) Sin alias nuevos: cada operacion canonica tiene exactamente una ruta.
 // =====================================================================
 
-/** Una ruta legacy con su sucesora canonica. [sunsetAt] null hasta que el propietario la apruebe. */
+/**
+ * Una ruta legacy con su sucesora canonica. [sunsetAt] null hasta que el propietario la apruebe. [successorPath] vacio =
+ * el contrato congelado aun NO declara sucesora (no se anuncia un `Link` a una ruta que no existe).
+ */
 data class LegacyEndpoint(
     val endpointId: String,
     val method: String,
@@ -70,6 +73,29 @@ object LegacyEndpoints {
     val EP_218 = LegacyEndpoint("EP-218", "POST", "/v1/auth/register/profile", "/api/v1/app/me/onboarding", SLICE_1_DEPRECATED_AT)
 
     val SLICE_1: List<LegacyEndpoint> = listOf(EP_124, EP_218)
+
+    // MASTER2-OPENAPI-006: las 9 rutas vivas de `/api/v1/app` (AppV1Routes.kt) que el contrato congelado no declara. Solo
+    // `iniciar` y `responder` tienen sucesora congelada (Slice 3, TARGET); el resto no tiene sucesora hasta Slice 2+.
+    // Criterio de retirada: contador `legacy_route_requests_total{endpoint="APP-*"}` a cero tras la release canonica de OB.
+    val APP_HOME = LegacyEndpoint("APP-HOME", "GET", "/api/v1/app/home", "", SLICE_1_DEPRECATED_AT)
+    val APP_ESTADISTICAS = LegacyEndpoint("APP-ESTADISTICAS", "GET", "/api/v1/app/estadisticas", "", SLICE_1_DEPRECATED_AT)
+    val APP_COMMERCIAL_CATALOG = LegacyEndpoint("APP-COMMERCIAL-CATALOG", "GET", "/api/v1/app/commercial/catalog", "", SLICE_1_DEPRECATED_AT)
+    val APP_COMMERCIAL_PURCHASES = LegacyEndpoint("APP-COMMERCIAL-PURCHASES", "GET", "/api/v1/app/commercial/purchases", "", SLICE_1_DEPRECATED_AT)
+    val APP_COMMERCIAL_SUBSCRIPTIONS = LegacyEndpoint("APP-COMMERCIAL-SUBSCRIPTIONS", "GET", "/api/v1/app/commercial/subscriptions", "", SLICE_1_DEPRECATED_AT)
+    val APP_EVENTOS = LegacyEndpoint("APP-EVENTOS", "POST", "/api/v1/app/eventos", "", SLICE_1_DEPRECATED_AT)
+    val APP_FEEDBACK_PREGUNTA = LegacyEndpoint("APP-FEEDBACK-PREGUNTA", "POST", "/api/v1/app/feedback/pregunta", "", SLICE_1_DEPRECATED_AT)
+    val APP_INICIAR = LegacyEndpoint(
+        "APP-EXAMEN-INICIAR", "POST", "/api/v1/app/examenes/{id}/iniciar", "/api/v1/app/examenes/{examId}/intentos", SLICE_1_DEPRECATED_AT,
+    )
+    val APP_RESPONDER = LegacyEndpoint(
+        "APP-INTENTO-RESPONDER", "POST", "/api/v1/app/intentos/{id}/responder",
+        "/api/v1/app/intentos/{attemptId}/respuestas/{preguntaId}", SLICE_1_DEPRECATED_AT,
+    )
+
+    val SLICE_1_APP: List<LegacyEndpoint> = listOf(
+        APP_HOME, APP_ESTADISTICAS, APP_COMMERCIAL_CATALOG, APP_COMMERCIAL_PURCHASES, APP_COMMERCIAL_SUBSCRIPTIONS,
+        APP_EVENTOS, APP_FEEDBACK_PREGUNTA, APP_INICIAR, APP_RESPONDER,
+    )
 }
 
 /** Nombre Micrometer; Prometheus lo publica como `legacy_route_requests_total`. */
@@ -111,14 +137,14 @@ val LegacyRoute = createRouteScopedPlugin("LegacyRoute", ::LegacyRouteConfig) {
         .tag("endpoint", endpoint.endpointId)
         .register(pluginConfig.registry)
     val deprecation = LegacyHeaders.deprecation(endpoint.deprecatedAt)
-    val link = LegacyHeaders.successorLink(endpoint.successorPath)
+    val link = endpoint.successorPath.takeIf { it.isNotBlank() }?.let(LegacyHeaders::successorLink)
     val sunset = endpoint.sunsetAt?.let(LegacyHeaders::sunset)
 
     onCall { call ->
         counter.increment()
         // Antes del handler: tambien las respuestas de error (StatusPages) las llevan.
         call.response.header(LegacyHeaders.DEPRECATION, deprecation)
-        call.response.header(HttpHeaders.Link, link)
+        link?.let { call.response.header(HttpHeaders.Link, it) }
         sunset?.let { call.response.header(LegacyHeaders.SUNSET, it) }
     }
 }

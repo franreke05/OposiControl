@@ -26,6 +26,14 @@ internal enum class OposiBotsAuthOperation(
     RESEND(6, 3, 3_600),
     EMAIL_EXCHANGE(20, 8, 900),
     LOGIN(30, 8, 300),
+
+    /**
+     * MASTER2-AUTH-002: tope POR CUENTA (email solo) del login, ademas del de (email, IP). Alto a proposito: desde
+     * una sola IP el cupo (email, IP) de [LOGIN] (8/300 s = 24/900 s) nunca lo alcanza, asi que un tercero no bloquea
+     * al titular sin varias IPs; pero un ataque distribuido (rotando IPs o prefijos IPv6) ya no tiene cupo ilimitado
+     * por cuenta. Solo se usa como limite por sujeto (el de IP no se consulta con esta operacion).
+     */
+    LOGIN_ACCOUNT(30, 50, 900),
     REFRESH(60, 30, 300),
     LOGOUT(60, 30, 300),
     ME(120, 60, 60),
@@ -72,7 +80,7 @@ internal class InMemoryOposiBotsAuthRateLimiter(
     override suspend fun checkIp(
         operation: OposiBotsAuthOperation,
         clientIp: String,
-    ) = consume("ip", operation, clientIp, operation.ipLimit)
+    ) = consume("ip", operation, rateLimitClientBucket(clientIp), operation.ipLimit)
 
     override suspend fun checkSubject(
         operation: OposiBotsAuthOperation,
@@ -135,7 +143,7 @@ internal class ValkeyOposiBotsAuthRateLimiter(
     override suspend fun checkIp(
         operation: OposiBotsAuthOperation,
         clientIp: String,
-    ) = consume("ip", operation, clientIp, operation.ipLimit)
+    ) = consume("ip", operation, rateLimitClientBucket(clientIp), operation.ipLimit)
 
     override suspend fun checkSubject(
         operation: OposiBotsAuthOperation,
@@ -187,6 +195,55 @@ internal class ValkeyOposiBotsAuthRateLimiter(
             return {1, ttl}
         """
     }
+}
+
+/**
+ * MASTER2-AUTH-002: clave de limite de un cliente. Una IPv6 cuenta por su prefijo /64 (lo minimo que se asigna a un
+ * suscriptor: rotar direcciones dentro de el ya no da cupos nuevos); una IPv4 mapeada (`::ffff:a.b.c.d`) cuenta como
+ * su IPv4; una IPv4 queda igual. Sin DNS: parseo propio del literal; lo que no es un literal valido se usa tal cual.
+ */
+internal fun rateLimitClientBucket(clientIp: String): String {
+    val literal = normalizePeerAddress(clientIp)
+    if (':' !in literal) return literal
+    val groups = expandIpv6(literal) ?: return literal
+    if (groups.subList(0, 5).all { it == 0 } && groups[5] == 0xffff) {
+        return "${groups[6] shr 8}.${groups[6] and 0xff}.${groups[7] shr 8}.${groups[7] and 0xff}"
+    }
+    return groups.take(4).joinToString(":") { it.toString(16) } + "::/64"
+}
+
+/** Los 8 grupos de 16 bits de una IPv6 literal (con `::` y cola IPv4 opcionales), o `null` si no es valida. */
+private fun expandIpv6(literal: String): List<Int>? {
+    var text = literal
+    val tail = mutableListOf<Int>()
+    val lastColon = text.lastIndexOf(':')
+    if ('.' in text.substring(lastColon + 1)) {
+        val octets = text.substring(lastColon + 1).split('.')
+        if (octets.size != 4 || octets.any { it.isEmpty() || it.length > 3 || it.toIntOrNull() !in 0..255 }) return null
+        val v = octets.map(String::toInt)
+        tail += (v[0] shl 8) or v[1]
+        tail += (v[2] shl 8) or v[3]
+        // "...:a.b.c.d" -> "..." (se quita el ':' separador salvo que forme parte de un '::').
+        text = text.substring(0, lastColon + 1).let { if (it.endsWith("::")) it else it.removeSuffix(":") }
+    }
+    val halves = text.split("::")
+    if (halves.size > 2) return null
+    fun groupsOf(part: String): List<Int>? =
+        if (part.isEmpty()) emptyList() else part.split(':').map { g ->
+            if (g.isEmpty() || g.length > 4 || !g.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' }) return null
+            g.toInt(16)
+        }
+    val head = groupsOf(halves[0]) ?: return null
+    val rest = if (halves.size == 2) groupsOf(halves[1]) ?: return null else emptyList()
+    val explicit = head.size + rest.size + tail.size
+    val groups = if (halves.size == 2) {
+        if (explicit > 7) return null
+        head + List(8 - explicit) { 0 } + rest + tail
+    } else {
+        if (explicit != 8) return null
+        head + tail
+    }
+    return groups
 }
 
 internal class RateLimitKeyHasher(secret: String) {

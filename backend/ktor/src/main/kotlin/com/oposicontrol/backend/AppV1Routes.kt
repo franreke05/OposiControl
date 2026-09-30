@@ -73,7 +73,7 @@ fun Route.appV1Routes(
     route("/api/v1/app") {
         get("/home") {
             call.respond(gateway.home(call.usuarioId(verifier, allowDevUser, identityResolver)))
-        }
+        }.legacyRoute(LegacyEndpoints.APP_HOME)
         get("/examenes") {
             call.usuarioId(verifier, allowDevUser, identityResolver) // requiere sesion
             call.respond(AppExamenesResponse(gateway.listExamenes()))
@@ -87,28 +87,28 @@ fun Route.appV1Routes(
         post("/examenes/{id}/iniciar") {
             val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(io.ktor.http.HttpStatusCode.Created, AppIntentoResponse(gateway.iniciar(uid, call.requiredPath("id"))))
-        }
+        }.legacyRoute(LegacyEndpoints.APP_INICIAR)
         post("/intentos/{id}/responder") {
             val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(gateway.responder(uid, call.requiredPath("id"), call.receive()))
-        }
+        }.legacyRoute(LegacyEndpoints.APP_RESPONDER)
         post("/intentos/{id}/finalizar") {
             val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(AppIntentoResponse(gateway.finalizar(uid, call.requiredPath("id"))))
         }
         get("/estadisticas") {
             call.respond(AppEstadisticasResponse(gateway.estadisticas(call.usuarioId(verifier, allowDevUser, identityResolver))))
-        }
+        }.legacyRoute(LegacyEndpoints.APP_ESTADISTICAS)
         get("/commercial/catalog") {
             call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(gateway.commercialCatalog())
-        }
+        }.legacyRoute(LegacyEndpoints.APP_COMMERCIAL_CATALOG)
         get("/commercial/purchases") {
             call.respond(gateway.commercialPurchases(call.usuarioId(verifier, allowDevUser, identityResolver)))
-        }
+        }.legacyRoute(LegacyEndpoints.APP_COMMERCIAL_PURCHASES)
         get("/commercial/subscriptions") {
             call.respond(gateway.commercialSubscriptions(call.usuarioId(verifier, allowDevUser, identityResolver)))
-        }
+        }.legacyRoute(LegacyEndpoints.APP_COMMERCIAL_SUBSCRIPTIONS)
         get("/reto-diario") {
             call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(AppRetoResponse(gateway.retoDiario()))
@@ -116,11 +116,11 @@ fun Route.appV1Routes(
         post("/feedback/pregunta") {
             val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(io.ktor.http.HttpStatusCode.Created, OkResponse(id = gateway.crearFeedback(uid, call.receive())))
-        }
+        }.legacyRoute(LegacyEndpoints.APP_FEEDBACK_PREGUNTA)
         post("/eventos") {
             val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(io.ktor.http.HttpStatusCode.Created, OkResponse(id = gateway.registrarEvento(uid, call.receive())))
-        }
+        }.legacyRoute(LegacyEndpoints.APP_EVENTOS)
     }
 }
 
@@ -152,6 +152,9 @@ private const val JWKS_MIN_REFETCH_MS = 5_000L
 /** MASTER-SEC-004: edad maxima de la cache del JWKS antes de volver a descargarlo. */
 internal const val JWKS_MAX_AGE_MS = 10 * 60 * 1_000L
 
+/** MASTER2-AUTH-004: timeout de la descarga del JWKS (documento pequeno y estatico; no necesita ~20 s). */
+internal val JWKS_FETCH_TIMEOUT: java.time.Duration = java.time.Duration.ofSeconds(4)
+
 /**
  * Verifica la firma ES256 contra el JWKS público y devuelve el `sub`.
  *
@@ -165,10 +168,19 @@ class SupabaseJwtVerifier(
     supabaseUrl: String,
     private val json: Json,
     private val client: HttpClient = sharedUpstreamHttpClient,
+    /** MASTER2-AUTH-004: timeout propio y corto del JWKS (antes UPSTREAM_REQUEST_TIMEOUT, ~20 s). */
+    private val fetchTimeout: java.time.Duration = JWKS_FETCH_TIMEOUT,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val issuer = "$supabaseUrl/auth/v1"
     private val jwksUrl = "$issuer/.well-known/jwks.json"
+
+    /**
+     * MASTER2-AUTH-004: sustituye a `@Synchronized`. El refresco por caducidad usa `tryLock` (nunca espera: si otro
+     * hilo ya esta refrescando, se sirven las claves en cache); solo el camino sin clave (`kid` desconocido o cache
+     * vacia) espera al lock, porque sin clave no hay nada que servir.
+     */
+    private val refreshLock = java.util.concurrent.locks.ReentrantLock()
 
     @Volatile private var keys: Map<String, ECPublicKey> = emptyMap()
     @Volatile private var fetchedAt = 0L
@@ -220,10 +232,24 @@ class SupabaseJwtVerifier(
      */
     private fun refreshIfStale() {
         if (fetchedAt == 0L || clock() - fetchedAt < JWKS_MAX_AGE_MS) return
+        // MASTER2-AUTH-004: no bloquear peticiones con token valido detras de un refresco en curso.
+        if (!refreshLock.tryLock()) return
         try {
-            refresh()
+            refreshLocked()
         } catch (_: java.io.IOException) {
             // Fail-soft: se siguen usando las claves ya verificadas.
+        } finally {
+            refreshLock.unlock()
+        }
+    }
+
+    /** Refresco BLOQUEANTE: solo para `kid` desconocido o cache vacia (no hay clave que servir mientras tanto). */
+    private fun refresh() {
+        refreshLock.lock()
+        try {
+            refreshLocked()
+        } finally {
+            refreshLock.unlock()
         }
     }
 
@@ -233,15 +259,13 @@ class SupabaseJwtVerifier(
      * UPSTREAM_REQUEST_TIMEOUT dentro del lock, agotando el pool de IO. Dentro de la ventana se reutiliza
      * el ultimo fallo (un [java.io.IOException] -> 503) sin tocar la red.
      */
-    @Synchronized
-    private fun refresh() {
+    private fun refreshLocked() {
         // Anti-tormenta corto (no 60s): una rotacion de claves no debe dejar 401 durante un minuto.
         val now = clock()
         if (lastAttemptAt != 0L && now - lastAttemptAt < JWKS_MIN_REFETCH_MS) {
             lastFailure?.let { throw java.io.IOException(it.message, it) }
             return
         }
-        lastAttemptAt = now
         val parsed = try {
             fetchJwks()
         } catch (io: java.io.IOException) {
@@ -251,6 +275,10 @@ class SupabaseJwtVerifier(
             val wrapped = java.io.IOException(bad.message ?: "JWKS no disponible", bad)
             lastFailure = wrapped
             throw wrapped
+        } finally {
+            // MASTER2-AUTH-004: la ventana anti-tormenta empieza al TERMINAR el intento; con el inicio, un fallo lento
+            // (timeout) dejaba la ventana ya vencida y cada hilo en espera repetia su propia descarga en serie.
+            lastAttemptAt = clock()
         }
         lastFailure = null
         keys = parsed
@@ -259,7 +287,7 @@ class SupabaseJwtVerifier(
 
     private fun fetchJwks(): Map<String, ECPublicKey> {
         val response = client.send(
-            HttpRequest.newBuilder(URI.create(jwksUrl)).timeout(UPSTREAM_REQUEST_TIMEOUT).GET().build(),
+            HttpRequest.newBuilder(URI.create(jwksUrl)).timeout(fetchTimeout).GET().build(),
             HttpResponse.BodyHandlers.ofString(),
         )
         if (response.statusCode() !in 200..299) throw java.io.IOException("JWKS HTTP ${response.statusCode()}")
@@ -881,12 +909,19 @@ class AppV1Gateway private constructor(
         usuarioId.validatedUuid("usuarioId")
         require(req.eventVersion > 0) { "eventVersion debe ser mayor que cero." }
         require(!req.idempotencyKey.isNullOrBlank()) { "idempotencyKey es obligatoria para evitar duplicados por retry." }
-        // MASTER-SEC-007: tamaños acotados (antes solo el limite global de cuerpo del servidor).
+        // MASTER-SEC-007: tamaños acotados. El tope de cuerpo real es `RequestBodyLimit` (413 por Content-Length > 2 MB) mas el
+        // `max_size` de Caddy (ops/caddy/body-limit.caddy); aqui se acota cada campo (MASTER2-SEC-002).
         require(req.nombreEvento.isNotBlank() && req.nombreEvento.length <= EVENT_TEXT_MAX) { "nombreEvento invalido." }
         require(req.idempotencyKey.trim().length <= EVENT_IDEMPOTENCY_KEY_MAX) { "idempotencyKey demasiado larga." }
-        listOf(req.pantalla, req.entidadTipo).forEach { value ->
+        listOf(req.pantalla, req.entidadTipo, req.entidadId).forEach { value ->
             require(value == null || value.length <= EVENT_TEXT_MAX) { "Campo de texto del evento demasiado largo." }
         }
+        req.occurredEn?.let { occurred ->
+            require(occurred.length <= EVENT_TEXT_MAX && runCatching { java.time.OffsetDateTime.parse(occurred) }.isSuccess) {
+                "occurredEn debe ser una fecha-hora ISO-8601."
+            }
+        }
+        req.especialidadId?.validatedUuid("especialidadId")
         require(req.propiedades.toString().toByteArray(Charsets.UTF_8).size <= EVENT_PROPERTIES_MAX_BYTES) {
             "propiedades supera el tamaño maximo."
         }

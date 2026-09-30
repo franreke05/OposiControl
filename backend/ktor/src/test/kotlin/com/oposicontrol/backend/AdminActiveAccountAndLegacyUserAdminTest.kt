@@ -160,7 +160,8 @@ class AdminActiveAccountAndLegacyUserAdminTest {
         val ok = client.delete("/api/v1/admin/oposibots/usuarios/2") { header(HttpHeaders.Authorization, "Bearer $adminAuth") }
         assertEquals(HttpStatusCode.NoContent, ok.status)
         assertEquals(listOf(2), fake.deleted.toList())
-        assertEquals(listOf("oposibots_usuario_eliminado" to plainAuth), audits.toList())
+        // MASTER2-OBS-006 (cambio deliberado): intencion ANTES de borrar + resultado despues (antes: solo resultado).
+        assertEquals(listOf(ACTION_DELETE_INTENT to plainAuth, ACTION_DELETED to plainAuth), audits.toList())
     }
 
     @Test
@@ -174,7 +175,8 @@ class AdminActiveAccountAndLegacyUserAdminTest {
             setBody("""{"email":"n@example.com","nombre":"N","apellidos":"A","especialidadRegistro":"Celador"}""")
         }
         assertEquals(HttpStatusCode.Created, created.status)
-        assertEquals("oposibots_usuario_creado", audits.single().first)
+        // MASTER2-OBS-006 (cambio deliberado): intencion antes de crear + resultado despues.
+        assertEquals(listOf(ACTION_CREATE_INTENT, ACTION_CREATED), audits.map { it.first })
     }
 
     @Test
@@ -183,6 +185,8 @@ class AdminActiveAccountAndLegacyUserAdminTest {
         application { legacyModule(fake, mutableListOf(), auditFails = true) }
         val response = client.delete("/api/v1/admin/oposibots/usuarios/2") { header(HttpHeaders.Authorization, "Bearer $adminAuth") }
         assertFalse(response.status.value in 200..299, "sin auditoria no hay 2xx: ${response.status}")
+        // MASTER2-OBS-006: la auditoria obligatoria va ANTES de la baja irreversible: sin ella no se borra nada.
+        assertTrue(fake.deleted.isEmpty(), "sin auditoria de intencion no hay borrado")
     }
 
     @Test

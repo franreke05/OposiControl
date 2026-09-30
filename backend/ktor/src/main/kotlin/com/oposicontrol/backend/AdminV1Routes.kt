@@ -39,6 +39,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import java.net.URLEncoder
 import java.net.http.HttpClient
@@ -1130,12 +1131,16 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             }
             patch("/{id}") {
                 val userId = call.userPathId()
-                // MASTER-API-016: el cuerpo de D1-25 es `{nombreMostrar}`; `fullName` (legacy) se acepta en la ventana de
-                // compatibilidad. Sin ninguno de los dos, 400 REQUIRED en vez de vaciar el nombre en silencio.
-                val body = call.receive<AdminUserPatchBody>()
-                val name = body.nombreMostrar ?: body.fullName
+                // MASTER-API-016 / MASTER2-API-001: cuerpo canonico estricto `AdminUserPatchRequest`
+                // (`additionalProperties: false`): un campo desconocido (incluido el `fullName` legacy) -> 400 UNKNOWN_FIELD.
+                // `nombreMostrar` se recorta y debe quedar no vacio y <= 100; sin el, 400 REQUIRED (nunca se vacia en silencio).
+                val body = call.receiveCanonicalCommand<AdminUserPatchCommand>()
+                val name = body.nombreMostrar?.trim()
                     ?: throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.REQUIRED))
-                val saved = gateway.updateUsuario(userId, AdminV1UserDto(id = userId, fullName = name))
+                if (name.isEmpty()) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.REQUIRED))
+                if (name.length > ADMIN_USER_NAME_MAX) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.OUT_OF_RANGE))
+                val saved = gateway.updateUsuario(userId, name)
+                    ?: return@patch call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
                 call.respond(AdminUserResponse(saved))
             }
             post("/{id}/roles") {
@@ -3048,9 +3053,13 @@ private fun io.ktor.server.application.ApplicationCall.userPathId(): String =
 
 @Serializable data class AdminUserResponse(val data: AdminV1UserDto)
 
-/** PATCH /usuarios/{id}: `nombreMostrar` (D1-25) o el `fullName` legacy. Los demas campos que envie un cliente antiguo se ignoran. */
+/** D1-25 `AdminUserPatchRequest` (`additionalProperties: false`). MASTER2-API-001: decodificacion estricta con [receiveCanonicalCommand]. */
+@CanonicalCommand(CommandAudience.ADMIN)
 @Serializable
-data class AdminUserPatchBody(val nombreMostrar: String? = null, val fullName: String? = null)
+data class AdminUserPatchCommand(val nombreMostrar: String? = null)
+
+/** `maxLength` de `AdminUserPatchRequest.nombreMostrar` en profiles.yaml. */
+internal const val ADMIN_USER_NAME_MAX = 100
 
 /** D1-26 `RoleIdsBody` (`additionalProperties: false`, `roleIds` obligatorio). Decodificacion estricta con [receiveCanonicalCommand]. */
 @CanonicalCommand(CommandAudience.ADMIN)
@@ -3244,11 +3253,6 @@ private data class EstadoPremiumRow(
     @SerialName("fin_en") val finEn: String? = null,
 )
 
-@Serializable
-private data class AdminSyncRolesRpc(
-    @SerialName("p_usuario_id") val usuarioId: String,
-    @SerialName("p_role_ids") val roleIds: List<String>,
-)
 
 @Serializable
 private data class AdminGrantTicketsRpc(
@@ -5438,18 +5442,33 @@ class AdminV1Gateway private constructor(
         null
     }
 
-    fun updateUsuario(usuarioId: String, input: AdminV1UserDto): AdminV1UserDto {
+    /**
+     * MASTER2-API-001: lee la fila actual (sin fila -> `null` = 404, nunca un 200 fabricado), escribe
+     * `nombre_mostrar` + `actualizado_en` (ETag de perfil) con `return=representation` y audita SOLO si el valor cambio,
+     * con antes/despues. Un valor identico es idempotente: ni escritura ni auditoria.
+     */
+    fun updateUsuario(usuarioId: String, nombreMostrar: String): AdminV1UserDto? {
         // Ver `getUsuario`: se interpola en la URL de PostgREST, y aquí además en
         // un PATCH que escribe.
         usuarioId.validatedUuid("usuarioId")
-        request(
+        val current = getUsuario(usuarioId) ?: return null
+        if (current.fullName == nombreMostrar) return current
+        val written = request(
             "PATCH",
             "/rest/v1/perfiles_usuario?usuario_id=eq.$usuarioId",
-            """{"nombre_mostrar":${kotlinx.serialization.json.Json.encodeToString(input.fullName)}}""",
-            prefer = "return=minimal",
+            buildJsonObject {
+                put("nombre_mostrar", JsonPrimitive(nombreMostrar))
+                put("actualizado_en", JsonPrimitive(java.time.Instant.now().toString()))
+            }.toString(),
+            prefer = "return=representation",
+        ).decodeList<PerfilUsuarioRow>()
+        if (written.isEmpty()) return null // la fila desaparecio entre la lectura y la escritura
+        registrarAuditoria(
+            "usuario_actualizado", "perfiles_usuario", usuarioId,
+            antes = buildJsonObject { put("nombreMostrar", JsonPrimitive(current.fullName)) },
+            despues = buildJsonObject { put("nombreMostrar", JsonPrimitive(nombreMostrar)) },
         )
-        registrarAuditoria("usuario_actualizado", "perfiles_usuario", usuarioId)
-        return getUsuario(usuarioId) ?: input.copy(id = usuarioId)
+        return current.copy(fullName = nombreMostrar)
     }
 
     /**
@@ -5480,10 +5499,18 @@ class AdminV1Gateway private constructor(
                 throw CanonicalErrorCode.SUPERADMIN_REQUIRED.exception()
             }
         }
+        // MASTER2-AUTH-008: la comprobacion de arriba es un read-then-write (TOCTOU con una concesion concurrente).
+        // La RPC de 3 argumentos (migracion 20260930101600) REPITE la regla SUPERADMIN bajo el cerrojo consultivo de
+        // `admin_sync_roles`, con el actor. `p_actor_id` se envia SIEMPRE (null incluido): omitirlo resolveria a la
+        // sobrecarga antigua de 2 argumentos, que no conoce al actor.
         request(
             "POST",
             "/rest/v1/rpc/admin_sync_roles",
-            sbJson.encodeToString(AdminSyncRolesRpc(usuarioId = usuarioId, roleIds = requested)),
+            buildJsonObject {
+                put("p_usuario_id", JsonPrimitive(usuarioId))
+                put("p_role_ids", JsonArray(requested.map(::JsonPrimitive)))
+                put("p_actor_id", actorId?.let { JsonPrimitive(it.validatedUuid("actorId")) } ?: JsonNull)
+            }.toString(),
             prefer = "return=minimal",
         )
         registrarAuditoria(
@@ -5919,11 +5946,19 @@ class AdminV1Gateway private constructor(
             sbJson.encodeToString(AdminGrantTicketsRpc(usuarioId, cantidad, motivo, key, tipo)),
         ).decodeList<AdminGrantTicketsResult>().firstOrNull()
             ?: error("La operación de cartera no devolvió resultado.")
+        // MASTER2-OBS-009: una repeticion idempotente devuelve el MISMO transaction_id sin volver a acreditar; antes
+        // escribia otra fila `tickets_grant` indistinguible de una concesion nueva. Ahora la fila lleva el
+        // transactionId y, si ya existe una para esa transaccion, no se duplica.
+        if (ticketGrantAlreadyAudited(usuarioId, result.transactionId)) {
+            AuditLogger.info("tickets_grant replay transactionId={}: auditoria ya registrada", result.transactionId)
+            return result.saldoResultante
+        }
         registrarAuditoria(
             "tickets_grant",
             "carteras_usuario",
             usuarioId,
             despues = buildJsonObject {
+                put("transactionId", JsonPrimitive(result.transactionId))
                 put("cantidad", JsonPrimitive(cantidad))
                 put("tipo", JsonPrimitive(tipo))
                 put("motivo", JsonPrimitive(motivo.take(AUDIT_TEXT_MAX)))
@@ -5932,6 +5967,23 @@ class AdminV1Gateway private constructor(
             required = true,
         )
         return result.saldoResultante
+    }
+
+    /**
+     * MASTER2-OBS-009: ¿ya hay una fila `tickets_grant` de esta transaccion? Si la lectura falla se responde `false`
+     * (se escribe la fila: mejor una fila repetida, identificable por su transactionId, que una concesion sin auditar).
+     */
+    private fun ticketGrantAlreadyAudited(usuarioId: String, transactionId: String): Boolean = try {
+        val tx = transactionId.validatedUuid("transactionId")
+        request(
+            "GET",
+            "/rest/v1/auditoria_log?select=id&accion=eq.tickets_grant&registro_id=eq.$usuarioId" +
+                "&despues-%3E%3EtransactionId=eq.$tx&limit=1",
+            null,
+        ).let { json.parseToJsonElement(it).jsonArray.isNotEmpty() }
+    } catch (failure: Exception) {
+        AuditLogger.warn("tickets_grant replay check failed: {}", failure.redactedMessage("replay check", 160))
+        false
     }
 
     fun listTicketWallets(): List<AdminTicketWalletDto> {
@@ -6310,10 +6362,20 @@ class AdminV1Gateway private constructor(
         // seccion se marca no disponible y se conserva el perfil de siempre; GoTrue caido degrada a email null y [].
         // El estado no reconocido NO se traga: el `runCatching` de abajo lo degradaria a un perfil con `accountStatus`
         // vacio (fuera de esquema). Se resuelve antes: si no es uno de los tres congelados -> 502 UPSTREAM_CONTRACT_ERROR.
-        val statusWire = if (wants(AdminUserDetailSection.PERFIL)) {
-            AdminUserProfileMapper.accountStatusWire(perfil.estadoCuenta) ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
-        } else null
-        val perfilAdmin = if (!wants(AdminUserDetailSection.PERFIL)) perfil else runCatching {
+        // MASTER2-OPENAPI-003: `perfil` es required y `$ref AdminUser`, asi que se resuelve SIEMPRE (tambien con
+        // `?sections=` sin `perfil`): sin el, el DTO legacy emitia `id`/`accountStatus`/`createdAt` vacios (fuera de esquema).
+        val statusWire = AdminUserProfileMapper.accountStatusWire(perfil.estadoCuenta) ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val perfilAdmin = if (!wants(AdminUserDetailSection.PERFIL)) {
+            // Camino barato (sin lecturas de roles ni GoTrue): identidad, estado y alta salen de la fila ya leida; roleIds y
+            // authProviders van vacios porque esa seccion no se pidio.
+            perfil.copy(
+                id = perfil.usuarioId,
+                fullName = perfil.nombreMostrar,
+                accountStatus = statusWire,
+                createdAt = normalizeInstant(perfil.creadoEn.orEmpty()),
+                onboardingCompleted = perfil.onboardingCompletado,
+            )
+        } else runCatching {
             val roleIds = roleIdsOf(usuarioId)
             val auth = readAuthInfo(usuarioId)
             val user = AdminUserProfileMapper.user(
@@ -6342,7 +6404,7 @@ class AdminV1Gateway private constructor(
             // Fallback dentro del esquema: id, estado y alta salen de los campos legacy (los vacios no son AdminUser).
             perfil.copy(
                 id = perfil.usuarioId,
-                accountStatus = statusWire.orEmpty(),
+                accountStatus = statusWire,
                 createdAt = normalizeInstant(perfil.creadoEn.orEmpty()),
                 onboardingCompleted = perfil.onboardingCompletado,
                 fullName = perfil.nombreMostrar,

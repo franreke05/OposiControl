@@ -29,11 +29,12 @@ internal class PostgrestSpecialtyResolver(
     override suspend fun resolve(text: String): String? {
         val wanted = normalizeSpecialtyText(text)
         if (wanted.isEmpty()) return null
-        val body = withUpstreamIo { upstream.get("/rest/v1/especialidades?select=id,nombre,slug&activa=eq.true&limit=$SPECIALTY_FETCH_LIMIT") }
+        val body = canonicalUpstreamIo { upstream.get("/rest/v1/especialidades?select=id,nombre,slug&activa=eq.true&limit=${SPECIALTY_FETCH_LIMIT + 1}") }
         val rows = json.decodeFromString(ListSerializer(Row.serializer()), body)
         // MASTER-QUALITY-007: una lectura truncada podria ocultar la especialidad buscada (o una segunda coincidencia):
-        // fail-closed en vez de resolver sobre datos incompletos.
-        if (rows.size >= SPECIALTY_FETCH_LIMIT) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        // fail-closed en vez de resolver sobre datos incompletos. MASTER2-API-003: se piden LIMIT+1 filas, asi que solo
+        // hay truncado si llegan MAS de LIMIT (con exactamente LIMIT la lectura es completa).
+        if (rows.size > SPECIALTY_FETCH_LIMIT) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
         return matchSpecialty(wanted, rows.map { Triple(it.id, it.nombre, it.slug) })
     }
 }

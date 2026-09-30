@@ -60,7 +60,7 @@ components:
           type: string
         issue:
           type: string
-          description: 'UPPER_SNAKE issue value such as UNKNOWN_FIELD, OUT_OF_RANGE, REQUIRED, INVALID_FORMAT, or a contract-specific issue (for example NONE_OR_BOTH, BAD_CONFIRMATION, NON_UUID).'
+          description: 'UPPER_SNAKE issue value such as UNKNOWN_FIELD, OUT_OF_RANGE, REQUIRED, INVALID_FORMAT, or a contract-specific issue (for example NONE_OR_BOTH, BAD_CONFIRMATION, NON_UUID, TOO_MANY_MATCHES).'
           pattern: '^[A-Z][A-Z0-9_]*$'
     GenericErrorCode:
       type: string

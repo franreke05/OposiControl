@@ -459,7 +459,7 @@ class KtorRestPart2AuditTest {
     // ------------------------------------------------------------------ MASTER-API-016 (backend de D1-25)
 
     @Test
-    fun patchAcceptsNombreMostradoAndTheLegacyFullNameAndNeverBlanksTheNameSilently() = testApplication {
+    fun patchAcceptsNombreMostradoOnlyAndNeverBlanksTheNameSilently() = testApplication {
         val sent = CopyOnWriteArrayList<Sent>()
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
@@ -473,6 +473,8 @@ class KtorRestPart2AuditTest {
                     when {
                         "/rest/v1/roles_usuario" in uri || "/rest/v1/carteras_usuario" in uri -> V1StubResponse(200, "[]")
                         "/rest/v1/perfiles_usuario" in uri && "select=" in uri -> V1StubResponse(200, "[${perfil(u1, "ada_l")}]")
+                        // PATCH con `return=representation` (MASTER2-API-001): PostgREST devuelve la fila escrita.
+                        "/rest/v1/perfiles_usuario" in uri -> V1StubResponse(200, "[${perfil(u1, "ada_l")}]")
                         else -> V1StubResponse(204, "")
                     }
                 },
@@ -482,13 +484,15 @@ class KtorRestPart2AuditTest {
         val path = "/api/v1/admin/usuarios/$u1"
         val canonical = client.patch(path) { contentType(ContentType.Application.Json); setBody("""{"nombreMostrar":"Ada Nueva"}""") }
         assertEquals(HttpStatusCode.OK, canonical.status)
+        // MASTER2-API-001 (cambio deliberado): D1-25 es `additionalProperties: false`; el `fullName` legacy y cualquier campo
+        // extra ya NO se aceptan en silencio (el unico cliente, UsersApi de OC, envia solo `nombreMostrar`).
         val legacy = client.patch(path) { contentType(ContentType.Application.Json); setBody("""{"id":"$u1","fullName":"Ada Legacy","email":"a@x.es","roleIds":[],"isActive":true}""") }
-        assertEquals(HttpStatusCode.OK, legacy.status)
-        assertEquals(2, sent.count { it.method == "PATCH" })
+        assertEquals(HttpStatusCode.BadRequest, legacy.status)
+        assertEquals(1, sent.count { it.method == "PATCH" })
 
-        val neither = client.patch(path) { contentType(ContentType.Application.Json); setBody("""{"email":"a@x.es"}""") }
+        val neither = client.patch(path) { contentType(ContentType.Application.Json); setBody("""{}""") }
         assertEquals(HttpStatusCode.BadRequest, neither.status)
         assertEquals(listOf("nombreMostrar" to "REQUIRED"), issuesOf(neither.bodyAsText()))
-        assertEquals(2, sent.count { it.method == "PATCH" }, "sin nombre no se escribe nada")
+        assertEquals(1, sent.count { it.method == "PATCH" }, "sin nombre no se escribe nada")
     }
 }

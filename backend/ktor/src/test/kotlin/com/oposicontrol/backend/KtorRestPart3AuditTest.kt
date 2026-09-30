@@ -226,14 +226,15 @@ class KtorRestPart3AuditTest {
     @Test
     fun aTruncatedSpecialtyReadFailsClosedInsteadOfResolvingOnIncompleteData() = runBlocking {
         val upstream = FakeUpstream()
-        val full = (1..SPECIALTY_FETCH_LIMIT).joinToString(",", "[", "]") { """{"id":"id-$it","nombre":"Esp $it","slug":"esp-$it"}""" }
+        // MASTER2-API-003: se piden LIMIT+1 filas; solo MAS de LIMIT es lectura truncada (antes fallaba en exactamente LIMIT).
+        val full = (1..SPECIALTY_FETCH_LIMIT + 1).joinToString(",", "[", "]") { """{"id":"id-$it","nombre":"Esp $it","slug":"esp-$it"}""" }
         upstream.onGet = { full }
         val resolver = PostgrestSpecialtyResolver(upstream, testJson)
         val failure = assertFailsWith<BackendDomainException> { resolver.resolve("esp 1") }
         assertEquals(CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.name, failure.errorCode)
-        assertTrue("limit=$SPECIALTY_FETCH_LIMIT" in upstream.log.single())
-        // Un catalogo por debajo del limite sigue resolviendo.
-        val partial = (1 until SPECIALTY_FETCH_LIMIT).joinToString(",", "[", "]") { """{"id":"id-$it","nombre":"Esp $it","slug":"esp-$it"}""" }
+        assertTrue("limit=${SPECIALTY_FETCH_LIMIT + 1}" in upstream.log.single())
+        // Un catalogo de exactamente LIMIT filas es una lectura completa y resuelve (MASTER2-API-003).
+        val partial = (1..SPECIALTY_FETCH_LIMIT).joinToString(",", "[", "]") { """{"id":"id-$it","nombre":"Esp $it","slug":"esp-$it"}""" }
         upstream.onGet = { partial }
         assertEquals("id-1", resolver.resolve("esp 1"))
     }

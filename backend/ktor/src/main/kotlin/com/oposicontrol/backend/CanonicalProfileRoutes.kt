@@ -46,7 +46,7 @@ internal fun Route.canonicalProfileRoutes(runtime: OposiBotsAuthRuntime) {
             val decision = runtime.rateLimiter.checkIp(OposiBotsAuthOperation.LEGAL_LIST, call.canonicalClientIp(runtime))
             if (!decision.allowed) throw rateLimited(decision)
             val result = canonical.profiles.listLegalDocuments(call.request.queryParameters["tipo"])
-            // MASTER-API-007: revalidacion frecuente (documentado en profiles.yaml D1-16); el ETag es de contenido.
+            // MASTER-API-007: revalidacion frecuente; el ETag es de contenido. NO documentado aun en profiles.yaml D1-16 (contrato congelado): texto pendiente en ARCHITECTURE_DELTA_S1 KR3 API-007 / KR4 OPENAPI-002.
             call.response.header(HttpHeaders.CacheControl, "public, max-age=300, must-revalidate")
             call.response.header(HttpHeaders.ETag, result.etag)
             if (ifNoneMatchMatches(call.request.header(HttpHeaders.IfNoneMatch), result.etag)) {

@@ -16,6 +16,7 @@ import io.ktor.http.Parameters
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -35,6 +36,12 @@ import java.util.Base64
 import org.slf4j.LoggerFactory
 
 private val GatewayLogger = LoggerFactory.getLogger("OC-KTOR-AUTH-GATEWAY")
+
+/**
+ * MASTER2-AUTH-003: esperas entre reintentos de la lectura de la puerta en refresh (3 intentos, ~1 s de espera total,
+ * muy por debajo del timeout de la peticion y de la ventana de reutilizacion de GoTrue, 10 s por defecto).
+ */
+internal val REFRESH_GATE_RETRY_DELAYS_MS: List<Long> = listOf(250L, 750L)
 
 internal data class OposiBotsAuthContext(
     val requestId: String,
@@ -157,7 +164,10 @@ internal class SupabaseOposiBotsAuthGateway(
         // MASTER-AUTH-010: si la puerta no puede LEER el estado (fallo transitorio), la sesion rotada no se revoca: el
         // cliente nunca recibio sus tokens y reintenta con su refresh token anterior (ventana de reutilizacion de GoTrue).
         // Revocarla (y antes, en global) convertia una caida de PostgREST en cierre de sesion en todos los dispositivos.
-        return response.toSession(context, transientRevocation = null)
+        // MASTER2-AUTH-003: GoTrue YA roto el refresh token; si la lectura falla y el cliente reintenta fuera de la
+        // ventana de reutilizacion, la deteccion de reuso revoca la familia. Por eso, SOLO aqui, la lectura de la
+        // puerta se reintenta con un backoff corto y acotado antes de tratar el fallo como transitorio (nunca fail-open).
+        return response.toSession(context, transientRevocation = null, transientReadRetryDelaysMillis = REFRESH_GATE_RETRY_DELAYS_MS)
     }
 
     override suspend fun logout(accessToken: String, context: OposiBotsAuthContext) {
@@ -400,7 +410,7 @@ internal class SupabaseOposiBotsAuthGateway(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                GatewayLogger.warn("first-auth {} not persisted: {}", column, failure.toString())
+                GatewayLogger.warn("first-auth {} not persisted: {}", column, failure.toString().redactSensitiveText())
             }
         }
     }
@@ -409,12 +419,13 @@ internal class SupabaseOposiBotsAuthGateway(
         context: OposiBotsAuthContext,
         decodedSession: SupabaseSession? = null,
         transientRevocation: String? = "local",
+        transientReadRetryDelaysMillis: List<Long> = emptyList(),
     ): OposiBotsAuthSessionDto {
         val session = decodedSession ?: decode()
         if (session.accessToken.isBlank() || session.refreshToken.isBlank()) {
             throw OposiBotsAuthProblem.unavailable()
         }
-        val identity = enforceAccountGate(session, context, transientRevocation)
+        val identity = enforceAccountGate(session, context, transientRevocation, transientReadRetryDelaysMillis)
         return OposiBotsAuthSessionDto(
             accessToken = session.accessToken,
             refreshToken = session.refreshToken,
@@ -443,13 +454,15 @@ internal class SupabaseOposiBotsAuthGateway(
         session: SupabaseSession,
         context: OposiBotsAuthContext,
         transientRevocation: String? = "local",
+        transientReadRetryDelaysMillis: List<Long> = emptyList(),
     ): CanonicalUserIdentity {
         suspend fun revokeTransient() {
             transientRevocation?.let { revokeMintedSession(session.accessToken, context, scope = it) }
         }
         try {
             val userId = CanonicalUserId.fromJwtSubject(session.user.id)
-            val identity = findProfile(userId, context) ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
+            val identity = findProfileRetryingTransient(userId, context, transientReadRetryDelaysMillis)
+                ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
             return identity.requireActive()
         } catch (cancelled: CancellationException) {
             revokeTransient()
@@ -461,9 +474,35 @@ internal class SupabaseOposiBotsAuthGateway(
             revokeTransient()
             throw problem
         } catch (unexpected: Exception) {
-            GatewayLogger.warn("account gate could not read the profile: {}", unexpected.toString())
+            GatewayLogger.warn("account gate could not read the profile: {}", unexpected.toString().redactSensitiveText())
             revokeTransient()
             throw OposiBotsAuthProblem.unavailable()
+        }
+    }
+
+    /**
+     * MASTER2-AUTH-003: reintenta SOLO fallos transitorios de lectura (503/red/decodificacion); una denegacion de
+     * dominio o una cancelacion se propagan al primer intento. Agotados los reintentos, se relanza el ultimo fallo.
+     */
+    private suspend fun findProfileRetryingTransient(
+        userId: CanonicalUserId,
+        context: OposiBotsAuthContext,
+        retryDelaysMillis: List<Long>,
+    ): CanonicalUserIdentity? {
+        var attempt = 0
+        while (true) {
+            try {
+                return findProfile(userId, context)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (denied: BackendDomainException) {
+                throw denied
+            } catch (transient: Exception) {
+                val wait = retryDelaysMillis.getOrNull(attempt) ?: throw transient
+                attempt++
+                GatewayLogger.info("account gate read failed (attempt {}), retrying in {} ms: {}", attempt, wait, transient.toString().redactSensitiveText())
+                delay(wait)
+            }
         }
     }
 
@@ -587,7 +626,8 @@ internal class SupabaseOposiBotsAuthGateway(
             // silencio -- cualquier fallo de red/TLS/DNS hacia Supabase se
             // veia identico a un 5xx real de Supabase, sin forma de saber
             // cual de los dos pasaba.
-            GatewayLogger.warn("supabaseRequest path={} failed", path.substringBefore('?'), unexpected)
+            // MASTER2-OBS-004: sin el `Throwable` como ultimo argumento (su traza y mensaje saltaban la redaccion).
+            GatewayLogger.warn("supabaseRequest path={} failed: {}", path.substringBefore('?'), unexpected.redactedMessage("upstream request failed"))
             throw OposiBotsAuthProblem.unavailable()
         }
     }
@@ -624,7 +664,7 @@ internal class SupabaseOposiBotsAuthGateway(
         // Auth (status + error_code/msg) antes se descartaba por completo --
         // el cliente solo veia AuthenticationRequired/TemporarilyUnavailable
         // genericos sin ninguna pista de la causa real.
-        GatewayLogger.warn("mapCredentialError status={} error_code={} msg={}", response.status.value, error.error_code, error.msg)
+        GatewayLogger.warn("mapCredentialError status={} error_code={} msg={}", response.status.value, error.error_code, error.msg?.redactSensitiveText())
         return when {
             response.status == HttpStatusCode.TooManyRequests -> OposiBotsAuthProblem.unavailable(60)
             response.status.value >= 500 -> OposiBotsAuthProblem.unavailable()

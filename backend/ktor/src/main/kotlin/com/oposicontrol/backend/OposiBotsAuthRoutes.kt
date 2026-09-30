@@ -65,10 +65,10 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 request.validate()
                 // MASTER-SEC-003: la clave por sujeto es (email, IP de cliente). Un atacante que agota el cupo de un
                 // email desde SU IP no bloquea al titular desde otra IP; el cupo por IP sigue acotando el total.
-                requireSubjectLimit(
-                    runtime,
-                    loginSubjectKey(request.resolvedIdentifier().normalizedIdentifier(), trustedClientIp(runtime.configuration)),
-                )
+                val email = request.resolvedIdentifier().normalizedIdentifier()
+                requireSubjectLimit(runtime, loginSubjectKey(email, trustedClientIp(runtime.configuration)))
+                // MASTER2-AUTH-002: y un tope alto POR CUENTA (solo email): rotar IPs ya no da intentos ilimitados.
+                requireSubjectLimit(runtime, email, OposiBotsAuthOperation.LOGIN_ACCOUNT)
                 respond(runtime.gateway.login(request, authContext(runtime.configuration)))
             }
         }
@@ -186,7 +186,7 @@ private suspend fun ApplicationCall.authEndpoint(
         // en silencio (`catch (_: Exception)`) -- sin esto, cualquier fallo
         // real (Supabase, red, bug) se veia igual que un rate-limit, sin
         // forma de diagnosticarlo. No se expone al cliente, solo al log.
-        AuthLogger.warn("auth operation={} requestId={} unexpected={}", operation.name, requestId, unexpected.toString())
+        AuthLogger.warn("auth operation={} requestId={} unexpected={}", operation.name, requestId, unexpected.toString().redactSensitiveText())
         logAuthResult(operation, requestId, problem.status.value)
         respondAuthProblem(problem, requestId)
     }
@@ -218,8 +218,9 @@ private suspend fun ApplicationCall.respondAuthProblem(problem: OposiBotsAuthPro
 private suspend fun ApplicationCall.requireSubjectLimit(
     runtime: OposiBotsAuthRuntime,
     subject: String,
+    explicitOperation: OposiBotsAuthOperation? = null,
 ) {
-    val operation = when (request.path().substringAfterLast('/')) {
+    val operation = explicitOperation ?: when (request.path().substringAfterLast('/')) {
         "register" -> OposiBotsAuthOperation.REGISTER
         "resend" -> OposiBotsAuthOperation.RESEND
         "exchange" -> OposiBotsAuthOperation.EMAIL_EXCHANGE
@@ -259,8 +260,12 @@ private suspend fun ApplicationCall.withinSilentSubjectLimit(
     return allowed
 }
 
-/** MASTER-SEC-003: clave de sujeto del login = email normalizado + IP de cliente de confianza. */
-internal fun loginSubjectKey(normalizedEmail: String, clientIp: String): String = "$normalizedEmail|$clientIp"
+/**
+ * MASTER-SEC-003: clave de sujeto del login = email normalizado + IP de cliente de confianza.
+ * MASTER2-AUTH-002: la IP entra por su cubo de limite ([rateLimitClientBucket]: IPv6 por /64).
+ */
+internal fun loginSubjectKey(normalizedEmail: String, clientIp: String): String =
+    "$normalizedEmail|${rateLimitClientBucket(clientIp)}"
 
 private suspend inline fun <reified T : Any> ApplicationCall.receiveAuthJson(json: Json): T {
     if (!request.contentType().match(ContentType.Application.Json)) {

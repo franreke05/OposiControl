@@ -27,9 +27,10 @@ class ServerAuthoritativeTest {
         // SLICE 1: ya hay comandos canonicos; el tripwire de SLICE 0 es ahora una asercion.
         assertTrue(commands.isNotEmpty(), "se esperaban DTOs @CanonicalCommand en main (SLICE 1)")
         assertEquals(
-            setOf("OnboardingRequest", "ProfilePatchRequest", "LegalAcceptanceRequest", "AccountDeletionRequest", "AdminRoleIdsCommand"),
+            setOf("OnboardingRequest", "ProfilePatchRequest", "LegalAcceptanceRequest", "AccountDeletionRequest", "AdminRoleIdsCommand",
+                "AdminUserPatchCommand"),
             commands.map { it.simpleName }.toSet(),
-            "comandos canonicos de SLICE 1 (D1-12, D1-13, D1-17, D1-19, D1-26 admin: MASTER-API-005)",
+            "comandos canonicos de SLICE 1 (D1-12, D1-13, D1-17, D1-19, D1-26 admin: MASTER-API-005; D1-25 admin: MASTER2-API-001)",
         )
         val violations = commands.flatMap { type ->
             val annotation = type.getAnnotation(CanonicalCommand::class.java)

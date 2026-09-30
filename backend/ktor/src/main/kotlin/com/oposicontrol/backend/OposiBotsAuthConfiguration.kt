@@ -27,9 +27,8 @@ internal data class OposiBotsAuthConfiguration(
                 System.getenv("OPOSIBOTS_AUTH_ENABLED")?.toBooleanStrictOrNull() == true
             if (!enabled) return null
 
-            val environment = System.getenv("APP_ENV")?.trim()?.takeIf(String::isNotEmpty)
-                ?.let(AppEnvironment::resolve)
-                ?: error("APP_ENV es obligatorio (dev/test solo en desarrollo; production en el resto).")
+            // MASTER2-SEC-001: el mismo resolvedor fail-closed que el resto (vacio/ausente -> production).
+            val environment = AppEnvironment.fromSystemEnvironment()
             val serviceKey = System.getenv("SUPABASE_SECRET_KEY")
                 ?.trim()
                 ?.takeIf(String::isNotBlank)
@@ -83,23 +82,35 @@ internal data class OposiBotsAuthConfiguration(
                 rateLimitHmacSecret = hmacSecret,
                 valkeyUrl = optionalEnvironment("VALKEY_URL"),
             )
-            require(configuration.supabaseUrl.startsWith("https://") || configuration.development) {
+            configuration.requireDeployable()
+            return configuration
+        }
+
+        /** Invariantes de arranque (fallo cerrado). Separadas de la lectura del entorno para poder probarlas. */
+        internal fun OposiBotsAuthConfiguration.requireDeployable() {
+            require(supabaseUrl.startsWith("https://") || development) {
                 "SUPABASE_URL debe usar HTTPS fuera de desarrollo."
             }
-            require(rateLimitMode == "valkey" || (rateLimitMode == "memory" && configuration.development)) {
+            require(rateLimitMode == "valkey" || (rateLimitMode == "memory" && development)) {
                 "El rate limiter en memoria solo está permitido en desarrollo."
             }
             // MASTER-SEC-001: la comparacion con el peer es solo por literal IP; un nombre de host nunca coincidiria.
-            require(configuration.trustedProxyHosts.all { isIpLiteral(normalizePeerAddress(it)) }) {
+            require(trustedProxyHosts.all { isIpLiteral(normalizePeerAddress(it)) }) {
                 "TRUSTED_PROXY_HOSTS solo admite literales IP (no nombres de host)."
             }
-            require(!configuration.trustProxyHeaders || configuration.trustedProxyHosts.isNotEmpty()) {
+            require(!trustProxyHeaders || trustedProxyHosts.isNotEmpty()) {
                 "TRUSTED_PROXY_HOSTS es obligatorio cuando TRUST_PROXY_HEADERS=true."
             }
-            if (rateLimitMode == "valkey") require(!configuration.valkeyUrl.isNullOrBlank()) {
+            // MASTER2-AUTH-002: fuera de desarrollo el backend corre SIEMPRE detras de Caddy (ops/caddy, DEPLOYMENT.md).
+            // Sin confiar en su X-Forwarded-For, la "IP de cliente" es la del proxy: todos los usuarios comparten un
+            // unico cupo por IP (auto-DoS) y la clave (email, IP) del login se degrada a (email, proxy).
+            require(development || trustProxyHeaders) {
+                "Fuera de desarrollo TRUST_PROXY_HEADERS=true es obligatorio (el backend corre detras de Caddy), " +
+                    "con TRUSTED_PROXY_HOSTS = IP literal del proxy."
+            }
+            if (rateLimitMode == "valkey") require(!valkeyUrl.isNullOrBlank()) {
                 "VALKEY_URL es obligatorio cuando AUTH_RATE_LIMIT_MODE=valkey."
             }
-            return configuration
         }
 
         private fun optionalEnvironment(name: String): String? =
@@ -123,8 +134,14 @@ internal class OposiBotsAuthRuntime(
      * aplicacion. Cada recurso se cierra aunque el anterior falle.
      */
     override fun close() {
-        runCatching { rateLimiter.close() }
-        runCatching { (gateway as? AutoCloseable)?.close() }
+        // MASTER2-OBS-004: un cierre fallido se registra (redactado) en vez de tragarse en silencio.
+        runCatching { rateLimiter.close() }.onFailure { logCloseFailure("rateLimiter", it) }
+        runCatching { (gateway as? AutoCloseable)?.close() }.onFailure { logCloseFailure("gateway", it) }
+    }
+
+    private fun logCloseFailure(resource: String, failure: Throwable) {
+        org.slf4j.LoggerFactory.getLogger("OC-KTOR-AUTH")
+            .warn("runtime close failed resource={}: {}", resource, failure.redactedMessage("close failed"))
     }
 
     companion object {
