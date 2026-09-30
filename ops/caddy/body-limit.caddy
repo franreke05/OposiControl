@@ -1,0 +1,15 @@
+# Snippet de ingress (MASTER2-SEC-002): tope de cuerpo para las peticiones que NO son multipart. Las subidas multipart
+# (portadas 10 MB, recursos 50 MB) se acotan en la ruta de Ktor; el resto de cuerpos (JSON) no supera 2 MB. Ktor aplica
+# el mismo tope sobre `Content-Length` (413 PAYLOAD_TOO_LARGE); esto cubre los cuerpos `chunked` que no declaran longitud.
+#
+#   api.oposibots.es {
+#       import /etc/caddy/metrics-block.caddy
+#       import /etc/caddy/body-limit.caddy
+#       reverse_proxy oposicontrol-ktor:8080
+#   }
+@bounded {
+    not header Content-Type multipart/*
+}
+request_body @bounded {
+    max_size 2MB
+}

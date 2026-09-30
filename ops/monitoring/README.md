@@ -67,8 +67,10 @@ la variable no esta vacia (ver `.env.example`). Prometheus lo envia con
 `docker compose up`, mismo valor que el backend). Orden de despliegue:
 1) fijar el token en el backend y crear el archivo, 2) levantar Prometheus con
 esta config, 3) comprobar el target `ktor` en `UP`. Con el token vacio el
-endpoint queda abierto (solo desarrollo); en produccion el token es obligatorio
-y el bloqueo publico de Caddy es defensa en profundidad.
+endpoint queda ABIERTO: el codigo aun no falla cerrado (B-22, se hara tras desplegar el scrape con token).
+Mientras tanto, en produccion el token es obligatorio por procedimiento y la unica barrera es el bloqueo
+publico de Caddy (`ops/caddy/metrics-block.caddy`), que se comprueba tras cada despliegue con
+`curl -s -o /dev/null -w '%{http_code}' https://<host>/metrics` = 404.
 
 ## Actualizar
 

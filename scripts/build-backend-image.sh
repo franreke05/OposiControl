@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Construye la imagen del backend Ktor desde el arbol limpio.
-# Uso: scripts/build-backend-image.sh            (etiqueta = git SHA corto)
+# Uso: bash scripts/build-backend-image.sh            (etiqueta = git SHA corto)
 # No despliega ni hace push. Ver docs/engineering/DEPLOYMENT.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-  echo "ERROR: arbol de trabajo con cambios; la etiqueta SHA no identificaria la imagen." >&2
+if [ -n "$(git status --porcelain)" ]; then
+  echo "ERROR: arbol de trabajo con cambios o archivos sin rastrear (installDist compilaria codigo no versionado); la etiqueta SHA no identificaria la imagen." >&2
   exit 1
 fi
 SHA="$(git rev-parse --short=12 HEAD)"

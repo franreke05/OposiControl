@@ -1,59 +1,139 @@
 #!/usr/bin/env node
-// MASTER-SEC-014: auditoria SCA de las dependencias fijadas del backend Ktor contra la base OSV (api.osv.dev).
-// Sin dependencias: solo Node >= 18 (fetch). Falla (exit 1) si alguna coordenada fijada tiene una vulnerabilidad
-// conocida; hay que subir la version antes de fusionar. Uso:
-//   node scripts/osv-audit.mjs              # audita backend/ktor/build.gradle.kts
-//   node scripts/osv-audit.mjs --self-test  # comprueba el parser y que OSV marca una version vulnerable conocida
-import { readFileSync } from 'node:fs';
+// MASTER-SEC-014 / MASTER2-CICD-001: auditoria SCA del grafo RESUELTO (runtimeClasspath) del backend Ktor contra OSV.
+// Sin dependencias: solo Node >= 18 (fetch). La entrada es la salida de
+//   ./gradlew :backend:ktor:dependencies --configuration runtimeClasspath -q > deps.txt
+// (incluye BOMs, alias del catalogo, versiones resueltas y transitivas). Falla (exit 1) si:
+//   - alguna coordenada resuelta tiene un aviso OSV no ignorado (scripts/osv-ignore.json, con caducidad),
+//   - alguna linea del arbol no se puede interpretar o hay una dependencia sin resolver (FAILED),
+//   - faltan coordenadas esperadas (senal de que se audito otra cosa),
+//   - OSV no responde tras los reintentos (fail-closed).
+// Uso:
+//   node scripts/osv-audit.mjs deps.txt
+//   node scripts/osv-audit.mjs --self-test   # parser + comprobacion de que OSV marca log4j-core 2.14.1
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const OSV_QUERY = 'https://api.osv.dev/v1/query';
+const OSV_BATCH = 'https://api.osv.dev/v1/querybatch';
+const TIMEOUT_MS = 20000;
+const RETRIES = 3;
+const BATCH_SIZE = 100;
+const EXPECTED = [
+  'ch.qos.logback:logback-classic', 'ch.qos.logback:logback-core', 'org.apache.pdfbox:pdfbox',
+  'io.lettuce:lettuce-core', 'com.auth0:java-jwt', 'io.ktor:ktor-server-core', 'io.netty:netty-handler',
+];
 
-export function extractCoordinates(buildScript, tomlText) {
-  const ktorVersion = /^ktor\s*=\s*"([^"]+)"/m.exec(tomlText)?.[1];
+const SAMPLE = [
+  'runtimeClasspath - Runtime classpath of null/main.',
+  '+--- io.ktor:ktor-server-core:3.1.0',
+  '|    +--- io.ktor:ktor-http:3.1.0 (*)',
+  '|    \\--- org.jetbrains.kotlin:kotlin-stdlib:2.0.0 -> 2.1.0',
+  '+--- io.micrometer:micrometer-bom:1.15.12 (c)',
+  '+--- project :domain',
+  '\\--- org.foo:bar -> org.baz:bar2:2.0',
+].join('\n');
+
+/** Devuelve { coordinates: [{name, version}], errors: [string] } a partir del arbol de `gradle dependencies`. */
+export function parseGradleDependencies(text) {
   const found = new Map();
-  const literal = /"([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+):([^"$]+|\$\{libs\.versions\.ktor\.get\(\)\})"/g;
-  for (const [, group, artifact, rawVersion] of buildScript.matchAll(literal)) {
-    const version = rawVersion.includes('libs.versions.ktor') ? ktorVersion : rawVersion;
-    if (version) found.set(`${group}:${artifact}@${version}`, { name: `${group}:${artifact}`, version });
+  const errors = [];
+  for (const rawLine of text.split(/\r?\n/)) {
+    const m = /^[| ]*[+\\]--- (.+)$/.exec(rawLine);
+    if (!m) continue;
+    let body = m[1].trim();
+    if (body.startsWith('project ')) continue;
+    if (/\bFAILED\b/.test(body)) { errors.push(`sin resolver: ${rawLine.trim()}`); continue; }
+    if (/\(c\)\s*$/.test(body)) continue; // restriccion (BOM/constraint): no es un artefacto en el classpath
+    body = body.replace(/\s+\((\*|n)\)\s*$/, '');
+    const [left, right] = body.split(' -> ').map((s) => s.trim());
+    const lm = /^([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)(?::(.+))?$/.exec(left);
+    if (!lm) { errors.push(`linea no interpretable: ${rawLine.trim()}`); continue; }
+    let name = `${lm[1]}:${lm[2]}`;
+    let version = lm[3];
+    if (right !== undefined) {
+      const rm = /^([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+):(\S+)$/.exec(right);
+      if (rm) { name = `${rm[1]}:${rm[2]}`; version = rm[3]; } else version = right;
+    }
+    if (version) version = version.replace(/^\{.*?\}\s*/, '').trim();
+    if (!version || /[{}\[\]()]/.test(version)) { errors.push(`version no resuelta: ${rawLine.trim()}`); continue; }
+    found.set(`${name}@${version}`, { name, version });
   }
-  return [...found.values()];
+  return { coordinates: [...found.values()], errors };
 }
 
-async function vulnerabilities({ name, version }) {
-  const response = await fetch(OSV_QUERY, {
-    method: 'POST',
-    body: JSON.stringify({ package: { name, ecosystem: 'Maven' }, version }),
-  });
-  if (!response.ok) throw new Error(`OSV respondio ${response.status} para ${name}@${version}`);
-  return (await response.json()).vulns ?? [];
+async function post(body) {
+  let last;
+  for (let attempt = 1; attempt <= RETRIES; attempt++) {
+    try {
+      const response = await fetch(OSV_BATCH, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
+      if (response.ok) return await response.json();
+      last = new Error(`OSV respondio ${response.status}`);
+      if (response.status < 500 && response.status !== 429) break;
+    } catch (error) { last = error; }
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+  }
+  throw new Error(`OSV no disponible tras ${RETRIES} intentos: ${last?.message ?? last}`);
+}
+
+/** Devuelve, por coordenada, la lista de ids de aviso (sigue next_page_token). */
+export async function queryAll(coordinates) {
+  const ids = coordinates.map(() => new Set());
+  for (let start = 0; start < coordinates.length; start += BATCH_SIZE) {
+    let pending = coordinates.slice(start, start + BATCH_SIZE).map((c, i) => ({ index: start + i, token: undefined, c }));
+    while (pending.length > 0) {
+      const queries = pending.map(({ c, token }) => ({ package: { name: c.name, ecosystem: 'Maven' }, version: c.version, ...(token ? { page_token: token } : {}) }));
+      const { results } = await post({ queries });
+      if (!Array.isArray(results) || results.length !== queries.length) throw new Error('respuesta OSV inesperada');
+      const next = [];
+      results.forEach((r, i) => {
+        for (const v of r.vulns ?? []) ids[pending[i].index].add(v.id);
+        if (r.next_page_token) next.push({ ...pending[i], token: r.next_page_token });
+      });
+      pending = next;
+    }
+  }
+  return ids.map((s) => [...s]);
+}
+
+export function loadIgnores(path, now = new Date()) {
+  if (!existsSync(path)) return new Set();
+  const entries = JSON.parse(readFileSync(path, 'utf8'));
+  const active = new Set();
+  for (const { id, expires, reason } of entries) {
+    if (!id || !reason || !expires || Number.isNaN(Date.parse(expires))) throw new Error(`osv-ignore invalido: ${JSON.stringify({ id, expires })}`);
+    if (new Date(expires) < now) throw new Error(`osv-ignore caducado: ${id} (${expires}); revisar o eliminar`);
+    active.add(id);
+  }
+  return active;
 }
 
 async function main() {
-  const selfTest = process.argv.includes('--self-test');
-  const buildScript = readFileSync(join(root, 'backend/ktor/build.gradle.kts'), 'utf8');
-  const toml = readFileSync(join(root, 'gradle/libs.versions.toml'), 'utf8');
-  const coordinates = extractCoordinates(buildScript, toml);
-  const names = coordinates.map((c) => c.name);
-  for (const expected of ['ch.qos.logback:logback-classic', 'org.apache.pdfbox:pdfbox', 'io.lettuce:lettuce-core', 'com.auth0:java-jwt', 'io.ktor:ktor-server-metrics-micrometer']) {
-    if (!names.includes(expected)) throw new Error(`el parser no encontro ${expected}`);
-  }
-  if (selfTest) {
-    const known = await vulnerabilities({ name: 'org.apache.logging.log4j:log4j-core', version: '2.14.1' });
+  const args = process.argv.slice(2);
+  if (args.includes('--self-test')) {
+    const { coordinates, errors } = parseGradleDependencies(SAMPLE);
+    if (errors.length > 0 || coordinates.length !== 4) throw new Error(`self-test parser: ${JSON.stringify({ coordinates, errors })}`);
+    const [known] = await queryAll([{ name: 'org.apache.logging.log4j:log4j-core', version: '2.14.1' }]);
     if (known.length === 0) throw new Error('self-test: OSV no marco log4j-core 2.14.1 (Log4Shell)');
-    console.log(`self-test OK: ${coordinates.length} coordenadas, log4j-core 2.14.1 marcado (${known.length} avisos)`);
+    console.log(`self-test OK: parser y OSV (log4j-core 2.14.1: ${known.length} avisos)`);
     return;
   }
+  const file = args.find((a) => !a.startsWith('--'));
+  if (!file) throw new Error('uso: node scripts/osv-audit.mjs <deps.txt> | --self-test');
+  const { coordinates, errors } = parseGradleDependencies(readFileSync(file, 'utf8'));
+  if (errors.length > 0) throw new Error(`el arbol resuelto tiene ${errors.length} problemas:\n${errors.join('\n')}`);
+  const names = new Set(coordinates.map((c) => c.name));
+  for (const expected of EXPECTED) if (!names.has(expected)) throw new Error(`el grafo resuelto no contiene ${expected}: se audito otra cosa`);
+  const ignores = loadIgnores(join(root, 'scripts/osv-ignore.json'));
+  const results = await queryAll(coordinates);
   let failed = false;
-  for (const coordinate of coordinates) {
-    const vulns = await vulnerabilities(coordinate);
-    console.log(`${coordinate.name}@${coordinate.version}: ${vulns.length === 0 ? 'sin avisos' : vulns.map((v) => v.id).join(', ')}`);
-    if (vulns.length > 0) failed = true;
-  }
+  coordinates.forEach((c, i) => {
+    const open = results[i].filter((id) => !ignores.has(id));
+    if (open.length > 0) { failed = true; console.log(`${c.name}@${c.version}: ${open.join(', ')}`); }
+  });
+  console.log(`${coordinates.length} coordenadas resueltas auditadas`);
   if (failed) {
-    console.error('Hay dependencias con vulnerabilidades conocidas: subir la version.');
+    console.error('Hay dependencias con vulnerabilidades conocidas: subir la version o ignorar con caducidad en scripts/osv-ignore.json.');
     process.exit(1);
   }
 }
