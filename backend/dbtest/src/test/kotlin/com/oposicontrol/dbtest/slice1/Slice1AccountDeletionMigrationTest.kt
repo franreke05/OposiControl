@@ -213,15 +213,19 @@ class Slice1AccountDeletionMigrationTest {
         // Idempotente: repetir no cambia actualizado_en.
         assertTrue(c.llamar("select public.app_registrar_revocacion_sesiones('$USER_A', 'hecha')::text").ok)
         assertEquals(s, c.solicitud(USER_A))
-        assertTrue(c.llamar("select public.app_registrar_revocacion_sesiones('$USER_A', 'fallida')::text").ok)
-        assertEquals("fallida", c.solicitud(USER_A)!![1])
+        // MASTER2-AUTH-009 (cambio DELIBERADO; antes esta prueba fijaba el defecto `hecha` -> `fallida`): con
+        // 20260930101500 'hecha' es terminal; un 'fallida' tardio no la degrada, no toca actualizado_en y no da OC404.
+        val tardio = c.llamar("select public.app_registrar_revocacion_sesiones('$USER_A', 'fallida')::text")
+        assertTrue(tardio.ok, tardio.toString())
+        assertEquals("hecha", tardio.campo("revocacionSesiones"))
+        assertEquals(s, c.solicitud(USER_A))
         c.llamar("select public.app_registrar_revocacion_sesiones('$USER_A', 'quiza')::text").assertError("22023", "INVALID_ARGUMENT")
         c.llamar("select public.app_registrar_revocacion_sesiones('$USER_A', null)::text").assertError("22023", "INVALID_ARGUMENT")
         c.llamar("select public.app_registrar_revocacion_sesiones(null, 'hecha')::text").assertError("22023", "INVALID_ARGUMENT")
         assertEquals("eliminacion_pendiente", c.estado(USER_A))
         // Una repeticion de la solicitud no reinicia el resultado de la revocacion.
         assertEquals("true", c.solicitar(USER_A).valor!!.split("|")[2])
-        assertEquals("fallida", c.solicitud(USER_A)!![1])
+        assertEquals("hecha", c.solicitud(USER_A)!![1])
     }
 
     @Test

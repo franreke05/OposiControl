@@ -23,7 +23,9 @@ object Slice1Db {
     const val DELETION = "supabase/migrations/20260930100300_slice1_account_deletion_requests.sql"
     /** Audit loop 1 (MASTER-DB-001/003/004/006/008): forward fix, the four files above stay untouched. */
     const val HARDENING = "supabase/migrations/20260930100500_slice1_audit_hardening.sql"
-    val TODAS = listOf(GUARDS, LEGAL, RPCS, DELETION, HARDENING)
+    /** Audit loop 2 (MASTER2-AUTH-009): 'hecha' terminal en app_registrar_revocacion_sesiones; forward fix. */
+    const val REVOCATION_MONOTONIC = "supabase/migrations/20260930101500_slice1_session_revocation_monotonic.sql"
+    val TODAS = listOf(GUARDS, LEGAL, RPCS, DELETION, HARDENING, REVOCATION_MONOTONIC)
 
     const val USER_D = "dddddddd-0000-0000-0000-000000000004"
     const val USER_E = "eeeeeeee-0000-0000-0000-000000000005"

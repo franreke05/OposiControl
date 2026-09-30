@@ -5,6 +5,22 @@
 -- public.record_event and ux_eventos_app_idempotency_key come from the MAIN baseline (product metrics candidate
 -- 009_record_event_idempotency_rpc.sql); this file only narrows the idempotency scope. One transaction.
 --
+-- BASELINE PREREQUISITE (audit loop 2, MASTER2-DB-001; explicit, recorded edit of this branch-only file)
+--   No migration in supabase/migrations creates public.eventos_app or public.record_event: both come from the MAIN
+--   baseline (gate baseline_main.sql). This file therefore starts with a PREFLIGHT block that aborts the whole
+--   transaction (nothing applied) with a clear message when:
+--     * public.eventos_app is missing                                  -> PREFLIGHT_BASELINE_MISSING
+--     * public.record_event(uuid, text, text, text, uuid, jsonb, integer, timestamptz, uuid, uuid, uuid, text)
+--       is missing                                                     -> PREFLIGHT_BASELINE_MISSING
+--     * a single-column UNIQUE index on eventos_app(idempotency_key) exists under a name other than
+--       ux_eventos_app_idempotency_key (MAIN drift: `drop index if exists` would silently keep the global scope)
+--                                                                      -> PREFLIGHT_MAIN_DRIFT
+--     * neither ux_eventos_app_idempotency_key (baseline) nor ux_eventos_app_idempotency_key_usuario (already
+--       applied, re-run) exists                                        -> PREFLIGHT_MAIN_DRIFT
+--   The preflight changes no object: with the MAIN baseline it passes and the resulting schema is identical to the
+--   loop-1 version of this file. VERIFY `global_index_still_present` now counts ANY single-column unique index on
+--   idempotency_key (not only the baseline name) and is mandatory (= 0) at the apply gate.
+--
 -- WHAT THIS MIGRATION DOES
 --   1. New unique index ux_eventos_app_idempotency_key_usuario on public.eventos_app (idempotency_key, usuario_id).
 --      Leading column idempotency_key so the RPC lookup (key + user) is an index probe. Default NULLS DISTINCT on
@@ -123,7 +139,10 @@
 --        null::text as info
 -- union all
 -- select 'global_index_still_present',
---        (select count(*) from pg_indexes where schemaname = 'public' and tablename = 'eventos_app' and indexname = 'ux_eventos_app_idempotency_key'),
+--        (select count(*) from pg_index x
+--         join pg_attribute a on a.attrelid = x.indrelid and a.attnum = x.indkey[0]
+--         where x.indrelid = 'public.eventos_app'::regclass and x.indisunique and x.indnkeyatts = 1
+--           and a.attname = 'idempotency_key'),
 --        null
 -- union all
 -- select 'record_event_lookup_not_per_user',
@@ -143,6 +162,36 @@
 begin;
 
 set local lock_timeout = '5s';
+
+-- PREFLIGHT (MASTER2-DB-001): fail loudly, before any change, when the MAIN baseline objects are missing or drifted.
+do $preflight$
+declare
+  v_drift text;
+begin
+  if to_regclass('public.eventos_app') is null then
+    raise exception 'PREFLIGHT_BASELINE_MISSING: public.eventos_app does not exist; this migration requires the MAIN baseline schema';
+  end if;
+  if to_regprocedure('public.record_event(uuid, text, text, text, uuid, jsonb, integer, timestamptz, uuid, uuid, uuid, text)') is null then
+    raise exception 'PREFLIGHT_BASELINE_MISSING: public.record_event(uuid, text, text, text, uuid, jsonb, integer, timestamptz, uuid, uuid, uuid, text) does not exist; this migration requires the MAIN baseline schema';
+  end if;
+  select string_agg(i.relname::text, ', ' order by i.relname) into v_drift
+  from pg_index x
+  join pg_class i on i.oid = x.indexrelid
+  join pg_attribute a on a.attrelid = x.indrelid and a.attnum = x.indkey[0]
+  where x.indrelid = 'public.eventos_app'::regclass
+    and x.indisunique
+    and x.indnkeyatts = 1
+    and a.attname = 'idempotency_key'
+    and i.relname <> 'ux_eventos_app_idempotency_key';
+  if v_drift is not null then
+    raise exception 'PREFLIGHT_MAIN_DRIFT: global unique index on eventos_app(idempotency_key) under an unexpected name (%); dropping ux_eventos_app_idempotency_key would not remove the global scope', v_drift;
+  end if;
+  if to_regclass('public.ux_eventos_app_idempotency_key') is null
+     and to_regclass('public.ux_eventos_app_idempotency_key_usuario') is null then
+    raise exception 'PREFLIGHT_MAIN_DRIFT: neither ux_eventos_app_idempotency_key (MAIN baseline) nor ux_eventos_app_idempotency_key_usuario exists on public.eventos_app';
+  end if;
+end
+$preflight$;
 
 create unique index if not exists ux_eventos_app_idempotency_key_usuario
     on public.eventos_app using btree (idempotency_key, usuario_id);
