@@ -12,7 +12,7 @@ mutate() {
   local desc="$1" file="$2" expr="$3" expect="$4" w="$tmp/w$n" out
   n=$((n + 1))
   mkdir "$w"
-  cp -r ops scripts .dockerignore .env.example .gitattributes "$w"/
+  cp -r ops scripts .github .dockerignore .env.example .gitattributes "$w"/
   if [ "$expr" = "@touch" ]; then
     touch "$w/$file"
   else
@@ -42,4 +42,8 @@ mutate "build sin pipefail" scripts/build-backend-image.sh '/^set -euo pipefail/
 mutate "build sin guarda" scripts/build-backend-image.sh '/^bash scripts\/assert-clean-tree.sh/d' "script de build de imagen"
 mutate "guarda sin --ignored" scripts/assert-clean-tree.sh 's/git status --porcelain --ignored/git status --porcelain/' "guarda de arbol limpio"
 mutate "guarda ignora no rastreados" scripts/assert-clean-tree.sh 's/git status --porcelain)/git status --porcelain --untracked-files=no)/' "guarda de arbol limpio"
+mutate "ci.yml cancel-in-progress incondicional (MASTER4-CICD-003)" .github/workflows/ci.yml 's/^  cancel-in-progress:.*/  cancel-in-progress: true/' "cancel-in-progress solo en pull_request"
+mutate "guarda acepta ignorados bajo src/ (MASTER4-SEC-002)" scripts/assert-clean-tree.sh "s/grep -E '\^!! (\.\*\/)?src\//grep -E '^!! (.*\/)?zzz\//" "rechaza ignorados bajo src"
+mutate "guarda vuelve a leer CLEAN_TREE_ROOT (MASTER4-SEC-002)" scripts/assert-clean-tree.sh 's/^cd "\${1:-/cd "${CLEAN_TREE_ROOT:-/' "rechaza ignorados bajo src"
+mutate "README sin Bearer en el curl interno (MASTER4-CICD-004)" ops/monitoring/README.md '/Authorization: Bearer/d' "curl interno de /metrics envia el Bearer"
 echo "verify-ops-config.test OK ($n mutaciones)"

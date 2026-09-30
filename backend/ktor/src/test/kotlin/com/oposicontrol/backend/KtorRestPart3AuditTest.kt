@@ -93,11 +93,15 @@ class KtorRestPart3AuditTest {
 
     @Test
     fun successorLinksNeverCarryOpenApiPathTemplates() {
-        assertEquals("</api/v1/admin/noticias>; rel=\"successor-version\"", LegacyHeaders.successorLink("/api/v1/admin/noticias/{noticiaId}"))
+        // MASTER4-API-004 (cambio deliberado): la plantilla ya no se trunca a la coleccion; se sustituye por el valor real
+        // o, si no se puede resolver, no hay Link.
+        assertEquals("</api/v1/admin/noticias/n%201>; rel=\"successor-version\"", LegacyHeaders.successorLink("/api/v1/admin/noticias/{noticiaId}") { if (it == "noticiaId") "n 1" else null })
+        assertNull(LegacyHeaders.successorLink("/api/v1/admin/noticias/{noticiaId}"))
+        assertNull(LegacyHeaders.successorLink("/api/v1/admin/noticias/{noticiaId}") { "" })
         assertEquals("</api/v1/app/me>; rel=\"successor-version\"", LegacyHeaders.successorLink("/api/v1/app/me"))
         (LegacyEndpoints.SLICE_0 + LegacyEndpoints.SLICE_1).forEach {
-            val link = LegacyHeaders.successorLink(it.successorPath!!)
-            assertFalse('{' in link || '}' in link, "${it.endpointId}: $link")
+            val link = LegacyHeaders.successorLink(it.successorPath!!) { "v" }
+            assertFalse(link!!.contains('{') || link.contains('}'), "${it.endpointId}: $link")
         }
     }
 

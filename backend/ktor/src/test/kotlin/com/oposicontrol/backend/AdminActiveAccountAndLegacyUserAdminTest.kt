@@ -30,6 +30,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -198,5 +199,26 @@ class AdminActiveAccountAndLegacyUserAdminTest {
         assertEquals("</api/v1/admin/usuarios>; rel=\"successor-version\"", list.headers[HttpHeaders.Link])
         val one = client.get("/api/v1/admin/oposibots/usuarios/2") { header(HttpHeaders.Authorization, "Bearer $adminAuth") }
         assertEquals("</api/v1/admin/usuarios>; rel=\"successor-version\"", one.headers[HttpHeaders.Link])
+    }
+
+    /** MASTER4-API-004: crear y borrar no tienen equivalente canonico; se marcan deprecadas pero NO anuncian sucesor. */
+    @Test
+    fun legacyCreateAndDeleteAreDeprecatedButAdvertiseNoSuccessor() = testApplication {
+        val fake = LegacyFake(mapOf(2 to plainAuth))
+        application { legacyModule(fake, mutableListOf()) }
+        val created = client.post("/api/v1/admin/oposibots/usuarios") {
+            header(HttpHeaders.Authorization, "Bearer $adminAuth")
+            contentType(ContentType.Application.Json)
+            setBody("""{"email":"n@example.com","nombre":"N","apellidos":"A","especialidadRegistro":"Celador"}""")
+        }
+        assertEquals(HttpStatusCode.Created, created.status)
+        assertEquals("@${LegacyEndpoints.SLICE_1_DEPRECATED_AT.epochSecond}", created.headers[LegacyHeaders.DEPRECATION])
+        assertNull(created.headers[HttpHeaders.Link], "POST legacy no tiene sucesor canonico")
+        val removed = client.delete("/api/v1/admin/oposibots/usuarios/2") { header(HttpHeaders.Authorization, "Bearer $adminAuth") }
+        assertEquals(HttpStatusCode.NoContent, removed.status)
+        assertEquals("@${LegacyEndpoints.SLICE_1_DEPRECATED_AT.epochSecond}", removed.headers[LegacyHeaders.DEPRECATION])
+        assertNull(removed.headers[HttpHeaders.Link], "DELETE legacy no tiene sucesor canonico")
+        assertNull(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_001_POST.successorPath)
+        assertNull(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_002_DELETE.successorPath)
     }
 }

@@ -50,10 +50,25 @@ Tras desplegar, verificar ambos límites:
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
   https://api.oposibots.es/metrics)" = "404"
 
-# Interno: debe ser accesible desde la red compartida.
+# Interno: debe ser accesible desde la red compartida. Con METRICS_SCRAPE_TOKEN
+# fijado (obligatorio en produccion) Ktor exige el Bearer: sin el responde 401 y
+# `--fail` haria fallar este paso en un despliegue correcto (MASTER4-CICD-004).
+# Ejecutar desde la raiz del repo; el token sale del mismo archivo que usa Prometheus.
 docker run --rm --network oposicontrol-deploy_default curlimages/curl:8.16.0 \
-  --fail --silent http://oposicontrol-ktor:8080/metrics >/dev/null
+  --fail --silent \
+  -H "Authorization: Bearer $(cat ops/monitoring/secrets/metrics_token)" \
+  http://oposicontrol-ktor:8080/metrics >/dev/null
+
+# Interno SIN token: debe dar 401 (un 200 significa endpoint abierto = token vacio en el backend).
+test "$(docker run --rm --network oposicontrol-deploy_default curlimages/curl:8.16.0 \
+  --silent --output /dev/null --write-out '%{http_code}' \
+  http://oposicontrol-ktor:8080/metrics)" = "401"
 ```
+
+Si el backend corre con el token VACIO (solo tolerado fuera de produccion, ver
+mas abajo) el segundo curl responde 200 y el bloque falla: es la senal de que el
+token no esta fijado. El archivo `ops/monitoring/secrets/metrics_token` no debe
+quedar vacio ni versionarse.
 
 La regla de Caddy esta versionada en `ops/caddy/metrics-block.caddy`; se
 importa ANTES del proxy general. No se deben abrir puertos adicionales.

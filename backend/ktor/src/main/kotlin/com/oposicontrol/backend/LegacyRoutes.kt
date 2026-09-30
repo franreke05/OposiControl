@@ -1,6 +1,7 @@
 package com.oposicontrol.backend
 
 import io.ktor.http.HttpHeaders
+import io.ktor.http.encodeURLPathPart
 import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.application.install
 import io.ktor.server.response.header
@@ -113,12 +114,22 @@ internal object LegacyHeaders {
     /** RFC 8594: IMF-fixdate. */
     fun sunset(at: Instant): String = DateTimeFormatter.RFC_1123_DATE_TIME.format(at.atOffset(ZoneOffset.UTC))
 
+    private val TEMPLATE_VARIABLE = Regex("\\{([^/{}]+)}")
+
     /**
-     * RFC 8288: el destino es una URI-Reference; `{noticiaId}` (plantilla OpenAPI) no lo es. Los segmentos con llaves se
-     * descartan y se anuncia la URI de la coleccion.
+     * RFC 8288: el destino es una URI-Reference; una plantilla OpenAPI (`{noticiaId}`) no lo es. MASTER4-API-004: ya no se
+     * trunca al primer `{` (eso anunciaba una coleccion que no es la sucesora del recurso). Cada variable se sustituye por
+     * su valor real (codificado como segmento de ruta) tomado de [params]; si alguna no se puede resolver (la ruta legacy
+     * no la lleva en la URL, p.ej. va en el cuerpo) NO hay sucesor direccionable y se devuelve null (sin `Link`).
      */
-    fun successorLink(path: String): String {
-        val uri = path.split("/").takeWhile { "{" !in it && "}" !in it }.joinToString("/")
+    fun successorLink(path: String, params: (String) -> String? = { null }): String? {
+        var unresolved = false
+        val uri = TEMPLATE_VARIABLE.replace(path) { m ->
+            val value = params(m.groupValues[1])?.takeIf { it.isNotEmpty() }
+            if (value == null) unresolved = true
+            value?.encodeURLPathPart().orEmpty()
+        }
+        if (unresolved || '{' in uri || '}' in uri) return null
         return "<$uri>; rel=\"successor-version\""
     }
 }
@@ -139,14 +150,15 @@ val LegacyRoute = createRouteScopedPlugin("LegacyRoute", ::LegacyRouteConfig) {
         .tag("endpoint", endpoint.endpointId)
         .register(pluginConfig.registry)
     val deprecation = LegacyHeaders.deprecation(endpoint.deprecatedAt)
-    val link = endpoint.successorPath?.takeIf { it.isNotBlank() }?.let(LegacyHeaders::successorLink)
+    val successor = endpoint.successorPath?.takeIf { it.isNotBlank() }
     val sunset = endpoint.sunsetAt?.let(LegacyHeaders::sunset)
 
     onCall { call ->
         counter.increment()
         // Antes del handler: tambien las respuestas de error (StatusPages) las llevan.
         call.response.header(LegacyHeaders.DEPRECATION, deprecation)
-        link?.let { call.response.header(HttpHeaders.Link, it) }
+        successor?.let { path -> LegacyHeaders.successorLink(path) { call.parameters[it] } }
+            ?.let { call.response.header(HttpHeaders.Link, it) }
         sunset?.let { call.response.header(LegacyHeaders.SUNSET, it) }
     }
 }

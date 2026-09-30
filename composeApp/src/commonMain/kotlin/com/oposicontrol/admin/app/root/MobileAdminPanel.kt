@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.domain.model.AccountStatus
 import com.oposicontrol.admin.domain.model.ForumReport
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.GlassChip
@@ -64,12 +65,13 @@ import com.oposicontrol.admin.features.tickets.presentation.TicketsIntent
 import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
 import com.oposicontrol.admin.features.users.presentation.USER_ACCOUNT_FIELD_LABEL
 import com.oposicontrol.admin.features.users.presentation.USER_EMAIL_UNAVAILABLE_NOTE
-import com.oposicontrol.admin.features.users.presentation.UserAccountKind
 import com.oposicontrol.admin.features.users.presentation.UsersIntent
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
 import com.oposicontrol.admin.features.users.presentation.userAccountKind
 import com.oposicontrol.admin.features.users.presentation.userAccountKindLabel
 import com.oposicontrol.admin.features.users.presentation.userAccountName
+import com.oposicontrol.admin.features.users.presentation.userAccountStatusLabel
+import com.oposicontrol.admin.features.users.presentation.userAccountStatusNeedsAttention
 import com.oposicontrol.admin.features.users.presentation.userRoleSummary
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -460,21 +462,23 @@ private fun AdminUsersSection(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                if (user.roleIds.isNotEmpty()) {
-                                    Text(
-                                        // Nombres de rol, no sus identificadores:
-                                        // aquí se pintaban los UUID del catálogo.
-                                        text = userRoleSummary(user, usersState.rolesById),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
+                                Text(
+                                    // Tipo de cuenta (registrada/invitada) + nombres de rol, no sus identificadores:
+                                    // aquí se pintaban los UUID del catálogo.
+                                    text = userAccountKindLabel(userAccountKind(user)) + if (user.roleIds.isNotEmpty()) {
+                                        " · " + userRoleSummary(user, usersState.rolesById)
+                                    } else {
+                                        ""
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                             Spacer(Modifier.width(8.dp))
                             Column(
-                                modifier = Modifier.width(84.dp),
+                                modifier = Modifier.width(112.dp),
                                 horizontalAlignment = Alignment.End,
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
@@ -486,14 +490,15 @@ private fun AdminUsersSection(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                // `isActive` es `!es_invitado`: distingue invitado
-                                // de registrado, no activo de bloqueado.
+                                // MASTER4-OC-004: el estado de la cuenta (AccountStatus canonico), no el tipo invitado/registrado
+                                // (`isActive` = `!es_invitado`, que va en la linea de la izquierda). Bloqueada o con eliminacion
+                                // pendiente piden atencion; un estado ausente/desconocido dice "Sin dato", nunca "Activa".
                                 StatusChip(
-                                    status = userAccountKindLabel(userAccountKind(user)),
-                                    tone = if (userAccountKind(user) == UserAccountKind.REGISTRADO) {
-                                        StatusTone.POSITIVE
-                                    } else {
-                                        StatusTone.NEUTRAL
+                                    status = userAccountStatusLabel(user.accountStatus),
+                                    tone = when {
+                                        user.accountStatus == AccountStatus.ACTIVE -> StatusTone.POSITIVE
+                                        userAccountStatusNeedsAttention(user.accountStatus) -> StatusTone.ATTENTION
+                                        else -> StatusTone.NEUTRAL
                                     },
                                 )
                             }

@@ -43,7 +43,7 @@ class Master3AuthPasswordRejectionTest {
         listOf(
             HttpStatusCode.UnprocessableEntity to "weak_password",
             HttpStatusCode.UnprocessableEntity to "same_password",
-            HttpStatusCode.BadRequest to "validation_failed",
+            // MASTER4-API-003: `validation_failed` ya no es rechazo de contraseña por si solo (ver Master4AuthRegisterErrorMappingTest).
         ).forEach { (status, code) ->
             val requests = mutableListOf<HttpRequestData>()
             val gateway = gateway(requests, status, """{"code":${status.value},"error_code":"$code","msg":"rejected"}""")
@@ -79,11 +79,18 @@ class Master3AuthPasswordRejectionTest {
 
     @Test
     fun otherResetFailuresAndPasswordCodesOutsideRegisterResetKeepTheirMapping() = runTest {
-        // Un 422 de otro tipo en reset sigue siendo 401; y weak_password en LOGIN no se reinterpreta como validacion.
+        // MASTER4-API-003 (cambio deliberado): un 422 de otro tipo en el PUT de reset era 401, pero no es un fallo del
+        // token (ya verificado): es 400 VALIDATION sin campo. Un 401 del PUT (sesion de recuperacion invalida) sigue
+        // siendo 401 (declarado en D1-10). weak_password en LOGIN no se reinterpreta como validacion.
         val other = gateway(mutableListOf(), HttpStatusCode.UnprocessableEntity, """{"code":422,"error_code":"something_else","msg":"x"}""")
+        val otherProblem = assertFailsWith<OposiBotsAuthProblem> { other.reset(OposiBotsResetPasswordRequest("t", "safe-password-12"), context) }
+        assertEquals(HttpStatusCode.BadRequest, otherProblem.status)
+        assertEquals(CanonicalErrorCode.VALIDATION, otherProblem.canonicalCode())
+        assertEquals(emptySet(), otherProblem.issues)
+        val unauthorized = gateway(mutableListOf(), HttpStatusCode.Unauthorized, """{"code":401,"error_code":"bad_jwt","msg":"x"}""")
         assertEquals(
             HttpStatusCode.Unauthorized,
-            assertFailsWith<OposiBotsAuthProblem> { other.reset(OposiBotsResetPasswordRequest("t", "safe-password-12"), context) }.status,
+            assertFailsWith<OposiBotsAuthProblem> { unauthorized.reset(OposiBotsResetPasswordRequest("t", "safe-password-12"), context) }.status,
         )
         val login = SupabaseOposiBotsAuthGateway(
             m3Config(), Json { ignoreUnknownKeys = true },

@@ -186,7 +186,7 @@ class UsersViewModel(
             fullName = currentState().editorName.trim(),
             roleIds = currentState().editorRoleIds.toList(),
         )
-        when (val result = upsertUserUseCase(user)) {
+        when (val result = upsertUserUseCase(user, previousName = existing.fullName)) {
             is AppResult.Failure -> {
                 updateState { it.copy(actionState = UiAsync.Error(result.error)) }
                 // El guardado no es atomico (PATCH nombre, POST roles, GET): un fallo parcial deja el servidor con
@@ -201,7 +201,7 @@ class UsersViewModel(
                     // que la fila se refresca aquí; si no, la tabla seguiría
                     // enseñando el nombre antiguo hasta recargar la pantalla.
                     val updated = state.loadedUsers.map {
-                        if (it.id == result.value.id) result.value else it
+                        if (it.id == result.value.id) result.value.keepingKnownFrom(it) else it
                     }
                     state.copy(
                         users = UiAsync.Success(updated),

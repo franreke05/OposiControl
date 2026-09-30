@@ -129,7 +129,10 @@ class AdminAuditAtomicityLoop3Test {
                 else -> V1StubResponse(200, "[]")
             }
         }
-        assertFailsWith<IllegalStateException> { g.updateUsuario(u1, "Z") }
+        // MASTER4-API-002 (cambio deliberado): el agotamiento ya no es IllegalStateException (502 UPSTREAM_ERROR) sino
+        // 500 INTERNAL de dominio (declarado en D1-25). Ver AdminKtorSecLoop4Test.
+        val exhausted = assertFailsWith<BackendDomainException> { g.updateUsuario(u1, "Z") }
+        assertEquals(CanonicalErrorCode.INTERNAL.name, exhausted.errorCode)
         assertEquals(ADMIN_USER_UPDATE_ATTEMPTS, sent.count { it.method == "PATCH" })
         assertTrue(sent.audits().isEmpty())
     }

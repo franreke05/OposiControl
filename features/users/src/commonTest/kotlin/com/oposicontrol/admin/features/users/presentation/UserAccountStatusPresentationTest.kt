@@ -29,6 +29,16 @@ class UserAccountStatusPresentationTest {
     }
 
     @Test
+    fun mobileRowAttentionRuleMatchesTheDesktopPill() {
+        // MASTER4-OC-004: la fila móvil usa el estado canónico; desconocido nunca es positivo ni pide atención falsa.
+        assertTrue(userAccountStatusNeedsAttention(AccountStatus.BLOCKED))
+        assertTrue(userAccountStatusNeedsAttention(AccountStatus.DELETION_PENDING))
+        assertFalse(userAccountStatusNeedsAttention(AccountStatus.ACTIVE))
+        assertFalse(userAccountStatusNeedsAttention(AccountStatus.UNKNOWN))
+        assertEquals("Sin dato", userAccountStatusLabel(AccountStatus.UNKNOWN))
+    }
+
+    @Test
     fun theCapabilityMatrixNoLongerClaimsThatBlockingDoesNotExist() {
         val capability = userCapability("Bloquear o desbloquear")!!
         assertFalse(capability.note.contains("No existe bloqueo", ignoreCase = true))

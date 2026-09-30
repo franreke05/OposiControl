@@ -258,7 +258,9 @@ internal fun Application.installBackendStatusPages() {
             if (cause.status.value >= 500) {
                 val requestId = call.ensureRequestId()
                 logStrategicEvent(
-                    StrategicEvent.SUPABASE_REQUEST_FAILED,
+                    // MASTER4-API-002: un INTERNAL de dominio (p. ej. la contencion agotada de `updateUsuario`) NO es un
+                    // fallo del upstream: se cuenta como el resto de 500 INTERNAL del servidor, no como SUPABASE_REQUEST_FAILED.
+                    if (cause.errorCode == CanonicalErrorCode.INTERNAL.name) StrategicEvent.UNCAUGHT_EXCEPTION else StrategicEvent.SUPABASE_REQUEST_FAILED,
                     requestId = requestId,
                     operation = call.request.path(),
                     result = cause.status.value.toString(),

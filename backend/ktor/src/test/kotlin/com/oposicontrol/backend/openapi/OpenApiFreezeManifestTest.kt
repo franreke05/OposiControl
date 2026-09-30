@@ -29,22 +29,35 @@ class OpenApiFreezeManifestTest {
             .associate { line -> line.substringAfter("  ") to line.substringBefore("  ") }
     }
 
+    /** Rutas presentes en ambos mapas cuyo hash difiere (ficheros ausentes/sobrantes los cubre la comparacion de claves). */
+    private fun changedFiles(expected: Map<String, String>, actual: Map<String, String>): Set<String> =
+        expected.filter { (path, hash) -> actual[path] != hash }.keys
+
     @Test
     fun everyOpenApiFileMatchesThePinnedFreezeManifest() {
         val actual = File(root, "openapi").walkTopDown().filter { it.isFile }
             .associate { it.relativeTo(root).invariantSeparatorsPath to sha256(it) }
         val expected = pinned()
         assertEquals(expected.keys, actual.keys, "openapi/ file set differs from the freeze manifest (added or removed file)")
-        val changed = expected.filter { (path, hash) -> actual[path] != hash }.keys
+        val changed = changedFiles(expected, actual)
         assertEquals(emptySet<String>(), changed, "openapi/ is FROZEN: these files differ from the manifest; record a CONTRACT_FREEZE amendment and update the manifest")
     }
 
+    /**
+     * MASTER4-QUALITY-002: control negativo real. Antes solo comprobaba que hashear otro contenido da otro hash (cierto
+     * siempre). Ahora se ejercita la MISMA funcion de comparacion que usa el test de arriba sobre un mapa real con UN hash
+     * alterado, y debe senalar exactamente esa ruta (y ninguna mas), y nada si el mapa es identico.
+     */
     @Test
     fun theManifestDetectsAChangedFile() {
-        val victim = File(root, "openapi/root.yaml")
-        val tampered = MessageDigest.getInstance("SHA-256")
-            .digest((victim.readText(Charsets.UTF_8).replace("\r\n", "\n") + "# x\n").toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-        assertEquals(false, pinned()["openapi/root.yaml"] == tampered)
+        val actual = File(root, "openapi").walkTopDown().filter { it.isFile }
+            .associate { it.relativeTo(root).invariantSeparatorsPath to sha256(it) }
+        val victim = "openapi/root.yaml"
+        assertEquals(true, victim in actual)
+        assertEquals(emptySet<String>(), changedFiles(actual, actual), "control positivo: mapas identicos no cambian")
+        val mutated = actual + (victim to actual.getValue(victim).let { h -> (if (h.startsWith("0")) "1" else "0") + h.drop(1) })
+        assertEquals(setOf(victim), changedFiles(actual, mutated))
+        val deleted = actual - victim
+        assertEquals(setOf(victim), changedFiles(actual, deleted), "un fichero que desaparece tambien cuenta como cambiado")
     }
 }

@@ -219,7 +219,8 @@ enum class StrategicEvent {
     UPSTREAM_TIMEOUT,
 
     /** Cualquier excepcion no controlada que llega a StatusPages sin un
-     * handler mas especifico. */
+     * handler mas especifico, y todo 500 INTERNAL de dominio (fallo del
+     * propio servidor, no del upstream; MASTER4-API-002). */
     UNCAUGHT_EXCEPTION,
 
     SLOW_REQUEST,

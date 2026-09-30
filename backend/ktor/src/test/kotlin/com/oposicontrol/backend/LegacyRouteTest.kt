@@ -45,6 +45,30 @@ class LegacyRouteTest {
         deprecatedAt = Instant.parse("2026-09-28T00:00:00Z"),
     )
 
+    /** MASTER4-API-004: plantilla resuelta con el parametro real; sin parametro en la URL legacy (EP-229/EP-145) no hay Link. */
+    @Test
+    fun aTemplatedSuccessorIsResolvedFromTheRealPathParameterOrOmitted() = testApplication {
+        val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
+        val withParam = endpoint.copy(successorPath = "/api/v1/app/cosas/{cosaId}")
+        application {
+            install(ContentNegotiation) { json() }
+            installRequestCorrelation()
+            installBackendStatusPages()
+            routing {
+                get("/legacy/cosas/{cosaId}") { call.respond(listOf("a")) }.legacyRoute(withParam, registry)
+                get("/legacy/sin-parametro") { call.respond(listOf("b")) }.legacyRoute(withParam, registry)
+            }
+        }
+        assertEquals(
+            "</api/v1/app/cosas/a%2Fb>; rel=\"successor-version\"",
+            client.get("/legacy/cosas/a%2Fb").headers[HttpHeaders.Link],
+        )
+        val unresolved = client.get("/legacy/sin-parametro")
+        assertEquals("@1790553600", unresolved.headers[LegacyHeaders.DEPRECATION])
+        assertNull(unresolved.headers[HttpHeaders.Link], "sin valor para {cosaId} no hay sucesor direccionable")
+        assertEquals(setOf("EP-229", "EP-145"), LegacyEndpoints.SLICE_0.filter { "{" in it.successorPath.orEmpty() && "{" !in it.legacyPath }.map { it.endpointId }.toSet())
+    }
+
     @Test
     fun aLegacyRouteCarriesDeprecationAndSuccessorLinkButNoSunsetUntilApproved() = testApplication {
         val registry = PrometheusMeterRegistry(PrometheusConfig.DEFAULT)
@@ -192,7 +216,8 @@ class LegacyRouteTest {
         val one = client.get("/content/noticias/x") { header(HttpHeaders.Authorization, auth) }
         assertNull(one.headers[LegacyHeaders.DEPRECATION])
         val removed = client.delete("/content/noticias/x") { header(HttpHeaders.Authorization, auth) }
-        assertEquals("</api/v1/admin/noticias>; rel=\"successor-version\"", removed.headers[HttpHeaders.Link])
+        // MASTER4-API-004 (cambio deliberado): antes se truncaba a la coleccion; ahora el Link es el recurso real.
+        assertEquals("</api/v1/admin/noticias/x>; rel=\"successor-version\"", removed.headers[HttpHeaders.Link])
         val created = client.post("/content/noticias") {
             header(HttpHeaders.Authorization, auth)
             contentType(ContentType.Application.Json)

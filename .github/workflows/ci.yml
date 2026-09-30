@@ -8,7 +8,8 @@ permissions:
   contents: read
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # MASTER4-CICD-003: solo los PR cancelan runs anteriores; un push a main/feature/** conserva su check completo.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ops-static:
     runs-on: ubuntu-latest
@@ -19,6 +20,9 @@ jobs:
       - run: bash scripts/verify-ops-config.sh
       - run: bash scripts/verify-ops-config.test.sh
       - run: bash scripts/assert-clean-tree.test.sh
+      # MASTER4-ARCH-002: el manifiesto Slice 1 (copia del de OposiBot) debe coincidir con supabase/migrations/2026093*.sql.
+      - run: bash scripts/verify-migrations-manifest.sh
+      - run: bash scripts/verify-migrations-manifest.test.sh
   # MASTER-SEC-014 / MASTER2-CICD-001: SCA del grafo RESUELTO de runtimeClasspath (BOMs, alias del catalogo y transitivas)
   # contra OSV; falla si el arbol no se puede interpretar o OSV no responde (sin secretos, sin dependencias nuevas).
   dependency-audit:

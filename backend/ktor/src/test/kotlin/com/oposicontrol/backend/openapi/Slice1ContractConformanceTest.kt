@@ -189,6 +189,8 @@ class Slice1ContractConformanceTest {
         // D1-25 (PATCH /admin/usuarios/{id}) and D1-29 (GET /admin/roles) are LIVE legacy admin routes that exist at
         // HEAD and stay untouched (scope: "live /api/v1/admin/roles keeps working untouched"); DEFERRED only means Slice 1
         // does not adapt them to the canonical contract. Everything else deferred must not be served at all.
+        // Documented deviation (MASTER4-OPENAPI-001): D1-25 is `x-slice: null`, so the response sweeps here skip it; its 200
+        // body is validated against the frozen AdminUserResponse in KtorRestPart2AuditTest (PATCH usuarios test).
         val legacyLiveUntouched = setOf("D1-25", "D1-29")
         legacyLiveUntouched.forEach { assertTrue(key(op(it)) in registered, "$it: the legacy live route must still be served") }
         val leaked = deferredIds.filter { it !in legacyLiveUntouched }.map { op(it) }.filter { key(it) in registered }.map { it.label }

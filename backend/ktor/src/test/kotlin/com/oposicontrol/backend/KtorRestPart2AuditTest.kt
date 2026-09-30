@@ -27,6 +27,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.serializer
+import com.oposicontrol.backend.openapi.OpenApiDocs
+import com.oposicontrol.backend.openapi.SchemaChecker
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -489,6 +491,26 @@ class KtorRestPart2AuditTest {
         listOf("id", "accountStatus", "onboardingCompleted", "authProviders", "createdAt", "data").forEach {
             assertTrue(it in patched, "PATCH 200 sin $it: ${patched.keys}")
         }
+        // MASTER4-OPENAPI-001: ademas de la presencia de claves, el cuerpo 200 se valida (tipos, enums, formatos,
+        // additionalProperties) contra el esquema CONGELADO de D1-25 (AdminUserResponse). El barrido de conformidad de Slice 1
+        // omite D1-25 (`x-slice: null`, ruta legacy viva), asi que este es su unico control de esquema.
+        val docs = OpenApiDocs.locate()
+        val d125 = docs.operations().single { it.contractId == "D1-25" }
+        val ok200 = docs.responses(d125).getValue("200")
+        val schema = ((ok200.value as Map<*, *>)["content"] as Map<*, *>)["application/json"] as Map<*, *>
+        val problems = mutableListOf<String>()
+        // El duplicado legacy `data` NO es el AdminUser congelado (desviacion A3 de ARCHITECTURE_DELTA_S1: isActive, email =
+        // username, sin accountStatus...): se valida el cuerpo SIN `data` contra el esquema y `data` contra su forma legacy.
+        SchemaChecker(docs).validate(OpenApiDocs.Node(schema["schema"], ok200.file), JsonObject(patched - "data"), "$", problems)
+        assertTrue(problems.isEmpty(), "PATCH 200 viola AdminUserResponse: $problems")
+        val legacyData = patched.getValue("data").jsonObject
+        assertEquals("ada_l", legacyData["email"]!!.jsonPrimitive.content, "data legacy (A3): email = username")
+        assertTrue("isActive" in legacyData && "accountStatus" !in legacyData, "data legacy (A3): forma OC, no AdminUser: ${legacyData.keys}")
+        // Control negativo: el validador rechaza de verdad un tipo/enum incorrecto en este mismo cuerpo.
+        val broken = JsonObject(patched - "data" + ("accountStatus" to kotlinx.serialization.json.JsonPrimitive("inventado")) + ("onboardingCompleted" to kotlinx.serialization.json.JsonPrimitive("si")))
+        val brokenProblems = mutableListOf<String>()
+        SchemaChecker(docs).validate(OpenApiDocs.Node(schema["schema"], ok200.file), broken, "$", brokenProblems)
+        assertTrue(brokenProblems.any { "accountStatus" in it } && brokenProblems.any { "onboardingCompleted" in it }, "el esquema debe detectar enum/tipo invalidos: $brokenProblems")
         // MASTER2-API-001 (cambio deliberado): D1-25 es `additionalProperties: false`; el `fullName` legacy y cualquier campo
         // extra ya NO se aceptan en silencio (el unico cliente, UsersApi de OC, envia solo `nombreMostrar`).
         val legacy = client.patch(path) { contentType(ContentType.Application.Json); setBody("""{"id":"$u1","fullName":"Ada Legacy","email":"a@x.es","roleIds":[],"isActive":true}""") }

@@ -104,10 +104,12 @@ internal class SupabaseOposiBotsAuthGateway(
         val response = authRequest(HttpMethod.Post, "/auth/v1/signup", body, context = context)
         // Enumeration-safe (D1-01): con autoconfirm GoTrue contesta 422 user_already_exists en vez del 200 ofuscado;
         // un duplicado se contesta igual que un alta nueva (202) y nunca revela que el email existe.
-        if (response.status.value == 422 && response.error().normalizedCode in DUPLICATE_SIGNUP_CODES) {
+        // MASTER4-API-003: tambien con 400 (antes solo 422): tras quitar el 401 generico, un duplicado con 400 ya no puede
+        // salir como VALIDATION (seria un oraculo de existencia frente al 202 de un alta nueva).
+        if ((response.status.value == 422 || response.status.value == 400) && response.error().normalizedCode in DUPLICATE_SIGNUP_CODES) {
             return OposiBotsRegisterResponse()
         }
-        if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = false, purpose = AuthPurpose.PASSWORD_SET)
+        if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = false, purpose = AuthPurpose.REGISTER)
         return OposiBotsRegisterResponse()
     }
 
@@ -255,7 +257,7 @@ internal class SupabaseOposiBotsAuthGateway(
             revokeMintedSession(recovery.accessToken, context, scope = "local")
             // MASTER3-AUTH-002: /verify ya consumio el token de recuperacion (un solo uso); un rechazo de la contraseña por
             // GoTrue (weak/same_password) es 400 VALIDATION, no 401, y el cliente debe pedir un enlace nuevo.
-            throw mapCredentialError(updated, purpose = AuthPurpose.PASSWORD_SET)
+            throw mapCredentialError(updated, purpose = AuthPurpose.PASSWORD_RESET)
         }
         // MASTER-AUTH-006: contraseña cambiada -> se revocan TODAS las sesiones y refresh tokens del usuario (incluida
         // la de recuperacion). Mejor esfuerzo: la contraseña ya cambio, un fallo aqui no convierte el reset en error.
@@ -701,7 +703,7 @@ internal class SupabaseOposiBotsAuthGateway(
         }
     }
 
-    private enum class AuthPurpose { GENERIC, LOGIN, EXCHANGE, PASSWORD_SET }
+    private enum class AuthPurpose { GENERIC, LOGIN, EXCHANGE, REGISTER, PASSWORD_RESET }
 
     private fun mapCredentialError(
         response: AuthResponse,
@@ -724,16 +726,46 @@ internal class SupabaseOposiBotsAuthGateway(
                 CanonicalErrorCode.INVALID_CREDENTIALS.exception()
             purpose == AuthPurpose.LOGIN && error.normalizedCode == "email_not_confirmed" ->
                 CanonicalErrorCode.EMAIL_UNVERIFIED.exception()
-            // MASTER3-AUTH-002: register y reset envian una contraseña nueva; GoTrue la rechaza con 400/422 (politica,
-            // HIBP, misma contraseña). Es un error de validacion del cliente, no de autenticacion.
-            purpose == AuthPurpose.PASSWORD_SET && (response.status.value == 400 || response.status.value == 422) &&
-                error.normalizedCode in REJECTED_PASSWORD_CODES ->
-                OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_PASSWORD)
-            purpose == AuthPurpose.PASSWORD_SET && (response.status.value == 400 || response.status.value == 422) &&
-                error.normalizedCode == "email_address_invalid" ->
-                OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
+            purpose == AuthPurpose.REGISTER || purpose == AuthPurpose.PASSWORD_RESET ->
+                mapPasswordSetError(response.status, error, purpose)
             purpose == AuthPurpose.EXCHANGE -> CanonicalErrorCode.AUTH_CODE_INVALID.exception()
             else -> OposiBotsAuthProblem.authentication()
+        }
+    }
+
+    /**
+     * MASTER3-AUTH-002 / MASTER4-API-003: register (D1-01) y el `PUT /auth/v1/user` de reset (D1-10) envian una
+     * contraseña nueva. Solo `weak_password`/`same_password` son rechazos DE LA CONTRASEÑA; `validation_failed` es el
+     * codigo generico de GoTrue (email mal formado, contraseña > 72 bytes, campo ausente...) y se clasifica por el
+     * campo que nombra su `msg`, o queda como VALIDATION sin campo: antes se etiquetaba siempre INVALID_PASSWORD.
+     * Un 400/422 de configuracion del servicio (registro/proveedor deshabilitado, email no autorizado) es 503: no es culpa
+     * del cliente. El resto: 400/422 -> VALIDATION generico; 401/403 -> 401 SOLO en reset (token de recuperacion
+     * invalido, declarado en D1-10); cualquier otro 4xx -> 503. Register nunca devuelve 401 (D1-01 no lo declara).
+     */
+    private fun mapPasswordSetError(status: HttpStatusCode, error: SupabaseError, purpose: AuthPurpose): Exception {
+        val clientRejected = status.value == 400 || status.value == 422
+        val code = error.normalizedCode
+        return when {
+            clientRejected && code in REJECTED_PASSWORD_CODES ->
+                OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_PASSWORD)
+            clientRejected && code == "email_address_invalid" ->
+                OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
+            clientRejected && code == "captcha_failed" ->
+                OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CAPTCHA)
+            clientRejected && code in SERVICE_CONFIGURATION_CODES -> OposiBotsAuthProblem.unavailable()
+            clientRejected && code == "validation_failed" -> {
+                val message = error.msg.orEmpty().lowercase()
+                when {
+                    "password" in message -> OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_PASSWORD)
+                    "email" in message -> OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
+                    else -> OposiBotsAuthProblem.validation()
+                }
+            }
+            clientRejected -> OposiBotsAuthProblem.validation()
+            purpose == AuthPurpose.PASSWORD_RESET &&
+                (status == HttpStatusCode.Unauthorized || status == HttpStatusCode.Forbidden) ->
+                OposiBotsAuthProblem.authentication()
+            else -> OposiBotsAuthProblem.unavailable()
         }
     }
 
@@ -879,8 +911,19 @@ private fun String.sha256(): String =
 
 private val DUPLICATE_SIGNUP_CODES = setOf("user_already_exists", "email_exists")
 
-/** MASTER3-AUTH-002: codigos con los que GoTrue rechaza la contraseña nueva (register/reset). */
-private val REJECTED_PASSWORD_CODES = setOf("weak_password", "same_password", "validation_failed")
+/**
+ * MASTER3-AUTH-002: codigos con los que GoTrue rechaza la contraseña nueva (register/reset). MASTER4-API-003: sin
+ * `validation_failed` (generico de GoTrue: tambien lo usa para un email mal formado).
+ */
+private val REJECTED_PASSWORD_CODES = setOf("weak_password", "same_password")
+
+/** MASTER4-API-003: 400/422 de GoTrue por configuracion del servicio (no del cliente): 503 en register/reset. */
+private val SERVICE_CONFIGURATION_CODES = setOf(
+    "signup_disabled",
+    "email_provider_disabled",
+    "provider_disabled",
+    "email_address_not_authorized",
+)
 
 /**
  * MASTER3-AUTH-001: `error_code` con el que GoTrue dice que la sesion del JWT ya no existe (logout previo). `bad_jwt`

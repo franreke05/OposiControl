@@ -195,23 +195,29 @@ class UserPresentationTest {
     }
 
     @Test
-    fun elAvisoDeRolesNoPrometeUnaGarantiaQueTodaviaNoEstaDesplegada() {
-        // La guarda de `admin_sync_roles` está escrita pero su candidate sigue en
-        // APPLY_PENDING_APPROVAL: hasta que se aplique, este aviso es la ÚNICA
-        // protección. Hubo una versión que decía «el sistema no permitirá
-        // guardar…», y era falsa: hacía confiar en una red inexistente justo a
-        // quien se habría pensado dos veces el cambio.
-        //
-        // Cuando el candidate se apruebe y se aplique, este test debe cambiarse
-        // a la vez que la cadena — que es exactamente el punto de tenerlo.
-        assertTrue(
-            USER_ADMIN_ROLE_WARNING.contains("todavía no impide"),
-            "El aviso ya no declara que la protección está pendiente: $USER_ADMIN_ROLE_WARNING",
-        )
+    fun elAvisoDeRolesDescribeLaGuardaYaInstaladaEnElServidor() {
+        // MASTER4-OC-002: la guarda de `admin_sync_roles` (20260921071916 role_sync_guard) esta INSTALADA en MAIN y el
+        // servidor rechaza dejar la plataforma sin superadministrador (409 ROLE_SYNC_LAST_SUPERADMIN). Este test
+        // antes fijaba el texto contrario («todavía no impide»); se cambia a proposito junto con la cadena.
         assertFalse(
-            USER_ADMIN_ROLE_WARNING.contains("no permitirá"),
-            "El aviso promete un rechazo del servidor que no está desplegado.",
+            USER_ADMIN_ROLE_WARNING.contains("todavía no impide"),
+            "El aviso declara pendiente una protección que ya está instalada: $USER_ADMIN_ROLE_WARNING",
         )
+        assertTrue(
+            USER_ADMIN_ROLE_WARNING.contains("el servidor rechaza dejar la plataforma sin ningún superadministrador"),
+            "El aviso debe decir que el servidor rechaza el caso: $USER_ADMIN_ROLE_WARNING",
+        )
+    }
+
+    @Test
+    fun guardarSinNombreSoloSePermiteSiYaNoTeniaNombre() {
+        // MASTER4-API-001: edición «sólo roles» de un usuario sin nombre.
+        assertEquals(emptyList(), userSaveBlockers("", currentName = ""))
+        assertEquals(emptyList(), userSaveBlockers("  ", currentName = "  "))
+        // Vaciar un nombre existente, o no conocer el actual, sigue bloqueado.
+        assertEquals(1, userSaveBlockers("", currentName = "Ana").size)
+        assertEquals(1, userSaveBlockers("", currentName = null).size)
+        assertEquals(emptyList(), userSaveBlockers("Ana", currentName = ""))
     }
 
     @Test

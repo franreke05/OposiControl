@@ -8,8 +8,13 @@ import com.oposicontrol.admin.domain.repository.UsersRepository
 class UpsertUserUseCase(
     private val repository: UsersRepository,
 ) {
-    suspend operator fun invoke(user: User): AppResult<User> {
-        if (user.fullName.isBlank()) {
+    /**
+     * [previousName] es el nombre que el usuario tiene AHORA en el servidor. Un nombre en blanco solo se acepta cuando
+     * ya estaba en blanco (edicion "solo roles" de un usuario sin nombre, MASTER4-API-001): vaciar un nombre existente
+     * sigue siendo error (el servidor tambien lo rechaza con 400). `null` = desconocido: se exige nombre.
+     */
+    suspend operator fun invoke(user: User, previousName: String? = null): AppResult<User> {
+        if (user.fullName.isBlank() && previousName?.isBlank() != true) {
             return AppResult.Failure(AppError.Validation("El nombre del usuario no puede estar vacio."))
         }
         // Aquí había una validación de email, y era doblemente incorrecta.

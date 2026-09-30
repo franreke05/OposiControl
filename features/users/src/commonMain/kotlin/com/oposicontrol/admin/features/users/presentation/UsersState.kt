@@ -66,7 +66,7 @@ data class UsersState(
 
     val isDirty: Boolean get() = userEditorIsDirty(selectedUser, editorName, editorRoleIds)
 
-    val saveBlockers: List<String> get() = userSaveBlockers(editorName)
+    val saveBlockers: List<String> get() = userSaveBlockers(editorName, selectedUser?.fullName)
 
     /**
      * Se puede guardar si hay usuario, hay algo que guardar y nada lo impide.

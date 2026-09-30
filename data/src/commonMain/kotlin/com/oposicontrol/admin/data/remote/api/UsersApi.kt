@@ -84,7 +84,7 @@ internal suspend fun collectAllUsers(fetchPage: suspend (limit: Int, offset: Int
 }
 
 /**
- * Une el canon con el legacy. `isActive` es SOLO el legacy (`!es_invitado`): con fila legacy sin el campo vale true (el servidor omite el defecto) y sin fila legacy queda null, nunca se deriva de
+ * Une el canon con el legacy. `isActive` es SOLO el legacy (`!es_invitado`): con fila legacy sin el campo vale true (un backend ANTERIOR omite el defecto; el actual lo emite explicito con @EncodeDefault, y aqui se toleran ambos) y sin fila legacy queda null, nunca se deriva de
  * `accountStatus` (son dos conceptos distintos). Un estado ausente o no reconocido queda en UNKNOWN, nunca activo.
  * Una fila sin `id` se descarta (null) y un `createdAt` ausente queda null: no se fabrican.
  */
@@ -99,7 +99,7 @@ private fun merge(canon: AdminUserV1Dto?, legacy: AdminUserV1Dto?): UserDto? {
         fullName = c.fullName ?: l.fullName ?: "",
         email = c.email ?: l.email ?: "",
         roleIds = c.roleIds.ifEmpty { l.roleIds },
-        // Fila legacy presente sin isActive = true (el servidor omite el valor por defecto); sin fila legacy, desconocido.
+        // Fila legacy presente sin isActive = true (backend anterior: omite el defecto; actual: lo emite); sin fila legacy, desconocido.
         isActive = if (legacy != null) (l.isActive ?: true) else null,
         createdAt = c.createdAt?.ifBlank { null } ?: l.createdAt?.ifBlank { null },
         ticketsBalance = c.ticketsBalance ?: l.ticketsBalance,
@@ -139,12 +139,16 @@ class UsersApi(
 
     suspend fun upsertUser(user: UserDto): UserDto {
         if (user.id.isBlank()) error("Crear usuarios no está disponible desde la app admin. Usa el dashboard de Supabase.")
-        // PATCH nombre_mostrar en perfiles_usuario
-        client.patch(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.adminV1Usuario(user.id))) {
-            adminAuthHeaders(appConfig, sessionLocalDataSource)
-            contentType(ContentType.Application.Json)
-            setBody(AdminUserPatchBody(nombreMostrar = user.fullName))
-        }.checkedBody<kotlinx.serialization.json.JsonObject>(BackendRoutes.adminV1Usuario(user.id))
+        // PATCH nombre_mostrar en perfiles_usuario. MASTER4-API-001: un nombre en blanco NO se envia (el servidor lo
+        // rechazaria con 400 REQUIRED y /roles no llegaria a ejecutarse): es la edicion "solo roles" de un usuario
+        // sin nombre. Que un nombre existente NO pueda vaciarse lo impide `UpsertUserUseCase` (conoce el nombre previo).
+        if (user.fullName.isNotBlank()) {
+            client.patch(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.adminV1Usuario(user.id))) {
+                adminAuthHeaders(appConfig, sessionLocalDataSource)
+                contentType(ContentType.Application.Json)
+                setBody(AdminUserPatchBody(nombreMostrar = user.fullName.trim()))
+            }.checkedBody<kotlinx.serialization.json.JsonObject>(BackendRoutes.adminV1Usuario(user.id))
+        }
         // Sync roles
         client.post(BackendRoutes.url(appConfig.baseUrl, "${BackendRoutes.adminV1Usuario(user.id)}/roles")) {
             adminAuthHeaders(appConfig, sessionLocalDataSource)

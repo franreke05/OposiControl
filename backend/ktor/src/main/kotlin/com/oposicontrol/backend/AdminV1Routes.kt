@@ -3456,6 +3456,10 @@ private data class RolUsuarioRow(
     @SerialName("rol_id") val rolId: String,
 )
 
+/** MASTER4-OBS-001: respuesta de `admin_sync_roles_audited`: roles del usuario leidos BAJO el cerrojo, antes y despues. */
+@Serializable
+private data class RoleSyncLockedSets(val antes: List<String>, val despues: List<String>)
+
 @Serializable
 private data class EspecialidadNombreRow(val id: String, val nombre: String)
 
@@ -5474,7 +5478,12 @@ class AdminV1Gateway private constructor(
      * auditoria de B como X->Z (el `antes` rancio) y el atajo de "valor identico" se evaluaba sobre una lectura vieja.
      * Ahora, si la fila cambio entre la lectura y la escritura (0 filas), se vuelve a leer y se repite la comparacion
      * sobre el valor actual (set semantics: gana la ultima escritura, pero cada fila de auditoria lleva el `antes` real).
-     * Si la fila ya no existe -> `null` (404). Tras [ADMIN_USER_UPDATE_ATTEMPTS] conflictos seguidos -> 500.
+     * Si la fila ya no existe -> `null` (404). Tras [ADMIN_USER_UPDATE_ATTEMPTS] conflictos seguidos -> 500 INTERNAL.
+     *
+     * MASTER4-API-002: el agotamiento se lanzaba como `IllegalStateException`, que el `StatusPages` trata como fallo del
+     * UPSTREAM (502 UPSTREAM_ERROR, evento SUPABASE_REQUEST_FAILED) aunque PostgREST contestara bien en cada intento, y
+     * con un codigo fuera del catalogo congelado de D1-25. Ahora es `BackendDomainException` INTERNAL (500, declarado en
+     * D1-25), con un mensaje que nombra la contencion y sin fila de auditoria (nada se escribio).
      */
     fun updateUsuario(usuarioId: String, nombreMostrar: String): AdminV1UserDto? {
         // Ver `getUsuario`: se interpola en la URL de PostgREST, y aquí además en
@@ -5514,7 +5523,11 @@ class AdminV1Gateway private constructor(
             }
             // 0 filas: la fila desaparecio o cambio de version entre la lectura y la escritura -> releer.
         }
-        throw IllegalStateException("updateUsuario: la fila cambio en cada uno de los $ADMIN_USER_UPDATE_ATTEMPTS intentos.")
+        throw CanonicalErrorCode.INTERNAL.exception(
+            cause = ConcurrentModificationException(
+                "updateUsuario: la fila cambio en cada uno de los $ADMIN_USER_UPDATE_ATTEMPTS intentos (contencion, no fallo del upstream).",
+            ),
+        )
     }
 
     /**
@@ -5564,16 +5577,19 @@ class AdminV1Gateway private constructor(
             extra()
         }
         registrarAuditoria(ACTION_ROLES_SYNC_INTENT, "roles_usuario", usuarioId, antes = antes, despues = despues(), required = true)
-        try {
+        // MASTER4-OBS-001: `before` se lee ANTES del cerrojo consultivo de la RPC: dos sincronizaciones concurrentes podian
+        // auditar el mismo `antes` rancio. La intencion conserva esa foto (lo que el actor vio y se autorizo), pero el
+        // RESULTADO lleva los conjuntos que `admin_sync_roles_audited` (migracion 20260930101850) leyo BAJO el cerrojo:
+        // exactamente lo que esta sincronizacion reemplazo y lo que dejo.
+        val rpcBody = try {
             request(
                 "POST",
-                "/rest/v1/rpc/admin_sync_roles",
+                "/rest/v1/rpc/admin_sync_roles_audited",
                 buildJsonObject {
                     put("p_usuario_id", JsonPrimitive(usuarioId))
                     put("p_role_ids", JsonArray(requested.map(::JsonPrimitive)))
                     put("p_actor_id", actorId?.let { JsonPrimitive(it.validatedUuid("actorId")) } ?: JsonNull)
                 }.toString(),
-                prefer = "return=minimal",
             )
         } catch (failure: Exception) {
             // `rechazada`: la base rechazo la sincronizacion (error de dominio, nada cambio). `desconocido`: transporte o
@@ -5588,7 +5604,22 @@ class AdminV1Gateway private constructor(
             )
             throw failure
         }
-        registrarAuditoriaResultado(ACTION_ROLES_SYNCED, "roles_usuario", usuarioId, antes = antes, despues = despues())
+        // La sincronizacion YA se confirmo: una respuesta ilegible no la convierte en error. En ese caso el resultado dice
+        // explicitamente que sus conjuntos NO son los del cerrojo (`bajoCerrojo=false`: la foto previa y lo pedido).
+        val locked = runCatching { json.decodeFromString<RoleSyncLockedSets>(rpcBody) }.getOrNull()
+        if (locked == null) {
+            AuditLogger.warn("admin_sync_roles_audited answer undecodable; outcome audit falls back to the pre-lock snapshot registroId={}", usuarioId)
+        }
+        registrarAuditoriaResultado(
+            ACTION_ROLES_SYNCED, "roles_usuario", usuarioId,
+            antes = locked?.let { buildJsonObject { put("roleIds", JsonArray(it.antes.map(::JsonPrimitive))) } } ?: antes,
+            despues = buildJsonObject {
+                put("roleIds", JsonArray((locked?.despues ?: requested).map(::JsonPrimitive)))
+                put("roleIdsSolicitados", JsonArray(requested.map(::JsonPrimitive)))
+                requestId?.let { put("requestId", JsonPrimitive(it)) }
+                put("bajoCerrojo", JsonPrimitive(locked != null))
+            },
+        )
     }
 
     /**

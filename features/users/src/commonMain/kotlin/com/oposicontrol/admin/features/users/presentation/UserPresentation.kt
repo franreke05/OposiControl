@@ -198,6 +198,9 @@ fun userAccountStatusLabel(status: AccountStatus): String = when (status) {
     AccountStatus.UNKNOWN -> USER_NO_DATA
 }
 
+/** Bloqueada o con eliminación pendiente: pide atención (misma regla que la pastilla de escritorio). */
+fun userAccountStatusNeedsAttention(status: AccountStatus): Boolean = userAccountStatusTone(status) == UserPillTone.ATTENTION
+
 fun userAccountKindLabel(kind: UserAccountKind): String = when (kind) {
     UserAccountKind.REGISTRADO -> "Registrado"
     UserAccountKind.INVITADO -> "Invitado"
@@ -364,13 +367,16 @@ fun userEditorIsDirty(
 /**
  * Motivos por los que no se puede guardar. Lista vacía = se puede.
  *
- * El nombre es obligatorio porque `UpsertUserUseCase` lo rechaza en blanco. El
+ * El nombre es obligatorio salvo que el usuario ya no tuviera (`currentName` en
+ * blanco: edición «sólo roles»); `UpsertUserUseCase` aplica la misma regla. El
  * correo **ya no** se exige: la versión anterior lo pedía para poder guardar y
  * después el backend lo tiraba, así que bloqueaba el guardado de un usuario sin
  * username por un campo que no servía para nada.
  */
-fun userSaveBlockers(editorName: String): List<String> = buildList {
-    if (editorName.isBlank()) add("El nombre no puede estar vacío.")
+fun userSaveBlockers(editorName: String, currentName: String? = null): List<String> = buildList {
+    // MASTER4-API-001: un usuario SIN nombre puede guardar un cambio de roles dejando el nombre en blanco; vaciar un
+    // nombre existente (o no conocer el actual) sigue bloqueado, igual que el 400 REQUIRED del servidor.
+    if (editorName.isBlank() && currentName?.isBlank() != true) add("El nombre no puede estar vacío.")
 }
 
 /** Qué se va a escribir realmente al pulsar Guardar. Se dice antes, no después. */
@@ -396,22 +402,16 @@ fun userRoleSummary(user: User, rolesById: Map<String, Role>): String =
 /**
  * Aviso al conceder o retirar acceso administrativo.
  *
- * El texto describe lo que hoy es cierto **en ejecución**, y hoy la única
- * protección sigue siendo este aviso: la guarda de `admin_sync_roles` está
- * escrita y probada en `supabase/canonical/role_sync_guard_candidate_v1/`, pero
- * su estado es `APPLY_PENDING_APPROVAL` y **no se ha aplicado**.
- *
- * Hubo una versión de esta cadena que prometía «el sistema no permitirá
- * guardar…». Era falsa mientras la migración no estuviera aplicada, y de las dos
- * formas de equivocarse ésta es la peor: un aviso que promete una red inexistente
- * hace confiar en ella justo a quien se habría pensado dos veces el cambio.
- *
- * **Cuando el candidate se apruebe y se aplique**, este texto debe pasar a
- * anunciar el rechazo real del servidor — y no antes.
+ * La guarda de `admin_sync_roles` (`20260921071916 role_sync_guard`) está
+ * INSTALADA en MAIN: el servidor rechaza dejar la plataforma sin ningún
+ * superadministrador (409 `ROLE_SYNC_LAST_SUPERADMIN`, traducido en
+ * `BackendErrors.kt`). El aviso ya no es la única protección, pero sigue pidiendo
+ * revisar el cambio antes de confirmar. No promete más que eso: sólo se veta la
+ * transición de ≥1 a 0 superadministradores, no cualquier cambio de acceso.
  */
 const val USER_ADMIN_ROLE_WARNING: String =
     "Este cambio concede o retira acceso al panel de administración. Revísalo antes de " +
-        "confirmar: el sistema todavía no impide dejar la plataforma sin ningún superadministrador."
+        "confirmar: el servidor rechaza dejar la plataforma sin ningún superadministrador."
 
 /**
  * ¿El cambio de roles toca el acceso administrativo?

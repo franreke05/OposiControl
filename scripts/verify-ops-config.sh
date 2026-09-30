@@ -35,4 +35,10 @@ check "script de build de imagen existe, con set -euo pipefail y llama a la guar
   "test -f scripts/build-backend-image.sh && grep -q '^set -euo pipefail' scripts/build-backend-image.sh && grep -q '^bash scripts/assert-clean-tree.sh' scripts/build-backend-image.sh"
 check "guarda de arbol limpio: cambios, no rastreados y ignorados en arboles de codigo (MASTER3-SEC-002)" \
   "grep -q '^set -euo pipefail' scripts/assert-clean-tree.sh && grep -q 'git status --porcelain)' scripts/assert-clean-tree.sh && grep -q 'git status --porcelain --ignored' scripts/assert-clean-tree.sh && ! grep -q 'untracked-files=no' scripts/assert-clean-tree.sh"
+check "ci.yml: cancel-in-progress solo en pull_request (MASTER4-CICD-003)" \
+  "grep -Fq \"cancel-in-progress: \\\${{ github.event_name == 'pull_request' }}\" .github/workflows/ci.yml"
+check "guarda de arbol limpio: rechaza ignorados bajo src/ y la raiz solo por argumento (MASTER4-SEC-002)" \
+  "grep -q \"grep -E '^!! (.\\*/)?src/'\" scripts/assert-clean-tree.sh && ! grep -q 'CLEAN_TREE_ROOT' scripts/assert-clean-tree.sh"
+check "README de monitoring: el curl interno de /metrics envia el Bearer (MASTER4-CICD-004)" \
+  "grep -q 'Authorization: Bearer .(cat ops/monitoring/secrets/metrics_token)' ops/monitoring/README.md"
 exit $fail

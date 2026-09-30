@@ -392,7 +392,7 @@ class Loop2KtorRestTest {
     // ------------------------------------------------------------------ MASTER2-OPENAPI-006
 
     @Test
-    fun theNineLegacyAppRoutesCarryDeprecationAndOnlyRealSuccessorsCarryALink() = testApplication {
+    fun theNineLegacyAppRoutesCarryDeprecationAndNoLinkBecauseNoSuccessorIsRouted() = testApplication {
         val gateway = appGateway(CopyOnWriteArrayList())
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }

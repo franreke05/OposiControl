@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OSV_BATCH = 'https://api.osv.dev/v1/querybatch';
+const OSV_VULN = 'https://api.osv.dev/v1/vulns/';
 const TIMEOUT_MS = 20000;
 const RETRIES = 3;
 const BATCH_SIZE = 100;
@@ -62,11 +63,11 @@ export function parseGradleDependencies(text) {
   return { coordinates: [...found.values()], errors };
 }
 
-async function post(body) {
+async function osvRequest(url, init = {}) {
   let last;
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     try {
-      const response = await fetch(OSV_BATCH, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(TIMEOUT_MS) });
+      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) });
       if (response.ok) return await response.json();
       last = new Error(`OSV respondio ${response.status}`);
       if (response.status < 500 && response.status !== 429) break;
@@ -76,9 +77,18 @@ async function post(body) {
   throw new Error(`OSV no disponible tras ${RETRIES} intentos: ${last?.message ?? last}`);
 }
 
+const post = (body) => osvRequest(OSV_BATCH, { method: 'POST', body: JSON.stringify(body) });
+
+/** MASTER4-CICD-002: /v1/querybatch devuelve SOLO {id, modified} (sin aliases). Los alias (CVE <-> GHSA) salen de
+ *  GET /v1/vulns/{id}; se resuelven solo cuando hay ignoradas activas (la lista vacia no hace llamadas extra). */
+export async function fetchAliases(id) {
+  const vuln = await osvRequest(OSV_VULN + encodeURIComponent(id));
+  return Array.isArray(vuln?.aliases) ? vuln.aliases : [];
+}
+
 /** Devuelve, por coordenada, la lista de avisos { id, aliases } (sigue next_page_token). MASTER3-CICD-008: los alias
  *  (CVE-..., GHSA-...) se conservan para que una ignorada por CVE tambien suprima el aviso publicado con id GHSA. */
-export async function queryAll(coordinates) {
+export async function queryAll(coordinates, { resolveAliases = false } = {}) {
   const ids = coordinates.map(() => new Map());
   for (let start = 0; start < coordinates.length; start += BATCH_SIZE) {
     let pending = coordinates.slice(start, start + BATCH_SIZE).map((c, i) => ({ index: start + i, token: undefined, c }));
@@ -92,6 +102,16 @@ export async function queryAll(coordinates) {
         if (r.next_page_token) next.push({ ...pending[i], token: r.next_page_token });
       });
       pending = next;
+    }
+  }
+  if (resolveAliases) {
+    const cache = new Map();
+    for (const m of ids) {
+      for (const v of m.values()) {
+        if (v.aliases.length > 0) continue;
+        if (!cache.has(v.id)) cache.set(v.id, await fetchAliases(v.id));
+        v.aliases = cache.get(v.id);
+      }
     }
   }
   return ids.map((m) => [...m.values()]);
@@ -131,7 +151,7 @@ async function main() {
   const names = new Set(coordinates.map((c) => c.name));
   for (const expected of EXPECTED) if (!names.has(expected)) throw new Error(`el grafo resuelto no contiene ${expected}: se audito otra cosa`);
   const ignores = loadIgnores(join(root, 'scripts/osv-ignore.json'));
-  const results = await queryAll(coordinates);
+  const results = await queryAll(coordinates, { resolveAliases: ignores.size > 0 });
   let failed = false;
   coordinates.forEach((c, i) => {
     const open = results[i].filter((v) => !isIgnored(v, ignores));

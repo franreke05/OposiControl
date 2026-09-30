@@ -12,8 +12,9 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
 import io.ktor.server.routing.route
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -75,12 +76,24 @@ class OposiBotsUserAdminNotFoundException(message: String) : Exception(message)
  * de borrado diferido (DEC-008) está registrada en ARCHITECTURE_DELTA_S1.
  */
 internal object OposiBotsUserAdminLegacyEndpoints {
+    // MASTER4-API-004: el `id` legacy es un ENTERO de `public.usuario`; el canonico es un UUID, asi que no hay sucesor
+    // por-id direccionable: GET/PATCH apuntan a la coleccion canonica, y crear/borrar (sin equivalente canonico: el alta
+    // es por invitacion/Auth y el borrado es el comando diferido DEC-008) NO anuncian sucesor (`successorPath = null`).
+    // Mismo `endpointId` por recurso => un unico contador `legacy_route_requests_total{endpoint=...}`.
     val BOT_ADMIN_001 = LegacyEndpoint(
-        "BOT-ADMIN-001", "GET/POST", "/api/v1/admin/oposibots/usuarios", "/api/v1/admin/usuarios",
+        "BOT-ADMIN-001", "GET", "/api/v1/admin/oposibots/usuarios", "/api/v1/admin/usuarios",
+        LegacyEndpoints.SLICE_1_DEPRECATED_AT,
+    )
+    val BOT_ADMIN_001_POST = LegacyEndpoint(
+        "BOT-ADMIN-001", "POST", "/api/v1/admin/oposibots/usuarios", null,
         LegacyEndpoints.SLICE_1_DEPRECATED_AT,
     )
     val BOT_ADMIN_002 = LegacyEndpoint(
-        "BOT-ADMIN-002", "GET/PATCH/DELETE", "/api/v1/admin/oposibots/usuarios/{id}", "/api/v1/admin/usuarios/{id}",
+        "BOT-ADMIN-002", "GET/PATCH", "/api/v1/admin/oposibots/usuarios/{id}", "/api/v1/admin/usuarios",
+        LegacyEndpoints.SLICE_1_DEPRECATED_AT,
+    )
+    val BOT_ADMIN_002_DELETE = LegacyEndpoint(
+        "BOT-ADMIN-002", "DELETE", "/api/v1/admin/oposibots/usuarios/{id}", null,
         LegacyEndpoints.SLICE_1_DEPRECATED_AT,
     )
 }
@@ -134,7 +147,7 @@ fun Route.oposiBotsUserAdminRoutes(gateway: OposiBotsUserAdminGateway, policy: O
             }
             policy.auditOutcome(ACTION_CREATED, created.authUserId, created.auditDetail(requestId))
             call.respond(HttpStatusCode.Created, OposiBotsUserAdminSingleResponse(created.toResponseDto()))
-        }.legacyRoute(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_001)
+        }.legacyRoute(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_001_POST)
         patch("/{id}") {
             val id = call.parameters["id"]?.toIntOrNull() ?: throw IllegalArgumentException("id invalido.")
             val body = call.receive<OposiBotsUserAdminUpdateRequestBody>()
@@ -178,7 +191,7 @@ fun Route.oposiBotsUserAdminRoutes(gateway: OposiBotsUserAdminGateway, policy: O
             }
             policy.auditOutcome(ACTION_DELETED, target.authUserId, target.auditDetail(requestId))
             call.respond(HttpStatusCode.NoContent)
-        }.legacyRoute(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_002)
+        }.legacyRoute(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_002_DELETE)
     }
 }
 
@@ -209,21 +222,29 @@ private fun OposiBotsUserAdminUpdateRequestBody.changedFields(): List<String> = 
  * MASTER2-OBS-006: auditoria de RESULTADO, tras la mutacion ya hecha. Su fallo NO convierte una operacion completada
  * en error (la fila de intencion ya existe y un reintento no podria repetir la mutacion): se registra en ERROR con la
  * carga completa para poder reconstruir la fila a mano.
+ *
+ * MASTER4-IDEM-001: la escritura corre en NonCancellable (antes solo la del camino de FALLO): si la llamada se cancela
+ * (cliente desconectado) justo despues de una mutacion ya aplicada, la fila de intencion ya no queda sin su resultado.
+ * Tras escribirla se re-comprueba la cancelacion (`ensureActive`): la cancelacion se propaga, nunca se traga. Dentro
+ * del NonCancellable exterior del camino de fallo `ensureActive` no lanza y el error original se relanza tal cual.
  */
-private suspend fun OposiBotsUserAdminPolicy.auditOutcome(accion: String, authUserId: String?, detalle: JsonObject) {
-    try {
-        audit(accion, authUserId, detalle)
-    } catch (cancelled: CancellationException) {
-        throw cancelled
-    } catch (failure: Exception) {
-        LegacyUserAdminAuditLogger.error(
-            "legacy user admin outcome audit failed accion={} authUserId={} detalle={} error={}",
-            accion,
-            authUserId,
-            detalle.toString(),
-            failure::class.simpleName,
-        )
+internal suspend fun OposiBotsUserAdminPolicy.auditOutcome(accion: String, authUserId: String?, detalle: JsonObject) {
+    withContext(NonCancellable) {
+        try {
+            audit(accion, authUserId, detalle)
+        } catch (failure: Exception) {
+            // En NonCancellable una CancellationException solo puede venir del propio `audit` (p. ej. un timeout
+            // interno), no de la cancelacion de esta llamada: se registra como cualquier otro fallo de escritura.
+            LegacyUserAdminAuditLogger.error(
+                "legacy user admin outcome audit failed accion={} authUserId={} detalle={} error={}",
+                accion,
+                authUserId,
+                detalle.toString(),
+                failure::class.simpleName,
+            )
+        }
     }
+    currentCoroutineContext().ensureActive()
 }
 
 /**
