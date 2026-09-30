@@ -61,24 +61,26 @@ internal const val USERS_PAGE_LIMIT = 200
 internal const val USERS_MAX_OFFSET = 100_000
 
 /**
- * Recorre TODAS las paginas de D1-22 (antes: una sola llamada sin `limit`/`offset`, que truncaba la lista a 50 sin
- * avisar). Termina cuando una pagina viene corta o vacia, o cuando ya se leyeron `total` filas. Si `total` es null no se
- * da la lista por completa mientras las paginas vengan llenas.
+ * Recorre TODAS las paginas de D1-22. El offset avanza por las filas CRUDAS que devolvio el servidor (no por las que el
+ * cliente logra mapear: una fila sin `id` se descarta al mapear pero el servidor ya la conto). Termina cuando la pagina
+ * viene vacia o corta, o cuando ya se leyeron `total` filas. El resultado se deduplica por `id` (un insert concurrente
+ * desplaza las paginas y repetiria filas; `LazyColumn` revienta con claves duplicadas). Si se alcanza [USERS_MAX_OFFSET]
+ * sin haber terminado, la lista seria incompleta: se falla en voz alta en vez de truncar en silencio.
  */
 internal suspend fun collectAllUsers(fetchPage: suspend (limit: Int, offset: Int) -> AdminUsersV1Response): List<UserDto> {
-    val all = mutableListOf<UserDto>()
+    val all = LinkedHashMap<String, UserDto>()
     var offset = 0
     while (offset <= USERS_MAX_OFFSET) {
         val page = fetchPage(USERS_PAGE_LIMIT, offset)
-        val rows = page.toUserDtos()
-        if (rows.isEmpty()) break
-        all += rows
-        offset += rows.size
+        val rawCount = if (page.data.isNotEmpty()) page.data.size else page.items.size
+        if (rawCount == 0) return all.values.toList()
+        for (row in page.toUserDtos()) all.putIfAbsent(row.id, row)
+        offset += rawCount
         val pageSize = page.limit?.takeIf { it > 0 } ?: USERS_PAGE_LIMIT
-        if (rows.size < pageSize) break
-        if (page.total != null && offset >= page.total) break
+        if (rawCount < pageSize) return all.values.toList()
+        if (page.total != null && offset >= page.total) return all.values.toList()
     }
-    return all
+    error("lista de usuarios incompleta: se alcanzo el tope de offset $USERS_MAX_OFFSET sin llegar al final")
 }
 
 /**
@@ -99,7 +101,7 @@ private fun merge(canon: AdminUserV1Dto?, legacy: AdminUserV1Dto?): UserDto? {
         roleIds = c.roleIds.ifEmpty { l.roleIds },
         isActive = l.isActive,
         createdAt = c.createdAt?.ifBlank { null } ?: l.createdAt?.ifBlank { null },
-        ticketsBalance = c.ticketsBalance ?: l.ticketsBalance ?: 0,
+        ticketsBalance = c.ticketsBalance ?: l.ticketsBalance,
         accountStatus = status,
         username = c.username ?: l.username,
         authProviders = c.authProviders.ifEmpty { l.authProviders },

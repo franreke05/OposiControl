@@ -6,6 +6,7 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.domain.model.User
 import com.oposicontrol.admin.domain.repository.ModerationRepository
 import com.oposicontrol.admin.domain.repository.RolesRepository
 import com.oposicontrol.admin.domain.repository.UsersRepository
@@ -218,7 +219,7 @@ class UsersViewModel(
         val fresh = (usersRepository.getUser(userId) as? AppResult.Success)?.value ?: return
         updateState { state ->
             if (state.loadedUsers.none { it.id == fresh.id }) return@updateState state
-            state.copy(users = UiAsync.Success(state.loadedUsers.map { if (it.id == fresh.id) fresh else it }))
+            state.copy(users = UiAsync.Success(state.loadedUsers.map { if (it.id == fresh.id) fresh.keepingKnownFrom(it) else it }))
         }
     }
 
@@ -265,3 +266,15 @@ class UsersViewModel(
         }
     }
 }
+
+/**
+ * Una fila refrescada puede venir sin campos que la lista si trae (p. ej. `ticketsBalance`, ausente en `AdminUser`):
+ * lo que falta (null / vacio) se conserva de la fila previa en vez de sobrescribirlo con un dato fabricado.
+ */
+internal fun User.keepingKnownFrom(previous: User): User = copy(
+    ticketsBalance = ticketsBalance ?: previous.ticketsBalance,
+    fullName = fullName.ifBlank { previous.fullName },
+    email = email.ifBlank { previous.email },
+    createdAt = createdAt ?: previous.createdAt,
+    isRegistered = isRegistered ?: previous.isRegistered,
+)

@@ -12,7 +12,7 @@ data class UserDto(
     val isActive: Boolean?,
     /** Instante ISO; null si el backend no lo informa (no se fabrica una fecha). */
     val createdAt: String?,
-    val ticketsBalance: Int = 0,
+    val ticketsBalance: Int? = null,
     /** Wire `AccountStatus` (activa|bloqueada|eliminacion_pendiente); null si el backend no lo emite. */
     val accountStatus: String? = null,
     val username: String? = null,

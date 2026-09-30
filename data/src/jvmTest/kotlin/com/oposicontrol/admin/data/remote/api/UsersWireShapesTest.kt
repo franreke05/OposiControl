@@ -41,7 +41,7 @@ class UsersWireShapesTest {
         assertEquals(AccountStatus.BLOCKED, u.accountStatus)
         assertNull(u.isRegistered, "isActive is legacy-only: never derived from accountStatus")
         assertEquals("", u.email)
-        assertEquals(0, u.ticketsBalance)
+        assertNull(u.ticketsBalance, "sin cartera es null (Sin dato), no 0")
     }
 
     @Test fun `row present only in data stays unknown next to a listed one`() {

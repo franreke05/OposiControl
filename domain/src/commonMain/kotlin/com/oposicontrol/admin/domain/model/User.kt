@@ -30,7 +30,7 @@ data class User(
     val isRegistered: Boolean?,
     /** Null si el backend no lo informo o no es parseable: no se fabrica una fecha. */
     val createdAt: Instant?,
-    val ticketsBalance: Int = 0,
+    val ticketsBalance: Int? = null,
     val accountStatus: AccountStatus = AccountStatus.UNKNOWN,
     val username: String? = null,
     val authProviders: List<String> = emptyList(),

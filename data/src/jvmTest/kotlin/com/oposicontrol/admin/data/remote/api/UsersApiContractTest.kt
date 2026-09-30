@@ -20,7 +20,7 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.Json
+import com.oposicontrol.admin.core.network.AdminApiJson
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -31,7 +31,7 @@ class UsersApiContractTest {
 
     private fun page(from: Int, count: Int, total: Int?, limit: Int = USERS_PAGE_LIMIT, offset: Int = from) =
         AdminUsersV1Response(
-            items = (from until from + count).map { Json.decodeFromString<AdminUserV1Dto>(item(it)) },
+            items = (from until from + count).map { AdminApiJson.decodeFromString<AdminUserV1Dto>(item(it)) },
             total = total,
             limit = limit,
             offset = offset,
@@ -41,7 +41,7 @@ class UsersApiContractTest {
 
     @Test
     fun theWireEnvelopeKeepsTotalLimitAndOffset() {
-        val decoded = Json { ignoreUnknownKeys = true }.decodeFromString<AdminUsersV1Response>(
+        val decoded = AdminApiJson.decodeFromString<AdminUsersV1Response>(
             """{"items":[${item(1)}],"total":451,"limit":200,"offset":0}""",
         )
         assertEquals(451, decoded.total)
@@ -124,7 +124,7 @@ class UsersApiContractTest {
             val body = if (request.method == HttpMethod.Get) item(1).replace("00000000-0000-4000-8000-000000000001", id) else "{}"
             respond(ByteReadChannel(body), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }) {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            install(ContentNegotiation) { json(AdminApiJson) }
         }
         val api = UsersApi(client, config(), session())
 
@@ -132,10 +132,10 @@ class UsersApiContractTest {
 
         val patch = seen.single { it.first == HttpMethod.Patch }
         assertEquals("/api/v1/admin/usuarios/$id", patch.second)
-        assertEquals(setOf("nombreMostrar"), Json.parseToJsonElement(patch.third).jsonObject.keys, "additionalProperties:false: solo nombreMostrar")
-        assertEquals("Ana Lopez", Json.parseToJsonElement(patch.third).jsonObject["nombreMostrar"]!!.toString().trim('"'))
+        assertEquals(setOf("nombreMostrar"), AdminApiJson.parseToJsonElement(patch.third).jsonObject.keys, "additionalProperties:false: solo nombreMostrar")
+        assertEquals("Ana Lopez", AdminApiJson.parseToJsonElement(patch.third).jsonObject["nombreMostrar"]!!.toString().trim('"'))
         val roles = seen.single { it.second.endsWith("/roles") }
-        assertEquals(setOf("roleIds"), Json.parseToJsonElement(roles.third).jsonObject.keys)
+        assertEquals(setOf("roleIds"), AdminApiJson.parseToJsonElement(roles.third).jsonObject.keys)
     }
 
     @Test
@@ -145,7 +145,7 @@ class UsersApiContractTest {
             queries += request.url.encodedQuery
             respond(ByteReadChannel("""{"items":[],"total":0,"limit":200,"offset":0}"""), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         }) {
-            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+            install(ContentNegotiation) { json(AdminApiJson) }
         }
         UsersApi(client, config(), session()).getUsers()
         assertEquals(listOf("limit=200&offset=0"), queries)
