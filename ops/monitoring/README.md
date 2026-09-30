@@ -55,9 +55,20 @@ docker run --rm --network oposicontrol-deploy_default curlimages/curl:8.16.0 \
   --fail --silent http://oposicontrol-ktor:8080/metrics >/dev/null
 ```
 
-La regla equivalente de Caddy debe preceder al proxy general, por ejemplo un
-matcher exacto para `/metrics` con `respond 404`; no se deben abrir puertos
-adicionales.
+La regla de Caddy esta versionada en `ops/caddy/metrics-block.caddy`; se
+importa ANTES del proxy general. No se deben abrir puertos adicionales.
+
+### Token de scrape
+
+Ktor exige `Authorization: Bearer <METRICS_SCRAPE_TOKEN>` en `/metrics` cuando
+la variable no esta vacia (ver `.env.example`). Prometheus lo envia con
+`credentials_file: /etc/prometheus/secrets/metrics_token`, montado desde
+`ops/monitoring/secrets/metrics_token` (ignorado por git; crear antes de
+`docker compose up`, mismo valor que el backend). Orden de despliegue:
+1) fijar el token en el backend y crear el archivo, 2) levantar Prometheus con
+esta config, 3) comprobar el target `ktor` en `UP`. Con el token vacio el
+endpoint queda abierto (solo desarrollo); en produccion el token es obligatorio
+y el bloqueo publico de Caddy es defensa en profundidad.
 
 ## Actualizar
 

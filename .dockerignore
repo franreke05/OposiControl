@@ -1,0 +1,4 @@
+# El build context del backend es SOLO la distribucion instalada (`installDist`).
+# Ver ops/deploy/Dockerfile.backend y scripts/build-backend-image.sh.
+*
+!backend/ktor/build/install/ktor

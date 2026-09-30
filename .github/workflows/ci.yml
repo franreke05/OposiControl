@@ -1,0 +1,38 @@
+name: ci
+# Solo verificacion: sin despliegue y sin secretos.
+on:
+  pull_request:
+  push:
+    branches: [main, 'feature/**']
+permissions:
+  contents: read
+jobs:
+  ops-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/verify-ops-config.sh
+  # MASTER-SEC-014: SCA de las dependencias fijadas del backend contra OSV (sin secretos, sin dependencias nuevas).
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node scripts/osv-audit.mjs --self-test
+      - run: node scripts/osv-audit.mjs
+  openapi-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npx --yes @redocly/cli@latest lint openapi/root.yaml --config openapi/redocly.yaml
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest --rerun-tasks --no-build-cache

@@ -1,0 +1,9 @@
+# Finales de linea estables: los hashes documentados de migraciones se calculan
+# sobre el blob del indice (LF), no sobre el arbol de trabajo de Windows.
+* text=auto
+*.sh text eol=lf
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+supabase/migrations/*.sql text eol=lf
+supabase/**/*.sql text eol=lf
+ops/** text eol=lf

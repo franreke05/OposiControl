@@ -103,6 +103,8 @@ ENV JAVA_TOOL_OPTIONS="-Djava.awt.headless=true -XX:MaxRAMPercentage=70 -XX:+Exi
 #
 #     tmpfs:
 #       - /tmp:size=256m,mode=1777
+# MASTER-SEC-006: valor por defecto seguro; el despliegue fija APP_ENV explicitamente.
+ENV APP_ENV=production
 ENV TMPDIR=/tmp
 
 USER 10001:10001

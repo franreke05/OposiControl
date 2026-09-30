@@ -12,6 +12,7 @@ services:
       - --storage.tsdb.retention.size=5GB
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./secrets/metrics_token:/etc/prometheus/secrets/metrics_token:ro
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"

@@ -1,0 +1,11 @@
+# Snippet de ingress: /metrics NUNCA es publico. Debe ir ANTES del
+# reverse_proxy general del sitio api.oposibots.es.
+#
+#   api.oposibots.es {
+#       import /etc/caddy/metrics-block.caddy
+#       reverse_proxy oposicontrol-ktor:8080
+#   }
+#
+# Verificacion: ver ops/monitoring/README.md ("Seguridad del endpoint de metricas").
+@metrics path /metrics /metrics/*
+respond @metrics 404

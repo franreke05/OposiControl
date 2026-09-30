@@ -28,7 +28,7 @@
 #   - `ExitOnOutOfMemoryError` y `HEALTHCHECK`: cambian la semántica de fallo.
 #     No en el mismo despliegue que estrena cinco cambios funcionales.
 
-FROM eclipse-temurin:21-jre-jammy
+FROM eclipse-temurin:21-jre-jammy@sha256:e9aaf73145bbd1f9f6ec7f6867dd75a44f34b1a6c32a813504bf4129be2d09d7
 
 # ffmpeg ANTES de copiar la aplicación: esta capa no cambia entre despliegues y
 # se reaprovecha, mientras que la copia del binario cambia siempre.
@@ -63,6 +63,10 @@ USER app
 # con un X11 que aquí no existe — y ese fallo sería SILENCIOSO: las imágenes
 # dejarían de comprimirse cayendo por «formato no soportado», sin error.
 ENV JAVA_TOOL_OPTIONS="-Djava.awt.headless=true"
+
+# MASTER-SEC-006: falla cerrado. Sin APP_ENV el backend no arranca en modo desarrollo (captcha off, http, limiter en
+# memoria); el despliegue debe fijar APP_ENV explicitamente (production/staging) y esto es solo el valor por defecto seguro.
+ENV APP_ENV=production
 
 ENV HOST=0.0.0.0
 ENV PORT=8080
