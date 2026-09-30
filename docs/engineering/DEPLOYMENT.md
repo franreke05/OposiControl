@@ -11,7 +11,7 @@ El despliegue lo ejecuta un humano con el gate de produccion; nada de esto corre
 3. Verificar la version desplegada por la imagen, no por `/health` (hoy devuelve una cadena `build` fija):
    `docker inspect <contenedor> --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'`
    debe dar `oposicontrol-backend:<sha12>` y el commit completo esperado; ademas `/health/ready` = 200.
-   Slice 1 (migraciones `20260930100000..101730`): orden, hashes y clase de rollback en
+   Slice 1 (migraciones `20260930100000..101850`): orden, hashes y clase de rollback en
    `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` del repo OposiBot.
 
 ## Construir
@@ -53,7 +53,8 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
    `ops/caddy/metrics-block.caddy`); un `200` sin token significa que el bloqueo no esta activo y es un fallo del despliegue.
    MASTER2-SEC-002: el sitio del API importa tambien `ops/caddy/body-limit.caddy` (`request_body { max_size 2MB }` salvo
    multipart); Ktor rechaza ademas con 413 un `Content-Length` > 2 MB (`RequestBodyLimit`). Comprobar con un POST JSON de
-   3 MB a `/api/v1/app/eventos`: debe dar `413`.
+   3 MB a `/api/v1/app/eventos`: debe dar `413`. Excepcion (MASTER5-API-007): `/v1/auth/*` tiene su propio tope de 16 KB y
+   responde 400 `VALIDATION` (el estado declarado en `openapi/auth`), no el 413 de Ktor.
 
 ## Rollback
 

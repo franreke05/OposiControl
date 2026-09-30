@@ -9,7 +9,9 @@ Ktor en `oposicontrol-ktor:8080/metrics`.
 - Docker Engine con Compose v2.
 - El backend `oposicontrol-ktor` conectado a la red Docker externa
   `oposicontrol-deploy_default` y exponiendo `/metrics` dentro de esa red.
-- Ejecutar los comandos desde este directorio, o indicar siempre `-f`.
+- Todos los comandos de este documento se ejecutan desde la RAIZ del repositorio
+  (los comandos `docker compose` llevan `-f ops/monitoring/compose.yaml`; el nombre del
+  proyecto y del volumen los fija `name:` en el compose, no el directorio).
 
 Prometheus publica su interfaz únicamente en `127.0.0.1:9090`; no se debe abrir
 ese puerto en el firewall ni publicar `/metrics` mediante el proxy público.
@@ -17,13 +19,13 @@ ese puerto en el firewall ni publicar `/metrics` mediante el proxy público.
 ## Validar y levantar
 
 ```bash
-docker compose config --quiet
+docker compose -f ops/monitoring/compose.yaml config --quiet
 docker run --rm \
-  -v "$PWD/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+  -v "$PWD/ops/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
   --entrypoint promtool \
   prom/prometheus:v3.14.0 \
   check config /etc/prometheus/prometheus.yml
-docker compose up -d
+docker compose -f ops/monitoring/compose.yaml up -d
 ```
 
 Para comprobar los cuatro targets desde el propio servidor:
@@ -53,11 +55,15 @@ test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
 # Interno: debe ser accesible desde la red compartida. Con METRICS_SCRAPE_TOKEN
 # fijado (obligatorio en produccion) Ktor exige el Bearer: sin el responde 401 y
 # `--fail` haria fallar este paso en un despliegue correcto (MASTER4-CICD-004).
-# Ejecutar desde la raiz del repo; el token sale del mismo archivo que usa Prometheus.
-docker run --rm --network oposicontrol-deploy_default curlimages/curl:8.16.0 \
-  --fail --silent \
-  -H "Authorization: Bearer $(cat ops/monitoring/secrets/metrics_token)" \
-  http://oposicontrol-ktor:8080/metrics >/dev/null
+# Desde la raiz del repo. El token NO viaja en la linea de comandos (seria visible
+# en `ps`, `docker inspect` y el historial/auditoria del shell, MASTER5-SEC-002): se
+# monta el archivo de solo lectura (con el usuario que lo posee, para no relajar sus
+# permisos) y la cabecera se construye DENTRO del contenedor.
+docker run --rm --network oposicontrol-deploy_default \
+  --user "$(id -u):$(id -g)" \
+  -v "$PWD/ops/monitoring/secrets/metrics_token:/run/secrets/metrics_token:ro" \
+  --entrypoint sh curlimages/curl:8.16.0 -c \
+  'curl --fail --silent -H "Authorization: Bearer $(cat /run/secrets/metrics_token)" http://oposicontrol-ktor:8080/metrics >/dev/null'
 
 # Interno SIN token: debe dar 401 (un 200 significa endpoint abierto = token vacio en el backend).
 test "$(docker run --rm --network oposicontrol-deploy_default curlimages/curl:8.16.0 \
@@ -79,7 +85,7 @@ Ktor exige `Authorization: Bearer <METRICS_SCRAPE_TOKEN>` en `/metrics` cuando
 la variable no esta vacia (ver `.env.example`). Prometheus lo envia con
 `credentials_file: /etc/prometheus/secrets/metrics_token`, montado desde
 `ops/monitoring/secrets/metrics_token` (ignorado por git; crear antes de
-`docker compose up`, mismo valor que el backend). Orden de despliegue:
+`docker compose -f ops/monitoring/compose.yaml up`, mismo valor que el backend). Orden de despliegue:
 1) fijar el token en el backend y crear el archivo, 2) levantar Prometheus con
 esta config, 3) comprobar el target `ktor` en `UP`. Con el token vacio el
 endpoint queda ABIERTO: el codigo aun no falla cerrado (B-22, se hara tras desplegar el scrape con token).
@@ -90,9 +96,9 @@ publico de Caddy (`ops/caddy/metrics-block.caddy`), que se comprueba tras cada d
 ## Actualizar
 
 ```bash
-docker compose pull
-docker compose up -d
-docker compose ps
+docker compose -f ops/monitoring/compose.yaml pull
+docker compose -f ops/monitoring/compose.yaml up -d
+docker compose -f ops/monitoring/compose.yaml ps
 ```
 
 Las imágenes están fijadas a versiones concretas; actualizar una versión exige

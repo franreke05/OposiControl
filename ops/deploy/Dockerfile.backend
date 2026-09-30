@@ -54,7 +54,11 @@ WORKDIR /app
 
 COPY backend/ktor/build/install/ktor/ /app/
 
-RUN chown -R app:app /app
+# MASTER5-SEC-003: el codigo y los jars de /app son de root y NO escribibles por el usuario de ejecucion (antes
+# `chown -R app:app /app`: una RCE en la JVM podia reescribir sus propios jars). El backend no escribe bajo /app: los
+# temporales de ffmpeg van a /tmp (Files.createTempFile) y no hay appender de fichero. `go-w` garantiza que ni el grupo
+# ni otros escriban aunque el contexto de build traiga permisos laxos; `a+rX` mantiene legible y ejecutable bin/ktor.
+RUN chmod -R go-w,a+rX /app
 
 USER app
 

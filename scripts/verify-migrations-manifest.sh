@@ -17,4 +17,11 @@ if [ "$actual" != "$expected" ]; then
   diff <(echo "$expected") <(echo "$actual")
   exit 1
 fi
+# MASTER5-CICD-003: el rango que cita el runbook de despliegue debe terminar en la ULTIMA migracion del manifiesto.
+dep=docs/engineering/DEPLOYMENT.md
+last="$(echo "$expected" | tail -1 | cut -d_ -f1)"
+if [ -f "$dep" ] && ! grep -qF "20260930100000..${last#20260930}" "$dep"; then
+  echo "FAIL: $dep no cita el rango 20260930100000..${last#20260930} (ultima migracion del manifiesto)"
+  exit 1
+fi
 echo "ok:   manifiesto Slice 1 == migraciones 2026093* ($(echo "$actual" | wc -l | tr -d ' '))"

@@ -46,4 +46,7 @@ mutate "ci.yml cancel-in-progress incondicional (MASTER4-CICD-003)" .github/work
 mutate "guarda acepta ignorados bajo src/ (MASTER4-SEC-002)" scripts/assert-clean-tree.sh "s/grep -E '\^!! (\.\*\/)?src\//grep -E '^!! (.*\/)?zzz\//" "rechaza ignorados bajo src"
 mutate "guarda vuelve a leer CLEAN_TREE_ROOT (MASTER4-SEC-002)" scripts/assert-clean-tree.sh 's/^cd "\${1:-/cd "${CLEAN_TREE_ROOT:-/' "rechaza ignorados bajo src"
 mutate "README sin Bearer en el curl interno (MASTER4-CICD-004)" ops/monitoring/README.md '/Authorization: Bearer/d' "curl interno de /metrics envia el Bearer"
+mutate "README vuelve a pasar el token en la linea de comandos (MASTER5-SEC-002)" ops/monitoring/README.md '$a docker run curlimages/curl -H "Authorization: Bearer $(cat ops/monitoring/secrets/metrics_token)" x' "el token nunca se lee en el host"
+mutate "README vuelve a pedir el directorio del stack (MASTER5-SEC-002)" ops/monitoring/README.md 's#RAIZ del repositorio#directorio del stack#' "unico directorio de trabajo"
+mutate "README con docker compose sin -f (MASTER5-SEC-002)" ops/monitoring/README.md '0,/^docker compose -f ops\/monitoring\/compose.yaml up -d/s##docker compose up -d#' "unico directorio de trabajo"
 echo "verify-ops-config.test OK ($n mutaciones)"

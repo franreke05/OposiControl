@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 bash scripts/verify-migrations-manifest.sh >/dev/null || { echo "TEST FAIL: el repo deberia pasar"; exit 1; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 n=0
-fresh() { n=$((n + 1)); w="$tmp/w$n"; mkdir -p "$w/supabase/migrations" "$w/scripts"; cp supabase/SLICE1_MIGRATIONS.txt "$w/supabase/"; cp scripts/verify-migrations-manifest.sh "$w/scripts/"
+fresh() { n=$((n + 1)); w="$tmp/w$n"; mkdir -p "$w/supabase/migrations" "$w/scripts"; cp supabase/SLICE1_MIGRATIONS.txt "$w/supabase/"; cp scripts/verify-migrations-manifest.sh "$w/scripts/"; mkdir -p "$w/docs/engineering"; cp docs/engineering/DEPLOYMENT.md "$w/docs/engineering/"
   while IFS= read -r s; do [ -n "$s" ] && : > "$w/supabase/migrations/$s.sql"; done < supabase/SLICE1_MIGRATIONS.txt; }
 expect_fail() { MIG_ROOT="$w" bash "$w/scripts/verify-migrations-manifest.sh" >"$tmp/out" 2>&1 && { echo "TEST FAIL: $1 paso"; exit 1; }; grep -q '^FAIL:' "$tmp/out" || { echo "TEST FAIL: $1 sin FAIL"; exit 1; }; }
 fresh; MIG_ROOT="$w" bash "$w/scripts/verify-migrations-manifest.sh" >/dev/null || { echo "TEST FAIL: copia coincidente deberia pasar"; exit 1; }
@@ -15,4 +15,5 @@ fresh; echo "20260930109999_solo_manifiesto" >> "$w/supabase/SLICE1_MIGRATIONS.t
 fresh; : > "$w/supabase/SLICE1_MIGRATIONS.txt"; expect_fail "manifiesto vacio"
 fresh; rm "$w/supabase/SLICE1_MIGRATIONS.txt"; expect_fail "manifiesto ausente"
 fresh; rm "$w"/supabase/migrations/*.sql; expect_fail "directorio sin migraciones"
+fresh; sed -i 's/20260930100000..101850/20260930100000..101730/' "$w/docs/engineering/DEPLOYMENT.md"; cmp -s "$w/docs/engineering/DEPLOYMENT.md" docs/engineering/DEPLOYMENT.md && { echo "TEST FAIL: mutacion vacua"; exit 1; }; expect_fail "DEPLOYMENT con rango antiguo (MASTER5-CICD-003)"
 echo "verify-migrations-manifest.test OK ($n escenarios)"
