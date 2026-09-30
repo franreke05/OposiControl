@@ -196,8 +196,10 @@ class AdminRoleSyncSuperadminAndAuditTest {
         val stub = Stub().apply { auditStatus = 500 }
         application { module(stub) }
         val response = syncRoles(superActor, plainUser, roleUser, roleAdmin)
-        assertEquals(HttpStatusCode.BadGateway, response.status, response.bodyAsText())
-        assertEquals("UPSTREAM_ERROR", response.code())
+        // MASTER5-API-004 (cambio DELIBERADO): antes 502 UPSTREAM_ERROR, fuera del catalogo congelado de D1-26; una
+        // auditoria obligatoria que no se escribe es un fallo del servidor: 500 INTERNAL (declarado).
+        assertEquals(HttpStatusCode.InternalServerError, response.status, response.bodyAsText())
+        assertEquals("INTERNAL", response.code())
         // MASTER3-OBS-001: la fila obligatoria es la de INTENCION y va antes: sin ella los roles NO cambian.
         assertEquals(0, stub.rpcCalls(), "sin auditoria de intencion no se llama a admin_sync_roles")
     }

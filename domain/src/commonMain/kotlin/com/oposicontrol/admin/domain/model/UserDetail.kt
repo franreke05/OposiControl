@@ -33,8 +33,10 @@ data class UserProfile(
     val username: String? = null,
     val specialtyId: String? = null,
     val communityId: String? = null,
-    val isGuest: Boolean = false,
-    val onboardingCompleted: Boolean = false,
+    /** null = el backend no lo informo (no se asume false). */
+    val isGuest: Boolean? = null,
+    /** null = el backend no lo informo: la UI dice "Sin dato" en vez de "Pendiente". */
+    val onboardingCompleted: Boolean? = null,
     val createdAt: String? = null,
     val accountStatus: AccountStatus = AccountStatus.UNKNOWN,
     val authProviders: List<String> = emptyList(),

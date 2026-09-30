@@ -2,6 +2,7 @@ package com.oposicontrol.backend
 
 import io.ktor.http.HttpHeaders
 import io.ktor.server.application.ApplicationCall
+import io.ktor.util.AttributeKey
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -135,7 +136,8 @@ class CanonicalIdentityResolver(
     private val verifyClaims: ((String) -> VerifiedJwtClaims)? = null,
 ) {
     /** 401 UNAUTHENTICATED si falta el Bearer o no verifica. */
-    suspend fun userId(call: ApplicationCall): CanonicalUserId = verifiedClaims(call).let { CanonicalUserId.fromJwtSubject(it.subject) }
+    suspend fun userId(call: ApplicationCall): CanonicalUserId =
+        verifiedClaims(call).let { CanonicalUserId.fromJwtSubject(it.subject) }.also(call::rememberVerifiedCanonicalUserId)
 
     /** Claims del JWT ya verificado (misma verificacion y mismos errores que [userId]). */
     suspend fun verifiedClaims(call: ApplicationCall): VerifiedJwtClaims {
@@ -150,10 +152,12 @@ class CanonicalIdentityResolver(
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             // MASTER-QUALITY-003: la cancelacion no es un token invalido; se propaga (no se convierte en 401).
             throw cancelled
-        } catch (_: java.io.IOException) {
+        } catch (unavailable: java.io.IOException) {
             // RB-1-06: JWKS caido / timeout no es un token invalido: 503 (reintentable), no 401 (que cerraria sesion).
-            throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
-        } catch (_: Exception) {
+            // MASTER5-OBS-002: con la causa, para que StatusPages registre el motivo real ("JWKS HTTP 500", timeout...).
+            throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(cause = unavailable)
+        } catch (rejected: Exception) {
+            logJwtRejected("canonical", rejected)
             throw CanonicalErrorCode.UNAUTHENTICATED.exception()
         }
     }
@@ -203,13 +207,27 @@ class CanonicalIdentityResolver(
         beforeLookup: suspend (CanonicalUserId) -> Unit = {},
     ): DeletionIdentity {
         val claims = verifiedClaims(call)
-        val userId = CanonicalUserId.fromJwtSubject(claims.subject)
+        val userId = CanonicalUserId.fromJwtSubject(claims.subject).also(call::rememberVerifiedCanonicalUserId)
         // MASTER-SEC-010: el limite por usuario va antes de la lectura del perfil (ver [activeIdentity]).
         beforeLookup(userId)
         val identity = directory.find(userId) ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
         return DeletionIdentity(identity.requireActiveOrDeletionPending(), claims)
     }
 }
+
+/**
+ * MASTER5-OBS-004: el id canonico YA VERIFICADO de la peticion, para que la telemetria de denegacion (401/403 de
+ * dominio que responden StatusPages o el plano `/v1/auth`) lleve el sujeto. Solo se guarda tras verificar la firma:
+ * nunca un `sub` sin verificar.
+ */
+private val VerifiedCanonicalUserIdKey = AttributeKey<String>("oc-verified-canonical-user-id")
+
+private fun ApplicationCall.rememberVerifiedCanonicalUserId(userId: CanonicalUserId) {
+    attributes.put(VerifiedCanonicalUserIdKey, userId.value)
+}
+
+/** El id canonico verificado de la peticion, o `null` si ninguna ruta llego a verificarlo. */
+internal fun ApplicationCall.verifiedCanonicalUserIdOrNull(): String? = attributes.getOrNull(VerifiedCanonicalUserIdKey)
 
 /** Identidad de la ruta de borrado + los claims del JWT que la autenticaron. */
 data class DeletionIdentity(val identity: CanonicalUserIdentity, val claims: VerifiedJwtClaims)

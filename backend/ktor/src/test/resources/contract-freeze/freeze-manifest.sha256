@@ -1,5 +1,5 @@
 # MASTER3-OPENAPI-001: sha256 (LF-normalised) of every file under openapi/ at the CONTRACT_FREEZE state (Gate B-E amendments FA1..FA5
-# plus FA6 = MASTER2-API-002 text change in profiles.yaml and errors.yaml). A contract edit, committed or not, changes a hash and
+# plus FA6 = MASTER2-API-002 text change in profiles.yaml and errors.yaml, plus FA7 = MASTER5-OPENAPI-001 ETag response header on D1-11/12/13 in profiles.yaml). A contract edit, committed or not, changes a hash and
 # fails OpenApiFreezeManifestTest; the amendment is then recorded in CONTRACT_FREEZE.md (OposiBot repo) and this manifest updated
 # in the same change.
 73f17c2f9e8dfdeabc86bc888fe9c65ea6cc54bb2031b8b18e9ecf28cc9221e6  openapi/.redocly.lint-ignore.yaml
@@ -12,6 +12,6 @@ c4e495de9a0b57eaf7ea98e83a67d39028f71fbf18bb56348cc4931a599d6d2c  openapi/common
 fffa4e95f978756b96c35be08a246ac2e78984347c0767156472577a34de961b  openapi/common/pagination.yaml
 ed705987221b28107e778426111b162e5185c474cb8be997e380d149fc710e76  openapi/entitlements/entitlements.yaml
 7ef1cf767e663594d7c42eb18b07324ef08689ea4365e37d14cce8ff49c53e62  openapi/foundation/foundation.yaml
-dd33162e635597e25acd133ab28a68d09a3865ee344e4744f882b69e3465e514  openapi/profiles/profiles.yaml
+55925618322f0b0a35a7dd3623fa212ff672af456f3a8b3bcf39676298aaf1aa  openapi/profiles/profiles.yaml
 62e9bf4515e705e0a68eee5e1f31f94adab70eb63c944d733087c15672c779e0  openapi/redocly.yaml
 ceb3a4a2ded8bcceefd0e39a788d1d1244e8932b0f77b58f4c55de396bd01a25  openapi/root.yaml

@@ -194,8 +194,13 @@ internal suspend fun verifiedJwtPrincipalOrNull(
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (unavailable: java.io.IOException) {
-        throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(retryAfterSeconds = JWKS_UNAVAILABLE_RETRY_AFTER_SECONDS)
-    } catch (_: Exception) {
+        // MASTER5-OBS-002: la causa viaja para que StatusPages registre el motivo real del 503 (redactado).
+        throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(
+            retryAfterSeconds = JWKS_UNAVAILABLE_RETRY_AFTER_SECONDS,
+            cause = unavailable,
+        )
+    } catch (rejected: Exception) {
+        logJwtRejected("gateway-auth", rejected)
         null
     }
 

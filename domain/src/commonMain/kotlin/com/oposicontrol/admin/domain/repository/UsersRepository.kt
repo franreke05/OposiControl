@@ -16,7 +16,12 @@ interface UsersRepository {
      */
     fun observeUsers(): Flow<AppResult<List<User>>>
     suspend fun getUser(userId: String): AppResult<User>
-    suspend fun upsertUser(user: User): AppResult<User>
+    /**
+     * [previous] es la fila tal y como la vio el editor antes de tocarla. Con ella el guardado solo escribe lo que cambio
+     * (MASTER5-API-009): una edicion de nombre no repone el conjunto de roles (posiblemente viejo) ni al reves. `null` =
+     * desconocido: se escribe todo.
+     */
+    suspend fun upsertUser(user: User, previous: User? = null): AppResult<User>
     suspend fun deleteUser(userId: String): AppResult<Unit>
 
     /** Ficha completa: perfil, rendimiento, competitivo, economía y comunidad. */

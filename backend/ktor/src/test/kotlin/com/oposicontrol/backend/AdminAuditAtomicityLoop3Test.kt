@@ -266,7 +266,9 @@ class AdminAuditAtomicityLoop3Test {
                 else -> V1StubResponse(200, "[]")
             }
         }
-        assertFailsWith<IllegalStateException> { g.grantTickets(u1, 5, "premio", "ajuste", "key-1") }
+        // MASTER5-API-004 (cambio DELIBERADO): la auditoria obligatoria fallida es 500 INTERNAL, no IllegalStateException (502).
+        val failure = assertFailsWith<BackendDomainException> { g.grantTickets(u1, 5, "premio", "ajuste", "key-1") }
+        assertEquals(CanonicalErrorCode.INTERNAL.name, failure.errorCode)
     }
 
     @Test
@@ -275,7 +277,9 @@ class AdminAuditAtomicityLoop3Test {
         val g = gateway(sent) { _, uri ->
             if ("/rest/v1/auditoria_log" in uri) V1StubResponse(409, """{"code":"23505","message":"dup"}""") else V1StubResponse(200, "[]")
         }
-        assertFailsWith<IllegalStateException> { g.registrarAuditoria("otra", "t", u1, required = true) }
+        // MASTER5-API-004 (cambio DELIBERADO): sigue siendo un fallo, ahora 500 INTERNAL en vez de IllegalStateException.
+        val failure = assertFailsWith<BackendDomainException> { g.registrarAuditoria("otra", "t", u1, required = true) }
+        assertEquals(CanonicalErrorCode.INTERNAL.name, failure.errorCode)
     }
 
     // ------------------------------------------------------------------ MASTER3-OBS-002 (intenciones legacy)

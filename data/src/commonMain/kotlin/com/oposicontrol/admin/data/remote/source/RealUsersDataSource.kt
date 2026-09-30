@@ -32,9 +32,9 @@ class RealUsersDataSource(
         }
     }
 
-    override suspend fun upsertUser(user: User): AppResult<User> {
+    override suspend fun upsertUser(user: User, previous: User?): AppResult<User> {
         return adapter.safeCall {
-            api.upsertUser(user.toDto()).toDomain()
+            api.upsertUser(user.toDto(), previous?.toDto()).toDomain()
         }
     }
 

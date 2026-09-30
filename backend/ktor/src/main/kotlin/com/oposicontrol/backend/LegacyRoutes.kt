@@ -54,13 +54,16 @@ object LegacyEndpoints {
     val SLICE_0_DEPRECATED_AT: Instant = Instant.parse("2026-09-28T00:00:00Z")
 
     val EP_046 = LegacyEndpoint("EP-046", "GET", "/api/v1/admin/dashboard", "/api/v1/admin/dashboard/overview", SLICE_0_DEPRECATED_AT)
-    val EP_015 = LegacyEndpoint("EP-015", "DELETE", "/content/noticias/{noticiaId}", "/api/v1/admin/noticias/{noticiaId}", SLICE_0_DEPRECATED_AT)
-    val EP_025 = LegacyEndpoint("EP-025", "GET", "/admin/news-types", "/api/v1/admin/tipos-noticia", SLICE_0_DEPRECATED_AT)
-    val EP_111 = LegacyEndpoint("EP-111", "GET", "/content/noticias", "/api/v1/admin/noticias", SLICE_0_DEPRECATED_AT)
-    val EP_145 = LegacyEndpoint("EP-145", "POST", "/admin/news-types", "/api/v1/admin/tipos-noticia/{codigo}", SLICE_0_DEPRECATED_AT)
-    val EP_199 = LegacyEndpoint("EP-199", "POST", "/content/noticias", "/api/v1/admin/noticias", SLICE_0_DEPRECATED_AT)
-    val EP_200 = LegacyEndpoint("EP-200", "POST", "/content/noticias/assets", "/api/v1/admin/noticias/assets", SLICE_0_DEPRECATED_AT)
-    val EP_229 = LegacyEndpoint("EP-229", "PUT", "/content/noticias", "/api/v1/admin/noticias/{noticiaId}", SLICE_0_DEPRECATED_AT)
+    // MASTER5-OPENAPI-002: las sucesoras de noticias/tipos-noticia (/api/v1/admin/noticias, /tipos-noticia) NO existen
+    // como ruta ni en el OpenAPI congelado (TARGET futuro); sin sucesora direccionable no se anuncia `Link` (igual que APP-*).
+    // EP-046 y EP-144 si tienen sucesora ruteada en AdminV1Routes.
+    val EP_015 = LegacyEndpoint("EP-015", "DELETE", "/content/noticias/{noticiaId}", null, SLICE_0_DEPRECATED_AT)
+    val EP_025 = LegacyEndpoint("EP-025", "GET", "/admin/news-types", null, SLICE_0_DEPRECATED_AT)
+    val EP_111 = LegacyEndpoint("EP-111", "GET", "/content/noticias", null, SLICE_0_DEPRECATED_AT)
+    val EP_145 = LegacyEndpoint("EP-145", "POST", "/admin/news-types", null, SLICE_0_DEPRECATED_AT)
+    val EP_199 = LegacyEndpoint("EP-199", "POST", "/content/noticias", null, SLICE_0_DEPRECATED_AT)
+    val EP_200 = LegacyEndpoint("EP-200", "POST", "/content/noticias/assets", null, SLICE_0_DEPRECATED_AT)
+    val EP_229 = LegacyEndpoint("EP-229", "PUT", "/content/noticias", null, SLICE_0_DEPRECATED_AT)
     val EP_144 = LegacyEndpoint("EP-144", "POST", "/admin/moderation/actions", "/api/v1/admin/moderacion/actions", SLICE_0_DEPRECATED_AT)
 
     val SLICE_0: List<LegacyEndpoint> = listOf(EP_046, EP_015, EP_025, EP_111, EP_145, EP_199, EP_200, EP_229, EP_144)
@@ -119,7 +122,7 @@ internal object LegacyHeaders {
     /**
      * RFC 8288: el destino es una URI-Reference; una plantilla OpenAPI (`{noticiaId}`) no lo es. MASTER4-API-004: ya no se
      * trunca al primer `{` (eso anunciaba una coleccion que no es la sucesora del recurso). Cada variable se sustituye por
-     * su valor real (codificado como segmento de ruta) tomado de [params]; si alguna no se puede resolver (la ruta legacy
+     * su valor real (codificado como segmento de ruta) tomado de [params] (MASTER5-API-003: SOLO parametros de RUTA, nunca de query: la query la controla el llamador); si alguna no se puede resolver (la ruta legacy
      * no la lleva en la URL, p.ej. va en el cuerpo) NO hay sucesor direccionable y se devuelve null (sin `Link`).
      */
     fun successorLink(path: String, params: (String) -> String? = { null }): String? {
@@ -157,7 +160,7 @@ val LegacyRoute = createRouteScopedPlugin("LegacyRoute", ::LegacyRouteConfig) {
         counter.increment()
         // Antes del handler: tambien las respuestas de error (StatusPages) las llevan.
         call.response.header(LegacyHeaders.DEPRECATION, deprecation)
-        successor?.let { path -> LegacyHeaders.successorLink(path) { call.parameters[it] } }
+        successor?.let { path -> LegacyHeaders.successorLink(path) { call.pathParameterValue(it) } }
             ?.let { call.response.header(HttpHeaders.Link, it) }
         sunset?.let { call.response.header(LegacyHeaders.SUNSET, it) }
     }
@@ -193,4 +196,15 @@ class LegacyAdapter<LegacyIn, CanonicalIn, CanonicalOut, LegacyOut>(
     private val toLegacy: (CanonicalOut) -> LegacyOut,
 ) {
     suspend operator fun invoke(input: LegacyIn): LegacyOut = toLegacy(canonical(toCanonical(input)))
+}
+
+/**
+ * MASTER5-API-003: valor de un parametro de RUTA. `call.parameters` de Ktor 2 mezcla ruta Y query, y con un nombre repetido
+ * `call.parameters[name]` puede devolver el de la query (controlado por el llamador). Las ocurrencias que NO son de la
+ * query son las de la ruta: a los valores de `call.parameters` se les resta, una a una, los de `queryParameters`.
+ */
+internal fun io.ktor.server.application.ApplicationCall.pathParameterValue(name: String): String? {
+    val remaining = parameters.getAll(name).orEmpty().toMutableList()
+    request.queryParameters.getAll(name).orEmpty().forEach { remaining.remove(it) }
+    return remaining.firstOrNull()
 }

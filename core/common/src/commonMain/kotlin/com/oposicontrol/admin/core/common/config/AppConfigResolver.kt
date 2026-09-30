@@ -1,9 +1,21 @@
 package com.oposicontrol.admin.core.common.config
 
 object AppConfigResolver {
-    fun resolve(source: RuntimeConfigSource): AppConfig {
+    fun resolve(rawSource: RuntimeConfigSource): AppConfig {
+        // MASTER5-OC-005: un valor en blanco (p. ej. `BASE_URL=` en .env) es AUSENTE, no "configurado": ni pasa la
+        // validacion de DEV ni impide el defecto. Se normaliza aqui para TODAS las fuentes (JVM, Android, tests).
+        val source = object : RuntimeConfigSource {
+            override fun read(key: String): String? = rawSource.read(key)?.trim()?.ifBlank { null }
+        }
         val environment = Environment.from(source.read(KEY_APP_ENV))
-        val baseUrl = source.read(KEY_BASE_URL) ?: defaultBaseUrlFor(environment)
+        // STAGING/PROD fallan cerrado: sin BASE_URL explicito no se inventa un host (los *.local no enrutan y
+        // esconderian una mala configuracion hasta la primera llamada). Solo DEV tiene defecto (localhost).
+        val baseUrl = source.read(KEY_BASE_URL)
+            ?: if (environment == Environment.DEV) {
+                DEV_DEFAULT_BASE_URL
+            } else {
+                throw IllegalArgumentException("BASE_URL es obligatorio en ${environment.name.lowercase()}.")
+            }
         requireSecureUrl("BASE_URL", baseUrl, environment)
         val supabaseUrl = source.read(KEY_SUPABASE_URL).orEmpty().trimEnd('/')
         if (supabaseUrl.isNotBlank()) {
@@ -29,17 +41,11 @@ object AppConfigResolver {
 
     private fun requireSecureUrl(key: String, value: String, environment: Environment) {
         if (environment == Environment.DEV) return
-        require(value.startsWith("https://")) { "$key debe usar HTTPS en ${environment.name.lowercase()}." }
+        require(value.startsWith("https://", ignoreCase = true)) { "$key debe usar HTTPS en ${environment.name.lowercase()}." }
         require(!value.contains("localhost", ignoreCase = true)) { "$key no puede apuntar a localhost en ${environment.name.lowercase()}." }
     }
 
-    private fun defaultBaseUrlFor(environment: Environment): String {
-        return when (environment) {
-            Environment.DEV -> "http://localhost:8080"
-            Environment.STAGING -> "https://staging.api.oposicontrol.local"
-            Environment.PROD -> "https://api.oposicontrol.local"
-        }
-    }
+    private const val DEV_DEFAULT_BASE_URL = "http://localhost:8080"
 
     const val KEY_APP_ENV = "APP_ENV"
     const val KEY_BASE_URL = "BASE_URL"

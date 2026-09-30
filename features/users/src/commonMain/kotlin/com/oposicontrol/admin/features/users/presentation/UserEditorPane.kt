@@ -126,10 +126,13 @@ internal fun UserBasicInfoCard(
             UserRowDivider()
             UserInfoRowSlot(label = "Onboarding") {
                 when (detail) {
-                    is UiAsyncDetail.Loaded -> UserPill(
-                        text = if (detail.detail.profile.onboardingCompleted) "Completo" else "Pendiente",
-                        tone = if (detail.detail.profile.onboardingCompleted) UserPillTone.POSITIVE else UserPillTone.ATTENTION,
-                    )
+                    is UiAsyncDetail.Loaded -> when (val done = detail.detail.profile.onboardingCompleted) {
+                        null -> Text(text = USER_NO_DATA, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
+                        else -> UserPill(
+                            text = if (done) "Completo" else "Pendiente",
+                            tone = if (done) UserPillTone.POSITIVE else UserPillTone.ATTENTION,
+                        )
+                    }
                     UiAsyncDetail.Loading -> UserLoadingNote()
                     UiAsyncDetail.Failed -> UserUnavailable()
                     UiAsyncDetail.Missing -> Text(text = NO_DATA_TEXT, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)

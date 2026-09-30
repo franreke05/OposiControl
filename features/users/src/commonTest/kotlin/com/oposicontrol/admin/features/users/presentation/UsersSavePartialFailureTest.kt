@@ -34,7 +34,7 @@ class UsersSavePartialFailureTest {
         var getUserCalls = 0
         override fun observeUsers(): Flow<AppResult<List<User>>> = flowOf(AppResult.Success(listOf(listed)))
         override suspend fun getUser(userId: String): AppResult<User> { getUserCalls++; return AppResult.Success(server) }
-        override suspend fun upsertUser(user: User): AppResult<User> {
+        override suspend fun upsertUser(user: User, previous: User?): AppResult<User> {
             // El PATCH del nombre llego al servidor, los roles no.
             server = server.copy(fullName = user.fullName)
             return AppResult.Failure(AppError.Network("roles 500"))

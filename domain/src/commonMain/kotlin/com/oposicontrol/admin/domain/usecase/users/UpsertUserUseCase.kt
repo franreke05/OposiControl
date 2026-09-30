@@ -13,8 +13,9 @@ class UpsertUserUseCase(
      * ya estaba en blanco (edicion "solo roles" de un usuario sin nombre, MASTER4-API-001): vaciar un nombre existente
      * sigue siendo error (el servidor tambien lo rechaza con 400). `null` = desconocido: se exige nombre.
      */
-    suspend operator fun invoke(user: User, previousName: String? = null): AppResult<User> {
-        if (user.fullName.isBlank() && previousName?.isBlank() != true) {
+    suspend operator fun invoke(user: User, previousName: String? = null, previous: User? = null): AppResult<User> {
+        val knownName = previous?.fullName ?: previousName
+        if (user.fullName.isBlank() && knownName?.isBlank() != true) {
             return AppResult.Failure(AppError.Validation("El nombre del usuario no puede estar vacio."))
         }
         // Aquí había una validación de email, y era doblemente incorrecta.
@@ -29,6 +30,6 @@ class UpsertUserUseCase(
         // Y aunque el dato fuera un correo, el `PATCH` de usuario sólo escribe
         // `nombre_mostrar`: validar un campo que el backend descarta sólo sirve
         // para bloquear la única edición que sí persiste.
-        return repository.upsertUser(user)
+        return repository.upsertUser(user, previous)
     }
 }

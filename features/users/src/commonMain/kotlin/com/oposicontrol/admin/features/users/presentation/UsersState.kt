@@ -21,6 +21,9 @@ import com.oposicontrol.admin.domain.model.UserDetail
  * Y sobra uno nuevo, [pendingSelectionUserId], que es el que impide perder
  * cambios al saltar de usuario.
  */
+/** Concesion de tickets con resultado desconocido: usuario, importe y la clave de idempotencia con la que se envio. */
+data class PendingGrant(val userId: String, val amount: Int, val key: String)
+
 data class UsersState(
     val users: UiAsync<List<User>> = UiAsync.Loading,
     val availableRoles: List<Role> = emptyList(),
@@ -52,6 +55,13 @@ data class UsersState(
      * diálogo para que reintentos y dobles clics no concedan dos veces.
      */
     val ticketsIdempotencyKey: String? = null,
+    /**
+     * Concesion cuyo resultado no se conoce (fallo de red, timeout, respuesta perdida): el servidor pudo haberla
+     * aplicado. Conserva su clave para que reabrir el dialogo y confirmar el MISMO importe la reenvie con la misma
+     * clave (el backend devuelve el movimiento original) en vez de conceder dos veces (MASTER5-IDEM-001). Se borra al
+     * tener exito; un importe distinto acuña una clave nueva.
+     */
+    val pendingGrant: PendingGrant? = null,
     val warningDialogOpen: Boolean = false,
     val warningInput: String = "",
 ) {
@@ -66,7 +76,13 @@ data class UsersState(
 
     val isDirty: Boolean get() = userEditorIsDirty(selectedUser, editorName, editorRoleIds)
 
-    val saveBlockers: List<String> get() = userSaveBlockers(editorName, selectedUser?.fullName)
+    val saveBlockers: List<String>
+        get() = userSaveBlockers(
+            editorName = editorName,
+            currentName = selectedUser?.fullName,
+            editorRoleIds = editorRoleIds,
+            currentRoleIds = selectedUser?.roleIds?.toSet(),
+        )
 
     /**
      * Se puede guardar si hay usuario, hay algo que guardar y nada lo impide.
@@ -74,7 +90,8 @@ data class UsersState(
      * El editor anterior exigía además un email válido — un campo que el backend
      * descarta —, así que bloqueaba el guardado del nombre por un dato inútil.
      */
-    val canSave: Boolean get() = selectedUser != null && isDirty && saveBlockers.isEmpty()
+    val canSave: Boolean
+        get() = selectedUser != null && isDirty && saveBlockers.isEmpty() && actionState !is UiAsync.Loading
 
     /** ¿El guardado pendiente concede o retira acceso administrativo? */
     val touchesAdminAccess: Boolean

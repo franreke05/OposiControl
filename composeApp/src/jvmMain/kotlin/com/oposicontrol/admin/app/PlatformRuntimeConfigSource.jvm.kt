@@ -29,11 +29,15 @@ internal open class JvmRuntimeConfigSource(
     private val dotEnv: Map<String, String> by lazy { loadDotEnv(startDir) }
 
     override fun read(key: String): String? {
-        systemProperty("oposi.$key")?.let { return it }
-        systemEnv(key)?.let { return it }
-        return dotEnv[key]
+        // MASTER5-OC-005: una capa en blanco (`-Doposi.BASE_URL=`, `BASE_URL=` exportada vacia) es "no definida" y
+        // deja pasar a la siguiente capa; los valores se devuelven recortados.
+        systemProperty("oposi.$key")?.normalized()?.let { return it }
+        systemEnv(key)?.normalized()?.let { return it }
+        return dotEnv[key]?.normalized()
     }
 }
+
+private fun String.normalized(): String? = trim().ifBlank { null }
 
 internal fun loadDotEnv(startDir: File, maxDepth: Int = 8): Map<String, String> {
     val file = findDotEnvFile(startDir, maxDepth) ?: return emptyMap()

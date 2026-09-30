@@ -172,13 +172,13 @@ private suspend fun ApplicationCall.authEndpoint(
         throw cancelled
     } catch (problem: OposiBotsAuthProblem) {
         problem.retryAfterSeconds?.let { response.headers.append(HttpHeaders.RetryAfter, it.toString()) }
-        logAuthResult(operation, requestId, problem.status.value)
+        logAuthFailure(operation, requestId, problem.status, problem.canonicalCode().name, failure = null)
         respondAuthProblem(problem, requestId)
     } catch (domain: BackendDomainException) {
         // SLICE 1: errores canonicos (INVALID_CREDENTIALS, ACCOUNT_BLOCKED, USERNAME_TAKEN...) con `code` propio y el
         // `error` legacy de OB (AuthErrorWire) derivado del estado HTTP.
         domain.retryAfterSeconds?.let { response.headers.append(HttpHeaders.RetryAfter, it.toString()) }
-        logAuthResult(operation, requestId, domain.status.value)
+        logAuthFailure(operation, requestId, domain.status, domain.errorCode, failure = domain)
         respondAuthDomain(domain, requestId)
     } catch (unexpected: Exception) {
         val problem = OposiBotsAuthProblem.unavailable()
@@ -414,8 +414,53 @@ internal fun isIpLiteral(value: String): Boolean {
     return ':' in value && value.all { it.isDigit() || it.lowercaseChar() in 'a'..'f' || it == ':' || it == '.' }
 }
 
-private fun logAuthResult(operation: OposiBotsAuthOperation, requestId: String, status: Int) {
-    AuthLogger.info("auth operation={} requestId={} status={}", operation.name, requestId, status)
+private fun logAuthResult(operation: OposiBotsAuthOperation, requestId: String, status: Int, errorCode: String? = null) {
+    AuthLogger.info("auth operation={} requestId={} status={} code={}", operation.name, requestId, status, errorCode ?: "-")
+}
+
+/**
+ * MASTER5-OBS-001: el plano `/v1/auth` responde sus errores AQUI (no llegan a StatusPages), asi que aqui se registra lo
+ * mismo que StatusPages registra en el resto del backend:
+ * - 5xx: evento estrategico (UNCAUGHT_EXCEPTION si es INTERNAL, si no SUPABASE_REQUEST_FAILED) y un WARN con el codigo
+ *   y la causa REDACTADA ([redactedMessage]); antes solo quedaba `status=503` y la causa se perdia.
+ * - 401: AUTH_LOGIN_FAILED; 403: AUTHORIZATION_DENIED (MASTER5-OBS-004), con el codigo como `error_type` y el usuario
+ *   verificado cuando la ruta llego a resolverlo. Nunca el mensaje ni credenciales.
+ * La linea `auth operation=... status=... code=...` se sigue emitiendo siempre.
+ */
+private fun ApplicationCall.logAuthFailure(
+    operation: OposiBotsAuthOperation,
+    requestId: String,
+    status: HttpStatusCode,
+    errorCode: String,
+    failure: Throwable?,
+) {
+    logAuthResult(operation, requestId, status.value, errorCode)
+    val event = when {
+        status.value >= 500 ->
+            if (errorCode == CanonicalErrorCode.INTERNAL.name) StrategicEvent.UNCAUGHT_EXCEPTION else StrategicEvent.SUPABASE_REQUEST_FAILED
+        status == HttpStatusCode.Unauthorized -> StrategicEvent.AUTH_LOGIN_FAILED
+        status == HttpStatusCode.Forbidden -> StrategicEvent.AUTHORIZATION_DENIED
+        else -> return
+    }
+    logStrategicEvent(
+        event,
+        requestId = requestId,
+        operation = operation.name,
+        result = status.value.toString(),
+        durationMs = elapsedMsOrNull(),
+        errorType = errorCode,
+        userId = verifiedCanonicalUserIdOrNull(),
+    )
+    if (status.value >= 500) {
+        AuthLogger.warn(
+            "auth failure operation={} requestId={} status={} code={}: {}",
+            operation.name,
+            requestId,
+            status.value,
+            errorCode,
+            failure?.let { (it.cause ?: it).redactedMessage("Auth failure") } ?: "-",
+        )
+    }
 }
 
 private fun String.requireCredential(maxLength: Int = AUTH_CREDENTIAL_MAX_LENGTH) {

@@ -386,6 +386,12 @@ private val SUPABASE_SQLSTATE_ERRORS: Map<String, SqlStateErrorDefinition> = map
         HttpStatusCode.UnprocessableEntity,
         "Alguno de los valores enviados no está permitido para este campo.",
     ),
+    // numeric_value_out_of_range (MASTER5-API-001): un entero fuera de rango que llega a un parametro tipado.
+    "22003" to SqlStateErrorDefinition(
+        "NUMERIC_VALUE_OUT_OF_RANGE",
+        HttpStatusCode.UnprocessableEntity,
+        "Alguno de los valores numéricos enviados está fuera de rango.",
+    ),
     // foreign_key_violation
     "23503" to SqlStateErrorDefinition(
         "FOREIGN_KEY_VIOLATION",

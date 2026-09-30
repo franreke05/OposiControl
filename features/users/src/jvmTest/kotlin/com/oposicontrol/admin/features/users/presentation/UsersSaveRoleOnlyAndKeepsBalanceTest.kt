@@ -36,7 +36,7 @@ class UsersSaveRoleOnlyAndKeepsBalanceTest {
         val upserts = mutableListOf<User>()
         override fun observeUsers(): Flow<AppResult<List<User>>> = flowOf(AppResult.Success(listOf(listed)))
         override suspend fun getUser(userId: String): AppResult<User> = AppResult.Success(listed)
-        override suspend fun upsertUser(user: User): AppResult<User> {
+        override suspend fun upsertUser(user: User, previous: User?): AppResult<User> {
             upserts += user
             return AppResult.Success(user.copy(ticketsBalance = null))
         }

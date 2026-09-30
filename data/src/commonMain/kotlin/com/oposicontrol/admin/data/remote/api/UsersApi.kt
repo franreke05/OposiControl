@@ -137,24 +137,35 @@ class UsersApi(
             adminAuthHeaders(appConfig, sessionLocalDataSource)
         }.checkedBody<AdminUserV1Dto>(BackendRoutes.adminV1Usuario(userId)).toUserDto()
 
-    suspend fun upsertUser(user: UserDto): UserDto {
+    /**
+     * [previous] = la fila que el editor leyo antes de cambiarla (MASTER5-API-009). Solo se escribe lo que difiere: el
+     * PATCH de nombre si el nombre recortado cambio, el POST /roles (reemplazo total, sin precondicion) si el CONJUNTO de
+     * roles cambio. Asi una edicion de nombre no repone roles posiblemente obsoletos (revirtiendo a otro admin, o dando
+     * 403 a un no-superadmin tras haber aplicado ya el PATCH) ni deja una fila de auditoria ROLES_SYNC sin cambio real.
+     * `previous == null` = desconocido: se escribe todo (comportamiento anterior).
+     */
+    suspend fun upsertUser(user: UserDto, previous: UserDto? = null): UserDto {
         if (user.id.isBlank()) error("Crear usuarios no está disponible desde la app admin. Usa el dashboard de Supabase.")
         // PATCH nombre_mostrar en perfiles_usuario. MASTER4-API-001: un nombre en blanco NO se envia (el servidor lo
         // rechazaria con 400 REQUIRED y /roles no llegaria a ejecutarse): es la edicion "solo roles" de un usuario
         // sin nombre. Que un nombre existente NO pueda vaciarse lo impide `UpsertUserUseCase` (conoce el nombre previo).
-        if (user.fullName.isNotBlank()) {
+        val nameChanged = previous == null || user.fullName.trim() != previous.fullName.trim()
+        val rolesChanged = previous == null || user.roleIds.toSet() != previous.roleIds.toSet()
+        if (user.fullName.isNotBlank() && nameChanged) {
             client.patch(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.adminV1Usuario(user.id))) {
                 adminAuthHeaders(appConfig, sessionLocalDataSource)
                 contentType(ContentType.Application.Json)
                 setBody(AdminUserPatchBody(nombreMostrar = user.fullName.trim()))
             }.checkedBody<kotlinx.serialization.json.JsonObject>(BackendRoutes.adminV1Usuario(user.id))
         }
-        // Sync roles
-        client.post(BackendRoutes.url(appConfig.baseUrl, "${BackendRoutes.adminV1Usuario(user.id)}/roles")) {
-            adminAuthHeaders(appConfig, sessionLocalDataSource)
-            contentType(ContentType.Application.Json)
-            setBody(RolesBody(user.roleIds))
-        }.checkedBody<kotlinx.serialization.json.JsonObject>("${BackendRoutes.adminV1Usuario(user.id)}/roles")
+        // Sync roles (solo si el conjunto cambio)
+        if (rolesChanged) {
+            client.post(BackendRoutes.url(appConfig.baseUrl, "${BackendRoutes.adminV1Usuario(user.id)}/roles")) {
+                adminAuthHeaders(appConfig, sessionLocalDataSource)
+                contentType(ContentType.Application.Json)
+                setBody(RolesBody(user.roleIds))
+            }.checkedBody<kotlinx.serialization.json.JsonObject>("${BackendRoutes.adminV1Usuario(user.id)}/roles")
+        }
         return getUser(user.id)
     }
 

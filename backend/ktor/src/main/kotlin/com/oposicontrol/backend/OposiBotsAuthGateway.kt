@@ -330,24 +330,47 @@ internal class SupabaseOposiBotsAuthGateway(
      * Revoca la sesion recien acuñada. `local` (por defecto) mata SOLO esa sesion; `global` mata todas las del usuario
      * y se reserva para decisiones definitivas (cuenta denegada por la puerta, contraseña cambiada).
      * Mejor esfuerzo: nunca sustituye al error original.
+     *
+     * MASTER5-OBS-003: un fallo del revoke ya no es silencioso. Un estado no 2xx (salvo 401/404: la sesion ya no existe,
+     * que es el resultado buscado) o un fallo de transporte dejan un WARN con scope, status/clase y requestId: una
+     * sesion acuñada que sigue viva tras una denegacion o un replay tiene ahora rastro. Nunca se registra el token.
      */
     private suspend fun revokeMintedSession(accessToken: String, context: OposiBotsAuthContext, scope: String = "local") {
         withContext(NonCancellable) {
             try {
-                authRequest(
+                val response = authRequest(
                     method = HttpMethod.Post,
                     path = "/auth/v1/logout?scope=$scope",
                     body = null,
                     accessToken = accessToken,
                     context = context,
                 )
+                if (!response.status.revokeReachedItsGoal()) {
+                    GatewayLogger.warn(
+                        "minted-session revoke failed scope={} status={} requestId={}",
+                        scope,
+                        response.status.value,
+                        context.requestId,
+                    )
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
                 // Best effort compensation: never replace the original replay/claim/gate failure.
+                GatewayLogger.warn(
+                    "minted-session revoke failed scope={} error={} requestId={}: {}",
+                    scope,
+                    failure::class.simpleName,
+                    context.requestId,
+                    failure.redactedMessage("revoke failed").redactSensitiveText(),
+                )
             }
         }
     }
+
+    /** 2xx = revocada; 401/404 = la sesion ya no existe (caducada o revocada antes): tambien es el resultado buscado. */
+    private fun HttpStatusCode.revokeReachedItsGoal(): Boolean =
+        isSuccessStatus() || this == HttpStatusCode.Unauthorized || this == HttpStatusCode.NotFound
 
     private suspend fun verifyAppleCode(request: OposiBotsAppleRequest, context: OposiBotsAuthContext) {
         val clientId = configuration.appleClientId ?: throw OposiBotsAuthProblem.unavailable()

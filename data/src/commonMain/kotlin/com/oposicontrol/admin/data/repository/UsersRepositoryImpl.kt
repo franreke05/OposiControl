@@ -14,7 +14,7 @@ class UsersRepositoryImpl(
 
     override suspend fun getUser(userId: String) = remote.getUser(userId)
 
-    override suspend fun upsertUser(user: User): AppResult<User> = remote.upsertUser(user)
+    override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = remote.upsertUser(user, previous)
 
     override suspend fun deleteUser(userId: String): AppResult<Unit> = remote.deleteUser(userId)
 

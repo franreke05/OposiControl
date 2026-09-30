@@ -23,9 +23,9 @@ import com.oposicontrol.admin.domain.model.User
  *    bloqueado**: distingue invitado de registrado. El estado de acceso es
  *    `User.accountStatus` (activa / bloqueada / eliminación pendiente). Ver
  *    [UserAccountKind] y [userAccountStatusLabel].
- * 3. `User.email` **no es el email**: el backend lo rellena con `p.username`,
- *    porque `perfiles_usuario` no tiene columna de email. El correo real vive en
- *    `auth.users` y nadie lo lee. Ver [USER_EMAIL_UNAVAILABLE_NOTE].
+ * 3. `User.email` **no es el nombre de cuenta**: en la lista es el `username` legacy y
+ *    en `GET /usuarios/{id}` el correo real de GoTrue. La pantalla pinta
+ *    `User.username` ([userAccountName]) y no muestra el correo. Ver [USER_EMAIL_UNAVAILABLE_NOTE].
  */
 
 // ---------------------------------------------------------------------------
@@ -141,14 +141,21 @@ const val USER_NAME_MISSING: String = "Sin nombre"
  */
 const val USER_ACCOUNT_FIELD_LABEL: String = "Nombre de usuario"
 
-/** Valor del campo anterior, o la marca de ausencia. */
+/**
+ * Valor del campo anterior, o la marca de ausencia.
+ *
+ * MASTER5-OC-001: sale de `User.username`, que la lista y la ficha informan igual. `User.email` lleva dos
+ * semanticas (username en la lista, correo real de GoTrue en `GET /usuarios/{id}`), asi que leerlo hacia que la fila
+ * pasara a enseñar el correo tras guardar bajo la etiqueta «Nombre de usuario». `email` solo es el respaldo de un
+ * backend anterior que no envia `username`.
+ */
 fun userAccountName(user: User): String =
-    user.email.trim().ifBlank { USER_NO_DATA }
+    (user.username?.takeIf { it.isNotBlank() } ?: user.email).trim().ifBlank { USER_NO_DATA }
 
-/** El correo real existe, pero en `auth.users`, y esta pantalla no lo lee. */
+/** El correo real lo devuelve el detalle, pero esta pantalla no lo muestra: el campo de cuenta es el nombre de usuario. */
 const val USER_EMAIL_UNAVAILABLE_NOTE: String =
-    "El correo electrónico no está disponible en esta pantalla: se guarda en el sistema " +
-        "de autenticación, que el panel todavía no consulta."
+    "El correo electrónico no se muestra en esta pantalla: el campo de arriba es el nombre " +
+        "de usuario, no el correo de la cuenta."
 
 /** Ausencia de dato. Nunca un cero, nunca un hueco en blanco. */
 const val USER_NO_DATA: String = "Sin dato"
@@ -373,11 +380,27 @@ fun userEditorIsDirty(
  * después el backend lo tiraba, así que bloqueaba el guardado de un usuario sin
  * username por un campo que no servía para nada.
  */
-fun userSaveBlockers(editorName: String, currentName: String? = null): List<String> = buildList {
+fun userSaveBlockers(
+    editorName: String,
+    currentName: String? = null,
+    editorRoleIds: Set<String>? = null,
+    currentRoleIds: Set<String>? = null,
+): List<String> = buildList {
     // MASTER4-API-001: un usuario SIN nombre puede guardar un cambio de roles dejando el nombre en blanco; vaciar un
     // nombre existente (o no conocer el actual) sigue bloqueado, igual que el 400 REQUIRED del servidor.
     if (editorName.isBlank() && currentName?.isBlank() != true) add("El nombre no puede estar vacío.")
+    // MASTER5-OC-006: limites del contrato (D1-25 nombreMostrar maxLength 100; D1-26 roleIds no vacio). El cliente los
+    // aplica antes de escribir: si no, el PATCH del nombre persiste y luego /roles falla con 422 (guardado parcial).
+    if (editorName.trim().length > USER_NAME_MAX_LENGTH) add("El nombre no puede superar los $USER_NAME_MAX_LENGTH caracteres.")
+    // Quitar TODOS los roles lo rechaza el servidor (422 ROLE_SYNC_EMPTY_ROLES). Un usuario que ya estaba sin roles y
+    // solo cambia el nombre no envia /roles (conjunto sin cambios), por eso solo se exige si el conjunto cambia.
+    if (editorRoleIds != null && currentRoleIds != null && editorRoleIds.isEmpty() && editorRoleIds != currentRoleIds) {
+        add("El usuario debe conservar al menos un rol.")
+    }
 }
+
+/** D1-25 `AdminUserPatchRequest.nombreMostrar`: maxLength 100. */
+const val USER_NAME_MAX_LENGTH: Int = 100
 
 /** Qué se va a escribir realmente al pulsar Guardar. Se dice antes, no después. */
 const val USER_SAVE_SCOPE_NOTE: String =

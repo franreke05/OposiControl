@@ -48,6 +48,10 @@ data class AdminGrantTicketsRequestDto(
          * manual, así que por encima de esto se exige partir la concesión.
          */
         const val MAX_CANTIDAD_POR_OPERACION = 10_000
+
+        /** MASTER5-API-001: tope de longitud del motivo (descripcion del ledger) y de la clave de idempotencia. */
+        const val MAX_MOTIVO_LENGTH = 1_000
+        const val MAX_IDEMPOTENCY_KEY_LENGTH = 200
     }
 }
 
@@ -85,6 +89,9 @@ internal fun AdminGrantTicketsRequestDto.validated(): AdminGrantTicketsRequestDt
     // Sin motivo, el ledger queda con un movimiento que nadie puede justificar
     // después. La trazabilidad es la mitad del valor de tener ledger.
     if (motivo.isBlank()) reject("GRANT_REASON_REQUIRED", "La concesión necesita un motivo.")
+    if (motivo.trim().length > AdminGrantTicketsRequestDto.MAX_MOTIVO_LENGTH) {
+        reject("GRANT_REASON_TOO_LONG", "El motivo no puede superar ${AdminGrantTicketsRequestDto.MAX_MOTIVO_LENGTH} caracteres.")
+    }
     if (tipo !in AdminGrantTicketsRequestDto.TIPOS_PERMITIDOS) {
         reject(
             "GRANT_TYPE_INVALID",
@@ -101,6 +108,12 @@ internal fun AdminGrantTicketsRequestDto.validated(): AdminGrantTicketsRequestDt
         reject(
             "WALLET_IDEMPOTENCY_KEY_REQUIRED",
             "Falta la clave de idempotencia: sin ella un reintento concedería los tickets dos veces.",
+        )
+    }
+    if (key.length > AdminGrantTicketsRequestDto.MAX_IDEMPOTENCY_KEY_LENGTH) {
+        reject(
+            "WALLET_IDEMPOTENCY_KEY_INVALID",
+            "La clave de idempotencia no puede superar ${AdminGrantTicketsRequestDto.MAX_IDEMPOTENCY_KEY_LENGTH} caracteres.",
         )
     }
     return copy(motivo = motivo.trim(), idempotencyKey = key, referencia = referencia?.trim()?.takeIf { it.isNotEmpty() })
@@ -156,3 +169,25 @@ data class AdminGrantTicketsResponse(val data: AdminGrantTicketsResultDto)
 
 @Serializable
 data class AdminTicketsOverviewResponse(val data: AdminTicketsOverviewDto)
+
+/**
+ * MASTER5-API-001: validacion de magnitud/longitud para TODO llamador del RPC `admin_grant_tickets` (rutas legacy
+ * `/usuarios/{id}/tickets` y `/tickets/{id}/transacciones`, recompensa de reporte y la ruta canonica), que antes
+ * solo cubria `validated()`. El RPC no impone tope de magnitud ni de longitud.
+ */
+internal fun requireWalletGrantWithinBounds(cantidad: Int, motivo: String, idempotencyKey: String) {
+    fun reject(code: String, message: String): Nothing =
+        throw BackendDomainException(code, HttpStatusCode.UnprocessableEntity, message)
+    if (cantidad == 0 || kotlin.math.abs(cantidad.toLong()) > AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION) {
+        reject(
+            "WALLET_AMOUNT_INVALID",
+            "La cantidad debe ser distinta de cero y no superar ${AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION} por operación.",
+        )
+    }
+    if (motivo.isBlank() || motivo.trim().length > AdminGrantTicketsRequestDto.MAX_MOTIVO_LENGTH) {
+        reject("WALLET_DESCRIPTION_REQUIRED", "El motivo es obligatorio y no puede superar ${AdminGrantTicketsRequestDto.MAX_MOTIVO_LENGTH} caracteres.")
+    }
+    if (idempotencyKey.length > AdminGrantTicketsRequestDto.MAX_IDEMPOTENCY_KEY_LENGTH) {
+        reject("WALLET_IDEMPOTENCY_KEY_INVALID", "La clave de idempotencia no puede superar ${AdminGrantTicketsRequestDto.MAX_IDEMPOTENCY_KEY_LENGTH} caracteres.")
+    }
+}

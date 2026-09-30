@@ -12,6 +12,8 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -156,6 +158,15 @@ class SupabaseOposiBotsUserAdminGateway(
                 put("email_confirm", true)
             },
         )
+        // MASTER5-API-008: las dos escrituras (identidad de Auth + fila `usuario`) y su compensacion corren como UNA
+        // unidad NO cancelable. Antes, si el cliente se desconectaba entre ambas, la compensacion (DELETE de la
+        // identidad) se lanzaba en el contexto ya cancelado, fallaba al instante y quedaba una identidad de Auth
+        // huerfana; y cancelar DURANTE el POST de Auth podia dejarla creada sin que nadie supiera su id. Cada peticion
+        // esta acotada por el HttpTimeout del cliente (15 s), asi que la unidad termina siempre.
+        return withContext(NonCancellable) { createUserAtomically(request, authBody) }
+    }
+
+    private suspend fun createUserAtomically(request: OposiBotsUserAdminCreateRequest, authBody: String): OposiBotsUserAdminDto {
         val authUserId = json.decodeFromString<SupabaseAuthAdminUserWire>(
             request(HttpMethod.Post, "/auth/v1/admin/users", authBody),
         ).id
@@ -231,34 +242,31 @@ class SupabaseOposiBotsUserAdminGateway(
             .decodeList<OposiBotsUsuarioRow>().firstOrNull()?.toDto()
     }
 
-    override suspend fun deleteUser(id: Int): Boolean {
-        // Order matters: usuario row first, then the Supabase Auth identity.
-        // If deleting the auth identity fails partway through, the profile is
-        // already gone (an orphaned auth-only account can't do much and is
-        // still addressable by an admin via auth_user_id) rather than leaving
-        // a dangling usuario row that blocks future re-registration under the
-        // same email/username with no account left to retry deleting.
-        val deletedRows = request(HttpMethod.Delete, "/rest/v1/usuario?id=eq.$id", null, prefer = "return=representation")
-            .decodeList<OposiBotsUsuarioRow>()
-        if (deletedRows.isEmpty()) return false
-        val existing = deletedRows.first().toDto()
+    /**
+     * MASTER5-API-008: orden identidad de Auth -> fila `usuario`, y ambos pasos como una unidad NO cancelable.
+     *
+     * Antes se borraba primero la fila y despues la identidad: si el segundo paso fallaba (o el cliente se desconectaba
+     * entre ambos), la identidad seguia pudiendo iniciar sesion y el reintento ya no encontraba la fila (404) ni
+     * llegaba nunca al borrado de Auth. Ahora:
+     * - se lee la fila (sin fila -> `false`, 404);
+     * - se borra la identidad de Auth (un 404 de Auth = ya no existe = exito idempotente);
+     * - se borra la fila. Si este ultimo paso falla, la fila SIGUE ahi y el reintento repite todo (Auth responde 404,
+     *   que es exito) hasta completarlo: ningun estado intermedio deja de ser reintentable por esta misma ruta.
+     * Si la fila ya no esta al borrarla (p. ej. un FK en cascada desde `auth.users`), el objetivo esta cumplido: `true`.
+     */
+    override suspend fun deleteUser(id: Int): Boolean = withContext(NonCancellable) {
+        val existing = request(HttpMethod.Get, "/rest/v1/usuario?select=$UsuarioSelectColumns&id=eq.$id&limit=1", null)
+            .decodeList<OposiBotsUsuarioRow>().firstOrNull() ?: return@withContext false
         existing.authUserId?.let { authUserId ->
             try {
                 request(HttpMethod.Delete, "/auth/v1/admin/users/$authUserId", null)
-            } catch (error: Exception) {
-                // 404 from Auth DELETE means the identity was already removed (idempotent success)
-                if (error is IllegalStateException && error.message?.contains("404") == true) {
-                    return@let // Treat 404 as success
-                }
-                throw IllegalStateException(
-                    "El perfil de usuario $id fue eliminado pero la identidad de Supabase Auth " +
-                        "$authUserId NO pudo eliminarse (${error.message}). Reintentar manualmente " +
-                        "borrando ese auth_user_id.",
-                    error,
-                )
+            } catch (error: SupabaseHttpStatusException) {
+                // 404 de Auth: la identidad ya no existe (borrado previo o reintento) -> exito idempotente.
+                if (error.status != 404) throw error
             }
         }
-        return true
+        request(HttpMethod.Delete, "/rest/v1/usuario?id=eq.$id", null, prefer = "return=representation")
+        true
     }
 
     private suspend fun request(method: HttpMethod, path: String, body: String?, prefer: String? = null): String {
@@ -286,7 +294,7 @@ class SupabaseOposiBotsUserAdminGateway(
             if (statusCode == 409) {
                 throw IllegalArgumentException("Ya existe un usuario con esos datos (posible duplicado de email o username).")
             }
-            throw IllegalStateException("Supabase $method ${path.substringBefore('?')} -> $statusCode: ${responseBody.take(300)}")
+            throw SupabaseHttpStatusException(statusCode, "Supabase $method ${path.substringBefore('?')} -> $statusCode: ${responseBody.take(300)}")
         }
         return response.bodyAsText()
     }
@@ -307,6 +315,12 @@ class SupabaseOposiBotsUserAdminGateway(
         }
     }
 }
+
+/**
+ * Respuesta no 2xx de Supabase con su estado. Sigue siendo [IllegalStateException] (StatusPages: 502, como antes);
+ * el estado explicito sustituye a buscar "404" dentro del mensaje, que tambien casaba con un uuid que contuviera "404".
+ */
+internal class SupabaseHttpStatusException(val status: Int, message: String) : IllegalStateException(message)
 
 private fun defaultUserAdminHttpClient(): HttpClient = HttpClient(Java) {
     expectSuccess = false

@@ -209,6 +209,14 @@ internal fun unconfiguredSupabaseGateways(json: Json, environment: (String) -> S
  * excepción, no el primero registrado. Por eso `SerializationException`, que
  * extiende `IllegalArgumentException`, tiene su propio handler y no cae en el 400.
  */
+/**
+ * MASTER5-OBS-004: sujeto de una denegacion para la telemetria: el id canonico ya verificado por
+ * [CanonicalIdentityResolver] o, en las superficies `authenticate {}`, el principal si es un uuid
+ * ([actorIdFromPrincipalName]: el token estatico no es una persona y queda `null`).
+ */
+internal fun ApplicationCall.deniedSubjectOrNull(): String? =
+    verifiedCanonicalUserIdOrNull() ?: actorIdFromPrincipalName(principal<UserIdPrincipal>()?.name)
+
 internal fun Application.installBackendStatusPages() {
     // Sobre canonico (SLICE 0): cualquier `ErrorDto` que responda una ruta
     // directamente —sin pasar por una excepcion— sale tambien con `requestId`, el
@@ -236,6 +244,8 @@ internal fun Application.installBackendStatusPages() {
                 result = "forbidden",
                 durationMs = call.elapsedMsOrNull(),
                 errorType = cause::class.simpleName,
+                // MASTER5-OBS-004: el sujeto (uuid del principal ya autenticado; nunca el token estatico ni un nombre).
+                userId = call.deniedSubjectOrNull(),
             )
             call.respondErrorEnvelope(
                 CanonicalErrorCode.FORBIDDEN,
@@ -274,6 +284,19 @@ internal fun Application.installBackendStatusPages() {
                     call.request.path(),
                     requestId,
                     (cause.cause ?: cause).redactedMessage("Upstream failure"),
+                )
+            } else if (cause.status == HttpStatusCode.Unauthorized || cause.status == HttpStatusCode.Forbidden) {
+                // MASTER5-OBS-004: las denegaciones canonicas (UNAUTHENTICATED, STALE_AUTH, REAUTH_FAILED, FORBIDDEN,
+                // ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING...) dejan evento con el codigo como
+                // `error_type` y el sujeto verificado si lo hay; nunca el mensaje.
+                logStrategicEvent(
+                    if (cause.status == HttpStatusCode.Unauthorized) StrategicEvent.AUTH_LOGIN_FAILED else StrategicEvent.AUTHORIZATION_DENIED,
+                    requestId = call.ensureRequestId(),
+                    operation = call.request.path(),
+                    result = cause.status.value.toString(),
+                    durationMs = call.elapsedMsOrNull(),
+                    errorType = cause.errorCode,
+                    userId = call.deniedSubjectOrNull(),
                 )
             }
             cause.retryAfterSeconds?.let { seconds ->

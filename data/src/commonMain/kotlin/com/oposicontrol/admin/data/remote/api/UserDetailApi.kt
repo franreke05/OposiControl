@@ -65,12 +65,19 @@ internal data class UserDetailDto(
 @Serializable
 internal data class UserProfileDto(
     @SerialName("usuario_id") val usuarioId: String = "",
+    /** D1-24: `perfil` es un AdminUser canonico; `id`, `fullName`, `onboardingCompleted` y `createdAt` mandan sobre el legacy. */
+    val id: String? = null,
+    val fullName: String? = null,
+    val onboardingCompleted: Boolean? = null,
+    val createdAt: String? = null,
     @SerialName("nombre_mostrar") val nombreMostrar: String? = null,
     val username: String? = null,
     @SerialName("especialidad_principal_id") val especialidadPrincipalId: String? = null,
     @SerialName("comunidad_principal_id") val comunidadPrincipalId: String? = null,
-    @SerialName("es_invitado") val esInvitado: Boolean = false,
-    @SerialName("onboarding_completado") val onboardingCompletado: Boolean = false,
+    // MASTER5-OC-004: nullable a proposito. Un booleano ausente NO es false: defaultear a false fabricaba
+    // "Onboarding: Pendiente" cuando el backend solo enviaba el campo canonico (o ninguno).
+    @SerialName("es_invitado") val esInvitado: Boolean? = null,
+    @SerialName("onboarding_completado") val onboardingCompletado: Boolean? = null,
     @SerialName("creado_en") val creadoEn: String? = null,
     // D1-24: `perfil` es un AdminUser; `accountStatus` manda, `estado_cuenta` es el legacy. Ausente o desconocido = UNKNOWN.
     val accountStatus: String? = null,
@@ -169,15 +176,16 @@ internal data class UserWeaknessDto(
 
 internal fun UserDetailDto.toDomain() = UserDetail(
     profile = UserProfile(
-        userId = perfil.usuarioId,
-        displayName = perfil.nombreMostrar,
+        userId = perfil.usuarioId.ifBlank { perfil.id.orEmpty() },
+        displayName = perfil.nombreMostrar ?: perfil.fullName,
         username = perfil.username,
         specialtyId = perfil.especialidadPrincipalId,
         communityId = perfil.comunidadPrincipalId,
         isGuest = perfil.esInvitado,
-        onboardingCompleted = perfil.onboardingCompletado,
-        createdAt = perfil.creadoEn,
-        accountStatus = AccountStatus.fromWire(perfil.accountStatus ?: perfil.estadoCuenta),
+        onboardingCompleted = perfil.onboardingCompleted ?: perfil.onboardingCompletado,
+        createdAt = perfil.createdAt?.ifBlank { null } ?: perfil.creadoEn?.ifBlank { null },
+        // Un accountStatus en blanco es ausente: no debe tapar el fallback legacy.
+        accountStatus = AccountStatus.fromWire(perfil.accountStatus?.ifBlank { null } ?: perfil.estadoCuenta?.ifBlank { null }),
         authProviders = perfil.authProviders,
     ),
     extendedProfile = detalle?.let {

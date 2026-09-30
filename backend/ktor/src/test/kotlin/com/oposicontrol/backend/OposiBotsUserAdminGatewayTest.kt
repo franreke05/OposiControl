@@ -123,7 +123,7 @@ class OposiBotsUserAdminGatewayTest {
     }
 
     @Test
-    fun deleteUserRemovesUsuarioRowThenAuthIdentityInThatOrder() = runTest {
+    fun deleteUserReadsTheRowThenRemovesAuthIdentityThenUsuarioRow() = runTest {
         val requests = mutableListOf<HttpRequestData>()
         val client = HttpClient(MockEngine { request ->
             requests += request
@@ -142,9 +142,16 @@ class OposiBotsUserAdminGatewayTest {
         val deleted = gateway.deleteUser(42)
 
         assertEquals(true, deleted)
-        assertEquals(2, requests.size)
-        assertTrue(requests[0].url.encodedPath.endsWith("/rest/v1/usuario"), "usuario row must be deleted first")
-        assertTrue(requests[1].url.encodedPath.endsWith("/auth/v1/admin/users/22222222-2222-2222-2222-222222222222"), "auth identity deleted second")
+        // MASTER5-API-008 (cambio DELIBERADO de orden): antes fila -> Auth, lo que dejaba una identidad viva y NO
+        // reintentable si el segundo paso fallaba. Ahora: leer la fila, borrar Auth, borrar la fila.
+        assertEquals(
+            listOf(
+                "GET /rest/v1/usuario",
+                "DELETE /auth/v1/admin/users/22222222-2222-2222-2222-222222222222",
+                "DELETE /rest/v1/usuario",
+            ),
+            requests.map { "${it.method.value} ${it.url.encodedPath}" },
+        )
     }
 
     @Test
@@ -290,6 +297,8 @@ class OposiBotsUserAdminGatewayTest {
         val result = gateway.deleteUser(42)
 
         assertEquals(true, result)
-        assertEquals(2, requests.size)
+        // MASTER5-API-008 (cambio DELIBERADO): lectura + DELETE de Auth (404 = exito) + DELETE de la fila = 3.
+        assertEquals(3, requests.size)
+        assertEquals("DELETE /rest/v1/usuario", requests.last().let { "${it.method.value} ${it.url.encodedPath}" })
     }
 }

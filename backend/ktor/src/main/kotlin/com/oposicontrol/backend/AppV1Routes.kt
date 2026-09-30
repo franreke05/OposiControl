@@ -136,6 +136,7 @@ private suspend fun ApplicationCall.usuarioId(
         return try {
             verifier.subFrom(bearer)
         } catch (error: Exception) {
+            logJwtRejected("legacy-app", error)
             throw AppUnauthorized("JWT invalido: ${error.message?.take(120)}")
         }
     }
@@ -162,6 +163,40 @@ internal val JWKS_FETCH_TIMEOUT: java.time.Duration = java.time.Duration.ofSecon
 internal const val JWKS_STALE_REFRESH_BACKOFF_MS = 60_000L
 
 /**
+ * MASTER5-SEC-001: espera maxima de un hilo que necesita el refresco por `kid` desconocido / cache vacia mientras
+ * OTRO hilo ya descarga el JWKS. Cubre una descarga sana (el documento es pequeno) sin dejar que peticiones sin
+ * autenticar aparquen hilos de IO durante toda una descarga lenta ([JWKS_FETCH_TIMEOUT]); agotada, 503 reintentable.
+ */
+internal const val JWKS_REFRESH_LOCK_WAIT_MS = 250L
+
+/**
+ * Rechazo ESPERADO de un token (sin `kid`, `kid` desconocido con un JWKS sano, sin `sub`). Extiende
+ * [IllegalStateException] como el `error()` al que sustituye, para que el tipo visible no cambie.
+ */
+internal class JwtRejectedException(message: String) : IllegalStateException(message)
+
+internal val JwtVerificationLogger: org.slf4j.Logger = org.slf4j.LoggerFactory.getLogger("OC-KTOR-JWT")
+
+/**
+ * MASTER5-OBS-002: un token rechazado acaba en 401 en [surface]. Un rechazo esperado (firma, emisor, caducidad,
+ * formato: [com.auth0.jwt.exceptions.JWTVerificationException] o [JwtRejectedException]) lo provoca cualquiera sin
+ * autenticar: DEBUG, solo la clase. Cualquier otra excepcion es un fallo del verificador (un bug o una clave del JWKS
+ * que no se puede usar) que antes se convertia en 401 sin rastro: WARN con la clase y el mensaje redactado.
+ */
+internal fun logJwtRejected(surface: String, failure: Throwable) {
+    if (failure is com.auth0.jwt.exceptions.JWTVerificationException || failure is JwtRejectedException) {
+        JwtVerificationLogger.debug("JWT rejected on {}: {}", surface, failure::class.simpleName)
+    } else {
+        JwtVerificationLogger.warn(
+            "JWT verifier failure on {} mapped to 401 ({}): {}",
+            surface,
+            failure::class.simpleName,
+            failure.redactedMessage("JWT verifier failure", 200),
+        )
+    }
+}
+
+/**
  * Verifica la firma ES256 contra el JWKS público y devuelve el `sub`.
  *
  * [subFrom] BLOQUEA cuando tiene que descargar el JWKS (arranque, `kid` nuevo o
@@ -184,7 +219,8 @@ class SupabaseJwtVerifier(
     /**
      * MASTER2-AUTH-004: sustituye a `@Synchronized`. El refresco por caducidad usa `tryLock` (nunca espera: si otro
      * hilo ya esta refrescando, se sirven las claves en cache); solo el camino sin clave (`kid` desconocido o cache
-     * vacia) espera al lock, porque sin clave no hay nada que servir.
+     * vacia) espera al lock, porque sin clave no hay nada que servir, y como mucho [JWKS_REFRESH_LOCK_WAIT_MS]
+     * (MASTER5-SEC-001).
      */
     private val refreshLock = java.util.concurrent.locks.ReentrantLock()
 
@@ -210,15 +246,15 @@ class SupabaseJwtVerifier(
      */
     fun claimsFrom(token: String): VerifiedJwtClaims {
         val decoded = JWT.decode(token)
-        val kid = decoded.keyId ?: error("token sin kid")
+        val kid = decoded.keyId ?: throw JwtRejectedException("token sin kid")
         refreshIfStale()
         val key = keys[kid] ?: run { refresh(); keys[kid] } ?: run {
             // Sin ninguna clave no se puede afirmar que el kid sea desconocido: JWKS no disponible.
             if (keys.isEmpty()) throw java.io.IOException("JWKS sin claves")
-            error("kid no encontrado en JWKS")
+            throw JwtRejectedException("kid no encontrado en JWKS")
         }
         val verified = JWT.require(Algorithm.ECDSA256(key, null)).withIssuer(issuer).build().verify(token)
-        val subject = verified.subject ?: error("token sin sub")
+        val subject = verified.subject ?: throw JwtRejectedException("token sin sub")
         return VerifiedJwtClaims(
             subject = subject,
             issuedAt = verified.issuedAt?.toInstant()?.epochSecond,
@@ -248,22 +284,60 @@ class SupabaseJwtVerifier(
         if (!refreshLock.tryLock()) return
         try {
             refreshLocked()
-        } catch (_: java.io.IOException) {
+        } catch (failure: java.io.IOException) {
             // Fail-soft: se siguen usando las claves ya verificadas.
             staleRefreshBackoffUntil = clock() + JWKS_STALE_REFRESH_BACKOFF_MS
+            // MASTER5-OBS-002: antes silencioso; una rotacion/revocacion que deja de aplicarse no dejaba rastro. Como
+            // mucho una linea por backoff ([JWKS_STALE_REFRESH_BACKOFF_MS]); sin cuerpo ni token.
+            JwtVerificationLogger.warn(
+                "JWKS stale refresh failed ({}): {}; serving cached keys, next attempt in {} ms",
+                failure::class.simpleName,
+                failure.redactedMessage("JWKS unavailable"),
+                JWKS_STALE_REFRESH_BACKOFF_MS,
+            )
         } finally {
             refreshLock.unlock()
         }
     }
 
-    /** Refresco BLOQUEANTE: solo para `kid` desconocido o cache vacia (no hay clave que servir mientras tanto). */
+    /**
+     * Refresco por `kid` desconocido o cache vacia (no hay clave que servir mientras tanto).
+     *
+     * MASTER5-SEC-001: un token con un `kid` inventado lo puede mandar cualquiera sin autenticar. Antes cada uno hacia
+     * `refreshLock.lock()` sin limite: con un JWKS lento, N peticiones aparcaban N hilos de IO durante toda la descarga
+     * (hasta [fetchTimeout]) en cada ventana anti-tormenta. Ahora:
+     * - la ventana anti-tormenta se comprueba ANTES del lock: dentro de ella se responde al instante (el fallo cacheado
+     *   -> 503, o nada -> el llamador da 401 por `kid` desconocido) sin tocar el lock;
+     * - si otro hilo ya esta descargando, se espera como mucho [JWKS_REFRESH_LOCK_WAIT_MS] y despues se responde
+     *   JWKS no disponible ([java.io.IOException] -> 503 con `Retry-After`, reintentable). Solo el hilo que descarga
+     *   espera la red, y esa espera la acota [fetchTimeout].
+     */
     private fun refresh() {
-        refreshLock.lock()
+        if (withinAntiStormWindow()) return
+        val acquired = try {
+            refreshLock.tryLock(JWKS_REFRESH_LOCK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw java.io.InterruptedIOException("espera del refresco del JWKS interrumpida").apply { initCause(interrupted) }
+        }
+        if (!acquired) throw java.io.IOException("JWKS: refresco en curso")
         try {
             refreshLocked()
         } finally {
             refreshLock.unlock()
         }
+    }
+
+    /**
+     * `true` si se esta dentro de la ventana anti-tormenta tras un intento con EXITO (el llamador sigue con las claves
+     * actuales); relanza el ultimo fallo si el intento fallo; `false` si toca descargar. Lectura sin lock: los campos
+     * son `@Volatile` y [refreshLocked] publica claves / fallo ANTES de [lastAttemptAt].
+     */
+    private fun withinAntiStormWindow(): Boolean {
+        val attemptedAt = lastAttemptAt
+        if (attemptedAt == 0L || clock() - attemptedAt >= JWKS_MIN_REFETCH_MS) return false
+        lastFailure?.let { throw java.io.IOException(it.message, it) }
+        return true
     }
 
     /**
@@ -274,28 +348,28 @@ class SupabaseJwtVerifier(
      */
     private fun refreshLocked() {
         // Anti-tormenta corto (no 60s): una rotacion de claves no debe dejar 401 durante un minuto.
-        val now = clock()
-        if (lastAttemptAt != 0L && now - lastAttemptAt < JWKS_MIN_REFETCH_MS) {
-            lastFailure?.let { throw java.io.IOException(it.message, it) }
-            return
-        }
-        val parsed = try {
-            fetchJwks()
-        } catch (io: java.io.IOException) {
-            lastFailure = io
-            throw io
-        } catch (bad: Exception) {
-            val wrapped = java.io.IOException(bad.message ?: "JWKS no disponible", bad)
-            lastFailure = wrapped
-            throw wrapped
+        if (withinAntiStormWindow()) return
+        try {
+            val parsed = try {
+                fetchJwks()
+            } catch (io: java.io.IOException) {
+                lastFailure = io
+                throw io
+            } catch (bad: Exception) {
+                val wrapped = java.io.IOException(bad.message ?: "JWKS no disponible", bad)
+                lastFailure = wrapped
+                throw wrapped
+            }
+            // MASTER5-SEC-001: claves y fallo se publican ANTES de [lastAttemptAt]: un lector sin lock
+            // ([withinAntiStormWindow]) que ya ve la ventana nueva ve tambien su resultado, nunca el del intento anterior.
+            keys = parsed
+            fetchedAt = clock()
+            lastFailure = null
         } finally {
             // MASTER2-AUTH-004: la ventana anti-tormenta empieza al TERMINAR el intento; con el inicio, un fallo lento
             // (timeout) dejaba la ventana ya vencida y cada hilo en espera repetia su propia descarga en serie.
             lastAttemptAt = clock()
         }
-        lastFailure = null
-        keys = parsed
-        fetchedAt = clock()
     }
 
     private fun fetchJwks(): Map<String, ECPublicKey> {

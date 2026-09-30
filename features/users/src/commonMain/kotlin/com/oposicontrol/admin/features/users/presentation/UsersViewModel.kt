@@ -11,6 +11,7 @@ import com.oposicontrol.admin.domain.repository.ModerationRepository
 import com.oposicontrol.admin.domain.repository.RolesRepository
 import com.oposicontrol.admin.domain.repository.UsersRepository
 import com.oposicontrol.admin.domain.usecase.users.UpsertUserUseCase
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
@@ -26,6 +27,15 @@ class UsersViewModel(
     initialState = UsersState(),
     dispatcherProvider = dispatcherProvider,
 ) {
+    /** Carga de la ficha en curso: se cancela al cambiar de usuario (MASTER5-OC-002). */
+    private var detailJob: Job? = null
+
+    /** Guardados en vuelo por usuario: un segundo Save del mismo usuario (aunque se cambie de fila y se vuelva) no se lanza. */
+    private val savesInFlight = mutableSetOf<String>()
+    private var grantInFlight = false
+    private var warningInFlight = false
+    private var keySequence = 0
+
     init {
         scope.launch {
             // Un fallo del backend ya NO se confunde con «no hay usuarios»: el
@@ -91,21 +101,24 @@ class UsersViewModel(
 
             is UsersIntent.GrantTickets -> grantTickets(intent.amount)
             UsersIntent.OpenTicketsDialog -> updateState {
+                // Si hay una concesión con resultado desconocido para ESTE usuario, se reabre con su importe y su clave:
+                // confirmar lo mismo la reenvía idempotente (MASTER5-IDEM-001). Si no, una clave nueva por apertura.
+                val pending = it.pendingGrant?.takeIf { p -> p.userId == it.selectedUserId }
                 it.copy(
                     ticketsDialogOpen = true,
-                    ticketsInput = "",
-                    // Una clave por apertura de diálogo: estable durante toda la
-                    // operación, distinta para la siguiente.
-                    ticketsIdempotencyKey = "grant:${it.selectedUserId.orEmpty()}:${Clock.System.now().toEpochMilliseconds()}",
+                    ticketsInput = pending?.amount?.toString().orEmpty(),
+                    ticketsIdempotencyKey = pending?.key ?: mintGrantKey(it.selectedUserId.orEmpty(), null),
                     actionState = UiAsync.Idle,
                 )
             }
             UsersIntent.DismissTicketsDialog -> updateState {
+                // pendingGrant NO se toca: cerrar el diálogo no dice si el servidor aplicó la concesión.
                 it.copy(ticketsDialogOpen = false, ticketsInput = "", ticketsIdempotencyKey = null)
             }
             is UsersIntent.UpdateTicketsInput -> updateState { it.copy(ticketsInput = intent.value) }
             UsersIntent.ConfirmTickets -> {
                 val amount = currentState().ticketsInput.toIntOrNull() ?: return
+                if (grantInFlight) return
                 updateState { it.copy(ticketsDialogOpen = false, ticketsInput = "") }
                 grantTickets(amount)
             }
@@ -117,7 +130,7 @@ class UsersViewModel(
                 it.copy(warningDialogOpen = false, warningInput = "")
             }
             is UsersIntent.UpdateWarningInput -> updateState { it.copy(warningInput = intent.value) }
-            UsersIntent.ConfirmWarning -> sendWarning()
+            UsersIntent.ConfirmWarning -> if (!warningInFlight) sendWarning()
 
             is UsersIntent.UpdateSearch -> updateState { it.copy(searchQuery = intent.value) }
         }
@@ -154,14 +167,28 @@ class UsersViewModel(
         // La ficha se carga aparte del formulario de edición: es sólo lectura,
         // tiene su propio estado de carga y su propio error, y no debe impedir
         // editar nombre/roles si alguna de sus secciones falla.
-        loadUserDetail(user.id)
+        reloadUserDetail(user.id)
     }
 
-    private suspend fun loadUserDetail(userId: String) {
+    /**
+     * Lanza la carga de la ficha cancelando la anterior, y descarta el resultado si entre tanto se seleccionó otro usuario
+     * (MASTER5-OC-002: una respuesta lenta de A ya no pisa la ficha de B).
+     */
+    private fun reloadUserDetail(userId: String) {
+        detailJob?.cancel()
         updateState { it.copy(detail = UiAsync.Loading) }
-        when (val result = usersRepository.getUserDetail(userId)) {
-            is AppResult.Failure -> updateState { it.copy(detail = UiAsync.Error(result.error)) }
-            is AppResult.Success -> updateState { it.copy(detail = UiAsync.Success(result.value)) }
+        detailJob = scope.launch {
+            val result = usersRepository.getUserDetail(userId)
+            updateState { state ->
+                if (state.selectedUserId != userId) {
+                    state
+                } else {
+                    when (result) {
+                        is AppResult.Failure -> state.copy(detail = UiAsync.Error(result.error))
+                        is AppResult.Success -> state.copy(detail = UiAsync.Success(result.value))
+                    }
+                }
+            }
         }
     }
 
@@ -175,43 +202,60 @@ class UsersViewModel(
      * inventaba una fecha de alta.
      */
     private suspend fun save() {
-        val existing = currentState().selectedUser ?: return
-        val blockers = currentState().saveBlockers
+        val snapshot = currentState()
+        val existing = snapshot.selectedUser ?: return
+        // Sin guardado doble: un segundo Save del mismo usuario mientras el primero vuela no lanza otro upsert.
+        if (existing.id in savesInFlight || snapshot.actionState is UiAsync.Loading) return
+        val blockers = snapshot.saveBlockers
         if (blockers.isNotEmpty()) {
             updateState { it.copy(actionState = UiAsync.Error(AppError.Validation(blockers.first()))) }
             return
         }
-        updateState { it.copy(actionState = UiAsync.Loading) }
-        val user = existing.copy(
-            fullName = currentState().editorName.trim(),
-            roleIds = currentState().editorRoleIds.toList(),
-        )
-        when (val result = upsertUserUseCase(user, previousName = existing.fullName)) {
-            is AppResult.Failure -> {
-                updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-                // El guardado no es atomico (PATCH nombre, POST roles, GET): un fallo parcial deja el servidor con
-                // parte del cambio. Se relee la fila para que la lista y la ficha no diverjan; el editor conserva
-                // lo tecleado para poder reintentar (el "sucio" se calcula contra la fila releida).
-                refreshUserRow(user.id)
-            }
-            is AppResult.Success -> {
-                analyticsTracker.trackAction("user_saved", mapOf("user_id" to user.id))
-                updateState { state ->
-                    // El flujo de la lista no vuelve a emitir tras un guardado, así
-                    // que la fila se refresca aquí; si no, la tabla seguiría
-                    // enseñando el nombre antiguo hasta recargar la pantalla.
-                    val updated = state.loadedUsers.map {
-                        if (it.id == result.value.id) result.value.keepingKnownFrom(it) else it
+        savesInFlight += existing.id
+        try {
+            updateState { it.copy(actionState = UiAsync.Loading) }
+            val user = existing.copy(
+                fullName = snapshot.editorName.trim(),
+                roleIds = snapshot.editorRoleIds.toList(),
+            )
+            // `previous` = la fila que el editor leyó: el guardado sólo escribe lo que cambió (MASTER5-API-009).
+            when (val result = upsertUserUseCase(user, previousName = existing.fullName, previous = existing)) {
+                is AppResult.Failure -> {
+                    // Sólo se informa en el editor si sigue mostrando a este usuario (MASTER5-OC-002).
+                    updateState { if (it.selectedUserId == user.id) it.copy(actionState = UiAsync.Error(result.error)) else it }
+                    // El guardado no es atomico (PATCH nombre, POST roles, GET): un fallo parcial deja el servidor con
+                    // parte del cambio. Se relee la fila para que la lista y la ficha no diverjan; el editor conserva
+                    // lo tecleado para poder reintentar (el "sucio" se calcula contra la fila releida).
+                    refreshUserRow(user.id)
+                }
+                is AppResult.Success -> {
+                    analyticsTracker.trackAction("user_saved", mapOf("user_id" to user.id))
+                    updateState { state ->
+                        // El flujo de la lista no vuelve a emitir tras un guardado, así
+                        // que la fila se refresca aquí; si no, la tabla seguiría
+                        // enseñando el nombre antiguo hasta recargar la pantalla.
+                        val updated = state.loadedUsers.map {
+                            if (it.id == result.value.id) result.value.keepingKnownFrom(it) else it
+                        }
+                        val withRows = state.copy(users = UiAsync.Success(updated))
+                        if (state.selectedUserId == result.value.id) {
+                            // El editor sólo se repone si sigue en este usuario: un save(A) lento ya no arrastra el
+                            // editor de vuelta a A tras cambiar a B.
+                            withRows.copy(
+                                editorName = result.value.fullName,
+                                editorRoleIds = result.value.roleIds.toSet(),
+                                actionState = UiAsync.Success(Unit),
+                            )
+                        } else {
+                            withRows
+                        }
                     }
-                    state.copy(
-                        users = UiAsync.Success(updated),
-                        selectedUserId = result.value.id,
-                        editorName = result.value.fullName,
-                        editorRoleIds = result.value.roleIds.toSet(),
-                        actionState = UiAsync.Success(Unit),
-                    )
+                    // MASTER5-OC-003: la ficha (nombre/roles/estado) se relee tras guardar, si sigue seleccionado.
+                    if (currentState().selectedUserId == user.id) reloadUserDetail(user.id)
                 }
             }
+        } finally {
+            savesInFlight -= existing.id
         }
     }
 
@@ -223,46 +267,89 @@ class UsersViewModel(
         }
     }
 
+    /** Clave nueva: usuario, importe (si se conoce), instante y secuencia local (dos aperturas en el mismo ms no colisionan). */
+    private fun mintGrantKey(userId: String, amount: Int?): String =
+        "grant:$userId:${amount ?: "_"}:${Clock.System.now().toEpochMilliseconds()}:${++keySequence}"
+
     private suspend fun grantTickets(amount: Int) {
-        val userId = currentState().selectedUserId ?: return
-        // La clave se fija al abrir el diálogo, no al pulsar: así un doble clic o
-        // un reintento de red reutilizan la misma y el backend devuelve el
-        // movimiento original en lugar de conceder los tickets otra vez.
-        val idempotencyKey = currentState().ticketsIdempotencyKey ?: return updateState {
+        if (grantInFlight) return
+        val snapshot = currentState()
+        val userId = snapshot.selectedUserId ?: return
+        // MASTER5-IDEM-001: la clave identifica la OPERACIÓN, no el intento ni la apertura del diálogo.
+        //  - Hay una concesión con resultado desconocido para este usuario y el importe es el mismo: se reutiliza su clave
+        //    (un reintento tras un timeout no concede dos veces; el backend devuelve el movimiento original).
+        //  - Importe distinto: es otra operación, clave nueva.
+        //  - Sin pendiente: la clave fijada al abrir el diálogo (doble clic = misma clave).
+        val pending = snapshot.pendingGrant?.takeIf { it.userId == userId }
+        val idempotencyKey = when {
+            pending != null && pending.amount == amount -> pending.key
+            pending != null -> mintGrantKey(userId, amount)
+            else -> snapshot.ticketsIdempotencyKey
+        } ?: return updateState {
             it.copy(
                 actionState = UiAsync.Error(
                     AppError.Validation("Vuelve a abrir el diálogo para conceder OposiTickets."),
                 ),
             )
         }
-        updateState { it.copy(actionState = UiAsync.Loading) }
-        when (val result = moderationRepository.grantTickets(userId, amount, "Ajuste manual", idempotencyKey)) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> {
-                analyticsTracker.trackAction("tickets_grant", mapOf("user_id" to userId, "amount" to amount.toString()))
-                updateState { state ->
-                    val updated = state.loadedUsers.map { user ->
-                        if (user.id == userId) user.copy(ticketsBalance = result.value) else user
-                    }
-                    state.copy(
-                        users = if (updated.isEmpty()) state.users else UiAsync.Success(updated),
-                        actionState = UiAsync.Success(Unit),
+        grantInFlight = true
+        try {
+            updateState { it.copy(actionState = UiAsync.Loading) }
+            when (val result = moderationRepository.grantTickets(userId, amount, "Ajuste manual", idempotencyKey)) {
+                is AppResult.Failure -> updateState {
+                    // El resultado es desconocido (puede haberse aplicado): se conserva la clave para el reintento.
+                    it.copy(
+                        pendingGrant = PendingGrant(userId, amount, idempotencyKey),
+                        actionState = if (it.selectedUserId == userId) UiAsync.Error(result.error) else it.actionState,
                     )
                 }
+                is AppResult.Success -> {
+                    analyticsTracker.trackAction("tickets_grant", mapOf("user_id" to userId, "amount" to amount.toString()))
+                    updateState { state ->
+                        val updated = state.loadedUsers.map { user ->
+                            if (user.id == userId) user.copy(ticketsBalance = result.value) else user
+                        }
+                        // MASTER5-OC-003: la ficha (saldo de Economía) se actualiza con el saldo devuelto.
+                        val detail = (state.detail as? UiAsync.Success)?.value
+                        val economy = detail?.economy
+                        val patchedDetail = if (detail != null && economy != null && state.selectedUserId == userId) {
+                            UiAsync.Success(detail.copy(economy = economy.copy(ticketBalance = result.value)))
+                        } else {
+                            state.detail
+                        }
+                        state.copy(
+                            users = if (updated.isEmpty()) state.users else UiAsync.Success(updated),
+                            detail = patchedDetail,
+                            pendingGrant = state.pendingGrant?.takeIf { it.userId != userId },
+                            // Concesión resuelta: su clave no puede reutilizarse para otra operación.
+                            ticketsIdempotencyKey = if (state.ticketsDialogOpen) state.ticketsIdempotencyKey else null,
+                            actionState = if (state.selectedUserId == userId) UiAsync.Success(Unit) else state.actionState,
+                        )
+                    }
+                }
             }
+        } finally {
+            grantInFlight = false
         }
     }
 
     private suspend fun sendWarning() {
         val userId = currentState().selectedUserId ?: return
         val message = currentState().warningInput.trim().ifBlank { return }
-        updateState { it.copy(warningDialogOpen = false, warningInput = "", actionState = UiAsync.Loading) }
-        when (val result = moderationRepository.warnUser(userId, message)) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
-            is AppResult.Success -> {
-                analyticsTracker.trackAction("user_warned", mapOf("user_id" to userId))
-                updateState { it.copy(actionState = UiAsync.Success(Unit)) }
+        warningInFlight = true
+        try {
+            updateState { it.copy(warningDialogOpen = false, warningInput = "", actionState = UiAsync.Loading) }
+            when (val result = moderationRepository.warnUser(userId, message)) {
+                is AppResult.Failure -> updateState {
+                    if (it.selectedUserId == userId) it.copy(actionState = UiAsync.Error(result.error)) else it
+                }
+                is AppResult.Success -> {
+                    analyticsTracker.trackAction("user_warned", mapOf("user_id" to userId))
+                    updateState { if (it.selectedUserId == userId) it.copy(actionState = UiAsync.Success(Unit)) else it }
+                }
             }
+        } finally {
+            warningInFlight = false
         }
     }
 }
@@ -275,6 +362,7 @@ internal fun User.keepingKnownFrom(previous: User): User = copy(
     ticketsBalance = ticketsBalance ?: previous.ticketsBalance,
     fullName = fullName.ifBlank { previous.fullName },
     email = email.ifBlank { previous.email },
+    username = username ?: previous.username,
     createdAt = createdAt ?: previous.createdAt,
     isRegistered = isRegistered ?: previous.isRegistered,
 )

@@ -18,7 +18,7 @@ class UpsertUserBlankNameTest {
         val saved = mutableListOf<User>()
         override fun observeUsers(): Flow<AppResult<List<User>>> = emptyFlow()
         override suspend fun getUser(userId: String): AppResult<User> = error("unused")
-        override suspend fun upsertUser(user: User): AppResult<User> { saved += user; return AppResult.Success(user) }
+        override suspend fun upsertUser(user: User, previous: User?): AppResult<User> { saved += user; return AppResult.Success(user) }
         override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = error("unused")
     }

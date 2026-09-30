@@ -1107,16 +1107,16 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val query = call.request.queryParameters
                 // MASTER-API-008: limit/offset estrictos (400 OUT_OF_RANGE), no un defecto silencioso.
                 val (limit, offset) = AdminPageRequest.parseStrict(query["limit"], query["offset"])
-                val page = gateway.listUsuarios(
-                    limit = limit,
-                    offset = offset,
-                    filter = AdminUserListFilter.parse(query["q"], query["roleCode"], query["accountStatus"], query["sort"]),
-                )
+                // MASTER5-API-010 (F-10): parseo y validacion FUERA; la llamada bloqueante al gateway, en `withUpstreamIo`.
+                // El actor de auditoria ([AdminAuditActor], ThreadContextElement) y el MDC viajan con el cambio de hilo.
+                val filter = AdminUserListFilter.parse(query["q"], query["roleCode"], query["accountStatus"], query["sort"])
+                val page = withUpstreamIo { gateway.listUsuarios(limit = limit, offset = offset, filter = filter) }
                 call.respond(page)
             }
             get("/{id}") {
                 // D1-23 (SLICE 1): AdminUser + el duplicado legacy `data`. Un id que no es UUID -> 400 NON_UUID.
-                val user = gateway.getUsuarioAdmin(call.userPathId())
+                val userId = call.userPathId()
+                val user = withUpstreamIo { gateway.getUsuarioAdmin(userId) }
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
                 call.respond(user)
             }
@@ -1125,7 +1125,7 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             get("/{id}/detalle") {
                 val userId = call.userPathId()
                 val sections = AdminUserDetailSection.parse(call.request.queryParameters["sections"])
-                val detail = gateway.getUsuarioDetalle(userId, sections)
+                val detail = withUpstreamIo { gateway.getUsuarioDetalle(userId, sections) }
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
                 call.respond(AdminUserDetailResponse(detail))
             }
@@ -1140,12 +1140,15 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val name = body.nombreMostrar?.trim()
                 if (name != null) {
                     if (name.isEmpty()) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.REQUIRED))
-                    if (name.length > ADMIN_USER_NAME_MAX) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.OUT_OF_RANGE))
-                    gateway.updateUsuario(userId, name)
+                    // MASTER5-API-005: el OpenAPI `maxLength` cuenta PUNTOS DE CODIGO (no unidades UTF-16: un emoji son 2) y un
+                    // nombre visible no admite caracteres de control (p{Cc}: saltos de linea, NUL, ...).
+                    if (name.codePointCount(0, name.length) > ADMIN_USER_NAME_MAX) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.OUT_OF_RANGE))
+                    if (name.any { it.isISOControl() }) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.INVALID_FORMAT))
+                    withUpstreamIo { gateway.updateUsuario(userId, name) }
                         ?: return@patch call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
                 }
                 // MASTER3-API-001: 200 = `AdminUserResponse` (AdminUser canonico + `data` legacy), igual que GET /{id} (D1-23).
-                val user = gateway.getUsuarioAdmin(userId)
+                val user = withUpstreamIo { gateway.getUsuarioAdmin(userId) }
                     ?: return@patch call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
                 call.respond(user)
             }
@@ -1176,18 +1179,17 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 // petición cuando el identificador no es un UUID.
                 // MASTER-AUTH-003: el actor (sub del JWT) decide si puede tocar roles administrativos.
                 val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
-                gateway.syncRoles(
-                    userId,
-                    body.roleIds.map { it.validatedUuid("roleIds") },
-                    actorId = actorId,
-                )
-                // D1-26 (SLICE 1): los roles RESULTANTES (re-leidos tras la sincronizacion). `ok` se conserva para OC.
-                call.respond(AdminUserRolesResponse(roleIds = gateway.roleIdsOf(userId)))
+                val requestedRoleIds = body.roleIds.map { it.validatedUuid("roleIds") }
+                // D1-26 (SLICE 1): los roles RESULTANTES de esta sincronizacion (MASTER5-API-011: el `despues` bajo el
+                // cerrojo de la RPC, no una re-lectura posterior). `ok` se conserva para OC. MASTER5-API-010: en el pool IO.
+                val resultingRoleIds = withUpstreamIo { gateway.syncRoles(userId, requestedRoleIds, actorId = actorId) }
+                call.respond(AdminUserRolesResponse(roleIds = resultingRoleIds))
             }
             post("/{id}/tickets") {
                 val body = call.receive<GrantTicketsBody>()
                 val idempotencyKey = body.idempotencyKey ?: call.request.headers["Idempotency-Key"]
-                val saldo = gateway.grantTickets(call.requiredPath("id"), body.cantidad, body.motivo, idempotencyKey = idempotencyKey)
+                val userId = call.requiredPath("id")
+                val saldo = withUpstreamIo { gateway.grantTickets(userId, body.cantidad, body.motivo, idempotencyKey = idempotencyKey) }
                 call.respond(GrantTicketsResponse(saldo))
             }
         }
@@ -5538,7 +5540,7 @@ class AdminV1Gateway private constructor(
      * ANTES de la RPC y falla cerrada (sin actor, o actor sin `superadmin` → 403 SUPERADMIN_REQUIRED, sin
      * llamar a `admin_sync_roles`). Cambiar sólo `moderador`/`usuario` sigue abierto a cualquier admin.
      */
-    fun syncRoles(usuarioId: String, roleIds: List<String>, actorId: String? = null) {
+    fun syncRoles(usuarioId: String, roleIds: List<String>, actorId: String? = null): List<String> {
         // Misma apertura que `grantTickets`, `getUsuarioDetalle` y
         // `grantTicketsAdmin`: el identificador se valida ANTES de interpolarse
         // en ninguna URL ni de bajar a la RPC. Sin esto, el segmento del path
@@ -5598,7 +5600,14 @@ class AdminV1Gateway private constructor(
                 ACTION_ROLES_SYNC_FAILED, "roles_usuario", usuarioId,
                 antes = antes,
                 despues = despues {
-                    put("resultado", JsonPrimitive(if (failure is BackendDomainException) "rechazada" else "desconocido"))
+                    // MASTER5-DB-001: RPC inexistente (PGRST202, despliegue mixto sin migracion 20260930101850): ni se rechazo la
+                    // sincronizacion por una regla ni es un fallo desconocido; se dice tal cual.
+                    val resultado = when {
+                        failure.saysWriteRpcIsMissing() -> "rpc_ausente"
+                        failure is BackendDomainException -> "rechazada"
+                        else -> "desconocido"
+                    }
+                    put("resultado", JsonPrimitive(resultado))
                     put("error", JsonPrimitive((failure as? BackendDomainException)?.errorCode ?: failure::class.simpleName))
                 },
             )
@@ -5620,6 +5629,11 @@ class AdminV1Gateway private constructor(
                 put("bajoCerrojo", JsonPrimitive(locked != null))
             },
         )
+        // MASTER5-API-011: D1-26 responde los roles RESULTANTES de ESTA sincronizacion: el `despues` que la RPC leyo bajo
+        // su cerrojo (el mismo que acaba de auditarse). Antes la ruta re-leia `roles_usuario` despues de soltar el
+        // cerrojo: con otra sincronizacion concurrente, respuesta y auditoria podian discrepar. Solo si la respuesta de
+        // la RPC es ilegible se re-lee (la sincronizacion ya esta confirmada; la re-lectura es la mejor foto disponible).
+        return locked?.despues ?: roleIdsOf(usuarioId)
     }
 
     /**
@@ -6008,6 +6022,15 @@ class AdminV1Gateway private constructor(
      */
     fun resolverReporte(id: String, req: ResolverReporteBody, actorId: String?) {
         require(req.accion.isNotBlank()) { "La acción es obligatoria." }
+        // MASTER5-API-001: la recompensa se valida ANTES de escribir la accion de moderacion, para que un importe fuera
+        // de tope no deje la accion insertada y la recompensa rechazada.
+        if (req.ticketsReporter > AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION) {
+            throw BackendDomainException(
+                "WALLET_AMOUNT_INVALID",
+                HttpStatusCode.UnprocessableEntity,
+                "La recompensa no puede superar ${AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION} OposiTickets.",
+            )
+        }
         val reporte = request("GET", "/rest/v1/reportes_contenido?select=*&id=eq.$id&limit=1", null)
             .decodeList<ReporteRow>().firstOrNull() ?: error("Reporte no encontrado.")
         val estado = if (req.accion == "descartar") "descartado" else "resuelto"
@@ -6060,6 +6083,7 @@ class AdminV1Gateway private constructor(
                 "La clave de idempotencia es obligatoria.",
             )
         }
+        requireWalletGrantWithinBounds(cantidad, motivo, key)
         val result = request(
             "POST",
             "/rest/v1/rpc/admin_grant_tickets",
@@ -7134,7 +7158,16 @@ class AdminV1Gateway private constructor(
             entityId = registroId,
             errorType = error::class.simpleName,
         )
-        if (required) throw IllegalStateException("No se pudo registrar la auditoria de '$accion'.", error)
+        // MASTER5-API-004: una auditoria OBLIGATORIA que no se puede escribir es un fallo del servidor (no se deja operar
+        // sin rastro), no un "upstream roto": antes era `IllegalStateException`, que StatusPages publica como 502
+        // UPSTREAM_ERROR / 504 UPSTREAM_TIMEOUT, fuera del catalogo congelado de D1-26 (y de D1-25/D1-23). INTERNAL (500)
+        // si esta declarado; la causa viaja para el log redactado de StatusPages.
+        if (required) {
+            throw CanonicalErrorCode.INTERNAL.exception(
+                message = "No se pudo registrar la auditoria obligatoria de la operacion.",
+                cause = error,
+            )
+        }
     }
 
     // TIENDA (Store) -- proxies what the Desktop client used to call directly

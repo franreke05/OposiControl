@@ -20,6 +20,9 @@ components:
         responses:
           '200':
             description: 'Current user.'
+            headers:
+              ETag:
+                $ref: '#/components/headers/ProfileETag'
             content:
               application/json:
                 schema:
@@ -107,6 +110,9 @@ components:
         responses:
           '200':
             description: 'Current user (D1-11 shape).'
+            headers:
+              ETag:
+                $ref: '#/components/headers/ProfileETag'
             content:
               application/json:
                 schema:
@@ -157,6 +163,9 @@ components:
         responses:
           '200':
             description: 'Current user (D1-11 shape).'
+            headers:
+              ETag:
+                $ref: '#/components/headers/ProfileETag'
             content:
               application/json:
                 schema:
@@ -796,6 +805,12 @@ components:
             description: 'VERSION_EXISTS.'
           '500':
             $ref: '../common/errors.yaml#/components/responses/Internal'
+  headers:
+    ProfileETag:
+      description: 'Current profile version (opaque strong validator). The client sends it back as If-Match on PATCH /api/v1/app/me/profile for optimistic concurrency; it is omitted only if the server has no version for the profile; in that case a client must not save blindly (re-read first).'
+      required: false
+      schema:
+        type: string
   schemas:
     AuthProvider:
       type: string
