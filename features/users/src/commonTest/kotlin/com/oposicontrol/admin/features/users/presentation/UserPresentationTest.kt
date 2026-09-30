@@ -29,13 +29,13 @@ class UserPresentationTest {
         fullName: String = "Ana García",
         email: String = "ana.garcia",
         roleIds: List<String> = listOf("r-user"),
-        isActive: Boolean = true,
+        isRegistered: Boolean? = true,
     ) = User(
         id = id,
         fullName = fullName,
         email = email,
         roleIds = roleIds,
-        isActive = isActive,
+        isRegistered = isRegistered,
         createdAt = Instant.parse("2026-03-04T10:15:00Z"),
     )
 
@@ -104,11 +104,12 @@ class UserPresentationTest {
 
     @Test
     fun elBooleanoDistingueInvitadoDeRegistradoNoActivoDeBloqueado() {
-        assertEquals(UserAccountKind.REGISTRADO, userAccountKind(user(isActive = true)))
-        assertEquals(UserAccountKind.INVITADO, userAccountKind(user(isActive = false)))
+        assertEquals(UserAccountKind.REGISTRADO, userAccountKind(user(isRegistered = true)))
+        assertEquals(UserAccountKind.INVITADO, userAccountKind(user(isRegistered = false)))
+        assertEquals(UserAccountKind.SIN_DATO, userAccountKind(user(isRegistered = null)), "sin dato != invitado")
 
         val etiquetas = UserAccountKind.entries.map { userAccountKindLabel(it) }
-        assertEquals(listOf("Registrado", "Invitado"), etiquetas)
+        assertEquals(listOf("Registrado", "Invitado", USER_NO_DATA), etiquetas)
         assertFalse(etiquetas.any { it.contains("Bloquead", ignoreCase = true) })
         assertFalse(etiquetas.any { it.contains("Activo", ignoreCase = true) })
     }

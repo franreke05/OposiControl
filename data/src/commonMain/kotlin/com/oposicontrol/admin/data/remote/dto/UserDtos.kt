@@ -8,8 +8,10 @@ data class UserDto(
     val fullName: String,
     val email: String,
     val roleIds: List<String>,
-    val isActive: Boolean,
-    val createdAt: String,
+    /** `!es_invitado` legacy; null si el backend no lo informa (nunca se deriva de `accountStatus`). */
+    val isActive: Boolean?,
+    /** Instante ISO; null si el backend no lo informa (no se fabrica una fecha). */
+    val createdAt: String?,
     val ticketsBalance: Int = 0,
     /** Wire `AccountStatus` (activa|bloqueada|eliminacion_pendiente); null si el backend no lo emite. */
     val accountStatus: String? = null,

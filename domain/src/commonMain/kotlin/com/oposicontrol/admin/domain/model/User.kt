@@ -23,9 +23,13 @@ data class User(
     val fullName: String,
     val email: String,
     val roleIds: List<String>,
-    /** OJO: el backend lo calcula como `!es_invitado`, no es el estado de cuenta; ese es [accountStatus]. */
-    val isActive: Boolean,
-    val createdAt: Instant,
+    /**
+     * Cuenta registrada (`!es_invitado`); NO es el estado de cuenta ni de acceso, ese es [accountStatus]. En el cable
+     * legacy sigue llamandose `isActive` (`UserDto.isActive`) hasta que el backend lo renombre. Null = el backend no lo informo.
+     */
+    val isRegistered: Boolean?,
+    /** Null si el backend no lo informo o no es parseable: no se fabrica una fecha. */
+    val createdAt: Instant?,
     val ticketsBalance: Int = 0,
     val accountStatus: AccountStatus = AccountStatus.UNKNOWN,
     val username: String? = null,

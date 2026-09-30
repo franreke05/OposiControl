@@ -49,6 +49,7 @@ import com.oposicontrol.admin.core.ui.layout.desktopBreakpointFor
 import com.oposicontrol.admin.core.ui.layout.supportsMasterDetail
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.domain.model.AccountStatus
 import com.oposicontrol.admin.domain.model.Role
 import com.oposicontrol.admin.domain.model.User
 
@@ -176,6 +177,13 @@ internal fun UserAvatar(
 /** El significado de una pastilla: qué familia de color le toca. */
 internal enum class UserPillTone { POSITIVE, NEUTRAL, INFO, ADMIN, ATTENTION }
 
+/** Tono de la pastilla del estado de cuenta: activa en positivo; bloqueada y eliminación pendiente piden atención. */
+internal fun userAccountStatusTone(status: AccountStatus): UserPillTone = when (status) {
+    AccountStatus.ACTIVE -> UserPillTone.POSITIVE
+    AccountStatus.BLOCKED, AccountStatus.DELETION_PENDING -> UserPillTone.ATTENTION
+    AccountStatus.UNKNOWN -> UserPillTone.NEUTRAL
+}
+
 /** Pastilla pequeña de la fila y de la cabecera de la ficha. El texto lleva el dato; el color acompaña. */
 @Composable
 internal fun UserPill(text: String, tone: UserPillTone, modifier: Modifier = Modifier) {
@@ -264,7 +272,7 @@ internal fun UserRowCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = if (narrow) "${userAccountName(user)} · ${userAccountKindLabel(kind)}" else userAccountName(user),
+                text = if (narrow) "${userAccountName(user)} · ${userAccountKindLabel(kind)} · ${userAccountStatusLabel(user.accountStatus)}" else userAccountName(user),
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.textSecondary,
                 maxLines = 1,
@@ -277,6 +285,10 @@ internal fun UserRowCard(
                     UserPill(
                         text = userAccountKindLabel(kind),
                         tone = if (kind == UserAccountKind.REGISTRADO) UserPillTone.POSITIVE else UserPillTone.NEUTRAL,
+                    )
+                    UserPill(
+                        text = userAccountStatusLabel(user.accountStatus),
+                        tone = userAccountStatusTone(user.accountStatus),
                     )
                 }
                 UserPill(

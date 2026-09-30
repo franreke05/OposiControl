@@ -2,7 +2,7 @@ package com.oposicontrol.admin.data.remote.api
 
 import com.oposicontrol.admin.data.mapper.toDomain
 import com.oposicontrol.admin.domain.model.AccountStatus
-import kotlinx.serialization.json.Json
+import com.oposicontrol.admin.core.network.AdminApiJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -10,7 +10,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class UsersWireShapesTest {
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = AdminApiJson
     private val id = "11111111-1111-4111-8111-111111111111"
     private val id2 = "22222222-2222-4222-8222-222222222222"
 
@@ -26,20 +26,20 @@ class UsersWireShapesTest {
         val u = users.single()
         assertEquals(AccountStatus.DELETION_PENDING, u.accountStatus)
         assertEquals("ana", u.username)
-        assertTrue(u.isActive, "isActive keeps its legacy (!es_invitado) meaning")
+        assertEquals(true, u.isRegistered, "isActive keeps its legacy (!es_invitado) meaning")
         assertEquals(3, u.ticketsBalance)
     }
 
     @Test fun `legacy only list never reports active`() {
         val u = list("""{"data":[{"id":"$id","fullName":"Ana","email":"a@x.es","roleIds":[],"isActive":true,"createdAt":"2026-01-01T00:00:00Z"}]}""").single().toDomain()
         assertEquals(AccountStatus.UNKNOWN, u.accountStatus)
-        assertTrue(u.isActive)
+        assertEquals(true, u.isRegistered)
     }
 
     @Test fun `items only list survives data removal`() {
         val u = list("""{"items":[{"id":"$id","email":null,"roleIds":[],"accountStatus":"bloqueada","createdAt":"2026-01-01T00:00:00Z","ticketsBalance":null}]}""").single().toDomain()
         assertEquals(AccountStatus.BLOCKED, u.accountStatus)
-        assertFalse(u.isActive)
+        assertNull(u.isRegistered, "isActive is legacy-only: never derived from accountStatus")
         assertEquals("", u.email)
         assertEquals(0, u.ticketsBalance)
     }
@@ -69,7 +69,7 @@ class UsersWireShapesTest {
         assertEquals(true, u.onboardingCompleted)
         assertEquals("a@x.es", u.email, "null canonical email falls back to legacy")
         assertEquals("Ana", u.fullName)
-        assertFalse(u.isActive)
+        assertEquals(false, u.isRegistered)
         assertEquals(5, u.ticketsBalance)
     }
 
@@ -83,7 +83,7 @@ class UsersWireShapesTest {
     @Test fun `detail canonical without data wrapper`() {
         val u = one("""{"id":"$id","roleIds":[],"accountStatus":"bloqueada","onboardingCompleted":false,"createdAt":"2026-01-01T00:00:00Z","authProviders":[]}""").toDomain()
         assertEquals(AccountStatus.BLOCKED, u.accountStatus)
-        assertFalse(u.isActive)
+        assertNull(u.isRegistered, "isActive is legacy-only: never derived from accountStatus")
     }
 
     @Test fun `detail dossier profile carries account state`() {

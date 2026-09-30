@@ -186,7 +186,13 @@ class UsersViewModel(
             roleIds = currentState().editorRoleIds.toList(),
         )
         when (val result = upsertUserUseCase(user)) {
-            is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+            is AppResult.Failure -> {
+                updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+                // El guardado no es atomico (PATCH nombre, POST roles, GET): un fallo parcial deja el servidor con
+                // parte del cambio. Se relee la fila para que la lista y la ficha no diverjan; el editor conserva
+                // lo tecleado para poder reintentar (el "sucio" se calcula contra la fila releida).
+                refreshUserRow(user.id)
+            }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("user_saved", mapOf("user_id" to user.id))
                 updateState { state ->
@@ -205,6 +211,14 @@ class UsersViewModel(
                     )
                 }
             }
+        }
+    }
+
+    private suspend fun refreshUserRow(userId: String) {
+        val fresh = (usersRepository.getUser(userId) as? AppResult.Success)?.value ?: return
+        updateState { state ->
+            if (state.loadedUsers.none { it.id == fresh.id }) return@updateState state
+            state.copy(users = UiAsync.Success(state.loadedUsers.map { if (it.id == fresh.id) fresh else it }))
         }
     }
 

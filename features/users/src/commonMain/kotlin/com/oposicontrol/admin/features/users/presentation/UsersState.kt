@@ -14,7 +14,7 @@ import com.oposicontrol.admin.domain.model.UserDetail
  *   `username`, y el guardado lo descarta. Mantenerlo editable hacía creer que se
  *   estaba corrigiendo el correo de alguien. Ahora se enseña como dato de sólo
  *   lectura. Ver [USER_ACCOUNT_FIELD_LABEL].
- * - `editorIsActive`: `User.isActive` es `!es_invitado`, no un estado de acceso,
+ * - `editorIsActive`: `User.isRegistered` es `!es_invitado`, no un estado de acceso,
  *   y el `PATCH` ni siquiera lo escribe. Ver [UserAccountKind].
  * - el par de acciones de bloqueo, por lo mismo.
  *

@@ -49,7 +49,7 @@ internal object UsersFixtures {
         fullName = fullName,
         email = username,
         roleIds = roleIds,
-        isActive = registrado,
+        isRegistered = registrado,
         createdAt = Instant.fromEpochSeconds(NOW.epochSeconds - daysAgo * 86_400L),
         ticketsBalance = tickets,
     )

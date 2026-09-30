@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.features.users.presentation
 
+import com.oposicontrol.admin.domain.model.AccountStatus
 import com.oposicontrol.admin.domain.model.Role
 import com.oposicontrol.admin.domain.model.User
 
@@ -18,9 +19,10 @@ import com.oposicontrol.admin.domain.model.User
  *    administradores de OposiControl. Un administrador no es otra cosa que una
  *    fila de `perfiles_usuario` con un rol `admin`/`superadmin` enlazado. Ver
  *    [UserPopulation].
- * 2. `User.isActive` **no significa activo ni bloqueado**: el backend lo calcula
- *    como `!es_invitado`, así que distingue invitado de registrado. No existe
- *    ninguna columna de bloqueo en el esquema. Ver [UserAccountKind].
+ * 2. `User.isRegistered` (`!es_invitado` en el backend) **no significa activo ni
+ *    bloqueado**: distingue invitado de registrado. El estado de acceso es
+ *    `User.accountStatus` (activa / bloqueada / eliminación pendiente). Ver
+ *    [UserAccountKind] y [userAccountStatusLabel].
  * 3. `User.email` **no es el email**: el backend lo rellena con `p.username`,
  *    porque `perfiles_usuario` no tiene columna de email. El correo real vive en
  *    `auth.users` y nadie lo lee. Ver [USER_EMAIL_UNAVAILABLE_NOTE].
@@ -153,7 +155,7 @@ const val USER_NO_DATA: String = "Sin dato"
 
 /** Fecha de alta en formato corto. `createdAt` llega como instante ISO. */
 fun userSignupDate(user: User): String =
-    user.createdAt.toString().take(10)
+    user.createdAt?.toString()?.take(10) ?: USER_NO_DATA
 
 // ---------------------------------------------------------------------------
 // Estado de la cuenta: invitado vs registrado (NO activo vs bloqueado)
@@ -162,7 +164,7 @@ fun userSignupDate(user: User): String =
 /**
  * Qué tipo de cuenta es.
  *
- * El backend calcula `isActive = !es_invitado` tanto en la lista como en la
+ * El backend calcula `isActive = !es_invitado` (dominio: `isRegistered`) tanto en la lista como en la
  * ficha. Es decir: el booleano distingue una cuenta de invitado de una
  * registrada, y **no dice nada sobre acceso**. La pantalla anterior lo pintaba
  * como «Activo/Bloqueado» en la tabla y como «invitado/registrado» en la ficha —
@@ -174,27 +176,43 @@ enum class UserAccountKind {
 
     /** Cuenta de invitado, creada sin registro. `es_invitado = true`. */
     INVITADO,
+
+    /** El backend no informo `es_invitado`: no se afirma ni registrado ni invitado. */
+    SIN_DATO,
 }
 
-fun userAccountKind(user: User): UserAccountKind =
-    if (user.isActive) UserAccountKind.REGISTRADO else UserAccountKind.INVITADO
+fun userAccountKind(user: User): UserAccountKind = when (user.isRegistered) {
+    true -> UserAccountKind.REGISTRADO
+    false -> UserAccountKind.INVITADO
+    null -> UserAccountKind.SIN_DATO
+}
+
+/**
+ * Estado de la cuenta (`AccountStatus` canonico): lo que el panel dice del acceso. Un estado ausente o no
+ * reconocido (`UNKNOWN`) se muestra como sin dato, nunca como activo (deny-by-default).
+ */
+fun userAccountStatusLabel(status: AccountStatus): String = when (status) {
+    AccountStatus.ACTIVE -> "Activa"
+    AccountStatus.BLOCKED -> "Bloqueada"
+    AccountStatus.DELETION_PENDING -> "Eliminación pendiente"
+    AccountStatus.UNKNOWN -> USER_NO_DATA
+}
 
 fun userAccountKindLabel(kind: UserAccountKind): String = when (kind) {
     UserAccountKind.REGISTRADO -> "Registrado"
     UserAccountKind.INVITADO -> "Invitado"
+    UserAccountKind.SIN_DATO -> USER_NO_DATA
 }
 
 /**
  * Por qué no hay ninguna acción de bloqueo en esta pantalla.
  *
- * No es una omisión de diseño: el esquema no tiene estado de bloqueo, y el
- * `PATCH` de usuario sólo escribe `nombre_mostrar`. El botón «Bloquear» anterior
- * llamaba a ese `PATCH` con el booleano cambiado, el backend lo descartaba y la
- * UI pintaba «Operación completada».
+ * El estado de cuenta (activa / bloqueada / eliminación pendiente) SÍ existe y se enseña, pero es de sólo lectura:
+ * el `PATCH` de usuario sólo escribe `nombre_mostrar` y ninguna operación del panel lo cambia. El botón «Bloquear»
+ * anterior llamaba a ese `PATCH` con un booleano, el backend lo descartaba y la UI pintaba «Operación completada».
  */
-const val USER_NO_BLOCK_STATE_NOTE: String =
-    "No existe bloqueo de usuarios: el sistema distingue cuentas de invitado de cuentas " +
-        "registradas, pero no permite retirar el acceso desde el panel."
+const val USER_ACCOUNT_STATUS_READ_ONLY_NOTE: String =
+    "El estado de la cuenta se muestra tal como lo informa el sistema, pero no se puede cambiar desde el panel."
 
 // ---------------------------------------------------------------------------
 // Matriz de honestidad: qué se puede hacer de verdad
@@ -280,7 +298,7 @@ private val USER_CAPABILITIES: List<UserCapability> = listOf(
     UserCapability(
         name = "Bloquear o desbloquear",
         level = UserCapabilityLevel.NOT_FOUND,
-        note = USER_NO_BLOCK_STATE_NOTE,
+        note = USER_ACCOUNT_STATUS_READ_ONLY_NOTE,
     ),
     UserCapability(
         name = "Invitar por correo",

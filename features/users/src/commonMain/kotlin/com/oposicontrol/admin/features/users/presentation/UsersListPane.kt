@@ -41,7 +41,7 @@ import com.oposicontrol.admin.domain.model.User
  * Filtro por población.
  *
  * Sustituye al antiguo «Todos / Activos / Bloqueados». Aquel filtraba sobre
- * `isActive`, que el backend calcula como `!es_invitado`: pedir «Bloqueados»
+ * `isRegistered`, que el backend calcula (`isActive` en el cable) como `!es_invitado`: pedir «Bloqueados»
  * devolvía en realidad la lista de invitados. Ver [UserAccountKind].
  */
 private enum class PopulationFilter(val label: String) {
@@ -67,7 +67,7 @@ private enum class AccountFilter(val label: String) {
  *   con las cuentas que tienen acceso a este mismo panel, porque ambas son filas de
  *   `perfiles_usuario` y sólo las separa el rol.
  * - El tipo de cuenta dice **Registrado/Invitado** y no Activo/Bloqueado. No existe
- *   bloqueo en el sistema. Ver [USER_NO_BLOCK_STATE_NOTE].
+ *   bloqueo editable desde el panel: el estado de cuenta se muestra en su pastilla. Ver [USER_ACCOUNT_STATUS_READ_ONLY_NOTE].
  *
  * No hay paginación de cliente: el backend sirve el catálogo paginado de 50 en 50 y
  * la pantalla enseña las filas cargadas y dice que son las primeras. Ver

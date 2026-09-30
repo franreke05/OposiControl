@@ -100,6 +100,17 @@ internal fun UserBasicInfoCard(
                 }
             }
             UserRowDivider()
+            UserInfoRowSlot(label = "Estado de cuenta") {
+                if (user == null) {
+                    Text(text = USER_NO_DATA, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
+                } else {
+                    UserPill(
+                        text = userAccountStatusLabel(user.accountStatus),
+                        tone = userAccountStatusTone(user.accountStatus),
+                    )
+                }
+            }
+            UserRowDivider()
             UserInfoRowSlot(label = "Población") {
                 if (population == null) {
                     Text(text = USER_NO_DATA, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
@@ -124,8 +135,8 @@ internal fun UserBasicInfoCard(
                     UiAsyncDetail.Missing -> Text(text = NO_DATA_TEXT, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
                 }
             }
-            // Las dos notas que hacen honesto el bloque: no hay correo que enseñar y no
-            // existe bloqueo. Van debajo, en pequeño, no como filas.
+            // Las dos notas que hacen honesto el bloque: no hay correo que enseñar y el
+            // estado de cuenta es de sólo lectura. Van debajo, en pequeño, no como filas.
             Column(
                 modifier = Modifier.padding(top = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -136,7 +147,7 @@ internal fun UserBasicInfoCard(
                     color = tokens.textSecondary,
                 )
                 Text(
-                    text = USER_NO_BLOCK_STATE_NOTE,
+                    text = USER_ACCOUNT_STATUS_READ_ONLY_NOTE,
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.textSecondary,
                 )

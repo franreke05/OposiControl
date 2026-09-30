@@ -3,10 +3,10 @@ package com.oposicontrol.admin.data.remote.api
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.data.remote.dto.UserDto
-import com.oposicontrol.admin.domain.model.AccountStatus
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
+import io.ktor.client.request.parameter
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -19,14 +19,11 @@ import kotlinx.serialization.Serializable
 
 @Serializable private data class RolesBody(val roleIds: List<String>)
 
-/** Cuerpo del PATCH: solo los campos que el contrato `AdminUserPatchRequest` ya conocia. */
-@Serializable private data class AdminUserPatchBody(
-    val id: String = "",
-    val fullName: String = "",
-    val email: String = "",
-    val roleIds: List<String> = emptyList(),
-    val isActive: Boolean = true,
-)
+/**
+ * Cuerpo del PATCH (D1-25 `AdminUserPatchRequest`, `additionalProperties: false`): SOLO `nombreMostrar`. Los roles viajan por
+ * POST /roles; `id`, `email` e `isActive` no son campos editables y un backend que aplique el contrato los rechazaria.
+ */
+@Serializable internal data class AdminUserPatchBody(val nombreMostrar: String)
 
 /**
  * Usuario tal y como llega hoy: un objeto `AdminUser` canonico (D1-23) con el duplicado legacy en `data`
@@ -41,7 +38,7 @@ import kotlinx.serialization.Serializable
     val isActive: Boolean? = null,
     val accountStatus: String? = null,
     val onboardingCompleted: Boolean? = null,
-    val createdAt: String = "",
+    val createdAt: String? = null,
     val authProviders: List<String> = emptyList(),
     val ticketsBalance: Int? = null,
     val data: AdminUserV1Dto? = null,
@@ -51,23 +48,57 @@ import kotlinx.serialization.Serializable
 @Serializable internal data class AdminUsersV1Response(
     val data: List<AdminUserV1Dto> = emptyList(),
     val items: List<AdminUserV1Dto> = emptyList(),
+    /** `OffsetPageEnvelope`: `total` es null si el conteo fallo (nunca se toma por "no hay mas"). */
+    val total: Int? = null,
+    val limit: Int? = null,
+    val offset: Int? = null,
 )
 
+/** Tamano de pagina que pide el cliente: el maximo de D1-22 (`AdminPageRequest.MAX_LIMIT`). */
+internal const val USERS_PAGE_LIMIT = 200
+
+/** Tope de `offset` del backend (D1-22): mas alla no hay pagina valida, asi que se corta el bucle. */
+internal const val USERS_MAX_OFFSET = 100_000
+
 /**
- * Une el canon con el legacy. `isActive` sale del legacy (`!es_invitado`); si el backend algun dia quita
- * `data`, se usa `accountStatus == activa`. Un estado ausente o no reconocido queda en UNKNOWN, nunca activo.
+ * Recorre TODAS las paginas de D1-22 (antes: una sola llamada sin `limit`/`offset`, que truncaba la lista a 50 sin
+ * avisar). Termina cuando una pagina viene corta o vacia, o cuando ya se leyeron `total` filas. Si `total` es null no se
+ * da la lista por completa mientras las paginas vengan llenas.
  */
-private fun merge(canon: AdminUserV1Dto?, legacy: AdminUserV1Dto?): UserDto {
+internal suspend fun collectAllUsers(fetchPage: suspend (limit: Int, offset: Int) -> AdminUsersV1Response): List<UserDto> {
+    val all = mutableListOf<UserDto>()
+    var offset = 0
+    while (offset <= USERS_MAX_OFFSET) {
+        val page = fetchPage(USERS_PAGE_LIMIT, offset)
+        val rows = page.toUserDtos()
+        if (rows.isEmpty()) break
+        all += rows
+        offset += rows.size
+        val pageSize = page.limit?.takeIf { it > 0 } ?: USERS_PAGE_LIMIT
+        if (rows.size < pageSize) break
+        if (page.total != null && offset >= page.total) break
+    }
+    return all
+}
+
+/**
+ * Une el canon con el legacy. `isActive` es SOLO el legacy (`!es_invitado`): si falta queda null, nunca se deriva de
+ * `accountStatus` (son dos conceptos distintos). Un estado ausente o no reconocido queda en UNKNOWN, nunca activo.
+ * Una fila sin `id` se descarta (null) y un `createdAt` ausente queda null: no se fabrican.
+ */
+private fun merge(canon: AdminUserV1Dto?, legacy: AdminUserV1Dto?): UserDto? {
     val c = canon ?: AdminUserV1Dto()
     val l = legacy ?: AdminUserV1Dto()
     val status = c.accountStatus ?: l.accountStatus
+    val id = c.id.ifBlank { l.id }
+    if (id.isBlank()) return null
     return UserDto(
-        id = c.id.ifBlank { l.id },
+        id = id,
         fullName = c.fullName ?: l.fullName ?: "",
         email = c.email ?: l.email ?: "",
         roleIds = c.roleIds.ifEmpty { l.roleIds },
-        isActive = l.isActive ?: (status == AccountStatus.ACTIVE.wire),
-        createdAt = c.createdAt.ifBlank { l.createdAt },
+        isActive = l.isActive,
+        createdAt = c.createdAt?.ifBlank { null } ?: l.createdAt?.ifBlank { null },
         ticketsBalance = c.ticketsBalance ?: l.ticketsBalance ?: 0,
         accountStatus = status,
         username = c.username ?: l.username,
@@ -77,22 +108,26 @@ private fun merge(canon: AdminUserV1Dto?, legacy: AdminUserV1Dto?): UserDto {
 }
 
 internal fun AdminUsersV1Response.toUserDtos(): List<UserDto> {
-    if (data.isEmpty()) return items.map { merge(it, null) }
+    if (data.isEmpty()) return items.mapNotNull { merge(it, null) }
     val byId = items.associateBy { it.id }
-    return data.map { merge(byId[it.id], it) }
+    return data.mapNotNull { merge(byId[it.id], it) }
 }
 
-internal fun AdminUserV1Dto.toUserDto(): UserDto = merge(this.takeIf { it.id.isNotBlank() }, data)
+internal fun AdminUserV1Dto.toUserDto(): UserDto =
+    merge(this.takeIf { it.id.isNotBlank() }, data) ?: error("backend devolvio un usuario sin id")
 
 class UsersApi(
     private val client: HttpClient,
     private val appConfig: AppConfig,
     private val sessionLocalDataSource: SessionLocalDataSource,
 ) {
-    suspend fun getUsers(): List<UserDto> =
+    suspend fun getUsers(): List<UserDto> = collectAllUsers { limit, offset ->
         client.get(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.ADMIN_V1_USUARIOS)) {
             adminAuthHeaders(appConfig, sessionLocalDataSource)
-        }.checkedBody<AdminUsersV1Response>(BackendRoutes.ADMIN_V1_USUARIOS).toUserDtos()
+            parameter("limit", limit)
+            parameter("offset", offset)
+        }.checkedBody<AdminUsersV1Response>(BackendRoutes.ADMIN_V1_USUARIOS)
+    }
 
     suspend fun getUser(userId: String): UserDto =
         client.get(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.adminV1Usuario(userId))) {
@@ -105,7 +140,7 @@ class UsersApi(
         client.patch(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.adminV1Usuario(user.id))) {
             adminAuthHeaders(appConfig, sessionLocalDataSource)
             contentType(ContentType.Application.Json)
-            setBody(AdminUserPatchBody(id = user.id, fullName = user.fullName, email = user.email, roleIds = user.roleIds, isActive = user.isActive))
+            setBody(AdminUserPatchBody(nombreMostrar = user.fullName))
         }.checkedBody<kotlinx.serialization.json.JsonObject>(BackendRoutes.adminV1Usuario(user.id))
         // Sync roles
         client.post(BackendRoutes.url(appConfig.baseUrl, "${BackendRoutes.adminV1Usuario(user.id)}/roles")) {

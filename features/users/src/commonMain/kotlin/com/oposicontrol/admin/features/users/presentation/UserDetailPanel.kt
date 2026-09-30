@@ -193,6 +193,10 @@ private fun UserHero(state: UsersState, user: User, onIntent: (UsersIntent) -> U
                             tone = if (kind == UserAccountKind.REGISTRADO) UserPillTone.POSITIVE else UserPillTone.NEUTRAL,
                         )
                         UserPill(
+                            text = userAccountStatusLabel(user.accountStatus),
+                            tone = userAccountStatusTone(user.accountStatus),
+                        )
+                        UserPill(
                             text = userPopulationLabel(population),
                             tone = if (population == UserPopulation.ADMINISTRACION) UserPillTone.ADMIN else UserPillTone.INFO,
                         )

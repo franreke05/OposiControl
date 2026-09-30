@@ -14,6 +14,17 @@ import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 
+/**
+ * El `Json` de produccion del cliente admin (MASTER-OC-006): lo usa [ApiClientFactory] y las pruebas de la capa de datos con
+ * `MockEngine`, para que decodifiquen con la MISMA configuracion que la app y no con una copia.
+ */
+val AdminApiJson: Json = Json {
+    ignoreUnknownKeys = true
+    isLenient = true
+    prettyPrint = false
+    explicitNulls = false
+}
+
 class ApiClientFactory(
     private val appConfig: AppConfig,
     private val logger: Logger,
@@ -24,14 +35,7 @@ class ApiClientFactory(
                 header("ngrok-skip-browser-warning", "true")
             }
             install(ContentNegotiation) {
-                json(
-                    Json {
-                        ignoreUnknownKeys = true
-                        isLenient = true
-                        prettyPrint = false
-                        explicitNulls = false
-                    },
-                )
+                json(AdminApiJson)
             }
             // F-04: presupuesto por defecto de 30 s. Era de 6 s, y el servidor admite
             // hasta 20 s por CADA llamada a Supabase y operaciones que encadenan
