@@ -1,6 +1,8 @@
 package com.oposicontrol.admin.core.common.config
 
+import com.oposicontrol.admin.core.common.logging.Logger
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -40,5 +42,52 @@ class MediaUrlPolicyTest {
         assertFalse(allowed(good, ""))
         assertFalse(allowed(good, "http://proj.supabase.co"))
         assertFalse(allowed("http://localhost/storage/v1/object/public/a.png", "http://localhost"))
+    }
+
+    // --- dev flag + config entry point (INV-NETWORK-COMPLETE, round 4) ---
+
+    private class Recorder : Logger {
+        val warnings = mutableListOf<String>()
+        override fun debug(message: String) = Unit
+        override fun info(message: String) = Unit
+        override fun warn(message: String) { warnings += message }
+        override fun error(message: String, throwable: Throwable?) = Unit
+    }
+
+    private fun config(supabaseUrl: String, env: Environment = Environment.DEV, allowInsecureDevMedia: Boolean = false) = AppConfig(
+        environment = env, baseUrl = "https://api.example.com", backendToken = "", supabaseUrl = supabaseUrl, supabaseAnonKey = "k",
+        supabaseBucketExamResources = "b", featureFlags = FeatureFlags(enableLogs = false, enableAnalytics = false),
+        appName = "n", appVersion = "1", allowInsecureDevMedia = allowInsecureDevMedia,
+    )
+
+    @Test fun httpIsDeniedWithoutTheExplicitDevFlagEvenInDev() {
+        val local = "http://10.0.2.2:54321"
+        val url = "$local/storage/v1/object/public/news/a.png"
+        assertFalse(MediaUrlPolicy.isAllowedRemoteMedia(url, config(local)))
+        assertFalse(MediaUrlPolicy.isAllowedRemoteMedia(url, local, allowInsecureDevHttp = false))
+    }
+
+    @Test fun explicitDevFlagAllowsHttpToTheConfiguredHostOnlyAndLogsTheReason() {
+        val local = "http://10.0.2.2:54321"
+        val log = Recorder()
+        val cfg = config(local, allowInsecureDevMedia = true)
+        assertTrue(MediaUrlPolicy.isAllowedRemoteMedia("$local/storage/v1/object/public/news/a.png", cfg, log))
+        assertEquals(1, log.warnings.size)
+        assertTrue(log.warnings.single().contains("MEDIA_ALLOW_INSECURE_DEV"))
+        assertFalse(log.warnings.single().contains("10.0.2.2"), "the log must not echo the URL")
+        assertFalse(MediaUrlPolicy.isAllowedRemoteMedia("http://evil.example/storage/v1/object/public/news/a.png", cfg, log))
+        assertFalse(MediaUrlPolicy.isAllowedRemoteMedia("http://10.0.2.2:54321@evil.example/storage/v1/object/public/a.png", cfg, log))
+        assertFalse(MediaUrlPolicy.isAllowedRemoteMedia("$local/storage/v1/object/sign/news/a.png", cfg, log))
+    }
+
+    @Test fun unconfiguredSupabaseDeniesAndLogsInsteadOfFailingSilently() {
+        val log = Recorder()
+        assertFalse(MediaUrlPolicy.isAllowedRemoteMedia(good, config(""), log))
+        assertTrue(log.warnings.single().contains("SUPABASE_URL"))
+        assertFalse(MediaUrlPolicy.isAllowedRemoteMedia(good, null, log))
+    }
+
+    @Test fun httpsConfigStillAllowsTheSameHostThroughTheConfigEntryPoint() {
+        assertTrue(MediaUrlPolicy.isAllowedRemoteMedia(good, config(supabase, Environment.PROD)))
     }
 }

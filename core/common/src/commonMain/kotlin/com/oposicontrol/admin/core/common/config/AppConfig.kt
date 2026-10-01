@@ -10,4 +10,6 @@ data class AppConfig(
     val featureFlags: FeatureFlags,
     val appName: String,
     val appVersion: String,
+    /** DEV-only explicit flag (`MEDIA_ALLOW_INSECURE_DEV`) that lets [MediaUrlPolicy] accept http media; never set outside DEV. */
+    val allowInsecureDevMedia: Boolean = false,
 )

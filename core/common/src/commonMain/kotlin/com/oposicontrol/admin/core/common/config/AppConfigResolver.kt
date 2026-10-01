@@ -21,8 +21,17 @@ object AppConfigResolver {
             }
         requireSecureUrl("BASE_URL", baseUrl, environment)
         val supabaseUrl = source.read(KEY_SUPABASE_URL).orEmpty().trimEnd('/')
+        // Fuera de DEV un SUPABASE_URL ausente es un error de configuracion RUIDOSO (antes: deny-all silencioso de medios
+        // y login imposible); http/localhost ya los rechaza requireSecureUrl.
+        if (environment != Environment.DEV) {
+            require(supabaseUrl.isNotBlank()) { "SUPABASE_URL es obligatorio en ${environment.name.lowercase()}." }
+        }
         if (supabaseUrl.isNotBlank()) {
             requireSecureUrl("SUPABASE_URL", supabaseUrl, environment)
+        }
+        val allowInsecureDevMedia = source.read(KEY_ALLOW_INSECURE_DEV_MEDIA)?.toBooleanStrictOrNull() ?: false
+        require(!allowInsecureDevMedia || environment == Environment.DEV) {
+            "$KEY_ALLOW_INSECURE_DEV_MEDIA solo es valido en dev."
         }
         // Mismo criterio que el guard de build (composeApp/build.gradle.kts), pero sobre el valor EN RUNTIME: el
         // fallback de escritorio (-Doposi.*, variable de entorno, .env) llega sin pasar por Gradle. Falla cerrado y
@@ -46,6 +55,7 @@ object AppConfigResolver {
             ),
             appName = source.read(KEY_APP_NAME) ?: "OposiControl Admin",
             appVersion = source.read(KEY_APP_VERSION) ?: "1.0.0",
+            allowInsecureDevMedia = allowInsecureDevMedia,
         )
     }
 
@@ -79,6 +89,7 @@ object AppConfigResolver {
     const val KEY_ENABLE_ANALYTICS = "ENABLE_ANALYTICS"
     const val KEY_APP_NAME = "APP_NAME"
     const val KEY_APP_VERSION = "APP_VERSION"
+    const val KEY_ALLOW_INSECURE_DEV_MEDIA = "MEDIA_ALLOW_INSECURE_DEV"
 
     private const val DEFAULT_SUPABASE_BUCKET_EXAM_RESOURCES = "exam-resources"
 }

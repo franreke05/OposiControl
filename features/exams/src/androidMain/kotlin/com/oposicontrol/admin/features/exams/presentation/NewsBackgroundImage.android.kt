@@ -11,6 +11,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.core.common.config.MediaUrlPolicy
+import com.oposicontrol.admin.core.common.logging.Logger
 import org.koin.mp.KoinPlatform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -27,7 +28,7 @@ actual fun NewsBackgroundImage(
             runCatching {
                 if (backgroundPath.startsWith("http://") || backgroundPath.startsWith("https://")) {
                     // INV-NETWORK-COMPLETE: https public Storage of the configured host only; no redirects, with timeouts.
-                    if (!MediaUrlPolicy.isAllowedRemoteMedia(backgroundPath, KoinPlatform.getKoin().getOrNull<AppConfig>()?.supabaseUrl.orEmpty())) return@runCatching null
+                    if (!MediaUrlPolicy.isAllowedRemoteMedia(backgroundPath, KoinPlatform.getKoin().getOrNull<AppConfig>(), KoinPlatform.getKoin().getOrNull<Logger>())) return@runCatching null
                     val connection = (URL(backgroundPath).openConnection() as java.net.HttpURLConnection).apply {
                         instanceFollowRedirects = false
                         connectTimeout = 5000

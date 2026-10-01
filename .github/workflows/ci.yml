@@ -28,6 +28,10 @@ jobs:
       # egreso HTTP queda fijado por ops/inventory/direct-supabase-allowlist.tsv. Los manifiestos de rutas los verifica `:backend:ktor:test`.
       - run: bash scripts/verify-no-direct-supabase.sh
       - run: bash scripts/verify-no-direct-supabase.test.sh
+      # CI-JVMTEST-COVERAGE: todo modulo con src/jvmTest|commonTest debe estar en la linea de pruebas del job `tests`, en la lista
+      # de verificacion de dependencias y en DEPLOYMENT.md (:core:common:jvmTest no corria en CI).
+      - run: bash scripts/verify-ci-jvmtest-coverage.sh
+      - run: bash scripts/verify-ci-jvmtest-coverage.test.sh
   # MASTER-SEC-014 / MASTER2-CICD-001: SCA del grafo RESUELTO de runtimeClasspath (BOMs, alias del catalogo y transitivas)
   # contra OSV; falla si el arbol no se puede interpretar o OSV no responde (sin secretos, sin dependencias nuevas).
   dependency-audit:
@@ -103,7 +107,7 @@ jobs:
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
-      - run: ./gradlew :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest --rerun-tasks --no-build-cache
+      - run: ./gradlew :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest :composeApp:jvmTest :core:common:jvmTest :core:network:jvmTest :core:ui:jvmTest :features:analytics:jvmTest :features:auth:jvmTest :features:dashboard:jvmTest :features:exam-access:jvmTest :features:forum:jvmTest :features:imports:jvmTest :features:news:jvmTest :features:opositester:jvmTest :features:questions:jvmTest :features:rankings:jvmTest :features:settings:jvmTest :features:specialties:jvmTest :features:store:jvmTest :features:support:jvmTest --rerun-tasks --no-build-cache
       # SEC-001: las pruebas de permisos 0700/0600 llevan Assume (se saltan en Windows); aqui, en Linux, deben EJECUTARSE y
       # pasar: un salto silencioso (p. ej. un FileStore sin vista posix) hace fallar el job en vez de contar como verde.
       - run: |
@@ -115,7 +119,7 @@ jobs:
       # (dependency-audit, backend-image y tests; misma lista que docs/engineering/DEPLOYMENT.md) y exige diff vacio: un
       # artefacto que falte o un sha256 distinto hace fallar el job (la verificacion estricta de los pasos previos ya falla
       # con "Dependency verification failed"; esto nombra el hueco exacto en el diff).
-      - run: ./gradlew --no-configuration-cache --write-verification-metadata sha256 :backend:ktor:dependencies --configuration runtimeClasspath :composeApp:dependencies --configuration jvmRuntimeClasspath :backend:ktor:installDist :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest
+      - run: ./gradlew --no-configuration-cache --write-verification-metadata sha256 :backend:ktor:dependencies --configuration runtimeClasspath :composeApp:dependencies --configuration jvmRuntimeClasspath :backend:ktor:installDist :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest :composeApp:jvmTest :core:common:jvmTest :core:network:jvmTest :core:ui:jvmTest :features:analytics:jvmTest :features:auth:jvmTest :features:dashboard:jvmTest :features:exam-access:jvmTest :features:forum:jvmTest :features:imports:jvmTest :features:news:jvmTest :features:opositester:jvmTest :features:questions:jvmTest :features:rankings:jvmTest :features:settings:jvmTest :features:specialties:jvmTest :features:store:jvmTest :features:support:jvmTest
       - run: git diff --exit-code -- gradle/verification-metadata.xml
   # DB-CI-PG17: migraciones pendientes (supabase/baseline/PENDING_MIGRATIONS.txt) sobre PostgreSQL 17 REAL (imagen de Supabase
   # fijada por digest) cargado con la forma de MAIN que tocan (supabase/baseline/main_shape_subset.sql, sin filas), ON_ERROR_STOP,

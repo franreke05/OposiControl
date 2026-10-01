@@ -1,0 +1,71 @@
+package com.oposicontrol.admin.data.inventory
+
+import com.oposicontrol.admin.data.remote.api.AuditApi
+import com.oposicontrol.admin.data.remote.api.RolesApi
+import com.oposicontrol.admin.data.repository.KtorTagsRepositoryImpl
+import com.oposicontrol.admin.domain.model.Tag
+
+/**
+ * Tabla del registrador (INV-NETWORK-COMPLETE): UNA FILA POR SITIO DE LLAMADA HTTP de cada `*Api` / `Ktor*RepositoryImpl`.
+ *
+ * Como rellenar una fila (copiar una de abajo):
+ *  - `file`: ruta del fichero cliente RELATIVA A LA RAIZ DEL REPO (la misma que `HTTPCALL` en direct-supabase-allowlist.tsv).
+ *  - `name`: metodo (si el metodo tiene varias ramas `client.get/post/...`, una fila por rama: `upsertTag(create)`).
+ *  - `expect`: metodo + PLANTILLA de ruta; los ids se pasan como centinelas `ID0`, `ID1`... y salen como `{}`. La primera
+ *    llamada es la del sitio; si el metodo encadena otra (p. ej. un refresco tras borrar) se declara tambien a continuacion.
+ *  - la lambda construye el cliente con `client`/`appConfig`/`session`/`adapter` del [Env] y llama al metodo con args minimos.
+ *    La respuesta del mock es `{"data":[]}`: los errores de mapeo se ignoran, solo cuenta lo enviado.
+ *  - la ruta (metodo + plantilla) tiene que existir en `ops/inventory/routes.combined.txt`; si el cliente llama a una ruta que el
+ *    backend no sirve, el fallo es REAL (arreglar el cliente o el backend, nunca la fila).
+ *  - al completar un fichero, bajar (o borrar) su entrada en [PENDING_ROWS]: `filas + pendientes == sitios` o falla.
+ */
+internal val CLIENT_CALL_ROWS: List<CallRow> = listOf(
+
+    // ---- Estilo Api (clase `*Api(client, appConfig, sessionLocalDataSource)`): 2 filas trabajadas ---------------------------
+    CallRow(AUDIT_API, "getEvents", get("/api/v1/admin/auditoria")) {
+        AuditApi(client, appConfig, session).getEvents()
+    },
+    CallRow(ROLES_API, "getRoles", get("/api/v1/admin/roles")) {
+        RolesApi(client, appConfig, session).getRoles()
+    },
+
+    // ---- Estilo repositorio (clase `Ktor*RepositoryImpl(client, appConfig, session, adapter)`): fichero completo -----------
+    CallRow(TAGS_REPO, "refreshTags", get("/api/v1/admin/etiquetas")) {
+        KtorTagsRepositoryImpl(client, appConfig, session, adapter).refreshTags()
+    },
+    CallRow(TAGS_REPO, "upsertTag(create)", post("/api/v1/admin/etiquetas")) {
+        KtorTagsRepositoryImpl(client, appConfig, session, adapter).upsertTag(Tag(id = "", name = "n", slug = "n", origin = "manual"))
+    },
+    CallRow(TAGS_REPO, "upsertTag(update)", patch("/api/v1/admin/etiquetas/{}")) {
+        KtorTagsRepositoryImpl(client, appConfig, session, adapter).upsertTag(Tag(id = "ID0", name = "n", slug = "n", origin = "manual"))
+    },
+    // deleteTag: DELETE y despues el refresco que encadena (su propio sitio ya tiene la fila refreshTags)
+    CallRow(TAGS_REPO, "deleteTag", listOf(delete("/api/v1/admin/etiquetas/{}"), get("/api/v1/admin/etiquetas"))) {
+        KtorTagsRepositoryImpl(client, appConfig, session, adapter).deleteTag("ID0")
+    },
+) + ROWS_B_DASHBOARD_API + ROWS_B_USER_DETAIL_API + ROWS_B_ADMIN_OPERATIONS_REPO + ROWS_B_COMMERCE_REPO +
+    ROWS_B_COMMUNITIES_REPO + ROWS_B_DASHBOARD_OVERVIEW_REPO + ROWS_B_MARKET_CATALOG_REPO + ROWS_B_NEWS_REPO +
+    ROWS_B_QUESTIONS_REPO + ROWS_B_SYSTEM_STATUS_REPO + ROWS_B_TESTER_REPO // R4-REC-B: ficheros RowsB*.kt
+
+/**
+ * Sitios de llamada aun SIN fila (fichero -> cuantos). SOLO PUEDE ENCOGER: `filas + pendientes == sitios` por fichero, de modo que
+ * un metodo nuevo (sitio nuevo) sin fila falla aunque el fichero siga pendiente. Los agentes siguientes rellenan y bajan aqui.
+ */
+internal val PENDING_ROWS: Map<String, Int> = mapOf(
+    "$API_DIR/AuthApi.kt" to 3, // host SUPABASE (GoTrue): Call(..., HostClass.SUPABASE)
+    "$API_DIR/UsersApi.kt" to 4,
+    "$REPO_DIR/KtorAdminV1ContentRepositoryImpl.kt" to 36,
+    "$REPO_DIR/KtorCommercialCatalogRepositoryImpl.kt" to 3,
+    "$REPO_DIR/KtorConnectionDiagnosticsRepositoryImpl.kt" to 9,
+    "$REPO_DIR/KtorForumRepositoryImpl.kt" to 3,
+    "$REPO_DIR/KtorModerationRepositoryImpl.kt" to 5,
+    "$REPO_DIR/KtorProductAnalyticsRepositoryImpl.kt" to 1,
+    "$REPO_DIR/KtorRankingsRepositoryImpl.kt" to 1,
+)
+
+private const val DATA_MAIN = "data/src/commonMain/kotlin/com/oposicontrol/admin/data"
+private const val API_DIR = "$DATA_MAIN/remote/api"
+private const val REPO_DIR = "$DATA_MAIN/repository"
+private const val AUDIT_API = "$API_DIR/AuditApi.kt"
+private const val ROLES_API = "$API_DIR/RolesApi.kt"
+private const val TAGS_REPO = "$REPO_DIR/KtorTagsRepositoryImpl.kt"

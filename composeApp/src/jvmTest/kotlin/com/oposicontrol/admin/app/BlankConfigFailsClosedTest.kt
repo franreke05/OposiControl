@@ -30,15 +30,15 @@ class BlankConfigFailsClosedTest {
     }
 
     @Test fun prodWithAnExplicitHttpsBaseUrlResolves() {
-        val cfg = resolve("APP_ENV" to "prod", "BASE_URL" to "  https://api.example.com ")
+        val cfg = resolve("APP_ENV" to "prod", "SUPABASE_URL" to "https://proj.supabase.co", "BASE_URL" to "  https://api.example.com ")
         assertEquals(Environment.PROD, cfg.environment)
         assertEquals("https://api.example.com", cfg.baseUrl)
     }
 
     @Test fun uppercaseSchemeIsAcceptedAndPlainHttpStillRejectedInProd() {
-        assertEquals("HTTPS://api.example.com", resolve("APP_ENV" to "prod", "BASE_URL" to "HTTPS://api.example.com").baseUrl)
-        assertFailsWith<IllegalArgumentException> { resolve("APP_ENV" to "prod", "BASE_URL" to "HTTP://api.example.com") }
-        assertFailsWith<IllegalArgumentException> { resolve("APP_ENV" to "prod", "BASE_URL" to "https://LOCALHOST:8080") }
+        assertEquals("HTTPS://api.example.com", resolve("APP_ENV" to "prod", "SUPABASE_URL" to "https://proj.supabase.co", "BASE_URL" to "HTTPS://api.example.com").baseUrl)
+        assertFailsWith<IllegalArgumentException> { resolve("APP_ENV" to "prod", "SUPABASE_URL" to "https://proj.supabase.co", "BASE_URL" to "HTTP://api.example.com") }
+        assertFailsWith<IllegalArgumentException> { resolve("APP_ENV" to "prod", "SUPABASE_URL" to "https://proj.supabase.co", "BASE_URL" to "https://LOCALHOST:8080") }
     }
 
     @Test fun blankBackendTokenStaysEmptyNotWhitespace() {
