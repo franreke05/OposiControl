@@ -3,14 +3,23 @@
 Estado: `NOT_VERIFIED` (runbook escrito, aun no ejercitado; ningun despliegue realizado desde este repo).
 El despliegue lo ejecuta un humano con el gate de produccion; nada de esto corre en CI.
 
-## Orden obligatorio: migrar, luego desplegar
+## Orden obligatorio: parar el Ktor viejo, migrar, luego desplegar
 
+0. (MASTER6-CICD-001) Ventana de mantenimiento: las migraciones 6-9 de Slice 1 (`20260930100800..101600`) son contract y el Ktor VIEJO
+   (previo a Slice 1) queda PROHIBIDO contra ellas (gate de produccion, seccion 2). Por tanto, ANTES del paso 1 se PARA el Ktor viejo
+   (`docker stop oposicontrol-ktor`; Caddy responde 502 durante la ventana) y no se rearranca esa imagen: el siguiente arranque es el
+   Ktor nuevo del paso 2. Anotar en el registro del gate la hora de parada y de arranque nuevo (ventana de caida ACEPTADA, minutos).
+   Las migraciones que solo anaden objetos (1-4, 10, 11) no exigen la parada, pero se sigue el mismo orden por simplicidad.
 1. Aplicar migraciones de `supabase/migrations/` a la base (con backup/PITR verificado).
 2. Desplegar Ktor. Sin las migraciones la pasarela responde 503 (falla cerrado), asi que
    el orden inverso rompe el trafico.
 3. Verificar la version desplegada por la imagen, no por `/health` (hoy devuelve una cadena `build` fija):
    `docker inspect <contenedor> --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'`
    debe dar `oposicontrol-backend:<sha12>` y el commit completo esperado; ademas `/health/ready` = 200.
+   MASTER6-CICD-002 (imagen de loop 5+, `/app` de root y no escribible; la imagen aun NO se ha construido ni arrancado en este entorno, sin Docker):
+   con la imagen construida, comprobar que corre como `app` y que el codigo no es escribible pero `/tmp` si:
+   `docker run --rm --entrypoint sh oposicontrol-backend:<sha12> -c 'test "$(id -un)" = app && ! touch /app/x 2>/dev/null && touch /tmp/x'`
+   debe terminar con codigo 0; despues arrancar el contenedor con el entorno real y esperar `/health/ready` = 200.
    Slice 1 (migraciones `20260930100000..101850`): orden, hashes y clase de rollback en
    `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` del repo OposiBot.
 

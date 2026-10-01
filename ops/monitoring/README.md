@@ -76,6 +76,13 @@ mas abajo) el segundo curl responde 200 y el bloque falla: es la senal de que el
 token no esta fijado. El archivo `ops/monitoring/secrets/metrics_token` no debe
 quedar vacio ni versionarse.
 
+Permisos del token (MASTER6-CICD-004). `prom/prometheus` corre como `nobody` (65534) y lee `credentials_file` a traves del bind mount,
+asi que un archivo `0600` del operador NO seria legible y el scrape fallaria (target `down` con 401/permission denied). Montaje
+que funciona: directorio `ops/monitoring/secrets` `0700` (solo el operador atraviesa el directorio en el host; el daemon de Docker, root, hace
+el bind) y archivo `metrics_token` `0644` (legible por `nobody` dentro del contenedor y por el usuario del operador en la comprobacion de
+arriba). Alternativa: `chown 65534` y `0400`, pero entonces la comprobacion `--user "$(id -u):$(id -g)"` de arriba debe ejecutarse como ese usuario
+o como root. Verificacion tras `docker compose up`: en Prometheus (`http://127.0.0.1:9090/targets`) el job de Ktor debe estar `UP`.
+
 La regla de Caddy esta versionada en `ops/caddy/metrics-block.caddy`; se
 importa ANTES del proxy general. No se deben abrir puertos adicionales.
 

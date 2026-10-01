@@ -20,7 +20,9 @@ fi
 # MASTER5-CICD-003: el rango que cita el runbook de despliegue debe terminar en la ULTIMA migracion del manifiesto.
 dep=docs/engineering/DEPLOYMENT.md
 last="$(echo "$expected" | tail -1 | cut -d_ -f1)"
-if [ -f "$dep" ] && ! grep -qF "20260930100000..${last#20260930}" "$dep"; then
+# MASTER6-CICD-005: un DEPLOYMENT.md ausente (renombrado/borrado) FALLA; antes el `[ -f ]` hacia que la comprobacion se omitiera.
+[ -f "$dep" ] || { echo "FAIL: $dep ausente"; exit 1; }
+if ! grep -qF "20260930100000..${last#20260930}" "$dep"; then
   echo "FAIL: $dep no cita el rango 20260930100000..${last#20260930} (ultima migracion del manifiesto)"
   exit 1
 fi
