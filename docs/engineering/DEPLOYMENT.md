@@ -41,12 +41,14 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
   estricta. Tras subir una dependencia se regenera EN LINUX (CI-GRADLE-VERIF; en Windows faltan variantes Linux), p. ej. en
   `eclipse-temurin:21-jdk-jammy` como uid no root (embedded-postgres de `:backend:dbtest` no arranca como root), con
   `ANDROID_HOME` apuntando a un SDK y un `GRADLE_USER_HOME` vacio, con EXACTAMENTE la lista del paso de deriva del job `tests`:
-  `./gradlew --no-configuration-cache --write-verification-metadata sha256 :backend:ktor:dependencies --configuration runtimeClasspath :composeApp:dependencies --configuration jvmRuntimeClasspath :backend:ktor:installDist :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest`
+  `./gradlew --no-configuration-cache --write-verification-metadata sha256 :backend:ktor:dependencies --configuration runtimeClasspath :composeApp:dependencies --configuration jvmRuntimeClasspath :backend:ktor:installDist :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest :composeApp:jvmTest :core:common:jvmTest :core:network:jvmTest :core:ui:jvmTest :features:analytics:jvmTest :features:auth:jvmTest :features:dashboard:jvmTest :features:exam-access:jvmTest :features:forum:jvmTest :features:imports:jvmTest :features:news:jvmTest :features:opositester:jvmTest :features:questions:jvmTest :features:rankings:jvmTest :features:settings:jvmTest :features:specialties:jvmTest :features:store:jvmTest :features:support:jvmTest`
   (si `dependency-audit` audita mas configuraciones se anaden aqui y en CI). `dependency-audit` audita contra OSV el
   `runtimeClasspath` del backend y el `jvmRuntimeClasspath` del cliente admin (`scripts/osv-ignore.json` vacio); el
   `releaseRuntimeClasspath` Android queda como seguimiento y las klibs de iOS fuera de alcance (no son coordenadas Maven).
   El diff debe ser solo de altas: un sha256 distinto para una coordenada existente es una senal de cadena de suministro que se
-  investiga, no se acepta. CI repite ese comando y exige `git diff --exit-code`. Fuera de esa lista quedan iOS, MSI/DMG y el
+  investiga, no se acepta. `scripts/verify-ci-jvmtest-coverage.sh` (job `ops-static`, con control negativo) exige que TODO modulo con
+  `src/jvmTest` o `src/commonTest` figure como `:modulo:jvmTest` en la linea de pruebas del job `tests`, en la lista de deriva y en
+  esta; las excepciones solo van, justificadas, en `scripts/ci-jvmtest-allowlist.tsv`. CI repite ese comando y exige `git diff --exit-code`. Fuera de esa lista quedan iOS, MSI/DMG y el
   release Android: necesitan su propio `--write-verification-metadata` la primera vez que se usen. `:composeApp:createDistributable`
   (jlink + jpackage app-image, CI-OC-RELEASE) ya tiene sus artefactos (generados en Linux) y lo verifica en estricto el job
   `desktop-release-linux`; si cambia la version de Compose se regenera tambien con
@@ -79,8 +81,12 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
    (`resolverReporte` marca `reportes_contenido.accion_pendiente` en su compare-and-set y escribe la accion con
    `admin_record_report_action`, MASTER6-API-001); sin ellas: PGRST202 en D1-26 y el compare-and-set de la resolucion falla
    (columna desconocida) antes de escribir. En rollback, primero ese Ktor y despues 102000/101900 (el ROLLBACK de 102000 borra
-   tambien la columna `accion_pendiente`). Los cierres historicos (Ktor viejo: accion ANTES del PATCH con `revisado_en`) leen
-   la marca en false y nunca se reanudan.
+   tambien la columna `accion_pendiente`, despues de restaurar el WITH CHECK de MAIN de `reportes_contenido_insert_auth`).
+   Los cierres historicos (Ktor viejo: accion ANTES del PATCH con `revisado_en`) leen la marca en false y nunca se reanudan.
+   La 102000 estrecha ademas la politica `reportes_contenido_insert_auth`: un cliente autenticado solo inserta un reporte
+   pendiente propio con las columnas del servidor en su default (Ktor escribe como service_role: sin efecto en Ktor).
+   Tras la cadena COMPLETA de ROLLBACK la huella esperada es 54/55 (cuerpos de `handle_new_auth_user` y `record_event`,
+   solo espacios en blanco; `SLICE_1_PRODUCTION_GATE.md`, seccion 8); cualquier otra diferencia es un fallo.
    La garantia "una accion por resolucion" de 102000 solo vale cuando el Ktor nuevo es el unico escritor de resoluciones: el
    Ktor viejo (POST directo a `acciones_moderacion`) y el staff por la politica `acciones_moderacion_staff_all` no toman el
    cerrojo del reporte. Por eso el Ktor viejo se para ANTES de migrar y no se rearranca despues (residual en
@@ -103,7 +109,7 @@ Reejecutar el contenedor con la imagen `rollback-<fecha>` (solo valido mientras 
 contract de Slice 1 no esten aplicadas). Las migraciones de Slice 1 NO son todas expand: `20260930100500`
 redefine funciones (rollback manual verbatim) y `20260930100800` retira el indice unico global de
 `eventos_app` (contract; el rollback de BD solo es posible mientras `cross_user_shared_keys = 0`, si no,
-roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compatibles y reversibles (la 101600 solo anade un overload: se revierte el Ktor de loop 2 ANTES de retirarla). `20260930101730` (indice unico parcial de `tickets_grant`, MASTER3-OBS-002) es aditiva y compatible con cualquier Ktor; su rollback solo borra el indice. `20260930101850` (MASTER4-OBS-001) solo anade `admin_sync_roles_audited`: compatible con el Ktor de loop 2/3; se revierte el Ktor de loop 4 ANTES de retirarla. `20260930101900` (MASTER6-IDEM-003) solo anade la sobrecarga de 4 argumentos de `admin_sync_roles_audited` y `20260930102000` (MASTER6-API-001) solo anade `admin_record_report_action`: aditivas, compatibles con el Ktor anterior; se revierte ANTES el Ktor que las llama. Clasificacion por fichero, orden y hashes:
+roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compatibles y reversibles (la 101600 solo anade un overload: se revierte el Ktor de loop 2 ANTES de retirarla). `20260930101730` (indice unico parcial de `tickets_grant`, MASTER3-OBS-002) es aditiva y compatible con cualquier Ktor; su rollback solo borra el indice. `20260930101850` (MASTER4-OBS-001) solo anade `admin_sync_roles_audited`: compatible con el Ktor de loop 2/3; se revierte el Ktor de loop 4 ANTES de retirarla. `20260930101900` (MASTER6-IDEM-003) solo anade la sobrecarga de 4 argumentos de `admin_sync_roles_audited` y `20260930102000` (MASTER6-API-001) anade `admin_record_report_action` y la columna `accion_pendiente` y solo ESTRECHA la politica de INSERT de clientes `reportes_contenido_insert_auth`: compatibles con el Ktor anterior (service_role); se revierte ANTES el Ktor que las llama. Clasificacion por fichero, orden y hashes:
 `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` (repo OposiBot). Ninguna se revierte automaticamente.
 
 ## Pendiente (registrado, no ejercitado)
