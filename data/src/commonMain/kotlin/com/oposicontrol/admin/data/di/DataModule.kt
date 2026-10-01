@@ -14,6 +14,7 @@ import com.oposicontrol.admin.data.remote.api.DashboardApi
 import com.oposicontrol.admin.data.remote.api.RolesApi
 import com.oposicontrol.admin.data.remote.api.UserDetailApi
 import com.oposicontrol.admin.data.remote.api.UsersApi
+import com.oposicontrol.admin.data.remote.api.installAdminSessionRefresh
 import com.oposicontrol.admin.data.remote.source.AuditDataSource
 import com.oposicontrol.admin.data.remote.source.AuthDataSource
 import com.oposicontrol.admin.data.remote.source.RealAuditDataSource
@@ -80,7 +81,18 @@ val dataModule = module {
     single<NewsEditorDraftLocalDataSource> { SqlDelightNewsEditorDraftLocalDataSource(get()) }
     single { PlatformFileReader(get()) }
 
-    single { ApiClientFactory(get(), get()).create() }
+    single {
+        // MASTER6-AUTH-004: refresco de sesion en el cliente compartido. El repositorio se resuelve tarde (en la
+        // primera peticion) porque depende de AuthApi, que a su vez usa este mismo cliente.
+        val scope = this
+        ApiClientFactory(get(), get()).create().also { client ->
+            client.installAdminSessionRefresh(
+                sessionLocalDataSource = get(),
+                isExpiring = { session -> scope.get<AuthRepositoryImpl>().isExpiring(session) },
+                refresher = { scope.get<AuthRepositoryImpl>() },
+            )
+        }
+    }
     single { NetworkResultAdapter(get()) }
 
     single { AuthApi(get(), get()) }
@@ -259,7 +271,8 @@ val dataModule = module {
     }
 
     single<AuditRepository> { AuditRepositoryImpl(get()) }
-    single<AuthRepository> { AuthRepositoryImpl(get(), get()) }
+    single { AuthRepositoryImpl(get(), get()) }
+    single<AuthRepository> { get<AuthRepositoryImpl>() }
     single<DashboardRepository> { ContentDashboardRepositoryImpl(get(), get(), get(), get(), get()) }
     single<UsersRepository> { UsersRepositoryImpl(get()) }
     single<RolesRepository> { RolesRepositoryImpl(get()) }

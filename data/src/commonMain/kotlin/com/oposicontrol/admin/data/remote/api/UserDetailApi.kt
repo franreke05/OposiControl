@@ -176,8 +176,9 @@ internal data class UserWeaknessDto(
 
 internal fun UserDetailDto.toDomain() = UserDetail(
     profile = UserProfile(
-        userId = perfil.usuarioId.ifBlank { perfil.id.orEmpty() },
-        displayName = perfil.nombreMostrar ?: perfil.fullName,
+        // Canonico antes que legacy (comentario de UserProfileDto); un valor en blanco no tapa al otro (MASTER6-QUALITY-006).
+        userId = perfil.id?.ifBlank { null } ?: perfil.usuarioId,
+        displayName = perfil.fullName?.ifBlank { null } ?: perfil.nombreMostrar,
         username = perfil.username,
         specialtyId = perfil.especialidadPrincipalId,
         communityId = perfil.comunidadPrincipalId,

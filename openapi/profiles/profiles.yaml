@@ -611,8 +611,8 @@ components:
         x-roles: [ADMIN, SUPERADMIN]
         x-pagination: NONE
         x-idempotency: NATURAL
-        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, SUPERADMIN_REQUIRED, ROLE_SYNC_LAST_SUPERADMIN, ROLE_SYNC_EMPTY_ROLES, ROLE_SYNC_UNKNOWN_ROLE, ROLE_SYNC_INVALID_USER, INTERNAL]
-        description: 'Idempotent full replace via rpc admin_sync_roles; granting or removing admin or superadmin requires SUPERADMIN.'
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, SUPERADMIN_REQUIRED, ROLE_SYNC_LAST_SUPERADMIN, VERSION_CONFLICT, ROLE_SYNC_EMPTY_ROLES, ROLE_SYNC_UNKNOWN_ROLE, ROLE_SYNC_INVALID_USER, INTERNAL]
+        description: 'Idempotent full replace via rpc admin_sync_roles; granting or removing admin or superadmin requires SUPERADMIN. Optional precondition (FA8): when expectedRoleIds is sent and, as a set, differs from the current roles of the user, nothing is written and the answer is 409 VERSION_CONFLICT.'
         security:
           - bearerAuth: []
         parameters:
@@ -622,7 +622,7 @@ components:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RoleIdsBody'
+                $ref: '#/components/schemas/AdminRoleSyncRequest'
         responses:
           '200':
             description: 'Resulting roles.'
@@ -639,7 +639,7 @@ components:
             description: 'FORBIDDEN or SUPERADMIN_REQUIRED.'
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
-            description: 'ROLE_SYNC_LAST_SUPERADMIN.'
+            description: 'ROLE_SYNC_LAST_SUPERADMIN or VERSION_CONFLICT (expectedRoleIds no longer matches the current roles).'
           '422':
             $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
             description: 'ROLE_SYNC_EMPTY_ROLES, ROLE_SYNC_UNKNOWN_ROLE or ROLE_SYNC_INVALID_USER.'
@@ -1226,6 +1226,7 @@ components:
         nombreMostrar:
           type: string
           maxLength: 100
+          description: 'FA9 (text only): maxLength counts Unicode code points after trimming surrounding whitespace. A name that is blank after trimming is 400 VALIDATION (REQUIRED); one with control or invisible-format characters (Unicode categories Cc, Cf, Zl, Zp, lone surrogates) is 400 VALIDATION (INVALID_FORMAT).'
         username:
           $ref: '#/components/schemas/Username'
     RoleIdsBody:
@@ -1235,6 +1236,22 @@ components:
       properties:
         roleIds:
           type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+    AdminRoleSyncRequest:
+      description: 'FA8: RoleIdsBody plus an optional precondition. expectedRoleIds = the role ids the editor saw; omitted means no precondition (previous behaviour).'
+      type: object
+      required: [roleIds]
+      additionalProperties: false
+      properties:
+        roleIds:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        expectedRoleIds:
+          type: array
+          maxItems: 50
           items:
             $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
     AdminBlockRequest:

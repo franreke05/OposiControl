@@ -105,8 +105,8 @@ internal fun UserBasicInfoCard(
                     Text(text = USER_NO_DATA, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
                 } else {
                     UserPill(
-                        text = userAccountStatusLabel(user.accountStatus),
-                        tone = userAccountStatusTone(user.accountStatus),
+                        text = userAccountStatusLabel(userEffectiveAccountStatus(user, (detail as? UiAsyncDetail.Loaded)?.detail)),
+                        tone = userAccountStatusTone(userEffectiveAccountStatus(user, (detail as? UiAsyncDetail.Loaded)?.detail)),
                     )
                 }
             }

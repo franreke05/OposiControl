@@ -28,7 +28,12 @@ class ProfileEtagContractTest {
 
     @Test
     fun otherProfileReadsDoNotClaimTheProfileEtag() {
-        // D1-16 (legal documents) has its own content ETag, not the profile version.
-        assertTrue("ETag" !in okHeaders("D1-17"))
+        // MASTER6-OPENAPI-002: D1-16 (legal documents) may carry its own content ETag, never the profile version; D1-17 likewise.
+        // Deliberately not "ETag absent": D1-16 may legitimately declare its own LegalDocumentsETag later.
+        for (id in listOf("D1-16", "D1-17")) {
+            @Suppress("UNCHECKED_CAST")
+            val etag = okHeaders(id)["ETag"] as Map<String, Any?>?
+            assertTrue(etag == null || etag["\$ref"] != "#/components/headers/ProfileETag", "$id must not claim the ProfileETag")
+        }
     }
 }

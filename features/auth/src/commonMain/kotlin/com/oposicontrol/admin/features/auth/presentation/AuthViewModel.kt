@@ -4,6 +4,7 @@ import com.oposicontrol.admin.core.common.analytics.AnalyticsTracker
 import com.oposicontrol.admin.core.common.coroutine.DispatcherProvider
 import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.AuthCredentials
 import com.oposicontrol.admin.domain.repository.AuthRepository
@@ -47,8 +48,19 @@ class AuthViewModel(
     override suspend fun handleIntent(intent: AuthIntent) {
         when (intent) {
             AuthIntent.Logout -> {
-                authRepository.logout()
-                updateState { it.copy(submitState = UiAsync.Idle, isRestoring = false) }
+                // MASTER6-AUTH-002: la copia local se borra siempre (la UI pasa a Auth); si la revocacion en el
+                // servidor no se completo se avisa, sin bloquear la salida.
+                val result = authRepository.logout()
+                updateState {
+                    it.copy(
+                        submitState = if (result is AppResult.Failure) {
+                            UiAsync.Error(AppError.Network(LOGOUT_NOT_CONFIRMED_MESSAGE))
+                        } else {
+                            UiAsync.Idle
+                        },
+                        isRestoring = false,
+                    )
+                }
             }
 
             AuthIntent.RestoreSession -> if (!currentState().isSubmitting) restoreSession()
@@ -71,14 +83,24 @@ class AuthViewModel(
     private suspend fun restoreSession() {
         updateState { it.copy(isRestoring = true) }
         when (val result = authRepository.refreshSession()) {
-            is AppResult.Failure -> {
-                authRepository.logout()
+            // MASTER6-AUTH-003: solo un rechazo definitivo (AppError.Authentication) cierra la sesion, y ese
+            // limpiado ya lo hizo el repositorio, sin revocar (el refresh token acaba de ser rechazado). Sin red,
+            // timeout, 5xx o 429 la sesion persistida se conserva: el refresco se reintenta solo en la siguiente
+            // llamada al backend (interceptor de sesion, MASTER6-AUTH-004).
+            is AppResult.Failure -> if (result.error is AppError.Authentication) {
                 updateState {
                     it.copy(
                         currentSession = null,
                         isAuthenticated = false,
                         isRestoring = false,
                         submitState = UiAsync.Error(result.error),
+                    )
+                }
+            } else {
+                updateState {
+                    it.copy(
+                        isAuthenticated = it.currentSession != null,
+                        isRestoring = false,
                     )
                 }
             }
@@ -118,3 +140,6 @@ class AuthViewModel(
         }
     }
 }
+
+internal const val LOGOUT_NOT_CONFIRMED_MESSAGE =
+    "Sesión cerrada en este equipo, pero el servidor no confirmó el cierre. Si el problema continúa, avisa al equipo técnico."

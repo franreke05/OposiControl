@@ -141,6 +141,8 @@ class OposiBotsUserAdminGatewayCancellationTest {
         var rowExists = true
         val h = Harness { request ->
             when {
+                // MASTER6-DB-001: el gateway mira las tablas de retencion legal ante un 5xx de Auth (aqui, sin filas).
+                request.url.encodedPath in LEGAL_RETENTION_PATHS -> respond(ByteReadChannel("[]"), HttpStatusCode.OK, jsonHeaders)
                 request.method == HttpMethod.Get ->
                     respond(ByteReadChannel(if (rowExists) row else "[]"), HttpStatusCode.OK, jsonHeaders)
                 request.method == HttpMethod.Delete && request.url.encodedPath == "/auth/v1/admin/users/$authId" ->
@@ -172,6 +174,8 @@ class OposiBotsUserAdminGatewayCancellationTest {
         val trickyRow = row.replace(authId, tricky)
         val h = Harness { request ->
             when {
+                // MASTER6-DB-001: el gateway mira las tablas de retencion legal ante un 5xx de Auth (aqui, sin filas).
+                request.url.encodedPath in LEGAL_RETENTION_PATHS -> respond(ByteReadChannel("[]"), HttpStatusCode.OK, jsonHeaders)
                 request.method == HttpMethod.Get -> respond(ByteReadChannel(trickyRow), HttpStatusCode.OK, jsonHeaders)
                 request.method == HttpMethod.Delete && request.url.encodedPath.startsWith("/auth/") ->
                     respond(ByteReadChannel("""{"message":"x"}"""), HttpStatusCode.BadGateway, jsonHeaders)
@@ -182,3 +186,5 @@ class OposiBotsUserAdminGatewayCancellationTest {
         assertTrue(h.requests.none { it == "DELETE /rest/v1/usuario" }, "un 502 de Auth no es un 404 por el texto de la ruta")
     }
 }
+
+private val LEGAL_RETENTION_PATHS = LEGAL_RETENTION_TABLES.map { "/rest/v1/$it" }.toSet()

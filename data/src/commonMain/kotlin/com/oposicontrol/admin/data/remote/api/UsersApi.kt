@@ -17,7 +17,11 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.Serializable
 
-@Serializable private data class RolesBody(val roleIds: List<String>)
+/**
+ * D1-26 `AdminRoleSyncRequest`. [expectedRoleIds] (MASTER6-IDEM-003, FA8) = los roles que el editor vio: el servidor responde
+ * 409 VERSION_CONFLICT sin escribir si ya no coinciden (otro admin los cambio). `null` = sin precondicion (no se serializa).
+ */
+@Serializable internal data class RolesBody(val roleIds: List<String>, val expectedRoleIds: List<String>? = null)
 
 /**
  * Cuerpo del PATCH (D1-25 `AdminUserPatchRequest`, `additionalProperties: false`): SOLO `nombreMostrar`. Los roles viajan por
@@ -163,7 +167,8 @@ class UsersApi(
             client.post(BackendRoutes.url(appConfig.baseUrl, "${BackendRoutes.adminV1Usuario(user.id)}/roles")) {
                 adminAuthHeaders(appConfig, sessionLocalDataSource)
                 contentType(ContentType.Application.Json)
-                setBody(RolesBody(user.roleIds))
+                // Con fila previa conocida se exige que los roles del servidor sigan siendo los que el editor vio (MASTER6-IDEM-003).
+                setBody(RolesBody(user.roleIds, expectedRoleIds = previous?.roleIds))
             }.checkedBody<kotlinx.serialization.json.JsonObject>("${BackendRoutes.adminV1Usuario(user.id)}/roles")
         }
         return getUser(user.id)

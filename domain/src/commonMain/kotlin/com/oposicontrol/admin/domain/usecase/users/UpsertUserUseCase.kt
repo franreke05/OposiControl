@@ -9,13 +9,13 @@ class UpsertUserUseCase(
     private val repository: UsersRepository,
 ) {
     /**
-     * [previousName] es el nombre que el usuario tiene AHORA en el servidor. Un nombre en blanco solo se acepta cuando
-     * ya estaba en blanco (edicion "solo roles" de un usuario sin nombre, MASTER4-API-001): vaciar un nombre existente
-     * sigue siendo error (el servidor tambien lo rechaza con 400). `null` = desconocido: se exige nombre.
+     * [previous] es la fila que el usuario tiene AHORA en el servidor (unica fuente del nombre previo,
+     * MASTER6-QUALITY-001). Un nombre en blanco solo se acepta cuando ya estaba en blanco (edicion "solo roles" de un
+     * usuario sin nombre, MASTER4-API-001): vaciar un nombre existente sigue siendo error (el servidor tambien lo
+     * rechaza con 400). `null` = desconocido: se exige nombre.
      */
-    suspend operator fun invoke(user: User, previousName: String? = null, previous: User? = null): AppResult<User> {
-        val knownName = previous?.fullName ?: previousName
-        if (user.fullName.isBlank() && knownName?.isBlank() != true) {
+    suspend operator fun invoke(user: User, previous: User? = null): AppResult<User> {
+        if (user.fullName.isBlank() && previous?.fullName?.isBlank() != true) {
             return AppResult.Failure(AppError.Validation("El nombre del usuario no puede estar vacio."))
         }
         // Aquí había una validación de email, y era doblemente incorrecta.

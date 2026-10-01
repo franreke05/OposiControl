@@ -19,6 +19,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -168,7 +172,12 @@ class SupabaseOposiBotsUserAdminGateway(
 
     private suspend fun createUserAtomically(request: OposiBotsUserAdminCreateRequest, authBody: String): OposiBotsUserAdminDto {
         val authUserId = json.decodeFromString<SupabaseAuthAdminUserWire>(
-            request(HttpMethod.Post, "/auth/v1/admin/users", authBody),
+            try {
+                request(HttpMethod.Post, "/auth/v1/admin/users", authBody)
+            } catch (rejected: SupabaseHttpStatusException) {
+                // MASTER6-API-004: un rechazo de GoTrue causado por el cliente no es un fallo del upstream (502).
+                throw goTrueCreateRejection(rejected) ?: rejected
+            },
         ).id
 
         val usuarioBody = json.encodeToString(
@@ -258,15 +267,73 @@ class SupabaseOposiBotsUserAdminGateway(
         val existing = request(HttpMethod.Get, "/rest/v1/usuario?select=$UsuarioSelectColumns&id=eq.$id&limit=1", null)
             .decodeList<OposiBotsUsuarioRow>().firstOrNull() ?: return@withContext false
         existing.authUserId?.let { authUserId ->
+            // MASTER6-DB-001: `aceptaciones_legales` y `solicitudes_eliminacion_cuenta` referencian `auth.users` con
+            // ON DELETE NO ACTION a proposito (retencion legal; migraciones 20260930100100/100300): GoTrue no puede borrar
+            // esa identidad (la transaccion se aborta: nada se borra) y respondia un 5xx opaco (-> 502). Ante un 5xx de
+            // GoTrue se comprueba si hay filas retenidas: si las hay, 409 CONFLICT (no es un fallo del upstream ni se
+            // arregla reintentando); si no, el 5xx sigue siendo un fallo del upstream. La fila `usuario` no se toca.
             try {
                 request(HttpMethod.Delete, "/auth/v1/admin/users/$authUserId", null)
             } catch (error: SupabaseHttpStatusException) {
                 // 404 de Auth: la identidad ya no existe (borrado previo o reintento) -> exito idempotente.
-                if (error.status != 404) throw error
+                if (error.status == 404) return@let
+                if (error.status >= 500 && hasLegalRetentionOrFalse(authUserId)) {
+                    throw legalRetentionConflict(error)
+                }
+                throw error
             }
         }
         request(HttpMethod.Delete, "/rest/v1/usuario?id=eq.$id", null, prefer = "return=representation")
         true
+    }
+
+    /**
+     * MASTER6-DB-001: ¿hay filas de retencion legal (FK NO ACTION a `auth.users`) para esta identidad? Una tabla que no
+     * existe (404: base sin las migraciones de Slice 1) no tiene FK que bloquee: no cuenta. Si la comprobacion misma
+     * falla, `false`: el 5xx original de GoTrue se propaga tal cual (nunca se inventa un 409).
+     */
+    private suspend fun hasLegalRetentionOrFalse(authUserId: String): Boolean {
+        if (!authUserId.isUuid()) return false
+        val id = authUserId.lowercase()
+        return try {
+            LEGAL_RETENTION_TABLES.any { table ->
+                try {
+                    request(HttpMethod.Get, "/rest/v1/$table?select=usuario_id&usuario_id=eq.$id&limit=1", null)
+                        .decodeList<JsonObject>().isNotEmpty()
+                } catch (missing: SupabaseHttpStatusException) {
+                    if (missing.status == 404) false else throw missing
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun legalRetentionConflict(cause: Throwable): BackendDomainException =
+        CanonicalErrorCode.CONFLICT.exception(
+            message = "La cuenta tiene aceptaciones legales o una solicitud de eliminacion que deben conservarse: " +
+                "no se puede borrar por esta ruta; usa el flujo de eliminacion de cuenta.",
+            cause = cause,
+        )
+
+    /**
+     * MASTER6-API-004: rechazos de `POST /auth/v1/admin/users` causados por la PETICION (email ya registrado, contrasena
+     * debil, email invalido): 409 CONFLICT para el duplicado, 400 VALIDATION para el resto. 5xx/transporte siguen
+     * siendo fallo del upstream. Solo el `error_code` de GoTrue decide (nunca su texto libre, que no se reenvia).
+     */
+    private fun goTrueCreateRejection(rejected: SupabaseHttpStatusException): BackendDomainException? {
+        if (rejected.status !in setOf(400, 409, 422)) return null
+        val errorCode = rejected.goTrueErrorCode
+        return if (rejected.status == 409 || errorCode in GOTRUE_DUPLICATE_ERROR_CODES) {
+            CanonicalErrorCode.CONFLICT.exception(message = "Ya existe un usuario con ese email.", cause = rejected)
+        } else {
+            CanonicalErrorCode.VALIDATION.exception(
+                message = "Supabase Auth rechazo los datos del usuario (${errorCode ?: "sin codigo"}).",
+                cause = rejected,
+            )
+        }
     }
 
     private suspend fun request(method: HttpMethod, path: String, body: String?, prefer: String? = null): String {
@@ -290,11 +357,21 @@ class SupabaseOposiBotsUserAdminGateway(
         if (response.status.value !in 200..299) {
             val statusCode = response.status.value
             val responseBody = response.bodyAsText()
-            // Special-case 409 Conflict responses as IllegalArgumentException (maps to 400)
-            if (statusCode == 409) {
+            // Special-case 409 Conflict responses as IllegalArgumentException (maps to 400). MASTER6-API-004: salvo en
+            // GoTrue (rutas /auth/), cuyo rechazo clasifica el llamador por error_code ([goTrueCreateRejection]).
+            if (statusCode == 409 && !path.startsWith("/auth/")) {
                 throw IllegalArgumentException("Ya existe un usuario con esos datos (posible duplicado de email o username).")
             }
-            throw SupabaseHttpStatusException(statusCode, "Supabase $method ${path.substringBefore('?')} -> $statusCode: ${responseBody.take(300)}")
+            val goTrueErrorCode = if (path.startsWith("/auth/")) {
+                runCatching { json.parseToJsonElement(responseBody).jsonObject["error_code"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+            } else {
+                null
+            }
+            throw SupabaseHttpStatusException(
+                statusCode,
+                "Supabase $method ${path.substringBefore('?')} -> $statusCode: ${responseBody.take(300)}",
+                goTrueErrorCode = goTrueErrorCode,
+            )
         }
         return response.bodyAsText()
     }
@@ -320,7 +397,18 @@ class SupabaseOposiBotsUserAdminGateway(
  * Respuesta no 2xx de Supabase con su estado. Sigue siendo [IllegalStateException] (StatusPages: 502, como antes);
  * el estado explicito sustituye a buscar "404" dentro del mensaje, que tambien casaba con un uuid que contuviera "404".
  */
-internal class SupabaseHttpStatusException(val status: Int, message: String) : IllegalStateException(message)
+internal class SupabaseHttpStatusException(
+    val status: Int,
+    message: String,
+    /** MASTER6-API-004: error_code de una respuesta de GoTrue (p. ej. email_exists, weak_password), o null. */
+    val goTrueErrorCode: String? = null,
+) : IllegalStateException(message)
+
+/** MASTER6-API-004: error_code de GoTrue que significan «ya existe». */
+internal val GOTRUE_DUPLICATE_ERROR_CODES: Set<String> = setOf("email_exists", "user_already_exists", "phone_exists")
+
+/** MASTER6-DB-001: tablas con FK ON DELETE NO ACTION a auth.users (retencion legal). */
+internal val LEGAL_RETENTION_TABLES: List<String> = listOf("aceptaciones_legales", "solicitudes_eliminacion_cuenta")
 
 private fun defaultUserAdminHttpClient(): HttpClient = HttpClient(Java) {
     expectSuccess = false

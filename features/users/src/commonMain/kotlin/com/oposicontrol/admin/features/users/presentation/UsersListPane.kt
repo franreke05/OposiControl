@@ -229,10 +229,12 @@ private fun filteredUsers(
         (roleFilter == null || roleFilter in user.roleIds)
 }
 
-private fun matchesSearch(user: User, query: String): Boolean {
+internal fun matchesSearch(user: User, query: String): Boolean {
     if (query.isBlank()) return true
+    // MASTER6-QUALITY-011: la fila ENSENA userAccountName (username, o email si no hay): tambien se busca por lo que se ve.
     return user.fullName.contains(query, ignoreCase = true) ||
-        user.email.contains(query, ignoreCase = true)
+        user.email.contains(query, ignoreCase = true) ||
+        userAccountName(user).contains(query, ignoreCase = true)
 }
 
 private fun matchesPopulation(

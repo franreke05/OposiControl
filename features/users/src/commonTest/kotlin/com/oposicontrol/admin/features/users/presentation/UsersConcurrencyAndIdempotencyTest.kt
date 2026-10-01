@@ -48,6 +48,8 @@ class UsersConcurrencyAndIdempotencyTest {
     private class Repo(val rows: List<User>) : UsersRepository {
         val detailGates = mutableMapOf<String, CompletableDeferred<UserDetail>>()
         var detailCalls = 0
+        /** Saldo vigente de la cartera tal como lo devuelve la ficha (el servidor lo mueve al conceder). */
+        var walletBalance = 10
         var saveGate: CompletableDeferred<Unit>? = null
         val upserts = mutableListOf<User>()
         val previouses = mutableListOf<User?>()
@@ -62,7 +64,7 @@ class UsersConcurrencyAndIdempotencyTest {
         override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> {
             detailCalls++
-            val gate = detailGates[userId] ?: return AppResult.Success(UserDetail(UserProfile(userId = userId), economy = UserEconomy(ticketBalance = 10)))
+            val gate = detailGates[userId] ?: return AppResult.Success(UserDetail(UserProfile(userId = userId), economy = UserEconomy(ticketBalance = walletBalance)))
             return AppResult.Success(gate.await())
         }
     }
@@ -103,13 +105,15 @@ class UsersConcurrencyAndIdempotencyTest {
 
     @Test fun retryAfterAnAmbiguousFailureReusesTheSameKey() = runTest {
         val moderation = Moderation(ArrayDeque(listOf(AppResult.Failure(AppError.Network("timeout")), AppResult.Success(15))))
-        val vm = vm(Repo(listOf(user("a", "Ana"))), moderation)
+        val repo = Repo(listOf(user("a", "Ana")))
+        val vm = vm(repo, moderation)
         testScheduler.advanceUntilIdle()
         send(vm, UsersIntent.SelectUser("a"), UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
         assertIs<UiAsync.Error>(vm.state.value.actionState)
         assertEquals(1, moderation.keys.size)
 
         // El admin reabre el dialogo: llega con el importe pendiente y confirma lo mismo.
+        repo.walletBalance = 15 // el servidor aplico la concesion; la ficha se relee tras el exito (MASTER6-IDEM-001)
         send(vm, UsersIntent.OpenTicketsDialog)
         assertEquals("5", vm.state.value.ticketsInput)
         send(vm, UsersIntent.ConfirmTickets)
@@ -155,6 +159,7 @@ class UsersConcurrencyAndIdempotencyTest {
         val vm = vm(repo, Moderation(ArrayDeque(listOf(AppResult.Success(15)))))
         testScheduler.advanceUntilIdle()
         send(vm, UsersIntent.SelectUser("a"))
+        repo.walletBalance = 15 // el servidor aplica la concesion (MASTER6-IDEM-001: la ficha se relee tras conceder)
         assertEquals(10, (vm.state.value.detail as UiAsync.Success).value.economy?.ticketBalance)
         send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
         assertEquals(15, (vm.state.value.detail as UiAsync.Success).value.economy?.ticketBalance)

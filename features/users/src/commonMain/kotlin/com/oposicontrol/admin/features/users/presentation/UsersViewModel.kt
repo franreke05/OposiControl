@@ -103,7 +103,7 @@ class UsersViewModel(
             UsersIntent.OpenTicketsDialog -> updateState {
                 // Si hay una concesión con resultado desconocido para ESTE usuario, se reabre con su importe y su clave:
                 // confirmar lo mismo la reenvía idempotente (MASTER5-IDEM-001). Si no, una clave nueva por apertura.
-                val pending = it.pendingGrant?.takeIf { p -> p.userId == it.selectedUserId }
+                val pending = it.pendingGrant
                 it.copy(
                     ticketsDialogOpen = true,
                     ticketsInput = pending?.amount?.toString().orEmpty(),
@@ -174,9 +174,9 @@ class UsersViewModel(
      * Lanza la carga de la ficha cancelando la anterior, y descarta el resultado si entre tanto se seleccionó otro usuario
      * (MASTER5-OC-002: una respuesta lenta de A ya no pisa la ficha de B).
      */
-    private fun reloadUserDetail(userId: String) {
+    private fun reloadUserDetail(userId: String, silent: Boolean = false) {
         detailJob?.cancel()
-        updateState { it.copy(detail = UiAsync.Loading) }
+        if (!silent) updateState { it.copy(detail = UiAsync.Loading) }
         detailJob = scope.launch {
             val result = usersRepository.getUserDetail(userId)
             updateState { state ->
@@ -184,8 +184,20 @@ class UsersViewModel(
                     state
                 } else {
                     when (result) {
-                        is AppResult.Failure -> state.copy(detail = UiAsync.Error(result.error))
-                        is AppResult.Success -> state.copy(detail = UiAsync.Success(result.value))
+                        // Relectura silenciosa fallida: se conserva lo que ya se mostraba.
+                        is AppResult.Failure -> if (silent) state else state.copy(detail = UiAsync.Error(result.error))
+                        is AppResult.Success -> {
+                            val balance = result.value.economy?.ticketBalance
+                            val rows = if (silent && balance != null) {
+                                state.loadedUsers.map { if (it.id == userId) it.copy(ticketsBalance = balance) else it }
+                            } else {
+                                null
+                            }
+                            state.copy(
+                                detail = UiAsync.Success(result.value),
+                                users = if (rows.isNullOrEmpty()) state.users else UiAsync.Success(rows),
+                            )
+                        }
                     }
                 }
             }
@@ -219,7 +231,7 @@ class UsersViewModel(
                 roleIds = snapshot.editorRoleIds.toList(),
             )
             // `previous` = la fila que el editor leyó: el guardado sólo escribe lo que cambió (MASTER5-API-009).
-            when (val result = upsertUserUseCase(user, previousName = existing.fullName, previous = existing)) {
+            when (val result = upsertUserUseCase(user, previous = existing)) {
                 is AppResult.Failure -> {
                     // Sólo se informa en el editor si sigue mostrando a este usuario (MASTER5-OC-002).
                     updateState { if (it.selectedUserId == user.id) it.copy(actionState = UiAsync.Error(result.error)) else it }
@@ -280,10 +292,11 @@ class UsersViewModel(
         //    (un reintento tras un timeout no concede dos veces; el backend devuelve el movimiento original).
         //  - Importe distinto: es otra operación, clave nueva.
         //  - Sin pendiente: la clave fijada al abrir el diálogo (doble clic = misma clave).
-        val pending = snapshot.pendingGrant?.takeIf { it.userId == userId }
+        val userPendings = snapshot.pendingGrants.filter { it.userId == userId }
+        val sameAmount = userPendings.lastOrNull { it.amount == amount }
         val idempotencyKey = when {
-            pending != null && pending.amount == amount -> pending.key
-            pending != null -> mintGrantKey(userId, amount)
+            sameAmount != null -> sameAmount.key
+            userPendings.isNotEmpty() -> mintGrantKey(userId, amount)
             else -> snapshot.ticketsIdempotencyKey
         } ?: return updateState {
             it.copy(
@@ -299,7 +312,9 @@ class UsersViewModel(
                 is AppResult.Failure -> updateState {
                     // El resultado es desconocido (puede haberse aplicado): se conserva la clave para el reintento.
                     it.copy(
-                        pendingGrant = PendingGrant(userId, amount, idempotencyKey),
+                        // Una pendiente por (usuario, importe): la de otro importe sigue viva (MASTER6-IDEM-002).
+                        pendingGrants = it.pendingGrants.filterNot { p -> p.userId == userId && p.amount == amount } +
+                            PendingGrant(userId, amount, idempotencyKey),
                         actionState = if (it.selectedUserId == userId) UiAsync.Error(result.error) else it.actionState,
                     )
                 }
@@ -320,12 +335,17 @@ class UsersViewModel(
                         state.copy(
                             users = if (updated.isEmpty()) state.users else UiAsync.Success(updated),
                             detail = patchedDetail,
-                            pendingGrant = state.pendingGrant?.takeIf { it.userId != userId },
+                            // Solo se resuelve la concesion que SE ha enviado (por su clave), no las demas del usuario.
+                            pendingGrants = state.pendingGrants.filterNot { it.key == idempotencyKey },
                             // Concesión resuelta: su clave no puede reutilizarse para otra operación.
                             ticketsIdempotencyKey = if (state.ticketsDialogOpen) state.ticketsIdempotencyKey else null,
                             actionState = if (state.selectedUserId == userId) UiAsync.Success(Unit) else state.actionState,
                         )
                     }
+                    // MASTER6-IDEM-001: el saldo devuelto por la concesion es el del asiento; en una repeticion idempotente
+                    // es el ORIGINAL. Se relee el saldo vigente de la ficha sin tocar la pantalla (el backend ya devuelve el
+                    // saldo actual, pero el cliente no presenta como vigente lo que no ha leido de la cartera).
+                    if (currentState().selectedUserId == userId) reloadUserDetail(userId, silent = true)
                 }
             }
         } finally {

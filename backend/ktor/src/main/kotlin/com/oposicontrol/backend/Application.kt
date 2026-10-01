@@ -25,6 +25,7 @@ import io.ktor.server.http.content.HttpStatusCodeContent
 import io.ktor.server.plugins.PayloadTooLargeException
 import io.ktor.server.plugins.UnsupportedMediaTypeException
 import io.ktor.server.response.ApplicationSendPipeline
+import kotlinx.coroutines.launch
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
@@ -527,6 +528,9 @@ fun Application.module() {
         ?: error(missingSupabaseConfigurationMessage("servir app API V1 desde Ktor"))
     val supabaseUrl = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
     val jwtVerifier = SupabaseJwtVerifier(supabaseUrl, json)
+    // MASTER6-AUTH-008: precarga del JWKS de mejor esfuerzo, fuera del arranque (pool IO, acotada por JWKS_FETCH_TIMEOUT):
+    // la primera rafaga de peticiones ya no encuentra la cache vacia.
+    if (supabaseUrl.isNotBlank()) launch(kotlinx.coroutines.Dispatchers.IO) { jwtVerifier.warmUp() }
     val appEnv = AppEnvironment.fromSystemEnvironment()
     val allowDevUser = allowsDevBypass(
         appEnv,

@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.users.presentation
 import com.oposicontrol.admin.domain.model.AccountStatus
 import com.oposicontrol.admin.domain.model.Role
 import com.oposicontrol.admin.domain.model.User
+import com.oposicontrol.admin.domain.model.UserDetail
 
 /**
  * Capa de decisión de Usuarios. Sin Compose, sin colores, sin repositorios.
@@ -391,7 +392,7 @@ fun userSaveBlockers(
     if (editorName.isBlank() && currentName?.isBlank() != true) add("El nombre no puede estar vacío.")
     // MASTER5-OC-006: limites del contrato (D1-25 nombreMostrar maxLength 100; D1-26 roleIds no vacio). El cliente los
     // aplica antes de escribir: si no, el PATCH del nombre persiste y luego /roles falla con 422 (guardado parcial).
-    if (editorName.trim().length > USER_NAME_MAX_LENGTH) add("El nombre no puede superar los $USER_NAME_MAX_LENGTH caracteres.")
+    if (userNameLength(editorName.trim()) > USER_NAME_MAX_LENGTH) add("El nombre no puede superar los $USER_NAME_MAX_LENGTH caracteres.")
     // Quitar TODOS los roles lo rechaza el servidor (422 ROLE_SYNC_EMPTY_ROLES). Un usuario que ya estaba sin roles y
     // solo cambia el nombre no envia /roles (conjunto sin cambios), por eso solo se exige si el conjunto cambia.
     if (editorRoleIds != null && currentRoleIds != null && editorRoleIds.isEmpty() && editorRoleIds != currentRoleIds) {
@@ -401,6 +402,29 @@ fun userSaveBlockers(
 
 /** D1-25 `AdminUserPatchRequest.nombreMostrar`: maxLength 100. */
 const val USER_NAME_MAX_LENGTH: Int = 100
+
+/**
+ * MASTER6-QUALITY-005: longitud en PUNTOS DE CODIGO Unicode, como la cuenta el servidor (`codePointCount`). `String.length`
+ * cuenta unidades UTF-16 y un emoji (plano suplementario) ocupa dos: con ella el cliente rechazaba nombres que el servidor
+ * acepta. Un par sustituto valido cuenta uno; un sustituto suelto (invalido) cuenta uno, igual que en `codePointCount`.
+ */
+fun userNameLength(name: String): Int {
+    var count = 0
+    var i = 0
+    while (i < name.length) {
+        i += if (name[i].isHighSurrogate() && i + 1 < name.length && name[i + 1].isLowSurrogate()) 2 else 1
+        count++
+    }
+    return count
+}
+
+/**
+ * MASTER6-QUALITY-010: estado de cuenta a pintar. La ficha recien leida manda sobre la fila de la lista (que puede estar
+ * obsoleta: una cuenta bloqueada o con eliminacion pendiente se veia "Activa"); si la ficha no cargo o no trae un estado
+ * reconocido, se mantiene el de la fila.
+ */
+fun userEffectiveAccountStatus(user: User, detail: UserDetail?): AccountStatus =
+    detail?.profile?.accountStatus?.takeIf { it != AccountStatus.UNKNOWN } ?: user.accountStatus
 
 /** Qué se va a escribir realmente al pulsar Guardar. Se dice antes, no después. */
 const val USER_SAVE_SCOPE_NOTE: String =

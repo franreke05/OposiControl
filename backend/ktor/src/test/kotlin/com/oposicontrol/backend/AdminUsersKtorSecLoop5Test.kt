@@ -78,6 +78,9 @@ class AdminUsersKtorSecLoop5Test {
         "/rest/v1/rpc/admin_sync_roles_audited" in uri -> rpcAnswer
         "/rest/v1/rpc/admin_grant_tickets" in uri ->
             V1StubResponse(200, """[{"transaction_id":"$txId","saldo_resultante":15}]""")
+        // MASTER6-IDEM-001: la ruta legacy lee el saldo ACTUAL tras la concesion.
+        method == "GET" && "/rest/v1/carteras_usuario" in uri ->
+            V1StubResponse(200, """[{"usuario_id":"$plainUser","saldo_tickets":15}]""")
         method == "POST" && "/rest/v1/auditoria_log" in uri ->
             V1StubResponse(auditStatus, if (auditStatus >= 400) """{"message":"audit down"}""" else "")
         method == "GET" && "/rest/v1/perfiles_usuario" in uri -> V1StubResponse(

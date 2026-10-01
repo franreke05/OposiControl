@@ -9,6 +9,7 @@ import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.RedirectResponseException
 import io.ktor.client.plugins.ResponseException
 import io.ktor.client.plugins.ServerResponseException
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.io.IOException
 import kotlinx.serialization.SerializationException
 
@@ -18,6 +19,9 @@ class NetworkResultAdapter(
     suspend fun <T> safeCall(block: suspend () -> T): AppResult<T> {
         return try {
             AppResult.Success(block())
+        } catch (cancellation: CancellationException) {
+            // MASTER6-QUALITY-012: la cancelacion estructurada no es un fallo de red: se propaga sin log ni AppResult.
+            throw cancellation
         } catch (throwable: Throwable) {
             val error = mapThrowable(throwable)
             logger.error("network.failure message=${error.message}", throwable)

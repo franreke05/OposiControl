@@ -54,6 +54,13 @@ class AppForbidden(message: String) : RuntimeException(message)
  */
 internal fun attemptNotOwned(): BackendDomainException = CanonicalErrorCode.ATTEMPT_NOT_FOUND.exception()
 
+/** MASTER6-API-006: vocabulario del CHECK vivo `feedback_pregunta_tipo_feedback_check` (baseline). */
+internal val FEEDBACK_TYPES: Set<String> =
+    setOf("mal_redactada", "respuesta_incorrecta", "explicacion_insuficiente", "fuente_dudosa", "recurso_roto", "otro")
+
+/** MASTER6-API-006: tope de `descripcion` del feedback de pregunta, en puntos de codigo (el valor que fijo la auditoria). */
+internal const val FEEDBACK_DESCRIPTION_MAX = 2_000
+
 /** MASTER-SEC-007: limites de `POST /api/v1/app/eventos`. */
 internal const val EVENT_TEXT_MAX = 100
 internal const val EVENT_IDEMPOTENCY_KEY_MAX = 200
@@ -135,9 +142,14 @@ private suspend fun ApplicationCall.usuarioId(
         if (identityResolver != null) return identityResolver.activeIdentity(this).userId.value
         return try {
             verifier.subFrom(bearer)
+        } catch (unavailable: java.io.IOException) {
+            // MASTER6-AUTH-009: JWKS no disponible = 503 reintentable, igual que el camino canonico; nunca 401.
+            JwtVerificationLogger.warn("JWKS unavailable on legacy-app ({}): mapped to 503", unavailable::class.simpleName)
+            throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(cause = unavailable)
         } catch (error: Exception) {
             logJwtRejected("legacy-app", error)
-            throw AppUnauthorized("JWT invalido: ${error.message?.take(120)}")
+            // MASTER6-AUTH-009: mensaje fijo; el detalle del verificador solo va al log ([logJwtRejected]).
+            throw AppUnauthorized("JWT invalido.")
         }
     }
     if (allowDevUser) {
@@ -248,7 +260,7 @@ class SupabaseJwtVerifier(
         val decoded = JWT.decode(token)
         val kid = decoded.keyId ?: throw JwtRejectedException("token sin kid")
         refreshIfStale()
-        val key = keys[kid] ?: run { refresh(); keys[kid] } ?: run {
+        val key = keys[kid] ?: run { refresh(kid); keys[kid] } ?: run {
             // Sin ninguna clave no se puede afirmar que el kid sea desconocido: JWKS no disponible.
             if (keys.isEmpty()) throw java.io.IOException("JWKS sin claves")
             throw JwtRejectedException("kid no encontrado en JWKS")
@@ -312,7 +324,7 @@ class SupabaseJwtVerifier(
      *   JWKS no disponible ([java.io.IOException] -> 503 con `Retry-After`, reintentable). Solo el hilo que descarga
      *   espera la red, y esa espera la acota [fetchTimeout].
      */
-    private fun refresh() {
+    private fun refresh(kid: String) {
         if (withinAntiStormWindow()) return
         val acquired = try {
             refreshLock.tryLock(JWKS_REFRESH_LOCK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
@@ -320,12 +332,41 @@ class SupabaseJwtVerifier(
             Thread.currentThread().interrupt()
             throw java.io.InterruptedIOException("espera del refresco del JWKS interrumpida").apply { initCause(interrupted) }
         }
-        if (!acquired) throw java.io.IOException("JWKS: refresco en curso")
+        if (!acquired) {
+            // MASTER6-AUTH-008: la descarga ajena pudo publicar ya la clave (las claves se publican ANTES de soltar el
+            // lock): si esta en cache, se sirve en vez de un 503.
+            if (keys[kid] != null) return
+            throw java.io.IOException("JWKS: refresco en curso")
+        }
         try {
+            // MASTER6-AUTH-008: quien esperaba al lock vuelve a mirar la cache antes de descargar otra vez.
+            if (keys[kid] != null) return
             refreshLocked()
         } finally {
             refreshLock.unlock()
         }
+    }
+
+    /**
+     * MASTER6-AUTH-008: precarga de mejor esfuerzo al arrancar, para que la primera rafaga de peticiones no encuentre la
+     * cache vacia (sin claves no hay nada que servir y los que esperan al lock salen con 503 tras
+     * [JWKS_REFRESH_LOCK_WAIT_MS]). Un fallo solo deja una linea WARN con la clase: la cache se rellena en la primera
+     * peticion como antes. Devuelve si quedo alguna clave.
+     */
+    fun warmUp(): Boolean {
+        if (keys.isNotEmpty()) return true
+        try {
+            if (refreshLock.tryLock()) {
+                try {
+                    if (keys.isEmpty()) refreshLocked()
+                } finally {
+                    refreshLock.unlock()
+                }
+            }
+        } catch (failure: java.io.IOException) {
+            JwtVerificationLogger.warn("JWKS warm-up failed ({}); keys will load on first request", failure::class.simpleName)
+        }
+        return keys.isNotEmpty()
     }
 
     /**
@@ -972,6 +1013,14 @@ class AppV1Gateway private constructor(
     fun crearFeedback(usuarioId: String, req: AppFeedbackRequest): String {
         usuarioId.validatedUuid("usuarioId")
         req.preguntaId.validatedUuid("preguntaId")
+        // MASTER6-API-006: campos acotados ANTES de cualquier lectura o escritura. `tipoFeedback` solo admite el
+        // vocabulario del CHECK vivo `feedback_pregunta_tipo_feedback_check`; `descripcion`, como mucho
+        // [FEEDBACK_DESCRIPTION_MAX] puntos de codigo (antes solo la acotaba el tope global de cuerpo, ~2 MB por fila).
+        val tipoFeedback = req.tipoFeedback.ifBlank { "otro" }
+        if (tipoFeedback !in FEEDBACK_TYPES) throw validationError(ErrorIssue("tipoFeedback", CanonicalIssue.INVALID_FORMAT))
+        if (req.descripcion.codePointCount(0, req.descripcion.length) > FEEDBACK_DESCRIPTION_MAX) {
+            throw validationError(ErrorIssue("descripcion", CanonicalIssue.OUT_OF_RANGE))
+        }
         req.intentoId?.let { intentoId ->
             intentoId.validatedUuid("intentoId")
             val examenId = get("/rest/v1/intentos_examen?select=examen_id&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1")
@@ -985,7 +1034,7 @@ class AppV1Gateway private constructor(
             put("usuario_id", usuarioId)
             put("pregunta_id", req.preguntaId)
             if (req.intentoId != null) put("intento_id", req.intentoId)
-            put("tipo_feedback", req.tipoFeedback.ifBlank { "otro" })
+            put("tipo_feedback", tipoFeedback)
             if (req.descripcion.isNotBlank()) put("descripcion", req.descripcion)
             put("estado", "pendiente")
         }

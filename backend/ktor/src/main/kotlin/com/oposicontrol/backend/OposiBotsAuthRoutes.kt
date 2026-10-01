@@ -187,7 +187,9 @@ private suspend fun ApplicationCall.authEndpoint(
         // real (Supabase, red, bug) se veia igual que un rate-limit, sin
         // forma de diagnosticarlo. No se expone al cliente, solo al log.
         AuthLogger.warn("auth operation={} requestId={} unexpected={}", operation.name, requestId, unexpected.toString().redactSensitiveText())
-        logAuthResult(operation, requestId, problem.status.value)
+        // MASTER6-OB-001: el 503 mas comun en la practica tambien emite su evento estrategico (SUPABASE_REQUEST_FAILED)
+        // y la linea de causa, como las ramas hermanas; `logAuthFailure` ya escribe la linea `auth operation=...`.
+        logAuthFailure(operation, requestId, problem.status, problem.canonicalCode().name, failure = unexpected)
         respondAuthProblem(problem, requestId)
     }
 }
@@ -452,13 +454,17 @@ private fun ApplicationCall.logAuthFailure(
         userId = verifiedCanonicalUserIdOrNull(),
     )
     if (status.value >= 500) {
+        // MASTER6-OB-002: con la clase de la causa (antes solo su mensaje, y "-" cuando no la habia: la causa de un
+        // OposiBotsAuthProblem del gateway ya la registra el propio gateway con su categoria).
+        val cause = failure?.let { it.cause ?: it }
         AuthLogger.warn(
-            "auth failure operation={} requestId={} status={} code={}: {}",
+            "auth failure operation={} requestId={} status={} code={} causeClass={}: {}",
             operation.name,
             requestId,
             status.value,
             errorCode,
-            failure?.let { (it.cause ?: it).redactedMessage("Auth failure") } ?: "-",
+            cause?.let { it::class.simpleName } ?: "-",
+            cause?.redactedMessage("Auth failure") ?: "-",
         )
     }
 }

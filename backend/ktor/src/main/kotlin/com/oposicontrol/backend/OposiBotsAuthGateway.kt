@@ -27,6 +27,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
@@ -38,6 +39,10 @@ import java.util.Base64
 import org.slf4j.LoggerFactory
 
 private val GatewayLogger = LoggerFactory.getLogger("OC-KTOR-AUTH-GATEWAY")
+
+/** MASTER6-OB-002: codigos `error` documentados del endpoint de token de Apple (RFC 6749 5.2 + `invalid_scope`). */
+internal val APPLE_TOKEN_ERROR_CODES: Set<String> =
+    setOf("invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope")
 
 /**
  * MASTER2-AUTH-003: esperas entre reintentos de la lectura de la puerta en refresh (3 intentos, ~1 s de espera total).
@@ -372,9 +377,15 @@ internal class SupabaseOposiBotsAuthGateway(
     private fun HttpStatusCode.revokeReachedItsGoal(): Boolean =
         isSuccessStatus() || this == HttpStatusCode.Unauthorized || this == HttpStatusCode.NotFound
 
+    /**
+     * MASTER6-OB-002: cada salida de error deja una linea WARN con una CATEGORIA distinta, el estado de Apple y el campo
+     * `error` de Apple solo si es uno de sus codigos documentados ([APPLE_TOKEN_ERROR_CODES]); nunca el code, el
+     * id_token, el client_secret ni el cuerpo. `invalid_client` (client_secret caducado o mal configurado) es un fallo de
+     * configuracion del SERVIDOR: 503, no un 401 que culpa al usuario.
+     */
     private suspend fun verifyAppleCode(request: OposiBotsAppleRequest, context: OposiBotsAuthContext) {
-        val clientId = configuration.appleClientId ?: throw OposiBotsAuthProblem.unavailable()
-        val clientSecret = configuration.appleClientSecret ?: throw OposiBotsAuthProblem.unavailable()
+        val clientId = configuration.appleClientId ?: throw appleFailure("apple_not_configured", context, unavailable = true)
+        val clientSecret = configuration.appleClientSecret ?: throw appleFailure("apple_not_configured", context, unavailable = true)
         val response = upstreamRequest(
             method = HttpMethod.Post,
             absoluteUrl = "https://appleid.apple.com/auth/token",
@@ -386,14 +397,52 @@ internal class SupabaseOposiBotsAuthGateway(
                     append("grant_type", "authorization_code")
                 },
             ),
+            category = "apple_token",
+            context = context,
         )
-        if (!response.status.isSuccessStatus()) throw OposiBotsAuthProblem.authentication()
-        val appleToken = response.decode<AppleTokenResponse>().idToken
-            ?: throw OposiBotsAuthProblem.authentication()
+        if (!response.status.isSuccessStatus()) {
+            val appleError = response.appleErrorCode()
+            throw appleFailure(
+                "apple_token_rejected",
+                context,
+                upstreamStatus = response.status.value,
+                appleError = appleError,
+                unavailable = appleError == "invalid_client" || response.status.value >= 500,
+            )
+        }
+        val decoded = try {
+            response.decode<AppleTokenResponse>()
+        } catch (undecodable: OposiBotsAuthProblem) {
+            throw appleFailure("apple_token_undecodable", context, upstreamStatus = response.status.value, unavailable = true)
+        }
+        val appleToken = decoded.idToken
+            ?: throw appleFailure("apple_token_missing_id_token", context, upstreamStatus = response.status.value)
         if (appleToken.jwtSubject() != request.identityToken.jwtSubject()) {
-            throw OposiBotsAuthProblem.authentication()
+            throw appleFailure("apple_subject_mismatch", context, upstreamStatus = response.status.value)
         }
     }
+
+    private fun appleFailure(
+        category: String,
+        context: OposiBotsAuthContext,
+        upstreamStatus: Int? = null,
+        appleError: String? = null,
+        unavailable: Boolean = false,
+    ): OposiBotsAuthProblem {
+        GatewayLogger.warn(
+            "apple verification failed category={} upstreamStatus={} appleError={} requestId={}",
+            category,
+            upstreamStatus ?: "-",
+            appleError ?: "-",
+            context.requestId,
+        )
+        return if (unavailable) OposiBotsAuthProblem.unavailable() else OposiBotsAuthProblem.authentication()
+    }
+
+    /** El `error` de una respuesta de error de Apple, solo si es un codigo documentado (nunca texto libre). */
+    private fun AuthResponse.appleErrorCode(): String? = runCatching {
+        json.parseToJsonElement(body).jsonObject["error"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()?.takeIf { it in APPLE_TOKEN_ERROR_CODES } ?: if (body.isBlank()) null else "other"
 
     private suspend fun claimOAuthCredential(
         provider: String,
@@ -711,6 +760,8 @@ internal class SupabaseOposiBotsAuthGateway(
         method: HttpMethod,
         absoluteUrl: String,
         form: FormDataContent,
+        category: String,
+        context: OposiBotsAuthContext,
     ): AuthResponse {
         return try {
             val response = client.request(absoluteUrl) {
@@ -721,7 +772,14 @@ internal class SupabaseOposiBotsAuthGateway(
             AuthResponse(response.status, response.bodyAsText(), json)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (transport: Exception) {
+            // MASTER6-OB-002: red, TLS, DNS o timeout hacia el proveedor: categoria y clase (sin mensaje: puede llevar la URL).
+            GatewayLogger.warn(
+                "upstream request failed category={}_transport error={} requestId={}",
+                category,
+                transport::class.simpleName,
+                context.requestId,
+            )
             throw OposiBotsAuthProblem.unavailable()
         }
     }

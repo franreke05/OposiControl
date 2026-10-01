@@ -59,12 +59,19 @@ data class UsersState(
      * Concesion cuyo resultado no se conoce (fallo de red, timeout, respuesta perdida): el servidor pudo haberla
      * aplicado. Conserva su clave para que reabrir el dialogo y confirmar el MISMO importe la reenvie con la misma
      * clave (el backend devuelve el movimiento original) en vez de conceder dos veces (MASTER5-IDEM-001). Se borra al
-     * tener exito; un importe distinto acuña una clave nueva.
+     * tener exito (solo la suya: MASTER6-IDEM-002, el exito de otra concesion no la borra); un importe distinto acuña una
+     * clave nueva y NO descarta las pendientes anteriores (una por usuario e importe).
      */
-    val pendingGrant: PendingGrant? = null,
+    val pendingGrants: List<PendingGrant> = emptyList(),
     val warningDialogOpen: Boolean = false,
     val warningInput: String = "",
 ) {
+    /**
+     * La concesion pendiente MAS RECIENTE del usuario seleccionado (la que reabre el dialogo). MASTER6-IDEM-002: las
+     * pendientes son una por (usuario, importe), no una por usuario; ver [pendingGrants].
+     */
+    val pendingGrant: PendingGrant? get() = pendingGrants.lastOrNull { it.userId == selectedUserId }
+
     val loadedUsers: List<User> get() = (users as? UiAsync.Success)?.value.orEmpty()
 
     val selectedUser: User? get() = loadedUsers.firstOrNull { it.id == selectedUserId }

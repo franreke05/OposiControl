@@ -243,6 +243,38 @@ internal fun preguntaSearchFilter(termino: String): String? {
     return "codigo_pregunta.ilike.$codificado,titulo.ilike.$codificado"
 }
 
+/**
+ * MASTER6-OBS-006: estado HTTP upstream de un fallo del transporte (`BackendDomainException.status`, o el `-> NNN:` del
+ * mensaje que compone `SupabaseRequestTransport.failOnError`), o `null` si no lo hay (red, timeout, decodificacion).
+ */
+internal fun upstreamStatusOf(failure: Throwable): Int? = when (failure) {
+    is BackendDomainException -> failure.status.value
+    is SupabaseHttpStatusException -> failure.status
+    else -> failure.message?.let { Regex(""" -> (\d{3}):""").find(it)?.groupValues?.get(1)?.toIntOrNull() }
+}
+
+/**
+ * MASTER5-API-005 / MASTER6-SEC-002: un nombre visible no admite caracteres de control (p{Cc}), de formato invisibles
+ * (p{Cf}: bidi U+202A..U+202E / U+2066..U+2069, ancho cero U+200B..U+200D, BOM U+FEFF...), separadores de linea o de
+ * parrafo (p{Zl}/p{Zp}) ni sustitutos UTF-16 sueltos. Consecuencia aceptada: el ZWJ (U+200D) de los emojis compuestos
+ * tambien se rechaza.
+ */
+internal fun isAcceptableDisplayName(name: String): Boolean {
+    var i = 0
+    while (i < name.length) {
+        val cp = name.codePointAt(i)
+        when (Character.getType(cp).toByte()) {
+            Character.CONTROL, Character.FORMAT, Character.LINE_SEPARATOR, Character.PARAGRAPH_SEPARATOR, Character.SURROGATE ->
+                return false
+        }
+        i += Character.charCount(cp)
+    }
+    return true
+}
+
+/** MASTER6-API-001: estados en los que un reporte de contenido sigue abierto (CHECK `reportes_contenido_estado_check`). */
+internal val REPORTE_OPEN_STATES: List<String> = listOf("pendiente", "revisado")
+
 internal fun String.toForoSnippet(maxLength: Int = 240): String {
     val trimmed = trim()
     if (trimmed.length <= maxLength) return trimmed
@@ -1052,16 +1084,19 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val limit = params["limit"]?.toIntOrNull()?.coerceIn(1, 50) ?: 20
                 val cursor = params["cursor"]?.takeIf { it.isNotBlank() }
                 call.respond(
-                    gateway.listFeedback(
-                        estado = params["estado"],
-                        tipoFeedback = params["tipo"]?.takeIf { it.isNotBlank() },
-                        cursor = cursor,
-                        limit = limit,
-                    ),
+                    withUpstreamIo {
+                        gateway.listFeedback(
+                            estado = params["estado"],
+                            tipoFeedback = params["tipo"]?.takeIf { it.isNotBlank() },
+                            cursor = cursor,
+                            limit = limit,
+                        )
+                    },
                 )
             }
             get("/{id}") {
-                val detail = gateway.getFeedbackDetail(call.requiredPath("id").validatedUuid("id"))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val detail = withUpstreamIo { gateway.getFeedbackDetail(id) }
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Incidencia no encontrada."))
                 call.respond(AdminFeedbackDetailResponse(detail))
             }
@@ -1091,12 +1126,12 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             post("/{id}/resolver") {
                 val id = call.requiredPath("id").validatedUuid("id")
                 val req = call.receive<ResolverFeedbackRequest>()
-                call.respond(AdminFeedbackResponse(gateway.resolverFeedback(id, req)))
+                call.respond(AdminFeedbackResponse(withUpstreamIo { gateway.resolverFeedback(id, req) }))
             }
         }
         get("/auditoria") {
             val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 100
-            call.respond(AdminAuditoriasResponse(gateway.listAuditoria(limit)))
+            call.respond(AdminAuditoriasResponse(withUpstreamIo { gateway.listAuditoria(limit) }))
         }
         route("/usuarios") {
             get {
@@ -1143,7 +1178,9 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     // MASTER5-API-005: el OpenAPI `maxLength` cuenta PUNTOS DE CODIGO (no unidades UTF-16: un emoji son 2) y un
                     // nombre visible no admite caracteres de control (p{Cc}: saltos de linea, NUL, ...).
                     if (name.codePointCount(0, name.length) > ADMIN_USER_NAME_MAX) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.OUT_OF_RANGE))
-                    if (name.any { it.isISOControl() }) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.INVALID_FORMAT))
+                    // MASTER6-SEC-002: tampoco formato invisible (p{Cf}: bidi U+202E, ancho cero U+200B, BOM U+FEFF...),
+                    // separadores de linea/parrafo ni sustitutos sueltos: suplantacion visual en el panel admin.
+                    if (!isAcceptableDisplayName(name)) throw validationError(ErrorIssue("nombreMostrar", CanonicalIssue.INVALID_FORMAT))
                     withUpstreamIo { gateway.updateUsuario(userId, name) }
                         ?: return@patch call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Usuario no encontrado."))
                 }
@@ -1180,77 +1217,107 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 // MASTER-AUTH-003: el actor (sub del JWT) decide si puede tocar roles administrativos.
                 val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
                 val requestedRoleIds = body.roleIds.map { it.validatedUuid("roleIds") }
+                // MASTER6-IDEM-003: precondicion opcional del editor (mismo tope y misma validacion que roleIds).
+                if ((body.expectedRoleIds?.size ?: 0) > ADMIN_ROLE_IDS_MAX) throw validationError(ErrorIssue("expectedRoleIds", CanonicalIssue.OUT_OF_RANGE))
+                val expectedRoleIds = body.expectedRoleIds?.map { it.validatedUuid("expectedRoleIds") }
                 // D1-26 (SLICE 1): los roles RESULTANTES de esta sincronizacion (MASTER5-API-011: el `despues` bajo el
                 // cerrojo de la RPC, no una re-lectura posterior). `ok` se conserva para OC. MASTER5-API-010: en el pool IO.
-                val resultingRoleIds = withUpstreamIo { gateway.syncRoles(userId, requestedRoleIds, actorId = actorId) }
+                val resultingRoleIds = withUpstreamIo { gateway.syncRoles(userId, requestedRoleIds, actorId = actorId, expectedRoleIds = expectedRoleIds) }
                 call.respond(AdminUserRolesResponse(roleIds = resultingRoleIds))
             }
             post("/{id}/tickets") {
+                // MASTER6-SEC-001: el id de ruta se valida antes de tocar nada (el gateway lo repite).
+                val userId = call.requiredPath("id").validatedUuid("id")
                 val body = call.receive<GrantTicketsBody>()
                 val idempotencyKey = body.idempotencyKey ?: call.request.headers["Idempotency-Key"]
-                val userId = call.requiredPath("id")
-                val saldo = withUpstreamIo { gateway.grantTickets(userId, body.cantidad, body.motivo, idempotencyKey = idempotencyKey) }
+                // MASTER6-IDEM-001: `saldo` es el saldo ACTUAL de la cartera, leido despues de la concesion. Antes era el
+                // `saldo_resultante` del asiento: en una repeticion idempotente (mismo idempotencyKey) el RPC devuelve el
+                // asiento ORIGINAL, y la app lo pintaba como saldo vigente aunque hubiera habido movimientos despues.
+                val saldo = withUpstreamIo {
+                    gateway.grantTicketsReportingCurrentBalance(userId, body.cantidad, body.motivo, idempotencyKey = idempotencyKey)
+                }
                 call.respond(GrantTicketsResponse(saldo))
             }
         }
+        // MASTER6-API-003 (F-10, MASTER5-API-010): desde aqui hasta el final del bloque, TODAS las llamadas al gateway van
+        // en `withUpstreamIo` (el cuerpo se lee ANTES, fuera del pool IO). MASTER6-SEC-001 (F-06): los `{id}` que se
+        // interpolan en PostgREST se validan como UUID en la ruta y otra vez en el gateway.
         route("/reportes") {
-            get { call.respond(AdminReportesResponse(gateway.listReportes(call.request.queryParameters["estado"]))) }
-            get("/{id}") { call.respond(gateway.getReporte(call.requiredPath("id"))) }
+            get {
+                val estado = call.request.queryParameters["estado"]
+                call.respond(AdminReportesResponse(withUpstreamIo { gateway.listReportes(estado) }))
+            }
+            get("/{id}") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                call.respond(withUpstreamIo { gateway.getReporte(id) })
+            }
             post("/{id}/resolver") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<ResolverReporteBody>()
                 val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
-                gateway.resolverReporte(call.requiredPath("id"), call.receive(), actorId)
+                withUpstreamIo { gateway.resolverReporte(id, body, actorId) }
                 call.respond(OkDto())
             }
         }
         route("/roles") {
             get {
-                call.respond(AdminRolesV1Response(gateway.listRoles()))
+                call.respond(AdminRolesV1Response(withUpstreamIo { gateway.listRoles() }))
             }
         }
         route("/tickets") {
-            get { call.respond(gateway.listTicketWallets()) }
+            get { call.respond(withUpstreamIo { gateway.listTicketWallets() }) }
             // Resumen agregado de la economía de OT.
-            get("/resumen") { call.respond(AdminTicketsOverviewResponse(gateway.getTicketsOverview())) }
+            get("/resumen") { call.respond(AdminTicketsOverviewResponse(withUpstreamIo { gateway.getTicketsOverview() })) }
             // Concesión administrativa. Pasa por el RPC atómico e idempotente;
             // esta ruta nunca escribe un saldo por su cuenta.
             post("/conceder") {
+                val body = call.receive<AdminGrantTicketsRequestDto>()
                 call.respond(
                     HttpStatusCode.Created,
-                    AdminGrantTicketsResponse(gateway.grantTicketsAdmin(call.receive())),
+                    AdminGrantTicketsResponse(withUpstreamIo { gateway.grantTicketsAdmin(body) }),
                 )
             }
             get("/{usuarioId}/transacciones") {
-                call.respond(gateway.listTicketTransactions(call.requiredPath("usuarioId")))
+                val usuarioId = call.requiredPath("usuarioId").validatedUuid("usuarioId")
+                call.respond(withUpstreamIo { gateway.listTicketTransactions(usuarioId) })
             }
             post("/{usuarioId}/transacciones") {
-                call.respond(HttpStatusCode.Created, gateway.appendTicketAdjustment(call.requiredPath("usuarioId"), call.receive()))
+                val usuarioId = call.requiredPath("usuarioId").validatedUuid("usuarioId")
+                val body = call.receive<AdminTicketAdjustmentDto>()
+                call.respond(HttpStatusCode.Created, withUpstreamIo { gateway.appendTicketAdjustment(usuarioId, body) })
             }
         }
         route("/soporte") {
-            get { call.respond(gateway.listSupportConversations()) }
+            get { call.respond(withUpstreamIo { gateway.listSupportConversations() }) }
             route("/conversaciones") {
-                get { call.respond(gateway.listSupportConversations()) }
+                get { call.respond(withUpstreamIo { gateway.listSupportConversations() }) }
                 get("/{id}/mensajes") {
-                    call.respond(gateway.listSupportMessages(call.requiredPath("id")))
+                    val id = call.requiredPath("id").validatedUuid("id")
+                    call.respond(withUpstreamIo { gateway.listSupportMessages(id) })
                 }
                 post("/{id}/mensajes") {
-                    call.respond(HttpStatusCode.Created, gateway.sendSupportMessage(call.requiredPath("id"), call.receive()))
+                    val id = call.requiredPath("id").validatedUuid("id")
+                    val body = call.receive<AdminSupportReplyDto>()
+                    call.respond(HttpStatusCode.Created, withUpstreamIo { gateway.sendSupportMessage(id, body) })
                 }
             }
         }
         route("/accesos") {
-            get { call.respond(gateway.listExamAccesses()) }
-            post { call.respond(HttpStatusCode.Created, gateway.upsertExamAccess(call.receive())) }
+            get { call.respond(withUpstreamIo { gateway.listExamAccesses() }) }
+            post {
+                val body = call.receive<AdminExamAccessDto>()
+                call.respond(HttpStatusCode.Created, withUpstreamIo { gateway.upsertExamAccess(body) })
+            }
         }
         route("/moderacion") {
-            get { call.respond(AdminReportesResponse(gateway.listReportes())) }
-            get("/reportes") { call.respond(AdminReportesResponse(gateway.listReportes())) }
-            get("/actions") { call.respond(gateway.listModerationActions()) }
-            get("/acciones") { call.respond(gateway.listModerationActions()) }
+            get { call.respond(AdminReportesResponse(withUpstreamIo { gateway.listReportes() })) }
+            get("/reportes") { call.respond(AdminReportesResponse(withUpstreamIo { gateway.listReportes() })) }
+            get("/actions") { call.respond(withUpstreamIo { gateway.listModerationActions() }) }
+            get("/acciones") { call.respond(withUpstreamIo { gateway.listModerationActions() }) }
             post("/actions") {
                 val req = call.receive<WarnUserRequest>()
                 req.targetUserId.validatedUuid("targetUserId")
-                gateway.warnUser(req.targetUserId, req.actionType, req.reason)
+                withUpstreamIo { gateway.warnUser(req.targetUserId, req.actionType, req.reason) }
                 call.respond(HttpStatusCode.Created, OkDto())
             }
             get("/hilos") {
@@ -1259,10 +1326,15 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val cursor = params["cursor"]?.takeIf { it.isNotBlank() }
                 val reportedOnly = params["reportados"] == "true"
                 val categoriaId = params["categoriaId"]?.takeIf { it.isNotBlank() }?.also { it.validatedUuid("categoriaId") }
-                call.respond(gateway.listForoHilos(limit = limit, cursor = cursor, reportedOnly = reportedOnly, categoriaId = categoriaId))
+                call.respond(
+                    withUpstreamIo {
+                        gateway.listForoHilos(limit = limit, cursor = cursor, reportedOnly = reportedOnly, categoriaId = categoriaId)
+                    },
+                )
             }
             get("/hilos/{id}") {
-                val hilo = gateway.getForoHilo(call.requiredPath("id"))
+                val id = call.requiredPath("id").validatedUuid("id")
+                val hilo = withUpstreamIo { gateway.getForoHilo(id) }
                     ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Hilo no encontrado."))
                 call.respond(hilo)
             }
@@ -1276,23 +1348,27 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val params = call.request.queryParameters
                 val limit = params["limit"]?.toIntOrNull()?.coerceIn(1, 50) ?: 20
                 val cursor = params["cursor"]?.takeIf { it.isNotBlank() }
-                call.respond(gateway.getForoHiloRespuestas(hiloId, limit = limit, cursor = cursor))
+                call.respond(withUpstreamIo { gateway.getForoHiloRespuestas(hiloId, limit = limit, cursor = cursor) })
             }
         }
-        get("/settings") { call.respond(gateway.settings()) }
-        get("/ajustes") { call.respond(gateway.settings()) }
+        get("/settings") { call.respond(withUpstreamIo { gateway.settings() }) }
+        get("/ajustes") { call.respond(withUpstreamIo { gateway.settings() }) }
         route("/etiquetas") {
-            get { call.respond(AdminEtiquetasResponse(gateway.listEtiquetas())) }
+            get { call.respond(AdminEtiquetasResponse(withUpstreamIo { gateway.listEtiquetas() })) }
             post {
-                val saved = gateway.createEtiqueta(call.receive())
+                val body = call.receive<AdminEtiquetaDto>()
+                val saved = withUpstreamIo { gateway.createEtiqueta(body) }
                 call.respond(HttpStatusCode.Created, AdminEtiquetaResponse(saved))
             }
             patch("/{id}") {
-                val saved = gateway.updateEtiqueta(call.requiredPath("id"), call.receive())
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<AdminEtiquetaDto>()
+                val saved = withUpstreamIo { gateway.updateEtiqueta(id, body) }
                 call.respond(AdminEtiquetaResponse(saved))
             }
             delete("/{id}") {
-                gateway.deleteEtiqueta(call.requiredPath("id"))
+                val id = call.requiredPath("id").validatedUuid("id")
+                withUpstreamIo { gateway.deleteEtiqueta(id) }
                 call.respond(OkDto())
             }
         }
@@ -1330,18 +1406,20 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         // aquí cambia la app sin desplegar nada.
         route("/comercial") {
             route("/productos") {
-                get { call.respond(AdminProductosComercialesResponse(gateway.listProductosComerciales())) }
-                post { call.respond(AdminProductoComercialResponse(gateway.upsertProductoComercial(call.receive()))) }
+                get { call.respond(AdminProductosComercialesResponse(withUpstreamIo { gateway.listProductosComerciales() })) }
+                post {
+                    val body = call.receive<AdminProductoComercialDto>()
+                    call.respond(AdminProductoComercialResponse(withUpstreamIo { gateway.upsertProductoComercial(body) }))
+                }
                 route("/{productoId}/tarifas") {
                     get {
-                        call.respond(AdminTarifasProductoResponse(gateway.listTarifas(call.requiredPath("productoId"))))
+                        val productoId = call.requiredPath("productoId").validatedUuid("productoId")
+                        call.respond(AdminTarifasProductoResponse(withUpstreamIo { gateway.listTarifas(productoId) }))
                     }
                     post {
-                        call.respond(
-                            AdminTarifaProductoResponse(
-                                gateway.upsertTarifa(call.requiredPath("productoId"), call.receive()),
-                            ),
-                        )
+                        val productoId = call.requiredPath("productoId").validatedUuid("productoId")
+                        val body = call.receive<AdminTarifaProductoDto>()
+                        call.respond(AdminTarifaProductoResponse(withUpstreamIo { gateway.upsertTarifa(productoId, body) }))
                     }
                 }
             }
@@ -1349,20 +1427,20 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         // Planes de suscripción y sus beneficios. Los precios NO están aquí:
         // viven en tarifas_producto_comercial, por periodo y fase.
         route("/planes") {
-            get { call.respond(AdminPlansResponse(gateway.listPlanes())) }
-            post { call.respond(AdminPlanResponse(gateway.upsertPlan(call.receive()))) }
+            get { call.respond(AdminPlansResponse(withUpstreamIo { gateway.listPlanes() })) }
+            post {
+                val body = call.receive<AdminPlanDto>()
+                call.respond(AdminPlanResponse(withUpstreamIo { gateway.upsertPlan(body) }))
+            }
             route("/{planId}/beneficios") {
                 get {
-                    call.respond(
-                        AdminPlanBenefitsResponse(gateway.listPlanBenefits(call.requiredPath("planId"))),
-                    )
+                    val planId = call.requiredPath("planId").validatedUuid("planId")
+                    call.respond(AdminPlanBenefitsResponse(withUpstreamIo { gateway.listPlanBenefits(planId) }))
                 }
                 post {
-                    call.respond(
-                        AdminPlanBenefitResponse(
-                            gateway.upsertPlanBenefit(call.requiredPath("planId"), call.receive()),
-                        ),
-                    )
+                    val planId = call.requiredPath("planId").validatedUuid("planId")
+                    val body = call.receive<AdminPlanBenefitDto>()
+                    call.respond(AdminPlanBenefitResponse(withUpstreamIo { gateway.upsertPlanBenefit(planId, body) }))
                 }
             }
         }
@@ -1370,38 +1448,62 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         // datos: cambiarlos no debe requerir un despliegue.
         route("/market") {
             route("/packs") {
-                get { call.respond(AdminTicketPacksResponse(gateway.listTicketPacks())) }
-                post { call.respond(AdminTicketPackResponse(gateway.upsertTicketPack(call.receive()))) }
+                get { call.respond(AdminTicketPacksResponse(withUpstreamIo { gateway.listTicketPacks() })) }
+                post {
+                    val body = call.receive<AdminTicketPackDto>()
+                    call.respond(AdminTicketPackResponse(withUpstreamIo { gateway.upsertTicketPack(body) }))
+                }
             }
             route("/servicios") {
-                get { call.respond(AdminServicesResponse(gateway.listServices())) }
-                post { call.respond(AdminServiceResponse(gateway.upsertService(call.receive()))) }
+                get { call.respond(AdminServicesResponse(withUpstreamIo { gateway.listServices() })) }
+                post {
+                    val body = call.receive<AdminServiceDto>()
+                    call.respond(AdminServiceResponse(withUpstreamIo { gateway.upsertService(body) }))
+                }
             }
             route("/promociones") {
-                get { call.respond(AdminPromotionsResponse(gateway.listPromotions())) }
-                post { call.respond(AdminPromotionResponse(gateway.upsertPromotion(call.receive()))) }
+                get { call.respond(AdminPromotionsResponse(withUpstreamIo { gateway.listPromotions() })) }
+                post {
+                    val body = call.receive<AdminPromotionDto>()
+                    call.respond(AdminPromotionResponse(withUpstreamIo { gateway.upsertPromotion(body) }))
+                }
             }
             route("/popups") {
-                get { call.respond(AdminPopupRulesResponse(gateway.listPopupRules())) }
-                post { call.respond(AdminPopupRuleResponse(gateway.upsertPopupRule(call.receive()))) }
+                get { call.respond(AdminPopupRulesResponse(withUpstreamIo { gateway.listPopupRules() })) }
+                post {
+                    val body = call.receive<AdminPopupRuleDto>()
+                    call.respond(AdminPopupRuleResponse(withUpstreamIo { gateway.upsertPopupRule(body) }))
+                }
             }
         }
         route("/tienda") {
             route("/articulos") {
-                get { call.respond(AdminArticulosTiendaResponse(gateway.listArticulosTienda())) }
-                post { call.respond(AdminArticuloTiendaResponse(gateway.upsertArticuloTienda(call.receive()))) }
+                get { call.respond(AdminArticulosTiendaResponse(withUpstreamIo { gateway.listArticulosTienda() })) }
+                post {
+                    val body = call.receive<AdminArticuloTiendaDto>()
+                    call.respond(AdminArticuloTiendaResponse(withUpstreamIo { gateway.upsertArticuloTienda(body) }))
+                }
             }
             route("/ofertas") {
-                get { call.respond(AdminOfertasTiendaResponse(gateway.listOfertasTienda())) }
-                post { call.respond(AdminOfertaTiendaResponse(gateway.upsertOfertaTienda(call.receive()))) }
+                get { call.respond(AdminOfertasTiendaResponse(withUpstreamIo { gateway.listOfertasTienda() })) }
+                post {
+                    val body = call.receive<AdminOfertaTiendaDto>()
+                    call.respond(AdminOfertaTiendaResponse(withUpstreamIo { gateway.upsertOfertaTienda(body) }))
+                }
             }
             route("/recursos-temporales") {
-                get { call.respond(AdminRecursosTemporalesTiendaResponse(gateway.listRecursosTemporalesTienda())) }
-                post { call.respond(AdminRecursoTemporalTiendaResponse(gateway.upsertRecursoTemporalTienda(call.receive()))) }
+                get { call.respond(AdminRecursosTemporalesTiendaResponse(withUpstreamIo { gateway.listRecursosTemporalesTienda() })) }
+                post {
+                    val body = call.receive<AdminRecursoTemporalTiendaDto>()
+                    call.respond(AdminRecursoTemporalTiendaResponse(withUpstreamIo { gateway.upsertRecursoTemporalTienda(body) }))
+                }
             }
             route("/rafagas") {
-                get { call.respond(AdminCampanasRafagaResponse(gateway.listCampanasRafaga())) }
-                post { call.respond(AdminCampanaRafagaResponse(gateway.upsertCampanaRafaga(call.receive()))) }
+                get { call.respond(AdminCampanasRafagaResponse(withUpstreamIo { gateway.listCampanasRafaga() })) }
+                post {
+                    val body = call.receive<AdminCampanaRafagaDto>()
+                    call.respond(AdminCampanaRafagaResponse(withUpstreamIo { gateway.upsertCampanaRafaga(body) }))
+                }
             }
         }
     }
@@ -3083,10 +3185,14 @@ internal const val ACTION_ROLES_SYNC_FAILED = "roles_sincronizacion_fallida"
 /** MASTER3-API-004: intentos de lectura + escritura condicionada de `updateUsuario` ante escrituras concurrentes. */
 internal const val ADMIN_USER_UPDATE_ATTEMPTS = 3
 
-/** D1-26 `RoleIdsBody` (`additionalProperties: false`, `roleIds` obligatorio). Decodificacion estricta con [receiveCanonicalCommand]. */
+/**
+ * D1-26 `AdminRoleSyncRequest` (`additionalProperties: false`, `roleIds` obligatorio). Decodificacion estricta con
+ * [receiveCanonicalCommand]. MASTER6-IDEM-003 (FA8): `expectedRoleIds` OPCIONAL = los roles que el editor vio al abrir el
+ * formulario; si vienen y no coinciden (como conjunto) con los actuales, 409 VERSION_CONFLICT sin escribir nada.
+ */
 @CanonicalCommand(CommandAudience.ADMIN)
 @Serializable
-data class AdminRoleIdsCommand(val roleIds: List<String>)
+data class AdminRoleIdsCommand(val roleIds: List<String>, val expectedRoleIds: List<String>? = null)
 
 /** Tope de `roleIds` en D1-26 (hay 4 roles canonicos; 50 deja margen sin permitir cuerpos arbitrarios). */
 internal const val ADMIN_ROLE_IDS_MAX = 50
@@ -5464,9 +5570,25 @@ class AdminV1Gateway private constructor(
             .decodeList<RolUsuarioRow>().map { it.rolId }
     }
 
+    /**
+     * MASTER6-OBS-006: sigue degradando a `null` (la ficha se sirve sin datos de Auth), pero un fallo de la lectura de
+     * `auth.users` ya no es indistinguible de «no hay datos»: deja un evento SUPABASE_REQUEST_FAILED con la categoria, la
+     * clase y el estado upstream (nunca el cuerpo, el email ni el mensaje). Un 404 (la identidad no existe) es dato, no
+     * fallo: sin evento.
+     */
     private fun readAuthInfo(usuarioId: String): AdminAuthInfo? = try {
         AdminUserProfileMapper.authInfo(request("GET", "/auth/v1/admin/users/$usuarioId", null), json)
-    } catch (_: Exception) {
+    } catch (failure: Exception) {
+        val upstreamStatus = upstreamStatusOf(failure)
+        if (upstreamStatus != 404) {
+            logStrategicEvent(
+                StrategicEvent.SUPABASE_REQUEST_FAILED,
+                operation = "read_auth_info",
+                result = "degraded",
+                entityType = "auth.users",
+                errorType = "${failure::class.simpleName}:${upstreamStatus ?: "-"}",
+            )
+        }
         null
     }
 
@@ -5540,7 +5662,7 @@ class AdminV1Gateway private constructor(
      * ANTES de la RPC y falla cerrada (sin actor, o actor sin `superadmin` → 403 SUPERADMIN_REQUIRED, sin
      * llamar a `admin_sync_roles`). Cambiar sólo `moderador`/`usuario` sigue abierto a cualquier admin.
      */
-    fun syncRoles(usuarioId: String, roleIds: List<String>, actorId: String? = null): List<String> {
+    fun syncRoles(usuarioId: String, roleIds: List<String>, actorId: String? = null, expectedRoleIds: List<String>? = null): List<String> {
         // Misma apertura que `grantTickets`, `getUsuarioDetalle` y
         // `grantTicketsAdmin`: el identificador se valida ANTES de interpolarse
         // en ninguna URL ni de bajar a la RPC. Sin esto, el segmento del path
@@ -5550,6 +5672,16 @@ class AdminV1Gateway private constructor(
         val requested = roleIds.distinct()
         val codeById = listRoles().associate { it.id to it.code.trim().lowercase() }
         val before = roleIdsOf(usuarioId)
+        // MASTER6-IDEM-003 (FA8): un editor con una foto vieja ya no borra en silencio roles concedidos despues por otro
+        // admin: si declara lo que vio y no es lo actual, 409 VERSION_CONFLICT ANTES de la auditoria de intencion y de la
+        // RPC. Limite conocido: la comparacion es previa al cerrojo de la RPC; la ventana restante (milisegundos entre esta
+        // lectura y el cerrojo) se cierra comparando bajo el cerrojo en `admin_sync_roles_audited` (requiere migracion) y,
+        // mientras tanto, se detecta abajo con el `antes` leido bajo el cerrojo.
+        if (expectedRoleIds != null && expectedRoleIds.toSet() != before.toSet()) {
+            throw CanonicalErrorCode.VERSION_CONFLICT.exception(
+                "Los roles del usuario cambiaron desde que abriste el formulario. Recarga y vuelve a intentarlo.",
+            )
+        }
         val changesAdministrativeRoles = RoleSyncInvariants.changesAdministrativeRoles(
             currentRoleCodes = before.mapNotNull(codeById::get).toSet(),
             requestedRoleCodes = requested.mapNotNull(codeById::get).toSet(),
@@ -5616,6 +5748,10 @@ class AdminV1Gateway private constructor(
         // La sincronizacion YA se confirmo: una respuesta ilegible no la convierte en error. En ese caso el resultado dice
         // explicitamente que sus conjuntos NO son los del cerrojo (`bajoCerrojo=false`: la foto previa y lo pedido).
         val locked = runCatching { json.decodeFromString<RoleSyncLockedSets>(rpcBody) }.getOrNull()
+        if (expectedRoleIds != null && locked != null && locked.antes.toSet() != expectedRoleIds.toSet()) {
+            // MASTER6-IDEM-003: la precondicion paso antes del cerrojo pero otra sincronizacion entro en esa ventana.
+            AuditLogger.warn("roles sync precondition raced under the lock registroId={}: locked antes differs from expectedRoleIds", usuarioId)
+        }
         if (locked == null) {
             AuditLogger.warn("admin_sync_roles_audited answer undecodable; outcome audit falls back to the pre-lock snapshot registroId={}", usuarioId)
         }
@@ -5838,7 +5974,8 @@ class AdminV1Gateway private constructor(
      * ruta ya existente, pero esta nueva sí usa el patrón correcto que ya
      * siguen Examenes/Preguntas/Lotes/Usuarios en este mismo archivo).
      */
-    fun getForoHilo(id: String): AdminForoHiloDetailDto? {
+    fun getForoHilo(rawId: String): AdminForoHiloDetailDto? {
+        val id = rawId.validatedUuid("id")
         val row = request(
             "GET",
             "/rest/v1/publicaciones_oposired?select=*,comentarios_oposired(count)&id=eq.$id&limit=1",
@@ -5944,7 +6081,9 @@ class AdminV1Gateway private constructor(
     /** Reporte único para la pantalla de detalle móvil. Mismo lookup que ya
      * hacía [resolverReporte] internamente, solo que expuesto como lectura;
      * además resuelve el contenido real reportado (tipoEntidad + entidadId). */
-    fun getReporte(id: String): AdminReporteDto {
+    fun getReporte(rawId: String): AdminReporteDto {
+        // MASTER6-SEC-001: validado antes de interpolarse (un `%26` decodificado anadia parametros a PostgREST).
+        val id = rawId.validatedUuid("id")
         val r = request("GET", "/rest/v1/reportes_contenido?select=*&id=eq.$id&limit=1", null)
             .decodeList<ReporteRow>().firstOrNull() ?: error("Reporte no encontrado.")
         val reporterNombre = resolveUserDisplayName(r.reportadoPor)
@@ -6020,40 +6159,80 @@ class AdminV1Gateway private constructor(
      *   principal legacy de token estático ("oposicontrol-admin", que no es un
      *   uuid válido) — si no hay JWT real, se guarda sin actor en vez de fabricar uno.
      */
-    fun resolverReporte(id: String, req: ResolverReporteBody, actorId: String?) {
+    fun resolverReporte(rawId: String, req: ResolverReporteBody, actorId: String?) {
         require(req.accion.isNotBlank()) { "La acción es obligatoria." }
-        // MASTER5-API-001: la recompensa se valida ANTES de escribir la accion de moderacion, para que un importe fuera
-        // de tope no deje la accion insertada y la recompensa rechazada.
-        if (req.ticketsReporter > AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION) {
+        // MASTER5-API-001 / MASTER6-API-001: la recompensa se valida ANTES de cualquier escritura y en AMBOS extremos.
+        // 0 es valido (es el defecto de `ResolverReporteBody` y lo que envia «descartar»: sin recompensa); un negativo
+        // no lo es (antes pasaba y se guardaba como `tickets_otorgados` negativo).
+        if (req.ticketsReporter !in 0..AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION) {
             throw BackendDomainException(
                 "WALLET_AMOUNT_INVALID",
                 HttpStatusCode.UnprocessableEntity,
-                "La recompensa no puede superar ${AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION} OposiTickets.",
+                "La recompensa tiene que estar entre 0 y ${AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION} OposiTickets.",
             )
         }
+        // MASTER6-SEC-001: el id se valida antes de interpolarse en PostgREST y en la auditoria.
+        val id = rawId.validatedUuid("id")
         val reporte = request("GET", "/rest/v1/reportes_contenido?select=*&id=eq.$id&limit=1", null)
             .decodeList<ReporteRow>().firstOrNull() ?: error("Reporte no encontrado.")
+        // MASTER6-API-001: solo se resuelve un reporte ABIERTO. Antes un segundo POST insertaba otra accion de moderacion
+        // y podia voltear un reporte resuelto a descartado.
+        if (reporte.estado !in REPORTE_OPEN_STATES) throw reportAlreadyClosed()
         val estado = if (req.accion == "descartar") "descartado" else "resuelto"
-        val accion = AccionModeracionInsert(reporteId = id, tipoAccion = req.accion, notas = req.notas, moderadorId = actorId)
-        request("POST", "/rest/v1/acciones_moderacion", sbJson.encodeToString(listOf(accion)), prefer = "return=minimal")
-        val reward = req.ticketsReporter > 0
-        if (reward && !reporte.reportadoPor.isNullOrBlank()) {
-            grantTickets(
-                reporte.reportadoPor,
-                req.ticketsReporter,
-                "Recompensa por reporte",
-                tipo = "reporte_validado",
-                idempotencyKey = opositesterRewardIdempotencyKey(id),
-            )
+        // MASTER6-API-001: la recompensa se concede ANTES del cambio de estado y `recompensa_entregada` refleja SOLO una
+        // concesion CONFIRMADA por `admin_grant_tickets` (idempotente por reporte: un reintento no acredita dos veces).
+        // - Sin reportante (anonimo o borrado) no hay concesion: false/0 (antes se guardaba true sin acreditar nada).
+        // - Si la concesion falla, la excepcion sale ANTES de tocar el reporte: sigue abierto, con la marca en false, y el
+        //   reintento repite la misma concesion idempotente.
+        // - Si se pide 0 pero un intento anterior YA acredito (concedio y fallo despues), la marca sale del ledger.
+        val reporter = reporte.reportadoPor?.takeIf { it.isNotBlank() }
+        val granted = when {
+            reporter == null -> 0
+            req.ticketsReporter > 0 -> {
+                grantTickets(
+                    reporter,
+                    req.ticketsReporter,
+                    "Recompensa por reporte",
+                    tipo = "reporte_validado",
+                    idempotencyKey = opositesterRewardIdempotencyKey(id),
+                )
+                req.ticketsReporter
+            }
+            else -> confirmedReportReward(id)
         }
         val patch = ReportePatch(
             estado = estado,
             revisadoEn = Instant.now().toString(),
-            ticketsOtorgados = req.ticketsReporter,
-            recompensaEntregada = reward,
+            ticketsOtorgados = granted,
+            recompensaEntregada = granted > 0,
             revisadoPor = actorId,
         )
-        request("PATCH", "/rest/v1/reportes_contenido?id=eq.$id", sbJson.encodeToString(patch), prefer = "return=minimal")
+        // MASTER6-API-001: transicion compare-and-set (solo si sigue abierto). Si otra resolucion gano la carrera no se
+        // inserta accion ni auditoria; si ESTA peticion acredito, se deja constancia de la concesion confirmada (sin
+        // tocar el estado ajeno) antes de responder 409.
+        val transitioned = request(
+            "PATCH",
+            "/rest/v1/reportes_contenido?id=eq.$id&estado=in.(${REPORTE_OPEN_STATES.joinToString(",")})",
+            sbJson.encodeToString(patch),
+            prefer = "return=representation",
+        ).decodeList<ReporteRow>().isNotEmpty()
+        if (!transitioned) {
+            if (granted > 0) {
+                request(
+                    "PATCH",
+                    "/rest/v1/reportes_contenido?id=eq.$id&recompensa_entregada=eq.false",
+                    buildJsonObject {
+                        put("tickets_otorgados", JsonPrimitive(granted))
+                        put("recompensa_entregada", JsonPrimitive(true))
+                    }.toString(),
+                    prefer = "return=minimal",
+                )
+            }
+            throw reportAlreadyClosed()
+        }
+        // La accion de moderacion, SOLO tras ganar la transicion: un reintento o una carrera ya no la duplican.
+        val accion = AccionModeracionInsert(reporteId = id, tipoAccion = req.accion, notas = req.notas, moderadorId = actorId)
+        request("POST", "/rest/v1/acciones_moderacion", sbJson.encodeToString(listOf(accion)), prefer = "return=minimal")
         registrarAuditoria("reporte_$estado", "reportes_contenido", id)
         logStrategicEvent(
             StrategicEvent.REPORT_RESOLVED,
@@ -6065,6 +6244,16 @@ class AdminV1Gateway private constructor(
         )
     }
 
+    /** MASTER6-API-001: cantidad ya acreditada por la recompensa de este reporte (asiento del ledger con su clave), o 0. */
+    private fun confirmedReportReward(reporteId: String): Int {
+        val key = opositesterRewardIdempotencyKey(reporteId).urlEncode()
+        return request("GET", "/rest/v1/transacciones_cartera?select=*&idempotency_key=eq.$key&limit=1", null)
+            .decodeList<TransaccionCarteraRow>().firstOrNull()?.cantidad?.coerceAtLeast(0) ?: 0
+    }
+
+    private fun reportAlreadyClosed(): BackendDomainException =
+        CanonicalErrorCode.CONFLICT.exception("El reporte ya no esta pendiente: otra resolucion lo cerro antes.")
+
     // TICKETS MANUALES (carteras_usuario + transacciones_cartera)
     // tipo debe ser un valor permitido por el CHECK: "ajuste" (manual) / "reporte_validado" (recompensa)
     fun grantTickets(
@@ -6073,7 +6262,43 @@ class AdminV1Gateway private constructor(
         motivo: String,
         tipo: String = "ajuste",
         idempotencyKey: String?,
+    ): Int = grantTicketsLedger(usuarioId, cantidad, motivo, tipo, idempotencyKey).saldoResultante
+
+    /**
+     * MASTER6-IDEM-001: concesion + saldo ACTUAL de la cartera (leido despues). El `saldo_resultante` del asiento es el
+     * saldo justo tras ESE asiento: en una repeticion idempotente el RPC devuelve el asiento original, que puede no ser ya
+     * el saldo vigente. Si la lectura falla, la peticion falla (la concesion es idempotente: el reintento es seguro) en
+     * vez de presentar un saldo viejo como actual.
+     */
+    fun grantTicketsReportingCurrentBalance(
+        usuarioId: String,
+        cantidad: Int,
+        motivo: String,
+        tipo: String = "ajuste",
+        idempotencyKey: String?,
     ): Int {
+        grantTicketsLedger(usuarioId, cantidad, motivo, tipo, idempotencyKey)
+        return currentWalletBalance(usuarioId)
+    }
+
+    private fun currentWalletBalance(usuarioId: String): Int {
+        val id = usuarioId.validatedUuid("usuarioId")
+        return request("GET", "/rest/v1/carteras_usuario?select=usuario_id,saldo_tickets&usuario_id=eq.$id&limit=1", null)
+            .decodeList<CarteraRow>().firstOrNull()?.saldoTickets
+            // Tras una concesion confirmada la cartera existe (el RPC la crea): si no aparece, es una respuesta incoherente.
+            ?: error("La cartera no aparece tras una concesion confirmada.")
+    }
+
+    /** Resultado de `admin_grant_tickets`: el asiento (nuevo o, en una repeticion, el original) y su saldo resultante. */
+    internal data class WalletGrant(val transactionId: String, val saldoResultante: Int)
+
+    private fun grantTicketsLedger(
+        usuarioId: String,
+        cantidad: Int,
+        motivo: String,
+        tipo: String,
+        idempotencyKey: String?,
+    ): WalletGrant {
         usuarioId.validatedUuid("usuarioId")
         val key = idempotencyKey?.trim().orEmpty()
         if (key.isBlank()) {
@@ -6095,7 +6320,7 @@ class AdminV1Gateway private constructor(
         // transactionId y, si ya existe una para esa transaccion, no se duplica.
         if (ticketGrantAlreadyAudited(usuarioId, result.transactionId)) {
             AuditLogger.info("tickets_grant replay transactionId={}: auditoria ya registrada", result.transactionId)
-            return result.saldoResultante
+            return WalletGrant(result.transactionId, result.saldoResultante)
         }
         registrarAuditoria(
             "tickets_grant",
@@ -6114,7 +6339,7 @@ class AdminV1Gateway private constructor(
             // en el INSERT y la segunda recibe 23505 = ya auditada (no es un fallo).
             duplicateMeansAudited = true,
         )
-        return result.saldoResultante
+        return WalletGrant(result.transactionId, result.saldoResultante)
     }
 
     /**
@@ -6177,16 +6402,14 @@ class AdminV1Gateway private constructor(
             HttpStatusCode.UnprocessableEntity,
             "La clave de idempotencia es obligatoria.",
         )
-        val saldo = grantTickets(usuarioId, amount, input.reason, idempotencyKey = idempotencyKey)
-        return listTicketTransactions(usuarioId).firstOrNull()
-            ?: AdminTicketTransactionDto(
-                id = "",
-                userId = usuarioId,
-                type = "ajuste",
-                amount = amount.toDouble(),
-                reason = input.reason,
-                occurredAt = Instant.now().toString(),
-            ).also { check(saldo >= 0) }
+        val grant = grantTicketsLedger(usuarioId, amount, input.reason, "ajuste", idempotencyKey)
+        // MASTER6-API-007: se devuelve EL asiento de esta concesion (el `transaction_id` del RPC: el nuevo o, en una
+        // repeticion idempotente, el original), no el mas reciente del usuario, que con una repeticion o una concesion
+        // concurrente era otro movimiento.
+        val transactionId = grant.transactionId.validatedUuid("transactionId")
+        return request("GET", "/rest/v1/transacciones_cartera?select=*&id=eq.$transactionId&limit=1", null)
+            .decodeList<TransaccionCarteraRow>().firstOrNull()?.toDto()
+            ?: error("El asiento $transactionId no aparece tras una concesion confirmada.")
     }
 
     fun listSupportConversations(): List<AdminSupportConversationDto> {
@@ -6211,7 +6434,8 @@ class AdminV1Gateway private constructor(
             }
     }
 
-    fun listSupportMessages(conversationId: String): List<AdminSupportMessageDto> {
+    fun listSupportMessages(rawConversationId: String): List<AdminSupportMessageDto> {
+        val conversationId = rawConversationId.validatedUuid("id")
         val usersById = perfilesUsuario().associateBy { it.usuarioId }
         return request(
             "GET",
@@ -6229,7 +6453,8 @@ class AdminV1Gateway private constructor(
         }
     }
 
-    fun sendSupportMessage(conversationId: String, input: AdminSupportReplyDto): AdminSupportMessageDto {
+    fun sendSupportMessage(rawConversationId: String, input: AdminSupportReplyDto): AdminSupportMessageDto {
+        val conversationId = rawConversationId.validatedUuid("id")
         require(input.text.isNotBlank()) { "El mensaje no puede estar vacio." }
         val sender = input.assignee.takeIf { it.isNotBlank() }?.let(::findPerfil)
             ?: perfilesUsuario().firstOrNull()
@@ -6359,7 +6584,8 @@ class AdminV1Gateway private constructor(
             .decodeList<V1EtiquetaRow>().first().let { AdminEtiquetaDto(it.id.orEmpty(), it.nombre, it.slug, it.descripcion, it.colorHex, it.activa) }
     }
 
-    fun updateEtiqueta(id: String, input: AdminEtiquetaDto): AdminEtiquetaDto {
+    fun updateEtiqueta(rawId: String, input: AdminEtiquetaDto): AdminEtiquetaDto {
+        val id = rawId.validatedUuid("id")
         require(input.nombre.isNotBlank()) { "La etiqueta necesita nombre." }
         val row = V1EtiquetaRow(id = id, nombre = input.nombre.trim(), slug = input.slug.ifBlank { input.nombre.toSlug() }, descripcion = input.descripcion, colorHex = input.colorHex, activa = input.activa)
         return request("PATCH", "/rest/v1/etiquetas?id=eq.$id", sbJson.encodeToString(row), prefer = "return=representation")
@@ -6367,7 +6593,9 @@ class AdminV1Gateway private constructor(
             ?: error("Etiqueta no encontrada para actualizar: $id")
     }
 
-    fun deleteEtiqueta(id: String) {
+    fun deleteEtiqueta(rawId: String) {
+        // MASTER6-SEC-001: el id crudo llegaba al DELETE de PostgREST y a la fila de auditoria.
+        val id = rawId.validatedUuid("id")
         request("DELETE", "/rest/v1/etiquetas?id=eq.$id", null)
         registrarAuditoria("etiqueta_eliminada", "etiquetas", id)
     }

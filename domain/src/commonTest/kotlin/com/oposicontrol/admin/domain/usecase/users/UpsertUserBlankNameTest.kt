@@ -27,13 +27,13 @@ class UpsertUserBlankNameTest {
 
     @Test fun blankNameStaysBlankWhenTheUserAlreadyHadNoName() = runTest {
         val repo = Repo()
-        assertIs<AppResult.Success<User>>(UpsertUserUseCase(repo)(user(""), previousName = ""))
+        assertIs<AppResult.Success<User>>(UpsertUserUseCase(repo)(user(""), previous = user("")))
         assertEquals(1, repo.saved.size)
     }
 
     @Test fun blankingAnExistingNameIsRejectedAndNeverReachesTheRepository() = runTest {
         val repo = Repo()
-        val r = UpsertUserUseCase(repo)(user("  "), previousName = "Ana")
+        val r = UpsertUserUseCase(repo)(user("  "), previous = user("Ana"))
         assertIs<AppResult.Failure>(r)
         assertIs<AppError.Validation>(r.error)
         assertEquals(0, repo.saved.size)
@@ -47,6 +47,6 @@ class UpsertUserBlankNameTest {
 
     @Test fun aNonBlankNameIsAlwaysAccepted() = runTest {
         val repo = Repo()
-        assertIs<AppResult.Success<User>>(UpsertUserUseCase(repo)(user("Ana B"), previousName = "Ana"))
+        assertIs<AppResult.Success<User>>(UpsertUserUseCase(repo)(user("Ana B"), previous = user("Ana")))
     }
 }

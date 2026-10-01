@@ -79,6 +79,12 @@ class Master5KtorRestLoop5Test {
                     "/rest/v1/roles_usuario" in uri -> V1StubResponse(200, "[]")
                     "/rest/v1/rpc/admin_sync_roles_audited" in uri -> stub.rolesRpc
                     "/rest/v1/rpc/admin_grant_tickets" in uri -> V1StubResponse(200, """[{"transaction_id":"$tx","saldo_resultante":15}]""")
+                    // MASTER6-IDEM-001 / MASTER6-API-007: saldo actual tras la concesion y el asiento de ESTA concesion.
+                    "/rest/v1/carteras_usuario" in uri -> V1StubResponse(200, """[{"usuario_id":"$user","saldo_tickets":15}]""")
+                    "/rest/v1/transacciones_cartera?select=*&id=eq.$tx" in uri -> V1StubResponse(
+                        200,
+                        """[{"id":"$tx","usuario_id":"$user","tipo":"ajuste","cantidad":10000,"descripcion":"m"}]""",
+                    )
                     "/rest/v1/perfiles_usuario" in uri -> V1StubResponse(
                         200,
                         """[{"usuario_id":"$user","username":"ada_l","nombre_mostrar":"Ada","es_invitado":false,"onboarding_completado":true,""" +

@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.app.bootstrap
 
+import com.oposicontrol.admin.core.common.config.AppConfigResolver
 import com.oposicontrol.admin.core.common.config.RuntimeConfigSource
 import java.io.File
 
@@ -31,11 +32,20 @@ internal open class JvmRuntimeConfigSource(
     override fun read(key: String): String? {
         // MASTER5-OC-005: una capa en blanco (`-Doposi.BASE_URL=`, `BASE_URL=` exportada vacia) es "no definida" y
         // deja pasar a la siguiente capa; los valores se devuelven recortados.
-        systemProperty("oposi.$key")?.normalized()?.let { return it }
+        val property = systemProperty("oposi.$key")
+        // MASTER6-AUTH-012: para las claves FIJABLES (secretos), un `-Doposi.<KEY>=` presente aunque vacio es la
+        // decision del empaquetado ("aqui no hay valor") y manda: no se consulta ni el entorno ni un `.env`. Es lo
+        // que hace la distribucion de escritorio con `-Doposi.BACKEND_TOKEN=`. El resto de claves (BASE_URL...)
+        // mantiene la caida a la siguiente capa de MASTER5-OC-005, y el fallo cerrado de AppConfigResolver.
+        if (property != null && key in BLANK_PIN_KEYS && property.isBlank()) return null
+        property?.normalized()?.let { return it }
         systemEnv(key)?.normalized()?.let { return it }
         return dotEnv[key]?.normalized()
     }
 }
+
+/** Claves cuyo `-Doposi.<KEY>=` en blanco es un pin autoritativo (ver [JvmRuntimeConfigSource.read]). */
+internal val BLANK_PIN_KEYS: Set<String> = setOf(AppConfigResolver.KEY_BACKEND_TOKEN)
 
 private fun String.normalized(): String? = trim().ifBlank { null }
 
