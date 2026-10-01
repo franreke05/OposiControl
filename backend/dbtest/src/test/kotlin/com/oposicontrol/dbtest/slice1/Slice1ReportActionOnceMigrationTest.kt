@@ -24,9 +24,12 @@ import org.postgresql.util.PSQLException
 
 /**
  * MASTER6-API-001: migracion 20260930102000. `admin_record_report_action` bloquea la fila del reporte, comprueba
- * (compare-and-set) que esta cerrado en el estado esperado por el mismo moderador y que aun no tiene accion, e inserta
- * la accion en la MISMA transaccion. Antes Ktor hacia GET "sin accion" + POST: dos reanudaciones concurrentes insertaban
- * dos filas en `acciones_moderacion`.
+ * (compare-and-set) que esta cerrado en el estado esperado por el mismo moderador y con la marca en vuelo
+ * `accion_pendiente` (que solo pone el compare-and-set del Ktor nuevo), inserta la accion y limpia la marca en la MISMA
+ * transaccion. Antes Ktor hacia GET "sin accion" + POST: dos reanudaciones concurrentes insertaban dos filas en
+ * `acciones_moderacion`. Round 3: hechos verificados del Ktor antiguo (MAIN) en
+ * [ningunCierreHistoricoDelKtorAntiguoEsReanudableNiRecibeOtraAccion]: accion PRIMERO (creado_en = now() de la BD),
+ * despues el PATCH con `revisado_en` = reloj de Ktor; por eso ninguna clave de tiempo distingue un cierre historico.
  */
 class Slice1ReportActionOnceMigrationTest {
     private val migracion = "supabase/migrations/20260930102000_slice1_report_action_once.sql"
@@ -61,28 +64,41 @@ class Slice1ReportActionOnceMigrationTest {
         bloque(c)
     }
 
-    private fun Connection.reporteCerrado(estado: String, revisor: String?) = ejecutar(
-        "insert into public.reportes_contenido (id, tipo_entidad, entidad_id, motivo, estado, revisado_por) values " +
-            "('$reporte', 'publicacion_oposired', gen_random_uuid(), 'spam', '$estado', ${revisor?.let { "'$it'" } ?: "null"})",
+    /** Cierre del Ktor NUEVO: el compare-and-set deja la marca `accion_pendiente` = true hasta que la RPC registra. */
+    private fun Connection.reporteCerrado(estado: String, revisor: String?) = reporteCerradoEn(estado, revisor, "now()")
+
+    /** Cierre del Ktor NUEVO con `revisado_en` del reloj de Ktor (aqui, una expresion SQL) y la marca en vuelo. */
+    private fun Connection.reporteCerradoEn(estado: String, revisor: String?, revisadoEn: String) = ejecutar(
+        "insert into public.reportes_contenido (id, tipo_entidad, entidad_id, motivo, estado, revisado_por, revisado_en, accion_pendiente) values " +
+            "('$reporte', 'publicacion_oposired', gen_random_uuid(), 'spam', '$estado', ${revisor?.let { "'$it'" } ?: "null"}, $revisadoEn, true)",
     )
 
-    /** Cierre como lo hace Ktor: `revisado_en` lo pone el reloj de Ktor (aqui, una expresion SQL). */
-    private fun Connection.reporteCerradoEn(estado: String, revisor: String?, revisadoEn: String) = ejecutar(
-        "insert into public.reportes_contenido (id, tipo_entidad, entidad_id, motivo, estado, revisado_por, revisado_en) values " +
-            "('$reporte', 'publicacion_oposired', gen_random_uuid(), 'spam', '$estado', ${revisor?.let { "'$it'" } ?: "null"}, $revisadoEn)",
+    /**
+     * Cierre HISTORICO tal y como lo escribio el Ktor de MAIN (`git show main:.../AdminV1Routes.kt` resolverReporte): sin
+     * marca (la columna aun no existe), `revisado_en` del reloj de Ktor tomado DESPUES de insertar la accion.
+     */
+    private fun Connection.reporteAbierto(id: String) = ejecutar(
+        "insert into public.reportes_contenido (id, tipo_entidad, entidad_id, motivo) values ('$id', 'publicacion_oposired', gen_random_uuid(), 'spam')",
     )
+
+    private fun Connection.cierreHistorico(id: String, estado: String, revisor: String?, revisadoEn: String) = ejecutar(
+        "update public.reportes_contenido set estado = '$estado', revisado_por = ${revisor?.let { "'$it'" } ?: "null"}, " +
+            "revisado_en = $revisadoEn where id = '$id'",
+    )
+
+    private fun Connection.marca(): String? = unico("select accion_pendiente::text from public.reportes_contenido where id = '$reporte'")
 
     /** Accion insertada FUERA de la RPC (staff por la politica, Ktor antiguo o datos de MAIN). */
-    private fun Connection.accionDirecta(moderador: String?, creadoEn: String, accion: String = "ocultar") = ejecutar(
+    private fun Connection.accionDirecta(moderador: String?, creadoEn: String, accion: String = "ocultar", id: String = reporte) = ejecutar(
         "insert into public.acciones_moderacion (reporte_id, moderador_id, tipo_accion, creado_en) values " +
-            "('$reporte', ${moderador?.let { "'$it'" } ?: "null"}, '$accion', $creadoEn)",
+            "('$id', ${moderador?.let { "'$it'" } ?: "null"}, '$accion', $creadoEn)",
     )
 
-    private fun Connection.registrar(estado: String, moderador: String?, accion: String = "ocultar"): Result<Boolean> = try {
+    private fun Connection.registrar(estado: String, moderador: String?, accion: String = "ocultar", id: String = reporte): Result<Boolean> = try {
         ejecutar("set role service_role")
         Result.success(
             unico(
-                "select public.admin_record_report_action('$reporte'::uuid, '$estado', " +
+                "select public.admin_record_report_action('$id'::uuid, '$estado', " +
                     "${moderador?.let { "'$it'::uuid" } ?: "null::uuid"}, '$accion', 'nota')::text",
             ) == "true",
         )
@@ -98,7 +114,9 @@ class Slice1ReportActionOnceMigrationTest {
     @Test
     fun registraLaAccionUnaSolaVezYElReintentoEsNoOp(): Unit = escenario { c ->
         c.reporteCerrado("resuelto", USER_A)
+        assertEquals("true", c.marca())
         assertTrue(c.registrar("resuelto", USER_A).getOrThrow())
+        assertEquals("false", c.marca(), "la insercion limpia la marca en la misma transaccion")
         assertFalse(c.registrar("resuelto", USER_A).getOrThrow(), "resolucion ya completa")
         assertEquals(1L, c.acciones())
         assertEquals(USER_A, c.unico("select moderador_id::text from public.acciones_moderacion where reporte_id = '$reporte'"))
@@ -140,29 +158,59 @@ class Slice1ReportActionOnceMigrationTest {
         )
     }
 
-    /** Una accion del revisor en o despues de `revisado_en` (p. ej. escrita por el Ktor antiguo) completa la resolucion. */
+    /**
+     * Round 3 (gate 102000 MEDIUM, REGRESION del round 2). Cambio DELIBERADO: sustituye a
+     * `laAccionDelRevisorTrasElCierreCompletaLaResolucion`, que modelaba el Ktor antiguo con la accion DESPUES del cierre;
+     * el Ktor de MAIN (`git show main:.../AdminV1Routes.kt` resolverReporte) insertaba la accion PRIMERO (creado_en =
+     * now() de la BD) y despues hacia el PATCH con `revisado_en` = reloj de Ktor, con `moderador_id` = `revisado_por` =
+     * el actor JWT (NULL con token estatico), y sin guarda de estado (re-resolver anadia otra accion). Esos datos
+     * existen ANTES de la migracion: se insertan sin la columna y la migracion se aplica encima. Ningun cierre historico
+     * es reanudable ni recibe una segunda accion, sea cual sea el orden, el actor o si tiene accion.
+     */
     @Test
-    fun laAccionDelRevisorTrasElCierreCompletaLaResolucion(): Unit = escenario { c ->
-        c.reporteCerradoEn("resuelto", USER_A, "now() - interval '10 minutes'")
-        c.accionDirecta(USER_A, "now() - interval '9 minutes'")
-        assertFalse(c.registrar("resuelto", USER_A).getOrThrow())
-        assertEquals(1L, c.acciones())
+    fun ningunCierreHistoricoDelKtorAntiguoEsReanudableNiRecibeOtraAccion(): Unit = escenario(conMigracion = false) { c ->
+        data class Caso(val id: String, val estado: String, val revisor: String?, val accionEn: String?)
+        val casos = listOf(
+            // Orden real del Ktor antiguo: accion unos milisegundos/segundos ANTES de revisado_en, actor JWT.
+            Caso("7e7e7e7e-0000-4000-8000-0000000000a1", "resuelto", USER_A, "now() - interval '10 minutes' - interval '2 seconds'"),
+            // Reloj de Ktor atrasado: la accion queda DESPUES de revisado_en.
+            Caso("7e7e7e7e-0000-4000-8000-0000000000a2", "resuelto", USER_A, "now() - interval '9 minutes'"),
+            // Descartado por token estatico: actor NULL en accion y en revisado_por.
+            Caso("7e7e7e7e-0000-4000-8000-0000000000a3", "descartado", null, "now() - interval '10 minutes' - interval '1 second'"),
+            // Cerrado sin ninguna accion (p. ej. el moderador borrado, la fila fuera de la RPC o un cierre a mano).
+            Caso("7e7e7e7e-0000-4000-8000-0000000000a4", "resuelto", USER_A, null),
+            Caso("7e7e7e7e-0000-4000-8000-0000000000a5", "descartado", null, null),
+        )
+        for (k in casos) {
+            c.reporteAbierto(k.id)
+            k.accionEn?.let { c.accionDirecta(k.revisor, it, accion = if (k.estado == "descartado") "descartar" else "ocultar", id = k.id) }
+            c.cierreHistorico(k.id, k.estado, k.revisor, "now() - interval '10 minutes'")
+        }
+        val antes = c.unico("select count(*) from public.acciones_moderacion")!!.toLong()
+        c.aplicar(migracion)
+        for (k in casos) {
+            assertEquals("false", c.unico("select accion_pendiente::text from public.reportes_contenido where id = '${k.id}'"), k.toString())
+            for (accion in listOf("ocultar", "eliminar")) {
+                val r = c.registrar(k.estado, k.revisor, accion = if (k.estado == "descartado") "descartar" else accion, id = k.id)
+                assertFalse(r.getOrThrow(), "cierre historico nunca reanudable: $k")
+            }
+        }
+        assertEquals(antes, c.unico("select count(*) from public.acciones_moderacion")!!.toLong(), "ninguna segunda accion")
     }
 
     /**
-     * Reloj de Ktor ADELANTADO respecto a la base: `revisado_en` queda en el futuro de `now()`. La fila de la RPC se sella
-     * con `creado_en = greatest(now(), revisado_en)`, asi que cumple la clave y una segunda llamada nunca duplica.
+     * Round 3 (gate 102000 LOW): la accion se sella con el `now()` de la BD aunque el reloj de Ktor vaya ADELANTADO
+     * (`revisado_en` en el futuro): nunca un `creado_en` futuro. La unicidad la da la marca, no las marcas de tiempo.
+     * Cambio DELIBERADO: sustituye a `conElRelojDeKtorAdelantadoLaAccionCumpleLaClaveYNoSeDuplica`, que exigia el sello
+     * futuro `greatest(now(), revisado_en)`.
      */
     @Test
-    fun conElRelojDeKtorAdelantadoLaAccionCumpleLaClaveYNoSeDuplica(): Unit = escenario { c ->
+    fun conElRelojDeKtorAdelantadoLaAccionNoSeSellaEnElFuturoYNoSeDuplica(): Unit = escenario { c ->
         c.reporteCerradoEn("resuelto", USER_A, "now() + interval '1 hour'")
         assertTrue(c.registrar("resuelto", USER_A).getOrThrow())
         assertEquals(
             "true",
-            c.unico(
-                "select (a.creado_en >= r.revisado_en)::text from public.acciones_moderacion a " +
-                    "join public.reportes_contenido r on r.id = a.reporte_id where r.id = '$reporte'",
-            ),
+            c.unico("select (creado_en <= clock_timestamp())::text from public.acciones_moderacion where reporte_id = '$reporte'"),
         )
         assertFalse(c.registrar("resuelto", USER_A).getOrThrow())
         assertEquals(1L, c.acciones())
@@ -244,7 +292,8 @@ class Slice1ReportActionOnceMigrationTest {
     fun soloServiceRoleDefinerConSearchPathFijoYRollbackIdempotente(): Unit = escenario { c ->
         fun verify() = c.filas(Slice0Db.verifyDe(migracion)).associate { it[0]!! to it[1]!!.toLong() }
         val v = verify()
-        assertEquals(3, v.size, v.toString())
+        // Round 3: + report_action_marker_column_missing (la marca en vuelo).
+        assertEquals(4, v.size, v.toString())
         assertTrue(v.values.all { it == 0L }, "VERIFY: $v")
         assertEquals("true", c.unico("select has_function_privilege('service_role', '$fn', 'execute')::text"))
         assertEquals("false", c.unico("select has_function_privilege('anon', '$fn', 'execute')::text"))
@@ -260,6 +309,9 @@ class Slice1ReportActionOnceMigrationTest {
         c.ejecutar(Slice0Db.rollbackDe(migracion))
         assertNull(c.unico("select to_regprocedure('$fn')::text"))
         assertEquals(1L, verify()["report_action_function_missing"])
+        assertEquals(1L, verify()["report_action_marker_column_missing"])
+        assertEquals("0", c.unico("select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'reportes_contenido' and column_name = 'accion_pendiente'"))
+        assertEquals(1L, c.unico("select count(*) from public.reportes_contenido where id = '$reporte'")!!.toLong(), "el rollback no borra filas")
         assertNotNull(c.unico("select to_regclass('public.idx_acciones_moderacion_reporte_id')::text"), "el rollback no toca el indice")
         c.aplicar(migracion)
         c.aplicar(migracion)
@@ -280,7 +332,23 @@ class Slice1ReportActionOnceMigrationTest {
         assertEquals("REPORT_ACTION_PREFLIGHT", sinTabla?.serverErrorMessage?.message)
     }
 
-    /** La clave de la resolucion usa `revisado_en` y `creado_en`: con otro tipo la migracion no crea nada. */
+    /** Una `accion_pendiente` previa que no sea boolean NOT NULL no se reutiliza: la migracion no crea nada. */
+    @Test
+    fun preflightRechazaUnaMarcaPreexistenteDeOtroTipo(): Unit = escenario(conMigracion = false) { c ->
+        c.ejecutar("alter table public.reportes_contenido add column accion_pendiente text")
+        val error = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
+        runCatching { c.ejecutar("rollback") }
+        c.autoCommit = true
+        assertEquals("REPORT_ACTION_PREFLIGHT", error?.serverErrorMessage?.message)
+        assertNull(c.unico("select to_regprocedure('$fn')::text"))
+        c.ejecutar("alter table public.reportes_contenido drop column accion_pendiente")
+        c.ejecutar("alter table public.reportes_contenido add column accion_pendiente boolean")
+        val nullable = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
+        runCatching { c.ejecutar("rollback") }
+        assertEquals("REPORT_ACTION_PREFLIGHT", nullable?.serverErrorMessage?.message)
+    }
+
+    /** El preflight sigue exigiendo `revisado_en` y `creado_en` (Ktor y la tabla los escriben): con otro tipo no crea nada. */
     @Test
     fun preflightExigeLasMarcasDeTiempoDeLaClave(): Unit = escenario(conMigracion = false) { c ->
         c.ejecutar("alter table public.reportes_contenido alter column revisado_en type text")

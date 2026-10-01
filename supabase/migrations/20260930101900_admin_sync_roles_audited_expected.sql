@@ -14,12 +14,15 @@
 --   p_expected_role_ids uuid[]) returns jsonb {"antes": [...], "despues": [...]}:
 --     1. takes the SAME transaction advisory lock (pg_advisory_xact_lock(hashtextextended('admin-role-sync', 0)))
 --        BEFORE its first read;
---     2. if p_expected_role_ids is NOT NULL: an unknown target (not in auth.users) raises 'ROLE_SYNC_INVALID_USER',
---        the same error and the same check as public.admin_sync_roles(uuid, uuid[]), BEFORE the comparison (an
---        unknown user is never reported as a version conflict, whatever the expected set);
---     3. reads the target's current role ids (sorted, distinct) under the lock; if the sorted distinct expected set
---        differs from it, raises 'ROLE_SYNC_VERSION_CONFLICT' BEFORE any write (a NULL element never matches: deny by
---        default);
+--     2. if p_expected_role_ids is NOT NULL: reads the target's current role ids (sorted, distinct) under the lock;
+--     3. if the sorted distinct expected set differs from it (a NULL element never matches: deny by default), an
+--        unknown target still raises 'ROLE_SYNC_INVALID_USER' (never a version conflict, whatever the expected set):
+--        the function delegates the existence check to the guard of public.admin_sync_roles(uuid, uuid[]) by calling
+--        it with the target's CURRENT role set, so the error, sqlstate (P0001), detail and hint are that guard's own.
+--        This function does NOT read auth.users itself (gate rule: no new SECURITY DEFINER read of auth.users). For a
+--        known target that call rewrites the same set (no guard can fire) and the function then raises
+--        'ROLE_SYNC_VERSION_CONFLICT', which aborts the caller's (sub)transaction and undoes that rewrite: a conflict
+--        never leaves a write;
 --     4. otherwise delegates to public.admin_sync_roles_audited(uuid, uuid[], uuid) in the same transaction (advisory
 --        xact locks are re-entrant; its `antes` is read under the same lock, so it equals the compared set; guard
 --        errors propagate unchanged). A NULL p_expected_role_ids behaves exactly like the 3-argument function.
@@ -43,7 +46,9 @@
 --
 -- LOCKING
 --   Function DDL only (catalog locks). Runtime: the existing global transaction advisory lock of role sync (no new
---   lock, no new wait). `set local lock_timeout = '5s'` applies to the DDL of THIS migration only.
+--   lock, no new wait). On a version conflict the delegated existence check also takes the row locks of the target's
+--   own roles_usuario rows (same-set rewrite) until the conflict aborts the transaction, under the advisory lock that
+--   every role sync already holds. `set local lock_timeout = '5s'` applies to the DDL of THIS migration only.
 --
 -- DATA LOSS
 --   None.
@@ -55,8 +60,9 @@
 --   No policy change. SECURITY DEFINER with search_path '' and row_security off (same fail-closed rationale as the
 --   other role-sync overloads). EXECUTE revoked from public/anon/authenticated and granted to service_role only. It
 --   calls the 3-argument admin_sync_roles_audited as its owner (the migration role): the VERIFY check
---   `nested_execute_missing` fails if that owner cannot execute it. Like public.admin_sync_roles(uuid, uuid[]) it
---   reads auth.users (existence of ONE id, as its owner) only when p_expected_role_ids is not null.
+--   `nested_execute_missing` fails if that owner cannot execute it. On a version conflict it calls the existence guard
+--   public.admin_sync_roles(uuid, uuid[]) as its owner: VERIFY `guard_execute_missing` fails if that owner cannot
+--   execute it. It never reads auth.users itself (VERIFY `expected_overload_reads_auth_users`).
 --
 -- ROLLBACK (manual; executed verbatim by dbtest)
 -- ROLLBACK-BEGIN
@@ -89,7 +95,19 @@
 --                           where p.oid = to_regprocedure('public.admin_sync_roles_audited(uuid,uuid[],uuid,uuid[])')
 --                             and to_regprocedure('public.admin_sync_roles_audited(uuid,uuid[],uuid)') is not null
 --                             and has_function_privilege(p.proowner, to_regprocedure('public.admin_sync_roles_audited(uuid,uuid[],uuid)'), 'execute'))
---              then 0 else 1 end)::bigint, null;
+--              then 0 else 1 end)::bigint, null
+-- union all
+-- select 'guard_execute_missing',
+--        (case when exists (select 1 from pg_proc p
+--                           where p.oid = to_regprocedure('public.admin_sync_roles_audited(uuid,uuid[],uuid,uuid[])')
+--                             and to_regprocedure('public.admin_sync_roles(uuid,uuid[])') is not null
+--                             and has_function_privilege(p.proowner, to_regprocedure('public.admin_sync_roles(uuid,uuid[])'), 'execute'))
+--              then 0 else 1 end)::bigint, null
+-- union all
+-- select 'expected_overload_reads_auth_users', count(*)::bigint, null
+-- from pg_proc p
+-- where p.oid = to_regprocedure('public.admin_sync_roles_audited(uuid,uuid[],uuid,uuid[])')
+--   and pg_get_functiondef(p.oid) ~* 'auth\.users';
 -- VERIFY-END
 
 begin;
@@ -110,6 +128,7 @@ set search_path = ''
 set row_security = off
 as $$
 declare
+  v_actuales uuid[];
   v_antes jsonb;
   v_esperados jsonb;
 begin
@@ -122,15 +141,11 @@ begin
   perform pg_advisory_xact_lock(hashtextextended('admin-role-sync', 0));
 
   if p_expected_role_ids is not null then
-    -- Same existence guard (and the same error) as public.admin_sync_roles(uuid, uuid[]): an unknown target is
-    -- ROLE_SYNC_INVALID_USER whatever the expected set is, never a version conflict.
-    if not exists (select 1 from auth.users u where u.id = p_usuario_id) then
-      raise exception 'ROLE_SYNC_INVALID_USER';
-    end if;
+    v_actuales := array(select distinct ru.rol_id from public.roles_usuario ru where ru.usuario_id = p_usuario_id);
 
     select coalesce(jsonb_agg(to_jsonb(x.rol_id::text) order by x.rol_id::text), '[]'::jsonb)
     into v_antes
-    from (select distinct ru.rol_id from public.roles_usuario ru where ru.usuario_id = p_usuario_id) x;
+    from unnest(v_actuales) as x(rol_id);
 
     -- Sorted distinct expected set. A NULL element becomes JSON null and never equals a stored role id.
     select coalesce(jsonb_agg(to_jsonb(x.rol_id::text) order by x.rol_id::text), '[]'::jsonb)
@@ -138,6 +153,11 @@ begin
     from (select distinct e.rol_id from unnest(p_expected_role_ids) as e(rol_id)) x;
 
     if v_esperados is distinct from v_antes then
+      -- Unknown target: delegated to the existence guard of public.admin_sync_roles(uuid, uuid[]) (its own check, its
+      -- own ROLE_SYNC_INVALID_USER, propagated unchanged), so this function never reads the auth schema itself. For a
+      -- known target that call rewrites the SAME role set (no guard can fire: same roles, same superadmin count) and
+      -- the raise below aborts the caller's (sub)transaction, which undoes it: a conflict never writes.
+      perform public.admin_sync_roles(p_usuario_id, v_actuales);
       raise exception 'ROLE_SYNC_VERSION_CONFLICT';
     end if;
   end if;
@@ -153,7 +173,8 @@ grant execute on function public.admin_sync_roles_audited(uuid, uuid[], uuid, uu
 do $$
 begin
   if to_regprocedure('public.admin_sync_roles_audited(uuid,uuid[],uuid,uuid[])') is null
-    or to_regprocedure('public.admin_sync_roles_audited(uuid,uuid[],uuid)') is null then
+    or to_regprocedure('public.admin_sync_roles_audited(uuid,uuid[],uuid)') is null
+    or to_regprocedure('public.admin_sync_roles(uuid,uuid[])') is null then
     raise exception 'ROLE_SYNC_AUDITED_EXPECTED_NOT_INSTALLED';
   end if;
 end;

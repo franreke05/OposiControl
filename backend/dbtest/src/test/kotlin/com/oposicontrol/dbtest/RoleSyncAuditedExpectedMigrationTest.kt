@@ -131,6 +131,41 @@ class RoleSyncAuditedExpectedMigrationTest {
         assertEquals(0L, c.unico("select count(*) from public.roles_usuario where usuario_id = '$fantasma'")!!.toLong())
     }
 
+    /**
+     * Gate PG17 (LOW, round 3): la sobrecarga de 4 argumentos es SECURITY DEFINER y NO lee auth.users. La existencia del
+     * destino se delega en la guarda de `admin_sync_roles(uuid, uuid[])`: mismo error, sqlstate, detail y hint que esa
+     * guarda, y siempre antes de VERSION_CONFLICT. Un conflicto sobre un destino real no deja ninguna escritura (las
+     * filas de roles_usuario conservan su xmin: la reescritura de la delegacion se deshace con el conflicto).
+     */
+    @Test
+    fun laExistenciaSeDelegaEnLaGuardaSinLeerAuthUsersYUnConflictoNoEscribe(): Unit = escenario { c ->
+        assertEquals(
+            "false",
+            c.unico(
+                "select (pg_get_functiondef('public.admin_sync_roles_audited(uuid,uuid[],uuid,uuid[])'::regprocedure) ~* 'auth\\.users')::text",
+            ),
+        )
+        c.asignar(USER_B, SUPERADMIN)
+        c.asignar(USER_C, USUARIO)
+        c.asignar(USER_C, MODERADOR)
+        val fantasma = "f0f0f0f0-0000-4000-8000-0000000000ef"
+        val guarda = runCatching { c.unico("select public.admin_sync_roles('$fantasma'::uuid, array['$USUARIO']::uuid[])::text") }
+            .exceptionOrNull() as org.postgresql.util.PSQLException
+        for (esperados in listOf(listOf(USUARIO), listOf<String?>(null))) {
+            val e = c.sync(fantasma, listOf(USUARIO), USER_B, esperados).exceptionOrNull() as org.postgresql.util.PSQLException
+            assertEquals(guarda.sqlState, e.sqlState)
+            assertEquals("P0001", e.sqlState)
+            assertEquals("ROLE_SYNC_INVALID_USER", e.serverErrorMessage?.message)
+            assertEquals(guarda.serverErrorMessage?.message, e.serverErrorMessage?.message)
+            assertEquals(guarda.serverErrorMessage?.detail, e.serverErrorMessage?.detail)
+            assertEquals(guarda.serverErrorMessage?.hint, e.serverErrorMessage?.hint)
+        }
+        val filas = "select string_agg(rol_id::text || ':' || xmin::text, ',' order by rol_id) from public.roles_usuario where usuario_id = '$USER_C'"
+        val antes = c.unico(filas)
+        assertTrue(c.sync(USER_C, listOf(USUARIO), USER_B, esperados = listOf(USUARIO)).conflicto())
+        assertEquals(antes, c.unico(filas), "el conflicto no deja ninguna escritura")
+    }
+
     @Test
     fun elReintentoConElConjuntoActualTrasUnConflictoSincroniza(): Unit = escenario { c ->
         c.asignar(USER_B, SUPERADMIN)
@@ -179,7 +214,8 @@ class RoleSyncAuditedExpectedMigrationTest {
     fun soloServiceRoleEjecutaYElRollbackQuitaSoloLaSobrecargaNueva(): Unit = escenario { c ->
         fun verify() = c.filas(Slice0Db.verifyDe(expected)).associate { it[0]!! to it[1]!!.toLong() }
         val v = verify()
-        assertEquals(5, v.size, v.toString())
+        // Round 3: + guard_execute_missing y expected_overload_reads_auth_users (la delegacion de existencia).
+        assertEquals(7, v.size, v.toString())
         assertTrue(v.values.all { it == 0L }, "VERIFY: $v")
         val fn = "public.admin_sync_roles_audited(uuid,uuid[],uuid,uuid[])"
         assertEquals("true", c.unico("select has_function_privilege('service_role', '$fn', 'execute')::text"))

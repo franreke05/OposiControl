@@ -3292,6 +3292,10 @@ private data class ReporteRow(
     @SerialName("creado_en") val creadoEn: String? = null,
     @SerialName("revisado_en") val revisadoEn: String? = null,
     @SerialName("revisado_por") val revisadoPor: String? = null,
+    // Round 3 (gate 102000): marca de resolucion en vuelo (migracion 20260930102000). Solo la pone el compare-and-set
+    // de [AdminV1Gateway.resolverReporte] y la limpia `admin_record_report_action` al insertar la accion. Ausente o
+    // false (todo cierre historico de MAIN) = nunca reanudable (deny-by-default).
+    @SerialName("accion_pendiente") val accionPendiente: Boolean = false,
 )
 
 
@@ -3302,6 +3306,7 @@ private data class ReportePatch(
     @SerialName("tickets_otorgados") val ticketsOtorgados: Int,
     @SerialName("recompensa_entregada") val recompensaEntregada: Boolean,
     @SerialName("revisado_por") val revisadoPor: String? = null,
+    @SerialName("accion_pendiente") val accionPendiente: Boolean,
 )
 
 // Contenido real de OposiRed (hilos/comentarios), solo lectura para el preview del detalle.
@@ -6227,10 +6232,11 @@ class AdminV1Gateway private constructor(
             // escritura). Cualquier otro caso (otro moderador, otro destino, resolucion ya completa) es 409 sin efectos.
             // Sin actor (token estatico) NUNCA se reanuda: `null == null` haria pasar a cualquier llamador sin identidad
             // como «el mismo moderador» (deny-by-default).
-            // Gate PG17: «ya tiene accion» es la accion de ESTA resolucion (misma clave que la RPC): una accion anterior
-            // (tomada con el reporte abierto) o de otro miembro del staff no bloquea la reanudacion.
+            // Gate 102000 (round 3): «incompleta» es la marca explicita `accion_pendiente`, que SOLO pone el
+            // compare-and-set de abajo y que la RPC limpia al insertar la accion. Un cierre historico (Ktor antiguo: accion
+            // ANTES del PATCH, sin marca) nunca se reanuda; las acciones anteriores o de otro staff no importan.
             val resumable = actorId != null && reporte.estado == estado && reporte.revisadoPor == actorId &&
-                !hasResolutionAction(id, actorId, reporte.revisadoEn)
+                reporte.accionPendiente
             if (!resumable) throw reportAlreadyClosed()
             completeResolution(id, estado, reporte, req, actorId)
             return
@@ -6248,6 +6254,7 @@ class AdminV1Gateway private constructor(
                     ticketsOtorgados = 0,
                     recompensaEntregada = false,
                     revisadoPor = actorId,
+                    accionPendiente = true,
                 ),
             ),
             prefer = "return=representation",
@@ -6258,8 +6265,9 @@ class AdminV1Gateway private constructor(
 
     /**
      * MASTER6-API-001: pasos posteriores al compromiso, todos re-ejecutables. Si cualquiera falla, el reporte queda
-     * cerrado SIN fila en `acciones_moderacion` y con `recompensa_entregada` = false salvo concesion confirmada: ese
-     * estado significa «resolucion incompleta» y el reintento del mismo moderador la reanuda (ver [resolverReporte]).
+     * cerrado con `accion_pendiente` = true (sin la accion de esta resolucion) y con `recompensa_entregada` = false salvo
+     * concesion confirmada: esa marca significa «resolucion incompleta» y el reintento del mismo moderador la reanuda
+     * (ver [resolverReporte]).
      * - Sin reportante (anonimo o borrado) no hay concesion: false/0.
      * - La concesion es idempotente por reporte (`report-reward:<id>`): el reintento no acredita dos veces.
      * - Si se pide 0 pero un intento anterior YA acredito, la marca sale del ledger.
@@ -6294,8 +6302,8 @@ class AdminV1Gateway private constructor(
         }
         // La accion de moderacion es la ULTIMA escritura duradera: marca la resolucion como completa.
         // MASTER6-API-001: la escribe `admin_record_report_action` (migracion 20260930102000) en UNA transaccion: bloquea
-        // la fila del reporte, comprueba que sigue cerrado en `estado` por este actor y sin la accion de ESTA resolucion
-        // (clave: revisor + `creado_en >= revisado_en`; una accion anterior o de otro staff no cuenta), e inserta. Antes un GET
+        // la fila del reporte, comprueba que sigue cerrado en `estado` por este actor y con la marca `accion_pendiente`
+        // (una accion anterior o de otro staff no cuenta), inserta y limpia la marca en la misma transaccion. Antes un GET
         // + POST sueltos dejaban que dos reanudaciones concurrentes insertaran dos acciones. `false` = otra llamada la
         // completo (o el reporte ya no es de esta resolucion): 409 sin auditar dos veces.
         val recorded = request(
@@ -6319,20 +6327,6 @@ class AdminV1Gateway private constructor(
             entityId = id,
             userId = actorId,
         )
-    }
-
-    /**
-     * MASTER6-API-001 (gate PG17): si ESTA resolucion ya tiene su accion de moderacion (resolucion completa). Misma clave
-     * de idempotencia que `admin_record_report_action` (migracion 20260930102000): accion del reporte escrita por el
-     * revisor (`moderador_id`) en o despues de `revisado_en`; sin `revisado_en` (cierre legado) cuenta cualquiera suya.
-     */
-    private fun hasResolutionAction(reporteId: String, moderadorId: String, revisadoEn: String?): Boolean {
-        val desde = revisadoEn?.takeIf { it.isNotBlank() }?.let { "&creado_en=gte.${it.urlEncode()}" }.orEmpty()
-        return request(
-            "GET",
-            "/rest/v1/acciones_moderacion?select=reporte_id&reporte_id=eq.$reporteId&moderador_id=eq.$moderadorId$desde&limit=1",
-            null,
-        ).decodeList<JsonObject>().isNotEmpty()
     }
 
     /** MASTER6-API-001: cantidad ya acreditada por la recompensa de este reporte (asiento del ledger con su clave), o 0. */

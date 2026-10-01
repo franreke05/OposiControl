@@ -40,9 +40,23 @@ class AppEnvironmentSingleSourceTest {
         }
     }
 
+    /**
+     * SEC-ALLOWDEVUSER: este test fijaba antes `backendRestartEnabled("production", "true") == true` (el interruptor
+     * explicito ganaba al entorno: fail-open). Se invierte DELIBERADAMENTE: fuera de desarrollo el flag no enciende nada.
+     */
+    @Test
+    fun theExplicitFlagCanNeverEnableTheRestartOutsideDevelopment() {
+        listOf("production", "prod", "staging", "preprod", "unknown-value", "", "   ", null).forEach { env ->
+            assertEquals(false, backendRestartEnabled(env, explicitFlag = "true"), "backendRestartEnabled($env, true)")
+            assertEquals(false, backendRestartEnabled(env, explicitFlag = " true "), "backendRestartEnabled($env, ' true ')")
+        }
+    }
+
     @Test
     fun theRestartOnlyObeysAnExplicitBooleanFlagOtherwiseTheEnvironment() {
-        assertEquals(true, backendRestartEnabled("production", explicitFlag = "true"))
+        assertEquals(false, backendRestartEnabled("production", explicitFlag = "true"))
+        assertEquals(true, backendRestartEnabled("dev", explicitFlag = "true"))
+        assertEquals(true, backendRestartEnabled("dev", explicitFlag = null))
         assertEquals(false, backendRestartEnabled("dev", explicitFlag = "false"))
         assertEquals(true, backendRestartEnabled("dev", explicitFlag = " TRUE ".lowercase()))
         // Un valor que no es booleano no abre nada: decide el entorno.

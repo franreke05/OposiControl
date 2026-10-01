@@ -1,0 +1,17 @@
+# DB-CI-PG17: migraciones pendientes de desplegar sobre MAIN (rango de docs/engineering/DEPLOYMENT.md), una version completa sin .sql por linea.
+# Debe ser EXACTAMENTE supabase/migrations/2026092810*.sql + supabase/SLICE1_MIGRATIONS.txt (lo exige scripts/db-pg17-gate.sh).
+20260928100000_identity_canonical_profile_expand
+20260928100100_idempotency_keys
+20260930100000_slice1_profile_guards
+20260930100100_slice1_legal_attribution_detail
+20260930100200_slice1_profile_command_rpcs
+20260930100300_slice1_account_deletion_requests
+20260930100500_slice1_audit_hardening
+20260930100800_slice1_event_idempotency_per_user
+20260930100900_slice1_record_event_concurrent_retry
+20260930101500_slice1_session_revocation_monotonic
+20260930101600_admin_sync_roles_actor_guard
+20260930101730_slice1_tickets_grant_audit_unique
+20260930101850_admin_sync_roles_audited
+20260930101900_admin_sync_roles_audited_expected
+20260930102000_slice1_report_action_once

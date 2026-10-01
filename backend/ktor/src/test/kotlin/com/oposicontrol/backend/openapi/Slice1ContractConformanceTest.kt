@@ -58,9 +58,6 @@ import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.routing.HttpMethodRouteSelector
-import io.ktor.server.routing.PathSegmentConstantRouteSelector
-import io.ktor.server.routing.PathSegmentParameterRouteSelector
 import io.ktor.server.routing.RoutingNode
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
@@ -121,18 +118,7 @@ class Slice1ContractConformanceTest {
     private fun key(o: OpenApiDocs.Operation) = "${o.method.uppercase()} ${template(o.path)}"
 
     private fun collectRegisteredRoutes(): Set<String> {
-        val out = sortedSetOf<String>()
-        fun walk(route: RoutingNode, path: String, method: String?) {
-            val selector = route.selector
-            val nextPath = when (selector) {
-                is PathSegmentConstantRouteSelector -> "$path/${selector.value}"
-                is PathSegmentParameterRouteSelector -> "$path/{}"
-                else -> path
-            }
-            val nextMethod = (selector as? HttpMethodRouteSelector)?.method?.value ?: method
-            if (selector is HttpMethodRouteSelector && route.children.isEmpty()) out += "$nextMethod $nextPath"
-            route.children.forEach { walk(it, nextPath, nextMethod) }
-        }
+        var out: Set<String> = emptySet()
         testApplication {
             application {
                 install(ContentNegotiation) { json(testJson) }
@@ -161,7 +147,7 @@ class Slice1ContractConformanceTest {
                     observabilityHealthRoutes()
                     prometheusMetricsRoute()
                 }
-                walk(root as RoutingNode, "", null)
+                out = com.oposicontrol.backend.inventory.RouteTreeWalker.keys(root as RoutingNode)
             }
             startApplication()
         }

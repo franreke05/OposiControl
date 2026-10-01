@@ -549,17 +549,60 @@ fun Application.module() {
     install(Authentication) {
         gatewayBearerAuth(appEnv, jwtVerifier::subFrom)
     }
-    routing {
+    val routingDeps = CombinedRoutingDeps(
+        contentGateway = gateway,
+        newsGateway = newsGateway,
+        tagSearchGateway = tagSearchGateway,
+        adminGateway = adminGateway,
+        adminAnalyticsGateway = adminAnalyticsGateway,
+        adminRankingsGateway = adminRankingsGateway,
+        adminDashboardOverviewGateway = adminDashboardOverviewGateway,
+        v1Gateway = v1Gateway,
+        adminV1Gateway = adminV1Gateway,
+        oposiBotsUserAdminGateway = oposiBotsUserAdminGateway,
+        appV1Gateway = appV1Gateway,
+        jwtVerifier = jwtVerifier,
+        allowDevUser = allowDevUser,
+        appEnv = appEnv,
+        authRuntime = authRuntime,
+        identityResolver = PostgrestCanonicalProfileDirectory.fromEnvironment()?.let {
+            CanonicalIdentityResolver(jwtVerifier::subFrom, it)
+        },
+    )
+    routing { installCombinedRoutes(routingDeps) }
+}
+
+/**
+ * Dependencias del arbol de rutas del perfil `combined`. Extraido de [module] SIN cambiar rutas, plugins ni orden para
+ * que el inventario (`RouteInventoryTest`) recorra el arbol REAL con gateways de prueba, en vez de una copia a mano.
+ */
+internal class CombinedRoutingDeps(
+    val contentGateway: SupabaseContentGateway,
+    val newsGateway: SupabaseNewsGateway,
+    val tagSearchGateway: SupabaseTagSearchGateway,
+    val adminGateway: SupabaseAdminGateway,
+    val adminAnalyticsGateway: AdminAnalyticsGateway,
+    val adminRankingsGateway: AdminRankingsGateway,
+    val adminDashboardOverviewGateway: AdminDashboardOverviewGateway,
+    val v1Gateway: SupabaseV1Gateway,
+    val adminV1Gateway: AdminV1Gateway,
+    val oposiBotsUserAdminGateway: OposiBotsUserAdminGateway,
+    val appV1Gateway: AppV1Gateway,
+    val jwtVerifier: SupabaseJwtVerifier,
+    val allowDevUser: Boolean,
+    val appEnv: String,
+    val authRuntime: OposiBotsAuthRuntime?,
+    val identityResolver: CanonicalIdentityResolver?,
+)
+
+internal fun Route.installCombinedRoutes(deps: CombinedRoutingDeps): Unit = with(deps) {
+    val gateway = contentGateway
+    run {
         prometheusMetricsRoute()
-        get("/health") {
-            call.respond(
-                mapOf(
-                    "status" to "ok",
-                    "build" to "20260512-no-legacy-columns",
-                    "restartEnabled" to BackendRestartRequest.isEnabled().toString(),
-                ),
-            )
-        }
+        legacyHealthRoute(
+            appEnv = System.getenv("APP_ENV"),
+            restartFlag = System.getenv("OPOSICONTROL_ENABLE_BACKEND_RESTART"),
+        )
         // /health/live y /health/ready (Observability.kt): mas precisos que
         // /health (que se deja igual, por compatibilidad con lo que ya lo
         // consulta). Publicos a proposito, igual que /health -- un balanceador
@@ -974,12 +1017,28 @@ internal fun isLocalDevelopmentPeer(appEnv: String, remoteHost: String): Boolean
 }
 
 /**
- * MASTER2-SEC-001: el reinicio (lanza powershell/gradlew) solo se habilita en un entorno EXPLICITO de desarrollo o
- * con `OPOSICONTROL_ENABLE_BACKEND_RESTART=true`. Antes cualquier valor distinto de prod/production (p. ej.
- * `staging` o uno desconocido) lo dejaba abierto: fail-open.
+ * MASTER2-SEC-001 / SEC-ALLOWDEVUSER: el reinicio (lanza powershell/gradlew) solo se habilita en un entorno EXPLICITO de
+ * desarrollo. `OPOSICONTROL_ENABLE_BACKEND_RESTART` solo puede APAGARLO ahi (`false`); fuera de desarrollo (produccion,
+ * staging, vacio o desconocido) `true` ya NO lo enciende (antes el interruptor explicito ganaba al entorno: fail-open).
  */
 internal fun backendRestartEnabled(appEnv: String?, explicitFlag: String?): Boolean =
-    explicitFlag?.trim()?.toBooleanStrictOrNull() ?: AppEnvironment.isDevelopment(appEnv)
+    AppEnvironment.isDevelopment(appEnv) && (explicitFlag?.trim()?.toBooleanStrictOrNull() ?: true)
+
+/**
+ * `/health` legado (publico). SEC-ALLOWDEVUSER: `restartEnabled` solo se publica en un entorno EXPLICITO de desarrollo;
+ * fuera de el la clave no existe (ningun cliente la lee y era una divulgacion publica de la superficie de reinicio).
+ */
+internal fun legacyHealthPayload(appEnv: String?, restartFlag: String?): Map<String, String> = buildMap {
+    put("status", "ok")
+    put("build", "20260512-no-legacy-columns")
+    if (AppEnvironment.isDevelopment(appEnv)) {
+        put("restartEnabled", backendRestartEnabled(appEnv, restartFlag).toString())
+    }
+}
+
+internal fun Route.legacyHealthRoute(appEnv: String?, restartFlag: String?) {
+    get("/health") { call.respond(legacyHealthPayload(appEnv, restartFlag)) }
+}
 
 internal fun isLegacyStaticTokenPath(path: String): Boolean =
     path == "/admin" || path.startsWith("/admin/") ||
@@ -1189,7 +1248,7 @@ private fun ApplicationCall.ngrokHostForRestart(): String? {
     }
 }
 
-private data class BackendUploadedFile(
+internal data class BackendUploadedFile(
     val fileName: String,
     val mimeType: String,
     val bytes: ByteArray,
@@ -1398,7 +1457,7 @@ data class ComunidadDto(
     val updatedAt: String = "",
 )
 
-private class SupabaseContentGateway private constructor(
+internal class SupabaseContentGateway private constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
     private val examResourcesBucket: String,

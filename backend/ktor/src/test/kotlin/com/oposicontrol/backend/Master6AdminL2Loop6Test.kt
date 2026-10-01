@@ -66,25 +66,12 @@ class Master6AdminL2Loop6Test {
         var reportReporter: String? = reporter
         var reportReviewer: String? = null
         var reportReviewedAt: String? = null
-        var moderationActions = "[]"
         /**
-         * Gate PG17: si no es null, filas reales (moderador_id, creado_en) de `acciones_moderacion` del reporte; la GET
-         * aplica los filtros `moderador_id=eq.` y `creado_en=gte.` que lleve la URI, como PostgREST.
+         * Round 3 (gate 102000): columna `accion_pendiente` del reporte. null = la fila no la trae (PostgREST anterior a
+         * la migracion); false = cierre historico o resolucion completa; true = resolucion del Ktor nuevo en vuelo.
          */
-        var actionRows: List<Pair<String?, String>>? = null
-
-        fun moderationActionsFor(uri: String): String {
-            val rows = actionRows ?: return moderationActions
-            val query = java.net.URI(uri).rawQuery.split('&').associate {
-                it.substringBefore('=') to java.net.URLDecoder.decode(it.substringAfter('='), Charsets.UTF_8)
-            }
-            val moderador = query["moderador_id"]?.removePrefix("eq.")
-            val desde = query["creado_en"]?.removePrefix("gte.")?.let { java.time.OffsetDateTime.parse(it).toInstant() }
-            return rows.filter { (m, creado) ->
-                (moderador == null || m == moderador) &&
-                    (desde == null || !java.time.OffsetDateTime.parse(creado).toInstant().isBefore(desde))
-            }.joinToString(",", "[", "]") { """{"reporte_id":"$reportId"}""" }
-        }
+        var reportPending: Boolean? = null
+        var moderationActions = "[]"
         /** MASTER6-API-001: `admin_record_report_action` (true = accion insertada; false = ya la tenia otra llamada). */
         var actionInsert = V1StubResponse(200, "true")
         var syncRpc: V1StubResponse? = null
@@ -110,7 +97,8 @@ class Master6AdminL2Loop6Test {
                 """[{"id":"$reportId","tipo_entidad":"publicacion_oposired","estado":"$reportState",""" +
                     """"reportado_por":${reportReporter?.let { "\"$it\"" } ?: "null"},""" +
                     """"revisado_por":${reportReviewer?.let { "\"$it\"" } ?: "null"},""" +
-                    """"revisado_en":${reportReviewedAt?.let { "\"$it\"" } ?: "null"}}]""",
+                    """"revisado_en":${reportReviewedAt?.let { "\"$it\"" } ?: "null"}""" +
+                    (reportPending?.let { ""","accion_pendiente":$it""" } ?: "") + "}]",
             )
             method == "PATCH" && "/rest/v1/reportes_contenido" in uri && "estado=in." in uri -> casPatch
             method == "PATCH" && "/rest/v1/reportes_contenido" in uri -> V1StubResponse(204, "")
@@ -138,7 +126,7 @@ class Master6AdminL2Loop6Test {
                 """[{"usuario_id":"$user","username":"ada_l","nombre_mostrar":"Ada","es_invitado":false,"onboarding_completado":true,""" +
                     """"estado_cuenta":"activa","creado_en":"2026-01-02T03:04:05+00:00","actualizado_en":"2026-09-30T10:00:00+00:00"}]""",
             )
-            method == "GET" && "/rest/v1/acciones_moderacion" in uri -> V1StubResponse(200, moderationActionsFor(uri))
+            method == "GET" && "/rest/v1/acciones_moderacion" in uri -> V1StubResponse(200, moderationActions)
             "/rest/v1/rpc/admin_record_report_action" in uri -> actionInsert
             method == "POST" && "/rest/v1/auditoria_log" in uri -> V1StubResponse(201, "")
             else -> V1StubResponse(200, "[]")
@@ -230,6 +218,7 @@ class Master6AdminL2Loop6Test {
         // El reporte quedo cerrado por ESTE moderador, sin accion. Su reintento reanuda (no 409) y concede con la misma clave.
         stub.reportState = "resuelto"
         stub.reportReviewer = admin
+        stub.reportPending = true // la marca que dejo el compare-and-set
         stub.grantRpc = V1StubResponse(200, """[{"transaction_id":"$tx","saldo_resultante":15}]""")
         g.resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
         assertEquals(1, stub.of("PATCH", "estado=in.").size, "el reintento no repite la transicion")
@@ -250,6 +239,7 @@ class Master6AdminL2Loop6Test {
         }
         stub.reportState = "descartado"
         stub.reportReviewer = admin
+        stub.reportPending = true // la marca que dejo el compare-and-set
         stub.actionInsert = V1StubResponse(200, "true")
         g.resolverReporte(reportId, ResolverReporteBody(accion = "descartar", ticketsReporter = 0), actorId = admin)
         assertEquals(2, stub.actionCalls().size, "1 fallida + 1 reanudada")
@@ -260,7 +250,7 @@ class Master6AdminL2Loop6Test {
     @Test
     fun aClosedReportIsNeverResumedByAnotherModeratorOrAfterItsActionExists() {
         // Otro moderador cerro el reporte (mismo destino, sin accion aun): 409 sin efectos.
-        val other = Stub().apply { reportState = "resuelto"; reportReviewer = "6a6a6a6a-0000-4000-8000-000000000009" }
+        val other = Stub().apply { reportState = "resuelto"; reportReviewer = "6a6a6a6a-0000-4000-8000-000000000009"; reportPending = true }
         assertEquals(
             "CONFLICT",
             assertFailsWith<BackendDomainException> {
@@ -270,14 +260,14 @@ class Master6AdminL2Loop6Test {
         assertTrue(other.sent.none { it.method != "GET" }, other.sent.map { it.method + " " + it.uri }.toString())
         // El mismo moderador, resolucion ya completa (hay accion): 409 sin efectos.
         val done = Stub().apply {
-            reportState = "resuelto"; reportReviewer = admin; moderationActions = """[{"reporte_id":"$reportId"}]"""
+            reportState = "resuelto"; reportReviewer = admin; reportPending = false; moderationActions = """[{"reporte_id":"$reportId"}]"""
         }
         assertFailsWith<BackendDomainException> {
             gateway(done).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
         }
         assertTrue(done.sent.none { it.method != "GET" })
         // El mismo moderador con OTRO destino: 409.
-        val flip = Stub().apply { reportState = "resuelto"; reportReviewer = admin }
+        val flip = Stub().apply { reportState = "resuelto"; reportReviewer = admin; reportPending = true }
         assertFailsWith<BackendDomainException> {
             gateway(flip).resolverReporte(reportId, ResolverReporteBody(accion = "descartar", ticketsReporter = 0), actorId = admin)
         }
@@ -376,7 +366,7 @@ class Master6AdminL2Loop6Test {
     @Test
     fun aConcurrentResumeThatFindsTheActionAlreadyRecordedIs409AndAuditsNothing() {
         // Dos reanudaciones del mismo moderador: esta pierde dentro de la RPC (la otra ya inserto la accion).
-        val stub = Stub().apply { reportState = "resuelto"; reportReviewer = admin; actionInsert = V1StubResponse(200, "false") }
+        val stub = Stub().apply { reportState = "resuelto"; reportReviewer = admin; reportPending = true; actionInsert = V1StubResponse(200, "false") }
         val failure = assertFailsWith<BackendDomainException> {
             gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 0), actorId = admin)
         }
@@ -387,7 +377,7 @@ class Master6AdminL2Loop6Test {
 
     @Test
     fun aCallerWithoutActorNeverResumesAClosedReportEvenIfItWasClosedWithoutActor() {
-        val stub = Stub().apply { reportState = "resuelto"; reportReviewer = null }
+        val stub = Stub().apply { reportState = "resuelto"; reportReviewer = null; reportPending = true }
         val failure = assertFailsWith<BackendDomainException> {
             gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = null)
         }
@@ -397,54 +387,59 @@ class Master6AdminL2Loop6Test {
         assertTrue(stub.actionCalls().isEmpty())
     }
 
-    // ------------------------------------------------------------------ Gate PG17 (MEDIUM): clave de la resolucion
+    // ------------------------------------------------------------------ Gate 102000 (round 3): marca en vuelo
+    // Cambio DELIBERADO: las dos pruebas del round 2 (`anEarlierActionTakenWhileOpenOrByOtherStaffDoesNotBlockTheResume`
+    // con su GET `creado_en=gte.` y `theResolversOwnActionAtOrAfterTheCloseCompletesTheResolution`) fijaban la clave de
+    // tiempo que malinterpretaba los cierres historicos. Se sustituyen por la marca explicita `accion_pendiente`.
 
     @Test
     fun anEarlierActionTakenWhileOpenOrByOtherStaffDoesNotBlockTheResume() {
-        // Cerrado por admin a las 10:00 sin accion de resolucion. Antes, con el reporte abierto, otro moderador y el
-        // propio admin ocultaron el contenido: esas acciones no son la resolucion.
-        val closedAt = "2026-10-01T10:00:00.123456+00:00"
+        // Cerrado por admin con la marca en vuelo y acciones anteriores/de otro staff: solo la marca decide, sin GET previo.
         val stub = Stub().apply {
-            reportState = "resuelto"; reportReviewer = admin; reportReviewedAt = closedAt
-            actionRows = listOf(
-                "6a6a6a6a-0000-4000-8000-000000000009" to "2026-10-01T09:00:00+00:00",
-                admin to "2026-10-01T09:30:00+00:00",
-                "6a6a6a6a-0000-4000-8000-000000000009" to "2026-10-01T10:05:00+00:00",
-            )
+            reportState = "resuelto"; reportReviewer = admin; reportReviewedAt = "2026-10-01T10:00:00.123456+00:00"
+            reportPending = true
+            moderationActions = """[{"reporte_id":"$reportId"},{"reporte_id":"$reportId"}]"""
         }
         gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 0), actorId = admin)
-        val check = stub.of("GET", "/rest/v1/acciones_moderacion").single().uri
-        assertTrue("moderador_id=eq.$admin" in check, check)
-        assertTrue("creado_en=gte.2026-10-01T10%3A00%3A00.123456%2B00%3A00" in check, check)
+        assertTrue(stub.of("GET", "/rest/v1/acciones_moderacion").isEmpty(), "ninguna clave de tiempo: la marca y la RPC deciden")
         assertEquals(1, stub.actionCalls().size, "antes: 409 permanente por la accion previa")
         assertEquals(1, stub.of("POST", "/rest/v1/auditoria_log").size)
     }
 
+    /**
+     * MEDIUM (regresion del round 2): un reporte cerrado por el Ktor de MAIN (accion PRIMERO, despues PATCH con
+     * `revisado_en` del reloj de Ktor y `revisado_por` = actor JWT) no lleva la marca. El mismo moderador NUNCA lo
+     * reanuda: 409 sin escrituras, sin concesion, sin segunda accion, auditoria ni evento, tenga o no acciones, en
+     * cualquier orden, y tanto si PostgREST trae la columna en false como si no la trae.
+     */
     @Test
-    fun theResolversOwnActionAtOrAfterTheCloseCompletesTheResolution() {
+    fun aHistoricalClosureByTheOldKtorIsNeverResumedByItsResolver() {
         val closedAt = "2026-10-01T10:00:00+00:00"
-        for (at in listOf(closedAt, "2026-10-01T10:00:01+00:00")) {
+        val histories = listOf("[]", """[{"reporte_id":"$reportId"}]""", """[{"reporte_id":"$reportId"},{"reporte_id":"$reportId"}]""")
+        for (pending in listOf(false, null)) for (estado in listOf("resuelto", "descartado")) for (actions in histories) {
             val stub = Stub().apply {
-                reportState = "resuelto"; reportReviewer = admin; reportReviewedAt = closedAt
-                actionRows = listOf(admin to at)
+                reportState = estado; reportReviewer = admin; reportReviewedAt = closedAt
+                reportPending = pending; moderationActions = actions
             }
-            assertEquals(
-                "CONFLICT",
-                assertFailsWith<BackendDomainException> {
-                    gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
-                }.errorCode,
-            )
-            assertTrue(stub.sent.none { it.method != "GET" }, "resolucion completa: sin escrituras ($at)")
+            val accion = if (estado == "descartado") "descartar" else "ocultar"
+            val failure = assertFailsWith<BackendDomainException> {
+                gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = accion, ticketsReporter = 0), actorId = admin)
+            }
+            assertEquals("CONFLICT", failure.errorCode, "$pending/$estado/$actions")
+            assertTrue(stub.sent.none { it.method != "GET" }, "sin escrituras ($pending/$estado/$actions): ${stub.sent.map { it.method + " " + it.uri }}")
+            assertTrue(stub.actionCalls().isEmpty())
+            assertEquals(0, stub.rpcCalls("admin_grant_tickets"))
         }
-        // Cierre legado sin revisado_en: cualquier accion del revisor la completa (fail closed).
-        val legacy = Stub().apply {
-            reportState = "resuelto"; reportReviewer = admin; actionRows = listOf(admin to "2020-01-01T00:00:00+00:00")
-        }
-        assertFailsWith<BackendDomainException> {
-            gateway(legacy).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 0), actorId = admin)
-        }
-        assertFalse("creado_en=" in legacy.of("GET", "/rest/v1/acciones_moderacion").single().uri)
-        assertTrue(legacy.sent.none { it.method != "GET" })
+    }
+
+    @Test
+    fun theTransitionSetsTheInFlightMarkerThatOnlyTheRpcClears() {
+        val stub = Stub()
+        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
+        val cas = stub.of("PATCH", "estado=in.(pendiente,revisado)").single().json()
+        assertEquals("true", cas["accion_pendiente"]!!.jsonPrimitive.content)
+        val stamp = stub.of("PATCH", "estado=eq.resuelto").single().json()
+        assertFalse("accion_pendiente" in stamp.keys, "la marca solo la limpia admin_record_report_action")
     }
 
     // ------------------------------------------------------------------ MASTER7-API-004 / MASTER7-API-002
