@@ -56,13 +56,38 @@ class DatabaseHardeningJvmTest {
         assertEquals(1L, value)
     }
 
+    /** POSIX-only: Assume-skipped on Windows (inherited ACL); it executes in CI (ubuntu-latest, `:core:database:jvmTest`). */
     @Test
     fun databaseAndDirectoryAreOwnerOnlyOnPosix() {
         val dbFile = File(dir, "OposiControl/oposicontrol-desktop.db").also { it.parentFile.mkdirs() }
+        org.junit.Assume.assumeTrue(Files.getFileStore(dir.toPath()).supportsFileAttributeView("posix"))
+        // A pre-existing world-readable directory must be tightened, not just left as created.
+        Files.setPosixFilePermissions(dbFile.parentFile.toPath(), PosixFilePermissions.fromString("rwxr-xr-x"))
         openHardenedDesktopDriver(dbFile).close()
-        if (!Files.getFileStore(dbFile.toPath()).supportsFileAttributeView("posix")) return // Windows: ACL heredada
         assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(dbFile.toPath()))
         assertEquals(PosixFilePermissions.fromString("rwx------"), Files.getPosixFilePermissions(dbFile.parentFile.toPath()))
-        assertTrue(true)
+    }
+
+    /** Portable part: on a non-POSIX store (Windows) hardening is a silent no-op (no WARN) and the DB still opens. */
+    @Test
+    fun nonPosixStoreOpensTheDatabaseWithoutHardeningWarnings() {
+        org.junit.Assume.assumeFalse(Files.getFileStore(dir.toPath()).supportsFileAttributeView("posix"))
+        val logger = java.util.logging.Logger.getLogger("com.oposicontrol.admin.core.database")
+        val records = mutableListOf<java.util.logging.LogRecord>()
+        val handler = object : java.util.logging.Handler() {
+            override fun publish(record: java.util.logging.LogRecord) { records += record }
+            override fun flush() = Unit
+            override fun close() = Unit
+        }
+        logger.addHandler(handler)
+        val dbFile = File(dir, "OposiControl/oposicontrol-desktop.db")
+        try {
+            ensureOwnerOnlyDir(dbFile.parentFile)
+            openHardenedDesktopDriver(dbFile).close()
+        } finally {
+            logger.removeHandler(handler)
+        }
+        assertTrue(dbFile.isFile)
+        assertTrue(records.none { it.level == java.util.logging.Level.WARNING }, "no hardening WARN on a non-POSIX store")
     }
 }

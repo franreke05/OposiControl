@@ -30,3 +30,8 @@ No route was deleted or consolidated in this pass. Candidate canonical surfaces 
 Las rutas Ktor se catalogan en `docs/integration/ENDPOINT_CATALOG.md` y en el código bajo `backend/ktor`. Este documento es el índice canónico de esa evidencia, no una lista de endpoints inventados.
 
 Estado: contratos observados en código; Supabase live `READ_ONLY_VERIFIED` para la reconciliación, pero consumidores y runtime de rutas siguen sin handshake completo. Cambios de ruta son propiedad Backend/Ktor y requieren Architecture + Quality.
+
+## POST /api/v1/admin/reportes/{id}/resolver (R2-API004, MASTER7-API-004)
+
+- `accion` en el cable: `descartar`, `ocultar`, `restaurar`, `eliminar`, `advertir`, `bloquear_usuario` (valores del CHECK `acciones_moderacion.tipo_accion`) y los alias de los clientes vivos `avisar` -> `advertir`, `banear` -> `bloquear_usuario`, `resuelto_sin_accion` -> `descartar` (etiqueta neutra del CHECK; el estado del reporte es `resuelto`). Cualquier otro valor: 422 `REPORT_ACTION_INVALID` sin lecturas ni escrituras.
+- `descartar` con `ticketsReporter > 0` es contradictorio: 422 `WALLET_AMOUNT_INVALID` (decision deliberada, sin efectos). La UI (lane OC) no debe ofrecer recompensa al descartar; hasta entonces el moderador recibe ese 422.

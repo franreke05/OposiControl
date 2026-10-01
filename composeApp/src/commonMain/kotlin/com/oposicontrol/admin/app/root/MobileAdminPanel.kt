@@ -321,6 +321,12 @@ private fun AdminModerationSection(
 private val MODERATION_ACTIONS = listOf("descartar" to "Descartar", "ocultar" to "Ocultar", "avisar" to "Avisar", "banear" to "Banear")
 private val REWARD_PRESETS = listOf(0, 5, 10)
 
+/** El backend rechaza (422 WALLET_AMOUNT_INVALID) descartar con recompensa: descartar nunca concede tickets. */
+internal fun rewardAllowedFor(action: String): Boolean = action != "descartar"
+
+/** Recompensa que realmente se envia: 0 si la accion elegida no admite recompensa. */
+internal fun effectiveReward(action: String, reward: Int): Int = if (rewardAllowedFor(action)) reward else 0
+
 @Composable
 private fun ReportCard(
     report: ForumReport,
@@ -354,7 +360,10 @@ private fun ReportCard(
             GlassChipGroup(
                 options = MODERATION_ACTIONS,
                 selected = setOf(action),
-                onToggle = { action = it },
+                onToggle = {
+                    action = it
+                    reward = effectiveReward(it, reward)
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
             Text("Recompensa al reporter", style = MaterialTheme.typography.labelMedium, color = GlassTheme.tokens.textSecondary)
@@ -363,6 +372,7 @@ private fun ReportCard(
                     GlassChip(
                         label = if (preset == 0) "Sin tickets" else "+$preset",
                         selected = reward == preset,
+                        enabled = rewardAllowedFor(action),
                         onClick = { reward = preset },
                     )
                 }
@@ -372,7 +382,7 @@ private fun ReportCard(
                 label = if (busy) "Resolviendo..." else "Resolver",
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !busy,
-                onClick = { onResolve(action, reward) },
+                onClick = { onResolve(action, effectiveReward(action, reward)) },
             )
         }
     }

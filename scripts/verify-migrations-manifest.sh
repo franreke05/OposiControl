@@ -26,4 +26,10 @@ if ! grep -qF "20260930100000..${last#20260930}" "$dep"; then
   echo "FAIL: $dep no cita el rango 20260930100000..${last#20260930} (ultima migracion del manifiesto)"
   exit 1
 fi
+# Remediacion completa: las dos migraciones NUEVAS (101900, 102000) deben seguir en el manifiesto y el total no puede bajar de 13
+# (si se borraran de las dos partes a la vez, la igualdad de arriba seguiria pasando).
+for need in 20260930101900_admin_sync_roles_audited_expected 20260930102000_slice1_report_action_once; do
+  echo "$expected" | grep -qx "$need" || { echo "FAIL: el manifiesto no lista $need"; exit 1; }
+done
+[ "$(echo "$expected" | wc -l | tr -d ' ')" -ge 13 ] || { echo "FAIL: el manifiesto tiene menos de 13 migraciones Slice 1"; exit 1; }
 echo "ok:   manifiesto Slice 1 == migraciones 2026093* ($(echo "$actual" | wc -l | tr -d ' '))"

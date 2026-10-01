@@ -64,6 +64,10 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
    sobrecarga de 4 argumentos con `p_expected_role_ids`, MASTER6-IDEM-003) y `20260930102000_slice1_report_action_once.sql`
    (`resolverReporte` escribe la accion con `admin_record_report_action`, MASTER6-API-001); sin ellas: PGRST202 en D1-26 y la
    resolucion queda incompleta (reanudable) en la ultima escritura. En rollback, primero ese Ktor y despues 102000/101900.
+   La garantia "una accion por resolucion" de 102000 solo vale cuando el Ktor nuevo es el unico escritor de resoluciones: el
+   Ktor viejo (POST directo a `acciones_moderacion`) y el staff por la politica `acciones_moderacion_staff_all` no toman el
+   cerrojo del reporte. Por eso el Ktor viejo se para ANTES de migrar y no se rearranca despues (residual en
+   `SLICE_1_PRODUCTION_GATE.md`, seccion 8).
    Orden backend ANTES que el cliente admin (MASTER4-API-005): el `AdminV1UserDto` actual emite `ticketsBalance = null`
    (sin wallet) e `isActive` explicito (`@EncodeDefault`); un backend anterior omite `ticketsBalance = 0` (default) y el
    cliente nuevo lo pintaria "Sin dato" en saldos a cero durante el rollout mixto. Desplegar primero el Ktor y despues
