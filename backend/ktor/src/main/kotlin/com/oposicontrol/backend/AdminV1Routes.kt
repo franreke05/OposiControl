@@ -3280,6 +3280,7 @@ private data class ReporteRow(
     @SerialName("reportado_por") val reportadoPor: String? = null,
     @SerialName("creado_en") val creadoEn: String? = null,
     @SerialName("revisado_en") val revisadoEn: String? = null,
+    @SerialName("revisado_por") val revisadoPor: String? = null,
 )
 
 @Serializable
@@ -5748,8 +5749,11 @@ class AdminV1Gateway private constructor(
         // La sincronizacion YA se confirmo: una respuesta ilegible no la convierte en error. En ese caso el resultado dice
         // explicitamente que sus conjuntos NO son los del cerrojo (`bajoCerrojo=false`: la foto previa y lo pedido).
         val locked = runCatching { json.decodeFromString<RoleSyncLockedSets>(rpcBody) }.getOrNull()
-        if (expectedRoleIds != null && locked != null && locked.antes.toSet() != expectedRoleIds.toSet()) {
-            // MASTER6-IDEM-003: la precondicion paso antes del cerrojo pero otra sincronizacion entro en esa ventana.
+        val preconditionRaced = expectedRoleIds != null && locked != null && locked.antes.toSet() != expectedRoleIds.toSet()
+        if (preconditionRaced) {
+            // MASTER6-IDEM-003: la precondicion paso antes del cerrojo pero otra sincronizacion entro en esa ventana. Sin
+            // migracion no se puede impedir (la comparacion bajo el cerrojo exige `p_expected_role_ids` en la RPC); como
+            // mitigacion queda en la fila DURADERA de resultado (`precondicionViolada`, con lo esperado) ademas del WARN.
             AuditLogger.warn("roles sync precondition raced under the lock registroId={}: locked antes differs from expectedRoleIds", usuarioId)
         }
         if (locked == null) {
@@ -5763,6 +5767,10 @@ class AdminV1Gateway private constructor(
                 put("roleIdsSolicitados", JsonArray(requested.map(::JsonPrimitive)))
                 requestId?.let { put("requestId", JsonPrimitive(it)) }
                 put("bajoCerrojo", JsonPrimitive(locked != null))
+                if (preconditionRaced) {
+                    put("precondicionViolada", JsonPrimitive(true))
+                    put("roleIdsEsperados", JsonArray(expectedRoleIds!!.distinct().map(::JsonPrimitive)))
+                }
             },
         )
         // MASTER5-API-011: D1-26 responde los roles RESULTANTES de ESTA sincronizacion: el `despues` que la RPC leyo bajo
@@ -6177,14 +6185,46 @@ class AdminV1Gateway private constructor(
             .decodeList<ReporteRow>().firstOrNull() ?: error("Reporte no encontrado.")
         // MASTER6-API-001: solo se resuelve un reporte ABIERTO. Antes un segundo POST insertaba otra accion de moderacion
         // y podia voltear un reporte resuelto a descartado.
-        if (reporte.estado !in REPORTE_OPEN_STATES) throw reportAlreadyClosed()
         val estado = if (req.accion == "descartar") "descartado" else "resuelto"
-        // MASTER6-API-001: la recompensa se concede ANTES del cambio de estado y `recompensa_entregada` refleja SOLO una
-        // concesion CONFIRMADA por `admin_grant_tickets` (idempotente por reporte: un reintento no acredita dos veces).
-        // - Sin reportante (anonimo o borrado) no hay concesion: false/0 (antes se guardaba true sin acreditar nada).
-        // - Si la concesion falla, la excepcion sale ANTES de tocar el reporte: sigue abierto, con la marca en false, y el
-        //   reintento repite la misma concesion idempotente.
-        // - Si se pide 0 pero un intento anterior YA acredito (concedio y fallo despues), la marca sale del ledger.
+        if (reporte.estado !in REPORTE_OPEN_STATES) {
+            // MASTER6-API-001 (loop 6 cierre): un reporte cerrado SOLO se reanuda si es la resolucion incompleta de ESTE
+            // mismo moderador (mismo estado destino, mismo revisado_por) y aun no tiene accion de moderacion (la ultima
+            // escritura). Cualquier otro caso (otro moderador, otro destino, resolucion ya completa) es 409 sin efectos.
+            val resumable = reporte.estado == estado && reporte.revisadoPor == actorId && !hasModerationAction(id)
+            if (!resumable) throw reportAlreadyClosed()
+            completeResolution(id, estado, reporte, req, actorId)
+            return
+        }
+        // MASTER6-API-001 (loop 6 cierre): orden de fallos definido. La transicion compare-and-set es el PUNTO DE
+        // COMPROMISO y va PRIMERO, con la marca en false/0: quien pierde la carrera recibe 409 SIN haber acreditado nada
+        // (antes la concesion iba antes y el perdedor acreditaba sobre un reporte que otro moderador habia descartado).
+        val transitioned = request(
+            "PATCH",
+            "/rest/v1/reportes_contenido?id=eq.$id&estado=in.(${REPORTE_OPEN_STATES.joinToString(",")})",
+            sbJson.encodeToString(
+                ReportePatch(
+                    estado = estado,
+                    revisadoEn = Instant.now().toString(),
+                    ticketsOtorgados = 0,
+                    recompensaEntregada = false,
+                    revisadoPor = actorId,
+                ),
+            ),
+            prefer = "return=representation",
+        ).decodeList<ReporteRow>().isNotEmpty()
+        if (!transitioned) throw reportAlreadyClosed()
+        completeResolution(id, estado, reporte, req, actorId)
+    }
+
+    /**
+     * MASTER6-API-001: pasos posteriores al compromiso, todos re-ejecutables. Si cualquiera falla, el reporte queda
+     * cerrado SIN fila en `acciones_moderacion` y con `recompensa_entregada` = false salvo concesion confirmada: ese
+     * estado significa «resolucion incompleta» y el reintento del mismo moderador la reanuda (ver [resolverReporte]).
+     * - Sin reportante (anonimo o borrado) no hay concesion: false/0.
+     * - La concesion es idempotente por reporte (`report-reward:<id>`): el reintento no acredita dos veces.
+     * - Si se pide 0 pero un intento anterior YA acredito, la marca sale del ledger.
+     */
+    private fun completeResolution(id: String, estado: String, reporte: ReporteRow, req: ResolverReporteBody, actorId: String?) {
         val reporter = reporte.reportadoPor?.takeIf { it.isNotBlank() }
         val granted = when {
             reporter == null -> 0
@@ -6200,37 +6240,19 @@ class AdminV1Gateway private constructor(
             }
             else -> confirmedReportReward(id)
         }
-        val patch = ReportePatch(
-            estado = estado,
-            revisadoEn = Instant.now().toString(),
-            ticketsOtorgados = granted,
-            recompensaEntregada = granted > 0,
-            revisadoPor = actorId,
-        )
-        // MASTER6-API-001: transicion compare-and-set (solo si sigue abierto). Si otra resolucion gano la carrera no se
-        // inserta accion ni auditoria; si ESTA peticion acredito, se deja constancia de la concesion confirmada (sin
-        // tocar el estado ajeno) antes de responder 409.
-        val transitioned = request(
-            "PATCH",
-            "/rest/v1/reportes_contenido?id=eq.$id&estado=in.(${REPORTE_OPEN_STATES.joinToString(",")})",
-            sbJson.encodeToString(patch),
-            prefer = "return=representation",
-        ).decodeList<ReporteRow>().isNotEmpty()
-        if (!transitioned) {
-            if (granted > 0) {
-                request(
-                    "PATCH",
-                    "/rest/v1/reportes_contenido?id=eq.$id&recompensa_entregada=eq.false",
-                    buildJsonObject {
-                        put("tickets_otorgados", JsonPrimitive(granted))
-                        put("recompensa_entregada", JsonPrimitive(true))
-                    }.toString(),
-                    prefer = "return=minimal",
-                )
-            }
-            throw reportAlreadyClosed()
+        if (granted > 0) {
+            // Solo tras una concesion CONFIRMADA, y solo sobre el estado que ESTA resolucion fijo.
+            request(
+                "PATCH",
+                "/rest/v1/reportes_contenido?id=eq.$id&estado=eq.$estado",
+                buildJsonObject {
+                    put("tickets_otorgados", JsonPrimitive(granted))
+                    put("recompensa_entregada", JsonPrimitive(true))
+                }.toString(),
+                prefer = "return=minimal",
+            )
         }
-        // La accion de moderacion, SOLO tras ganar la transicion: un reintento o una carrera ya no la duplican.
+        // La accion de moderacion es la ULTIMA escritura duradera: marca la resolucion como completa.
         val accion = AccionModeracionInsert(reporteId = id, tipoAccion = req.accion, notas = req.notas, moderadorId = actorId)
         request("POST", "/rest/v1/acciones_moderacion", sbJson.encodeToString(listOf(accion)), prefer = "return=minimal")
         registrarAuditoria("reporte_$estado", "reportes_contenido", id)
@@ -6243,6 +6265,11 @@ class AdminV1Gateway private constructor(
             userId = actorId,
         )
     }
+
+    /** MASTER6-API-001: si el reporte ya tiene su accion de moderacion (resolucion completa). */
+    private fun hasModerationAction(reporteId: String): Boolean =
+        request("GET", "/rest/v1/acciones_moderacion?select=reporte_id&reporte_id=eq.$reporteId&limit=1", null)
+            .decodeList<JsonObject>().isNotEmpty()
 
     /** MASTER6-API-001: cantidad ya acreditada por la recompensa de este reporte (asiento del ledger con su clave), o 0. */
     private fun confirmedReportReward(reporteId: String): Int {

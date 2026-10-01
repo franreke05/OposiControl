@@ -64,12 +64,16 @@ class Master6AdminL2Loop6Test {
         val sent = CopyOnWriteArrayList<Sent>()
         var reportState: String = "pendiente"
         var reportReporter: String? = reporter
+        var reportReviewer: String? = null
+        var moderationActions = "[]"
+        var actionInsert = V1StubResponse(201, "")
         var grantRpc = V1StubResponse(200, """[{"transaction_id":"$tx","saldo_resultante":15}]""")
         var casPatch = V1StubResponse(200, """[{"id":"$reportId"}]""")
         var priorRewardLedger = "[]"
         var wallet = V1StubResponse(200, """[{"usuario_id":"$user","saldo_tickets":42}]""")
         var authUser = V1StubResponse(200, """{"id":"$user","email":"a@b.c"}""")
         var rolesOfUser = "[]"
+        var lockedAntes: String? = null
 
         fun of(method: String, fragment: String) = sent.filter { it.method == method && fragment in it.uri }
         fun rpcCalls(name: String) = of("POST", "/rest/v1/rpc/$name").size
@@ -78,11 +82,12 @@ class Master6AdminL2Loop6Test {
         fun respond(method: String, uri: String): V1StubResponse = when {
             "/rest/v1/rpc/admin_grant_tickets" in uri -> grantRpc
             "/rest/v1/rpc/admin_sync_roles_audited" in uri ->
-                V1StubResponse(200, """{"antes":$rolesOfUser,"despues":["$roleUsuario"]}""")
+                V1StubResponse(200, """{"antes":${lockedAntes ?: rolesOfUser},"despues":["$roleUsuario"]}""")
             method == "GET" && "/rest/v1/reportes_contenido" in uri -> V1StubResponse(
                 200,
                 """[{"id":"$reportId","tipo_entidad":"publicacion_oposired","estado":"$reportState",""" +
-                    """"reportado_por":${reportReporter?.let { "\"$it\"" } ?: "null"}}]""",
+                    """"reportado_por":${reportReporter?.let { "\"$it\"" } ?: "null"},""" +
+                    """"revisado_por":${reportReviewer?.let { "\"$it\"" } ?: "null"}}]""",
             )
             method == "PATCH" && "/rest/v1/reportes_contenido" in uri && "estado=in." in uri -> casPatch
             method == "PATCH" && "/rest/v1/reportes_contenido" in uri -> V1StubResponse(204, "")
@@ -110,7 +115,9 @@ class Master6AdminL2Loop6Test {
                 """[{"usuario_id":"$user","username":"ada_l","nombre_mostrar":"Ada","es_invitado":false,"onboarding_completado":true,""" +
                     """"estado_cuenta":"activa","creado_en":"2026-01-02T03:04:05+00:00","actualizado_en":"2026-09-30T10:00:00+00:00"}]""",
             )
-            method == "POST" && ("/rest/v1/auditoria_log" in uri || "/rest/v1/acciones_moderacion" in uri) -> V1StubResponse(201, "")
+            method == "GET" && "/rest/v1/acciones_moderacion" in uri -> V1StubResponse(200, moderationActions)
+            method == "POST" && "/rest/v1/acciones_moderacion" in uri -> actionInsert
+            method == "POST" && "/rest/v1/auditoria_log" in uri -> V1StubResponse(201, "")
             else -> V1StubResponse(200, "[]")
         }
     }
@@ -187,29 +194,90 @@ class Master6AdminL2Loop6Test {
     }
 
     @Test
-    fun aFailedGrantLeavesTheReportOpenWithTheFlagFalseAndNoModerationAction() {
+    fun aFailedGrantAfterTheCommitLeavesAnIncompleteResolutionThatTheSameModeratorsRetryResumes() {
         val stub = Stub().apply { grantRpc = V1StubResponse(500, """{"message":"boom"}""") }
+        val g = gateway(stub)
         assertFailsWith<Exception> {
-            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+            g.resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
         }
-        assertEquals(1, stub.rpcCalls("admin_grant_tickets"))
-        assertTrue(stub.of("PATCH", "/rest/v1/reportes_contenido").isEmpty(), "el reporte sigue abierto y la marca en false")
-        assertTrue(stub.of("POST", "/rest/v1/acciones_moderacion").isEmpty(), "ninguna accion huerfana")
+        val cas = stub.of("PATCH", "/rest/v1/reportes_contenido").single()
+        assertEquals("false", cas.json()["recompensa_entregada"]!!.jsonPrimitive.content, "la marca solo tras concesion confirmada")
+        assertEquals("0", cas.json()["tickets_otorgados"]!!.jsonPrimitive.content)
+        assertTrue(stub.of("POST", "/rest/v1/acciones_moderacion").isEmpty(), "sin accion: resolucion incompleta")
+        // El reporte quedo cerrado por ESTE moderador, sin accion. Su reintento reanuda (no 409) y concede con la misma clave.
+        stub.reportState = "resuelto"
+        stub.reportReviewer = admin
+        stub.grantRpc = V1StubResponse(200, """[{"transaction_id":"$tx","saldo_resultante":15}]""")
+        g.resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+        assertEquals(1, stub.of("PATCH", "estado=in.").size, "el reintento no repite la transicion")
+        val stamp = stub.of("PATCH", "estado=eq.resuelto").single().json()
+        assertEquals("true", stamp["recompensa_entregada"]!!.jsonPrimitive.content)
+        assertEquals("5", stamp["tickets_otorgados"]!!.jsonPrimitive.content)
+        assertEquals(1, stub.of("POST", "/rest/v1/acciones_moderacion").size)
+        val keys = stub.of("POST", "admin_grant_tickets").map { it.json()["p_idempotency_key"]!!.jsonPrimitive.content }.toSet()
+        assertEquals(setOf("report-reward:$reportId"), keys)
     }
 
     @Test
-    fun aGrantedRewardIsRecordedInTheSameTransitionAndTheActionComesAfterIt() {
+    fun aFailedActionInsertAfterTheCommitIsResumedByTheRetryInsteadOf409() {
+        val stub = Stub().apply { actionInsert = V1StubResponse(500, """{"message":"down"}""") }
+        val g = gateway(stub)
+        assertFailsWith<Exception> {
+            g.resolverReporte(reportId, ResolverReporteBody(accion = "descartar", ticketsReporter = 0), actorId = admin)
+        }
+        stub.reportState = "descartado"
+        stub.reportReviewer = admin
+        stub.actionInsert = V1StubResponse(201, "")
+        g.resolverReporte(reportId, ResolverReporteBody(accion = "descartar", ticketsReporter = 0), actorId = admin)
+        assertEquals(2, stub.of("POST", "/rest/v1/acciones_moderacion").size, "1 fallida + 1 reanudada")
+        assertEquals(1, stub.of("PATCH", "estado=in.").size)
+        assertEquals(1, stub.of("POST", "/rest/v1/auditoria_log").size, "auditoria solo de la resolucion completa")
+    }
+
+    @Test
+    fun aClosedReportIsNeverResumedByAnotherModeratorOrAfterItsActionExists() {
+        // Otro moderador cerro el reporte (mismo destino, sin accion aun): 409 sin efectos.
+        val other = Stub().apply { reportState = "resuelto"; reportReviewer = "6a6a6a6a-0000-4000-8000-000000000009" }
+        assertEquals(
+            "CONFLICT",
+            assertFailsWith<BackendDomainException> {
+                gateway(other).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+            }.errorCode,
+        )
+        assertTrue(other.sent.none { it.method != "GET" }, other.sent.map { it.method + " " + it.uri }.toString())
+        // El mismo moderador, resolucion ya completa (hay accion): 409 sin efectos.
+        val done = Stub().apply {
+            reportState = "resuelto"; reportReviewer = admin; moderationActions = """[{"reporte_id":"$reportId"}]"""
+        }
+        assertFailsWith<BackendDomainException> {
+            gateway(done).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+        }
+        assertTrue(done.sent.none { it.method != "GET" })
+        // El mismo moderador con OTRO destino: 409.
+        val flip = Stub().apply { reportState = "resuelto"; reportReviewer = admin }
+        assertFailsWith<BackendDomainException> {
+            gateway(flip).resolverReporte(reportId, ResolverReporteBody(accion = "descartar", ticketsReporter = 0), actorId = admin)
+        }
+        assertTrue(flip.sent.none { it.method != "GET" })
+    }
+
+    @Test
+    fun theTransitionCommitsFirstThenTheGrantThenTheStampThenTheAction() {
         val stub = Stub()
         gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
-        val order = stub.sent.map { it.method + " " + it.uri.substringAfter(".test").substringBefore('?') }
-        val rpc = order.indexOf("POST /rest/v1/rpc/admin_grant_tickets")
-        val cas = order.indexOfFirst { it == "PATCH /rest/v1/reportes_contenido" }
-        val action = order.indexOf("POST /rest/v1/acciones_moderacion")
-        assertTrue(rpc in 0 until cas && cas < action, order.toString())
-        val patch = stub.of("PATCH", "/rest/v1/reportes_contenido").single()
-        assertTrue("estado=in.(pendiente,revisado)" in patch.uri, "compare-and-set: ${patch.uri}")
-        assertEquals("true", patch.json()["recompensa_entregada"]!!.jsonPrimitive.content)
-        assertEquals("5", patch.json()["tickets_otorgados"]!!.jsonPrimitive.content)
+        val order = stub.sent.map { it.method + " " + it.uri.substringAfter(".test") }
+        val cas = order.indexOfFirst { it.startsWith("PATCH /rest/v1/reportes_contenido") && "estado=in." in it }
+        val rpc = order.indexOfFirst { it.startsWith("POST /rest/v1/rpc/admin_grant_tickets") }
+        val stamp = order.indexOfFirst { it.startsWith("PATCH /rest/v1/reportes_contenido") && "estado=eq.resuelto" in it }
+        val action = order.indexOfFirst { it.startsWith("POST /rest/v1/acciones_moderacion") }
+        assertTrue(cas in 0 until rpc && rpc < stamp && stamp < action, order.toString())
+        val casBody = stub.of("PATCH", "estado=in.(pendiente,revisado)").single().json()
+        assertEquals("false", casBody["recompensa_entregada"]!!.jsonPrimitive.content)
+        assertEquals("0", casBody["tickets_otorgados"]!!.jsonPrimitive.content)
+        val stampBody = stub.of("PATCH", "estado=eq.resuelto").single().json()
+        assertEquals("true", stampBody["recompensa_entregada"]!!.jsonPrimitive.content)
+        assertEquals("5", stampBody["tickets_otorgados"]!!.jsonPrimitive.content)
+        assertEquals(setOf("tickets_otorgados", "recompensa_entregada"), stampBody.keys, "la marca no toca el estado")
         val rpcBody = stub.of("POST", "admin_grant_tickets").single().json()
         assertEquals("report-reward:$reportId", rpcBody["p_idempotency_key"]!!.jsonPrimitive.content)
         assertEquals(reporter, rpcBody["p_usuario_id"]!!.jsonPrimitive.content)
@@ -227,16 +295,16 @@ class Master6AdminL2Loop6Test {
     }
 
     @Test
-    fun losingTheTransitionInsertsNoActionButKeepsTheConfirmedGrantOnRecord() {
+    fun theConcurrentLoserOfTheTransitionCreditsNothingAndWritesNothingElse() {
+        // Moderador A pide 5 OT mientras B descarta y gana el compare-and-set.
         val stub = Stub().apply { casPatch = V1StubResponse(200, "[]") }
         val failure = assertFailsWith<BackendDomainException> {
             gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
         }
         assertEquals("CONFLICT", failure.errorCode)
+        assertEquals(0, stub.rpcCalls("admin_grant_tickets"), "antes: el perdedor ya habia acreditado 5 OT")
         assertTrue(stub.of("POST", "/rest/v1/acciones_moderacion").isEmpty())
-        val record = stub.of("PATCH", "recompensa_entregada=eq.false").single().json()
-        assertEquals("true", record["recompensa_entregada"]!!.jsonPrimitive.content)
-        assertEquals(setOf("tickets_otorgados", "recompensa_entregada"), record.keys, "no toca el estado ajeno")
+        assertEquals(1, stub.of("PATCH", "/rest/v1/reportes_contenido").size, "solo el intento de transicion; ninguna marca")
     }
 
     @Test
@@ -247,10 +315,11 @@ class Master6AdminL2Loop6Test {
             g.resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
         }
         assertTrue(stub.of("POST", "/rest/v1/acciones_moderacion").isEmpty(), "antes: la accion ya estaba insertada")
+        assertEquals(0, stub.rpcCalls("admin_grant_tickets"), "nada se acredita antes del compromiso")
         stub.casPatch = V1StubResponse(200, """[{"id":"$reportId"}]""")
         g.resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
         assertEquals(1, stub.of("POST", "/rest/v1/acciones_moderacion").size)
-        // El RPC se repite con LA MISMA clave por reporte: el ledger no acredita dos veces.
+        assertEquals(1, stub.rpcCalls("admin_grant_tickets"))
         val keys = stub.of("POST", "admin_grant_tickets").map { it.json()["p_idempotency_key"]!!.jsonPrimitive.content }.toSet()
         assertEquals(setOf("report-reward:$reportId"), keys)
     }
@@ -259,9 +328,9 @@ class Master6AdminL2Loop6Test {
     fun aZeroRewardAfterAnEarlierConfirmedGrantTakesTheFlagFromTheLedger() {
         val stub = Stub().apply { priorRewardLedger = """[{"id":"$tx","usuario_id":"$reporter","tipo":"reporte_validado","cantidad":5}]""" }
         gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 0), actorId = admin)
-        val cas = stub.of("PATCH", "/rest/v1/reportes_contenido").single().json()
-        assertEquals("true", cas["recompensa_entregada"]!!.jsonPrimitive.content)
-        assertEquals("5", cas["tickets_otorgados"]!!.jsonPrimitive.content)
+        val stamp = stub.of("PATCH", "estado=eq.resuelto").single().json()
+        assertEquals("true", stamp["recompensa_entregada"]!!.jsonPrimitive.content)
+        assertEquals("5", stamp["tickets_otorgados"]!!.jsonPrimitive.content)
         assertTrue(stub.of("GET", "idempotency_key=eq.report-reward%3A$reportId").isNotEmpty())
     }
 
@@ -492,5 +561,32 @@ class Master6AdminL2Loop6Test {
         val badId = postJson("/api/v1/admin/usuarios/$user/roles", """{"roleIds":["$roleUsuario"],"expectedRoleIds":["no-uuid"]}""")
         assertEquals(HttpStatusCode.BadRequest, badId.status)
         assertEquals(2, stub.rpcCalls("admin_sync_roles_audited"))
+    }
+
+    /**
+     * MASTER6-IDEM-003 (mitigacion sin migracion): la precondicion pasa antes del cerrojo, pero la RPC lee BAJO el cerrojo
+     * otro conjunto (otra sincronizacion entro en la ventana). La escritura no se puede impedir sin migracion; queda en la
+     * fila DURADERA de resultado, no solo en un WARN.
+     */
+    @Test
+    fun aPreconditionRacedUnderTheLockIsRecordedInTheDurableOutcomeRow() = testApplication {
+        val superadmin = "aaaaaaaa-0000-4000-8000-00000000000a"
+        val stub = Stub().apply { rolesOfUser = """["$roleUsuario"]"""; lockedAntes = """["$roleUsuario","$superadmin"]""" }
+        application { adminModule(gateway(stub)) }
+        val response = postJson("/api/v1/admin/usuarios/$user/roles", """{"roleIds":["$roleUsuario"],"expectedRoleIds":["$roleUsuario"]}""")
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        val outcome = stub.of("POST", "/rest/v1/auditoria_log").map { it.body }.single { "roleIdsSolicitados" in it }
+        assertTrue(""""precondicionViolada":true""" in outcome, outcome)
+        assertTrue("roleIdsEsperados" in outcome && superadmin in outcome, outcome)
+    }
+
+    @Test
+    fun aPreconditionThatHoldsUnderTheLockIsNotFlagged() = testApplication {
+        val stub = Stub().apply { rolesOfUser = """["$roleUsuario"]""" }
+        application { adminModule(gateway(stub)) }
+        val response = postJson("/api/v1/admin/usuarios/$user/roles", """{"roleIds":["$roleUsuario"],"expectedRoleIds":["$roleUsuario"]}""")
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        val outcome = stub.of("POST", "/rest/v1/auditoria_log").map { it.body }.single { "roleIdsSolicitados" in it }
+        assertFalse("precondicionViolada" in outcome, outcome)
     }
 }

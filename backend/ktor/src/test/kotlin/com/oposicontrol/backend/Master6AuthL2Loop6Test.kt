@@ -268,30 +268,54 @@ class Master6AuthL2Loop6Test {
 
     private fun verifier() = SupabaseJwtVerifier(baseUrl, Json { ignoreUnknownKeys = true }, java.net.http.HttpClient.newHttpClient(), fetchTimeout = Duration.ofSeconds(3))
 
-    /** Primera rafaga en frio con una descarga lenta: [first] descarga, [others] esperan al lock. */
-    private fun coldBurst(v: SupabaseJwtVerifier, token: String, others: Int): List<Throwable?> {
+    /**
+     * Rotacion: cache caliente con k1; Supabase pasa a firmar con k2. Un hilo descarga (lento, mas que
+     * [JWKS_REFRESH_LOCK_WAIT_MS]) y llega una rafaga con el MISMO k2. Una sola descarga las resuelve a todas: antes, todas
+     * menos la que descargaba salian con 503 a los 250 ms.
+     */
+    @Test
+    fun aRotationBurstWithTheNewKidWaitsForTheSingleInFlightFetchInsteadOf503() {
+        val (results, fetchHits) = rotationBurst(burstKid = "k2")
+        results.forEach { assertEquals(null, it, "la clave nueva verifica para toda la rafaga: $results") }
+        assertEquals(1, fetchHits, "una sola descarga para toda la rafaga")
+    }
+
+    /** MASTER5-SEC-001 sigue en pie: un `kid` DISTINTO del que se descarga no espera la descarga, 503 a los 250 ms. */
+    @Test
+    fun aDifferentUnknownKidDuringTheRotationFetchStillGetsTheBounded503() {
+        val (results, _) = rotationBurst(burstKid = "forged")
+        results.forEach { assertIs<IOException>(it, "kid ajeno a la descarga en curso: 503 reintentable") }
+    }
+
+    private fun rotationBurst(burstKid: String): Pair<List<Throwable?>, Int> {
+        var now = 1_000_000L
+        val k1 = newKey()
+        val k2 = newKey()
+        jwksBody = jwks("k1", k1)
+        val v = SupabaseJwtVerifier(baseUrl, Json { ignoreUnknownKeys = true }, java.net.http.HttpClient.newHttpClient(), fetchTimeout = Duration.ofSeconds(3), clock = { now })
+        assertEquals(uid, v.subFrom(tokenFor("k1", k1)))
+        val w1 = (k1.public as ECPublicKey).w
+        val w2 = (k2.public as ECPublicKey).w
+        jwksBody = """{"keys":[{"kty":"EC","crv":"P-256","kid":"k1","x":"${b64(w1.affineX)}","y":"${b64(w1.affineY)}"},""" +
+            """{"kty":"EC","crv":"P-256","kid":"k2","x":"${b64(w2.affineX)}","y":"${b64(w2.affineY)}"}]}"""
+        now += 10_000 // fuera de la ventana anti-tormenta
         hang = true
-        val pool = Executors.newFixedThreadPool(others + 1)
+        val before = hits.get()
+        val pool = Executors.newFixedThreadPool(9)
         try {
-            val first = pool.submit<Throwable?> { runCatching { v.subFrom(token) }.exceptionOrNull() }
+            val fetcher = pool.submit<Throwable?> { runCatching { v.subFrom(tokenFor("k2", k2)) }.exceptionOrNull() }
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
-            while (hits.get() < 1 && System.nanoTime() < deadline) Thread.onSpinWait()
-            val rest = (1..others).map { pool.submit<Throwable?> { runCatching { v.subFrom(token) }.exceptionOrNull() } }
-            val restResults = rest.map { it.get(10, TimeUnit.SECONDS) }
+            while (hits.get() == before && System.nanoTime() < deadline) Thread.onSpinWait()
+            val burstToken = if (burstKid == "k2") tokenFor("k2", k2) else tokenFor(burstKid, newKey())
+            val burst = (1..8).map { pool.submit<Throwable?> { runCatching { v.subFrom(burstToken) }.exceptionOrNull() } }
+            // La descarga tarda MAS que la espera acotada del lock.
+            Thread.sleep(JWKS_REFRESH_LOCK_WAIT_MS + 400)
             release.countDown()
-            return listOf(first.get(10, TimeUnit.SECONDS)) + restResults
+            val results = listOf(fetcher.get(10, TimeUnit.SECONDS)) + burst.map { it.get(10, TimeUnit.SECONDS) }
+            return (if (burstKid == "k2") results else results.drop(1)) to (hits.get() - before)
         } finally {
             pool.shutdownNow()
         }
-    }
-
-    @Test
-    fun withoutWarmUpAColdBurstDuringASlowFetchStillGets503s() {
-        val key = newKey()
-        jwksBody = jwks("k1", key)
-        val results = coldBurst(verifier(), tokenFor("k1", key), others = 3)
-        assertEquals(null, results.first(), "el que descarga verifica")
-        results.drop(1).forEach { assertIs<IOException>(it, "control negativo: sin precarga, 503 reintentable") }
     }
 
     @Test

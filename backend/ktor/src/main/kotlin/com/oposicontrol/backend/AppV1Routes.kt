@@ -182,6 +182,15 @@ internal const val JWKS_STALE_REFRESH_BACKOFF_MS = 60_000L
 internal const val JWKS_REFRESH_LOCK_WAIT_MS = 250L
 
 /**
+ * MASTER6-AUTH-008 (cierre loop 6): cuantas peticiones con EL MISMO `kid` que esta descargando otro hilo pueden esperar
+ * a que esa descarga termine (acotada por [JWKS_FETCH_TIMEOUT]) en vez de salir con 503 tras
+ * [JWKS_REFRESH_LOCK_WAIT_MS]. Es una rotacion de claves: una sola descarga las resuelve a todas. El tope es la cuarta
+ * parte de los 64 hilos por defecto de `Dispatchers.IO` (donde corre [withUpstreamIo]) para que una avalancha con un
+ * `kid` inventado repetido no aparque el pool entero (MASTER5-SEC-001); por encima del tope, 503 reintentable como antes.
+ */
+internal const val JWKS_SAME_KID_WAITERS_MAX = 16
+
+/**
  * Rechazo ESPERADO de un token (sin `kid`, `kid` desconocido con un JWKS sano, sin `sub`). Extiende
  * [IllegalStateException] como el `error()` al que sustituye, para que el tipo visible no cambie.
  */
@@ -336,14 +345,55 @@ class SupabaseJwtVerifier(
             // MASTER6-AUTH-008: la descarga ajena pudo publicar ya la clave (las claves se publican ANTES de soltar el
             // lock): si esta en cache, se sirve en vez de un 503.
             if (keys[kid] != null) return
+            if (awaitInFlightFetchOf(kid)) return
             throw java.io.IOException("JWKS: refresco en curso")
         }
         try {
             // MASTER6-AUTH-008: quien esperaba al lock vuelve a mirar la cache antes de descargar otra vez.
             if (keys[kid] != null) return
-            refreshLocked()
+            val fetch = InFlightFetch(kid)
+            inFlight = fetch
+            try {
+                refreshLocked()
+            } finally {
+                inFlight = null
+                fetch.done.countDown()
+            }
         } finally {
             refreshLock.unlock()
+        }
+    }
+
+    /** MASTER6-AUTH-008: la descarga por `kid` desconocido en curso (si hay) y la senal de que termino. */
+    private class InFlightFetch(val kid: String) {
+        val done = java.util.concurrent.CountDownLatch(1)
+    }
+
+    @Volatile private var inFlight: InFlightFetch? = null
+    private val sameKidWaiters = java.util.concurrent.Semaphore(JWKS_SAME_KID_WAITERS_MAX)
+
+    /**
+     * MASTER6-AUTH-008 (rotacion): si la descarga en curso es por ESTE mismo `kid`, se espera a que termine (como mucho
+     * [fetchTimeout], que ya acota esa descarga) en vez de 503: una sola descarga resuelve toda la rafaga de la clave
+     * nueva. Un `kid` distinto, o el cupo [JWKS_SAME_KID_WAITERS_MAX] agotado, devuelve `false` (503 como antes,
+     * MASTER5-SEC-001). Si la descarga fallo y la clave no esta, se relanza ese fallo (503), no un 401.
+     */
+    private fun awaitInFlightFetchOf(kid: String): Boolean {
+        val fetch = inFlight ?: return false
+        if (fetch.kid != kid) return false
+        if (!sameKidWaiters.tryAcquire()) return false
+        try {
+            val finished = try {
+                fetch.done.await(fetchTimeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                throw java.io.InterruptedIOException("espera del refresco del JWKS interrumpida").apply { initCause(interrupted) }
+            }
+            if (!finished) return false
+            if (keys[kid] == null) lastFailure?.let { throw java.io.IOException(it.message, it) }
+            return true
+        } finally {
+            sameKidWaiters.release()
         }
     }
 
