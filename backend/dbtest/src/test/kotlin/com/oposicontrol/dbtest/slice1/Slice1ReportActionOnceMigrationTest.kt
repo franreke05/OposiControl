@@ -1,6 +1,7 @@
 package com.oposicontrol.dbtest.slice1
 
 import com.oposicontrol.dbtest.PostgresHarness
+import com.oposicontrol.dbtest.SupabaseFixture.MODERADOR
 import com.oposicontrol.dbtest.SupabaseFixture.USER_A
 import com.oposicontrol.dbtest.SupabaseFixture.USER_B
 import com.oposicontrol.dbtest.SupabaseFixture.USER_C
@@ -56,7 +57,73 @@ class Slice1ReportActionOnceMigrationTest {
         create index idx_acciones_moderacion_reporte_id on public.acciones_moderacion (reporte_id);
         alter table public.acciones_moderacion enable row level security;
         alter table public.reportes_contenido enable row level security;
+        -- Round 4: RLS, grants, helper y trigger de MAIN tal cual (baseline_main.sql 3523, 3636, 3754-3755, 3820-3823,
+        -- 4076-4079; es_moderador_o_admin y establecer_actualizado_en de supabase/baseline/main_shape_subset.sql).
+        grant usage on schema auth to anon, authenticated, service_role;
+        grant usage on schema public to anon, authenticated, service_role;
+        create or replace function public.es_moderador_o_admin() returns boolean
+        language sql stable security definer set search_path to ''
+        as ${'$'}${'$'}
+          select exists (
+            select 1 from public.roles_usuario ru join public.roles_app ra on ra.id = ru.rol_id
+            where ru.usuario_id = auth.uid() and ra.codigo in ('superadmin', 'admin', 'moderador')
+          );
+        ${'$'}${'$'};
+        create or replace function public.establecer_actualizado_en() returns trigger
+        language plpgsql set search_path to 'public'
+        as ${'$'}${'$'}
+        begin
+            new.actualizado_en = now();
+            return new;
+        end;
+        ${'$'}${'$'};
+        create trigger trg_reportes_contenido_actualizado_en before update on public.reportes_contenido
+          for each row execute function public.establecer_actualizado_en();
+        create policy acciones_moderacion_staff_all on public.acciones_moderacion as permissive for all to authenticated
+          using (public.es_moderador_o_admin()) with check (public.es_moderador_o_admin());
+        create policy reportes_contenido_insert_auth on public.reportes_contenido as permissive for insert to authenticated
+          with check ((reportado_por = ( select auth.uid() as uid)));
+        create policy reportes_contenido_select_staff on public.reportes_contenido as permissive for select to authenticated
+          using (public.es_moderador_o_admin());
+        revoke all on table public.acciones_moderacion from public, anon, authenticated, service_role;
+        grant select on table public.acciones_moderacion to anon;
+        grant delete, insert, references, select, trigger, truncate, update on table public.acciones_moderacion to authenticated, service_role;
+        revoke all on table public.reportes_contenido from public, anon, authenticated, service_role;
+        grant select on table public.reportes_contenido to anon;
+        grant delete, insert, references, select, trigger, truncate, update on table public.reportes_contenido to authenticated, service_role;
     """.trimIndent()
+
+    /** WITH CHECK de MAIN de `reportes_contenido_insert_auth` (deparse de baseline_main.sql 3754). */
+    private val insertAuthMain = "(reportado_por = ( SELECT auth.uid() AS uid))"
+
+    private fun Connection.politicaInsert(): String? = unico(
+        "select pg_get_expr(polwithcheck, polrelid) from pg_policy where polrelid = 'public.reportes_contenido'::regclass " +
+            "and polname = 'reportes_contenido_insert_auth'",
+    )
+
+    /**
+     * Sentencia como cliente REAL de PostgREST: `set local role` + claim `sub` en su propia transaccion. Devuelve las
+     * filas afectadas o el error (la transaccion se deshace).
+     */
+    private fun Connection.comoCliente(sub: String?, sql: String, rol: String = "authenticated"): Result<Int> {
+        ejecutar("begin")
+        return try {
+            ejecutar("set local role $rol")
+            ejecutar("select set_config('request.jwt.claim.sub', '${sub ?: ""}', true)")
+            val n = createStatement().use { it.executeUpdate(sql) }
+            ejecutar("commit")
+            Result.success(n)
+        } catch (e: SQLException) {
+            runCatching { ejecutar("rollback") }
+            Result.failure(e)
+        }
+    }
+
+    private fun Result<Int>.sqlState(): String? = (exceptionOrNull() as SQLException?)?.sqlState
+
+    private fun insertCliente(columnas: String = "", valores: String = "", reportadoPor: String? = USER_A) =
+        "insert into public.reportes_contenido (tipo_entidad, entidad_id, motivo, reportado_por$columnas) values " +
+            "('publicacion_oposired', gen_random_uuid(), 'spam', ${reportadoPor?.let { "'$it'" } ?: "null"}$valores)"
 
     private fun <T> escenario(conMigracion: Boolean = true, bloque: (Connection) -> T): T = PostgresHarness.escenario { c ->
         c.ejecutar(mainShapes)
@@ -292,8 +359,9 @@ class Slice1ReportActionOnceMigrationTest {
     fun soloServiceRoleDefinerConSearchPathFijoYRollbackIdempotente(): Unit = escenario { c ->
         fun verify() = c.filas(Slice0Db.verifyDe(migracion)).associate { it[0]!! to it[1]!!.toLong() }
         val v = verify()
-        // Round 3: + report_action_marker_column_missing (la marca en vuelo).
-        assertEquals(4, v.size, v.toString())
+        // Round 3: + report_action_marker_column_missing (la marca en vuelo). Round 4 (cambio DELIBERADO, 4 -> 6):
+        // + report_insert_policy_not_pending_only y report_client_write_policy_widened (politica de INSERT endurecida).
+        assertEquals(6, v.size, v.toString())
         assertTrue(v.values.all { it == 0L }, "VERIFY: $v")
         assertEquals("true", c.unico("select has_function_privilege('service_role', '$fn', 'execute')::text"))
         assertEquals("false", c.unico("select has_function_privilege('anon', '$fn', 'execute')::text"))
@@ -307,15 +375,166 @@ class Slice1ReportActionOnceMigrationTest {
         assertEquals("42501", (denegado.exceptionOrNull() as PSQLException?)?.sqlState)
 
         c.ejecutar(Slice0Db.rollbackDe(migracion))
+        assertEquals(insertAuthMain, c.politicaInsert(), "el rollback restaura el WITH CHECK de MAIN byte a byte")
         assertNull(c.unico("select to_regprocedure('$fn')::text"))
         assertEquals(1L, verify()["report_action_function_missing"])
         assertEquals(1L, verify()["report_action_marker_column_missing"])
         assertEquals("0", c.unico("select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'reportes_contenido' and column_name = 'accion_pendiente'"))
         assertEquals(1L, c.unico("select count(*) from public.reportes_contenido where id = '$reporte'")!!.toLong(), "el rollback no borra filas")
         assertNotNull(c.unico("select to_regclass('public.idx_acciones_moderacion_reporte_id')::text"), "el rollback no toca el indice")
+        c.ejecutar(Slice0Db.rollbackDe(migracion)) // el rollback es re-ejecutable
+        assertEquals(insertAuthMain, c.politicaInsert())
         c.aplicar(migracion)
         c.aplicar(migracion)
         assertTrue(verify().values.all { it == 0L })
+    }
+
+    /**
+     * Round 4 (gate MEDIUM a): un cliente autenticado solo puede insertar un reporte PENDIENTE propio con todas las
+     * columnas del servidor en su default. Antes (`git show HEAD`, politica de MAIN `reportado_por = auth.uid()`) el
+     * reporte falsificado ya cerrado por un moderador y con la marca en vuelo se insertaba y la RPC lo "reanudaba".
+     */
+    @Test
+    fun unClienteSoloInsertaUnReportePendientePropioConLasColumnasDelServidorPorDefecto(): Unit = escenario { c ->
+        val legitimo = c.comoCliente(USER_A, insertCliente())
+        assertEquals(1, legitimo.getOrThrow(), "el flujo legitimo del reportante sigue funcionando")
+        val forjados = mapOf(
+            "cierre forjado completo (gate R1)" to insertCliente(
+                ", estado, revisado_por, revisado_en, accion_pendiente",
+                ", 'resuelto', '$USER_B', now(), true",
+            ),
+            "cerrado" to insertCliente(", estado", ", 'resuelto'"),
+            "descartado" to insertCliente(", estado", ", 'descartado'"),
+            "revisado" to insertCliente(", estado", ", 'revisado'"),
+            "revisor" to insertCliente(", revisado_por", ", '$USER_B'"),
+            "revisado_en" to insertCliente(", revisado_en", ", now()"),
+            "en vuelo" to insertCliente(", accion_pendiente", ", true"),
+            "tickets" to insertCliente(", tickets_otorgados", ", 5"),
+            "recompensa" to insertCliente(", recompensa_entregada", ", true"),
+            "de otro" to insertCliente(reportadoPor = USER_B),
+            "sin reportante" to insertCliente(reportadoPor = null),
+        )
+        for ((caso, sql) in forjados) {
+            assertEquals("42501", c.comoCliente(USER_A, sql).sqlState(), caso)
+        }
+        assertEquals("42501", c.comoCliente(null, insertCliente(), rol = "anon").sqlState(), "anon no inserta")
+        assertEquals(1L, c.unico("select count(*) from public.reportes_contenido")!!.toLong())
+        assertEquals(
+            "pendiente|null|f|0|f",
+            c.unico(
+                "select concat_ws('|', estado, coalesce(revisado_por::text, 'null'), accion_pendiente, tickets_otorgados, " +
+                    "recompensa_entregada) from public.reportes_contenido",
+            ),
+        )
+        // La RPC rechaza el unico reporte que un cliente puede crear: abierto y sin marca.
+        val id = c.unico("select id::text from public.reportes_contenido")!!
+        assertFalse(c.registrar("resuelto", USER_B, id = id).getOrThrow())
+        assertFalse(c.registrar("resuelto", null, id = id).getOrThrow())
+        assertEquals(0L, c.unico("select count(*) from public.acciones_moderacion")!!.toLong())
+    }
+
+    /**
+     * Round 4 (auditoria a): ningun rol cliente (reportante, staff, anon) puede UPDATE/DELETE del reporte (no hay
+     * politica de UPDATE/DELETE en MAIN) y una accion insertada por staff via `acciones_moderacion_staff_all` no
+     * completa ni falsifica una resolucion: solo decide la marca.
+     */
+    @Test
+    fun ningunClienteCambiaElEstadoNiLaMarcaYUnaAccionDeStaffNoFalsificaUnaResolucion(): Unit = escenario { c ->
+        c.ejecutar("insert into public.roles_usuario (usuario_id, rol_id) values ('$USER_B', '$MODERADOR')")
+        c.comoCliente(USER_A, insertCliente()).getOrThrow()
+        val id = c.unico("select id::text from public.reportes_contenido")!!
+        val forja = "update public.reportes_contenido set estado = 'resuelto', revisado_por = '$USER_B', revisado_en = now(), " +
+            "accion_pendiente = true, tickets_otorgados = 5, recompensa_entregada = true where id = '$id'"
+        assertEquals(0, c.comoCliente(USER_A, forja).getOrThrow(), "el reportante no actualiza")
+        assertEquals(0, c.comoCliente(USER_B, forja).getOrThrow(), "el staff tampoco: no hay politica de UPDATE")
+        assertEquals(0, c.comoCliente(USER_B, "delete from public.reportes_contenido where id = '$id'").getOrThrow())
+        assertEquals("42501", c.comoCliente(null, forja, rol = "anon").sqlState(), "anon sin privilegio de UPDATE")
+        assertEquals(
+            "42501",
+            c.comoCliente(USER_A, "insert into public.acciones_moderacion (reporte_id, moderador_id, tipo_accion) values ('$id', '$USER_A', 'ocultar')").sqlState(),
+            "un no-staff no inserta acciones",
+        )
+        // Staff por la politica de MAIN (residual documentado): la fila existe pero no es la resolucion.
+        assertEquals(
+            1,
+            c.comoCliente(USER_B, "insert into public.acciones_moderacion (reporte_id, moderador_id, tipo_accion) values ('$id', '$USER_B', 'ocultar')").getOrThrow(),
+        )
+        assertEquals(
+            "pendiente|null|f",
+            c.unico("select concat_ws('|', estado, coalesce(revisado_por::text, 'null'), accion_pendiente) from public.reportes_contenido where id = '$id'"),
+        )
+        assertFalse(c.registrar("resuelto", USER_B, id = id).getOrThrow(), "la RPC no completa nada")
+        assertEquals(1L, c.unico("select count(*) from public.acciones_moderacion")!!.toLong())
+    }
+
+    /**
+     * Gate INFO c (documentado en la cabecera): limpiar la marca es un UPDATE, asi que el trigger de MAIN
+     * `trg_reportes_contenido_actualizado_en` mueve `actualizado_en`; nada mas cambia.
+     */
+    @Test
+    fun registrarMueveActualizadoEnPorElTriggerYNadaMas(): Unit = escenario { c ->
+        c.reporteCerrado("resuelto", USER_A)
+        c.ejecutar("alter table public.reportes_contenido disable trigger trg_reportes_contenido_actualizado_en")
+        c.ejecutar("update public.reportes_contenido set actualizado_en = now() - interval '1 day' where id = '$reporte'")
+        c.ejecutar("alter table public.reportes_contenido enable trigger trg_reportes_contenido_actualizado_en")
+        val antes = c.unico("select concat_ws('|', estado, revisado_por, revisado_en, tickets_otorgados, recompensa_entregada) from public.reportes_contenido")
+        assertTrue(c.registrar("resuelto", USER_A).getOrThrow())
+        assertEquals("true", c.unico("select (actualizado_en > now() - interval '1 hour')::text from public.reportes_contenido"))
+        assertEquals(antes, c.unico("select concat_ws('|', estado, revisado_por, revisado_en, tickets_otorgados, recompensa_entregada) from public.reportes_contenido"))
+    }
+
+    /**
+     * Round 4 (gate LOW b): una `accion_pendiente` previa boolean NOT NULL con default distinto de false, o con alguna
+     * fila historica ya en true, haria reanudables cierres historicos: el preflight falla cerrado y no crea nada.
+     */
+    @Test
+    fun preflightRechazaUnaMarcaPreexistenteConDefaultTrueOConFilasHistoricasEnTrue(): Unit = escenario(conMigracion = false) { c ->
+        c.ejecutar("alter table public.reportes_contenido add column accion_pendiente boolean not null default true")
+        val conDefaultTrue = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
+        runCatching { c.ejecutar("rollback") }
+        c.autoCommit = true
+        assertEquals("REPORT_ACTION_PREFLIGHT", conDefaultTrue?.serverErrorMessage?.message)
+        assertNull(c.unico("select to_regprocedure('$fn')::text"))
+        assertEquals(insertAuthMain, c.politicaInsert(), "nada creado ni alterado")
+
+        c.ejecutar("alter table public.reportes_contenido alter column accion_pendiente set default false")
+        c.reporteAbierto("7e7e7e7e-0000-4000-8000-0000000000b1")
+        c.reporteAbierto("7e7e7e7e-0000-4000-8000-0000000000b2")
+        c.ejecutar("update public.reportes_contenido set accion_pendiente = true where id = '7e7e7e7e-0000-4000-8000-0000000000b1'")
+        val conHistorica = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
+        runCatching { c.ejecutar("rollback") }
+        assertEquals("REPORT_ACTION_PREFLIGHT", conHistorica?.serverErrorMessage?.message, "b1 historica ya en true")
+        assertNull(c.unico("select to_regprocedure('$fn')::text"))
+
+        // Control: la misma columna exacta sin ninguna fila en true se reutiliza.
+        c.ejecutar("update public.reportes_contenido set accion_pendiente = false")
+        c.aplicar(migracion)
+        assertNotNull(c.unico("select to_regprocedure('$fn')::text"))
+    }
+
+    /** Round 4 (b): en una re-ejecucion (funcion ya instalada) las marcas en vuelo legitimas no bloquean ni se tocan. */
+    @Test
+    fun reejecutarConResolucionesEnVueloEsIdempotente(): Unit = escenario { c ->
+        c.reporteCerrado("resuelto", USER_A)
+        c.aplicar(migracion)
+        assertEquals("true", c.marca())
+        assertTrue(c.registrar("resuelto", USER_A).getOrThrow())
+    }
+
+    /** Round 4 (a): sin la politica de MAIN, o con otra politica permisiva de INSERT, endurecerla no cerraria nada. */
+    @Test
+    fun preflightExigeQueLaPoliticaDeInsertSeaLaUnicaVia(): Unit = escenario(conMigracion = false) { c ->
+        c.ejecutar("create policy reportes_contenido_insert_extra on public.reportes_contenido for insert to authenticated with check (true)")
+        val extra = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
+        runCatching { c.ejecutar("rollback") }
+        c.autoCommit = true
+        assertEquals("REPORT_ACTION_PREFLIGHT", extra?.serverErrorMessage?.message)
+        c.ejecutar("drop policy reportes_contenido_insert_extra on public.reportes_contenido")
+        c.ejecutar("drop policy reportes_contenido_insert_auth on public.reportes_contenido")
+        val sinPolitica = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
+        runCatching { c.ejecutar("rollback") }
+        assertEquals("REPORT_ACTION_PREFLIGHT", sinPolitica?.serverErrorMessage?.message)
+        assertNull(c.unico("select to_regprocedure('$fn')::text"))
     }
 
     @Test
