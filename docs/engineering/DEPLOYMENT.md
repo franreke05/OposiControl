@@ -32,12 +32,26 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
 - `ops/deploy/Dockerfile.backend` copia `backend/ktor/build/install/ktor` (resultado de `installDist`);
   `.dockerignore` deja fuera todo lo demas del contexto.
 - CI (MASTER7-CICD-002): el job `backend-image` de `.github/workflows/ci.yml` ejecuta `bash scripts/build-backend-image.sh` y
-  despues `bash scripts/smoke-backend-image.sh` (uid 10001, `/app` no escribible, `/tmp` escribible y `/health/live` = 200 con
-  variables de relleno, sin secretos, sin push ni despliegue). No sustituye la comprobacion con el entorno REAL de la seccion
+  despues `bash scripts/smoke-backend-image.sh` (etiqueta `org.opencontainers.image.revision` = commit, uid 10001, `/app` no
+  escribible, `/tmp` escribible y `/health/live` = 200 en los perfiles `combined` y `SERVER_PROFILE=consumer`, este ultimo con
+  `APP_ENV=development` solo para la comprobacion de arranque; falla al momento si el contenedor muere; variables de relleno,
+  sin secretos, sin push ni despliegue). No sustituye la comprobacion con el entorno REAL de la seccion
   Desplegar (`/health/ready` = 200).
 - Dependencias (MASTER7-CICD-005): `gradle/verification-metadata.xml` fija el sha256 de cada artefacto y la verificacion es
-  estricta. Tras subir una dependencia: `./gradlew --write-verification-metadata sha256 <tareas de CI> --no-configuration-cache`
-  y revisar el diff. `tools/redocly/package-lock.json` fija la herramienta de lint de OpenAPI.
+  estricta. Tras subir una dependencia se regenera EN LINUX (CI-GRADLE-VERIF; en Windows faltan variantes Linux), p. ej. en
+  `eclipse-temurin:21-jdk-jammy` como uid no root (embedded-postgres de `:backend:dbtest` no arranca como root), con
+  `ANDROID_HOME` apuntando a un SDK y un `GRADLE_USER_HOME` vacio, con EXACTAMENTE la lista del paso de deriva del job `tests`:
+  `./gradlew --no-configuration-cache --write-verification-metadata sha256 :backend:ktor:dependencies --configuration runtimeClasspath :composeApp:dependencies --configuration jvmRuntimeClasspath :backend:ktor:installDist :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest`
+  (si `dependency-audit` audita mas configuraciones se anaden aqui y en CI). `dependency-audit` audita contra OSV el
+  `runtimeClasspath` del backend y el `jvmRuntimeClasspath` del cliente admin (`scripts/osv-ignore.json` vacio); el
+  `releaseRuntimeClasspath` Android queda como seguimiento y las klibs de iOS fuera de alcance (no son coordenadas Maven).
+  El diff debe ser solo de altas: un sha256 distinto para una coordenada existente es una senal de cadena de suministro que se
+  investiga, no se acepta. CI repite ese comando y exige `git diff --exit-code`. Fuera de esa lista quedan iOS, MSI/DMG y el
+  release Android: necesitan su propio `--write-verification-metadata` la primera vez que se usen. `:composeApp:createDistributable`
+  (jlink + jpackage app-image, CI-OC-RELEASE) ya tiene sus artefactos (generados en Linux) y lo verifica en estricto el job
+  `desktop-release-linux`; si cambia la version de Compose se regenera tambien con
+  `./gradlew --no-configuration-cache --write-verification-metadata sha256 :composeApp:createDistributable -PoposiProduction=true`.
+  `tools/redocly/package-lock.json` fija la herramienta de lint de OpenAPI.
 - La base `eclipse-temurin:21-jre-jammy` esta fijada por digest. Para actualizarla:
   `docker buildx imagetools inspect eclipse-temurin:21-jre-jammy`, cambiar el digest y revisar.
 
@@ -62,8 +76,11 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
    sin ella recibe PGRST202); en rollback, primero el Ktor de loop 4 y despues la 101850.
    Migraciones antes del Ktor de la remediacion completa: `20260930101900_admin_sync_roles_audited_expected.sql` (D1-26 llama a la
    sobrecarga de 4 argumentos con `p_expected_role_ids`, MASTER6-IDEM-003) y `20260930102000_slice1_report_action_once.sql`
-   (`resolverReporte` escribe la accion con `admin_record_report_action`, MASTER6-API-001); sin ellas: PGRST202 en D1-26 y la
-   resolucion queda incompleta (reanudable) en la ultima escritura. En rollback, primero ese Ktor y despues 102000/101900.
+   (`resolverReporte` marca `reportes_contenido.accion_pendiente` en su compare-and-set y escribe la accion con
+   `admin_record_report_action`, MASTER6-API-001); sin ellas: PGRST202 en D1-26 y el compare-and-set de la resolucion falla
+   (columna desconocida) antes de escribir. En rollback, primero ese Ktor y despues 102000/101900 (el ROLLBACK de 102000 borra
+   tambien la columna `accion_pendiente`). Los cierres historicos (Ktor viejo: accion ANTES del PATCH con `revisado_en`) leen
+   la marca en false y nunca se reanudan.
    La garantia "una accion por resolucion" de 102000 solo vale cuando el Ktor nuevo es el unico escritor de resoluciones: el
    Ktor viejo (POST directo a `acciones_moderacion`) y el staff por la politica `acciones_moderacion_staff_all` no toman el
    cerrojo del reporte. Por eso el Ktor viejo se para ANTES de migrar y no se rearranca despues (residual en
@@ -96,4 +113,18 @@ roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compati
 - `/health/ready` solo comprueba Supabase; una sonda de marcador de esquema requiere aprobacion
   del owner del contrato (D8-08 congelado).
 - CI (`.github/workflows/ci.yml`) verifica tests, lint OpenAPI y `scripts/verify-ops-config.sh`;
-  `dbtest` corre sobre PostgreSQL 16 embebido (zonky); la validacion PG17 sigue siendo el gate local Supabase.
+  `dbtest` corre sobre PostgreSQL 16 embebido (zonky). DB-CI-PG17: el job `db-pg17` aplica las migraciones pendientes
+  (`supabase/baseline/PENDING_MIGRATIONS.txt` = `2026092810*` + `SLICE1_MIGRATIONS.txt`) sobre PostgreSQL 17 (imagen Supabase
+  fijada por digest) cargado SOLO con la forma de MAIN que tocan (`supabase/baseline/main_shape_subset.sql`), con VERIFY = 0,
+  `assertions.sql` y rollback/re-aplicacion, mas su control negativo; NO carga el baseline completo de MAIN (decision del owner
+  pendiente), asi que el gate local Supabase completo (baseline 55/55, schemadiff, e2e) sigue siendo el gate previo al despliegue.
+  Cobertura y limites: `supabase/baseline/README.md`. CI-OC-RELEASE: el job `desktop-release-linux` construye
+  `:composeApp:createDistributable` y exige java.sql/java.management/java.instrument/jdk.unsupported/jdk.crypto.ec en el runtime
+  embebido (`scripts/verify-desktop-runtime-modules.sh`); MSI (Windows), DMG y el release Android (R8) siguen fuera de CI.
+
+## Notas de la ronda 3 (remediacion completa, 2026-10-01)
+
+- Migraciones `20260930101900` y `20260930102000`: son NUEVAS y no estan publicadas, asi que se enmendaron EN SITIO (respecto al historial publicado siguen siendo solo hacia delante). Sus hashes de `SLICE_1_PRODUCTION_GATE.md` se calculan UNA vez sobre el blob del commit a desplegar (`NEW_SHA`); antes de desplegar se repite el gate PG17 local completo. La 101900 ya no lee `auth.users` (delega en la guarda de `admin_sync_roles(uuid, uuid[])`); la 102000 usa la columna `reportes_contenido.accion_pendiente` y no una clave de tiempo.
+- Ktor viejo y la 102000 (hechos verificados con `git show main:`): `resolverReporte` viejo insertaba la accion PRIMERO y despues hacia el PATCH con `revisado_en` (reloj de Ktor), sin guarda de estado; por eso todo cierre historico lee `accion_pendiente = false` y nunca se reanuda. Parar el Ktor viejo ANTES de migrar y no rearrancarlo: un Ktor viejo que re-resolviera un reporte en vuelo anadiria una accion sin limpiar la marca.
+- `OPOSICONTROL_ENABLE_BACKEND_RESTART=true` ya no habilita el reinicio fuera de un `APP_ENV` de desarrollo y `/health` solo publica `restartEnabled` en desarrollo. Tras desplegar el Ktor nuevo, comprobar que `/health` no lleva esa clave y quitar la variable del entorno del servidor.
+- Los jobs `db-pg17`, `desktop-release-linux`, la deriva de `verification-metadata.xml` y las pruebas POSIX solo se ejercitan en el CI de Linux; hasta su primera ejecucion no cuentan como prueba (B-28 en `SLICE_1_OPEN_BLOCKERS.md` de OposiBot).

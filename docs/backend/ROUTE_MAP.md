@@ -35,3 +35,17 @@ Estado: contratos observados en código; Supabase live `READ_ONLY_VERIFIED` para
 
 - `accion` en el cable: `descartar`, `ocultar`, `restaurar`, `eliminar`, `advertir`, `bloquear_usuario` (valores del CHECK `acciones_moderacion.tipo_accion`) y los alias de los clientes vivos `avisar` -> `advertir`, `banear` -> `bloquear_usuario`, `resuelto_sin_accion` -> `descartar` (etiqueta neutra del CHECK; el estado del reporte es `resuelto`). Cualquier otro valor: 422 `REPORT_ACTION_INVALID` sin lecturas ni escrituras.
 - `descartar` con `ticketsReporter > 0` es contradictorio: 422 `WALLET_AMOUNT_INVALID` (decision deliberada, sin efectos). La UI (lane OC) no debe ofrecer recompensa al descartar; hasta entonces el moderador recibe ese 422.
+
+## Inventario determinista y excepciones del OpenAPI (2026-10-01)
+
+El mapa de arriba ya no se mantiene a mano como unica fuente: el arbol REAL de rutas se vuelca a `ops/inventory/routes.combined.txt`
+y `routes.consumer.txt` (`RouteInventoryTest`) y se compara en cada ejecucion. Las rutas servidas que el OpenAPI congelado
+(`openapi/`, sin tocar) no declara estan enroladas una a una en `ops/inventory/undocumented-routes.tsv` con clase
+(`LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING`, `ADMIN_CONTRACT_GAP`, `INFRA`, `DEV_ONLY`), referencia a `LegacyEndpoint`/EP y
+sucesor, consumidor (`OC`/`OB`/`BOTH`/`NONE`) y evidencia. No es una especificacion ni inventa semantica: la lista solo puede
+encogerse (fila obsoleta o ya documentada = fallo; `# max:` no crece sin editarlo). Una ruta de consumidor, auth, compartida o de salud
+nueva no entra sin esa revision deliberada. No se borra ninguna ruta; la clasificacion legacy esta en
+`docs/integration/api-redesign/LEGACY_ROUTE_REGISTER.md` y la de DTOs en `docs/integration/DTO_CLASSIFICATION.md`. `/metrics` esta
+documentado (D8-09, token o anonimo, tal cual `PrometheusMetrics.kt`); queda como residual de despliegue que `METRICS_SCRAPE_TOKEN`
+este definido en produccion y que Caddy devuelva 404 a `/metrics` (`ops/caddy/metrics-block.caddy`, ya comprobado por
+`scripts/verify-ops-config.sh`).

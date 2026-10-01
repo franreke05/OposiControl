@@ -8,7 +8,7 @@
 //   - faltan coordenadas esperadas (senal de que se audito otra cosa),
 //   - OSV no responde tras los reintentos (fail-closed).
 // Uso:
-//   node scripts/osv-audit.mjs deps.txt
+//   node scripts/osv-audit.mjs deps.txt [admin-deps.txt ...]   # CI-OC-DEPS: varios volcados se auditan juntos
 //   node scripts/osv-audit.mjs --self-test   # parser + comprobacion de que OSV marca log4j-core 2.14.1
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -59,6 +59,20 @@ export function parseGradleDependencies(text) {
     if (version) version = version.replace(/^\{.*?\}\s*/, '').trim();
     if (!version || /[{}\[\]()]/.test(version)) { errors.push(`version no resuelta: ${rawLine.trim()}`); continue; }
     found.set(`${name}@${version}`, { name, version });
+  }
+  return { coordinates: [...found.values()], errors };
+}
+
+/** CI-OC-DEPS: varios volcados (backend runtimeClasspath + cliente admin jvmRuntimeClasspath) en una sola auditoria.
+ *  Une y deduplica las coordenadas; un volcado sin ninguna coordenada es un error (se audito algo vacio). */
+export function collectCoordinates(dumps) {
+  const found = new Map();
+  const errors = [];
+  for (const { label, text } of dumps) {
+    const parsed = parseGradleDependencies(text);
+    errors.push(...parsed.errors.map((e) => `${label}: ${e}`));
+    if (parsed.coordinates.length === 0) errors.push(`${label}: el volcado no contiene ninguna coordenada resuelta`);
+    for (const c of parsed.coordinates) found.set(`${c.name}@${c.version}`, c);
   }
   return { coordinates: [...found.values()], errors };
 }
@@ -144,9 +158,9 @@ async function main() {
     console.log(`self-test OK: parser y OSV (log4j-core 2.14.1: ${known.length} avisos)`);
     return;
   }
-  const file = args.find((a) => !a.startsWith('--'));
-  if (!file) throw new Error('uso: node scripts/osv-audit.mjs <deps.txt> | --self-test');
-  const { coordinates, errors } = parseGradleDependencies(readFileSync(file, 'utf8'));
+  const files = args.filter((a) => !a.startsWith('--'));
+  if (files.length === 0) throw new Error('uso: node scripts/osv-audit.mjs <deps.txt> [<deps2.txt> ...] | --self-test');
+  const { coordinates, errors } = collectCoordinates(files.map((f) => ({ label: f, text: readFileSync(f, 'utf8') })));
   if (errors.length > 0) throw new Error(`el arbol resuelto tiene ${errors.length} problemas:\n${errors.join('\n')}`);
   const names = new Set(coordinates.map((c) => c.name));
   for (const expected of EXPECTED) if (!names.has(expected)) throw new Error(`el grafo resuelto no contiene ${expected}: se audito otra cosa`);

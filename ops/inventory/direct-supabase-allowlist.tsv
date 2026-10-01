@@ -1,0 +1,44 @@
+# Lista de permitidos de scripts/verify-no-direct-supabase.sh. id<TAB>fichero<TAB>lineas<TAB>motivo. Fijada por fichero y numero de lineas;
+# solo puede encogerse (una entrada que ya no aparece FALLA). No se permite NINGUN otro acceso a Supabase desde los clientes.
+AUTH_V1	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/AuthApi.kt	3	GoTrue token(password|refresh_token) y logout(scope=local): identidad, no negocio
+APIKEY	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/AuthApi.kt	3	cabecera apikey (clave anon publica) de esas 3 llamadas GoTrue
+AUTH_V1	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/AdminSessionRefresh.kt	1	startsWith("/auth/v1/"): comprobacion de ruta para no refrescar la sesion en llamadas de auth, sin host
+APIKEY	core/network/src/commonMain/kotlin/com/oposicontrol/admin/core/network/ApiClientFactory.kt	1	header.equals("apikey"): redaccion de logs, no una llamada
+SECRET	composeApp/build.gradle.kts	1	guarda de build: blanquea una anon key con forma sb_secret_
+SECRET	core/common/src/commonMain/kotlin/com/oposicontrol/admin/core/common/config/AppConfigResolver.kt	3	guarda en runtime: rechaza sb_secret_/service_role como SUPABASE_ANON_KEY (no incrusta ningun valor)
+DATA_API	core/common/src/commonMain/kotlin/com/oposicontrol/admin/core/common/config/MediaUrlPolicy.kt	1	prefijo de ruta para VALIDAR URLs de medios publicos; no emite ninguna peticion
+BUCKET	composeApp/build.gradle.kts	3	NEEDS_OWNER: pista de bucket vestigial (ninguna lectura de negocio); retirar o mantener es decision del propietario
+BUCKET	composeApp/src/androidMain/kotlin/com/oposicontrol/admin/app/PlatformRuntimeConfigSource.android.kt	1	NEEDS_OWNER: ver composeApp/build.gradle.kts
+BUCKET	core/common/src/commonMain/kotlin/com/oposicontrol/admin/core/common/config/AppConfigResolver.kt	5	NEEDS_OWNER: ver composeApp/build.gradle.kts
+BUCKET	iosApp/Configuration/Config.xcconfig	1	NEEDS_OWNER: ver composeApp/build.gradle.kts
+BUCKET	iosApp/iosApp/Info.plist	2	NEEDS_OWNER: ver composeApp/build.gradle.kts
+# --- Egreso (fijado a proposito): HTTPCALL con '*' = el fichero puede llamar a client.get/post/...; uno NUEVO exige darlo de alta aqui (y en el inventario de rutas).
+EGRESS_CTOR	core/network/src/commonMain/kotlin/com/oposicontrol/admin/core/network/ApiClientFactory.kt	1	unica construccion de HttpClient (ApiClientFactory: followRedirects, redaccion de logs, timeouts)
+EGRESS_NONKTOR	composeApp/src/jvmMain/kotlin/com/example/oposicontrol/main.kt	1	Sentry.init: telemetria de errores del cliente (no datos de negocio)
+EGRESS_NONKTOR	features/exams/src/androidMain/kotlin/com/oposicontrol/admin/features/exams/presentation/NewsBackgroundImage.android.kt	1	PUBLIC_STORAGE_MEDIA: GET sin credenciales de una imagen/medio publico (URL de storage publico); no es una llamada de negocio
+EGRESS_NONKTOR	features/exams/src/iosMain/kotlin/com/oposicontrol/admin/features/exams/presentation/NewsBackgroundImage.ios.kt	1	PUBLIC_STORAGE_MEDIA: GET sin credenciales de una imagen/medio publico (URL de storage publico); no es una llamada de negocio
+EGRESS_NONKTOR	features/news/src/androidMain/kotlin/com/oposicontrol/admin/features/news/presentation/NewsAssets.android.kt	2	PUBLIC_STORAGE_MEDIA: GET sin credenciales de una imagen/medio publico (URL de storage publico); no es una llamada de negocio
+EGRESS_NONKTOR	features/news/src/jvmMain/kotlin/com/oposicontrol/admin/features/news/presentation/NewsAssets.jvm.kt	2	PUBLIC_STORAGE_MEDIA: GET sin credenciales de una imagen/medio publico (URL de storage publico); no es una llamada de negocio
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/AuditApi.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/AuthApi.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/DashboardApi.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/RolesApi.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/UserDetailApi.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/UsersApi.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAdminOperationsRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAdminV1ContentRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommerceRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommunitiesRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorConnectionDiagnosticsRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorDashboardOverviewRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorForumRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorMarketCatalogRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorModerationRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorNewsRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorProductAnalyticsRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorQuestionsRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorRankingsRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorSystemStatusRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorTagsRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorTesterRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)

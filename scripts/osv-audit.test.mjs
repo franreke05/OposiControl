@@ -4,7 +4,22 @@ import assert from 'node:assert/strict';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseGradleDependencies, loadIgnores, isIgnored, queryAll, fetchAliases } from './osv-audit.mjs';
+import { parseGradleDependencies, collectCoordinates, loadIgnores, isIgnored, queryAll, fetchAliases } from './osv-audit.mjs';
+
+test('CI-OC-DEPS: varios volcados se unen y deduplican; uno vacio o ilegible falla cerrado', () => {
+  const backend = '+--- io.netty:netty-handler:4.2.2.Final -> 4.2.17.Final\n\\--- com.auth0:java-jwt:4.4.0';
+  const admin = '+--- io.ktor:ktor-client-okhttp:3.2.3\n\\--- io.netty:netty-handler:4.2.17.Final';
+  const ok = collectCoordinates([{ label: 'backend', text: backend }, { label: 'admin', text: admin }]);
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.coordinates.map((c) => `${c.name}@${c.version}`).sort(), [
+    'com.auth0:java-jwt@4.4.0', 'io.ktor:ktor-client-okhttp@3.2.3', 'io.netty:netty-handler@4.2.17.Final',
+  ]);
+  const empty = collectCoordinates([{ label: 'backend', text: backend }, { label: 'admin.txt', text: 'No configurations\n' }]);
+  assert.deepEqual(empty.errors, ['admin.txt: el volcado no contiene ninguna coordenada resuelta']);
+  const bad = collectCoordinates([{ label: 'backend', text: backend }, { label: 'admin.txt', text: '+--- org.a:b:1.0 FAILED' }]);
+  assert.equal(bad.errors.length, 2);
+  assert.ok(bad.errors.every((e) => e.startsWith('admin.txt: ')));
+});
 
 test('resuelve versiones (->), transitivas, sustituciones y omite proyectos, constraints y (*)', () => {
   const { coordinates, errors } = parseGradleDependencies([
