@@ -308,9 +308,9 @@ internal fun DashboardV2Destination.toAppRoute(): AppRoute = when (this) {
  * Tres condiciones, y la tercera es la que se añade: el panel de escritorio no lo
  * dibuja **nunca**.
  *
- * `GlobalTagSearch` es hoy DECORATIVO. `KtorTagSearchRepositoryImpl` devuelve
- * `emptyList()` de forma incondicional, así que el campo contesta «Sin
- * resultados» se escriba lo que se escriba. En Inicio —la primera pantalla que se
+ * `GlobalTagSearch` no tiene backend: `KtorTagSearchRepositoryImpl.isAvailable` es false y sus
+ * operaciones fallan, así que fuera del escritorio el componente sólo muestra «no disponible» y nunca llama al
+ * repositorio. En Inicio —la primera pantalla que se
  * ve— eso hace dos daños a la vez: promete una capacidad que la aplicación no
  * tiene, y se come la franja vertical que le corresponde a «Estado del sistema»,
  * que sí trae un dato real.

@@ -204,7 +204,7 @@ val dataModule = module {
     }
 
     single<TagSearchRepository> {
-        KtorTagSearchRepositoryImpl(adapter = get())
+        KtorTagSearchRepositoryImpl()
     }
 
     single<TagsRepository> {

@@ -5,6 +5,8 @@ import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import com.oposicontrol.admin.core.common.platform.AppPlatformContext
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermission
 import java.nio.file.attribute.PosixFilePermissions
 import java.sql.DriverManager
 import java.util.Properties
@@ -46,15 +48,19 @@ internal fun openHardenedDesktopDriver(databasePath: File): SqlDriver {
  * 0700 on the directory, 0600 on the DB file, on POSIX file systems only (Windows inherits per-user ACLs).
  * MASTER7-SEC-001: a failure is not swallowed: it is logged (WARN, file name and exception class only, no values).
  */
-internal fun restrictToOwner(databasePath: File) {
+internal fun restrictToOwner(
+    databasePath: File,
+    isPosix: (Path) -> Boolean = { Files.getFileStore(it).supportsFileAttributeView("posix") },
+    setPermissions: (Path, Set<PosixFilePermission>) -> Unit = { path, perms -> Files.setPosixFilePermissions(path, perms) },
+) {
     runCatching {
         val dir = databasePath.parentFile?.toPath()
-        if (dir != null && Files.getFileStore(dir).supportsFileAttributeView("posix")) {
-            Files.setPosixFilePermissions(dir, PosixFilePermissions.fromString("rwx------"))
+        if (dir != null && isPosix(dir)) {
+            setPermissions(dir, PosixFilePermissions.fromString("rwx------"))
         }
         val file = databasePath.toPath()
-        if (Files.exists(file) && Files.getFileStore(file).supportsFileAttributeView("posix")) {
-            Files.setPosixFilePermissions(file, PosixFilePermissions.fromString("rw-------"))
+        if (Files.exists(file) && isPosix(file)) {
+            setPermissions(file, PosixFilePermissions.fromString("rw-------"))
         }
     }.onFailure { error ->
         hardeningLog.log(
@@ -65,11 +71,15 @@ internal fun restrictToOwner(databasePath: File) {
 }
 
 /** Creates [dir] and, on POSIX stores, makes it 0700 before any DB or legacy copy is placed in it. */
-internal fun ensureOwnerOnlyDir(dir: File) {
+internal fun ensureOwnerOnlyDir(
+    dir: File,
+    isPosix: (Path) -> Boolean = { Files.getFileStore(it).supportsFileAttributeView("posix") },
+    setPermissions: (Path, Set<PosixFilePermission>) -> Unit = { path, perms -> Files.setPosixFilePermissions(path, perms) },
+) {
     runCatching {
         dir.mkdirs()
-        if (Files.getFileStore(dir.toPath()).supportsFileAttributeView("posix")) {
-            Files.setPosixFilePermissions(dir.toPath(), PosixFilePermissions.fromString("rwx------"))
+        if (isPosix(dir.toPath())) {
+            setPermissions(dir.toPath(), PosixFilePermissions.fromString("rwx------"))
         }
     }.onFailure { error ->
         hardeningLog.log(Level.WARNING, "Owner-only directory setup failed: ${error.javaClass.simpleName}")

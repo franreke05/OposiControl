@@ -1,41 +1,35 @@
 package com.oposicontrol.admin.data.repository
 
-import com.oposicontrol.admin.core.network.NetworkResultAdapter
+import com.oposicontrol.admin.core.common.result.AppError
+import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.Tag
 import com.oposicontrol.admin.domain.model.TagSearchQuery
 import com.oposicontrol.admin.domain.model.TaggedSearchResult
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
 
 /**
- * Búsqueda por etiquetas: enlazada en `dataModule`, pero SIN backend todavía.
+ * Búsqueda por etiquetas: NO DISPONIBLE, y lo dice.
  *
- * Los tres métodos devuelven vacío porque `/tags`, `/search` y
- * `/search/reindex` siguen en la API legacy y no se han migrado a `/v1`.
+ * Los endpoints legacy `/tags`, `/search` y `/search/reindex` leen `search_index`/`tag`/`entity_tag` y el RPC
+ * `admin_replace_search_index`, que no existen en MAIN (los endpoints fallan en runtime; EP-122/EP-208 de la
+ * matriz de migración los retiran). El reemplazo es el filtro canónico `etiquetaId` + `q` de los listados admin.
  *
- * El fichero arrastraba además el cliente HTTP, el constructor de URL, las
- * cabeceras de autenticación, dos DTOs y sus mappers: ~50 líneas que ninguna
- * de las tres funciones podía alcanzar, y que hacían leer esta clase como si
- * hiciera peticiones. Se han borrado. Lo que queda dice la verdad.
- *
- * DEUDA CONOCIDA, no resuelta aquí: devolver vacío hace que el panel no
- * distinga "no hay resultados" de "esto todavía no existe". Arreglarlo es un
- * cambio del contrato [TagSearchRepository], no una optimización.
+ * Por eso no hace ninguna petición y nunca devuelve un éxito vacío (eso se pintaba como «Sin resultados» o
+ * «Indice actualizado.»): cada operación devuelve [AppResult.Failure] y [isAvailable] es false para que la UI
+ * oculte el buscador.
  */
-class KtorTagSearchRepositoryImpl(
-    private val adapter: NetworkResultAdapter,
-) : TagSearchRepository {
-    override suspend fun findTags(query: String) = adapter.safeCall {
-        // Legacy /tags disabled until the endpoint is migrated to /v1.
-        emptyList<Tag>()
-    }
+class KtorTagSearchRepositoryImpl : TagSearchRepository {
+    override val isAvailable: Boolean = false
 
-    override suspend fun search(query: TagSearchQuery) = adapter.safeCall {
-        // Legacy /search disabled until the endpoint is migrated to /v1.
-        emptyList<TaggedSearchResult>()
-    }
+    override suspend fun findTags(query: String): AppResult<List<Tag>> = unavailable()
 
-    override suspend fun reindex() = adapter.safeCall {
-        // Legacy /search/reindex disabled until search is migrated to /v1.
-        Unit
+    override suspend fun search(query: TagSearchQuery): AppResult<List<TaggedSearchResult>> = unavailable()
+
+    override suspend fun reindex(): AppResult<Unit> = unavailable()
+
+    private fun unavailable(): AppResult.Failure = AppResult.Failure(AppError.NotFound(UNAVAILABLE_MESSAGE))
+
+    companion object {
+        const val UNAVAILABLE_MESSAGE = "La busqueda por etiquetas no esta disponible todavia."
     }
 }

@@ -1,5 +1,8 @@
 package com.oposicontrol.admin.core.common.config
 
+import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
+
 object AppConfigResolver {
     fun resolve(rawSource: RuntimeConfigSource): AppConfig {
         // MASTER5-OC-005: un valor en blanco (p. ej. `BASE_URL=` en .env) es AUSENTE, no "configurado": ni pasa la
@@ -21,12 +24,19 @@ object AppConfigResolver {
         if (supabaseUrl.isNotBlank()) {
             requireSecureUrl("SUPABASE_URL", supabaseUrl, environment)
         }
+        // Mismo criterio que el guard de build (composeApp/build.gradle.kts), pero sobre el valor EN RUNTIME: el
+        // fallback de escritorio (-Doposi.*, variable de entorno, .env) llega sin pasar por Gradle. Falla cerrado y
+        // el mensaje no repite el valor.
+        val anonKey = source.read(KEY_SUPABASE_ANON_KEY).orEmpty()
+        require(!isSecretSupabaseKey(anonKey)) {
+            "$KEY_SUPABASE_ANON_KEY no puede ser una clave secreta (sb_secret_ / service_role)."
+        }
         return AppConfig(
             environment = environment,
             baseUrl = baseUrl,
             backendToken = source.read(KEY_BACKEND_TOKEN).orEmpty(),
             supabaseUrl = supabaseUrl,
-            supabaseAnonKey = source.read(KEY_SUPABASE_ANON_KEY).orEmpty(),
+            supabaseAnonKey = anonKey,
             supabaseBucketExamResources = source.read(KEY_SUPABASE_BUCKET_EXAM_RESOURCES)
                 ?.ifBlank { DEFAULT_SUPABASE_BUCKET_EXAM_RESOURCES }
                 ?: DEFAULT_SUPABASE_BUCKET_EXAM_RESOURCES,
@@ -43,6 +53,18 @@ object AppConfigResolver {
         if (environment == Environment.DEV) return
         require(value.startsWith("https://", ignoreCase = true)) { "$key debe usar HTTPS en ${environment.name.lowercase()}." }
         require(!value.contains("localhost", ignoreCase = true)) { "$key no puede apuntar a localhost en ${environment.name.lowercase()}." }
+    }
+
+    /** `sb_secret_` keys and JWTs whose payload carries `"role":"service_role"`; a malformed key is not a secret key. */
+    @OptIn(ExperimentalEncodingApi::class)
+    internal fun isSecretSupabaseKey(key: String): Boolean {
+        if (key.startsWith("sb_secret_", ignoreCase = true)) return true
+        val parts = key.split('.')
+        if (parts.size != 3) return false
+        val payload = runCatching {
+            Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT_OPTIONAL).decode(parts[1]).decodeToString()
+        }.getOrNull() ?: return false
+        return payload.filterNot { it.isWhitespace() }.contains("\"role\":\"service_role\"")
     }
 
     private const val DEV_DEFAULT_BASE_URL = "http://localhost:8080"

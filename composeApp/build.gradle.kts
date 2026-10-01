@@ -242,6 +242,11 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "OposiControlAdmin"
             packageVersion = "1.0.0"
+            // CI-OC-RELEASE: runtime embebido (jlink) con los modulos que el cliente usa de verdad (lista validada en la rama
+            // macOS): java.sql (SQLite JDBC / DriverManager; sin el, la MSI fallaba al arrancar), java.management y
+            // java.instrument (Sentry), jdk.unsupported (Skiko/coroutines) y jdk.crypto.ec (TLS ECDHE en JDK 21). Lo comprueba
+            // el job `desktop-release-linux` con scripts/verify-desktop-runtime-modules.sh.
+            modules("java.instrument", "java.management", "java.sql", "jdk.unsupported", "jdk.crypto.ec")
         }
     }
 }

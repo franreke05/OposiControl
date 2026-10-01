@@ -9,6 +9,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.oposicontrol.admin.core.common.config.AppConfig
+import com.oposicontrol.admin.core.common.config.MediaUrlPolicy
+import org.koin.mp.KoinPlatform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URL
@@ -23,7 +26,14 @@ actual fun NewsBackgroundImage(
         value = withContext(Dispatchers.IO) {
             runCatching {
                 if (backgroundPath.startsWith("http://") || backgroundPath.startsWith("https://")) {
-                    URL(backgroundPath).openStream().use { input -> BitmapFactory.decodeStream(input) }
+                    // INV-NETWORK-COMPLETE: https public Storage of the configured host only; no redirects, with timeouts.
+                    if (!MediaUrlPolicy.isAllowedRemoteMedia(backgroundPath, KoinPlatform.getKoin().getOrNull<AppConfig>()?.supabaseUrl.orEmpty())) return@runCatching null
+                    val connection = (URL(backgroundPath).openConnection() as java.net.HttpURLConnection).apply {
+                        instanceFollowRedirects = false
+                        connectTimeout = 5000
+                        readTimeout = 10000
+                    }
+                    connection.inputStream.use { input -> BitmapFactory.decodeStream(input) }
                 } else {
                     context.contentResolver.openInputStream(Uri.parse(backgroundPath))?.use { input ->
                         BitmapFactory.decodeStream(input)

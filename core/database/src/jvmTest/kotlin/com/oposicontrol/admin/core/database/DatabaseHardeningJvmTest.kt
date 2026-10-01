@@ -68,10 +68,11 @@ class DatabaseHardeningJvmTest {
         assertEquals(PosixFilePermissions.fromString("rwx------"), Files.getPosixFilePermissions(dbFile.parentFile.toPath()))
     }
 
-    /** Portable part: on a non-POSIX store (Windows) hardening is a silent no-op (no WARN) and the DB still opens. */
-    @Test
-    fun nonPosixStoreOpensTheDatabaseWithoutHardeningWarnings() {
-        org.junit.Assume.assumeFalse(Files.getFileStore(dir.toPath()).supportsFileAttributeView("posix"))
+    /**
+     * Host-independent: the POSIX decision and the permission call are injected, so these run on Windows and Linux.
+     * A non-POSIX store must never receive a permission call (and no WARN); a POSIX store gets 0700 dir / 0600 file.
+     */
+    private fun captureWarnings(block: () -> Unit): List<java.util.logging.LogRecord> {
         val logger = java.util.logging.Logger.getLogger("com.oposicontrol.admin.core.database")
         val records = mutableListOf<java.util.logging.LogRecord>()
         val handler = object : java.util.logging.Handler() {
@@ -80,14 +81,44 @@ class DatabaseHardeningJvmTest {
             override fun close() = Unit
         }
         logger.addHandler(handler)
+        try { block() } finally { logger.removeHandler(handler) }
+        return records.filter { it.level == java.util.logging.Level.WARNING }
+    }
+
+    @Test
+    fun nonPosixStoreGetsNoPermissionCallsAndNoWarnings() {
         val dbFile = File(dir, "OposiControl/oposicontrol-desktop.db")
-        try {
-            ensureOwnerOnlyDir(dbFile.parentFile)
+        val calls = mutableListOf<java.nio.file.Path>()
+        val warnings = captureWarnings {
+            ensureOwnerOnlyDir(dbFile.parentFile, isPosix = { false }, setPermissions = { p, _ -> calls.add(p) })
             openHardenedDesktopDriver(dbFile).close()
-        } finally {
-            logger.removeHandler(handler)
+            restrictToOwner(dbFile, isPosix = { false }, setPermissions = { p, _ -> calls.add(p) })
         }
         assertTrue(dbFile.isFile)
-        assertTrue(records.none { it.level == java.util.logging.Level.WARNING }, "no hardening WARN on a non-POSIX store")
+        assertTrue(calls.isEmpty(), "no permission call on a non-POSIX store")
+        assertTrue(warnings.isEmpty(), "no hardening WARN on a non-POSIX store")
+    }
+
+    @Test
+    fun posixStoreGetsOwnerOnlyDirAndFile() {
+        val dbFile = File(dir, "OposiControl/oposicontrol-desktop.db")
+        val applied = mutableMapOf<java.nio.file.Path, Set<java.nio.file.attribute.PosixFilePermission>>()
+        ensureOwnerOnlyDir(dbFile.parentFile, isPosix = { true }, setPermissions = { p, perms -> applied[p] = perms })
+        openHardenedDesktopDriver(dbFile).close()
+        restrictToOwner(dbFile, isPosix = { true }, setPermissions = { p, perms -> applied[p] = perms })
+        assertEquals(PosixFilePermissions.fromString("rwx------"), applied[dbFile.parentFile.toPath()])
+        assertEquals(PosixFilePermissions.fromString("rw-------"), applied[dbFile.toPath()])
+    }
+
+    @Test
+    fun hardeningFailureIsLoggedWithoutTheValues() {
+        val dbFile = File(dir, "OposiControl/oposicontrol-desktop.db").also { it.parentFile.mkdirs() }
+        dbFile.writeText("x")
+        val warnings = captureWarnings {
+            restrictToOwner(dbFile, isPosix = { true }, setPermissions = { _, _ -> throw java.io.IOException("secret-detail") })
+        }
+        assertEquals(1, warnings.size)
+        assertTrue(warnings.single().message.orEmpty().contains("IOException"))
+        assertFalse(warnings.single().message.orEmpty().contains("secret-detail"))
     }
 }

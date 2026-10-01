@@ -14,6 +14,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.oposicontrol.admin.core.common.config.AppConfig
+import com.oposicontrol.admin.core.common.config.MediaUrlPolicy
+import org.koin.mp.KoinPlatform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -32,7 +35,14 @@ internal actual fun NewsAssetImage(path: String, modifier: Modifier) {
         value = false to withContext(Dispatchers.IO) { runCatching {
             val stream = when {
                 path.startsWith("content://") -> context.contentResolver.openInputStream(Uri.parse(path))!!
-                path.startsWith("https://") -> URL(path).openConnection().apply { connectTimeout = 5000; readTimeout = 10000 }.getInputStream()
+                path.startsWith("https://") -> {
+                    // INV-NETWORK-COMPLETE: public Storage of the configured host only; no redirects.
+                    require(MediaUrlPolicy.isAllowedRemoteMedia(path, KoinPlatform.getKoin().getOrNull<AppConfig>()?.supabaseUrl.orEmpty()))
+                    URL(path).openConnection().apply {
+                        connectTimeout = 5000; readTimeout = 10000
+                        (this as? java.net.HttpURLConnection)?.instanceFollowRedirects = false
+                    }.getInputStream()
+                }
                 else -> File(path.removePrefix("file://")).inputStream()
             }
             stream.use { BitmapFactory.decodeStream(it)?.asImageBitmap() }

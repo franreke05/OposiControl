@@ -6,6 +6,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.interop.UIKitView
+import com.oposicontrol.admin.core.common.config.AppConfig
+import com.oposicontrol.admin.core.common.config.MediaUrlPolicy
+import org.koin.mp.KoinPlatform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import platform.Foundation.NSData
@@ -40,6 +43,8 @@ actual fun NewsBackgroundImage(
 
 private fun String.loadImage(): UIImage? {
     if (startsWith("http://") || startsWith("https://")) {
+        // INV-NETWORK-COMPLETE: https public Storage of the configured host only (no http).
+        if (!MediaUrlPolicy.isAllowedRemoteMedia(this, KoinPlatform.getKoin().getOrNull<AppConfig>()?.supabaseUrl.orEmpty())) return null
         val url = NSURL.URLWithString(this) ?: return null
         val data = NSData.create(contentsOfURL = url) ?: return null
         return UIImage.imageWithData(data)

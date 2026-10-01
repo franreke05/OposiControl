@@ -51,6 +51,15 @@ fun GlobalTagSearch(
     var sectionOnly by remember(currentSection) { mutableStateOf(false) }
     var results by remember { mutableStateOf<UiAsync<List<TaggedSearchResult>>>(UiAsync.Idle) }
 
+    if (!repository.isAvailable) {
+        Text(
+            text = "Busqueda por etiquetas no disponible todavia.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+
     LaunchedEffect(query) {
         delay(180)
         when (val result = repository.findTags(query)) {

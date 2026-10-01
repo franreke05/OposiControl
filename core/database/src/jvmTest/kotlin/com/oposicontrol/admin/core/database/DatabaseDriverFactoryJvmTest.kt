@@ -29,7 +29,11 @@ class DatabaseDriverFactoryJvmTest {
             env = { key -> if (key == "APPDATA") "${tempHome.path}\\AppData\\Roaming" else null },
             userHome = tempHome.path,
         )
-        assertEquals(File("${tempHome.path}\\AppData\\Roaming\\OposiControl\\oposicontrol-desktop.db").path, file.path)
+        // SEC-001: host-independent (the Linux CI job runs :core:database:jvmTest); java.io.File joins with the HOST separator.
+        assertEquals(
+            "${tempHome.path}\\AppData\\Roaming\\OposiControl\\oposicontrol-desktop.db".replace('\\', '/'),
+            file.path.replace('\\', '/'),
+        )
     }
 
     @Test

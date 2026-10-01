@@ -2664,6 +2664,9 @@ private fun SpecialtyMobileCard(
     }
 }
 
+/** El buscador y «Reindexar» sólo se ofrecen con un repositorio que tenga backend real. */
+internal fun tagSearchUsable(repository: TagSearchRepository?): Boolean = repository?.isAvailable == true
+
 @Composable
 private fun MobileTagSearchPanel(
     repository: TagSearchRepository?,
@@ -2674,8 +2677,8 @@ private fun MobileTagSearchPanel(
     var results by remember { mutableStateOf<UiAsync<List<TaggedSearchResult>>>(UiAsync.Idle) }
     var reindexState by remember { mutableStateOf<UiAsync<Unit>>(UiAsync.Idle) }
 
-    if (repository == null) {
-        EmptyStateCard("Etiquetas", "El buscador de etiquetas no esta disponible en este entorno.")
+    if (repository == null || !tagSearchUsable(repository)) {
+        EmptyStateCard("Etiquetas", "Busqueda por etiquetas no disponible todavia.")
         return
     }
 
