@@ -7,3 +7,6 @@ gradlew.bat text eol=crlf
 supabase/migrations/*.sql text eol=lf
 supabase/**/*.sql text eol=lf
 ops/** text eol=lf
+
+# Markdown con LF (MASTER7-QUALITY-001): un CR suelto convierte el blob en no-texto y git no lo normaliza ni lo diffea.
+*.md text eol=lf

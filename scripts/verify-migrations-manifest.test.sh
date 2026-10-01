@@ -15,6 +15,6 @@ fresh; echo "20260930109999_solo_manifiesto" >> "$w/supabase/SLICE1_MIGRATIONS.t
 fresh; : > "$w/supabase/SLICE1_MIGRATIONS.txt"; expect_fail "manifiesto vacio"
 fresh; rm "$w/supabase/SLICE1_MIGRATIONS.txt"; expect_fail "manifiesto ausente"
 fresh; rm "$w"/supabase/migrations/*.sql; expect_fail "directorio sin migraciones"
-fresh; sed -i 's/20260930100000..101850/20260930100000..101730/' "$w/docs/engineering/DEPLOYMENT.md"; cmp -s "$w/docs/engineering/DEPLOYMENT.md" docs/engineering/DEPLOYMENT.md && { echo "TEST FAIL: mutacion vacua"; exit 1; }; expect_fail "DEPLOYMENT con rango antiguo (MASTER5-CICD-003)"
+fresh; sed -i 's/20260930100000..102000/20260930100000..101850/' "$w/docs/engineering/DEPLOYMENT.md"; cmp -s "$w/docs/engineering/DEPLOYMENT.md" docs/engineering/DEPLOYMENT.md && { echo "TEST FAIL: mutacion vacua"; exit 1; }; expect_fail "DEPLOYMENT con rango antiguo (MASTER5-CICD-003)"
 fresh; rm "$w/docs/engineering/DEPLOYMENT.md"; expect_fail "DEPLOYMENT ausente (MASTER6-CICD-005)"; grep -q 'DEPLOYMENT.md ausente' "$tmp/out" || { echo "TEST FAIL: DEPLOYMENT ausente sin su mensaje"; exit 1; }
 echo "verify-migrations-manifest.test OK ($n escenarios)"

@@ -1,0 +1,16 @@
+# MASTER7-CICD-001: avisos de actualizacion para el catalogo Gradle, las acciones de CI y la herramienta de lint (solo propone PRs;
+# sin secretos). El gate bloqueante es el job `dependency-audit` de ci.yml (OSV sobre el grafo resuelto).
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /tools/redocly
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5

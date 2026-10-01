@@ -7,14 +7,19 @@ cd "$(dirname "$0")/.."
 bash scripts/verify-ops-config.sh >/dev/null || { echo "TEST FAIL: el repo deberia pasar"; exit 1; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 n=0
-# mutate <descripcion> <archivo relativo> <sed -i expr | @touch> <subcadena del FAIL esperado>
+# mutate <descripcion> <archivo relativo> <sed -i expr | @touch | @rm> <subcadena del FAIL esperado>
 mutate() {
   local desc="$1" file="$2" expr="$3" expect="$4" w="$tmp/w$n" out
   n=$((n + 1))
   mkdir "$w"
-  cp -r ops scripts .github .dockerignore .env.example .gitattributes "$w"/
+  cp -r ops scripts .github docs .dockerignore .env.example .gitattributes README.md "$w"/
+  mkdir -p "$w/gradle" "$w/tools/redocly"
+  cp gradle/verification-metadata.xml "$w/gradle/"
+  cp tools/redocly/package.json tools/redocly/package-lock.json "$w/tools/redocly/"
   if [ "$expr" = "@touch" ]; then
     touch "$w/$file"
+  elif [ "$expr" = "@rm" ]; then
+    rm "$w/$file"
   else
     cp "$w/$file" "$w/$file.orig"
     sed -i "$expr" "$w/$file"
@@ -49,4 +54,21 @@ mutate "README sin Bearer en el curl interno (MASTER4-CICD-004)" ops/monitoring/
 mutate "README vuelve a pasar el token en la linea de comandos (MASTER5-SEC-002)" ops/monitoring/README.md '$a docker run curlimages/curl -H "Authorization: Bearer $(cat ops/monitoring/secrets/metrics_token)" x' "el token nunca se lee en el host"
 mutate "README vuelve a pedir el directorio del stack (MASTER5-SEC-002)" ops/monitoring/README.md 's#RAIZ del repositorio#directorio del stack#' "unico directorio de trabajo"
 mutate "README con docker compose sin -f (MASTER5-SEC-002)" ops/monitoring/README.md '0,/^docker compose -f ops\/monitoring\/compose.yaml up -d/s##docker compose up -d#' "unico directorio de trabajo"
+C=.github/workflows/ci.yml
+mutate "ci.yml sin gitleaks (MASTER7-CICD-001)" $C '/gitleaks\/gitleaks-action@/d' "secret-scan con gitleaks"
+mutate "ci.yml con gitleaks sin fijar por SHA (MASTER7-CICD-001)" $C 's#gitleaks-action@[0-9a-f]\{40\}#gitleaks-action@v2#' "secret-scan con gitleaks"
+mutate "sin dependabot.yml (MASTER7-CICD-001)" .github/dependabot.yml @rm "dependabot.yml: ecosistemas"
+mutate "dependabot sin github-actions (MASTER7-CICD-001)" .github/dependabot.yml 's/package-ecosystem: github-actions/package-ecosystem: pip/' "dependabot.yml: ecosistemas"
+mutate "ci.yml no construye la imagen (MASTER7-CICD-002)" $C '/bash scripts\/build-backend-image.sh/d' "construye y arranca la imagen"
+mutate "ci.yml no ejecuta el humo (MASTER7-CICD-002)" $C '/bash scripts\/smoke-backend-image.sh$/d' "construye y arranca la imagen"
+mutate "humo sin /health/live (MASTER7-CICD-002)" scripts/smoke-backend-image.sh 's#/health/live#/health#g' "smoke-backend-image.sh:"
+mutate "humo sin limpieza (MASTER7-CICD-002)" scripts/smoke-backend-image.sh '/^trap cleanup EXIT/d' "smoke-backend-image.sh:"
+mutate "sin verification-metadata.xml (MASTER7-CICD-005)" gradle/verification-metadata.xml @rm "verification-metadata.xml existe"
+mutate "ci.yml desactiva la verificacion de dependencias (MASTER7-CICD-005)" $C '$a # ./gradlew build --dependency-verification=off' "verification-metadata.xml existe"
+mutate "ci.yml vuelve a npx --yes (MASTER7-CICD-005)" $C '$a # npx --yes @redocly/cli' "redocly desde tools/redocly"
+mutate "sin package-lock de redocly (MASTER7-CICD-005)" tools/redocly/package-lock.json @rm "redocly desde tools/redocly"
+mutate ".gitattributes sin *.md eol=lf (MASTER7-QUALITY-001)" .gitattributes '/^\*\.md text eol=lf/d' "fija LF en"
+mutate "SECURITY.md con CR suelto (MASTER7-QUALITY-001)" docs/engineering/SECURITY.md '1s/$/\rx/' "CR suelto"
+mutate "SECURITY.md pierde la mencion de /metrics (MASTER7-QUALITY-001)" docs/engineering/SECURITY.md 's/does exist/zzz/' "SECURITY.md no niega"
+mutate "SECURITY.md vuelve a negar las metricas (MASTER7-QUALITY-001)" docs/engineering/SECURITY.md '$a no global Ktor `CallLogging`, metrics/tracing' "SECURITY.md no niega"
 echo "verify-ops-config.test OK ($n mutaciones)"
