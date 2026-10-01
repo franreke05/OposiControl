@@ -14,9 +14,12 @@
 --   p_expected_role_ids uuid[]) returns jsonb {"antes": [...], "despues": [...]}:
 --     1. takes the SAME transaction advisory lock (pg_advisory_xact_lock(hashtextextended('admin-role-sync', 0)))
 --        BEFORE its first read;
---     2. reads the target's current role ids (sorted, distinct) under the lock;
---     3. if p_expected_role_ids is NOT NULL and its sorted distinct set differs from that set, raises
---        'ROLE_SYNC_VERSION_CONFLICT' BEFORE any write (a NULL element never matches: deny by default);
+--     2. if p_expected_role_ids is NOT NULL: an unknown target (not in auth.users) raises 'ROLE_SYNC_INVALID_USER',
+--        the same error and the same check as public.admin_sync_roles(uuid, uuid[]), BEFORE the comparison (an
+--        unknown user is never reported as a version conflict, whatever the expected set);
+--     3. reads the target's current role ids (sorted, distinct) under the lock; if the sorted distinct expected set
+--        differs from it, raises 'ROLE_SYNC_VERSION_CONFLICT' BEFORE any write (a NULL element never matches: deny by
+--        default);
 --     4. otherwise delegates to public.admin_sync_roles_audited(uuid, uuid[], uuid) in the same transaction (advisory
 --        xact locks are re-entrant; its `antes` is read under the same lock, so it equals the compared set; guard
 --        errors propagate unchanged). A NULL p_expected_role_ids behaves exactly like the 3-argument function.
@@ -52,7 +55,8 @@
 --   No policy change. SECURITY DEFINER with search_path '' and row_security off (same fail-closed rationale as the
 --   other role-sync overloads). EXECUTE revoked from public/anon/authenticated and granted to service_role only. It
 --   calls the 3-argument admin_sync_roles_audited as its owner (the migration role): the VERIFY check
---   `nested_execute_missing` fails if that owner cannot execute it.
+--   `nested_execute_missing` fails if that owner cannot execute it. Like public.admin_sync_roles(uuid, uuid[]) it
+--   reads auth.users (existence of ONE id, as its owner) only when p_expected_role_ids is not null.
 --
 -- ROLLBACK (manual; executed verbatim by dbtest)
 -- ROLLBACK-BEGIN
@@ -118,6 +122,12 @@ begin
   perform pg_advisory_xact_lock(hashtextextended('admin-role-sync', 0));
 
   if p_expected_role_ids is not null then
+    -- Same existence guard (and the same error) as public.admin_sync_roles(uuid, uuid[]): an unknown target is
+    -- ROLE_SYNC_INVALID_USER whatever the expected set is, never a version conflict.
+    if not exists (select 1 from auth.users u where u.id = p_usuario_id) then
+      raise exception 'ROLE_SYNC_INVALID_USER';
+    end if;
+
     select coalesce(jsonb_agg(to_jsonb(x.rol_id::text) order by x.rol_id::text), '[]'::jsonb)
     into v_antes
     from (select distinct ru.rol_id from public.roles_usuario ru where ru.usuario_id = p_usuario_id) x;

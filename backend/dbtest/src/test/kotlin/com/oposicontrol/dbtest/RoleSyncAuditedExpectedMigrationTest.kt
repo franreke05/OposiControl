@@ -114,6 +114,23 @@ class RoleSyncAuditedExpectedMigrationTest {
         assertEquals(listOf("usuario"), c.rolesDe(USER_C))
     }
 
+    /**
+     * Gate PG17 (LOW): un destino inexistente es ROLE_SYNC_INVALID_USER (404) con CUALQUIER conjunto esperado, igual que
+     * con NULL o [] (ruta de 3 argumentos). Antes un esperado no vacio levantaba VERSION_CONFLICT (409).
+     */
+    @Test
+    fun unDestinoInexistenteEsInvalidUserConCualquierConjuntoEsperado(): Unit = escenario { c ->
+        c.asignar(USER_B, SUPERADMIN)
+        val fantasma = "f0f0f0f0-0000-4000-8000-0000000000ee"
+        for (esperados in listOf(listOf(USUARIO), listOf(USUARIO, MODERADOR), listOf<String?>(null), emptyList(), null)) {
+            val error = c.sync(fantasma, listOf(USUARIO), USER_B, esperados).exceptionOrNull()?.message
+            assertNotNull(error, "esperados=$esperados")
+            assertTrue("ROLE_SYNC_INVALID_USER" in error, "esperados=$esperados: $error")
+            assertFalse("ROLE_SYNC_VERSION_CONFLICT" in error, "esperados=$esperados: $error")
+        }
+        assertEquals(0L, c.unico("select count(*) from public.roles_usuario where usuario_id = '$fantasma'")!!.toLong())
+    }
+
     @Test
     fun elReintentoConElConjuntoActualTrasUnConflictoSincroniza(): Unit = escenario { c ->
         c.asignar(USER_B, SUPERADMIN)

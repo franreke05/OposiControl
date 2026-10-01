@@ -184,6 +184,30 @@ class AdminV1UsersSlice1Test {
         assertTrue(sent.none { "/rest/v1/perfiles_usuario" in it.uri })
     }
 
+    /** Owner FA6 (D1-22): exactamente 100 titulares se admite (pagina filtrada); 101 jamas devuelve los 100 primeros. */
+    @Test
+    fun exactlyOneHundredRoleHoldersIsAllowed() = testApplication {
+        val sent = CopyOnWriteArrayList<Sent>()
+        val holders = (1..100).joinToString(",", "[", "]") { """{"usuario_id":"$u2"}""" }
+        application { adminModule(sent, usersResponder("[${perfil(u2, "bob", "Bob", "activa")}]", holders = holders)) }
+        val response = client.get("/api/v1/admin/usuarios?roleCode=admin")
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(sent.any { "/rest/v1/roles_usuario?select=usuario_id" in it.uri && "limit=101" in it.uri }, "se pide cap+1 para detectar el exceso")
+        assertTrue(sent.any { "/rest/v1/perfiles_usuario?select=*" in it.uri })
+    }
+
+    @Test
+    fun oneHundredAndOneRoleHoldersIs400AndNoTruncatedPageIsReturned() = testApplication {
+        val sent = CopyOnWriteArrayList<Sent>()
+        val many = (1..101).joinToString(",", "[", "]") { """{"usuario_id":"$u2"}""" }
+        application { adminModule(sent, usersResponder("[${perfil(u2, "bob", "Bob", "activa")}]", holders = many)) }
+        val response = client.get("/api/v1/admin/usuarios?roleCode=admin")
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals(listOf("TOO_MANY_MATCHES"), response.json().issueNames())
+        assertTrue("items" !in response.json().keys, "ninguna pagina truncada")
+        assertTrue(sent.none { "/rest/v1/perfiles_usuario" in it.uri })
+    }
+
     // ------------------------------------------------------------------ D1-23
 
     private fun userResponder(

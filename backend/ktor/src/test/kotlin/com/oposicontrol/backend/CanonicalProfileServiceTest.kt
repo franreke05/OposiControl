@@ -52,6 +52,17 @@ class CanonicalProfileServiceTest {
         assertEquals(0, args["p_documentos"]!!.jsonArray.size)
     }
 
+    /** Owner (ZWJ): tambien en la escritura del propio usuario el emoji compuesto con ZWJ se rechaza. */
+    @Test
+    fun userNamesWithAZwjComposedEmojiAreRejected() = runBlocking {
+        val (svc, upstream, _) = service()
+        upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) }
+        val patch = assertFailsWith<BackendDomainException> {
+            svc.updateProfile(identity, "token", ProfilePatchRequest(nombre = "Ada 👩‍👩", apellidos = null), null, context)
+        }
+        assertEquals(listOf(ErrorIssue("nombre", CanonicalIssue.INVALID_FORMAT)), patch.details!!.issues)
+    }
+
     /** MASTER7-ARCH-001: nombre/apellidos del usuario aplican la misma regla de caracteres que el nombre visible admin. */
     @Test
     fun userNamesWithBidiOrControlCharactersAreRejectedBeforeAnyRpc() = runBlocking {

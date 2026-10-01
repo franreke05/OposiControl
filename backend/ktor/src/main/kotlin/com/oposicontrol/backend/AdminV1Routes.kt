@@ -260,7 +260,15 @@ internal val REPORTE_OPEN_STATES: List<String> = listOf("pendiente", "revisado")
 internal val REPORTE_LIST_ESTADOS: Set<String> = setOf("pendiente", "revisado", "resuelto", "descartado", "todos")
 
 /** MASTER7-API-004: acciones de moderacion que envian los clientes (`descartar` cierra sin accion; el resto resuelve). */
-internal val ACCIONES_MODERACION: Set<String> = setOf("descartar", "ocultar", "avisar", "banear")
+internal val ACCIONES_MODERACION: Map<String, String> = mapOf(
+    // Valores que acepta el CHECK `acciones_moderacion.tipo_accion` (baseline_main.sql), tal cual.
+    "descartar" to "descartar", "ocultar" to "ocultar", "restaurar" to "restaurar", "eliminar" to "eliminar",
+    "advertir" to "advertir", "bloquear_usuario" to "bloquear_usuario",
+    // Alias de los clientes vivos (panel movil / ReportDetailViewModel) -> valor valido del CHECK; el cable no cambia.
+    // `resuelto_sin_accion` = resolver sin tocar contenido ni usuario: la unica etiqueta neutra del CHECK es `descartar`
+    // (el ESTADO del reporte sigue siendo `resuelto`, ver [resolverReporte]).
+    "avisar" to "advertir", "banear" to "bloquear_usuario", "resuelto_sin_accion" to "descartar",
+)
 
 /** MASTER7-API-007: tipos de accion de `POST /moderacion/actions` (entran en `auditoria_log.accion` como `<tipo>_usuario`). */
 internal val MODERATION_ACTION_TYPES: Set<String> = setOf("advertencia", "suspension", "ban")
@@ -6179,7 +6187,7 @@ class AdminV1Gateway private constructor(
      */
     fun resolverReporte(rawId: String, req: ResolverReporteBody, actorId: String?) {
         // MASTER7-API-004: allow-list exacta ANTES de cualquier lectura/escritura (un typo ya no resuelve ni concede).
-        if (req.accion !in ACCIONES_MODERACION) {
+        if (req.accion !in ACCIONES_MODERACION.keys) {
             throw BackendDomainException("REPORT_ACTION_INVALID", HttpStatusCode.UnprocessableEntity, "La acción no es válida.")
         }
         if ((req.notas?.length ?: 0) > AUDIT_TEXT_MAX) {
@@ -6219,7 +6227,10 @@ class AdminV1Gateway private constructor(
             // escritura). Cualquier otro caso (otro moderador, otro destino, resolucion ya completa) es 409 sin efectos.
             // Sin actor (token estatico) NUNCA se reanuda: `null == null` haria pasar a cualquier llamador sin identidad
             // como «el mismo moderador» (deny-by-default).
-            val resumable = actorId != null && reporte.estado == estado && reporte.revisadoPor == actorId && !hasModerationAction(id)
+            // Gate PG17: «ya tiene accion» es la accion de ESTA resolucion (misma clave que la RPC): una accion anterior
+            // (tomada con el reporte abierto) o de otro miembro del staff no bloquea la reanudacion.
+            val resumable = actorId != null && reporte.estado == estado && reporte.revisadoPor == actorId &&
+                !hasResolutionAction(id, actorId, reporte.revisadoEn)
             if (!resumable) throw reportAlreadyClosed()
             completeResolution(id, estado, reporte, req, actorId)
             return
@@ -6283,7 +6294,8 @@ class AdminV1Gateway private constructor(
         }
         // La accion de moderacion es la ULTIMA escritura duradera: marca la resolucion como completa.
         // MASTER6-API-001: la escribe `admin_record_report_action` (migracion 20260930102000) en UNA transaccion: bloquea
-        // la fila del reporte, comprueba que sigue cerrado en `estado` por este actor y sin accion, e inserta. Antes un GET
+        // la fila del reporte, comprueba que sigue cerrado en `estado` por este actor y sin la accion de ESTA resolucion
+        // (clave: revisor + `creado_en >= revisado_en`; una accion anterior o de otro staff no cuenta), e inserta. Antes un GET
         // + POST sueltos dejaban que dos reanudaciones concurrentes insertaran dos acciones. `false` = otra llamada la
         // completo (o el reporte ya no es de esta resolucion): 409 sin auditar dos veces.
         val recorded = request(
@@ -6293,7 +6305,7 @@ class AdminV1Gateway private constructor(
                 put("p_reporte_id", JsonPrimitive(id))
                 put("p_estado", JsonPrimitive(estado))
                 put("p_moderador_id", actorId?.let(::JsonPrimitive) ?: JsonNull)
-                put("p_tipo_accion", JsonPrimitive(req.accion))
+                put("p_tipo_accion", JsonPrimitive(ACCIONES_MODERACION.getValue(req.accion)))
                 put("p_notas", req.notas?.let(::JsonPrimitive) ?: JsonNull)
             }.toString(),
         ).trim() == "true"
@@ -6309,10 +6321,19 @@ class AdminV1Gateway private constructor(
         )
     }
 
-    /** MASTER6-API-001: si el reporte ya tiene su accion de moderacion (resolucion completa). */
-    private fun hasModerationAction(reporteId: String): Boolean =
-        request("GET", "/rest/v1/acciones_moderacion?select=reporte_id&reporte_id=eq.$reporteId&limit=1", null)
-            .decodeList<JsonObject>().isNotEmpty()
+    /**
+     * MASTER6-API-001 (gate PG17): si ESTA resolucion ya tiene su accion de moderacion (resolucion completa). Misma clave
+     * de idempotencia que `admin_record_report_action` (migracion 20260930102000): accion del reporte escrita por el
+     * revisor (`moderador_id`) en o despues de `revisado_en`; sin `revisado_en` (cierre legado) cuenta cualquiera suya.
+     */
+    private fun hasResolutionAction(reporteId: String, moderadorId: String, revisadoEn: String?): Boolean {
+        val desde = revisadoEn?.takeIf { it.isNotBlank() }?.let { "&creado_en=gte.${it.urlEncode()}" }.orEmpty()
+        return request(
+            "GET",
+            "/rest/v1/acciones_moderacion?select=reporte_id&reporte_id=eq.$reporteId&moderador_id=eq.$moderadorId$desde&limit=1",
+            null,
+        ).decodeList<JsonObject>().isNotEmpty()
+    }
 
     /** MASTER6-API-001: cantidad ya acreditada por la recompensa de este reporte (asiento del ledger con su clave), o 0. */
     private fun confirmedReportReward(reporteId: String): Int {

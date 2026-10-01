@@ -66,6 +66,18 @@ class Slice1ReportActionOnceMigrationTest {
             "('$reporte', 'publicacion_oposired', gen_random_uuid(), 'spam', '$estado', ${revisor?.let { "'$it'" } ?: "null"})",
     )
 
+    /** Cierre como lo hace Ktor: `revisado_en` lo pone el reloj de Ktor (aqui, una expresion SQL). */
+    private fun Connection.reporteCerradoEn(estado: String, revisor: String?, revisadoEn: String) = ejecutar(
+        "insert into public.reportes_contenido (id, tipo_entidad, entidad_id, motivo, estado, revisado_por, revisado_en) values " +
+            "('$reporte', 'publicacion_oposired', gen_random_uuid(), 'spam', '$estado', ${revisor?.let { "'$it'" } ?: "null"}, $revisadoEn)",
+    )
+
+    /** Accion insertada FUERA de la RPC (staff por la politica, Ktor antiguo o datos de MAIN). */
+    private fun Connection.accionDirecta(moderador: String?, creadoEn: String, accion: String = "ocultar") = ejecutar(
+        "insert into public.acciones_moderacion (reporte_id, moderador_id, tipo_accion, creado_en) values " +
+            "('$reporte', ${moderador?.let { "'$it'" } ?: "null"}, '$accion', $creadoEn)",
+    )
+
     private fun Connection.registrar(estado: String, moderador: String?, accion: String = "ocultar"): Result<Boolean> = try {
         ejecutar("set role service_role")
         Result.success(
@@ -104,6 +116,72 @@ class Slice1ReportActionOnceMigrationTest {
         c.ejecutar("delete from public.reportes_contenido")
         assertFalse(c.registrar("resuelto", USER_A).getOrThrow(), "reporte inexistente")
         assertEquals(0L, c.unico("select count(*) from public.acciones_moderacion")!!.toLong())
+    }
+
+    /**
+     * Gate PG17 (MEDIUM, P16): una accion anterior al cierre (con el reporte abierto, de otro moderador o del propio
+     * revisor) o una accion de otro staff no es la accion de ESTA resolucion: la resolucion se registra una vez. Antes
+     * cualquier fila del reporte devolvia false y la resolucion quedaba cerrada sin accion para siempre.
+     */
+    @Test
+    fun unaAccionAnteriorAlCierreODeOtroStaffNoBloqueaLaResolucion(): Unit = escenario { c ->
+        c.reporteCerradoEn("resuelto", USER_A, "now() - interval '10 minutes'")
+        c.accionDirecta(USER_B, "now() - interval '1 hour'")
+        c.accionDirecta(USER_A, "now() - interval '30 minutes'")
+        c.accionDirecta(USER_B, "now() - interval '5 minutes'", accion = "restaurar")
+        assertTrue(c.registrar("resuelto", USER_A, accion = "eliminar").getOrThrow(), "la resolucion se registra")
+        assertEquals(4L, c.acciones())
+        assertFalse(c.registrar("resuelto", USER_A, accion = "eliminar").getOrThrow(), "y solo una vez")
+        assertFalse(c.registrar("resuelto", USER_A, accion = "advertir").getOrThrow(), "ni con otro tipo")
+        assertEquals(4L, c.acciones())
+        assertEquals(
+            1L,
+            c.unico("select count(*) from public.acciones_moderacion where reporte_id = '$reporte' and tipo_accion = 'eliminar'")!!.toLong(),
+        )
+    }
+
+    /** Una accion del revisor en o despues de `revisado_en` (p. ej. escrita por el Ktor antiguo) completa la resolucion. */
+    @Test
+    fun laAccionDelRevisorTrasElCierreCompletaLaResolucion(): Unit = escenario { c ->
+        c.reporteCerradoEn("resuelto", USER_A, "now() - interval '10 minutes'")
+        c.accionDirecta(USER_A, "now() - interval '9 minutes'")
+        assertFalse(c.registrar("resuelto", USER_A).getOrThrow())
+        assertEquals(1L, c.acciones())
+    }
+
+    /**
+     * Reloj de Ktor ADELANTADO respecto a la base: `revisado_en` queda en el futuro de `now()`. La fila de la RPC se sella
+     * con `creado_en = greatest(now(), revisado_en)`, asi que cumple la clave y una segunda llamada nunca duplica.
+     */
+    @Test
+    fun conElRelojDeKtorAdelantadoLaAccionCumpleLaClaveYNoSeDuplica(): Unit = escenario { c ->
+        c.reporteCerradoEn("resuelto", USER_A, "now() + interval '1 hour'")
+        assertTrue(c.registrar("resuelto", USER_A).getOrThrow())
+        assertEquals(
+            "true",
+            c.unico(
+                "select (a.creado_en >= r.revisado_en)::text from public.acciones_moderacion a " +
+                    "join public.reportes_contenido r on r.id = a.reporte_id where r.id = '$reporte'",
+            ),
+        )
+        assertFalse(c.registrar("resuelto", USER_A).getOrThrow())
+        assertEquals(1L, c.acciones())
+    }
+
+    /**
+     * Gate PG17 (INFO): semantica explicita de `p_moderador_id` NULL. Solo casa con un reporte cerrado SIN actor
+     * (`revisado_por` NULL, la resolucion legada por token estatico), una sola vez y con la misma clave; nunca con un
+     * reporte cerrado por un moderador real, y un moderador real nunca completa un cierre sin actor.
+     */
+    @Test
+    fun unModeradorNuloSoloRegistraUnCierreSinActorYUnaSolaVez(): Unit = escenario { c ->
+        c.reporteCerradoEn("descartado", null, "now() - interval '10 minutes'")
+        c.accionDirecta(null, "now() - interval '1 hour'") // de un moderador ya borrado (ON DELETE SET NULL), anterior
+        assertFalse(c.registrar("descartado", USER_A, accion = "descartar").getOrThrow(), "un actor real no casa con un cierre sin actor")
+        assertTrue(c.registrar("descartado", null, accion = "descartar").getOrThrow(), "la accion anterior no es la resolucion")
+        assertFalse(c.registrar("descartado", null, accion = "descartar").getOrThrow(), "una sola vez")
+        assertEquals(2L, c.acciones())
+        assertNull(c.unico("select moderador_id::text from public.acciones_moderacion where reporte_id = '$reporte' and tipo_accion = 'descartar'"))
     }
 
     @Test
@@ -200,5 +278,21 @@ class Slice1ReportActionOnceMigrationTest {
         val sinTabla = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
         runCatching { c.ejecutar("rollback") }
         assertEquals("REPORT_ACTION_PREFLIGHT", sinTabla?.serverErrorMessage?.message)
+    }
+
+    /** La clave de la resolucion usa `revisado_en` y `creado_en`: con otro tipo la migracion no crea nada. */
+    @Test
+    fun preflightExigeLasMarcasDeTiempoDeLaClave(): Unit = escenario(conMigracion = false) { c ->
+        c.ejecutar("alter table public.reportes_contenido alter column revisado_en type text")
+        val error = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
+        runCatching { c.ejecutar("rollback") }
+        c.autoCommit = true
+        assertEquals("REPORT_ACTION_PREFLIGHT", error?.serverErrorMessage?.message)
+        assertNull(c.unico("select to_regprocedure('$fn')::text"))
+        c.ejecutar("alter table public.reportes_contenido alter column revisado_en type timestamptz using revisado_en::timestamptz")
+        c.ejecutar("alter table public.acciones_moderacion rename column creado_en to creado")
+        val sinCreado = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
+        runCatching { c.ejecutar("rollback") }
+        assertEquals("REPORT_ACTION_PREFLIGHT", sinCreado?.serverErrorMessage?.message)
     }
 }

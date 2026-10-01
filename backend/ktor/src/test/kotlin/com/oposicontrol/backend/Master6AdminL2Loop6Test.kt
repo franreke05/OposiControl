@@ -65,7 +65,26 @@ class Master6AdminL2Loop6Test {
         var reportState: String = "pendiente"
         var reportReporter: String? = reporter
         var reportReviewer: String? = null
+        var reportReviewedAt: String? = null
         var moderationActions = "[]"
+        /**
+         * Gate PG17: si no es null, filas reales (moderador_id, creado_en) de `acciones_moderacion` del reporte; la GET
+         * aplica los filtros `moderador_id=eq.` y `creado_en=gte.` que lleve la URI, como PostgREST.
+         */
+        var actionRows: List<Pair<String?, String>>? = null
+
+        fun moderationActionsFor(uri: String): String {
+            val rows = actionRows ?: return moderationActions
+            val query = java.net.URI(uri).rawQuery.split('&').associate {
+                it.substringBefore('=') to java.net.URLDecoder.decode(it.substringAfter('='), Charsets.UTF_8)
+            }
+            val moderador = query["moderador_id"]?.removePrefix("eq.")
+            val desde = query["creado_en"]?.removePrefix("gte.")?.let { java.time.OffsetDateTime.parse(it).toInstant() }
+            return rows.filter { (m, creado) ->
+                (moderador == null || m == moderador) &&
+                    (desde == null || !java.time.OffsetDateTime.parse(creado).toInstant().isBefore(desde))
+            }.joinToString(",", "[", "]") { """{"reporte_id":"$reportId"}""" }
+        }
         /** MASTER6-API-001: `admin_record_report_action` (true = accion insertada; false = ya la tenia otra llamada). */
         var actionInsert = V1StubResponse(200, "true")
         var syncRpc: V1StubResponse? = null
@@ -90,7 +109,8 @@ class Master6AdminL2Loop6Test {
                 200,
                 """[{"id":"$reportId","tipo_entidad":"publicacion_oposired","estado":"$reportState",""" +
                     """"reportado_por":${reportReporter?.let { "\"$it\"" } ?: "null"},""" +
-                    """"revisado_por":${reportReviewer?.let { "\"$it\"" } ?: "null"}}]""",
+                    """"revisado_por":${reportReviewer?.let { "\"$it\"" } ?: "null"},""" +
+                    """"revisado_en":${reportReviewedAt?.let { "\"$it\"" } ?: "null"}}]""",
             )
             method == "PATCH" && "/rest/v1/reportes_contenido" in uri && "estado=in." in uri -> casPatch
             method == "PATCH" && "/rest/v1/reportes_contenido" in uri -> V1StubResponse(204, "")
@@ -118,7 +138,7 @@ class Master6AdminL2Loop6Test {
                 """[{"usuario_id":"$user","username":"ada_l","nombre_mostrar":"Ada","es_invitado":false,"onboarding_completado":true,""" +
                     """"estado_cuenta":"activa","creado_en":"2026-01-02T03:04:05+00:00","actualizado_en":"2026-09-30T10:00:00+00:00"}]""",
             )
-            method == "GET" && "/rest/v1/acciones_moderacion" in uri -> V1StubResponse(200, moderationActions)
+            method == "GET" && "/rest/v1/acciones_moderacion" in uri -> V1StubResponse(200, moderationActionsFor(uri))
             "/rest/v1/rpc/admin_record_report_action" in uri -> actionInsert
             method == "POST" && "/rest/v1/auditoria_log" in uri -> V1StubResponse(201, "")
             else -> V1StubResponse(200, "[]")
@@ -377,6 +397,56 @@ class Master6AdminL2Loop6Test {
         assertTrue(stub.actionCalls().isEmpty())
     }
 
+    // ------------------------------------------------------------------ Gate PG17 (MEDIUM): clave de la resolucion
+
+    @Test
+    fun anEarlierActionTakenWhileOpenOrByOtherStaffDoesNotBlockTheResume() {
+        // Cerrado por admin a las 10:00 sin accion de resolucion. Antes, con el reporte abierto, otro moderador y el
+        // propio admin ocultaron el contenido: esas acciones no son la resolucion.
+        val closedAt = "2026-10-01T10:00:00.123456+00:00"
+        val stub = Stub().apply {
+            reportState = "resuelto"; reportReviewer = admin; reportReviewedAt = closedAt
+            actionRows = listOf(
+                "6a6a6a6a-0000-4000-8000-000000000009" to "2026-10-01T09:00:00+00:00",
+                admin to "2026-10-01T09:30:00+00:00",
+                "6a6a6a6a-0000-4000-8000-000000000009" to "2026-10-01T10:05:00+00:00",
+            )
+        }
+        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 0), actorId = admin)
+        val check = stub.of("GET", "/rest/v1/acciones_moderacion").single().uri
+        assertTrue("moderador_id=eq.$admin" in check, check)
+        assertTrue("creado_en=gte.2026-10-01T10%3A00%3A00.123456%2B00%3A00" in check, check)
+        assertEquals(1, stub.actionCalls().size, "antes: 409 permanente por la accion previa")
+        assertEquals(1, stub.of("POST", "/rest/v1/auditoria_log").size)
+    }
+
+    @Test
+    fun theResolversOwnActionAtOrAfterTheCloseCompletesTheResolution() {
+        val closedAt = "2026-10-01T10:00:00+00:00"
+        for (at in listOf(closedAt, "2026-10-01T10:00:01+00:00")) {
+            val stub = Stub().apply {
+                reportState = "resuelto"; reportReviewer = admin; reportReviewedAt = closedAt
+                actionRows = listOf(admin to at)
+            }
+            assertEquals(
+                "CONFLICT",
+                assertFailsWith<BackendDomainException> {
+                    gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
+                }.errorCode,
+            )
+            assertTrue(stub.sent.none { it.method != "GET" }, "resolucion completa: sin escrituras ($at)")
+        }
+        // Cierre legado sin revisado_en: cualquier accion del revisor la completa (fail closed).
+        val legacy = Stub().apply {
+            reportState = "resuelto"; reportReviewer = admin; actionRows = listOf(admin to "2020-01-01T00:00:00+00:00")
+        }
+        assertFailsWith<BackendDomainException> {
+            gateway(legacy).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 0), actorId = admin)
+        }
+        assertFalse("creado_en=" in legacy.of("GET", "/rest/v1/acciones_moderacion").single().uri)
+        assertTrue(legacy.sent.none { it.method != "GET" })
+    }
+
     // ------------------------------------------------------------------ MASTER7-API-004 / MASTER7-API-002
     // (cambio DELIBERADO en este fichero: las pruebas anteriores usaban `accion = "resolver"`, un valor que ningun
     // cliente envia y que ahora es 422; pasan a `ocultar`, una accion real, sin debilitar ninguna asercion.)
@@ -395,11 +465,30 @@ class Master6AdminL2Loop6Test {
 
     @Test
     fun everyRealClientActionStillResolves() {
-        for (ok in listOf("descartar", "ocultar", "avisar", "banear")) {
+        // R2-API004: cable del cliente -> valor que escribe la RPC. TODO valor escrito esta en el CHECK de
+        // acciones_moderacion.tipo_accion (ocultar, restaurar, eliminar, advertir, bloquear_usuario, descartar).
+        val dbCheck = setOf("ocultar", "restaurar", "eliminar", "advertir", "bloquear_usuario", "descartar")
+        val expected = mapOf(
+            "descartar" to "descartar", "ocultar" to "ocultar", "restaurar" to "restaurar", "eliminar" to "eliminar",
+            "advertir" to "advertir", "bloquear_usuario" to "bloquear_usuario",
+            "avisar" to "advertir", "banear" to "bloquear_usuario", "resuelto_sin_accion" to "descartar",
+        )
+        for ((wire, db) in expected) {
             val stub = Stub()
-            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = ok, ticketsReporter = 0), actorId = admin)
-            assertEquals(1, stub.actionCalls().size, ok)
+            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = wire, ticketsReporter = 0), actorId = admin)
+            val written = stub.actionCalls().single().json()["p_tipo_accion"]!!.jsonPrimitive.content
+            assertEquals(db, written, wire)
+            assertTrue(written in dbCheck, "$wire -> $written viola el CHECK")
+            val estado = stub.actionCalls().single().json()["p_estado"]!!.jsonPrimitive.content
+            assertEquals(if (wire == "descartar") "descartado" else "resuelto", estado, wire)
         }
+    }
+
+    @Test
+    fun resolvingWithoutActionKeepsTheRewardAndResolvedState() {
+        val stub = Stub()
+        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resuelto_sin_accion", ticketsReporter = 5), actorId = admin)
+        assertEquals("resuelto", stub.actionCalls().single().json()["p_estado"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -691,6 +780,27 @@ class Master6AdminL2Loop6Test {
         val badId = postJson("/api/v1/admin/usuarios/$user/roles", """{"roleIds":["$roleUsuario"],"expectedRoleIds":["no-uuid"]}""")
         assertEquals(HttpStatusCode.BadRequest, badId.status)
         assertEquals(2, stub.rpcCalls("admin_sync_roles_audited"))
+    }
+
+    /** Owner FA8 (D1-26): expectedRoleIds es una lista uuid de como mucho 50; 50 pasa, 51 es 400 sin tocar la base. */
+    @Test
+    fun expectedRoleIdsIsCappedAtFiftyUuids() = testApplication {
+        val stub = Stub().apply { rolesOfUser = """["$roleUsuario"]""" }
+        application { adminModule(gateway(stub)) }
+        fun body(n: Int) = """{"roleIds":["$roleUsuario"],"expectedRoleIds":[${(1..n).joinToString(",") { "\"$roleUsuario\"" }}]}"""
+        val over = postJson("/api/v1/admin/usuarios/$user/roles", body(51))
+        assertEquals(HttpStatusCode.BadRequest, over.status, over.bodyAsText())
+        assertEquals(0, stub.rpcCalls("admin_sync_roles_audited"))
+    }
+
+    /** Owner (ZWJ): los emojis compuestos con ZWJ y cualquier invisible/bidi/formato siguen rechazados; sin soporte de grafemas. */
+    @Test
+    fun composedEmojiNeedingZwjAndInvisibleFormatCharactersStayRejected() {
+        assertFalse(isAcceptableDisplayName("Ada 👩‍👩‍👧"))
+        assertFalse(isAcceptableDisplayName("Ada⁠L"))
+        assertFalse(isAcceptableDisplayName("Ada‎L"))
+        assertFalse(isAcceptableDisplayName("Ada­L"))
+        assertTrue(isAcceptableDisplayName("Ada 👩 José"))
     }
 
     /**
