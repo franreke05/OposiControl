@@ -344,8 +344,10 @@ class SupabaseJwtVerifier(
         if (!acquired) {
             // MASTER6-AUTH-008: la descarga ajena pudo publicar ya la clave (las claves se publican ANTES de soltar el
             // lock): si esta en cache, se sirve en vez de un 503.
-            if (keys[kid] != null) return
-            if (awaitInFlightFetchOf(kid)) return
+            // MASTER7-AUTH-004: la cache se vuelve a leer DESPUES de mirar la descarga en curso. Con el orden anterior
+            // (cache -> inFlight) una descarga que publicaba la clave y limpiaba `inFlight` entre ambas lecturas dejaba
+            // un 503 con la clave ya verificada en cache. Solo se sirve una clave publicada por el JWKS (deny-by-default).
+            if (awaitInFlightFetchOf(kid) || keys[kid] != null) return
             throw java.io.IOException("JWKS: refresco en curso")
         }
         try {
@@ -370,6 +372,12 @@ class SupabaseJwtVerifier(
     }
 
     @Volatile private var inFlight: InFlightFetch? = null
+
+    /**
+     * MASTER7-AUTH-004: punto de prueba para fijar de forma determinista la intercalacion "la descarga ajena publica la
+     * clave y limpia `inFlight` justo antes de que el que espera lo lea". `null` en produccion (sin efecto).
+     */
+    @Volatile internal var beforeInFlightReadForTesting: (() -> Unit)? = null
     private val sameKidWaiters = java.util.concurrent.Semaphore(JWKS_SAME_KID_WAITERS_MAX)
 
     /**
@@ -379,6 +387,7 @@ class SupabaseJwtVerifier(
      * MASTER5-SEC-001). Si la descarga fallo y la clave no esta, se relanza ese fallo (503), no un 401.
      */
     private fun awaitInFlightFetchOf(kid: String): Boolean {
+        beforeInFlightReadForTesting?.invoke()
         val fetch = inFlight ?: return false
         if (fetch.kid != kid) return false
         if (!sameKidWaiters.tryAcquire()) return false

@@ -192,7 +192,7 @@ class Master5KtorRestLoop5Test {
         val stub = Stub()
         val g = gateway(stub)
         val failure = assertFailsWith<BackendDomainException> {
-            g.resolverReporte("r-1", ResolverReporteBody(accion = "resolver", ticketsReporter = 2_000_000_000), actorId = null)
+            g.resolverReporte("r-1", ResolverReporteBody(accion = "ocultar", ticketsReporter = 2_000_000_000), actorId = null)
         }
         assertEquals("WALLET_AMOUNT_INVALID", failure.errorCode)
         assertTrue(stub.sent.none { it.method == "POST" }, "ni accion de moderacion ni RPC: ${stub.sent.map { it.uri }}")

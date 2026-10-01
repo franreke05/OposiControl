@@ -314,7 +314,12 @@ internal class SupabaseCanonicalProfileService(
 
     private fun nameIssues(field: String, value: String, required: Boolean): List<ErrorIssue> {
         val trimmed = value.trim()
-        return if ((required && trimmed.isEmpty()) || trimmed.length > MAX_NAME_LENGTH) {
+        // MASTER7-ARCH-001: misma regla de caracteres que el nombre visible admin (control/formato/bidi/sustitutos).
+        return if (
+            (required && trimmed.isEmpty()) ||
+            trimmed.length > MAX_NAME_LENGTH ||
+            (trimmed.isNotEmpty() && !isAcceptableDisplayName(trimmed))
+        ) {
             listOf(ErrorIssue(field, CanonicalIssue.INVALID_FORMAT))
         } else {
             emptyList()

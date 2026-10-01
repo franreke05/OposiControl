@@ -253,8 +253,12 @@ internal class SupabaseOposiBotsAuthGateway(
                 context = context,
             )
         } catch (failure: Exception) {
-            // Incluye la cancelacion: la sesion de recuperacion acuñada por /verify no debe quedar viva.
-            revokeMintedSession(recovery.accessToken, context, scope = "local")
+            // MASTER7-AUTH-001: resultado DESCONOCIDO (transporte, timeout, cancelacion): el PUT pudo llegar a GoTrue y
+            // cambiar la contraseña. Deny-by-default: se trata como si hubiera cambiado y se revocan TODAS las sesiones y
+            // refresh tokens del usuario (logout de usuario `scope=global`, que tambien mata la de recuperacion). La
+            // peticion SIEMPRE falla con el error original (nunca se informa exito por esta via); si el revoke falla se
+            // registra en WARN dentro de [revokeMintedSession] y el error original se propaga igualmente.
+            revokeMintedSession(recovery.accessToken, context, scope = "global")
             throw failure
         }
         if (!updated.status.isSuccessStatus()) {
@@ -485,7 +489,9 @@ internal class SupabaseOposiBotsAuthGateway(
     ) {
         val id = CanonicalUserId.fromJwtSubject(userId).value
         listOf("nombre" to names.first, "apellidos" to names.second).forEach { (column, value) ->
-            val text = value?.trim()?.take(100)?.takeIf(String::isNotEmpty) ?: return@forEach
+            // MASTER7-ARCH-001: un nombre de Apple con caracteres de control/formato/bidi NO se guarda (no fatal: la columna
+            // queda vacia y el usuario la fija por el endpoint de perfil, que aplica la misma regla).
+            val text = value?.trim()?.take(100)?.takeIf(String::isNotEmpty)?.takeIf(::isAcceptableDisplayName) ?: return@forEach
             try {
                 val response = supabaseRequest(
                     method = HttpMethod.Patch,

@@ -68,6 +68,12 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
         HttpStatusCode.UnprocessableEntity,
         "El usuario indicado no es válido.",
     ),
+    // MASTER6-IDEM-003: `admin_sync_roles_audited` de 4 argumentos (migracion 20260930101900) lo levanta bajo el
+    // cerrojo si `p_expected_role_ids` ya no es el conjunto actual. `syncRoles` lo traduce al canonico VERSION_CONFLICT.
+    "ROLE_SYNC_VERSION_CONFLICT" to DomainErrorDefinition(
+        HttpStatusCode.Conflict,
+        "Los roles del usuario cambiaron desde que abriste el formulario. Recarga y vuelve a intentarlo.",
+    ),
     // D1-26: conceder o retirar admin/superadmin exige superadmin.
     "SUPERADMIN_REQUIRED" to DomainErrorDefinition(
         HttpStatusCode.Forbidden,

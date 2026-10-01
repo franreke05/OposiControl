@@ -205,19 +205,56 @@ class AdminRoleSyncSuperadminAndAuditTest {
     }
 
     @Test
-    fun aLowRiskActionStaysBestEffortAndTheWarningReasonIsKept() = testApplication {
-        val stub = Stub().apply { auditStatus = 500 }
+    fun theWarningReasonIsKeptInTheAuditRow() = testApplication {
+        val stub = Stub()
         application { module(stub) }
-        val failing = client.post("/api/v1/admin/moderacion/actions") {
-            header(HttpHeaders.Authorization, "Bearer $adminActor")
-            contentType(ContentType.Application.Json)
-            setBody("""{"targetUserId":"$plainUser","actionType":"advertencia","reason":"spam reiterado"}""")
-        }
-        assertEquals(HttpStatusCode.Created, failing.status, "best-effort: la advertencia no se cae por la auditoria")
+        val ok = warn(adminActor, """{"targetUserId":"$plainUser","actionType":"advertencia","reason":"spam reiterado"}""")
+        assertEquals(HttpStatusCode.Created, ok.status)
         val row = stub.auditBodies().single()
         assertEquals(adminActor, row["usuario_id"]!!.jsonPrimitive.content)
+        assertEquals("advertencia_usuario", row["accion"]!!.jsonPrimitive.content)
         assertEquals("spam reiterado", row["despues"]!!.jsonObject["motivo"]!!.jsonPrimitive.content)
     }
+
+    // MASTER7-API-007 (cambio DELIBERADO): antes `aLowRiskActionStaysBestEffort...` fijaba que una advertencia
+    // respondiera 201 con la auditoria caida (defecto: la advertencia ES la fila de auditoria).
+    @Test
+    fun aWarningWhoseAuditCannotBeWrittenFailsInsteadOfAnswering201() = testApplication {
+        val stub = Stub().apply { auditStatus = 500 }
+        application { module(stub) }
+        val failing = warn(adminActor, """{"targetUserId":"$plainUser","actionType":"advertencia","reason":"x"}""")
+        assertEquals(HttpStatusCode.InternalServerError, failing.status, failing.bodyAsText())
+    }
+
+    @Test
+    fun anUnknownOrInjectedActionTypeIs400AndNothingIsAudited() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+        for (bad in listOf("x\nevent=FORGED", "borrar", "")) {
+            val r = warn(adminActor, """{"targetUserId":"$plainUser","actionType":"$bad","reason":"x"}""")
+            assertEquals(HttpStatusCode.BadRequest, r.status, "$bad: ${r.bodyAsText()}")
+        }
+        assertTrue(stub.auditBodies().isEmpty(), "ninguna fila de auditoria")
+        for (good in listOf("advertencia", "suspension", "ban")) {
+            assertEquals(HttpStatusCode.Created, warn(adminActor, """{"targetUserId":"$plainUser","actionType":"$good","reason":"x"}""").status, good)
+        }
+    }
+
+    @Test
+    fun anOverlongWarningReasonIs400() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+        val tooLong = "a".repeat(1_001)
+        assertEquals(HttpStatusCode.BadRequest, warn(adminActor, """{"targetUserId":"$plainUser","actionType":"ban","reason":"$tooLong"}""").status)
+        assertEquals(HttpStatusCode.Created, warn(adminActor, """{"targetUserId":"$plainUser","actionType":"ban","reason":"${"a".repeat(1_000)}"}""").status)
+    }
+
+    private suspend fun io.ktor.server.testing.ApplicationTestBuilder.warn(actor: String, json: String): HttpResponse =
+        client.post("/api/v1/admin/moderacion/actions") {
+            header(HttpHeaders.Authorization, "Bearer $actor")
+            contentType(ContentType.Application.Json)
+            setBody(json)
+        }
 
     @Test
     fun theActorTravelsIntoTheIoPoolAndIsNeverFabricatedOutsideARequest() {

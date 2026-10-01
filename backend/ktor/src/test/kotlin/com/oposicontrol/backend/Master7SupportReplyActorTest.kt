@@ -41,11 +41,13 @@ class Master7SupportReplyActorTest {
 
     private class Sent(val method: String, val uri: String, val body: String)
 
-    private inner class Stub {
+    private inner class Stub(val auditFails: Boolean = false) {
         val sent = CopyOnWriteArrayList<Sent>()
         fun inserts() = sent.filter { it.method == "POST" && "/rest/v1/mensajes_soporte" in it.uri }
+        fun audits() = sent.filter { it.method == "POST" && "/rest/v1/auditoria_log" in it.uri }
 
         fun respond(method: String, uri: String): V1StubResponse = when {
+            auditFails && method == "POST" && "/rest/v1/auditoria_log" in uri -> V1StubResponse(500, """{"message":"down"}""")
             // Orden creado_en.desc: `newest` es el primero (la antigua caida `firstOrNull`), `victim` coincide con el assignee.
             "/rest/v1/perfiles_usuario" in uri -> V1StubResponse(
                 200,
@@ -150,16 +152,70 @@ class Master7SupportReplyActorTest {
         assertTrue(stub.sent.isEmpty(), "ninguna peticion a Supabase con actor nulo")
     }
 
+    /**
+     * CAMBIO DELIBERADO (MASTER7-API-006): el test anterior (`theReplyIsStoredAsStaffRegardlessOfTheInternalFlag`)
+     * codificaba el defecto: una nota pensada como interna se guardaba como respuesta de staff VISIBLE para el usuario.
+     * Sin columna de nota interna (PRODUCT_BLOCKED) la unica opcion segura es rechazarla: 422 antes de cualquier I/O.
+     */
     @Test
-    fun theReplyIsStoredAsStaffRegardlessOfTheInternalFlag() = testApplication {
-        // `internal` no tiene columna propia en `mensajes_soporte` (PRODUCT_BLOCKED): el comportamiento definido es que
-        // el mensaje se guarda como respuesta de staff con el actor real, sin inventar semantica nueva.
+    fun anInternalNoteIsRejectedWith422BeforeAnyUpstreamCall() = testApplication {
         val stub = Stub()
         application { adminModule(gateway(stub)) }
         val response = reply(admin, """{"assignee":"victima","text":"hola","internal":true}""")
+        assertEquals(HttpStatusCode.UnprocessableEntity, response.status)
+        assertEquals(
+            "SUPPORT_INTERNAL_NOTE_UNSUPPORTED",
+            Json.parseToJsonElement(response.bodyAsText()).jsonObject["code"]?.jsonPrimitive?.content,
+        )
+        assertTrue(stub.sent.isEmpty(), "ninguna peticion a Supabase (ni lectura, ni insert, ni auditoria): ${stub.sent.map { it.uri }}")
+    }
+
+    @Test
+    fun aPublicReplyIsPersistedAsStaffAndReportedAsNotInternal() = testApplication {
+        val stub = Stub()
+        application { adminModule(gateway(stub)) }
+        val response = reply(admin, """{"assignee":"","text":"hola","internal":false}""")
         assertEquals(HttpStatusCode.Created, response.status)
         val row = Json.parseToJsonElement(stub.inserts().single().body).jsonArray.single().jsonObject
         assertEquals("true", row["es_staff"]!!.jsonPrimitive.content)
         assertEquals(admin, row["remitente_id"]!!.jsonPrimitive.content)
+        val dto = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+        assertEquals("false", dto["internal"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun aReplyWritesABoundedAuditRowAttributedToTheVerifiedActor() = testApplication {
+        val stub = Stub()
+        application { adminModule(gateway(stub)) }
+        val response = reply(admin, """{"assignee":"victima","text":"cuerpo-secreto-del-mensaje","internal":false}""")
+        assertEquals(HttpStatusCode.Created, response.status)
+        val audit = stub.audits().single()
+        val row = Json.parseToJsonElement(audit.body).jsonArray.single().jsonObject
+        assertEquals("soporte_respuesta_enviada", row["accion"]!!.jsonPrimitive.content)
+        assertEquals("mensajes_soporte", row["tabla_afectada"]!!.jsonPrimitive.content)
+        assertEquals("7c7c7c7c-0000-4000-8000-000000000001", row["registro_id"]!!.jsonPrimitive.content)
+        assertEquals(admin, row["usuario_id"]!!.jsonPrimitive.content)
+        val despues = row["despues"]!!.jsonObject
+        assertEquals(setOf("conversacion_id", "remitente_id"), despues.keys)
+        assertEquals(conversation, despues["conversacion_id"]!!.jsonPrimitive.content)
+        assertEquals(admin, despues["remitente_id"]!!.jsonPrimitive.content)
+        assertTrue("cuerpo-secreto-del-mensaje" !in audit.body, "la auditoria nunca lleva el cuerpo del mensaje")
+        // Orden: el insert va antes que la fila de auditoria (la fila referencia el id del mensaje).
+        assertTrue(stub.sent.indexOf(stub.inserts().single()) < stub.sent.indexOf(audit))
+    }
+
+    /**
+     * required = true: si la fila de auditoria no se puede escribir la respuesta FALLA (500 INTERNAL), nunca 201.
+     * RESIDUAL documentado: el mensaje ya insertado permanece (no atomico sin RPC/migracion).
+     */
+    @Test
+    fun aFailedAuditWriteFailsTheReply() = testApplication {
+        val stub = Stub(auditFails = true)
+        application { adminModule(gateway(stub)) }
+        val response = reply(admin, """{"assignee":"","text":"hola","internal":false}""")
+        assertEquals(HttpStatusCode.InternalServerError, response.status)
+        assertEquals("INTERNAL", Json.parseToJsonElement(response.bodyAsText()).jsonObject["code"]?.jsonPrimitive?.content)
+        assertEquals(1, stub.audits().size)
+        assertEquals(1, stub.inserts().size, "residual: el insert ya ocurrio antes de la auditoria fallida")
     }
 }

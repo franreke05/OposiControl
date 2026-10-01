@@ -72,7 +72,9 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
             call.respond(gateway.listSupportMessages(call.requiredPath("conversationId")))
         }
         post("/support/conversations/{conversationId}/messages") {
-            call.respond(HttpStatusCode.Created, gateway.sendSupportMessage(call.requiredPath("conversationId"), call.receive()))
+            // MASTER7-API-006: ruta retirada. El cuerpo NO se lee (mismo motivo que la cartera legacy: un JSON mal
+            // formado debe recibir el 410, no un 400/500) y no hay I/O upstream antes del rechazo.
+            gateway.rejectLegacySupportReply(call.requiredPath("conversationId"))
         }
         get("/moderation/actions") { call.respond(gateway.listModerationActions()) }
         post("/moderation/actions") {
@@ -328,40 +330,20 @@ class SupabaseAdminGateway internal constructor(
         }
     }
 
-    fun sendSupportMessage(conversationId: String, input: AdminSupportReplyDto): AdminSupportMessageDto {
-        require(input.text.isNotBlank()) { "El mensaje no puede estar vacio." }
-        val conversation = request(
-            "GET",
-            "/rest/v1/support_conversation?select=*&id=eq.${conversationId.toIntId()}",
-            null,
-        ).decodeList<SupportConversationRow>().firstOrNull() ?: throw IllegalArgumentException("Conversacion no encontrada.")
-        val sender = input.assignee.takeIf { it.isNotBlank() }?.let(::findUser)
-            ?: conversation.assignedUsuarioId?.let { id -> usuarios().firstOrNull { it.id == id } }
-            ?: usuarios().firstOrNull()
-            ?: throw IllegalArgumentException("No hay usuarios reales para enviar el mensaje.")
-        val saved = request(
-            "POST",
-            "/rest/v1/support_message",
-            json.encodeToString(
-                listOf(
-                    SupportMessageInsertRow(
-                        conversationId = conversationId.toIntId(),
-                        senderUsuarioId = sender.id.requireId("usuario"),
-                        body = input.text,
-                        internalNote = input.internal,
-                    ),
-                ),
-            ),
-            prefer = "return=representation",
-        ).decodeList<SupportMessageRow>().first()
-        return AdminSupportMessageDto(
-            id = saved.id?.toString().orEmpty(),
-            conversationId = conversationId,
-            authorName = sender.displayName(),
-            text = saved.body.orEmpty(),
-            timestamp = "",
-            internal = saved.internalNote,
-            attachmentLabel = saved.attachmentPath,
+    /**
+     * MASTER7-API-006: la respuesta de soporte legacy elegia el remitente por `assignee` de texto libre, por el
+     * asignado de la conversacion o por el primer usuario (suplantacion de autoria) y no dejaba auditoria. Se retira
+     * igual que [rejectLegacyTicketAdjustment]: 410 antes de leer el cuerpo o tocar Supabase. El escritor canonico
+     * (`POST /api/v1/admin/soporte/conversaciones/{id}/mensajes`) atribuye la respuesta al actor verificado y la audita.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun rejectLegacySupportReply(conversationId: String): Nothing {
+        throw BackendDomainException(
+            "SUPPORT_LEGACY_ROUTE_DISABLED",
+            HttpStatusCode.Gone,
+            "La respuesta de soporte legacy esta deshabilitada. " +
+                "Usa POST /api/v1/admin/soporte/conversaciones/{id}/mensajes, que atribuye la respuesta al actor " +
+                "autenticado y la audita.",
         )
     }
 
@@ -815,14 +797,6 @@ private data class SupportMessageRow(
     val body: String? = null,
     @SerialName("attachment_path") val attachmentPath: String? = null,
     @SerialName("internal_note") val internalNote: Boolean = false,
-)
-
-@Serializable
-private data class SupportMessageInsertRow(
-    @SerialName("conversation_id") val conversationId: Int,
-    @SerialName("sender_usuario_id") val senderUsuarioId: Int,
-    val body: String,
-    @SerialName("internal_note") val internalNote: Boolean,
 )
 
 @Serializable

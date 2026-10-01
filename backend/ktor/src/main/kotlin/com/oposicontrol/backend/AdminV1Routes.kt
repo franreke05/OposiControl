@@ -253,27 +253,17 @@ internal fun upstreamStatusOf(failure: Throwable): Int? = when (failure) {
     else -> failure.message?.let { Regex(""" -> (\d{3}):""").find(it)?.groupValues?.get(1)?.toIntOrNull() }
 }
 
-/**
- * MASTER5-API-005 / MASTER6-SEC-002: un nombre visible no admite caracteres de control (p{Cc}), de formato invisibles
- * (p{Cf}: bidi U+202A..U+202E / U+2066..U+2069, ancho cero U+200B..U+200D, BOM U+FEFF...), separadores de linea o de
- * parrafo (p{Zl}/p{Zp}) ni sustitutos UTF-16 sueltos. Consecuencia aceptada: el ZWJ (U+200D) de los emojis compuestos
- * tambien se rechaza.
- */
-internal fun isAcceptableDisplayName(name: String): Boolean {
-    var i = 0
-    while (i < name.length) {
-        val cp = name.codePointAt(i)
-        when (Character.getType(cp).toByte()) {
-            Character.CONTROL, Character.FORMAT, Character.LINE_SEPARATOR, Character.PARAGRAPH_SEPARATOR, Character.SURROGATE ->
-                return false
-        }
-        i += Character.charCount(cp)
-    }
-    return true
-}
-
 /** MASTER6-API-001: estados en los que un reporte de contenido sigue abierto (CHECK `reportes_contenido_estado_check`). */
 internal val REPORTE_OPEN_STATES: List<String> = listOf("pendiente", "revisado")
+
+/** MASTER7-API-002: estados validos del filtro de `GET /reportes` (los del CHECK + `todos` = sin filtro). */
+internal val REPORTE_LIST_ESTADOS: Set<String> = setOf("pendiente", "revisado", "resuelto", "descartado", "todos")
+
+/** MASTER7-API-004: acciones de moderacion que envian los clientes (`descartar` cierra sin accion; el resto resuelve). */
+internal val ACCIONES_MODERACION: Set<String> = setOf("descartar", "ocultar", "avisar", "banear")
+
+/** MASTER7-API-007: tipos de accion de `POST /moderacion/actions` (entran en `auditoria_log.accion` como `<tipo>_usuario`). */
+internal val MODERATION_ACTION_TYPES: Set<String> = setOf("advertencia", "suspension", "ban")
 
 internal fun String.toForoSnippet(maxLength: Int = 240): String {
     val trimmed = trim()
@@ -1244,8 +1234,14 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         // interpolan en PostgREST se validan como UUID en la ruta y otra vez en el gateway.
         route("/reportes") {
             get {
-                val estado = call.request.queryParameters["estado"]
-                call.respond(AdminReportesResponse(withUpstreamIo { gateway.listReportes(estado) }))
+                val params = call.request.queryParameters
+                val estado = params["estado"]
+                // MASTER7-API-002: limit/offset numericos o 400 (nunca se interpolan sin parsear); limit 1..200.
+                val limit = params["limit"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("limit debe ser un entero.") }
+                    ?.coerceIn(1, 200) ?: 200
+                val offset = params["offset"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("offset debe ser un entero.") }
+                    ?.coerceAtLeast(0) ?: 0
+                call.respond(AdminReportesResponse(withUpstreamIo { gateway.listReportes(estado, limit, offset) }))
             }
             get("/{id}") {
                 val id = call.requiredPath("id").validatedUuid("id")
@@ -1321,6 +1317,9 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             post("/actions") {
                 val req = call.receive<WarnUserRequest>()
                 req.targetUserId.validatedUuid("targetUserId")
+                // MASTER7-API-007: allow-list (el valor entra en `auditoria_log.accion` y en el log) y motivo acotado.
+                require(req.actionType in MODERATION_ACTION_TYPES) { "actionType no valido." }
+                require(req.reason.length <= AUDIT_TEXT_MAX) { "reason supera $AUDIT_TEXT_MAX caracteres." }
                 withUpstreamIo { gateway.warnUser(req.targetUserId, req.actionType, req.reason) }
                 call.respond(HttpStatusCode.Created, OkDto())
             }
@@ -3287,14 +3286,6 @@ private data class ReporteRow(
     @SerialName("revisado_por") val revisadoPor: String? = null,
 )
 
-@Serializable
-private data class AccionModeracionInsert(
-    @SerialName("reporte_id") val reporteId: String,
-    @SerialName("tipo_accion") val tipoAccion: String,
-    val notas: String? = null,
-    /** uuid del admin real (JWT sub); null si autenticó con el token estático legacy. */
-    @SerialName("moderador_id") val moderadorId: String? = null,
-)
 
 @Serializable
 private data class ReportePatch(
@@ -5679,9 +5670,9 @@ class AdminV1Gateway private constructor(
         val before = roleIdsOf(usuarioId)
         // MASTER6-IDEM-003 (FA8): un editor con una foto vieja ya no borra en silencio roles concedidos despues por otro
         // admin: si declara lo que vio y no es lo actual, 409 VERSION_CONFLICT ANTES de la auditoria de intencion y de la
-        // RPC. Limite conocido: la comparacion es previa al cerrojo de la RPC; la ventana restante (milisegundos entre esta
-        // lectura y el cerrojo) se cierra comparando bajo el cerrojo en `admin_sync_roles_audited` (requiere migracion) y,
-        // mientras tanto, se detecta abajo con el `antes` leido bajo el cerrojo.
+        // RPC (camino rapido). La comparacion AUTORITATIVA va bajo el cerrojo: la RPC recibe `p_expected_role_ids`
+        // (migracion 20260930101900) y levanta ROLE_SYNC_VERSION_CONFLICT antes de escribir si otra sincronizacion entro
+        // entre esta lectura y el cerrojo.
         if (expectedRoleIds != null && expectedRoleIds.toSet() != before.toSet()) {
             throw CanonicalErrorCode.VERSION_CONFLICT.exception(
                 "Los roles del usuario cambiaron desde que abriste el formulario. Recarga y vuelve a intentarlo.",
@@ -5728,9 +5719,21 @@ class AdminV1Gateway private constructor(
                     put("p_usuario_id", JsonPrimitive(usuarioId))
                     put("p_role_ids", JsonArray(requested.map(::JsonPrimitive)))
                     put("p_actor_id", actorId?.let { JsonPrimitive(it.validatedUuid("actorId")) } ?: JsonNull)
+                    // MASTER6-IDEM-003: SIEMPRE presente (array o null): asi PostgREST resuelve la sobrecarga de 4
+                    // argumentos, que compara lo esperado bajo el cerrojo; null = sin precondicion (como la de 3).
+                    put("p_expected_role_ids", expectedRoleIds?.let { ids -> JsonArray(ids.distinct().map(::JsonPrimitive)) } ?: JsonNull)
                 }.toString(),
             )
-        } catch (failure: Exception) {
+        } catch (raw: Exception) {
+            // MASTER6-IDEM-003: el conflicto bajo el cerrojo sale con el codigo canonico VERSION_CONFLICT (FA8), el mismo
+            // que el camino rapido; ROLE_SYNC_VERSION_CONFLICT es solo el codigo interno de la base.
+            val failure = if (raw is BackendDomainException && raw.errorCode == "ROLE_SYNC_VERSION_CONFLICT") {
+                CanonicalErrorCode.VERSION_CONFLICT.exception(
+                    "Los roles del usuario cambiaron desde que abriste el formulario. Recarga y vuelve a intentarlo.",
+                )
+            } else {
+                raw
+            }
             // `rechazada`: la base rechazo la sincronizacion (error de dominio, nada cambio). `desconocido`: transporte o
             // 5xx, la RPC pudo o no confirmarse; se dice asi en vez de afirmar un fallo.
             registrarAuditoria(
@@ -5755,9 +5758,9 @@ class AdminV1Gateway private constructor(
         val locked = runCatching { json.decodeFromString<RoleSyncLockedSets>(rpcBody) }.getOrNull()
         val preconditionRaced = expectedRoleIds != null && locked != null && locked.antes.toSet() != expectedRoleIds.toSet()
         if (preconditionRaced) {
-            // MASTER6-IDEM-003: la precondicion paso antes del cerrojo pero otra sincronizacion entro en esa ventana. Sin
-            // migracion no se puede impedir (la comparacion bajo el cerrojo exige `p_expected_role_ids` en la RPC); como
-            // mitigacion queda en la fila DURADERA de resultado (`precondicionViolada`, con lo esperado) ademas del WARN.
+            // MASTER6-IDEM-003: defensa en profundidad. Con la sobrecarga de 4 argumentos (migracion 20260930101900) la
+            // base ya rechaza este caso bajo el cerrojo, asi que aqui no deberia llegarse; si una regresion de la funcion
+            // lo dejara pasar, queda en la fila DURADERA de resultado (`precondicionViolada`, con lo esperado) y en el WARN.
             AuditLogger.warn("roles sync precondition raced under the lock registroId={}: locked antes differs from expectedRoleIds", usuarioId)
         }
         if (locked == null) {
@@ -5806,15 +5809,18 @@ class AdminV1Gateway private constructor(
     }
 
     // MODERACIÓN FORO (reportes_contenido + acciones_moderacion)
-    // `estado` es opcional y aditivo: sin valor (o cualquier valor distinto de
-    // "todos") mantiene el comportamiento histórico (solo pendientes, orden
-    // ascendente) del que ya depende la cola de moderación de escritorio.
-    // "todos" quita el filtro de estado para la nueva pantalla móvil de Informes.
-    fun listReportes(estado: String? = null): List<AdminReporteDto> {
-        val estadoFilter = if (estado == "todos") "" else "&estado=eq.pendiente"
+    // `estado` es opcional y aditivo: sin valor (o en blanco) mantiene el comportamiento histórico (solo
+    // pendientes, orden ascendente) del que ya depende la cola de moderación de escritorio.
+    // MASTER7-API-002: un valor fuera de [REPORTE_LIST_ESTADOS] es 400 (antes caia en silencio a pendiente);
+    // "todos" quita el filtro de estado; limit/offset paginan.
+    fun listReportes(estado: String? = null, limit: Int = 200, offset: Int = 0): List<AdminReporteDto> {
+        val estadoValue = estado?.takeIf { it.isNotBlank() } ?: "pendiente"
+        require(estadoValue in REPORTE_LIST_ESTADOS) { "estado no valido." }
+        val estadoFilter = if (estadoValue == "todos") "" else "&estado=eq.$estadoValue"
         val reportes = request(
             "GET",
-            "/rest/v1/reportes_contenido?select=*$estadoFilter&order=creado_en.asc&limit=200",
+            "/rest/v1/reportes_contenido?select=*$estadoFilter&order=creado_en.asc" +
+                "&limit=${limit.coerceIn(1, 200)}&offset=${offset.coerceAtLeast(0)}",
             null,
         ).decodeList<ReporteRow>()
         val reporterIds = reportes.mapNotNull { it.reportadoPor }.filter { it.isNotBlank() }.distinct()
@@ -6172,7 +6178,24 @@ class AdminV1Gateway private constructor(
      *   uuid válido) — si no hay JWT real, se guarda sin actor en vez de fabricar uno.
      */
     fun resolverReporte(rawId: String, req: ResolverReporteBody, actorId: String?) {
-        require(req.accion.isNotBlank()) { "La acción es obligatoria." }
+        // MASTER7-API-004: allow-list exacta ANTES de cualquier lectura/escritura (un typo ya no resuelve ni concede).
+        if (req.accion !in ACCIONES_MODERACION) {
+            throw BackendDomainException("REPORT_ACTION_INVALID", HttpStatusCode.UnprocessableEntity, "La acción no es válida.")
+        }
+        if ((req.notas?.length ?: 0) > AUDIT_TEXT_MAX) {
+            throw BackendDomainException(
+                "REPORT_NOTES_TOO_LONG",
+                HttpStatusCode.UnprocessableEntity,
+                "Las notas superan $AUDIT_TEXT_MAX caracteres.",
+            )
+        }
+        if (req.accion == "descartar" && req.ticketsReporter > 0) {
+            throw BackendDomainException(
+                "WALLET_AMOUNT_INVALID",
+                HttpStatusCode.UnprocessableEntity,
+                "Descartar un reporte no concede recompensa.",
+            )
+        }
         // MASTER5-API-001 / MASTER6-API-001: la recompensa se valida ANTES de cualquier escritura y en AMBOS extremos.
         // 0 es valido (es el defecto de `ResolverReporteBody` y lo que envia «descartar»: sin recompensa); un negativo
         // no lo es (antes pasaba y se guardaba como `tickets_otorgados` negativo).
@@ -6194,7 +6217,9 @@ class AdminV1Gateway private constructor(
             // MASTER6-API-001 (loop 6 cierre): un reporte cerrado SOLO se reanuda si es la resolucion incompleta de ESTE
             // mismo moderador (mismo estado destino, mismo revisado_por) y aun no tiene accion de moderacion (la ultima
             // escritura). Cualquier otro caso (otro moderador, otro destino, resolucion ya completa) es 409 sin efectos.
-            val resumable = reporte.estado == estado && reporte.revisadoPor == actorId && !hasModerationAction(id)
+            // Sin actor (token estatico) NUNCA se reanuda: `null == null` haria pasar a cualquier llamador sin identidad
+            // como «el mismo moderador» (deny-by-default).
+            val resumable = actorId != null && reporte.estado == estado && reporte.revisadoPor == actorId && !hasModerationAction(id)
             if (!resumable) throw reportAlreadyClosed()
             completeResolution(id, estado, reporte, req, actorId)
             return
@@ -6257,8 +6282,22 @@ class AdminV1Gateway private constructor(
             )
         }
         // La accion de moderacion es la ULTIMA escritura duradera: marca la resolucion como completa.
-        val accion = AccionModeracionInsert(reporteId = id, tipoAccion = req.accion, notas = req.notas, moderadorId = actorId)
-        request("POST", "/rest/v1/acciones_moderacion", sbJson.encodeToString(listOf(accion)), prefer = "return=minimal")
+        // MASTER6-API-001: la escribe `admin_record_report_action` (migracion 20260930102000) en UNA transaccion: bloquea
+        // la fila del reporte, comprueba que sigue cerrado en `estado` por este actor y sin accion, e inserta. Antes un GET
+        // + POST sueltos dejaban que dos reanudaciones concurrentes insertaran dos acciones. `false` = otra llamada la
+        // completo (o el reporte ya no es de esta resolucion): 409 sin auditar dos veces.
+        val recorded = request(
+            "POST",
+            "/rest/v1/rpc/admin_record_report_action",
+            buildJsonObject {
+                put("p_reporte_id", JsonPrimitive(id))
+                put("p_estado", JsonPrimitive(estado))
+                put("p_moderador_id", actorId?.let(::JsonPrimitive) ?: JsonNull)
+                put("p_tipo_accion", JsonPrimitive(req.accion))
+                put("p_notas", req.notas?.let(::JsonPrimitive) ?: JsonNull)
+            }.toString(),
+        ).trim() == "true"
+        if (!recorded) throw reportAlreadyClosed()
         registrarAuditoria("reporte_$estado", "reportes_contenido", id)
         logStrategicEvent(
             StrategicEvent.REPORT_RESOLVED,
@@ -6486,10 +6525,25 @@ class AdminV1Gateway private constructor(
 
     /**
      * MASTER7-API-006: [actorId] es el uuid verificado del JWT; `input.assignee` se IGNORA (texto libre del cliente,
-     * nunca decide la autoria). `input.internal` no se persiste: `mensajes_soporte` no tiene columna de nota interna
-     * (PRODUCT_BLOCKED / requiere migracion); `es_staff` sigue siendo true porque la respuesta la escribe staff.
+     * nunca decide la autoria).
+     *
+     * Nota interna: `mensajes_soporte` no tiene columna de nota interna (PRODUCT_BLOCKED / requiere migracion), asi
+     * que `internal = true` se RECHAZA con 422 SUPPORT_INTERNAL_NOTE_UNSUPPORTED antes de cualquier I/O (deny-by-default):
+     * guardarla como respuesta de staff la haria visible al usuario final. La respuesta informa siempre `internal = false`.
+     *
+     * Auditoria: fila OBLIGATORIA `soporte_respuesta_enviada` (required = true) con carga acotada (solo ids, nunca el
+     * cuerpo). RESIDUAL conocido: la fila se escribe DESPUES del insert; si falla, la peticion responde 500 pero el
+     * mensaje ya insertado queda. Hacerlo atomico exige una RPC/transaccion (migracion), propuesto para el siguiente paso.
      */
     fun sendSupportMessage(rawConversationId: String, input: AdminSupportReplyDto, actorId: String): AdminSupportMessageDto {
+        if (input.internal) {
+            throw BackendDomainException(
+                "SUPPORT_INTERNAL_NOTE_UNSUPPORTED",
+                HttpStatusCode.UnprocessableEntity,
+                "Las notas internas de soporte no estan soportadas: el mensaje seria visible para el usuario. " +
+                    "Envia la respuesta con internal = false.",
+            )
+        }
         val conversationId = rawConversationId.validatedUuid("id")
         val senderId = actorId.validatedUuid("actorId")
         require(input.text.isNotBlank()) { "El mensaje no puede estar vacio." }
@@ -6509,13 +6563,23 @@ class AdminV1Gateway private constructor(
             ),
             prefer = "return=representation",
         ).decodeList<SoporteMensajeRow>().first()
+        registrarAuditoria(
+            "soporte_respuesta_enviada",
+            "mensajes_soporte",
+            saved.id,
+            despues = buildJsonObject {
+                put("conversacion_id", JsonPrimitive(saved.conversacionId))
+                put("remitente_id", JsonPrimitive(senderId))
+            },
+            required = true,
+        )
         return AdminSupportMessageDto(
             id = saved.id,
             conversationId = saved.conversacionId,
             authorName = senderProfile.displayName(senderId),
             text = saved.cuerpo,
             timestamp = saved.creadoEn.orEmpty(),
-            internal = saved.esStaff,
+            internal = false,
         )
     }
 
@@ -7332,6 +7396,8 @@ class AdminV1Gateway private constructor(
             "perfiles_usuario",
             userId,
             despues = buildJsonObject { put("motivo", JsonPrimitive(reason.take(AUDIT_TEXT_MAX))) },
+            // MASTER7-API-007: la advertencia ES la fila de auditoria; si no se escribe no hay 201.
+            required = true,
         )
     }
 

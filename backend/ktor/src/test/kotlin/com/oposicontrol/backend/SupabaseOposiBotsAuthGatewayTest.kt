@@ -364,6 +364,27 @@ class SupabaseOposiBotsAuthGatewayTest {
         assertTrue(bodyOf(h.requests.first { it.url.encodedPath == "/auth/v1/token" }).contains("\"nonce\":\"n-1\""))
     }
 
+    /** MASTER7-ARCH-001: un nombre de Apple con bidi/control no se escribe (no fatal); el valido si. */
+    @Test
+    fun firstAuthNamesWithBidiOrControlCharactersAreNeverWritten() = runTest {
+        val h = harness(profile = { profileRow("activa", onboarding = false) }, appleConfigured = true, appleIdToken = testJwt("apple-11"))
+        val response = h.gateway.apple(
+            OposiBotsAppleRequest(testJwt("apple-11"), "auth-code", firstAuthGivenName = "a‮b", firstAuthFamilyName = "Lovelace"),
+            context,
+        )
+        assertEquals("minted-access", response.session.accessToken, "el nombre rechazado nunca deniega el acceso")
+        val patches = h.requests.filter { it.method == HttpMethod.Patch }
+        assertEquals(1, patches.size, "solo el apellido valido se escribe")
+        assertEquals("(apellidos.is.null,apellidos.eq.)", patches.single().url.parameters["or"])
+
+        val both = harness(profile = { profileRow("activa", onboarding = false) }, appleConfigured = true, appleIdToken = testJwt("apple-12"))
+        both.gateway.apple(
+            OposiBotsAppleRequest(testJwt("apple-12"), "auth-code", firstAuthGivenName = "a\u0000b", firstAuthFamilyName = "x⁦y"),
+            context,
+        )
+        assertEquals(0, both.requests.count { it.method == HttpMethod.Patch })
+    }
+
     @Test
     fun theLegacyAppleFullNameAliasIsSplitAndTheLegacyEmailIsIgnored() {
         val request = OposiBotsAppleRequest("t", "c", email = "x@y.es", fullName = "Ada King Lovelace")

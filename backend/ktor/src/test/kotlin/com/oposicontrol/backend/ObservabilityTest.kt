@@ -334,4 +334,84 @@ class ObservabilityTest {
 
         assertEquals(HttpStatusCode.ServiceUnavailable, response.status)
     }
+
+    // ----- MASTER7-OBS-002: la causa de un DOWN deja rastro (solo categoria) -----
+
+    private fun probeWithStatus(status: Int, apiKey: String): Pair<String, List<String>> {
+        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(), 0), 0)
+        server.createContext("/") { it.sendResponseHeaders(status, -1); it.close() }
+        server.start()
+        try {
+            var result = ""
+            val lines = captureObservabilityLogs {
+                result = checkSupabaseReachable(url = "http://127.0.0.1:${server.address.port}", apiKey = apiKey)
+            }
+            return result to lines
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun readinessDown_on401_logsTheStatusCategoryAndNoCredential() {
+        val (status, lines) = probeWithStatus(401, "secret-key-should-never-be-logged")
+        assertEquals("DOWN", status)
+        val line = lines.single()
+        assertTrue("event=SUPABASE_REQUEST_FAILED" in line, line)
+        assertTrue("result=status_401" in line, line)
+        assertFalse("secret-key-should-never-be-logged" in line, line)
+        assertFalse("Authorization" in line, line)
+    }
+
+    @Test
+    fun readinessDown_on503_logsItsStatus() {
+        val (status, lines) = probeWithStatus(503, "k")
+        assertEquals("DOWN", status)
+        assertTrue("result=status_503" in lines.single(), lines.toString())
+    }
+
+    @Test
+    fun readinessDown_onConnectionRefused_logsTheExceptionClassOnly() {
+        // ConnectException ya cuenta como UPSTREAM_TIMEOUT (TIMEOUT_MARKERS): sigue dejando rastro, sin mensaje.
+        var status = ""
+        val lines = captureObservabilityLogs { status = checkSupabaseReachable(url = "http://127.0.0.1:1", apiKey = "k") }
+        assertEquals("DOWN", status)
+        assertTrue("error_type=ConnectException" in lines.single(), lines.toString())
+    }
+
+    @Test
+    fun readinessDown_onANonTimeoutFailure_logsAStrategicEventWithTheClassOnly() {
+        // Una URL malformada falla antes de conectar: no es un timeout, y antes el DOWN salia mudo.
+        var status = ""
+        val lines = captureObservabilityLogs { status = checkSupabaseReachable(url = "http://[bad host", apiKey = "secret-k") }
+        assertEquals("DOWN", status)
+        val line = lines.single()
+        assertTrue("event=SUPABASE_REQUEST_FAILED" in line, line)
+        assertTrue("operation=health_ready_supabase_check" in line, line)
+        assertTrue("error_type=IllegalArgumentException" in line, line)
+        assertFalse("bad host" in line || "secret-k" in line, line)
+    }
+
+    @Test
+    fun readinessUp_logsNothing() {
+        val (status, lines) = probeWithStatus(200, "k")
+        assertEquals("UP", status)
+        assertTrue(lines.isEmpty(), lines.toString())
+    }
+
+    // ----- MASTER7-API-007: sin inyeccion de lineas de log -----
+
+    @Test
+    fun logStrategicEvent_neutralisesLineBreaksAndControlCharacters() {
+        val lines = captureObservabilityLogs {
+            logStrategicEvent(
+                StrategicEvent.ADMIN_ACTION,
+                operation = "x\nevent=FORGED\r\tuser_id=evil",
+                entityId = "a\u0000b",
+            )
+        }
+        val line = lines.single()
+        assertFalse('\n' in line || '\r' in line || '\u0000' in line, line)
+        assertTrue("operation=x_event=FORGED__user_id=evil" in line, line)
+    }
 }

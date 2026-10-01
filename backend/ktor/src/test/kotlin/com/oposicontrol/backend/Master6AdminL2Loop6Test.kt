@@ -66,7 +66,9 @@ class Master6AdminL2Loop6Test {
         var reportReporter: String? = reporter
         var reportReviewer: String? = null
         var moderationActions = "[]"
-        var actionInsert = V1StubResponse(201, "")
+        /** MASTER6-API-001: `admin_record_report_action` (true = accion insertada; false = ya la tenia otra llamada). */
+        var actionInsert = V1StubResponse(200, "true")
+        var syncRpc: V1StubResponse? = null
         var grantRpc = V1StubResponse(200, """[{"transaction_id":"$tx","saldo_resultante":15}]""")
         var casPatch = V1StubResponse(200, """[{"id":"$reportId"}]""")
         var priorRewardLedger = "[]"
@@ -78,10 +80,11 @@ class Master6AdminL2Loop6Test {
         fun of(method: String, fragment: String) = sent.filter { it.method == method && fragment in it.uri }
         fun rpcCalls(name: String) = of("POST", "/rest/v1/rpc/$name").size
         fun upstreamCalls() = sent.size
+        fun actionCalls() = of("POST", "/rest/v1/rpc/admin_record_report_action")
 
         fun respond(method: String, uri: String): V1StubResponse = when {
             "/rest/v1/rpc/admin_grant_tickets" in uri -> grantRpc
-            "/rest/v1/rpc/admin_sync_roles_audited" in uri ->
+            "/rest/v1/rpc/admin_sync_roles_audited" in uri -> syncRpc ?:
                 V1StubResponse(200, """{"antes":${lockedAntes ?: rolesOfUser},"despues":["$roleUsuario"]}""")
             method == "GET" && "/rest/v1/reportes_contenido" in uri -> V1StubResponse(
                 200,
@@ -116,7 +119,7 @@ class Master6AdminL2Loop6Test {
                     """"estado_cuenta":"activa","creado_en":"2026-01-02T03:04:05+00:00","actualizado_en":"2026-09-30T10:00:00+00:00"}]""",
             )
             method == "GET" && "/rest/v1/acciones_moderacion" in uri -> V1StubResponse(200, moderationActions)
-            method == "POST" && "/rest/v1/acciones_moderacion" in uri -> actionInsert
+            "/rest/v1/rpc/admin_record_report_action" in uri -> actionInsert
             method == "POST" && "/rest/v1/auditoria_log" in uri -> V1StubResponse(201, "")
             else -> V1StubResponse(200, "[]")
         }
@@ -165,7 +168,7 @@ class Master6AdminL2Loop6Test {
     fun aNegativeReportRewardIsRejectedBeforeAnyRequest() {
         val stub = Stub()
         val failure = assertFailsWith<BackendDomainException> {
-            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = -1), actorId = null)
+            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = -1), actorId = null)
         }
         assertEquals("WALLET_AMOUNT_INVALID", failure.errorCode)
         assertEquals(0, stub.upstreamCalls(), "ni lectura ni escritura: ${stub.sent.map { it.method + " " + it.uri }}")
@@ -180,13 +183,13 @@ class Master6AdminL2Loop6Test {
         assertEquals("descartado", cas["estado"]!!.jsonPrimitive.content)
         assertEquals("false", cas["recompensa_entregada"]!!.jsonPrimitive.content)
         assertEquals("0", cas["tickets_otorgados"]!!.jsonPrimitive.content)
-        assertEquals(1, stub.of("POST", "/rest/v1/acciones_moderacion").size)
+        assertEquals(1, stub.actionCalls().size)
     }
 
     @Test
     fun aReportWithoutReporterNeverClaimsARewardItDidNotGrant() {
         val stub = Stub().apply { reportReporter = null }
-        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
         assertEquals(0, stub.rpcCalls("admin_grant_tickets"), "sin reportante no hay concesion")
         val cas = stub.of("PATCH", "/rest/v1/reportes_contenido").single().json()
         assertEquals("false", cas["recompensa_entregada"]!!.jsonPrimitive.content, "antes: true sin acreditar nada")
@@ -198,22 +201,22 @@ class Master6AdminL2Loop6Test {
         val stub = Stub().apply { grantRpc = V1StubResponse(500, """{"message":"boom"}""") }
         val g = gateway(stub)
         assertFailsWith<Exception> {
-            g.resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+            g.resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
         }
         val cas = stub.of("PATCH", "/rest/v1/reportes_contenido").single()
         assertEquals("false", cas.json()["recompensa_entregada"]!!.jsonPrimitive.content, "la marca solo tras concesion confirmada")
         assertEquals("0", cas.json()["tickets_otorgados"]!!.jsonPrimitive.content)
-        assertTrue(stub.of("POST", "/rest/v1/acciones_moderacion").isEmpty(), "sin accion: resolucion incompleta")
+        assertTrue(stub.actionCalls().isEmpty(), "sin accion: resolucion incompleta")
         // El reporte quedo cerrado por ESTE moderador, sin accion. Su reintento reanuda (no 409) y concede con la misma clave.
         stub.reportState = "resuelto"
         stub.reportReviewer = admin
         stub.grantRpc = V1StubResponse(200, """[{"transaction_id":"$tx","saldo_resultante":15}]""")
-        g.resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+        g.resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
         assertEquals(1, stub.of("PATCH", "estado=in.").size, "el reintento no repite la transicion")
         val stamp = stub.of("PATCH", "estado=eq.resuelto").single().json()
         assertEquals("true", stamp["recompensa_entregada"]!!.jsonPrimitive.content)
         assertEquals("5", stamp["tickets_otorgados"]!!.jsonPrimitive.content)
-        assertEquals(1, stub.of("POST", "/rest/v1/acciones_moderacion").size)
+        assertEquals(1, stub.actionCalls().size)
         val keys = stub.of("POST", "admin_grant_tickets").map { it.json()["p_idempotency_key"]!!.jsonPrimitive.content }.toSet()
         assertEquals(setOf("report-reward:$reportId"), keys)
     }
@@ -227,9 +230,9 @@ class Master6AdminL2Loop6Test {
         }
         stub.reportState = "descartado"
         stub.reportReviewer = admin
-        stub.actionInsert = V1StubResponse(201, "")
+        stub.actionInsert = V1StubResponse(200, "true")
         g.resolverReporte(reportId, ResolverReporteBody(accion = "descartar", ticketsReporter = 0), actorId = admin)
-        assertEquals(2, stub.of("POST", "/rest/v1/acciones_moderacion").size, "1 fallida + 1 reanudada")
+        assertEquals(2, stub.actionCalls().size, "1 fallida + 1 reanudada")
         assertEquals(1, stub.of("PATCH", "estado=in.").size)
         assertEquals(1, stub.of("POST", "/rest/v1/auditoria_log").size, "auditoria solo de la resolucion completa")
     }
@@ -241,7 +244,7 @@ class Master6AdminL2Loop6Test {
         assertEquals(
             "CONFLICT",
             assertFailsWith<BackendDomainException> {
-                gateway(other).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+                gateway(other).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
             }.errorCode,
         )
         assertTrue(other.sent.none { it.method != "GET" }, other.sent.map { it.method + " " + it.uri }.toString())
@@ -250,7 +253,7 @@ class Master6AdminL2Loop6Test {
             reportState = "resuelto"; reportReviewer = admin; moderationActions = """[{"reporte_id":"$reportId"}]"""
         }
         assertFailsWith<BackendDomainException> {
-            gateway(done).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+            gateway(done).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
         }
         assertTrue(done.sent.none { it.method != "GET" })
         // El mismo moderador con OTRO destino: 409.
@@ -264,12 +267,12 @@ class Master6AdminL2Loop6Test {
     @Test
     fun theTransitionCommitsFirstThenTheGrantThenTheStampThenTheAction() {
         val stub = Stub()
-        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
         val order = stub.sent.map { it.method + " " + it.uri.substringAfter(".test") }
         val cas = order.indexOfFirst { it.startsWith("PATCH /rest/v1/reportes_contenido") && "estado=in." in it }
         val rpc = order.indexOfFirst { it.startsWith("POST /rest/v1/rpc/admin_grant_tickets") }
         val stamp = order.indexOfFirst { it.startsWith("PATCH /rest/v1/reportes_contenido") && "estado=eq.resuelto" in it }
-        val action = order.indexOfFirst { it.startsWith("POST /rest/v1/acciones_moderacion") }
+        val action = order.indexOfFirst { it.startsWith("POST /rest/v1/rpc/admin_record_report_action") }
         assertTrue(cas in 0 until rpc && rpc < stamp && stamp < action, order.toString())
         val casBody = stub.of("PATCH", "estado=in.(pendiente,revisado)").single().json()
         assertEquals("false", casBody["recompensa_entregada"]!!.jsonPrimitive.content)
@@ -287,7 +290,7 @@ class Master6AdminL2Loop6Test {
     fun aReplayOnAResolvedReportIs409WithoutAnySideEffect() = testApplication {
         val stub = Stub().apply { reportState = "resuelto" }
         application { adminModule(gateway(stub)) }
-        val response = postJson("/api/v1/admin/reportes/$reportId/resolver", """{"accion":"descartar","ticketsReporter":5}""")
+        val response = postJson("/api/v1/admin/reportes/$reportId/resolver", """{"accion":"ocultar","ticketsReporter":5}""")
         assertEquals(HttpStatusCode.Conflict, response.status, response.bodyAsText())
         assertEquals("CONFLICT", response.code())
         assertEquals(0, stub.rpcCalls("admin_grant_tickets"))
@@ -299,11 +302,11 @@ class Master6AdminL2Loop6Test {
         // Moderador A pide 5 OT mientras B descarta y gana el compare-and-set.
         val stub = Stub().apply { casPatch = V1StubResponse(200, "[]") }
         val failure = assertFailsWith<BackendDomainException> {
-            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
         }
         assertEquals("CONFLICT", failure.errorCode)
         assertEquals(0, stub.rpcCalls("admin_grant_tickets"), "antes: el perdedor ya habia acreditado 5 OT")
-        assertTrue(stub.of("POST", "/rest/v1/acciones_moderacion").isEmpty())
+        assertTrue(stub.actionCalls().isEmpty())
         assertEquals(1, stub.of("PATCH", "/rest/v1/reportes_contenido").size, "solo el intento de transicion; ninguna marca")
     }
 
@@ -312,13 +315,13 @@ class Master6AdminL2Loop6Test {
         val stub = Stub().apply { casPatch = V1StubResponse(500, """{"message":"down"}""") }
         val g = gateway(stub)
         assertFailsWith<Exception> {
-            g.resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
+            g.resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
         }
-        assertTrue(stub.of("POST", "/rest/v1/acciones_moderacion").isEmpty(), "antes: la accion ya estaba insertada")
+        assertTrue(stub.actionCalls().isEmpty(), "antes: la accion ya estaba insertada")
         assertEquals(0, stub.rpcCalls("admin_grant_tickets"), "nada se acredita antes del compromiso")
         stub.casPatch = V1StubResponse(200, """[{"id":"$reportId"}]""")
-        g.resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 5), actorId = admin)
-        assertEquals(1, stub.of("POST", "/rest/v1/acciones_moderacion").size)
+        g.resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = admin)
+        assertEquals(1, stub.actionCalls().size)
         assertEquals(1, stub.rpcCalls("admin_grant_tickets"))
         val keys = stub.of("POST", "admin_grant_tickets").map { it.json()["p_idempotency_key"]!!.jsonPrimitive.content }.toSet()
         assertEquals(setOf("report-reward:$reportId"), keys)
@@ -327,11 +330,138 @@ class Master6AdminL2Loop6Test {
     @Test
     fun aZeroRewardAfterAnEarlierConfirmedGrantTakesTheFlagFromTheLedger() {
         val stub = Stub().apply { priorRewardLedger = """[{"id":"$tx","usuario_id":"$reporter","tipo":"reporte_validado","cantidad":5}]""" }
-        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "resolver", ticketsReporter = 0), actorId = admin)
+        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 0), actorId = admin)
         val stamp = stub.of("PATCH", "estado=eq.resuelto").single().json()
         assertEquals("true", stamp["recompensa_entregada"]!!.jsonPrimitive.content)
         assertEquals("5", stamp["tickets_otorgados"]!!.jsonPrimitive.content)
         assertTrue(stub.of("GET", "idempotency_key=eq.report-reward%3A$reportId").isNotEmpty())
+    }
+
+    // ------------------------------------------------------------------ MASTER6-API-001 (remediacion completa)
+
+    @Test
+    fun theActionIsWrittenOnlyThroughTheAtomicRpcWithTheResolutionItCompletes() {
+        val stub = Stub()
+        gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", notas = "n", ticketsReporter = 0), actorId = admin)
+        assertTrue(stub.sent.none { it.method == "POST" && "/rest/v1/acciones_moderacion" in it.uri }, "nunca un POST directo a la tabla")
+        val body = stub.actionCalls().single().json()
+        assertEquals(reportId, body["p_reporte_id"]!!.jsonPrimitive.content)
+        assertEquals("resuelto", body["p_estado"]!!.jsonPrimitive.content)
+        assertEquals(admin, body["p_moderador_id"]!!.jsonPrimitive.content)
+        assertEquals("ocultar", body["p_tipo_accion"]!!.jsonPrimitive.content)
+        assertEquals("n", body["p_notas"]!!.jsonPrimitive.content)
+        assertEquals(1, stub.of("POST", "/rest/v1/auditoria_log").size)
+    }
+
+    @Test
+    fun aConcurrentResumeThatFindsTheActionAlreadyRecordedIs409AndAuditsNothing() {
+        // Dos reanudaciones del mismo moderador: esta pierde dentro de la RPC (la otra ya inserto la accion).
+        val stub = Stub().apply { reportState = "resuelto"; reportReviewer = admin; actionInsert = V1StubResponse(200, "false") }
+        val failure = assertFailsWith<BackendDomainException> {
+            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 0), actorId = admin)
+        }
+        assertEquals("CONFLICT", failure.errorCode)
+        assertEquals(1, stub.actionCalls().size)
+        assertTrue(stub.of("POST", "/rest/v1/auditoria_log").isEmpty(), "la auditoria solo la escribe quien inserto la accion")
+    }
+
+    @Test
+    fun aCallerWithoutActorNeverResumesAClosedReportEvenIfItWasClosedWithoutActor() {
+        val stub = Stub().apply { reportState = "resuelto"; reportReviewer = null }
+        val failure = assertFailsWith<BackendDomainException> {
+            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", ticketsReporter = 5), actorId = null)
+        }
+        assertEquals("CONFLICT", failure.errorCode)
+        assertTrue(stub.sent.none { it.method != "GET" }, "sin escrituras: ${stub.sent.map { it.method + " " + it.uri }}")
+        assertEquals(0, stub.rpcCalls("admin_grant_tickets"))
+        assertTrue(stub.actionCalls().isEmpty())
+    }
+
+    // ------------------------------------------------------------------ MASTER7-API-004 / MASTER7-API-002
+    // (cambio DELIBERADO en este fichero: las pruebas anteriores usaban `accion = "resolver"`, un valor que ningun
+    // cliente envia y que ahora es 422; pasan a `ocultar`, una accion real, sin debilitar ninguna asercion.)
+
+    @Test
+    fun anUnknownOrTypoedActionIs422AndNeverGrantsOrWritesAnything() {
+        for (bad in listOf("descartr", "resolver", "", "DESCARTAR")) {
+            val stub = Stub()
+            val failure = assertFailsWith<BackendDomainException> {
+                gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = bad, ticketsReporter = 5), actorId = admin)
+            }
+            assertEquals("REPORT_ACTION_INVALID", failure.errorCode, bad)
+            assertEquals(0, stub.upstreamCalls(), "ni lectura ni escritura ni concesion: ${stub.sent.map { it.method + " " + it.uri }}")
+        }
+    }
+
+    @Test
+    fun everyRealClientActionStillResolves() {
+        for (ok in listOf("descartar", "ocultar", "avisar", "banear")) {
+            val stub = Stub()
+            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = ok, ticketsReporter = 0), actorId = admin)
+            assertEquals(1, stub.actionCalls().size, ok)
+        }
+    }
+
+    @Test
+    fun notesAreCappedAt1000() {
+        val stub = Stub()
+        val failure = assertFailsWith<BackendDomainException> {
+            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", notas = "n".repeat(1_001)), actorId = admin)
+        }
+        assertEquals("REPORT_NOTES_TOO_LONG", failure.errorCode)
+        assertEquals(0, stub.upstreamCalls())
+        gateway(Stub()).resolverReporte(reportId, ResolverReporteBody(accion = "ocultar", notas = "n".repeat(1_000)), actorId = admin)
+    }
+
+    @Test
+    fun dismissingWithARewardIs422WithoutAnyGrant() {
+        val stub = Stub()
+        val failure = assertFailsWith<BackendDomainException> {
+            gateway(stub).resolverReporte(reportId, ResolverReporteBody(accion = "descartar", ticketsReporter = 5), actorId = admin)
+        }
+        assertEquals("WALLET_AMOUNT_INVALID", failure.errorCode)
+        assertEquals(0, stub.upstreamCalls())
+        assertEquals(0, stub.rpcCalls("admin_grant_tickets"))
+    }
+
+    private fun listUris(stub: Stub) = stub.of("GET", "/rest/v1/reportes_contenido?select=*").map { it.uri }
+
+    @Test
+    fun theReportListFiltersByEachValidEstadoAndKeepsTheDesktopDefault() = testApplication {
+        val stub = Stub()
+        application { adminModule(gateway(stub)) }
+        suspend fun get(q: String) = client.get("/api/v1/admin/reportes$q") { header(HttpHeaders.Authorization, "Bearer $admin") }
+        assertEquals(HttpStatusCode.OK, get("").status)
+        assertTrue("estado=eq.pendiente" in listUris(stub).last(), "defecto de escritorio")
+        assertEquals(HttpStatusCode.OK, get("?estado=revisado").status)
+        assertTrue("estado=eq.revisado" in listUris(stub).last())
+        assertEquals(HttpStatusCode.OK, get("?estado=todos").status)
+        assertFalse("estado=" in listUris(stub).last(), "todos = sin filtro")
+        assertTrue("limit=200&offset=0" in listUris(stub).last())
+    }
+
+    @Test
+    fun anUnknownEstadoIs400AndNoUpstreamCallIsMade() = testApplication {
+        val stub = Stub()
+        application { adminModule(gateway(stub)) }
+        val r = client.get("/api/v1/admin/reportes?estado=bogus") { header(HttpHeaders.Authorization, "Bearer $admin") }
+        assertEquals(HttpStatusCode.BadRequest, r.status, r.bodyAsText())
+        assertEquals(0, stub.upstreamCalls())
+    }
+
+    @Test
+    fun theReportListPaginatesAndCoercesLimit() = testApplication {
+        val stub = Stub()
+        application { adminModule(gateway(stub)) }
+        suspend fun get(q: String) = client.get("/api/v1/admin/reportes$q") { header(HttpHeaders.Authorization, "Bearer $admin") }
+        assertEquals(HttpStatusCode.OK, get("?limit=0&offset=30").status)
+        assertTrue("limit=1&offset=30" in listUris(stub).last(), listUris(stub).last())
+        assertEquals(HttpStatusCode.OK, get("?limit=999&offset=-5").status)
+        assertTrue("limit=200&offset=0" in listUris(stub).last(), listUris(stub).last())
+        val before = stub.upstreamCalls()
+        assertEquals(HttpStatusCode.BadRequest, get("?limit=abc").status)
+        assertEquals(HttpStatusCode.BadRequest, get("?offset=1;drop").status)
+        assertEquals(before, stub.upstreamCalls())
     }
 
     // ------------------------------------------------------------------ MASTER6-API-003
@@ -588,5 +718,38 @@ class Master6AdminL2Loop6Test {
         assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
         val outcome = stub.of("POST", "/rest/v1/auditoria_log").map { it.body }.single { "roleIdsSolicitados" in it }
         assertFalse("precondicionViolada" in outcome, outcome)
+    }
+
+    // ------------------------------------------------------------------ MASTER6-IDEM-003 (comparacion bajo el cerrojo)
+
+    @Test
+    fun theRpcAlwaysCarriesTheExpectedSetOrJsonNull() = testApplication {
+        val stub = Stub().apply { rolesOfUser = """["$roleUsuario"]""" }
+        application { adminModule(gateway(stub)) }
+        postJson("/api/v1/admin/usuarios/$user/roles", """{"roleIds":["$roleUsuario"],"expectedRoleIds":["$roleUsuario","$roleUsuario"]}""")
+        postJson("/api/v1/admin/usuarios/$user/roles", """{"roleIds":["$roleUsuario"]}""")
+        val bodies = stub.of("POST", "/rest/v1/rpc/admin_sync_roles_audited").map { it.json() }
+        assertEquals(2, bodies.size)
+        assertEquals(listOf(roleUsuario), bodies[0]["p_expected_role_ids"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertTrue(bodies[1].containsKey("p_expected_role_ids"), "presente aunque sea null: resuelve la sobrecarga de 4 argumentos")
+        assertEquals(kotlinx.serialization.json.JsonNull, bodies[1]["p_expected_role_ids"])
+    }
+
+    @Test
+    fun aConflictRaisedUnderTheLockIs409VersionConflictAndLeavesARejectedFailureRow() = testApplication {
+        // La precondicion pasa fuera del cerrojo; la RPC ve otro conjunto y levanta ROLE_SYNC_VERSION_CONFLICT.
+        val stub = Stub().apply {
+            rolesOfUser = """["$roleUsuario"]"""
+            syncRpc = V1StubResponse(400, """{"code":"P0001","details":null,"hint":null,"message":"ROLE_SYNC_VERSION_CONFLICT"}""")
+        }
+        application { adminModule(gateway(stub)) }
+        val response = postJson("/api/v1/admin/usuarios/$user/roles", """{"roleIds":["$roleUsuario"],"expectedRoleIds":["$roleUsuario"]}""")
+        assertEquals(HttpStatusCode.Conflict, response.status, response.bodyAsText())
+        assertEquals("VERSION_CONFLICT", response.code(), "codigo canonico FA8, no el interno de la base")
+        val audits = stub.of("POST", "/rest/v1/auditoria_log").map { it.body }
+        assertTrue(audits.none { ACTION_ROLES_SYNCED in it && "roleIdsSolicitados" in it }, audits.toString())
+        val failed = audits.single { ACTION_ROLES_SYNC_FAILED in it }
+        assertTrue(""""resultado":"rechazada"""" in failed, failed)
+        assertTrue(""""error":"VERSION_CONFLICT"""" in failed, failed)
     }
 }

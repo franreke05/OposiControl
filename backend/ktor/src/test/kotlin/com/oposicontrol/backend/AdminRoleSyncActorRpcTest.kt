@@ -50,7 +50,10 @@ class AdminRoleSyncActorRpcTest {
     @Test
     fun theRpcAlwaysReceivesTheActor() {
         val body = syncBody(actor)
-        assertEquals(setOf("p_usuario_id", "p_role_ids", "p_actor_id"), body.keys)
+        // MASTER6-IDEM-003: la clave exacta del cuerpo elige la sobrecarga; ahora siempre la de 4 argumentos
+        // (`p_expected_role_ids`, null cuando el cliente no declara precondicion).
+        assertEquals(setOf("p_usuario_id", "p_role_ids", "p_actor_id", "p_expected_role_ids"), body.keys)
+        assertEquals(JsonNull, body["p_expected_role_ids"])
         assertEquals(target, body["p_usuario_id"]!!.jsonPrimitive.content)
         assertEquals(listOf(roleUser, roleMod), body["p_role_ids"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals(actor, body["p_actor_id"]!!.jsonPrimitive.content)

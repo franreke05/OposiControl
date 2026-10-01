@@ -133,6 +133,37 @@ class OposiBotsAuthSessionRevocationTest {
         assertEquals("Bearer recovery-access", logout.headers[HttpHeaders.Authorization])
     }
 
+    /** MASTER7-AUTH-001: un PUT con resultado desconocido pudo cambiar la contraseña -> revoke GLOBAL y la peticion falla. */
+    @Test
+    fun aPasswordUpdateWithUnknownOutcomeRevokesEverySession() = runTest {
+        val h = harness(verifyBody = session(access = "recovery-access"), userPutThrows = true)
+        val failure = assertFailsWith<OposiBotsAuthProblem> {
+            h.gateway.reset(OposiBotsResetPasswordRequest("token-hash", "new-password-123"), context)
+        }
+        assertEquals(HttpStatusCode.ServiceUnavailable, failure.status, "el error original (unavailable) se propaga sin remapear")
+        val logout = h.logouts().single()
+        assertEquals("scope=global", logout.url.encodedQuery)
+        assertEquals("Bearer recovery-access", logout.headers[HttpHeaders.Authorization])
+    }
+
+    /** MASTER7-AUTH-001: si ademas falla el revoke global, el reset sigue FALLANDO con el error original (nunca exito). */
+    @Test
+    fun aFailedGlobalRevokeAfterAnUnknownPasswordUpdateStillFailsTheReset() = runTest {
+        val h = harness(verifyBody = session(access = "recovery-access"), userPutThrows = true, logoutThrows = true)
+        val failure = assertFailsWith<OposiBotsAuthProblem> {
+            h.gateway.reset(OposiBotsResetPasswordRequest("token-hash", "new-password-123"), context)
+        }
+        assertEquals(HttpStatusCode.ServiceUnavailable, failure.status)
+        assertEquals(listOf("scope=global"), h.logouts().map { it.url.encodedQuery })
+
+        val rejected = harness(verifyBody = session(access = "recovery-access"), userPutThrows = true, logoutStatus = HttpStatusCode.InternalServerError)
+        val second = assertFailsWith<OposiBotsAuthProblem> {
+            rejected.gateway.reset(OposiBotsResetPasswordRequest("token-hash", "new-password-123"), context)
+        }
+        assertEquals(HttpStatusCode.ServiceUnavailable, second.status)
+        assertEquals(listOf("scope=global"), rejected.logouts().map { it.url.encodedQuery })
+    }
+
     // ---------------- arnes ----------------
 
     private class Harness(val requests: MutableList<HttpRequestData>) {
@@ -149,6 +180,7 @@ class OposiBotsAuthSessionRevocationTest {
         claimStatus: HttpStatusCode = HttpStatusCode.NoContent,
         verifyBody: String = session(),
         userPutStatus: HttpStatusCode = HttpStatusCode.OK,
+        userPutThrows: Boolean = false,
         logoutStatus: HttpStatusCode = HttpStatusCode.NoContent,
         logoutThrows: Boolean = false,
         appleIdToken: String = "",
@@ -163,7 +195,7 @@ class OposiBotsAuthSessionRevocationTest {
                 request.url.host == "appleid.apple.com" -> respond(ByteReadChannel("""{"id_token":"$appleIdToken"}"""), HttpStatusCode.OK, json)
                 path == "/auth/v1/token" -> respond(ByteReadChannel(session()), HttpStatusCode.OK, json)
                 path == "/auth/v1/verify" -> respond(ByteReadChannel(verifyBody), HttpStatusCode.OK, json)
-                path == "/auth/v1/user" && request.method == HttpMethod.Put -> respond(ByteReadChannel("{}"), userPutStatus, json)
+                path == "/auth/v1/user" && request.method == HttpMethod.Put -> if (userPutThrows) error("put transport failure") else respond(ByteReadChannel("{}"), userPutStatus, json)
                 path == "/auth/v1/logout" -> if (logoutThrows) error("logout transport failure") else respond(ByteReadChannel(""), logoutStatus, json)
                 path == "/rest/v1/rpc/oposibots_claim_oauth_credential" -> respond(ByteReadChannel("{}"), claimStatus, json)
                 path == "/rest/v1/perfiles_usuario" -> respond(

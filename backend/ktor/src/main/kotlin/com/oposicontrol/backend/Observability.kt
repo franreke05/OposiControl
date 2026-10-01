@@ -251,6 +251,15 @@ private val ObservabilityLogger = LoggerFactory.getLogger("OC-KTOR-OBSERVABILITY
  * innecesario. Preferir IDs internos + metadata tecnica -- ver
  * [redactBackendMessage] para mensajes de error libres.
  */
+/**
+ * MASTER7-API-007: SLF4J parametrizado NO neutraliza CR/LF. Un valor con salto de linea forjaria una linea de log
+ * (`event=FORGED`): los caracteres de control pasan a `_` y la longitud se acota.
+ */
+internal fun sanitizeLogField(value: String): String =
+    value.take(LOG_FIELD_MAX).map { if (it.isISOControl()) '_' else it }.joinToString("")
+
+private const val LOG_FIELD_MAX = 128
+
 fun logStrategicEvent(
     event: StrategicEvent,
     requestId: String? = MDC.get(MDC_REQUEST_ID),
@@ -267,14 +276,14 @@ fun logStrategicEvent(
         "event={} request_id={} operation={} result={} duration_ms={} entity_type={} entity_id={} " +
             "error_type={} user_id={} count={} environment={}",
         event.name,
-        requestId ?: "-",
-        operation ?: "-",
-        result ?: "-",
+        requestId?.let(::sanitizeLogField) ?: "-",
+        operation?.let(::sanitizeLogField) ?: "-",
+        result?.let(::sanitizeLogField) ?: "-",
         durationMs?.toString() ?: "-",
-        entityType ?: "-",
-        entityId ?: "-",
-        errorType ?: "-",
-        userId ?: "-",
+        entityType?.let(::sanitizeLogField) ?: "-",
+        entityId?.let(::sanitizeLogField) ?: "-",
+        errorType?.let(::sanitizeLogField) ?: "-",
+        userId?.let(::sanitizeLogField) ?: "-",
         count?.toString() ?: "-",
         ObservabilityConfig.environment,
     )
@@ -636,10 +645,27 @@ internal fun checkSupabaseReachable(
         // El rango y las cabeceras se mueven JUNTOS. Si alguna vez la sonda deja
         // de mandar lo que manda el trafico real, este rango vuelve a ser una
         // apuesta sobre una combinacion que nadie ejerce y hay que ensancharlo.
-        if (response.statusCode() in 200..299) "UP" else "DOWN"
+        if (response.statusCode() in 200..299) {
+            "UP"
+        } else {
+            // MASTER7-OBS-002: la causa del DOWN deja rastro. SOLO el codigo numerico: nunca cabeceras, URL ni clave.
+            logStrategicEvent(
+                StrategicEvent.SUPABASE_REQUEST_FAILED,
+                operation = "health_ready_supabase_check",
+                result = "status_${response.statusCode()}",
+            )
+            "DOWN"
+        }
     } catch (error: Exception) {
         if (error.looksLikeUpstreamTimeout()) {
             logStrategicEvent(StrategicEvent.UPSTREAM_TIMEOUT, operation = "health_ready_supabase_check", errorType = error::class.simpleName)
+        } else {
+            // MASTER7-OBS-002: DNS/TLS/conexion rechazada: solo la clase de la excepcion, nunca su mensaje.
+            logStrategicEvent(
+                StrategicEvent.SUPABASE_REQUEST_FAILED,
+                operation = "health_ready_supabase_check",
+                errorType = error::class.simpleName,
+            )
         }
         "DOWN"
     }

@@ -52,6 +52,39 @@ class CanonicalProfileServiceTest {
         assertEquals(0, args["p_documentos"]!!.jsonArray.size)
     }
 
+    /** MASTER7-ARCH-001: nombre/apellidos del usuario aplican la misma regla de caracteres que el nombre visible admin. */
+    @Test
+    fun userNamesWithBidiOrControlCharactersAreRejectedBeforeAnyRpc() = runBlocking {
+        val (svc, upstream, _) = service()
+        upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) }
+        val patch = assertFailsWith<BackendDomainException> {
+            svc.updateProfile(identity, "token", ProfilePatchRequest(nombre = "a‮b", apellidos = "a\u0085b"), null, context)
+        }
+        assertEquals("VALIDATION", patch.errorCode)
+        assertEquals(400, patch.status.value, "VALIDATION canonico (mismo estado que el resto de INVALID_FORMAT de perfil)")
+        assertEquals(
+            listOf(ErrorIssue("nombre", CanonicalIssue.INVALID_FORMAT), ErrorIssue("apellidos", CanonicalIssue.INVALID_FORMAT)),
+            patch.details!!.issues,
+        )
+        val onboarding = assertFailsWith<BackendDomainException> {
+            svc.completeOnboarding(identity, "token", OnboardingRequest("ada_l", "Ada​", "Love lace", null, emptyList()), context)
+        }
+        assertEquals(
+            listOf(ErrorIssue("nombre", CanonicalIssue.INVALID_FORMAT), ErrorIssue("apellidos", CanonicalIssue.INVALID_FORMAT)),
+            onboarding.details!!.issues,
+        )
+        assertTrue(upstream.rpcNames().isEmpty(), "ninguna RPC con un nombre rechazado")
+    }
+
+    @Test
+    fun accentedAndEmojiNamesWithoutFormatCharactersAreStillAccepted() = runBlocking {
+        val (svc, upstream, _) = service()
+        upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) }
+        svc.updateProfile(identity, "token", ProfilePatchRequest(nombre = "Ada 😀", apellidos = "Núñez-Lovelace d'Ávila"), null, context)
+        svc.completeOnboarding(identity, "token", OnboardingRequest("ada_l", "José", "Muñoz", null, emptyList()), context)
+        assertEquals(listOf("app_actualizar_perfil", "app_completar_onboarding"), upstream.rpcNames())
+    }
+
     @Test
     fun theCallerIdIsNeverTakenFromTheBodyOnlyFromTheResolvedIdentity() = runBlocking {
         val (svc, upstream, _) = service()

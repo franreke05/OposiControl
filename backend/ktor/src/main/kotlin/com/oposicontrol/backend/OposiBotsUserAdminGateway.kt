@@ -30,6 +30,8 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.time.Instant
+import java.time.OffsetDateTime
+import org.slf4j.LoggerFactory
 
 interface OposiBotsUserAdminGateway {
     suspend fun listUsers(limit: Int, offset: Int, search: String?): List<OposiBotsUserAdminDto>
@@ -105,6 +107,25 @@ private data class OposiBotsUsuarioRow(
 @Serializable
 private data class SupabaseAuthAdminUserWire(val id: String)
 
+/** MASTER7-IDEM-001: `GET /auth/v1/admin/users` (lista paginada de GoTrue); solo lo necesario para reconciliar. */
+@Serializable
+private data class GoTrueAdminUserListWire(val users: List<GoTrueAdminUserWire> = emptyList())
+
+@Serializable
+private data class GoTrueAdminUserWire(
+    val id: String,
+    val email: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+)
+
+/**
+ * MASTER7-IDEM-001: margen de reloj entre este backend y GoTrue/Postgres al comparar el `created_at` de la identidad con
+ * el instante previo al POST. Pequeño a proposito: una identidad mas antigua puede ser un usuario real y nunca se borra.
+ */
+private const val LOST_AUTH_CREATE_CLOCK_SKEW_MS = 5_000L
+
+private val UserAdminLogger = LoggerFactory.getLogger("OC-KTOR-USER-ADMIN")
+
 private fun requireValidUsername(username: String) {
     require(username.length in 3..30 && username.matches(Regex("^[A-Za-z0-9._-]+$"))) {
         "Username invalido: debe tener 3-30 caracteres alfanumericos/._-."
@@ -171,12 +192,24 @@ class SupabaseOposiBotsUserAdminGateway(
     }
 
     private suspend fun createUserAtomically(request: OposiBotsUserAdminCreateRequest, authBody: String): OposiBotsUserAdminDto {
+        // MASTER7-IDEM-001: instante previo al POST de Auth; solo una identidad creada DESPUES (menos el margen de reloj)
+        // puede ser la que este POST creo y cuya respuesta se perdio.
+        val startedAt = Instant.now()
         val authUserId = json.decodeFromString<SupabaseAuthAdminUserWire>(
             try {
                 request(HttpMethod.Post, "/auth/v1/admin/users", authBody)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (rejected: SupabaseHttpStatusException) {
                 // MASTER6-API-004: un rechazo de GoTrue causado por el cliente no es un fallo del upstream (502).
-                throw goTrueCreateRejection(rejected) ?: rejected
+                goTrueCreateRejection(rejected)?.let { throw it }
+                // MASTER7-IDEM-001: un 5xx puede llegar DESPUES de que GoTrue confirmara la identidad (resultado ambiguo).
+                if (rejected.status >= 500) reconcileLostAuthCreate(request.email.trim(), startedAt)
+                throw rejected
+            } catch (lost: IllegalStateException) {
+                // MASTER7-IDEM-001: transporte/timeout: la respuesta se perdio y la identidad pudo quedar creada.
+                reconcileLostAuthCreate(request.email.trim(), startedAt)
+                throw lost
             },
         ).id
 
@@ -215,6 +248,71 @@ class SupabaseOposiBotsUserAdminGateway(
             throw error
         }
     }
+
+    /**
+     * MASTER7-IDEM-001: el POST de Auth fallo con resultado AMBIGUO (transporte, timeout o 5xx): GoTrue pudo crear la
+     * identidad sin que conozcamos su id. Sin reconciliar quedaba una identidad fantasma (el reintento daba 409 y el
+     * borrado 404, porque no hay fila `usuario`). Se busca por email y solo se borra si TODO cuadra (deny-by-default):
+     * - exactamente UNA identidad con el email EXACTO (sin mayusculas/espacios; nunca una coincidencia parcial);
+     * - creada en o despues de [startedAt] menos [LOST_AUTH_CREATE_CLOCK_SKEW_MS] (una anterior puede ser un usuario real);
+     * - con id uuid valido y SIN fila `usuario` enlazada.
+     * Cualquier otra cosa, o un fallo de la propia busqueda, no borra nada (solo WARN). Nunca se adopta la identidad: el
+     * llamador relanza SIEMPRE el error original (502) y, borrada la fantasma, el reintento funciona. Los logs llevan un
+     * prefijo SHA-256 del email en minusculas, nunca el email ni la contrasena. Si el borrado de reconciliacion falla, se
+     * lanza el mismo estilo de error que la compensacion existente, con el auth_user_id para limpieza manual.
+     */
+    private suspend fun reconcileLostAuthCreate(email: String, startedAt: Instant) {
+        val emailRef = sha256Hex(email.lowercase().toByteArray(StandardCharsets.UTF_8)).take(12)
+        val notBefore = startedAt.minusMillis(LOST_AUTH_CREATE_CLOCK_SKEW_MS)
+        val ghostId = try {
+            val path = "/auth/v1/admin/users?filter=${URLEncoder.encode(email, StandardCharsets.UTF_8)}&per_page=50"
+            val matches = json.decodeFromString<GoTrueAdminUserListWire>(request(HttpMethod.Get, path, null)).users
+                .filter { it.email?.trim()?.equals(email, ignoreCase = true) == true }
+            val candidate = matches.singleOrNull()
+            val createdAt = candidate?.createdAt?.let { runCatching { OffsetDateTime.parse(it).toInstant() }.getOrNull() }
+            if (candidate == null || !candidate.id.isUuid() || createdAt == null || createdAt.isBefore(notBefore)) {
+                UserAdminLogger.warn(
+                    "lost auth create: no reconcilable identity emailRef={} exactMatches={} (nothing deleted)",
+                    emailRef,
+                    matches.size,
+                )
+                return
+            }
+            val linked = request(HttpMethod.Get, "/rest/v1/usuario?select=id&auth_user_id=eq.${candidate.id}&limit=1", null)
+                .decodeList<JsonObject>().isNotEmpty()
+            if (linked) {
+                UserAdminLogger.warn("lost auth create: identity already linked emailRef={} authUserId={} (nothing deleted)", emailRef, candidate.id)
+                return
+            }
+            candidate.id
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (lookupFailure: Exception) {
+            UserAdminLogger.warn(
+                "lost auth create: lookup failed emailRef={} error={} (nothing deleted)",
+                emailRef,
+                lookupFailure::class.simpleName,
+            )
+            return
+        }
+        try {
+            request(HttpMethod.Delete, "/auth/v1/admin/users/$ghostId", null)
+            UserAdminLogger.warn("lost auth create: ghost identity deleted emailRef={} authUserId={}", emailRef, ghostId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (gone: SupabaseHttpStatusException) {
+            if (gone.status == 404) return
+            throw ghostDeletionFailed(ghostId, gone)
+        } catch (deletionFailure: Exception) {
+            throw ghostDeletionFailed(ghostId, deletionFailure)
+        }
+    }
+
+    private fun ghostDeletionFailed(authUserId: String, cause: Exception) = IllegalStateException(
+        "El alta de usuario fallo con resultado ambiguo y la identidad de Supabase Auth $authUserId creada por ella " +
+            "no pudo eliminarse (${cause::class.simpleName}). Reintentar manualmente borrando ese auth_user_id.",
+        cause,
+    )
 
     override suspend fun updateUser(id: Int, request: OposiBotsUserAdminUpdateRequest): OposiBotsUserAdminDto? {
         request.username?.let(::requireValidUsername)
