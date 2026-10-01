@@ -10,6 +10,5 @@ data class SupportState(
     val selectedConversationId: String? = null,
     val assignee: String = "",
     val replyText: String = "",
-    val sendAsInternalNote: Boolean = false,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
 )

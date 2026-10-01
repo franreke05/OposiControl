@@ -45,7 +45,16 @@ internal open class JvmRuntimeConfigSource(
 }
 
 /** Claves cuyo `-Doposi.<KEY>=` en blanco es un pin autoritativo (ver [JvmRuntimeConfigSource.read]). */
-internal val BLANK_PIN_KEYS: Set<String> = setOf(AppConfigResolver.KEY_BACKEND_TOKEN)
+internal val BLANK_PIN_KEYS: Set<String> = setOf(
+    AppConfigResolver.KEY_BACKEND_TOKEN,
+    AppConfigResolver.KEY_SUPABASE_URL,
+    AppConfigResolver.KEY_SUPABASE_ANON_KEY,
+    // Claves baked por composeApp/build.gradle.kts sin constante en AppConfigResolver. BASE_URL y APP_ENV no entran: el
+    // empaquetado nunca las deja en blanco y MASTER5-OC-005 exige que un BASE_URL en blanco caiga a la capa siguiente.
+    "SENTRY_DESKTOP_DSN",
+    "SENTRY_DESKTOP_ENVIRONMENT",
+    "SENTRY_DESKTOP_RELEASE",
+)
 
 private fun String.normalized(): String? = trim().ifBlank { null }
 

@@ -104,4 +104,30 @@ class PlatformRuntimeConfigSourceJvmTest {
         val nested = File(tempRoot, "a/b/c").apply { mkdirs() }
         assertNull(findDotEnvFile(nested, maxDepth = 8))
     }
+
+    private val bakedKeys = listOf(
+        "SUPABASE_URL", "SUPABASE_ANON_KEY", "SENTRY_DESKTOP_DSN", "SENTRY_DESKTOP_ENVIRONMENT", "SENTRY_DESKTOP_RELEASE",
+    )
+
+    @Test
+    fun aBlankBakedPropertyPinsEveryBakedKeyAgainstEnvAndDotEnv() {
+        File(tempRoot, ".env").writeText(bakedKeys.joinToString("\n") { "$it=from-dot-env" })
+        for (key in bakedKeys) {
+            val source = JvmRuntimeConfigSource(
+                systemProperty = { k -> if (k == "oposi.$key") "" else null },
+                systemEnv = { k -> if (k == key) "from-env" else null },
+                startDir = tempRoot,
+            )
+            assertNull(source.read(key), key)
+        }
+    }
+
+    @Test
+    fun anAbsentBakedPropertyStillFallsThroughAndUnpinnedBlankKeysStillFallThrough() {
+        File(tempRoot, ".env").writeText("SUPABASE_URL=from-dot-env\nENABLE_ANALYTICS=true\n")
+        val absent = JvmRuntimeConfigSource({ null }, { k -> if (k == "SUPABASE_URL") "from-env" else null }, tempRoot)
+        assertEquals("from-env", absent.read("SUPABASE_URL"))
+        val unpinned = JvmRuntimeConfigSource({ k -> if (k == "oposi.ENABLE_ANALYTICS") "" else null }, { null }, tempRoot)
+        assertEquals("true", unpinned.read("ENABLE_ANALYTICS"))
+    }
 }

@@ -42,7 +42,26 @@ class SupportViewModelTest {
         assertEquals("", state.replyText)
     }
 
+    @Test
+    fun `reply never requests an internal note and the state exposes no internal-note setting`() = runTest {
+        val repository = FakeAdminOperationsRepository()
+        val viewModel = SupportViewModel(
+            dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
+            repository = repository,
+            analyticsTracker = NoOpAnalyticsTracker,
+        )
+        viewModel.dispatch(SupportIntent.SelectConversation("conv-1"))
+        viewModel.dispatch(SupportIntent.UpdateReplyText("Hola"))
+        viewModel.dispatch(SupportIntent.SendReply)
+        advanceUntilIdle()
+
+        assertTrue(repository.sentInternalFlags.isNotEmpty() && repository.sentInternalFlags.all { !it })
+        // MASTER7-API-006: the backend cannot store internal notes, so no such setting may exist in the UI state.
+        assertTrue(!viewModel.state.value.toString().contains("InternalNote", ignoreCase = true))
+    }
+
     private class FakeAdminOperationsRepository : AdminOperationsRepository {
+        val sentInternalFlags = mutableListOf<Boolean>()
         private val messages = mutableListOf(
             SupportMessage(
                 id = "msg-1",
@@ -77,6 +96,7 @@ class SupportViewModelTest {
             text: String,
             internal: Boolean,
         ): AppResult<SupportMessage> {
+            sentInternalFlags += internal
             val message = SupportMessage(
                 id = "msg-${messages.size + 1}",
                 conversationId = conversationId,

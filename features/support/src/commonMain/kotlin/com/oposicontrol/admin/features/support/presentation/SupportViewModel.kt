@@ -30,7 +30,6 @@ class SupportViewModel(
             SupportIntent.Refresh -> refresh()
             SupportIntent.SendReply -> sendReply()
             is SupportIntent.SelectConversation -> selectConversation(intent.id)
-            is SupportIntent.ToggleInternalNote -> updateState { it.copy(sendAsInternalNote = intent.value) }
             is SupportIntent.UpdateAssignee -> updateState { it.copy(assignee = intent.value) }
             is SupportIntent.UpdateReplyText -> updateState { it.copy(replyText = intent.value) }
             is SupportIntent.UpdateSearch -> {
@@ -74,7 +73,6 @@ class SupportViewModel(
                 selectedConversationId = id,
                 assignee = conversation.assignedTo,
                 replyText = "",
-                sendAsInternalNote = false,
                 messages = UiAsync.Loading,
                 actionState = UiAsync.Idle,
             )
@@ -103,16 +101,16 @@ class SupportViewModel(
                 conversationId = conversationId,
                 assignee = currentState().assignee,
                 text = currentState().replyText,
-                internal = currentState().sendAsInternalNote,
+                internal = false, // MASTER7-API-006: the backend cannot store internal notes; never request one.
             )
         ) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 analyticsTracker.trackAction(
                     "support_send_reply",
-                    mapOf("conversation_id" to conversationId, "internal" to currentState().sendAsInternalNote.toString()),
+                    mapOf("conversation_id" to conversationId),
                 )
-                updateState { it.copy(replyText = "", sendAsInternalNote = false, actionState = UiAsync.Success(Unit)) }
+                updateState { it.copy(replyText = "", actionState = UiAsync.Success(Unit)) }
                 refresh()
                 selectConversation(conversationId)
             }

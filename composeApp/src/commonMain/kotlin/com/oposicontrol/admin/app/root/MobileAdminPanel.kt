@@ -1380,18 +1380,6 @@ private fun SupportReplyCard(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = false,
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Nota interna", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = state.sendAsInternalNote,
-                    onCheckedChange = { onIntent(SupportIntent.ToggleInternalNote(it)) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = GlassTheme.tokens.accent),
-                )
-            }
             AdminActionRow(
                 actionState = state.actionState,
                 saveLabel = "Enviar",

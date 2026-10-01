@@ -184,8 +184,13 @@ class UsersViewModel(
                     state
                 } else {
                     when (result) {
-                        // Relectura silenciosa fallida: se conserva lo que ya se mostraba.
-                        is AppResult.Failure -> if (silent) state else state.copy(detail = UiAsync.Error(result.error))
+                        // Relectura silenciosa fallida: se conserva lo que ya se mostraba, salvo que cancelase una carga en
+                        // curso (MASTER7-OC-006): entonces la ficha quedaria en Loading sin ningun job que la resuelva.
+                        is AppResult.Failure -> if (silent && state.detail !is UiAsync.Loading) {
+                            state
+                        } else {
+                            state.copy(detail = UiAsync.Error(result.error))
+                        }
                         is AppResult.Success -> {
                             val balance = result.value.economy?.ticketBalance
                             val rows = if (silent && balance != null) {

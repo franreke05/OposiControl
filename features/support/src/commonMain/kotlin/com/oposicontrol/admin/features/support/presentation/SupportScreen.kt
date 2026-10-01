@@ -29,7 +29,6 @@ import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.FormSection
 import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.GlassTextField
-import com.oposicontrol.admin.core.ui.components.GlassToggleRow
 import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.core.ui.theme.AdminTheme
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
@@ -138,7 +137,7 @@ fun SupportContent(
                 }
                 FormSection(
                     title = "Responder",
-                    description = "Respuesta al usuario o nota interna privada.",
+                    description = "Respuesta visible para el usuario.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         FieldLabel("Mensaje")
@@ -148,12 +147,6 @@ fun SupportContent(
                             placeholder = "Escribe tu respuesta…",
                             singleLine = false,
                             modifier = Modifier.fillMaxWidth(),
-                        )
-                        GlassToggleRow(
-                            title = "Enviar como nota interna",
-                            description = "Visible solo para el equipo, no para el usuario.",
-                            checked = state.sendAsInternalNote,
-                            onCheckedChange = { onIntent(SupportIntent.ToggleInternalNote(it)) },
                         )
                         GlassActionButton(
                             text = "Enviar respuesta",
