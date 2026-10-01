@@ -1297,8 +1297,12 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 }
                 post("/{id}/mensajes") {
                     val id = call.requiredPath("id").validatedUuid("id")
+                    // MASTER7-API-006: el remitente es SIEMPRE el actor verificado (sub del JWT). El token estatico legacy
+                    // (sin uuid) no puede firmar respuestas de soporte: 403 antes de leer el cuerpo o tocar Supabase.
+                    val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+                        ?: throw CanonicalErrorCode.FORBIDDEN.exception()
                     val body = call.receive<AdminSupportReplyDto>()
-                    call.respond(HttpStatusCode.Created, withUpstreamIo { gateway.sendSupportMessage(id, body) })
+                    call.respond(HttpStatusCode.Created, withUpstreamIo { gateway.sendSupportMessage(id, body, actorId) })
                 }
             }
         }
@@ -3818,7 +3822,7 @@ class AdminV1Gateway private constructor(
             especialidadPatchPayload(row),
             prefer = "return=representation",
         ).decodeList<AdminEspecialidadDto>().firstOrNull()
-            ?: error("Especialidad no encontrada para actualizar: $id")
+            ?: throw OposiBotsUserAdminNotFoundException("Especialidad no encontrada.")
     }
 
     fun archiveEspecialidad(id: String): AdminEspecialidadDto {
@@ -3828,7 +3832,7 @@ class AdminV1Gateway private constructor(
             """{"activa":false}""",
             prefer = "return=representation",
         ).decodeList<AdminEspecialidadDto>().firstOrNull()
-            ?: error("Especialidad no encontrada.")
+            ?: throw OposiBotsUserAdminNotFoundException("Especialidad no encontrada.")
         registrarAuditoria("especialidad_archivada", "especialidades", id)
         return saved
     }
@@ -5400,7 +5404,7 @@ class AdminV1Gateway private constructor(
         }
         val saved = request(
             "PATCH", "/rest/v1/feedback_pregunta?id=eq.$id", body, prefer = "return=representation",
-        ).decodeList<FeedbackRow>().firstOrNull() ?: error("Feedback no encontrado.")
+        ).decodeList<FeedbackRow>().firstOrNull() ?: throw OposiBotsUserAdminNotFoundException("Feedback no encontrado.")
         val autorNombre = saved.usuarioId?.let { resolveUserDisplayNames(listOf(it))[it] }.orEmpty()
         registrarAuditoria("feedback_$estado", "feedback_pregunta", id)
         logStrategicEvent(
@@ -6093,7 +6097,7 @@ class AdminV1Gateway private constructor(
         // MASTER6-SEC-001: validado antes de interpolarse (un `%26` decodificado anadia parametros a PostgREST).
         val id = rawId.validatedUuid("id")
         val r = request("GET", "/rest/v1/reportes_contenido?select=*&id=eq.$id&limit=1", null)
-            .decodeList<ReporteRow>().firstOrNull() ?: error("Reporte no encontrado.")
+            .decodeList<ReporteRow>().firstOrNull() ?: throw OposiBotsUserAdminNotFoundException("Reporte no encontrado.")
         val reporterNombre = resolveUserDisplayName(r.reportadoPor)
         return AdminReporteDto(
             id = r.id,
@@ -6182,7 +6186,7 @@ class AdminV1Gateway private constructor(
         // MASTER6-SEC-001: el id se valida antes de interpolarse en PostgREST y en la auditoria.
         val id = rawId.validatedUuid("id")
         val reporte = request("GET", "/rest/v1/reportes_contenido?select=*&id=eq.$id&limit=1", null)
-            .decodeList<ReporteRow>().firstOrNull() ?: error("Reporte no encontrado.")
+            .decodeList<ReporteRow>().firstOrNull() ?: throw OposiBotsUserAdminNotFoundException("Reporte no encontrado.")
         // MASTER6-API-001: solo se resuelve un reporte ABIERTO. Antes un segundo POST insertaba otra accion de moderacion
         // y podia voltear un reporte resuelto a descartado.
         val estado = if (req.accion == "descartar") "descartado" else "resuelto"
@@ -6480,12 +6484,16 @@ class AdminV1Gateway private constructor(
         }
     }
 
-    fun sendSupportMessage(rawConversationId: String, input: AdminSupportReplyDto): AdminSupportMessageDto {
+    /**
+     * MASTER7-API-006: [actorId] es el uuid verificado del JWT; `input.assignee` se IGNORA (texto libre del cliente,
+     * nunca decide la autoria). `input.internal` no se persiste: `mensajes_soporte` no tiene columna de nota interna
+     * (PRODUCT_BLOCKED / requiere migracion); `es_staff` sigue siendo true porque la respuesta la escribe staff.
+     */
+    fun sendSupportMessage(rawConversationId: String, input: AdminSupportReplyDto, actorId: String): AdminSupportMessageDto {
         val conversationId = rawConversationId.validatedUuid("id")
+        val senderId = actorId.validatedUuid("actorId")
         require(input.text.isNotBlank()) { "El mensaje no puede estar vacio." }
-        val sender = input.assignee.takeIf { it.isNotBlank() }?.let(::findPerfil)
-            ?: perfilesUsuario().firstOrNull()
-            ?: throw IllegalArgumentException("No hay usuarios reales para enviar el mensaje.")
+        val senderProfile = perfilesUsuario().firstOrNull { it.usuarioId == senderId }
         val saved = request(
             "POST",
             "/rest/v1/mensajes_soporte",
@@ -6493,7 +6501,7 @@ class AdminV1Gateway private constructor(
                 listOf(
                     SoporteMensajeInsertRow(
                         conversacionId = conversationId,
-                        remitenteId = sender.usuarioId,
+                        remitenteId = senderId,
                         cuerpo = input.text,
                         esStaff = true,
                     ),
@@ -6504,7 +6512,7 @@ class AdminV1Gateway private constructor(
         return AdminSupportMessageDto(
             id = saved.id,
             conversationId = saved.conversacionId,
-            authorName = sender.displayName(sender.usuarioId),
+            authorName = senderProfile.displayName(senderId),
             text = saved.cuerpo,
             timestamp = saved.creadoEn.orEmpty(),
             internal = saved.esStaff,
@@ -6617,7 +6625,7 @@ class AdminV1Gateway private constructor(
         val row = V1EtiquetaRow(id = id, nombre = input.nombre.trim(), slug = input.slug.ifBlank { input.nombre.toSlug() }, descripcion = input.descripcion, colorHex = input.colorHex, activa = input.activa)
         return request("PATCH", "/rest/v1/etiquetas?id=eq.$id", sbJson.encodeToString(row), prefer = "return=representation")
             .decodeList<V1EtiquetaRow>().firstOrNull()?.let { AdminEtiquetaDto(it.id.orEmpty(), it.nombre, it.slug, it.descripcion, it.colorHex, it.activa) }
-            ?: error("Etiqueta no encontrada para actualizar: $id")
+            ?: throw OposiBotsUserAdminNotFoundException("Etiqueta no encontrada.")
     }
 
     fun deleteEtiqueta(rawId: String) {
@@ -6644,7 +6652,7 @@ class AdminV1Gateway private constructor(
         val row = V1ComunidadRow(id = id, nombre = input.nombre.trim(), codigo = input.codigo.trim(), slug = input.slug.ifBlank { input.nombre.toSlug() }, activa = input.activa, posicion = input.posicion)
         return request("PATCH", "/rest/v1/comunidades_autonomas?id=eq.$id", sbJson.encodeToString(row), prefer = "return=representation")
             .decodeList<V1ComunidadRow>().firstOrNull()?.let { AdminComunidadDto(it.id.orEmpty(), it.nombre, it.codigo, it.slug, it.activa, it.posicion) }
-            ?: error("Comunidad no encontrada para actualizar: $id")
+            ?: throw OposiBotsUserAdminNotFoundException("Comunidad no encontrada.")
     }
 
     fun deleteComunidad(id: String) {

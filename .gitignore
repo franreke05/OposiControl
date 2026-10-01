@@ -60,3 +60,6 @@ ngrok*.log
 # Local worktrees and subagent-driven-development scratch workspaces
 .worktrees/
 .superpowers/
+
+# stray Gradle/test console logs (audit MASTER7-QUALITY-002)
+test_output*.log
