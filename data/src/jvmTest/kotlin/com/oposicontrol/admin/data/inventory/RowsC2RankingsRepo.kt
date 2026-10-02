@@ -13,7 +13,7 @@ private const val R = "/api/v1/admin/rankings"
 internal val ROWS_C2_RANKINGS_REPO: List<CallRow> = listOf(
     CallRow(
         FILE, "get(ligas,global,liga,usuario,usuarios)",
-        listOf(get("$R/ligas"), get("$R/global"), get("$R/liga/{}"), get("$R/usuario/{}"), get("$R/usuarios")),
+        listOf(get("$R/ligas"), get("$R/global?limit&offset"), get("$R/liga/{}?limit&offset"), get("$R/usuario/{}"), get("$R/usuarios?limit&offset&q")),
         covers = setOf("getLeagueLevels", "getGlobalRanking", "getLeagueRanking", "getUserStanding", "searchUsers"),
     ) {
         val r = KtorRankingsRepositoryImpl(client, appConfig, session, adapter)

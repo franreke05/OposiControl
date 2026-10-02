@@ -18,7 +18,10 @@ private val RESOURCE = QuestionResourceDraft(kind = QuestionResourceKind.TEXTO, 
 
 /** Filas del registrador (R4-REC-B): KtorQuestionsRepositoryImpl (13 sitios, una fila por metodo). */
 internal val ROWS_B_QUESTIONS_REPO: List<CallRow> = listOf(
-    CallRow(FILE, "listQuestions", get(Q)) { repo().listQuestions(QuestionListQuery()) },
+    // todos los filtros opcionales activos: cada `parameter("x"` de listQuestions lo graba la fila (R6-HARDEN)
+    CallRow(FILE, "listQuestions", get("$Q?activa&examenId&limit&offset&orden&q&tipo")) {
+        repo().listQuestions(QuestionListQuery(search = "s", type = QuestionType.RAFAGA, examId = "ID1"))
+    },
     CallRow(FILE, "getQuestionDetail", get("$Q/{}")) { repo().getQuestionDetail("ID0") },
     CallRow(FILE, "createQuestion", post(Q)) { repo().createQuestion("ID0", DRAFT, null) },
     CallRow(FILE, "updateQuestion", patch("$Q/{}")) { repo().updateQuestion("ID0", DRAFT, optionsChanged = false) },

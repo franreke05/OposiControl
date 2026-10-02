@@ -40,7 +40,7 @@ val localSupabasePublicKey = localEnvValue("SUPABASE_ANON_KEY")
 // o no es https/no-localhost (antes se horneaba "" y la app lanzaba al arrancar). Espejo de requireSecureUrl del resolver.
 val nonDevSupabaseUrlProblem: String? = localSupabaseUrl.trim().trimEnd('/').let { url ->
     when {
-        url.isEmpty() -> "SUPABASE_URL es obligatorio para los flavors staging/prod (variable de entorno o .env)."
+        url.isEmpty() -> "SUPABASE_URL es obligatorio para los flavors staging/prod y la distribucion de escritorio de produccion (variable de entorno o .env)."
         !url.startsWith("https://", ignoreCase = true) -> "SUPABASE_URL debe usar HTTPS en los flavors staging/prod."
         url.contains("localhost", ignoreCase = true) -> "SUPABASE_URL no puede apuntar a localhost en los flavors staging/prod."
         else -> null
@@ -58,6 +58,17 @@ val verifyNonDevSupabaseConfig = tasks.register("verifyNonDevSupabaseConfig") {
 // variante staging/prod (debug o release) y no afecta a dev ni a escritorio.
 tasks.configureEach {
     if (Regex("^pre(Staging|Prod)(Debug|Release)Build$").matches(name)) dependsOn(verifyNonDevSupabaseConfig)
+}
+
+// Distribucion de escritorio de PRODUCCION (-PoposiProduction=true => APP_ENV=prod): hornea -Doposi.SUPABASE_URL en sus jvmArgs, asi
+// que sin URL https arrancaria y fallaria (AppConfigResolver). Mismo guard, mismo mensaje: el build falla en voz alta en vez de
+// empaquetar una distribucion con SUPABASE_URL vacia. El escritorio de desarrollo (sin el flag) no se ve afectado.
+if (providers.gradleProperty("oposiProduction").orNull?.toBooleanStrictOrNull() == true) {
+    tasks.configureEach {
+        if (Regex("^(create(Release)?Distributable|package(Release)?(Distribution.*|Dmg|Msi|Deb))$").matches(name)) {
+            dependsOn(verifyNonDevSupabaseConfig)
+        }
+    }
 }
 
 val productionDesktopBuild =

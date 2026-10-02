@@ -41,18 +41,18 @@ private val NOW = Instant.parse("2026-01-01T00:00:00Z")
  */
 private fun body(c: Call): String = when {
     c.method != "GET" -> """{"data":{"id":"ID0","especialidadId":"ID0","tipoExamen":"rafaga"}}"""
-    c.path == ESP -> """{"data":[{"id":"ID0","nombre":"E"}]}"""
-    c.path == EXA -> """{"data":[{"id":"ID0","especialidadId":"ID0","tipoExamen":"rafaga"}]}"""
-    c.path == "$EXA/{}/preguntas" -> """{"data":[{"id":"ID1","posicion":1},{"id":"ID2","posicion":2}]}"""
-    c.path == "$PRE/{}/recursos" -> """{"data":[{"id":"ID1"}]}"""
-    c.path == "$IMP/preguntas" -> """{"data":[]}"""
+    c.template == ESP -> """{"data":[{"id":"ID0","nombre":"E"}]}"""
+    c.template == EXA -> """{"data":[{"id":"ID0","especialidadId":"ID0","tipoExamen":"rafaga"}]}"""
+    c.template == "$EXA/{}/preguntas" -> """{"data":[{"id":"ID1","posicion":1},{"id":"ID2","posicion":2}]}"""
+    c.template == "$PRE/{}/recursos" -> """{"data":[{"id":"ID1"}]}"""
+    c.template == "$IMP/preguntas" -> """{"data":[]}"""
     else -> """{"data":{"id":"ID0","especialidadId":"ID0","tipoExamen":"rafaga"}}"""
 }
 
 private suspend fun Env.withRepo(block: suspend (KtorAdminV1ContentRepositoryImpl) -> Unit) {
     val scripted = HttpClient(
         MockEngine { request ->
-            val call = Call(request.method.value, normalizeTemplate(request.url.encodedPath))
+            val call = recordedCall(request)
             recorded += call
             respond(
                 content = body(call),

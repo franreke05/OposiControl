@@ -156,5 +156,9 @@ jobs:
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
       - run: bash scripts/verify-desktop-runtime-modules.test.sh
+      # La distribucion PROD exige SUPABASE_URL https (verifyNonDevSupabaseConfig falla el build si falta). Aqui solo se verifica el
+      # empaquetado (sin firma ni publicacion): URL publica NO secreta de relleno; el valor real lo aporta el entorno de release.
       - run: ./gradlew :composeApp:createDistributable -PoposiProduction=true --console=plain
+        env:
+          SUPABASE_URL: https://ci-distribution-check.supabase.co
       - run: bash scripts/verify-desktop-runtime-modules.sh

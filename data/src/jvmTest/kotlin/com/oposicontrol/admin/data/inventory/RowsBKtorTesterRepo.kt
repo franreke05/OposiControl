@@ -6,8 +6,8 @@ private const val FILE = "data/src/commonMain/kotlin/com/oposicontrol/admin/data
 
 /** Filas del registrador (R4-REC-B): KtorTesterRepositoryImpl. */
 internal val ROWS_B_TESTER_REPO: List<CallRow> = listOf(
-    CallRow(FILE, "listReports", get("/api/v1/admin/feedback/preguntas")) {
-        KtorTesterRepositoryImpl(client, appConfig, session, adapter).listReports(status = null, cursor = null, type = null, pageSize = 25)
+    CallRow(FILE, "listReports", get("/api/v1/admin/feedback/preguntas?cursor&estado&limit&tipo")) {
+        KtorTesterRepositoryImpl(client, appConfig, session, adapter).listReports(status = "nuevo", cursor = "c", type = "t", pageSize = 25)
     },
     CallRow(FILE, "getReport", get("/api/v1/admin/feedback/preguntas/{}")) {
         KtorTesterRepositoryImpl(client, appConfig, session, adapter).getReport("ID0")

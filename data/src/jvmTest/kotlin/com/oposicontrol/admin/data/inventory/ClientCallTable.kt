@@ -17,7 +17,9 @@ import com.oposicontrol.admin.domain.model.Tag
  *    La respuesta del mock es `{"data":[]}`: los errores de mapeo se ignoran, solo cuenta lo enviado.
  *  - la ruta (metodo + plantilla) tiene que existir en `ops/inventory/routes.combined.txt`; si el cliente llama a una ruta que el
  *    backend no sirve, el fallo es REAL (arreglar el cliente o el backend, nunca la fila).
- *  - al completar un fichero, bajar (o borrar) su entrada en [PENDING_ROWS]: `filas + pendientes == sitios` o falla.
+ *  - `site`: la funcion del fichero que contiene el sitio (por defecto `name` sin `(rama)`); `filas == sitios` por funcion o
+ *    falla. No hay lista de pendientes: un sitio sin fila cuenta en UNMAPPED_CALLS y la puerta falla.
+ *  - la consulta se declara por NOMBRES tras `?` (`get("/x?limit&offset")`); varios `{}` en una ruta exigen ids crecientes.
  */
 internal val CLIENT_CALL_ROWS: List<CallRow> = listOf(
 
@@ -49,13 +51,6 @@ internal val CLIENT_CALL_ROWS: List<CallRow> = listOf(
     ROWS_C_ADMIN_V1_CONTENT_REPO + // R5-REC-C1: RowsCKtorAdminV1ContentRepo.kt
     ROWS_C2_AUTH_API + ROWS_C2_USERS_API + ROWS_C2_COMMERCIAL_CATALOG_REPO + ROWS_C2_CONNECTION_DIAGNOSTICS_REPO +
     ROWS_C2_FORUM_REPO + ROWS_C2_MODERATION_REPO + ROWS_C2_PRODUCT_ANALYTICS_REPO + ROWS_C2_RANKINGS_REPO // R5-REC-C2: RowsC2*.kt
-
-/**
- * Sitios de llamada aun SIN fila (fichero -> cuantos). SOLO PUEDE ENCOGER: `filas + pendientes == sitios` por fichero, de modo que
- * un metodo nuevo (sitio nuevo) sin fila falla aunque el fichero siga pendiente. Los agentes siguientes rellenan y bajan aqui.
- */
-internal val PENDING_ROWS: Map<String, Int> = mapOf(
-)
 
 private const val DATA_MAIN = "data/src/commonMain/kotlin/com/oposicontrol/admin/data"
 private const val API_DIR = "$DATA_MAIN/remote/api"

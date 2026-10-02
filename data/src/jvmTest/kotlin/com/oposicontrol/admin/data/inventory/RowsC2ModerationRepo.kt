@@ -12,7 +12,7 @@ private fun Env.repo() = KtorModerationRepositoryImpl(client, appConfig, session
  * (mismo sitio): la fila de `listReports` ejecuta los dos puntos de entrada, declara las dos llamadas y los nombra en `covers`.
  */
 internal val ROWS_C2_MODERATION_REPO: List<CallRow> = listOf(
-    CallRow(FILE, "listReports(pending,todos)", listOf(get(R), get(R)), covers = setOf("listReports", "listPendingReports")) {
+    CallRow(FILE, "listReports(pending,todos)", listOf(get(R), get("$R?estado")), covers = setOf("listReports", "listPendingReports")) {
         val r = repo()
         r.listPendingReports(); r.listReports(includeResolved = true)
     },

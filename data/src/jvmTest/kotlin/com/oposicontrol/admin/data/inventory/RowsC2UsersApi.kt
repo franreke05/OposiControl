@@ -13,7 +13,7 @@ private fun user(name: String, roles: List<String>) = UserDto("ID0", name, "e", 
  * terminan en el `getUser` que encadena; `previous` decide la rama. La respuesta minima de la lectura no mapea.
  */
 internal val ROWS_C2_USERS_API: List<CallRow> = listOf(
-    CallRow(FILE, "getUsers", get(U)) { UsersApi(client, appConfig, session).getUsers() },
+    CallRow(FILE, "getUsers", get("$U?limit&offset")) { UsersApi(client, appConfig, session).getUsers() },
     CallRow(FILE, "getUser", get("$U/{}")) { UsersApi(client, appConfig, session).getUser("ID0") },
     CallRow(FILE, "upsertUser(patch)", listOf(patch("$U/{}"), get("$U/{}"))) {
         UsersApi(client, appConfig, session).upsertUser(user("nuevo", listOf("r")), previous = user("viejo", listOf("r")))

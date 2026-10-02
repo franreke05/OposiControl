@@ -83,7 +83,11 @@ internal val NON_HTTP_MEMBERS: Map<String, Map<String, String>> = mapOf(
     "$REPO/KtorNewsRepositoryImpl.kt" to mapOf("observeNews" to "StateFlow local"),
     "$REPO/KtorRankingsRepositoryImpl.kt" to mapOf(
         "requireSuccess" to "extension de HttpResponse: lee el estado de una respuesta ya recibida",
-        "toDomain" to "mapeador DTO -> dominio (fachada)",
+        // nombre sobrecargado: cada firma se justifica por separado (una sobrecarga nueva no queda cubierta por el nombre)
+        "toDomain(LeagueLevelDto)" to "mapeador DTO -> dominio (fachada)",
+        "toDomain(RankingEntryDto)" to "mapeador DTO -> dominio (fachada)",
+        "toDomain(RankingPageDto)" to "mapeador DTO -> dominio (fachada)",
+        "toDomain(UserStandingDto)" to "mapeador DTO -> dominio (fachada)",
     ),
     "$REPO/KtorSystemStatusRepositoryImpl.kt" to mapOf(
         "ktorSystemStatusRepository" to "factoria Koin: construye el repositorio, no envia peticion",
@@ -91,13 +95,6 @@ internal val NON_HTTP_MEMBERS: Map<String, Map<String, String>> = mapOf(
         "toSystemStatusLevel" to "mapeador de texto -> nivel (fachada)",
     ),
     "$REPO/KtorTagsRepositoryImpl.kt" to mapOf("observeTags" to "StateFlow local"),
-)
-
-/**
- * Puntos de entrada HTTP aun SIN fila (fichero -> metodos). SOLO ENCOGE, igual que [PENDING_ROWS]: un metodo publico nuevo no
- * puede entrar sin aparecer aqui a la vista de la revision. El siguiente paso los convierte en filas y los borra.
- */
-internal val PENDING_METHODS: Map<String, Set<String>> = mapOf(
 )
 
 /**

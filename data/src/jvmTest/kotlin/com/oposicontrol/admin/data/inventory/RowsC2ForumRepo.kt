@@ -9,7 +9,9 @@ private fun Env.repo() = KtorForumRepositoryImpl(client, appConfig, session, ada
 
 /** Filas del registrador (R5-REC-C2): KtorForumRepositoryImpl (3 sitios). */
 internal val ROWS_C2_FORUM_REPO: List<CallRow> = listOf(
-    CallRow(FILE, "listThreads", get(H)) { repo().listThreads(cursor = null, reportedOnly = false) },
+    CallRow(FILE, "listThreads", get("$H?categoriaId&cursor&limit&reportados")) {
+        repo().listThreads(cursor = "c", reportedOnly = true, categoryId = "ID1")
+    },
     CallRow(FILE, "getThread", get("$H/{}")) { repo().getThread("ID0") },
-    CallRow(FILE, "listReplies", get("$H/{}/respuestas")) { repo().listReplies("ID0", cursor = null) },
+    CallRow(FILE, "listReplies", get("$H/{}/respuestas?cursor&limit")) { repo().listReplies("ID0", cursor = "c") },
 )
