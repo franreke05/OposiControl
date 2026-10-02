@@ -56,4 +56,7 @@ Lo que NO puede probar (limites exactos):
 - Un cliente que no se llame por los verbos Ktor contados (otro nombre de funcion de egreso, otro motor HTTP) o una clase que
   llega al cliente por un global (Koin `GlobalContext`) en vez de por campo o parametro; el tripwire de ficheros y
   `verify-no-direct-supabase.sh` (EGRESS_CTOR, `EGRESS_NONKTOR`) son las otras capas.
+- Tres formas de egreso NO contadas: un verbo importado con alias (`import io.ktor.client.request.post as send`), un verbo entre comillas invertidas (client.`post`(..)) y una referencia invocable (`client::post`); en los tres la cuenta no sube y, sin literal de ruta en linea, la comprobacion estatica calla.
+- Una rama cuyo literal conserva un sufijo ya grabado pero cambia el prefijo interpolado (`"${BackendRoutes.ADMIN_V1}/servicios"` en vez de `"$MARKET/servicios"`): la comprobacion estatica borra las interpolaciones y compara con `containsMatchIn`.
+- La linea `NETWORK_RECORDER_COUNTERS` puede leer 122/122/0/0 con una exclusion que deriva (otra invocacion del ayudante excluido); falla `siteExclusionsArePinnedExactlyAndJustified`, asi que el veredicto es el resultado de la suite, no la linea.
 - Una declaracion `fun` falsa en un comentario cambia la clave del sitio: el conteo por funcion FALLA (no pasa en silencio).

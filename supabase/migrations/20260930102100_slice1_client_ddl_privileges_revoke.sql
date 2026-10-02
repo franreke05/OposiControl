@@ -99,9 +99,21 @@
 --     public GRANT ALL ON TABLES TO ... anon, authenticated` (baseline_main.sql 4280 and 4283). A table created LATER
 --     by either role gets TRUNCATE/TRIGGER/REFERENCES (and everything else) for the client roles again. The migration
 --     role cannot alter the supabase_admin defaults, and changing the postgres defaults is outside owner decision 4.
---     Mitigation: every new table migration revokes explicitly (repo convention, e.g. 20260930100300), the VERIFY row
---     client_ddl_privilege_effective flags any such table at the next gate run, and rerunning this migration revokes
---     and records it.
+--     Mitigation: every new table migration revokes explicitly (repo convention, e.g. 20260930100300) and the VERIFY
+--     row client_ddl_privilege_effective flags any such table at the next gate run (whoever owns it). What a rerun of
+--     this migration does then depends on the OWNER of that table:
+--     * owned by a role the migration role can act as (pg_has_role USAGE; in MAIN that is postgres, the migration
+--       role): the rerun revokes it and records it for the ROLLBACK;
+--     * owned by supabase_admin (or any role the migration role cannot act as): the migration role cannot revoke those
+--       grants, so the rerun fails closed with P0001 CLIENT_DDL_PRIVILEGES_PREFLIGHT naming relation, role and
+--       privilege, and the WHOLE rerun revokes and records NOTHING (not even postgres-owned tables in the same run).
+--       Measured on the PG17 gate (round 6, a supabase_admin-owned future table): 6 effective entries, rerun aborts
+--       in PREFLIGHT; `ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin` as postgres -> permission denied.
+--       Operator action (SLICE_1_PRODUCTION_GATE section 8 checklist): run
+--       `revoke truncate, trigger, references on table public.<t> from anon, authenticated` in a session that acts
+--       as that table's owner (supabase_admin, e.g. dashboard SQL only if its role can act as supabase_admin;
+--       otherwise escalate to the platform owner), then rerun this migration so the remaining tables are revoked and
+--       VERIFY is 0. A table revoked that way is NOT recorded here, so this ROLLBACK does not re-grant it.
 --   - MAINTAIN stays granted to anon and authenticated (see UNCHANGED).
 --
 -- ROLLBACK (manual; executed verbatim by dbtest)

@@ -268,7 +268,10 @@ class Slice1ClientDdlPrivilegesMigrationTest {
     /**
      * Residual de los privilegios por defecto: una tabla creada DESPUES hereda de nuevo los privilegios (aqui los
      * defaults del dueno, como `ALTER DEFAULT PRIVILEGES FOR ROLE postgres/supabase_admin` en MAIN). El VERIFY la senala,
-     * re-ejecutar la migracion la revoca y la registra, y el ROLLBACK tambien la restaura.
+     * re-ejecutar la migracion la revoca y la registra, y el ROLLBACK tambien la restaura. Solo vale para una tabla cuyo
+     * dueno puede asumir el rol de migracion (aqui el propio rol del test; en MAIN postgres): una tabla futura de
+     * supabase_admin hace que la re-ejecucion aborte en CLIENT_DDL_PRIVILEGES_PREFLIGHT sin revocar nada (gate PG17
+     * ronda 6) y el operador debe revocarla en una sesion que actue como supabase_admin (cabecera, RESIDUALS).
      */
     @Test
     fun unaTablaNuevaConPrivilegiosPorDefectoLaSenalaElVerifyYUnaReejecucionLaRevoca(): Unit = escenario { c ->
