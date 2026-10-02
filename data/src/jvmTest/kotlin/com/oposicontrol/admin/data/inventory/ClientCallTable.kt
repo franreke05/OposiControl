@@ -45,22 +45,16 @@ internal val CLIENT_CALL_ROWS: List<CallRow> = listOf(
     },
 ) + ROWS_B_DASHBOARD_API + ROWS_B_USER_DETAIL_API + ROWS_B_ADMIN_OPERATIONS_REPO + ROWS_B_COMMERCE_REPO +
     ROWS_B_COMMUNITIES_REPO + ROWS_B_DASHBOARD_OVERVIEW_REPO + ROWS_B_MARKET_CATALOG_REPO + ROWS_B_NEWS_REPO +
-    ROWS_B_QUESTIONS_REPO + ROWS_B_SYSTEM_STATUS_REPO + ROWS_B_TESTER_REPO // R4-REC-B: ficheros RowsB*.kt
+    ROWS_B_QUESTIONS_REPO + ROWS_B_SYSTEM_STATUS_REPO + ROWS_B_TESTER_REPO + // R4-REC-B: ficheros RowsB*.kt
+    ROWS_C_ADMIN_V1_CONTENT_REPO + // R5-REC-C1: RowsCKtorAdminV1ContentRepo.kt
+    ROWS_C2_AUTH_API + ROWS_C2_USERS_API + ROWS_C2_COMMERCIAL_CATALOG_REPO + ROWS_C2_CONNECTION_DIAGNOSTICS_REPO +
+    ROWS_C2_FORUM_REPO + ROWS_C2_MODERATION_REPO + ROWS_C2_PRODUCT_ANALYTICS_REPO + ROWS_C2_RANKINGS_REPO // R5-REC-C2: RowsC2*.kt
 
 /**
  * Sitios de llamada aun SIN fila (fichero -> cuantos). SOLO PUEDE ENCOGER: `filas + pendientes == sitios` por fichero, de modo que
  * un metodo nuevo (sitio nuevo) sin fila falla aunque el fichero siga pendiente. Los agentes siguientes rellenan y bajan aqui.
  */
 internal val PENDING_ROWS: Map<String, Int> = mapOf(
-    "$API_DIR/AuthApi.kt" to 3, // host SUPABASE (GoTrue): Call(..., HostClass.SUPABASE)
-    "$API_DIR/UsersApi.kt" to 4,
-    "$REPO_DIR/KtorAdminV1ContentRepositoryImpl.kt" to 36,
-    "$REPO_DIR/KtorCommercialCatalogRepositoryImpl.kt" to 3,
-    "$REPO_DIR/KtorConnectionDiagnosticsRepositoryImpl.kt" to 9,
-    "$REPO_DIR/KtorForumRepositoryImpl.kt" to 3,
-    "$REPO_DIR/KtorModerationRepositoryImpl.kt" to 5,
-    "$REPO_DIR/KtorProductAnalyticsRepositoryImpl.kt" to 1,
-    "$REPO_DIR/KtorRankingsRepositoryImpl.kt" to 1,
 )
 
 private const val DATA_MAIN = "data/src/commonMain/kotlin/com/oposicontrol/admin/data"

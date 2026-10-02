@@ -121,6 +121,10 @@ jobs:
       # con "Dependency verification failed"; esto nombra el hueco exacto en el diff).
       - run: ./gradlew --no-configuration-cache --write-verification-metadata sha256 :backend:ktor:dependencies --configuration runtimeClasspath :composeApp:dependencies --configuration jvmRuntimeClasspath :backend:ktor:installDist :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest :composeApp:jvmTest :core:common:jvmTest :core:network:jvmTest :core:ui:jvmTest :features:analytics:jvmTest :features:auth:jvmTest :features:dashboard:jvmTest :features:exam-access:jvmTest :features:forum:jvmTest :features:imports:jvmTest :features:news:jvmTest :features:opositester:jvmTest :features:questions:jvmTest :features:rankings:jvmTest :features:settings:jvmTest :features:specialties:jvmTest :features:store:jvmTest :features:support:jvmTest
       - run: git diff --exit-code -- gradle/verification-metadata.xml
+      # CI-GRADLE-VERIF: control negativo funcional del paso anterior (copia temporal: sha256 corrupto / componente quitado => el diff debe FALLAR).
+      - run: bash scripts/verify-gradle-drift-negative-control.sh
+      # INV-NETWORK-COMPLETE: los flavors Android staging/prod hornean SUPABASE_URL del entorno y el BUILD falla si falta o no es https.
+      - run: bash scripts/verify-android-flavor-config.sh
   # DB-CI-PG17: migraciones pendientes (supabase/baseline/PENDING_MIGRATIONS.txt) sobre PostgreSQL 17 REAL (imagen de Supabase
   # fijada por digest) cargado con la forma de MAIN que tocan (supabase/baseline/main_shape_subset.sql, sin filas), ON_ERROR_STOP,
   # VERIFY = 0 tras cada una, assertions.sql (comportamiento + grants/RLS) y rollback inverso/re-aplicacion por huella de catalogo.

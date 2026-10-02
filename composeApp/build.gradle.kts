@@ -35,6 +35,31 @@ val localSupabasePublicKey = localEnvValue("SUPABASE_ANON_KEY")
     .takeUnless { it.startsWith("sb_secret_", ignoreCase = true) }
     .orEmpty()
 
+// INV-NETWORK-COMPLETE: AppConfigResolver lanza fuera de DEV sin SUPABASE_URL https. Los flavors Android staging/prod
+// toman SUPABASE_URL del mismo origen que dev/escritorio (variable de entorno o .env) y el BUILD falla en voz alta si falta
+// o no es https/no-localhost (antes se horneaba "" y la app lanzaba al arrancar). Espejo de requireSecureUrl del resolver.
+val nonDevSupabaseUrlProblem: String? = localSupabaseUrl.trim().trimEnd('/').let { url ->
+    when {
+        url.isEmpty() -> "SUPABASE_URL es obligatorio para los flavors staging/prod (variable de entorno o .env)."
+        !url.startsWith("https://", ignoreCase = true) -> "SUPABASE_URL debe usar HTTPS en los flavors staging/prod."
+        url.contains("localhost", ignoreCase = true) -> "SUPABASE_URL no puede apuntar a localhost en los flavors staging/prod."
+        else -> null
+    }
+}
+
+val verifyNonDevSupabaseConfig = tasks.register("verifyNonDevSupabaseConfig") {
+    group = "verification"
+    description = "Falla el build de staging/prod si SUPABASE_URL falta o no es https (nunca deny-all silencioso ni crash en runtime)."
+    val problem = nonDevSupabaseUrlProblem
+    doLast { if (problem != null) throw GradleException(problem) }
+}
+
+// Los flavors staging/prod de Android no se construyen en CI (ver DEPLOYMENT.md); este guard corre antes de cualquier
+// variante staging/prod (debug o release) y no afecta a dev ni a escritorio.
+tasks.configureEach {
+    if (Regex("^pre(Staging|Prod)(Debug|Release)Build$").matches(name)) dependsOn(verifyNonDevSupabaseConfig)
+}
+
 val productionDesktopBuild =
     providers.gradleProperty("oposiProduction").orNull?.toBooleanStrictOrNull() ?: false
 
@@ -177,8 +202,8 @@ android {
             buildConfigField("String", "APP_ENV", "\"staging\"")
             buildConfigField("String", "BASE_URL", "\"https://staging.api.oposicontrol.local\"")
             buildConfigField("String", "BACKEND_TOKEN", "\"\"")
-            buildConfigField("String", "SUPABASE_URL", "\"\"")
-            buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
+            buildConfigField("String", "SUPABASE_URL", localSupabaseUrl.toBuildConfigString())
+            buildConfigField("String", "SUPABASE_ANON_KEY", localSupabasePublicKey.toBuildConfigString())
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
             buildConfigField("boolean", "ENABLE_LOGS", "true")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "true")
@@ -188,8 +213,8 @@ android {
             buildConfigField("String", "APP_ENV", "\"prod\"")
             buildConfigField("String", "BASE_URL", "\"https://api.oposicontrol.local\"")
             buildConfigField("String", "BACKEND_TOKEN", "\"\"")
-            buildConfigField("String", "SUPABASE_URL", "\"\"")
-            buildConfigField("String", "SUPABASE_ANON_KEY", "\"\"")
+            buildConfigField("String", "SUPABASE_URL", localSupabaseUrl.toBuildConfigString())
+            buildConfigField("String", "SUPABASE_ANON_KEY", localSupabasePublicKey.toBuildConfigString())
             buildConfigField("String", "SUPABASE_BUCKET_EXAM_RESOURCES", "\"exam-resources\"")
             buildConfigField("boolean", "ENABLE_LOGS", "false")
             buildConfigField("boolean", "ENABLE_ANALYTICS", "true")

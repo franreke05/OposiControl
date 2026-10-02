@@ -91,8 +91,12 @@ internal class CallRow(
     val file: String,
     val name: String,
     val expect: List<Call>,
+    /** Metodos publicos que la fila ejecuta (por defecto, el nombre sin el sufijo `(rama)`): cobertura por punto de entrada. */
+    val covers: Set<String>,
     val body: suspend Env.() -> Unit,
 ) {
+    constructor(file: String, name: String, expect: List<Call>, body: suspend Env.() -> Unit) :
+        this(file, name, expect, setOf(name.substringBefore('(')), body)
     constructor(file: String, name: String, expect: Call, body: suspend Env.() -> Unit) : this(file, name, listOf(expect), body)
 }
 
@@ -149,5 +153,67 @@ internal fun completenessViolations(
     }
     (rowsByFile.keys + pending.keys).filter { it !in sitesByFile }.forEach { out += "$it: has rows/pending but is not an HTTPCALL client file" }
     pending.filterValues { it <= 0 }.keys.forEach { out += "${File(it).name}: stale pending entry (0 left): remove it" }
+    return out
+}
+
+// ------------------------------------------------------------------------------- completitud endurecida (R5-HARDEN)
+
+/**
+ * Egreso Ktor en TEXTO CRUDO (sin lexer, sin quitar comentarios, sin exigir receptor): cualquier invocacion de un verbo del
+ * cliente, con o sin genericos, en cualquier linea. Asi cuentan `client.get(`, `client\n    .get(` (multilinea),
+ * `with(client) { get(` y `client.apply { post(` igual. Lo que coincide y NO es egreso (un `put(` de `buildJsonObject`, un
+ * `get()` de Koin, la definicion/invocacion de un ayudante privado llamado `get`/`post`) se descuenta SOLO por [SiteExclusion]
+ * con fichero + patron + cuenta EXACTA + justificacion: si la cuenta cambia, falla (no absorbe sitios nuevos).
+ */
+internal val EGRESS_VERB = Regex(
+    """\b(get|post|put|delete|patch|head|options|request|submitForm|submitFormWithBinaryData|""" +
+        """prepareGet|preparePost|preparePut|prepareDelete|preparePatch|prepareHead|prepareOptions|prepareRequest)""" +
+        """\s*(<[^()]*>)?\s*\(""",
+)
+
+/** Coincidencia de [EGRESS_VERB] que no es egreso. `pattern` es una Regex sobre el texto crudo del fichero. */
+internal data class SiteExclusion(val file: String, val pattern: String, val count: Int, val why: String)
+
+/** Sitios de egreso del fichero y violaciones de sus exclusiones (cuenta distinta, sin justificacion, o que no tapa un verbo). */
+internal fun egressSites(file: String, text: String, exclusions: List<SiteExclusion>): Pair<Int, List<String>> {
+    val out = mutableListOf<String>()
+    var sites = EGRESS_VERB.findAll(text).count()
+    exclusions.filter { it.file == file }.forEach { ex ->
+        val hits = Regex(ex.pattern).findAll(text).map { it.value }.toList()
+        val who = "${File(file).name} exclusion /${ex.pattern}/"
+        if (ex.why.isBlank()) out += "$who: missing justification"
+        if (hits.size != ex.count) out += "$who: matches ${hits.size} times but is pinned to ${ex.count} (a new call is never absorbed)"
+        hits.filterNot { EGRESS_VERB.containsMatchIn(it) }.forEach { out += "$who: match '$it' covers no egress verb" }
+        sites -= hits.size
+    }
+    return sites to out
+}
+
+/**
+ * Cobertura por PUNTO DE ENTRADA (plan validado, paso 6: completitud por reflexion de Java): los metodos publicos declarados de
+ * la clase cliente (y de su fachada `<Fichero>Kt`), sin sinteticos ni puentes, deben ser EXACTAMENTE
+ * filas (`covers`) + pendientes + miembros sin HTTP justificados. Un metodo nuevo que reutiliza un ayudante (o llama en
+ * multilinea / `with(client)`) no tiene fila y FALLA aunque no anada ningun sitio.
+ */
+internal fun publicMethodNames(vararg classes: Class<*>): Set<String> = classes.flatMap { c ->
+    c.declaredMethods.filter { java.lang.reflect.Modifier.isPublic(it.modifiers) && !it.isSynthetic && !it.isBridge }.map { it.name }
+}.toSet()
+
+internal fun entryPointViolations(
+    file: String,
+    publicMethods: Set<String>,
+    covered: Set<String>,
+    pending: Set<String>,
+    nonHttp: Set<String>,
+): List<String> {
+    val who = File(file).name
+    val out = mutableListOf<String>()
+    (publicMethods - covered - pending - nonHttp).sorted()
+        .forEach { out += "$who#$it: public method without a recorder row, pending entry or non-HTTP justification" }
+    (covered - publicMethods).sorted().forEach { out += "$who#$it: a row covers a method that is not public in the class" }
+    (pending - publicMethods).sorted().forEach { out += "$who#$it: stale pending method (not public)" }
+    (pending intersect covered).sorted().forEach { out += "$who#$it: stale pending method (it has a row now): remove it" }
+    (nonHttp - publicMethods).sorted().forEach { out += "$who#$it: stale non-HTTP entry (not public)" }
+    (nonHttp intersect (covered + pending)).sorted().forEach { out += "$who#$it: non-HTTP entry that also has a row/pending" }
     return out
 }
