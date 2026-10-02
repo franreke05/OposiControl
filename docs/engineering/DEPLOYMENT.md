@@ -20,7 +20,7 @@ El despliegue lo ejecuta un humano con el gate de produccion; nada de esto corre
    con la imagen construida, comprobar que corre como `app` y que el codigo no es escribible pero `/tmp` si:
    `docker run --rm --entrypoint sh oposicontrol-backend:<sha12> -c 'test "$(id -un)" = app && ! touch /app/x 2>/dev/null && touch /tmp/x'`
    debe terminar con codigo 0; despues arrancar el contenedor con el entorno real y esperar `/health/ready` = 200.
-   Slice 1 (migraciones `20260930100000..102000`): orden, hashes y clase de rollback en
+   Slice 1 (migraciones `20260930100000..102100`): orden, hashes y clase de rollback en
    `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` del repo OposiBot.
 
 ## Construir
@@ -58,7 +58,11 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
 - Flavors Android (INV-NETWORK-COMPLETE): `staging`/`prod` hornean `SUPABASE_URL`/`SUPABASE_ANON_KEY` desde el mismo origen que `dev` (variable
   de entorno o `.env`) y `verifyNonDevSupabaseConfig` hace FALLAR el build (`pre{Staging,Prod}{Debug,Release}Build`) si falta, no es https
   o apunta a localhost, porque `AppConfigResolver` lanza fuera de DEV sin ella. Esos flavors no se construyen en CI (sus BASE_URL siguen
-  siendo marcadores `*.local`); `scripts/verify-android-flavor-config.sh` ejecuta el guard y comprueba su cableado.
+  siendo marcadores `*.local`); `scripts/verify-android-flavor-config.sh` ejecuta el guard y comprueba su cableado. El mismo guard
+  cuelga de `createDistributable`/`createReleaseDistributable`/`package*` cuando `-PoposiProduction=true` (APP_ENV=prod): sin
+  `SUPABASE_URL` https la distribucion de escritorio NO se empaqueta (antes horneaba `-Doposi.SUPABASE_URL=` vacio). El job
+  `desktop-release-linux` pasa una URL publica de relleno (no secreta, solo verificacion); un release real la toma del entorno. El
+  script exige el MENSAJE especifico del guard (un fallo de Gradle ajeno no cuenta, con control negativo) y reutiliza el daemon del job.
   `tools/redocly/package-lock.json` fija la herramienta de lint de OpenAPI.
 - La base `eclipse-temurin:21-jre-jammy` esta fijada por digest. Para actualizarla:
   `docker buildx imagetools inspect eclipse-temurin:21-jre-jammy`, cambiar el digest y revisar.
@@ -142,3 +146,7 @@ roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compati
 - Ktor viejo y la 102000 (hechos verificados con `git show main:`): `resolverReporte` viejo insertaba la accion PRIMERO y despues hacia el PATCH con `revisado_en` (reloj de Ktor), sin guarda de estado; por eso todo cierre historico lee `accion_pendiente = false` y nunca se reanuda. Parar el Ktor viejo ANTES de migrar y no rearrancarlo: un Ktor viejo que re-resolviera un reporte en vuelo anadiria una accion sin limpiar la marca.
 - `OPOSICONTROL_ENABLE_BACKEND_RESTART=true` ya no habilita el reinicio fuera de un `APP_ENV` de desarrollo y `/health` solo publica `restartEnabled` en desarrollo. Tras desplegar el Ktor nuevo, comprobar que `/health` no lleva esa clave y quitar la variable del entorno del servidor.
 - Los jobs `db-pg17`, `desktop-release-linux`, la deriva de `verification-metadata.xml` y las pruebas POSIX solo se ejercitan en el CI de Linux; hasta su primera ejecucion no cuentan como prueba (B-28 en `SLICE_1_OPEN_BLOCKERS.md` de OposiBot).
+
+## Nota de la ronda 6 (decision del owner 4, 2026-10-02)
+
+- Migracion NUEVA `20260930102100_slice1_client_ddl_privileges_revoke.sql` (solo hacia delante, independiente del Ktor): revoca TRUNCATE, TRIGGER y REFERENCES de `anon`/`authenticated` en las relaciones de `public` (en MAIN, 42 tablas para `authenticated` y `noticia`/`tipo_noticia` para `anon`), las registra en `private.slice1_client_ddl_grants_revoked` y su ROLLBACK restaura exactamente lo registrado. Su PREFLIGHT aborta (`CLIENT_DDL_PRIVILEGES_PREFLIGHT`) si un grant no lo concedio el dueno o lleva grant option. Residual: los privilegios por defecto de `postgres`/`supabase_admin` vuelven a conceder todo en una tabla NUEVA; el VERIFY `client_ddl_privilege_effective` la senala y re-ejecutar la migracion la revoca.
