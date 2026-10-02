@@ -53,6 +53,12 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
   (jlink + jpackage app-image, CI-OC-RELEASE) ya tiene sus artefactos (generados en Linux) y lo verifica en estricto el job
   `desktop-release-linux`; si cambia la version de Compose se regenera tambien con
   `./gradlew --no-configuration-cache --write-verification-metadata sha256 :composeApp:createDistributable -PoposiProduction=true`.
+  `scripts/verify-gradle-drift-negative-control.sh` (job `tests`) es el control negativo FUNCIONAL del paso de deriva: en una copia
+  temporal corrompe un sha256 / quita un componente y exige que `git diff --exit-code` falle.
+- Flavors Android (INV-NETWORK-COMPLETE): `staging`/`prod` hornean `SUPABASE_URL`/`SUPABASE_ANON_KEY` desde el mismo origen que `dev` (variable
+  de entorno o `.env`) y `verifyNonDevSupabaseConfig` hace FALLAR el build (`pre{Staging,Prod}{Debug,Release}Build`) si falta, no es https
+  o apunta a localhost, porque `AppConfigResolver` lanza fuera de DEV sin ella. Esos flavors no se construyen en CI (sus BASE_URL siguen
+  siendo marcadores `*.local`); `scripts/verify-android-flavor-config.sh` ejecuta el guard y comprueba su cableado.
   `tools/redocly/package-lock.json` fija la herramienta de lint de OpenAPI.
 - La base `eclipse-temurin:21-jre-jammy` esta fijada por digest. Para actualizarla:
   `docker buildx imagetools inspect eclipse-temurin:21-jre-jammy`, cambiar el digest y revisar.
@@ -85,6 +91,8 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
    Los cierres historicos (Ktor viejo: accion ANTES del PATCH con `revisado_en`) leen la marca en false y nunca se reanudan.
    La 102000 estrecha ademas la politica `reportes_contenido_insert_auth`: un cliente autenticado solo inserta un reporte
    pendiente propio con las columnas del servidor en su default (Ktor escribe como service_role: sin efecto en Ktor).
+   Su PREFLIGHT falla cerrado (`REPORT_ACTION_PREFLIGHT`) si `reportes_contenido` tiene otra politica permisiva de
+   INSERT, UPDATE, DELETE o ALL: "ningun cliente escribe la marca" se comprueba al aplicar, no se supone.
    Tras la cadena COMPLETA de ROLLBACK la huella esperada es 54/55 (cuerpos de `handle_new_auth_user` y `record_event`,
    solo espacios en blanco; `SLICE_1_PRODUCTION_GATE.md`, seccion 8); cualquier otra diferencia es un fallo.
    La garantia "una accion por resolucion" de 102000 solo vale cuando el Ktor nuevo es el unico escritor de resoluciones: el

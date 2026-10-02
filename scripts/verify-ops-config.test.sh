@@ -70,6 +70,8 @@ mutate "sin verification-metadata.xml (MASTER7-CICD-005)" gradle/verification-me
 mutate "ci.yml desactiva la verificacion de dependencias (MASTER7-CICD-005)" $C '$a # ./gradlew build --dependency-verification=off' "verification-metadata.xml existe"
 mutate "ci.yml sin paso de deriva de metadata (CI-GRADLE-VERIF)" $C '/run: git diff --exit-code -- gradle\/verification-metadata.xml/d' "deriva de verification-metadata"
 mutate "ci.yml regenera sin el grafo de la imagen (CI-GRADLE-VERIF)" $C '/write-verification-metadata sha256/s/ :backend:ktor:installDist//' "deriva de verification-metadata"
+mutate "ci.yml sin control negativo de la deriva (CI-GRADLE-VERIF)" $C '/verify-gradle-drift-negative-control.sh/d' "control negativo de la deriva"
+mutate "ci.yml sin guard de flavors Android (INV-NETWORK-COMPLETE)" $C '/verify-android-flavor-config.sh/d' "control negativo de la deriva"
 mutate "ci.yml vuelve a npx --yes (MASTER7-CICD-005)" $C '$a # npx --yes @redocly/cli' "redocly desde tools/redocly"
 mutate "sin package-lock de redocly (MASTER7-CICD-005)" tools/redocly/package-lock.json @rm "redocly desde tools/redocly"
 mutate ".gitattributes sin *.md eol=lf (MASTER7-QUALITY-001)" .gitattributes '/^\*\.md text eol=lf/d' "fija LF en"
