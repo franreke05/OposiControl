@@ -33,9 +33,13 @@
 --      recompensa_entregada = false, accion_pendiente = false. Before, a client could insert a report already closed
 --      by some moderator with the marker set, which that moderator's Ktor would "resume" (recording an action and
 --      possibly granting ticketsReporter to the forger). Server writers (Ktor service_role) bypass RLS: unaffected.
---      The policy is the ONLY client write path into reportes_contenido: there is no UPDATE or DELETE policy (RLS
---      denies both to anon and authenticated, staff included), anon has only SELECT (and no SELECT policy), and
---      acciones_moderacion is writable by clients only through acciones_moderacion_staff_all (see RESIDUALS).
+--      Through the Data API (PostgREST, RLS enforced) this policy is the ONLY client write path into
+--      reportes_contenido: there is no permissive UPDATE or DELETE policy (RLS denies both to anon and authenticated,
+--      staff included; the PREFLIGHT CHECKS this, it is not assumed), anon has only SELECT (and no SELECT policy), and
+--      acciones_moderacion is writable by clients only through acciones_moderacion_staff_all (see RESIDUALS). MAIN also
+--      grants TRUNCATE, TRIGGER and REFERENCES on both tables to authenticated (baseline_main.sql); none of them is
+--      reachable through PostgREST and authenticated cannot log in directly. Left UNCHANGED here: whether to REVOKE them
+--      in a later migration is an owner decision (see RLS AND GRANTS).
 --   Ktor writes the audit row and the strategic event only when it gets true, and answers 409 otherwise. Its resume
 --   pre-check reads the same marker (ReporteRow.accionPendiente; absent = false), so an earlier action taken while the
 --   report was open, or an action by other staff, never blocks or completes a resolution: only the marker decides.
@@ -66,7 +70,9 @@
 --   - Staff (es_moderador_o_admin) may still insert, update or delete acciones_moderacion rows directly through the
 --     pre-existing policy acciones_moderacion_staff_all (MAIN staff tooling; unchanged here). Such a row never
 --     completes, resumes or fakes a resolution: only the marker decides, and no client can write the marker (no
---     UPDATE policy on reportes_contenido; an INSERT must carry accion_pendiente = false, item 3).
+--     permissive UPDATE/DELETE policy on reportes_contenido, checked by the PREFLIGHT; an INSERT must carry
+--     accion_pendiente = false, item 3). This argument does not depend on the policies of acciones_moderacion (an
+--     action row never decides anything), so the PREFLIGHT does not constrain them.
 --   - CLOSED here (was a residual in round 3): the forged pre-closed report inserted by an authenticated client.
 --   Why not a UNIQUE index on acciones_moderacion(reporte_id): the invariant "one action per report" is NOT proven
 --   by the schema. baseline_main.sql declares reporte_id NULLABLE with ON DELETE SET NULL, tipo_accion admits
@@ -79,8 +85,10 @@
 --   public.reportes_contenido(id uuid, estado text, revisado_por uuid, revisado_en timestamptz, reportado_por uuid,
 --   tickets_otorgados integer, recompensa_entregada boolean) and public.acciones_moderacion(reporte_id uuid,
 --   moderador_id uuid, tipo_accion text, notas text, creado_en timestamptz) must exist with those types; the policy
---   reportes_contenido_insert_auth must exist as a PERMISSIVE INSERT policy and be the only permissive INSERT/ALL
---   policy on reportes_contenido (otherwise tightening it would not close the client insert path). An existing
+--   reportes_contenido_insert_auth must exist as a PERMISSIVE INSERT policy and be the only permissive
+--   INSERT/UPDATE/DELETE/ALL policy on reportes_contenido, for any role (otherwise tightening it would not close the
+--   client insert path, and a permissive UPDATE/DELETE policy would let a client write the marker, the state or the
+--   reviewer; same set as the VERIFY row report_client_write_policy_widened). An existing
 --   reportes_contenido.accion_pendiente must be boolean NOT NULL DEFAULT false and, while this migration is not yet
 --   installed (admin_record_report_action absent), no row may have accion_pendiente = true: a drifted default or a
 --   pre-set historical marker would make historical closures resumable. On a RERUN (function present) rows with the
@@ -121,7 +129,11 @@
 --
 -- RLS AND GRANTS
 --   One policy change, a NARROWING: reportes_contenido_insert_auth WITH CHECK (item 3); USING/command/roles unchanged,
---   no policy added or dropped, no grant widened. The column inherits the existing table grants (authenticated may
+--   no policy added or dropped, no grant widened or revoked. Pre-existing MAIN grants (unchanged; REVOKE in a later
+--   migration is an owner decision): authenticated holds DELETE, INSERT, REFERENCES, SELECT, TRIGGER, TRUNCATE and
+--   UPDATE on reportes_contenido and acciones_moderacion. TRUNCATE bypasses RLS and TRIGGER/REFERENCES are not
+--   row-level, but PostgREST, the only client entry point, exposes none of them; DELETE/UPDATE stay behind RLS. The
+--   column inherits the existing table grants (authenticated may
 --   name it on INSERT, but the policy only admits false). The function is SECURITY DEFINER with
 --   search_path '' and row_security off (fail closed: a client can never call it), reads no auth schema. EXECUTE
 --   revoked from public/anon/authenticated and granted to service_role only.
@@ -205,15 +217,16 @@ begin
     raise exception 'REPORT_ACTION_PREFLIGHT'
       using detail = 'historical reportes_contenido rows already have accion_pendiente = true before the first install';
   end if;
-  -- The policy tightened below must exist and be the only permissive client INSERT path.
+  -- The policy tightened below must exist and be the only permissive write policy (INSERT/UPDATE/DELETE/ALL): a
+  -- permissive UPDATE or DELETE policy would let a client write the marker, the state or the reviewer.
   if not exists (select 1 from pg_policy p
                  where p.polrelid = to_regclass('public.reportes_contenido')
                    and p.polname = 'reportes_contenido_insert_auth' and p.polcmd = 'a' and p.polpermissive)
     or exists (select 1 from pg_policy p
                where p.polrelid = to_regclass('public.reportes_contenido') and p.polpermissive
-                 and p.polcmd in ('a', '*') and p.polname <> 'reportes_contenido_insert_auth') then
+                 and p.polcmd in ('a', 'w', 'd', '*') and p.polname <> 'reportes_contenido_insert_auth') then
     raise exception 'REPORT_ACTION_PREFLIGHT'
-      using detail = 'reportes_contenido_insert_auth must be the only permissive INSERT policy on reportes_contenido';
+      using detail = 'reportes_contenido_insert_auth must be the only permissive INSERT/UPDATE/DELETE/ALL policy on reportes_contenido';
   end if;
   if (select count(*) from pg_attribute a
       where a.attrelid = to_regclass('public.reportes_contenido') and not a.attisdropped

@@ -537,6 +537,36 @@ class Slice1ReportActionOnceMigrationTest {
         assertNull(c.unico("select to_regprocedure('$fn')::text"))
     }
 
+    /**
+     * Round 5 (gate LOW, PF24): "ningun cliente escribe la marca" depende de que no haya politica permisiva de UPDATE ni
+     * de DELETE en `reportes_contenido`; el preflight lo COMPRUEBA (falla cerrado, nada creado ni alterado). Controles:
+     * una politica RESTRICTIVE de UPDATE (no concede nada) y la forma limpia de MAIN aplican.
+     */
+    @Test
+    fun preflightRechazaUnaPoliticaPermisivaDeUpdateODeleteEnReportes(): Unit = escenario(conMigracion = false) { c ->
+        c.autoCommit = true
+        for ((nombre, comando) in listOf("hx_upd" to "update", "hx_del" to "delete")) {
+            val crear = if (comando == "update") "using (true) with check (true)" else "using (true)"
+            c.ejecutar("create policy $nombre on public.reportes_contenido as permissive for $comando to authenticated $crear")
+            val error = runCatching { c.aplicar(migracion) }.exceptionOrNull() as PSQLException?
+            runCatching { c.ejecutar("rollback") }
+            c.autoCommit = true
+            assertEquals("REPORT_ACTION_PREFLIGHT", error?.serverErrorMessage?.message, "permisiva de $comando")
+            assertNull(c.unico("select to_regprocedure('$fn')::text"), "nada creado ($comando)")
+            assertNull(
+                c.unico("select attname::text from pg_attribute where attrelid = 'public.reportes_contenido'::regclass and attname = 'accion_pendiente'"),
+                "sin columna ($comando)",
+            )
+            assertEquals(insertAuthMain, c.politicaInsert(), "politica de INSERT sin alterar ($comando)")
+            c.ejecutar("drop policy $nombre on public.reportes_contenido")
+        }
+        // Control: una RESTRICTIVE de UPDATE no abre escritura; con ella (y la forma limpia de MAIN) la migracion aplica.
+        c.ejecutar("create policy hx_upd_restr on public.reportes_contenido as restrictive for update to authenticated using (true)")
+        c.aplicar(migracion)
+        assertNotNull(c.unico("select to_regprocedure('$fn')::text"))
+        assertEquals("1", c.unico("select count(*)::text from pg_policy where polrelid = 'public.reportes_contenido'::regclass and polcmd = 'w'"))
+    }
+
     @Test
     fun preflightSinLasTablasOConTiposDistintosNoCreaNada(): Unit = escenario(conMigracion = false) { c ->
         c.ejecutar("alter table public.acciones_moderacion alter column notas type varchar(50)")
