@@ -37,8 +37,11 @@ class Slice1ReportActionOnceMigrationTest {
     private val fn = "public.admin_record_report_action(uuid,text,uuid,text,text)"
     private val reporte = "7e7e7e7e-0000-4000-8000-000000000001"
 
-    /** Forma de MAIN (baseline_main.sql) de las dos tablas, con su FK, CHECK e indice no unico. */
-    private val mainShapes = """
+    /**
+     * Forma de MAIN (baseline_main.sql) de las dos tablas, con su FK, CHECK e indice no unico. `internal`: la reutiliza
+     * [Slice1ClientDdlPrivilegesMigrationTest] (flujo legitimo del reportante tras el REVOKE de 102100).
+     */
+    internal val mainShapes = """
         create table public.reportes_contenido (
           id uuid not null default gen_random_uuid() primary key, reportado_por uuid, tipo_entidad text not null,
           entidad_id uuid not null, motivo text not null, descripcion text, estado text not null default 'pendiente',
@@ -57,8 +60,8 @@ class Slice1ReportActionOnceMigrationTest {
         create index idx_acciones_moderacion_reporte_id on public.acciones_moderacion (reporte_id);
         alter table public.acciones_moderacion enable row level security;
         alter table public.reportes_contenido enable row level security;
-        -- Round 4: RLS, grants, helper y trigger de MAIN tal cual (baseline_main.sql 3523, 3636, 3754-3755, 3820-3823,
-        -- 4076-4079; es_moderador_o_admin y establecer_actualizado_en de supabase/baseline/main_shape_subset.sql).
+        -- Round 4: RLS, grants, helper y trigger de MAIN tal cual (baseline_main.sql 3521, 3634, 3752-3753, 3818-3821,
+        -- 4074-4077; es_moderador_o_admin y establecer_actualizado_en de supabase/baseline/main_shape_subset.sql).
         grant usage on schema auth to anon, authenticated, service_role;
         grant usage on schema public to anon, authenticated, service_role;
         create or replace function public.es_moderador_o_admin() returns boolean
@@ -93,7 +96,7 @@ class Slice1ReportActionOnceMigrationTest {
         grant delete, insert, references, select, trigger, truncate, update on table public.reportes_contenido to authenticated, service_role;
     """.trimIndent()
 
-    /** WITH CHECK de MAIN de `reportes_contenido_insert_auth` (deparse de baseline_main.sql 3754). */
+    /** WITH CHECK de MAIN de `reportes_contenido_insert_auth` (deparse de baseline_main.sql 3752). */
     private val insertAuthMain = "(reportado_por = ( SELECT auth.uid() AS uid))"
 
     private fun Connection.politicaInsert(): String? = unico(
