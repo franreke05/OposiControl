@@ -1,5 +1,6 @@
 package com.oposicontrol.backend
 
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
 import io.ktor.server.application.ApplicationCall
@@ -10,6 +11,7 @@ import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.request.contentLength
 import io.ktor.server.request.receive
 import io.ktor.server.request.receiveMultipart
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.delete
@@ -1126,25 +1128,29 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             }
         }
         route("/feedback/preguntas") {
+            // D5-28 (FA12): `limit` estricto y cursor validado (400 INVALID_CURSOR) antes de leer; la respuesta no se cachea.
             get {
                 val params = call.request.queryParameters
-                val limit = params["limit"]?.toIntOrNull()?.coerceIn(1, 50) ?: 20
-                val cursor = params["cursor"]?.takeIf { it.isNotBlank() }
-                call.respond(
-                    withUpstreamIo {
-                        gateway.listFeedback(
-                            estado = params["estado"],
-                            tipoFeedback = params["tipo"]?.takeIf { it.isNotBlank() },
-                            cursor = cursor,
-                            limit = limit,
-                        )
-                    },
-                )
+                val limit = ModerationQueries.limit(params["limit"])
+                val cursor = ModerationQueries.cursor(params["cursor"]) { decodeFeedbackCursor(it) }
+                val page = withUpstreamIo {
+                    gateway.listFeedback(
+                        estado = params["estado"],
+                        // `tipoFeedback` es el nombre del contrato; `tipo` es el que puede enviar el cliente OC actual.
+                        tipoFeedback = (params["tipoFeedback"] ?: params["tipo"])?.takeIf { it.isNotBlank() },
+                        cursor = cursor,
+                        limit = limit,
+                    )
+                }
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(page.copy(items = page.data))
             }
+            // D5-29 (FA12).
             get("/{id}") {
                 val id = call.requiredPath("id").validatedUuid("id")
                 val detail = withUpstreamIo { gateway.getFeedbackDetail(id) }
-                    ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Incidencia no encontrada."))
+                    ?: throw CanonicalErrorCode.NOT_FOUND.exception("Incidencia no encontrada.")
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
                 call.respond(AdminFeedbackDetailResponse(detail))
             }
             // El cuerpo se recibe SIN red: un cuerpo inválido tiene que dar 400.
@@ -1290,19 +1296,23 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         // en `withUpstreamIo` (el cuerpo se lee ANTES, fuera del pool IO). MASTER6-SEC-001 (F-06): los `{id}` que se
         // interpolan en PostgREST se validan como UUID en la ruta y otra vez en el gateway.
         route("/reportes") {
+            // D5-25 (FA12). MASTER7-API-002 se conserva (estado del enum, limit/offset numericos o 400, limit 1..200);
+            // nuevos y aditivos: `tipoEntidad`, `cursor` -> `nextCursor`, y `pendientesTotal`.
             get {
-                val params = call.request.queryParameters
-                val estado = params["estado"]
-                // MASTER7-API-002: limit/offset numericos o 400 (nunca se interpolan sin parsear); limit 1..200.
-                val limit = params["limit"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("limit debe ser un entero.") }
-                    ?.coerceIn(1, 200) ?: 200
-                val offset = params["offset"]?.let { it.toIntOrNull() ?: throw IllegalArgumentException("offset debe ser un entero.") }
-                    ?.coerceAtLeast(0) ?: 0
-                call.respond(AdminReportesResponse(withUpstreamIo { gateway.listReportes(estado, limit, offset) }))
+                val query = ModerationQueries.reportes(call.request.queryParameters)
+                val page = withUpstreamIo {
+                    val rows = gateway.listReportes(query.estado, query.limit, query.offset, query.tipoEntidad, query.after)
+                    AdminReportesResponse(data = rows, items = rows, nextCursor = query.nextCursor(rows), pendientesTotal = gateway.countReportesPendientes())
+                }
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(page)
             }
+            // D5-26 (FA12): `{data}` canonico + el reporte desnudo que lee el cliente actual.
             get("/{id}") {
                 val id = call.requiredPath("id").validatedUuid("id")
-                call.respond(withUpstreamIo { gateway.getReporte(id) })
+                val reporte = withUpstreamIo { gateway.getReporte(id) }
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(ModerationQueries.reporteDetail(reporte))
             }
             post("/{id}/resolver") {
                 val id = call.requiredPath("id").validatedUuid("id")
@@ -1380,22 +1390,25 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 withUpstreamIo { gateway.applyModerationAction(actorId, command) }
                 call.respond(HttpStatusCode.Created, OkDto())
             }
+            // D5-20 (FA12): `modo` (o el `reportados=true` del cliente actual), `limit` estricto y cursor validado.
             get("/hilos") {
                 val params = call.request.queryParameters
-                val limit = params["limit"]?.toIntOrNull()?.coerceIn(1, 50) ?: 20
-                val cursor = params["cursor"]?.takeIf { it.isNotBlank() }
-                val reportedOnly = params["reportados"] == "true"
-                val categoriaId = params["categoriaId"]?.takeIf { it.isNotBlank() }?.also { it.validatedUuid("categoriaId") }
-                call.respond(
-                    withUpstreamIo {
-                        gateway.listForoHilos(limit = limit, cursor = cursor, reportedOnly = reportedOnly, categoriaId = categoriaId)
-                    },
-                )
+                val limit = ModerationQueries.limit(params["limit"])
+                val cursor = ModerationQueries.cursor(params["cursor"]) { decodeForoCursor(it) }
+                val reportedOnly = ModerationQueries.reportedOnly(params)
+                val categoriaId = ModerationQueries.categoriaId(params)
+                val page = withUpstreamIo {
+                    gateway.listForoHilos(limit = limit, cursor = cursor, reportedOnly = reportedOnly, categoriaId = categoriaId)
+                }
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(page)
             }
+            // D5-21 (FA12).
             get("/hilos/{id}") {
                 val id = call.requiredPath("id").validatedUuid("id")
                 val hilo = withUpstreamIo { gateway.getForoHilo(id) }
-                    ?: return@get call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", "Hilo no encontrado."))
+                    ?: throw CanonicalErrorCode.NOT_FOUND.exception("Hilo no encontrado.")
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
                 call.respond(hilo)
             }
             // `hiloId` va ANTES de `&order` y `&limit` en la consulta que compone
@@ -1404,12 +1417,22 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             // y el `limit` es lo único que la acota. No corrompe nada (es un GET)
             // pero es amplificación de lectura a una petición de distancia.
             get("/hilos/{id}/respuestas") {
+                // D5-22 (FA12).
                 val hiloId = call.requiredPath("id").validatedUuid("id")
                 val params = call.request.queryParameters
-                val limit = params["limit"]?.toIntOrNull()?.coerceIn(1, 50) ?: 20
-                val cursor = params["cursor"]?.takeIf { it.isNotBlank() }
-                call.respond(withUpstreamIo { gateway.getForoHiloRespuestas(hiloId, limit = limit, cursor = cursor) })
+                val limit = ModerationQueries.limit(params["limit"])
+                val cursor = ModerationQueries.cursor(params["cursor"]) { decodeForoCursor(it) }
+                val page = withUpstreamIo { gateway.getForoHiloRespuestas(hiloId, limit = limit, cursor = cursor) }
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(page)
             }
+        }
+        // D7-27 (FA12): suscripciones, solo lectura. Filtros y cursor se validan antes de tocar la base.
+        get("/suscripciones") {
+            val query = AdminSubscriptionQueries.parse(call.request.queryParameters)
+            val page = withUpstreamIo { gateway.listSuscripciones(query) }
+            call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+            call.respond(page)
         }
         get("/settings") { call.respond(withUpstreamIo { gateway.settings() }) }
         get("/ajustes") { call.respond(withUpstreamIo { gateway.settings() }) }
@@ -2938,24 +2961,32 @@ private fun StagingRow.toDto() = AdminStagingItemDto(
  * páginas. Nuevo respecto al endpoint original (que devolvía todas las filas
  * sin límite) — ver [AdminV1Gateway.listFeedback]. */
 @Serializable
-data class AdminFeedbacksResponse(val data: List<AdminFeedbackDto>, val nextCursor: String? = null)
+data class AdminFeedbacksResponse(
+    val data: List<AdminFeedbackDto>,
+    val nextCursor: String? = null,
+    /** FA12 (D5-28): la pagina canonica. `data` la duplica hasta que el cliente OC lea `items`. */
+    val items: List<AdminFeedbackDto>? = null,
+)
 
 @Serializable
 data class AdminFeedbackResponse(val data: AdminFeedbackDto)
 
+// FA12 (D5-28): los campos con valor por defecto llevan @EncodeDefault para que salgan SIEMPRE por el cable (el Json del
+// modulo omite los valores por defecto y el contrato los declara obligatorios). Solo anade claves; el cliente ya las tolera.
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminFeedbackDto(
-    val id: String = "",
+    @EncodeDefault val id: String = "",
     val usuarioId: String? = null,
     /** Nombre real resuelto vía perfiles_usuario; "" si no se pudo resolver
      * (nunca se rellena con el UUID). */
-    val autorNombre: String = "",
-    val preguntaId: String = "",
+    @EncodeDefault val autorNombre: String = "",
+    @EncodeDefault val preguntaId: String = "",
     val intentoId: String? = null,
-    val tipoFeedback: String = "",
-    val descripcion: String = "",
-    val estado: String = "pendiente",
-    val creadoEn: String = "",
+    @EncodeDefault val tipoFeedback: String = "",
+    @EncodeDefault val descripcion: String = "",
+    @EncodeDefault val estado: String = "pendiente",
+    @EncodeDefault val creadoEn: String = "",
 )
 
 @Serializable
@@ -2973,17 +3004,18 @@ data class AdminFeedbackDetailResponse(val data: AdminFeedbackDetailDto)
  * examen: `preguntas` no tiene relación 1:1 con examen (ver
  * `preguntas_examen`, M:N), así que ese dato queda fuera hasta que haya una
  * forma real y no ambigua de resolverlo. */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminFeedbackDetailDto(
-    val id: String = "",
+    @EncodeDefault val id: String = "",
     val usuarioId: String? = null,
-    val autorNombre: String = "",
-    val preguntaId: String = "",
+    @EncodeDefault val autorNombre: String = "",
+    @EncodeDefault val preguntaId: String = "",
     val intentoId: String? = null,
-    val tipoFeedback: String = "",
-    val descripcion: String = "",
-    val estado: String = "pendiente",
-    val creadoEn: String = "",
+    @EncodeDefault val tipoFeedback: String = "",
+    @EncodeDefault val descripcion: String = "",
+    @EncodeDefault val estado: String = "pendiente",
+    @EncodeDefault val creadoEn: String = "",
     val pregunta: AdminFeedbackPreguntaContextDto? = null,
 )
 
@@ -3103,20 +3135,34 @@ data class AdminV1UserDto(
 )
 
 // Moderación del foro (OposiRed) + tickets manuales
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminReporteDto(
     val id: String,
-    val tipoEntidad: String = "",
-    val entidadId: String = "",
-    val motivo: String = "",
-    val descripcion: String = "",
-    val estado: String = "",
-    val creadoEn: String = "",
-    val reportadoPor: String = "",
-    val reporterNombre: String = "",
-    val revisadoEn: String = "",
+    @EncodeDefault val tipoEntidad: String = "",
+    @EncodeDefault val entidadId: String = "",
+    @EncodeDefault val motivo: String = "",
+    @EncodeDefault val descripcion: String = "",
+    @EncodeDefault val estado: String = "",
+    @EncodeDefault val creadoEn: String = "",
+    @EncodeDefault val reportadoPor: String = "",
+    @EncodeDefault val reporterNombre: String = "",
+    @EncodeDefault val revisadoEn: String = "",
     /** Solo poblado en el detalle (getReporte); la lista no lo resuelve por coste. */
     val contentPreview: AdminReporteContentPreviewDto? = null,
+    /** D5-26: solo en el detalle. Acciones de moderacion del reporte, las mas recientes primero (tope 50). */
+    val acciones: List<AdminReporteAccionDto>? = null,
+)
+
+/** Una fila de `acciones_moderacion` de un reporte (D5-26). Solo columnas que existen en produccion. */
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class AdminReporteAccionDto(
+    val id: String,
+    @EncodeDefault val tipoAccion: String = "",
+    val moderadorId: String? = null,
+    val notas: String? = null,
+    @EncodeDefault val creadoEn: String = "",
 )
 
 /** Contenido real reportado, resuelto desde publicaciones_oposired/comentarios_oposired
@@ -3131,7 +3177,17 @@ data class AdminReporteContentPreviewDto(
     val threadTitle: String? = null,
     val currentState: String = "",
 )
-@Serializable data class AdminReportesResponse(val data: List<AdminReporteDto>)
+/**
+ * D5-25. [nextCursor] solo sale cuando la pagina viene llena; [pendientesTotal] es el total de reportes `pendiente` (con
+ * independencia del filtro) o null si el conteo no se pudo leer (nunca un 0 inventado). Los alias legacy no los rellenan.
+ */
+@Serializable data class AdminReportesResponse(
+    val data: List<AdminReporteDto>,
+    /** La pagina canonica (D5-25). `data` la duplica hasta que el cliente OC lea `items`. */
+    val items: List<AdminReporteDto>? = null,
+    val nextCursor: String? = null,
+    val pendientesTotal: Int? = null,
+)
 
 /**
  * Listado paginado de hilos reales de OposiRed (publicaciones_oposired) para la
@@ -3148,19 +3204,27 @@ data class AdminReporteContentPreviewDto(
  * "reportados", que sí los resuelve, para no pagar una consulta extra por página
  * solo para un indicador discreto).
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable data class AdminForoHiloDto(
     val id: String,
     val categoriaId: String? = null,
-    val categoriaNombre: String = "",
-    val titulo: String = "",
-    val fragmento: String = "",
-    val estado: String = "",
-    val fijada: Boolean = false,
-    val autorNombre: String = "",
-    val creadoEn: String = "",
-    val actualizadoEn: String = "",
-    val respuestas: Int = 0,
-    val tieneReportePendiente: Boolean = false,
+    @EncodeDefault val categoriaNombre: String = "",
+    @EncodeDefault val titulo: String = "",
+    @EncodeDefault val fragmento: String = "",
+    @EncodeDefault val estado: String = "",
+    @EncodeDefault val fijada: Boolean = false,
+    @EncodeDefault val autorNombre: String = "",
+    @EncodeDefault val creadoEn: String = "",
+    @EncodeDefault val actualizadoEn: String = "",
+    @EncodeDefault val respuestas: Int = 0,
+    @EncodeDefault val tieneReportePendiente: Boolean = false,
+    /** D5-20: igual que [tieneReportePendiente] (nombre del contrato canonico). */
+    @EncodeDefault val reportado: Boolean = false,
+    /**
+     * D5-20: reportes PENDIENTES del hilo que la consulta de la pagina ya conoce. En `modo=reportados` cuenta los del hilo y
+     * los de sus respuestas; en `recientes` solo los directos sobre el hilo (el mismo criterio que [tieneReportePendiente]).
+     */
+    @EncodeDefault val pendingReports: Int = 0,
 )
 
 /**
@@ -3173,19 +3237,20 @@ data class AdminReporteContentPreviewDto(
  * Informes, para que los tres sitios nunca discrepen sobre qué cuenta como
  * "reporte asociado".
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable data class AdminForoHiloDetailDto(
     val id: String,
     val categoriaId: String? = null,
-    val categoriaNombre: String = "",
-    val titulo: String = "",
-    val contenido: String = "",
-    val estado: String = "",
-    val fijada: Boolean = false,
-    val autorNombre: String = "",
-    val creadoEn: String = "",
-    val actualizadoEn: String = "",
-    val respuestas: Int = 0,
-    val reportesAsociados: Int = 0,
+    @EncodeDefault val categoriaNombre: String = "",
+    @EncodeDefault val titulo: String = "",
+    @EncodeDefault val contenido: String = "",
+    @EncodeDefault val estado: String = "",
+    @EncodeDefault val fijada: Boolean = false,
+    @EncodeDefault val autorNombre: String = "",
+    @EncodeDefault val creadoEn: String = "",
+    @EncodeDefault val actualizadoEn: String = "",
+    @EncodeDefault val respuestas: Int = 0,
+    @EncodeDefault val reportesAsociados: Int = 0,
 )
 
 /**
@@ -3195,12 +3260,13 @@ data class AdminReporteContentPreviewDto(
  */
 @Serializable data class AdminForoRespuestasResponse(val items: List<AdminForoRespuestaDto>, val nextCursor: String? = null)
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable data class AdminForoRespuestaDto(
     val id: String,
-    val autorNombre: String = "",
-    val contenido: String = "",
-    val estado: String = "",
-    val creadoEn: String = "",
+    @EncodeDefault val autorNombre: String = "",
+    @EncodeDefault val contenido: String = "",
+    @EncodeDefault val estado: String = "",
+    @EncodeDefault val creadoEn: String = "",
 )
 
 @Serializable data class ResolverReporteBody(val accion: String = "descartar", val notas: String? = null, val ticketsReporter: Int = 0)
@@ -5878,13 +5944,29 @@ class AdminV1Gateway private constructor(
     // pendientes, orden ascendente) del que ya depende la cola de moderación de escritorio.
     // MASTER7-API-002: un valor fuera de [REPORTE_LIST_ESTADOS] es 400 (antes caia en silencio a pendiente);
     // "todos" quita el filtro de estado; limit/offset paginan.
-    fun listReportes(estado: String? = null, limit: Int = 200, offset: Int = 0): List<AdminReporteDto> {
+    // FA12 (D5-25): [tipoEntidad] (un valor del CHECK) y [after] (posicion keyset ya validada) son opcionales y aditivos. El
+    // orden gana el desempate por id para que el keyset sea estable; los alias legacy llaman sin ellos.
+    internal fun listReportes(
+        estado: String? = null,
+        limit: Int = 200,
+        offset: Int = 0,
+        tipoEntidad: String? = null,
+        after: KeysetPosition? = null,
+    ): List<AdminReporteDto> {
         val estadoValue = estado?.takeIf { it.isNotBlank() } ?: "pendiente"
         require(estadoValue in REPORTE_LIST_ESTADOS) { "estado no valido." }
         val estadoFilter = if (estadoValue == "todos") "" else "&estado=eq.$estadoValue"
+        val tipoFilter = tipoEntidad?.let {
+            require(it in ModerationQueries.REPORTE_TIPOS_ENTIDAD) { "tipoEntidad no valido." }
+            "&tipo_entidad=eq.$it"
+        }.orEmpty()
+        val afterFilter = after?.let {
+            val ts = it.timestamp.urlEncode()
+            "&or=(creado_en.gt.$ts,and(creado_en.eq.$ts,id.gt.${it.id}))"
+        }.orEmpty()
         val reportes = request(
             "GET",
-            "/rest/v1/reportes_contenido?select=*$estadoFilter&order=creado_en.asc" +
+            "/rest/v1/reportes_contenido?select=*$estadoFilter$tipoFilter$afterFilter&order=creado_en.asc,id.asc" +
                 "&limit=${limit.coerceIn(1, 200)}&offset=${offset.coerceAtLeast(0)}",
             null,
         ).decodeList<ReporteRow>()
@@ -5915,6 +5997,34 @@ class AdminV1Gateway private constructor(
     }
 
     /**
+     * D7-27: una pagina de `suscripciones`, `inicio_en DESC, id DESC`. Los filtros de [query] ya son valores de un CHECK
+     * cerrado o un uuid, y la posicion del cursor un instante + uuid validados; solo se seleccionan las columnas del contrato.
+     */
+    internal fun listSuscripciones(query: AdminSuscripcionesQuery): AdminSuscripcionesPage {
+        val filters = buildString {
+            query.estado?.let { append("&estado=eq.").append(it) }
+            query.proveedor?.let { append("&proveedor=eq.").append(it) }
+            query.usuarioId?.let { append("&usuario_id=eq.").append(it.validatedUuid("usuarioId")) }
+            query.after?.let {
+                val ts = it.timestamp.urlEncode()
+                append("&or=(inicio_en.lt.$ts,and(inicio_en.eq.$ts,id.lt.${it.id}))")
+            }
+        }
+        val rows = request(
+            "GET",
+            "/rest/v1/suscripciones?select=${AdminSubscriptionQueries.COLUMNS}$filters&order=inicio_en.desc,id.desc&limit=${query.page.fetchLimit}",
+            null,
+        ).decodeList<SuscripcionAdminRow>()
+        val page = query.page.page(rows) { KeysetPosition(it.inicioEn, it.id.lowercase()).toKeys() }
+        val names = resolveUserDisplayNames(page.items.map { it.usuarioId })
+        return AdminSuscripcionesPage(page.items.map { AdminSubscriptionQueries.toDto(it, names) }, page.nextCursor)
+    }
+
+    /** D5-25 `pendientesTotal`: conteo exacto en el servidor; null si no se pudo leer (nunca un 0 inventado). */
+    fun countReportesPendientes(): Int? =
+        runCatching { exactCount("/rest/v1/reportes_contenido?select=id&estado=eq.pendiente") }.getOrNull()
+
+    /**
      * Listado paginado (keyset, nunca OFFSET) de hilos reales de OposiRed para la
      * pantalla móvil de Foro. Orden estable: creado_en desc, id desc (más nuevo
      * primero); [cursor] continúa exactamente donde terminó la página anterior.
@@ -5929,10 +6039,11 @@ class AdminV1Gateway private constructor(
         }.orEmpty()
         val categoriaFilter = categoriaId?.let { "&categoria_id=eq.$it" }.orEmpty()
 
-        val idFilter = if (reportedOnly) {
-            val reportedIds = resolveReportedThreadIds()
-            if (reportedIds.isEmpty()) return AdminForoHilosResponse(items = emptyList(), nextCursor = null)
-            "&id=in.(${reportedIds.joinToString(",")})"
+        // Hilo -> reportes pendientes. En "reportados" se resuelve ANTES de la pagina (es su filtro).
+        val reportedCounts: Map<String, Int>? = if (reportedOnly) resolveReportedThreadIds() else null
+        val idFilter = if (reportedCounts != null) {
+            if (reportedCounts.isEmpty()) return AdminForoHilosResponse(items = emptyList(), nextCursor = null)
+            "&id=in.(${reportedCounts.keys.joinToString(",")})"
         } else {
             ""
         }
@@ -5969,7 +6080,8 @@ class AdminV1Gateway private constructor(
         // reportado); en "recientes" solo se marca el reporte directo sobre el
         // propio hilo, para no pagar la consulta extra de comentarios en la
         // pestaña de alto volumen (ver nota en AdminForoHiloDto).
-        val reportedThreadIds = if (reportedOnly) page.map { it.id }.toSet() else resolveDirectlyReportedThreadIds(page.map { it.id })
+        val pendingByThread: Map<String, Int> = reportedCounts ?: resolveDirectlyReportedThreadIds(page.map { it.id })
+        val reportedThreadIds = if (reportedOnly) page.map { it.id }.toSet() else pendingByThread.keys
 
         return AdminForoHilosResponse(
             items = page.map { row ->
@@ -5986,6 +6098,8 @@ class AdminV1Gateway private constructor(
                     actualizadoEn = row.actualizadoEn.orEmpty(),
                     respuestas = row.comentarios.firstOrNull()?.count ?: 0,
                     tieneReportePendiente = row.id in reportedThreadIds,
+                    reportado = row.id in reportedThreadIds,
+                    pendingReports = pendingByThread[row.id] ?: 0,
                 )
             },
             nextCursor = nextCursor,
@@ -6007,45 +6121,55 @@ class AdminV1Gateway private constructor(
      * ambas independientes del número de hilos que termine mostrando la página
      * (nunca N+1): reportes_contenido pendientes, y (solo si hay reportes de tipo
      * comentario/respuesta) sus publicacion_id reales. */
-    private fun resolveReportedThreadIds(): Set<String> {
+    // FA12: devuelve hilo -> numero de reportes pendientes (los suyos + los de sus respuestas). `tipo_entidad` usa los
+    // valores REALES del CHECK de produccion (`publicacion_oposired`, `comentario_oposired`); con solo los alias
+    // anteriores (hilo, publicacion, comentario, respuesta) ninguna fila podia coincidir y "reportados" salia siempre vacio.
+    private fun resolveReportedThreadIds(): Map<String, Int> {
+        val threadTypes = ModerationQueries.REPORTE_TIPOS_HILO
+        val commentTypes = ModerationQueries.REPORTE_TIPOS_COMENTARIO
         val reports = request(
             "GET",
-            "/rest/v1/reportes_contenido?select=id,tipo_entidad,entidad_id&estado=eq.pendiente&tipo_entidad=in.(hilo,publicacion,comentario,respuesta)&limit=500",
+            "/rest/v1/reportes_contenido?select=id,tipo_entidad,entidad_id&estado=eq.pendiente" +
+                "&tipo_entidad=in.(${(threadTypes + commentTypes).joinToString(",")})&limit=500",
             null,
         ).decodeList<ReporteRow>()
-        val directThreadIds = reports
-            .filter { it.tipoEntidad.lowercase() in setOf("hilo", "publicacion") }
+        val counts = LinkedHashMap<String, Int>()
+        reports
+            .filter { it.tipoEntidad.lowercase() in threadTypes }
             .mapNotNull { it.entidadId }
             .filter { it.isNotBlank() }
-            .toSet()
-        val commentIds = reports
-            .filter { it.tipoEntidad.lowercase() in setOf("comentario", "respuesta") }
+            .forEach { counts.merge(it, 1, Int::plus) }
+        val reportsByComment = reports
+            .filter { it.tipoEntidad.lowercase() in commentTypes }
             .mapNotNull { it.entidadId }
             .filter { it.isNotBlank() }
-            .distinct()
-        val threadIdsFromComments = if (commentIds.isEmpty()) {
-            emptySet()
-        } else {
+            .groupingBy { it }
+            .eachCount()
+        if (reportsByComment.isNotEmpty()) {
             request(
                 "GET",
-                "/rest/v1/comentarios_oposired?select=id,publicacion_id&id=in.(${commentIds.joinToString(",")})",
+                "/rest/v1/comentarios_oposired?select=id,publicacion_id&id=in.(${reportsByComment.keys.joinToString(",")})",
                 null,
-            ).decodeList<ComentarioOposiredRow>().mapNotNull { it.publicacionId }.filter { it.isNotBlank() }.toSet()
+            ).decodeList<ComentarioOposiredRow>().forEach { comment ->
+                val threadId = comment.publicacionId?.takeIf { it.isNotBlank() } ?: return@forEach
+                counts.merge(threadId, reportsByComment[comment.id] ?: 0, Int::plus)
+            }
         }
-        return directThreadIds + threadIdsFromComments
+        return counts
     }
 
     /** Igual que [resolveReportedThreadIds] pero acotado a [threadIds] (la página
      * actual) y sin mirar comentarios: usado solo para el indicador discreto de
      * "recientes", donde una consulta adicional de comentarios por página no se
      * justifica para un hint visual (ver nota en AdminForoHiloDto). */
-    private fun resolveDirectlyReportedThreadIds(threadIds: List<String>): Set<String> {
-        if (threadIds.isEmpty()) return emptySet()
+    private fun resolveDirectlyReportedThreadIds(threadIds: List<String>): Map<String, Int> {
+        if (threadIds.isEmpty()) return emptyMap()
         return request(
             "GET",
-            "/rest/v1/reportes_contenido?select=id,entidad_id&estado=eq.pendiente&tipo_entidad=in.(hilo,publicacion)&entidad_id=in.(${threadIds.joinToString(",")})",
+            "/rest/v1/reportes_contenido?select=id,entidad_id&estado=eq.pendiente" +
+                "&tipo_entidad=in.(${ModerationQueries.REPORTE_TIPOS_HILO.joinToString(",")})&entidad_id=in.(${threadIds.joinToString(",")})",
             null,
-        ).decodeList<ReporteRow>().mapNotNull { it.entidadId }.filter { it.isNotBlank() }.toSet()
+        ).decodeList<ReporteRow>().mapNotNull { it.entidadId }.filter { it.isNotBlank() }.groupingBy { it }.eachCount()
     }
 
     /**
@@ -6140,7 +6264,8 @@ class AdminV1Gateway private constructor(
     private fun countAssociatedPendingReports(threadId: String): Int {
         val direct = request(
             "GET",
-            "/rest/v1/reportes_contenido?select=id&estado=eq.pendiente&tipo_entidad=in.(hilo,publicacion)&entidad_id=eq.$threadId",
+            "/rest/v1/reportes_contenido?select=id&estado=eq.pendiente" +
+                "&tipo_entidad=in.(${ModerationQueries.REPORTE_TIPOS_HILO.joinToString(",")})&entidad_id=eq.$threadId",
             null,
         ).decodeList<ReporteRow>().size
 
@@ -6154,7 +6279,8 @@ class AdminV1Gateway private constructor(
         } else {
             request(
                 "GET",
-                "/rest/v1/reportes_contenido?select=id&estado=eq.pendiente&tipo_entidad=in.(comentario,respuesta)&entidad_id=in.(${commentIds.joinToString(",")})",
+                "/rest/v1/reportes_contenido?select=id&estado=eq.pendiente" +
+                    "&tipo_entidad=in.(${ModerationQueries.REPORTE_TIPOS_COMENTARIO.joinToString(",")})&entidad_id=in.(${commentIds.joinToString(",")})",
                 null,
             ).decodeList<ReporteRow>().size
         }
@@ -6182,8 +6308,26 @@ class AdminV1Gateway private constructor(
             reporterNombre = reporterNombre,
             revisadoEn = r.revisadoEn.orEmpty(),
             contentPreview = resolveContentPreview(r.tipoEntidad, r.entidadId),
+            acciones = reporteAcciones(id),
         )
     }
+
+    /** D5-26: acciones de moderacion de un reporte, las mas recientes primero, acotadas en la propia consulta. */
+    private fun reporteAcciones(reporteId: String): List<AdminReporteAccionDto> =
+        request(
+            "GET",
+            "/rest/v1/acciones_moderacion?select=id,reporte_id,moderador_id,tipo_accion,notas,creado_en&reporte_id=eq.$reporteId" +
+                "&order=creado_en.desc,id.desc&limit=${ModerationQueries.REPORTE_ACCIONES_MAX}",
+            null,
+        ).decodeList<AccionModeracionRow>().map { row ->
+            AdminReporteAccionDto(
+                id = row.id,
+                tipoAccion = row.tipoAccion,
+                moderadorId = row.moderadorId,
+                notas = row.notas,
+                creadoEn = row.creadoEn.orEmpty(),
+            )
+        }
 
     private fun resolveUserDisplayName(usuarioId: String?): String {
         if (usuarioId.isNullOrBlank()) return ""
@@ -6199,7 +6343,7 @@ class AdminV1Gateway private constructor(
     private fun resolveContentPreview(tipoEntidad: String, entidadId: String?): AdminReporteContentPreviewDto? {
         if (entidadId.isNullOrBlank()) return null
         return when (tipoEntidad.lowercase()) {
-            "hilo", "publicacion" -> {
+            in ModerationQueries.REPORTE_TIPOS_HILO -> {
                 val row = request("GET", "/rest/v1/publicaciones_oposired?select=*&id=eq.$entidadId&limit=1", null)
                     .decodeList<PublicacionOposiredRow>().firstOrNull() ?: return null
                 AdminReporteContentPreviewDto(
@@ -6211,7 +6355,7 @@ class AdminV1Gateway private constructor(
                     currentState = row.estado.orEmpty(),
                 )
             }
-            "comentario", "respuesta" -> {
+            in ModerationQueries.REPORTE_TIPOS_COMENTARIO -> {
                 val row = request("GET", "/rest/v1/comentarios_oposired?select=*&id=eq.$entidadId&limit=1", null)
                     .decodeList<ComentarioOposiredRow>().firstOrNull() ?: return null
                 val threadTitle = row.publicacionId?.takeIf { it.isNotBlank() }?.let { pid ->

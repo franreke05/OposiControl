@@ -1,0 +1,115 @@
+# COMMERCE ADMIN read contracts (FA12): D7-27. Admin view of public.suscripciones, read-only.
+# Subscription state is written by the payment provider flow only (D7-03 and D7-04, DEC-031); there is no admin mutation.
+# Not part of this file: the commercial catalog and plan administration D7-17..D7-23 (their canonical wire differs from the
+# one the OposiControl client reads today and their writes need one database function per command), store mappings D7-20
+# (DEC-031) and the promotion use log D7-29.
+components:
+  pathItems:
+    AdminSubscriptions:
+      get:
+        operationId: listAdminSubscriptions
+        summary: 'List subscriptions (admin)'
+        tags: [commerce-admin]
+        x-contract-id: D7-27
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR]
+        description: 'Keyset (inicio_en desc, id desc) over suscripciones. An unknown estado or proveedor or a non-uuid usuarioId is 400 INVALID_FILTER. Provider payloads and external identifiers are never returned. canceladaEn is null: suscripciones stores no cancellation instant yet. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: estado
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/SuscripcionEstado'
+          - name: proveedor
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/SuscripcionProveedor'
+          - name: usuarioId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitAdminCursor'
+        responses:
+          '200':
+            description: 'Subscription page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 100
+                          items:
+                            $ref: '#/components/schemas/AdminSuscripcion'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, INVALID_FILTER or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    SuscripcionEstado:
+      type: string
+      description: 'States of suscripciones (CHECK suscripciones_estado_check).'
+      enum: [activa, pausada, cancelada, caducada, periodo_prueba]
+    SuscripcionProveedor:
+      type: string
+      description: 'Providers of suscripciones (CHECK suscripciones_proveedor_check). DEC-031 decides which ones are actually used.'
+      enum: [google_play, app_store, stripe, manual]
+    AdminSuscripcion:
+      type: object
+      required: [id, usuarioId, proveedor, productoCodigo, estado, inicioEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        usuarioId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        usuarioNombre:
+          type: [string, 'null']
+          description: 'Display name of the user; null when it cannot be resolved (never the user id).'
+        proveedor:
+          type: string
+          description: 'See SuscripcionProveedor. Open string: clients tolerate unknown values.'
+        productoCodigo:
+          type: string
+        estado:
+          type: string
+          description: 'See SuscripcionEstado. Open string: clients tolerate unknown values.'
+        inicioEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        finEn:
+          type: [string, 'null']
+          format: date-time
+        renovacionEn:
+          type: [string, 'null']
+          format: date-time
+        canceladaEn:
+          type: [string, 'null']
+          format: date-time
+          description: 'null until suscripciones stores the cancellation instant (no such column in production yet).'

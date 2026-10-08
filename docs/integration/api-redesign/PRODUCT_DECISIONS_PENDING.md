@@ -70,3 +70,43 @@ External: D7-03 (payment provider verification) needs the provider chosen in DEC
 - Legacy news list decodes `capas` strictly while the canonical route stores them as opaque objects: a canonical article with
   a mistyped known layer key would break the legacy list page until fixed (admin only).
 - Wallet reads answer 502 `UPSTREAM_CONTRACT_ERROR` on corrupt upstream rows; `openapi/wallet/wallet.yaml` declares 503 only.
+
+## 7. NEEDS_SCHEMA (not a product decision: a schema object is missing in production)
+
+Checked against the data-free production DDL capture. Nothing below was implemented around the gap.
+
+| Contract | Missing object | Effect today |
+|---|---|---|
+| D5-23 moderation action log | `acciones_moderacion` has no target columns (only `reporte_id`) | not implemented; the legacy list stays as it is |
+| D5-24 moderation action command | target columns on `acciones_moderacion`; `fijar` and `desfijar` missing from `acciones_moderacion_tipo_accion_check`; one function for "target state + action + audit" | not implemented; the existing warn-user route is unchanged |
+| D8-02 support conversations | `conversaciones_soporte.asignado_a` (field and filter `asignadoA`) | not implemented as canonical (see section 8) |
+| D8-03, D8-04 support messages | an internal-note column on `mensajes_soporte`; for D8-04 also one function for "message + touch conversation + audit" | internal notes stay rejected with 422 (owner decision 2026-10-01) |
+| D5-28 feedback list (implemented) | `feedback_pregunta` has no resolution note column | `resolucionNota` is always null |
+| D7-27 subscription list (implemented) | `suscripciones` has no cancellation instant column | `canceladaEn` is always null |
+
+Already known from the plan and unchanged: D5-30 (`feedback_pregunta.revisado_por`), D8-05 (`conversaciones_soporte.asignado_a`), D6-03 (redeem function), D3-14 (aggregate functions), D4-20/D4-21, D5-12, D7-07, D7-30, D1-20.
+
+## 8. Same path, different wire: needs the OposiControl client to move first (decision for the lead)
+
+For these contracts the canonical METHOD + path is the one the current admin client already calls, and the two wires cannot be
+served together by adding fields (the client decodes a bare JSON array, or the canonical command requires an `Idempotency-Key`
+header and a body the client does not send). The backend was left untouched for them.
+
+| Contract | Path | Conflict |
+|---|---|---|
+| D8-02, D8-03 | `/api/v1/admin/soporte/conversaciones`, `.../{id}/mensajes` | bare array with English field names vs `{items, nextCursor}` |
+| D8-04 | `POST /api/v1/admin/soporte/conversaciones/{id}/mensajes` | `{assignee, text, internal}` without key vs `{cuerpo, interna}` + required key |
+| D5-23 | `GET /api/v1/admin/moderacion/actions` | bare array vs `{items, nextCursor}` |
+| D5-24 | `POST /api/v1/admin/moderacion/actions` | body without key vs required key and a different body |
+| D6-12, D6-13 | `GET /api/v1/admin/tickets`, `.../{usuarioId}/transacciones` | bare array vs `{items, nextCursor}` |
+| D6-14 | `POST /api/v1/admin/tickets/{usuarioId}/transacciones` | `{amount, reason}` without key vs `{delta, tipo, motivo}` + required key |
+
+Options, none taken: migrate the client call first and switch the route in the same release; or agree a rule for a transition
+period (the design defines none).
+
+## 9. Defaults taken in the moderation reads and the subscription list (FA12), to confirm
+
+- Role: the eight reads require an active admin account, like the rest of the admin plane. The design also lists a moderator role.
+- Reports list (D5-25): page size 1..200, default 200 (what the current panel reads in one call); the design says 1..50.
+- Thread list (D5-20): `pendingReports` counts reports on the thread only in the "recent" mode and also reports on its replies in the "reported" mode.
+- Forum reports are matched by the entity types the database actually allows (`publicacion_oposired`, `comentario_oposired`); the previous values could never match, so "reported threads" was always empty.

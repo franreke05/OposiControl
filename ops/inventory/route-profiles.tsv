@@ -99,6 +99,7 @@ GET	/api/v1/admin/settings	CONTROL	admin	Admin v1: settings	OposiControl
 GET	/api/v1/admin/soporte	CONTROL	admin	Admin v1: soporte	OposiControl
 GET	/api/v1/admin/soporte/conversaciones	CONTROL	admin	Admin v1: soporte/conversaciones	OposiControl
 GET	/api/v1/admin/soporte/conversaciones/{}/mensajes	CONTROL	admin	Admin v1: soporte/conversaciones/{}/mensajes	OposiControl
+GET	/api/v1/admin/suscripciones	CONTROL	admin	Admin v1: lista de suscripciones (solo lectura)	OposiControl
 GET	/api/v1/admin/tickets	CONTROL	admin	Admin v1: tickets	OposiControl
 GET	/api/v1/admin/tickets/resumen	CONTROL	admin	Admin v1: tickets/resumen	OposiControl
 GET	/api/v1/admin/tickets/{}/transacciones	CONTROL	admin	Admin v1: tickets/{}/transacciones	OposiControl

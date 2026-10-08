@@ -1,0 +1,667 @@
+# MODERATION read contracts (FA12): D5-20, D5-21, D5-22 (OposiRed threads), D5-25, D5-26 (content reports) and
+# D5-28, D5-29 (question feedback). Admin plane, read-only.
+# Source of truth: publicaciones_oposired, comentarios_oposired, reportes_contenido, acciones_moderacion, feedback_pregunta.
+# The seven operations are served at the path the OposiControl client already calls, so their wire is the existing one
+# plus additive fields and parameters; nothing the current client reads is renamed or removed. Where the client reads a
+# data wrapper, data duplicates the canonical field until the client migrates (same rule as D1-22 and D1-23).
+# Not part of this file: the moderation action log and command D5-23/D5-24 (acciones_moderacion has no target columns),
+# report resolution D5-27 (DEC-026, DEC-040) and feedback resolution D5-30 (feedback_pregunta has no reviewer column).
+components:
+  pathItems:
+    AdminModerationThreads:
+      get:
+        operationId: listAdminModerationThreads
+        summary: 'List forum threads for moderation'
+        tags: [moderation-admin]
+        x-contract-id: D5-20
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR]
+        description: 'Keyset (creado_en desc, id desc) over publicaciones_oposired, every estado included. modo recientes (default) lists every thread; modo reportados lists only threads with a pending report on the thread or on one of its replies (the pending reports considered are capped at 500). reportados=true is the deprecated spelling of modo=reportados that the current OposiControl client sends; when both are present modo wins. An unknown modo or a non-uuid categoriaId is 400 INVALID_FILTER. The cursor is opaque. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: modo
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/HiloModo'
+          - name: reportados
+            in: query
+            required: false
+            deprecated: true
+            description: 'Legacy spelling of modo=reportados. Only the literal true has an effect.'
+            schema:
+              type: string
+          - name: categoriaId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '#/components/parameters/LimitModeration'
+        responses:
+          '200':
+            description: 'Thread page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/ForoHilo'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, INVALID_FILTER or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminModerationThread:
+      parameters:
+        - $ref: '#/components/parameters/ModerationIdPath'
+      get:
+        operationId: getAdminModerationThread
+        summary: 'Get a forum thread for moderation'
+        tags: [moderation-admin]
+        x-contract-id: D5-21
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, UPSTREAM_ERROR]
+        description: 'Full thread (contenido is not truncated) with its counts: respuestas and reportesAsociados (pending reports on the thread plus pending reports on its replies). The replies themselves are read with D5-22. A non-uuid id is 400 VALIDATION. Cache no-store.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Thread.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoHiloDetalle'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminModerationThreadReplies:
+      parameters:
+        - $ref: '#/components/parameters/ModerationIdPath'
+      get:
+        operationId: listAdminModerationThreadReplies
+        summary: 'List the replies of a forum thread for moderation'
+        tags: [moderation-admin]
+        x-contract-id: D5-22
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR]
+        description: 'Keyset (creado_en asc, id asc) over comentarios_oposired of the thread, every estado included, in reading order. An unknown thread id returns an empty page. A non-uuid id is 400 VALIDATION. The cursor is opaque. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '#/components/parameters/LimitModeration'
+        responses:
+          '200':
+            description: 'Reply page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/ForoRespuesta'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminReports:
+      get:
+        operationId: listAdminReports
+        summary: 'List content reports'
+        tags: [moderation-admin]
+        x-contract-id: D5-25
+        x-implementation: TARGET
+        x-slice: 6
+        x-roles: [ADMIN]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR]
+        description: 'Moderation queue, oldest first: keyset (creado_en asc, id asc) over reportes_contenido. estado defaults to pendiente; todos removes the estado filter. An unknown estado or a non-integer limit is 400 VALIDATION; an unknown tipoEntidad is 400 INVALID_FILTER. nextCursor is present whenever the page is full, so the last page can be empty. pendientesTotal is the exact number of pending reports regardless of the filters, or null when the count cannot be read. Rows carry no contentPreview and no acciones (see D5-26). The legacy data array duplicates items until the OposiControl client migrates. The server still accepts the undocumented legacy offset parameter of that client (never together with cursor). Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: estado
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/ReporteEstadoFiltro'
+          - name: tipoEntidad
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/ReporteTipoEntidad'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - name: limit
+            in: query
+            required: false
+            description: 'Page size 1..200, default 200 (the queue size the current OposiControl client reads in one call); values outside the range are clamped.'
+            schema:
+              type: integer
+              minimum: 1
+              maximum: 200
+              default: 200
+        responses:
+          '200':
+            description: 'Report page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 200
+                          items:
+                            $ref: '#/components/schemas/Reporte'
+                        data:
+                          type: array
+                          deprecated: true
+                          description: 'Legacy duplicate of items.'
+                          items:
+                            $ref: '#/components/schemas/Reporte'
+                        pendientesTotal:
+                          type: [integer, 'null']
+                          minimum: 0
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, INVALID_FILTER or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminReport:
+      parameters:
+        - $ref: '#/components/parameters/ModerationIdPath'
+      get:
+        operationId: getAdminReport
+        summary: 'Get a content report'
+        tags: [moderation-admin]
+        x-contract-id: D5-26
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, UPSTREAM_ERROR]
+        description: 'The report under data, with contentPreview (the reported thread or reply; null when the entity no longer exists or the entity type has no preview) and acciones (its moderation actions, newest first, at most 50). Until the OposiControl client migrates the same report fields are also emitted at the top level (legacy duplicate). A non-uuid id is 400 VALIDATION; an unknown id is 404. Cache no-store.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Report.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '#/components/schemas/ReporteLegacyDuplicate'
+                    - type: object
+                      required: [data]
+                      properties:
+                        data:
+                          $ref: '#/components/schemas/ReporteDetalle'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminQuestionFeedback:
+      get:
+        operationId: listAdminQuestionFeedback
+        summary: 'List question feedback'
+        tags: [moderation-admin]
+        x-contract-id: D5-28
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR]
+        description: 'Keyset (creado_en desc, id desc) over feedback_pregunta. estado and tipoFeedback are exact-match filters; a value outside the listed ones matches no row. tipo is the legacy spelling of tipoFeedback that the current OposiControl client may send (the canonical name avoids the question-type meaning that tipo has on question routes); when both are present tipoFeedback wins. The cursor is opaque. resolucionNota is null: feedback_pregunta has no resolution note column yet. The legacy data array duplicates items until the OposiControl client migrates. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: estado
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/FeedbackEstado'
+          - name: tipoFeedback
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/FeedbackTipo'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '#/components/parameters/LimitModeration'
+        responses:
+          '200':
+            description: 'Feedback page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 50
+                          items:
+                            $ref: '#/components/schemas/Feedback'
+                        data:
+                          type: array
+                          deprecated: true
+                          description: 'Legacy duplicate of items.'
+                          items:
+                            $ref: '#/components/schemas/Feedback'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminQuestionFeedbackItem:
+      parameters:
+        - $ref: '#/components/parameters/ModerationIdPath'
+      get:
+        operationId: getAdminQuestionFeedback
+        summary: 'Get a question feedback entry'
+        tags: [moderation-admin]
+        x-contract-id: D5-29
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, UPSTREAM_ERROR]
+        description: 'The feedback entry with the context of its question (code and title); pregunta is null when the question no longer exists. A non-uuid id is 400 VALIDATION; an unknown id is 404. Cache no-store.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Feedback entry.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/FeedbackDetalle'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  parameters:
+    ModerationIdPath:
+      name: id
+      in: path
+      required: true
+      description: 'Row id. A non-uuid value returns 400 VALIDATION and never reaches the database.'
+      schema:
+        $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+    LimitModeration:
+      name: limit
+      in: query
+      required: false
+      description: 'Page size 1..50, default 20. A non-integer value or a value below 1 is 400 VALIDATION (OUT_OF_RANGE); values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+  schemas:
+    HiloModo:
+      type: string
+      enum: [recientes, reportados]
+    ReporteEstadoFiltro:
+      type: string
+      description: 'States of reportes_contenido (CHECK reportes_contenido_estado_check) plus todos (no estado filter).'
+      enum: [pendiente, revisado, resuelto, descartado, todos]
+    ReporteTipoEntidad:
+      type: string
+      description: 'Entity types of reportes_contenido (CHECK reportes_contenido_tipo_entidad_check).'
+      enum: [pregunta, recurso_pregunta, opositeca_item, publicacion_oposired, comentario_oposired, usuario]
+    FeedbackEstado:
+      type: string
+      description: 'States of feedback_pregunta (CHECK feedback_pregunta_estado_check).'
+      enum: [pendiente, revisado, resuelto, descartado]
+    FeedbackTipo:
+      type: string
+      description: 'Feedback types of feedback_pregunta (CHECK feedback_pregunta_tipo_feedback_check).'
+      enum: [mal_redactada, respuesta_incorrecta, explicacion_insuficiente, fuente_dudosa, recurso_roto, otro]
+    ForoHilo:
+      type: object
+      description: 'A forum thread row for the moderation list. Text fields are empty strings when the source value is missing.'
+      required: [id, categoriaNombre, titulo, fragmento, estado, fijada, autorNombre, creadoEn, actualizadoEn, respuestas, tieneReportePendiente, reportado, pendingReports]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        categoriaId:
+          type: [string, 'null']
+          format: uuid
+        categoriaNombre:
+          type: string
+        titulo:
+          type: string
+        fragmento:
+          type: string
+          description: 'Leading fragment of the thread body (at most 240 characters plus an ellipsis).'
+        estado:
+          type: string
+          description: 'publicaciones_oposired.estado (borrador, publicada, oculta, eliminada). Open string.'
+        fijada:
+          type: boolean
+        autorNombre:
+          type: string
+          description: 'Display name of the author; empty when it cannot be resolved (never the user id).'
+        creadoEn:
+          type: string
+        actualizadoEn:
+          type: string
+        respuestas:
+          type: integer
+          minimum: 0
+        reportado:
+          type: boolean
+          description: 'True when the thread has a pending report. In modo recientes only reports on the thread itself are considered; in modo reportados also reports on its replies.'
+        pendingReports:
+          type: integer
+          minimum: 0
+          description: 'Pending reports counted with the same rule as reportado.'
+        tieneReportePendiente:
+          type: boolean
+          deprecated: true
+          description: 'Legacy name of reportado, kept until the OposiControl client migrates.'
+    ForoHiloDetalle:
+      type: object
+      required: [id, categoriaNombre, titulo, contenido, estado, fijada, autorNombre, creadoEn, actualizadoEn, respuestas, reportesAsociados]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        categoriaId:
+          type: [string, 'null']
+          format: uuid
+        categoriaNombre:
+          type: string
+        titulo:
+          type: string
+        contenido:
+          type: string
+        estado:
+          type: string
+        fijada:
+          type: boolean
+        autorNombre:
+          type: string
+        creadoEn:
+          type: string
+        actualizadoEn:
+          type: string
+        respuestas:
+          type: integer
+          minimum: 0
+        reportesAsociados:
+          type: integer
+          minimum: 0
+          description: 'Pending reports on the thread plus pending reports on any of its replies.'
+    ForoRespuesta:
+      type: object
+      required: [id, autorNombre, contenido, estado, creadoEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        autorNombre:
+          type: string
+        contenido:
+          type: string
+        estado:
+          type: string
+          description: 'comentarios_oposired.estado (publicado, oculto, eliminado). Open string.'
+        creadoEn:
+          type: string
+    Reporte:
+      type: object
+      description: 'A content report. Text fields are empty strings when the source value is missing (revisadoEn is empty until the report is reviewed).'
+      required: [id, tipoEntidad, entidadId, motivo, descripcion, estado, creadoEn, reportadoPor, reporterNombre, revisadoEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipoEntidad:
+          type: string
+          description: 'See ReporteTipoEntidad. Open string: clients tolerate unknown values.'
+        entidadId:
+          type: string
+        motivo:
+          type: string
+        descripcion:
+          type: string
+        estado:
+          type: string
+          description: 'pendiente, revisado, resuelto or descartado. Open string.'
+        creadoEn:
+          type: string
+        reportadoPor:
+          type: string
+          description: 'User id of the reporter; empty when the reporter no longer exists.'
+        reporterNombre:
+          type: string
+        revisadoEn:
+          type: string
+    ReporteContentPreview:
+      type: [object, 'null']
+      description: 'The reported forum content. Only publicacion_oposired and comentario_oposired reports have a preview.'
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [hilo, comentario]
+        text:
+          type: string
+        author:
+          type: string
+        createdAt:
+          type: string
+        threadTitle:
+          type: [string, 'null']
+        currentState:
+          type: string
+    ReporteAccion:
+      type: object
+      description: 'A row of acciones_moderacion linked to the report.'
+      required: [id, tipoAccion, creadoEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipoAccion:
+          type: string
+          description: 'acciones_moderacion.tipo_accion (ocultar, restaurar, eliminar, advertir, bloquear_usuario, descartar). Open string.'
+        moderadorId:
+          type: [string, 'null']
+          format: uuid
+        notas:
+          type: [string, 'null']
+        creadoEn:
+          type: string
+    ReporteDetalle:
+      allOf:
+        - $ref: '#/components/schemas/Reporte'
+        - type: object
+          required: [acciones]
+          properties:
+            contentPreview:
+              $ref: '#/components/schemas/ReporteContentPreview'
+            acciones:
+              type: array
+              maxItems: 50
+              items:
+                $ref: '#/components/schemas/ReporteAccion'
+    ReporteLegacyDuplicate:
+      type: object
+      deprecated: true
+      description: 'Top-level copy of the fields of data (same values), read by the current OposiControl client. Removed once it reads data.'
+      required: []
+      properties:
+        id:
+          type: string
+        tipoEntidad:
+          type: string
+        entidadId:
+          type: string
+        motivo:
+          type: string
+        descripcion:
+          type: string
+        estado:
+          type: string
+        creadoEn:
+          type: string
+        reportadoPor:
+          type: string
+        reporterNombre:
+          type: string
+        revisadoEn:
+          type: string
+        contentPreview:
+          $ref: '#/components/schemas/ReporteContentPreview'
+        acciones:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReporteAccion'
+    Feedback:
+      type: object
+      description: 'A question feedback entry. Text fields are empty strings when the source value is missing.'
+      required: [id, autorNombre, preguntaId, tipoFeedback, descripcion, estado, creadoEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        usuarioId:
+          type: [string, 'null']
+          format: uuid
+        autorNombre:
+          type: string
+          description: 'Display name of the author; empty when it cannot be resolved (never the user id).'
+        preguntaId:
+          type: string
+        intentoId:
+          type: [string, 'null']
+          format: uuid
+        tipoFeedback:
+          type: string
+          description: 'See FeedbackTipo. Open string.'
+        descripcion:
+          type: string
+        estado:
+          type: string
+          description: 'See FeedbackEstado. Open string.'
+        resolucionNota:
+          type: [string, 'null']
+          description: 'null until feedback_pregunta stores a resolution note (no such column in production yet).'
+        creadoEn:
+          type: string
+    FeedbackDetalle:
+      allOf:
+        - $ref: '#/components/schemas/Feedback'
+        - type: object
+          required: []
+          properties:
+            pregunta:
+              type: [object, 'null']
+              description: 'Context of the question; null when the question no longer exists.'
+              required: [codigoPregunta, titulo]
+              properties:
+                codigoPregunta:
+                  type: string
+                titulo:
+                  type: string
+                especialidadNombre:
+                  type: [string, 'null']
+                  description: 'Always null: a question has no specialty of its own (the specialty belongs to the exam).'

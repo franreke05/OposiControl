@@ -93,6 +93,7 @@ GET /api/v1/admin/settings
 GET /api/v1/admin/soporte
 GET /api/v1/admin/soporte/conversaciones
 GET /api/v1/admin/soporte/conversaciones/{}/mensajes
+GET /api/v1/admin/suscripciones
 GET /api/v1/admin/tickets
 GET /api/v1/admin/tickets/resumen
 GET /api/v1/admin/tickets/{}/transacciones

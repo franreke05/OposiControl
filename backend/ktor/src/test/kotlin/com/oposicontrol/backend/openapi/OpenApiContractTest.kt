@@ -130,6 +130,16 @@ class OpenApiContractTest {
         "D4-11" to "PUT /api/v1/admin/tipos-noticia/{codigo}",
         "D6-01" to "GET /api/v1/app/wallet",
         "D6-02" to "GET /api/v1/app/wallet/movimientos",
+        // FA12: lecturas de moderacion (hilos, reportes, feedback de preguntas), TARGET.
+        "D5-20" to "GET /api/v1/admin/moderacion/hilos",
+        "D5-21" to "GET /api/v1/admin/moderacion/hilos/{id}",
+        "D5-22" to "GET /api/v1/admin/moderacion/hilos/{id}/respuestas",
+        "D5-25" to "GET /api/v1/admin/reportes",
+        "D5-26" to "GET /api/v1/admin/reportes/{id}",
+        "D5-28" to "GET /api/v1/admin/feedback/preguntas",
+        "D5-29" to "GET /api/v1/admin/feedback/preguntas/{id}",
+        // FA12: suscripciones (admin, solo lectura), TARGET.
+        "D7-27" to "GET /api/v1/admin/suscripciones",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
@@ -147,6 +157,11 @@ class OpenApiContractTest {
         "D2-65" to (50L to 20L),
         "D4-01" to (100L to 50L),
         "D6-02" to (50L to 20L),
+        "D5-20" to (50L to 20L),
+        "D5-22" to (50L to 20L),
+        "D5-25" to (200L to 200L),
+        "D5-28" to (50L to 20L),
+        "D7-27" to (100L to 50L),
     )
     private val offsetLists = mapOf(
         "D1-22" to (200L to 50L),
