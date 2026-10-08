@@ -1,0 +1,252 @@
+# Stack de PRODUCCION de un solo host (borrador versionado; NO desplegado desde este repo).
+#
+#   Cloudflare -> caddy -> { ktor-bot-1, ktor-bot-2 (SERVER_PROFILE=bot) | ktor-control (SERVER_PROFILE=control) } -> Supabase
+#                          prometheus + grafana (observabilidad)    valkey (limitador de auth compartido)
+#
+# AVISO DE CAPACIDAD: tres contenedores Ktor en UN host NO son 3x capacidad. Comparten CPU, RAM, disco y red del host. Lo que
+# compran es (a) aislamiento de fallos entre OposiBot y OposiControl, (b) despliegue/reinicio de una replica bot sin cortar el
+# servicio y (c) limites de recursos por perfil. Si el host cae, cae todo. El techo de rendimiento es el del host, no la suma.
+#
+# Uso (siempre con -f y con el fichero de variables FUERA del repo; ver docs/engineering/PRODUCTION_RUNBOOK.md):
+#   docker compose --env-file /etc/oposibots/production/compose.env -f ops/deploy/compose.production.yaml config -q
+#   docker compose --env-file /etc/oposibots/production/compose.env -f ops/deploy/compose.production.yaml up -d
+#
+# Secretos: SOLO en ficheros fuera del repo (`env_file` = /etc/oposibots/production/backend.env). Este fichero no contiene
+# ningun valor secreto; los nombres estan en ops/deploy/backend.env.example.
+#
+# Puertos: SOLO caddy publica (80/443). Prometheus, Grafana, Valkey y Ktor viven en la red interna sin `ports:`.
+
+name: oposibots-production
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+    compress: "true"
+
+# Plantilla comun de los tres contenedores Ktor (MISMA imagen, distinto SERVER_PROFILE).
+x-ktor: &ktor
+  image: ${BACKEND_IMAGE:?BACKEND_IMAGE es obligatoria (oposicontrol-backend:<sha12> o @sha256:...)}
+  restart: unless-stopped
+  env_file:
+    - ${BACKEND_ENV_FILE:-/etc/oposibots/production/backend.env}
+  # La JVM arranca como `app` (uid 10001), /app es de solo lectura para ella y los temporales de ffmpeg van a /tmp.
+  read_only: true
+  tmpfs:
+    - /tmp:size=512m,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 512
+  # Liveness del CONTENEDOR: /health/live nunca depende de Supabase (una caida de Supabase no debe reiniciar la JVM).
+  # La READINESS (/health/ready, con Supabase) la consulta Caddy para sacar una replica de rotacion.
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "--max-time", "3", "http://127.0.0.1:8080/health/live"]
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    start_period: 45s
+  # Cierre ordenado: Ktor termina las peticiones en curso (grace period del engine) antes de SIGKILL.
+  stop_grace_period: 35s
+  logging: *logging
+  networks:
+    - edge
+  depends_on:
+    valkey:
+      condition: service_healthy
+
+services:
+  caddy:
+    image: ${CADDY_IMAGE:-caddy:2.11.7}
+    restart: unless-stopped
+    environment:
+      API_HOST: ${API_HOST:?API_HOST es obligatoria (host publico del API)}
+    ports:
+      # Unicos puertos publicados de todo el stack. 443/udp (HTTP/3) no se publica: Cloudflare habla h2/h1 con el origen.
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../caddy/Caddyfile.production:/etc/caddy/Caddyfile:ro
+      - ../caddy/body-limit.caddy:/etc/caddy/body-limit.caddy:ro
+      - ../caddy/metrics-block.caddy:/etc/caddy/metrics-block.caddy:ro
+      # Cloudflare Origin CA (origin.pem + origin.key). Fuera del repo.
+      - ${ORIGIN_CERT_DIR:-/etc/oposibots/production/origin}:/etc/caddy/origin:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    cpus: 1.0
+    mem_limit: ${CADDY_MEM_LIMIT:-192m}
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    stop_grace_period: 20s
+    logging: *logging
+    networks:
+      edge:
+        # IP fija: es el valor literal de TRUSTED_PROXY_HOSTS en backend.env (el backend solo admite literales IP).
+        ipv4_address: ${CADDY_IPV4:-172.28.0.10}
+    depends_on:
+      - ktor-bot-1
+      - ktor-bot-2
+      - ktor-control
+
+  ktor-bot-1:
+    <<: *ktor
+    hostname: ktor-bot-1
+    environment:
+      SERVER_PROFILE: bot
+      # JAVA_TOOL_OPTIONS REEMPLAZA al ENV de la imagen: se repite java.awt.headless. Heap al 60 % del limite de memoria
+      # del contenedor (mem_limit): el 40 % restante cubre metaspace, pilas de hilos, buffers Netty y TLS. Sin ffmpeg en la
+      # ruta bot (no recibe multipart). ExitOnOutOfMemoryError: un OOM reinicia el contenedor limpio en vez de dejar una
+      # JVM zombi (el Dockerfile lo difirio a proposito; aqui `restart: unless-stopped` lo hace seguro).
+      JAVA_TOOL_OPTIONS: ${BOT_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+ExitOnOutOfMemoryError}
+    cpus: ${BOT_CPUS:-1.0}
+    mem_limit: ${BOT_MEM_LIMIT:-768m}
+
+  ktor-bot-2:
+    <<: *ktor
+    hostname: ktor-bot-2
+    environment:
+      SERVER_PROFILE: bot
+      JAVA_TOOL_OPTIONS: ${BOT_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+ExitOnOutOfMemoryError}
+    cpus: ${BOT_CPUS:-1.0}
+    mem_limit: ${BOT_MEM_LIMIT:-768m}
+
+  ktor-control:
+    <<: *ktor
+    hostname: ktor-control
+    environment:
+      SERVER_PROFILE: control
+      # ffmpeg es un SUBPROCESO de este contenedor (compresion de video/audio de recursos de pregunta, hasta 120 s) y su
+      # memoria vive FUERA del heap; una imagen de 50 MP se decodifica en heap (~200 MB). Por eso el heap es solo el 45 %
+      # del limite: 0.45 * 2g = ~920 MB de heap y ~1.1 GB para ffmpeg, metaspace e hilos.
+      JAVA_TOOL_OPTIONS: ${CONTROL_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=45 -XX:InitialRAMPercentage=25 -XX:+ExitOnOutOfMemoryError}
+      # El estado del sistema (estado-sistema) consulta Prometheus; el defecto del codigo es otro nombre de contenedor.
+      PROMETHEUS_URL: http://prometheus:9090
+    cpus: ${CONTROL_CPUS:-1.5}
+    mem_limit: ${CONTROL_MEM_LIMIT:-2g}
+
+  # Valkey: SOLO contadores de ventana del limitador de auth (ver docs/engineering/RUNTIME_DECISIONS.md). Sin persistencia:
+  # perder los contadores solo reinicia las ventanas de limite. Contrasena obligatoria aunque la red sea interna.
+  valkey:
+    image: ${VALKEY_IMAGE:-valkey/valkey:8.1-alpine}
+    restart: unless-stopped
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD es obligatoria (la misma que va dentro de VALKEY_URL en backend.env)}
+    command:
+      - sh
+      - -c
+      - exec valkey-server --requirepass "$$VALKEY_PASSWORD" --save "" --appendonly no --maxmemory 64mb --maxmemory-policy volatile-ttl --bind 0.0.0.0 --protected-mode yes
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    cpus: 0.25
+    mem_limit: ${VALKEY_MEM_LIMIT:-96m}
+    pids_limit: 64
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 10s
+    logging: *logging
+    networks:
+      - edge
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.14.0}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=4GB
+      - --web.enable-lifecycle
+    volumes:
+      - ../monitoring/prometheus/prometheus.production.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      # Mismo valor que METRICS_SCRAPE_TOKEN de backend.env. Fichero FUERA del repo, modo 0400.
+      - ${METRICS_TOKEN_FILE:-/etc/oposibots/production/metrics_token}:/etc/prometheus/secrets/metrics_token:ro
+      - prometheus-data:/prometheus
+    cpus: 0.5
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-512m}
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 30s
+    logging: *logging
+    networks:
+      edge:
+        # Alias del nombre que el codigo de Ktor usa por defecto para consultar Prometheus (PrometheusMetrics.kt).
+        aliases:
+          - oposicontrol-prometheus
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:11.6.0}
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD es obligatoria}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    cpus: 0.5
+    mem_limit: ${GRAFANA_MEM_LIMIT:-256m}
+    pids_limit: 128
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health | grep -q ok"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    stop_grace_period: 20s
+    logging: *logging
+    networks:
+      - edge
+    depends_on:
+      - prometheus
+
+  # WORKER: NO se despliega (WORKER_REQUIRED=NO, ver docs/engineering/RUNTIME_DECISIONS.md). Marcador comentado; se activa
+  # solo si se cumple un disparador documentado alli (p. ej. el ejecutor de borrado de cuenta). El flujo de importacion y
+  # subida de preguntas y examenes esta CERRADO y NO se mueve a un worker.
+  #
+  # worker:
+  #   <<: *ktor
+  #   hostname: worker
+  #   environment:
+  #     SERVER_PROFILE: worker      # perfil inexistente hoy
+  #   cpus: 1.0
+  #   mem_limit: 1g
+
+volumes:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  edge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${EDGE_SUBNET:-172.28.0.0/24}

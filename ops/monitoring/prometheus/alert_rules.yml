@@ -1,0 +1,94 @@
+# Alertas del stack de produccion. SOLO metricas que existen hoy en el codigo:
+#   - ktor_http_server_requests_seconds_{count,sum,bucket}  (MicrometerMetrics, PrometheusMetrics.kt; etiquetas status, route, method)
+#   - jvm_memory_used_bytes / jvm_memory_max_bytes, jvm_gc_pause_seconds_*, jvm_threads_live_threads (binders JVM de Micrometer)
+#   - up (Prometheus)
+# NO existen aun (hueco documentado en docs/engineering/RUNTIME_DECISIONS.md): metrica de latencia/errores hacia Supabase,
+# gauge de readiness, metricas del limitador/Valkey, metricas de worker. No se alerta sobre ellas.
+groups:
+  - name: ktor-availability
+    rules:
+      - alert: KtorInstanceDown
+        expr: up{job="ktor"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Instancia Ktor {{ $labels.replica }} ({{ $labels.profile }}) no responde al scrape"
+          description: "up=0 durante 1 minuto. Revisar `docker compose ps` y los logs del contenedor."
+
+      - alert: KtorBotPoolDegraded
+        expr: sum(up{job="ktor", profile="bot"}) < 2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "El pool bot funciona con menos de 2 replicas"
+          description: "Sin redundancia en OposiBot: una replica mas que caiga deja la API de la app sin servicio."
+
+  - name: ktor-http
+    rules:
+      - record: profile:ktor_http_requests:rate5m
+        expr: sum by (profile) (rate(ktor_http_server_requests_seconds_count{route!="/metrics"}[5m]))
+
+      - record: profile:ktor_http_errors_5xx:ratio5m
+        expr: |
+          sum by (profile) (rate(ktor_http_server_requests_seconds_count{status=~"5..", route!="/metrics"}[5m]))
+          /
+          sum by (profile) (rate(ktor_http_server_requests_seconds_count{route!="/metrics"}[5m]))
+
+      - record: profile:ktor_http_request_duration_seconds:p95_5m
+        expr: histogram_quantile(0.95, sum by (profile, le) (rate(ktor_http_server_requests_seconds_bucket{route!="/metrics"}[5m])))
+
+      - record: profile:ktor_http_request_duration_seconds:p99_5m
+        expr: histogram_quantile(0.99, sum by (profile, le) (rate(ktor_http_server_requests_seconds_bucket{route!="/metrics"}[5m])))
+
+      - alert: KtorHigh5xxRate
+        expr: profile:ktor_http_errors_5xx:ratio5m > 0.05 and profile:ktor_http_requests:rate5m > 0.2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Mas del 5 % de respuestas 5xx en el perfil {{ $labels.profile }}"
+          description: "Ratio 5xx {{ $value | humanizePercentage }} en 5 minutos (con trafico minimo de 0.2 req/s para evitar ruido)."
+
+      - alert: KtorHighLatencyP95
+        # Las subidas/importaciones de control son legitimamente lentas (hasta 120 s): umbral solo para el perfil bot.
+        expr: profile:ktor_http_request_duration_seconds:p95_5m{profile="bot"} > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 de latencia > 1 s en el pool bot"
+          description: "p95 {{ $value | humanizeDuration }} durante 10 minutos."
+
+      - alert: KtorHighLatencyP99
+        expr: profile:ktor_http_request_duration_seconds:p99_5m{profile="bot"} > 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p99 de latencia > 5 s en el pool bot"
+          description: "p99 {{ $value | humanizeDuration }} durante 10 minutos (el limite de Ktor hacia Supabase es de 20 s)."
+
+  - name: ktor-jvm
+    rules:
+      - alert: KtorJvmHeapPressure
+        expr: |
+          sum by (replica, profile) (jvm_memory_used_bytes{job="ktor", area="heap"})
+          /
+          sum by (replica, profile) (jvm_memory_max_bytes{job="ktor", area="heap"}) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Heap de {{ $labels.replica }} por encima del 90 % durante 10 minutos"
+          description: "Riesgo de OutOfMemoryError (la JVM sale por -XX:+ExitOnOutOfMemoryError y el contenedor se reinicia)."
+
+      - alert: KtorJvmLongGcPauses
+        expr: sum by (replica) (rate(jvm_gc_pause_seconds_sum{job="ktor"}[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.replica }} dedica mas del 10 % del tiempo a pausas de GC"
+          description: "Heap demasiado justo para la carga: revisar -XX:MaxRAMPercentage y el limite de memoria."

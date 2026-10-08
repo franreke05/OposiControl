@@ -26,7 +26,7 @@ mutate() {
     if cmp -s "$w/$file" "$w/$file.orig"; then echo "TEST FAIL: la mutacion '$desc' no cambio $file (prueba vacua)"; exit 1; fi
     rm "$w/$file.orig"
   fi
-  out="$(OPS_ROOT="$w" bash "$w/scripts/verify-ops-config.sh")" && { echo "TEST FAIL: '$desc' paso"; exit 1; }
+  out="$(OPS_SKIP_DOCKER="${MUTATE_DOCKER_OFF-1}" OPS_ROOT="$w" bash "$w/scripts/verify-ops-config.sh")" && { echo "TEST FAIL: '$desc' paso"; exit 1; }
   echo "$out" | grep -q "^FAIL: .*$expect" || { echo "TEST FAIL: '$desc' no fallo en '$expect':"; echo "$out"; exit 1; }
   [ "$(echo "$out" | grep -c '^FAIL:')" = 1 ] || { echo "TEST FAIL: '$desc' rompio mas de una comprobacion:"; echo "$out"; exit 1; }
 }
@@ -83,4 +83,36 @@ mutate "ci.yml sin la prueba de la puerta (GATE-DIRECT-SUPABASE)" .github/workfl
 mutate "ci.yml con modo de regeneracion del inventario" .github/workflows/ci.yml '$a # INVENTORY_UPDATE=true' "puertas de inventario"
 mutate "manifiesto de rutas ausente (INV-NETWORK-COMPLETE)" ops/inventory/routes.combined.txt @rm "puertas de inventario"
 mutate "registro de rutas sin documentar sin max (OPENAPI-GAPS)" ops/inventory/undocumented-routes.tsv '/^# max: /d' "puertas de inventario"
+# --- Produccion (compose.production, Caddyfile.production, Prometheus/Grafana de produccion) ---
+CP=ops/deploy/compose.production.yaml
+CF=ops/caddy/Caddyfile.production
+mutate "compose sin limite de memoria en ktor-bot-1" $CP '0,/mem_limit: \${BOT_MEM_LIMIT/{/mem_limit: \${BOT_MEM_LIMIT/d}' "todos los servicios con limites"
+mutate "compose: ktor-control sin perfil control" $CP 's/SERVER_PROFILE: control/SERVER_PROFILE: combined/' "ktor-control con SERVER_PROFILE=control"
+mutate "compose: ktor-bot-2 sin heap explicito" $CP '0,/ktor-bot-2:/!s/^\(      JAVA_TOOL_OPTIONS: \${BOT_JAVA_TOOL_OPTIONS:-\)-Djava.awt.headless=true -XX:MaxRAMPercentage=60/\1-Djava.awt.headless=true -XX:Zzz=60/' "ktor-bot-1 y ktor-bot-2 con SERVER_PROFILE=bot"
+mutate "compose: valkey sin limite de CPU" $CP '/^    cpus: 0.25$/d' "todos los servicios con limites"
+mutate "compose: healthcheck deja de usar /health/live" $CP 's#http://127.0.0.1:8080/health/live#http://127.0.0.1:8080/health#' "healthcheck /health/live"
+mutate "compose: sin rotacion de logs" $CP 's/max-size:/max-sz:/' "healthcheck /health/live"
+mutate "compose: prometheus publica un puerto" $CP '/^  prometheus:$/a\    ports:\n      - "9090:9090"' "unico puerto publicado"
+mutate "compose: caddy publica un puerto extra" $CP 's/^      - "80:80"$/      - "80:80"\n      - "8080:8080"/' "unico puerto publicado"
+mutate "compose: env_file dentro del repo" $CP 's#/etc/oposibots/production/backend.env#./backend.env#' "env_file fuera del repo"
+mutate "compose con secreto en claro" $CP 's/^      GF_USERS_ALLOW_SIGN_UP: "false"/      GF_USERS_ALLOW_SIGN_UP: "false"\n      GF_SECURITY_SECRET_KEY: abcdefghijklmnopqrstuvwx/' "no hay secretos en claro"
+if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+  MUTATE_DOCKER_OFF= mutate "compose con propiedad invalida" $CP 's/^    mem_limit: \${CADDY_MEM_LIMIT:-192m}$/&\n    bogus_key: 1/' "compose.production.yaml parsea"
+fi
+mutate "backend.env.example con un valor" ops/deploy/backend.env.example '$a FOO_BAR=1' "backend.env.example: solo nombres"
+mutate "Caddyfile sin bloqueo de /metrics" $CF '/import \/etc\/caddy\/metrics-block.caddy/d' "Caddyfile.production: host por variable"
+mutate "Caddyfile sin 404 por defecto" $CF 's/^\t\thandle {$/\t\thandle @zzz {/' "Caddyfile.production: host por variable"
+mutate "Caddyfile enruta /admin* en bloque" $CF 's# /admin/audit /admin/audit/\* # /admin/* #' "control por rutas explicitas"
+mutate "Caddyfile sin 404 de rutas de desarrollo" $CF '/respond @devonly 404/d' "control por rutas explicitas"
+mutate "Caddyfile sin salud activa en /health/ready" $CF 's#health_uri /health/ready#health_uri /health/live#g' "balanceo least_conn"
+mutate "Caddyfile no reescribe X-Forwarded-For" $CF '/header_up X-Forwarded-For {client_ip}/d' "balanceo least_conn"
+mutate "Caddyfile registra Authorization" $CF '/request>headers>Authorization delete/d' "no registra Authorization"
+M=ops/monitoring/prometheus/prometheus.production.yml
+mutate "prometheus de produccion sin Bearer" $M 's/credentials_file:/# credentials_file:/' "prometheus.production.yml"
+mutate "prometheus de produccion sin etiqueta profile de control" $M 's/^\(\s*\)profile: control/\1pro: control/' "prometheus.production.yml"
+mutate "alerta con metrica inventada" ops/monitoring/prometheus/alert_rules.yml 's/jvm_threads_live_threads/jvm_made_up_metric/;s/jvm_gc_pause_seconds_sum/jvm_made_up_metric/' "solo usan metricas que existen"
+mutate "panel con metrica inventada" ops/monitoring/grafana/dashboards/jvm.json 's/jvm_threads_live_threads/jvm_made_up_metric/' "solo usan metricas que existen"
+mutate "JWT en claro bajo ops" ops/monitoring/prometheus/alert_rules.yml '$a # eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9abcdefghij' "no hay secretos en claro"
+mutate "sin dashboard JVM" ops/monitoring/grafana/dashboards/jvm.json @rm "artefactos de produccion presentes"
+mutate "sin runbook de Cloudflare" docs/engineering/CLOUDFLARE_RUNBOOK.md @rm "artefactos de produccion presentes"
 echo "verify-ops-config.test OK ($n mutaciones)"

@@ -1,0 +1,146 @@
+# Caddyfile de PRODUCCION (borrador versionado, NO desplegado). Topologia:
+#   Cloudflare -> Caddy -> { ktor-bot-1, ktor-bot-2 (pool OposiBot) | ktor-control (OposiControl) } -> Supabase
+#
+# Variables de entorno (las inyecta compose.production.yaml; nada de esto es secreto):
+#   API_HOST      host publico del API (historico: api.oposibots.es). Sin valor por defecto a proposito: si falta, Caddy no arranca.
+# Certificado de origen: Cloudflare Origin CA montado en /etc/caddy/origin/{origin.pem,origin.key} (modo SSL "Full (strict)").
+#
+# Las rutas salen de ops/inventory/routes.combined.txt (manifiesto generado del arbol real de Ktor) y de la seccion 3.7 de
+# PRODUCTION_ROUTE_MATRIX. Si se anade un prefijo de ruta al backend, falla RouteInventoryTest y hay que reflejarlo AQUI:
+# cualquier ruta no listada responde 404 en el borde (deny by default).
+{
+	# Detras de Cloudflare no hay certificados automaticos de Let's Encrypt: se usa el Origin CA. Se conserva la
+	# redireccion http->https de :80 (no emite certificados).
+	auto_https disable_redirects
+	admin off
+
+	servers {
+		# Solo los rangos de Cloudflare (https://www.cloudflare.com/ips/) pueden decir quien es el cliente real.
+		# REFRESCAR esta lista si Cloudflare la cambia (runbook: CLOUDFLARE_RUNBOOK.md, seccion "Rangos de IP").
+		trusted_proxies static 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+		trusted_proxies_strict
+		client_ip_headers CF-Connecting-IP
+
+		timeouts {
+			read_header 10s
+			read_body 130s
+			idle 120s
+		}
+	}
+}
+
+{$API_HOST} {
+	tls /etc/caddy/origin/origin.pem /etc/caddy/origin/origin.key
+
+	# Log de acceso en JSON a stdout (lo rota Docker). NUNCA cabeceras de credenciales ni cookies; se vacian tambien los
+	# parametros de query tipicos de secretos. El cuerpo no se registra nunca.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			request>headers>Authorization delete
+			request>headers>Cookie delete
+			request>headers>Proxy-Authorization delete
+			request>headers>X-Api-Key delete
+			request>headers>Apikey delete
+			resp_headers>Set-Cookie delete
+			request>uri query {
+				delete token
+				delete access_token
+				delete refresh_token
+				delete code
+				delete apikey
+				delete password
+			}
+		}
+	}
+
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	# Id de peticion generado en el borde (no se confia en uno entrante); el cliente lo recibe y lo cita en soporte.
+	header X-Request-Id {http.request.uuid}
+
+	# Tope de cuerpo no multipart (2 MB). Snippet existente; define @bounded y request_body.
+	import /etc/caddy/body-limit.caddy
+
+	# Orden de evaluacion = orden escrito.
+	route {
+		# /metrics NUNCA es publico (snippet existente: 404). Prometheus raspa cada contenedor por la red interna.
+		import /etc/caddy/metrics-block.caddy
+
+		# Control del proceso solo en desarrollo: jamas publico (y desmontado en los perfiles bot/control).
+		@devonly path /admin/backend /admin/backend/* /admin/dev /admin/dev/*
+		respond @devonly 404
+
+		# --- OposiControl (1 instancia): 201 rutas ADMIN, enumeradas. NO se enruta `/admin*` en bloque. ---
+		@control path /api/v1/admin /api/v1/admin/* /admin/audit /admin/audit/* /admin/exam-access /admin/exam-access/* /admin/moderation /admin/moderation/* /admin/news-types /admin/news-types/* /admin/roles /admin/roles/* /admin/settings /admin/settings/* /admin/support /admin/support/* /admin/ticket-wallets /admin/ticket-wallets/* /admin/users /admin/users/* /content/comunidades /content/comunidades/* /content/especialidades /content/especialidades/* /content/etiquetas /content/etiquetas/* /content/noticias /content/noticias/* /content/preguntas /content/preguntas/* /content/rafaga /content/rafaga/* /content/solucionarios /content/solucionarios/* /dashboard/metrics /tags /search /search/reindex
+		handle @control {
+			reverse_proxy ktor-control:8080 {
+				header_up X-Forwarded-For {client_ip}
+				header_up X-Request-Id {http.request.uuid}
+				# Salud pasiva y activa. Una unica instancia: sin alternativa, un 503 de Caddy es el comportamiento correcto.
+				health_uri /health/ready
+				health_interval 15s
+				health_timeout 6s
+				health_status 2xx
+				transport http {
+					dial_timeout 3s
+					# Las subidas multipart pasan por ffmpeg (hasta 120 s, MediaCompression.VIDEO_TIMEOUT_MS) y la
+					# importacion de PDF es sincrona: cabeceras de respuesta hasta 150 s.
+					response_header_timeout 150s
+					keepalive 60s
+				}
+			}
+		}
+
+		# --- OposiBot (pool de 2 replicas sin estado): auth, consumer y catalogo publico compartido. ---
+		@bot path /v1/auth/* /v1/especialidades /v1/examenes /v1/examenes/* /api/v1/app /api/v1/app/*
+		handle @bot {
+			reverse_proxy ktor-bot-1:8080 ktor-bot-2:8080 {
+				lb_policy least_conn
+				lb_retries 2
+				lb_try_duration 3s
+				lb_try_interval 250ms
+				header_up X-Forwarded-For {client_ip}
+				header_up X-Request-Id {http.request.uuid}
+				health_uri /health/ready
+				health_interval 10s
+				health_timeout 6s
+				health_status 2xx
+				fail_duration 30s
+				max_fails 2
+				unhealthy_status 5xx
+				unhealthy_latency 25s
+				transport http {
+					dial_timeout 3s
+					# Ktor corta a Supabase a los 20 s (UPSTREAM_REQUEST_TIMEOUT_MS); 25 s deja margen al 504 propio.
+					response_header_timeout 25s
+					keepalive 60s
+				}
+			}
+		}
+
+		# --- Sondas publicas (liveness/readiness del pool OposiBot; /health legado solo lo consulta el diagnostico). ---
+		@health path /health /health/live /health/ready
+		handle @health {
+			reverse_proxy ktor-bot-1:8080 ktor-bot-2:8080 {
+				lb_policy first
+				header_up X-Forwarded-For {client_ip}
+				transport http {
+					dial_timeout 2s
+					response_header_timeout 8s
+				}
+			}
+		}
+
+		# Deny by default: ninguna otra ruta llega a Ktor.
+		handle {
+			respond 404
+		}
+	}
+}

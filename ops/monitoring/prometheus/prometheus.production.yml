@@ -1,0 +1,39 @@
+# Prometheus del stack de produccion (ops/deploy/compose.production.yaml). Distinto de prometheus.yml (stack de monitoring
+# historico, un solo Ktor). Etiquetas fijas y de cardinalidad minima: service, profile, replica. Nada por usuario ni por ruta
+# dinamica en las etiquetas de scrape.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: production
+
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  # Cada contenedor Ktor se raspa DIRECTAMENTE por la red interna (Caddy bloquea /metrics con 404 hacia fuera).
+  - job_name: ktor
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/metrics_token
+    static_configs:
+      - targets: ["ktor-bot-1:8080"]
+        labels:
+          service: oposibots
+          profile: bot
+          replica: bot-1
+      - targets: ["ktor-bot-2:8080"]
+        labels:
+          service: oposibots
+          profile: bot
+          replica: bot-2
+      - targets: ["ktor-control:8080"]
+        labels:
+          service: oposicontrol
+          profile: control
+          replica: control-1

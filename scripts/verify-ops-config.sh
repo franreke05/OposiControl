@@ -61,4 +61,82 @@ check ".gitattributes fija LF en *.md y ningun .md de docs/README tiene CR suelt
 check "SECURITY.md no niega las metricas Prometheus que existen (MASTER7-QUALITY-001)"   "grep -q 'Prometheus .*/metrics.* does exist' docs/engineering/SECURITY.md && ! grep -Eq 'CallLogging., metrics/tracing' docs/engineering/SECURITY.md"
 check "ci.yml ejecuta las puertas de inventario: sin acceso directo a Supabase (+ su prueba) y sin modo de regeneracion (GATE-DIRECT-SUPABASE, INV-NETWORK-COMPLETE)" \
   "grep -Fxq '      - run: bash scripts/verify-no-direct-supabase.sh' .github/workflows/ci.yml && grep -Fxq '      - run: bash scripts/verify-no-direct-supabase.test.sh' .github/workflows/ci.yml && ! grep -q INVENTORY_UPDATE .github/workflows/ci.yml && test -s ops/inventory/direct-supabase-allowlist.tsv && test -s ops/inventory/routes.combined.txt && test -s ops/inventory/routes.consumer.txt && grep -q '^# max: ' ops/inventory/undocumented-routes.tsv && test -s docs/integration/api-redesign/legacy-route-register.tsv"
+# ---------------------------------------------------------------------------------------------------------------------
+# Produccion (ops/deploy/compose.production.yaml, Caddyfile.production, Prometheus/Grafana de produccion). Estaticas: sin red ni
+# secretos. `docker compose config -q` se usa solo si Docker esta disponible; si no, el resto de comprobaciones estructurales cubre.
+CP=ops/deploy/compose.production.yaml
+# Bloque de un servicio del compose: desde `  <nombre>:` hasta el siguiente servicio o seccion de primer nivel.
+svc() { awk -v s="$1" '$0 ~ ("^  " s ":[[:space:]]*$"){f=1;next} f&&/^  [A-Za-z0-9_-]+:/{f=0} f&&/^[A-Za-z#x]/{f=0} f' "$CP"; }
+# Plantilla `x-ktor` (ancla compartida por los tres Ktor).
+xktor() { awk '/^x-ktor:/{f=1;next} f&&/^[A-Za-z#]/{f=0} f' "$CP"; }
+compose_parses() {
+  if [ -z "${OPS_SKIP_DOCKER:-}" ] && command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    local d; d="$(mktemp -d)"; : >"$d/backend.env"
+    BACKEND_ENV_FILE="$d/backend.env" BACKEND_IMAGE=x:1 API_HOST=api.example.test VALKEY_PASSWORD=x GRAFANA_ADMIN_PASSWORD=x \
+      docker compose -f "$CP" config -q; local rc=$?; rm -rf "$d"; return $rc
+  fi
+  grep -q '^services:' "$CP" && grep -q '^name: ' "$CP"
+}
+ktor_service_ok() { # <servicio> <perfil>
+  local b; b="$(svc "$1")"
+  echo "$b" | grep -Eq '<<:[[:space:]]*\*ktor' && echo "$b" | grep -Eq "^[[:space:]]+SERVER_PROFILE:[[:space:]]*$2[[:space:]]*\$" \
+    \
+    && echo "$b" | grep -Eq 'JAVA_TOOL_OPTIONS:.*MaxRAMPercentage='
+}
+all_limits() { local s; for s in caddy ktor-bot-1 ktor-bot-2 ktor-control valkey prometheus grafana; do
+  svc "$s" | grep -Eq '^[[:space:]]+cpus:' && svc "$s" | grep -Eq '^[[:space:]]+mem_limit:' || return 1; done; }
+only_caddy_publishes() {
+  local s n=0
+  for s in $(grep -E '^  [A-Za-z0-9_-]+:[[:space:]]*$' "$CP" | tr -d ' :'); do
+    if svc "$s" | grep -Eq '^[[:space:]]+ports:'; then [ "$s" = caddy ] || return 1; n=$((n + 1)); fi
+  done
+  [ "$n" = 1 ] && [ "$(svc caddy | grep -Ec '^[[:space:]]+-[[:space:]]*"[0-9]+:[0-9]+"')" = 2 ] \
+    && svc caddy | grep -Fq '"80:80"' && svc caddy | grep -Fq '"443:443"'
+}
+# Nombres de metrica que existen de verdad en el codigo (Micrometer/Ktor). Cualquier otro nombre en alertas o paneles es inventado.
+metrics_known() {
+  local m bad=0
+  # Las lineas de comentario de las reglas pueden nombrar metricas con comodin (`jvm_gc_pause_seconds_*`): no cuentan.
+  for m in $(cat ops/monitoring/grafana/dashboards/*.json ops/monitoring/prometheus/alert_rules.yml | grep -v '^[[:space:]]*#' \
+      | grep -oE '(ktor_http_server_requests_seconds_[a-z]+|jvm_[a-z_]+|legacy_route_requests_total|process_[a-z_]+|system_[a-z_]+)' | sort -u); do
+    case "$m" in
+      ktor_http_server_requests_seconds_count|ktor_http_server_requests_seconds_sum|ktor_http_server_requests_seconds_bucket) ;;
+      jvm_memory_used_bytes|jvm_memory_max_bytes|jvm_gc_pause_seconds_sum|jvm_gc_pause_seconds_count|jvm_threads_live_threads) ;;
+      legacy_route_requests_total) ;;
+      *) echo "metrica desconocida: $m" >&2; bad=1 ;;
+    esac
+  done
+  return $bad
+}
+no_secret_literals() {
+  ! grep -rEn --exclude-dir=secrets --exclude-dir=inventory \
+    -e '^[[:space:]]*"?[A-Z0-9_]*(SECRET|PASSWORD|TOKEN|KEY|DSN)[A-Z0-9_]*"?[:=][[:space:]]*["'"'"']?[A-Za-z0-9+/_.-]{12,}' \
+    -e 'eyJ[A-Za-z0-9_-]{20,}' -e 'sb_secret_[A-Za-z0-9]' -e 'BEGIN [A-Z ]*PRIVATE KEY' -e 'https://[0-9a-f]{16,}@' ops
+}
+check "compose.production.yaml parsea (docker compose config -q si hay Docker; si no, estructura)" "compose_parses"
+check "compose.production: ktor-bot-1 y ktor-bot-2 con SERVER_PROFILE=bot, plantilla x-ktor y heap explicito" \
+  "ktor_service_ok ktor-bot-1 bot && ktor_service_ok ktor-bot-2 bot"
+check "compose.production: ktor-control con SERVER_PROFILE=control, plantilla x-ktor y heap explicito" "ktor_service_ok ktor-control control"
+check "compose.production: todos los servicios con limites cpus y mem_limit" "all_limits"
+check "compose.production: healthcheck /health/live, restart, stop_grace_period y rotacion de logs en la plantilla x-ktor" \
+  "xktor | grep -Fq 'http://127.0.0.1:8080/health/live' && xktor | grep -Eq '^  restart:[[:space:]]*unless-stopped' && xktor | grep -Eq '^  stop_grace_period:' && xktor | grep -Eq '^  logging:' && grep -Eq 'max-size:' \"\$CP\""
+check "compose.production: unico puerto publicado es caddy 80/443" "only_caddy_publishes"
+check "compose.production: env_file fuera del repo (/etc/oposibots/production)" \
+  "xktor | grep -Fq '/etc/oposibots/production/backend.env'"
+check "backend.env.example: solo nombres, ninguna variable con valor" \
+  "test -s ops/deploy/backend.env.example && ! grep -Eq '^[A-Z][A-Z0-9_]*=.+' ops/deploy/backend.env.example && grep -q '^AUTH_RATE_LIMIT_HMAC_SECRET=' ops/deploy/backend.env.example && grep -q '^VALKEY_URL=' ops/deploy/backend.env.example"
+check "Caddyfile.production: host por variable, /metrics bloqueado, tope de cuerpo y 404 por defecto" \
+  "grep -Fq '{\$API_HOST}' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*import /etc/caddy/metrics-block.caddy' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*import /etc/caddy/body-limit.caddy' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*handle \\{\$' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*respond 404\$' ops/caddy/Caddyfile.production"
+check "Caddyfile.production: control por rutas explicitas (no /admin* en bloque) y dev-only /admin/backend, /admin/dev con 404" \
+  "grep -Eq '^[[:space:]]*@control path .*/api/v1/admin/\\*' ops/caddy/Caddyfile.production && ! grep -Eq '^[[:space:]]*@control path .* /admin/?\\*?( |\$)' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*@devonly path .*/admin/backend.*/admin/dev' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*respond @devonly 404' ops/caddy/Caddyfile.production"
+check "Caddyfile.production: balanceo least_conn con salud activa en /health/ready, IP real de Cloudflare y reescritura de X-Forwarded-For" \
+  "grep -Eq 'lb_policy least_conn' ops/caddy/Caddyfile.production && grep -Eq 'health_uri /health/ready' ops/caddy/Caddyfile.production && grep -Eq 'trusted_proxies static .*173\\.245\\.48\\.0/20' ops/caddy/Caddyfile.production && grep -Eq 'client_ip_headers CF-Connecting-IP' ops/caddy/Caddyfile.production && grep -Eq 'header_up X-Forwarded-For \\{client_ip\\}' ops/caddy/Caddyfile.production"
+check "Caddyfile.production: el log de acceso no registra Authorization ni cookies" \
+  "grep -Eq 'request>headers>Authorization delete' ops/caddy/Caddyfile.production && grep -Eq 'request>headers>Cookie delete' ops/caddy/Caddyfile.production"
+check "prometheus.production.yml: scrape de bot-1, bot-2 y control con Bearer y etiquetas service/profile/replica" \
+  "grep -Eq '^[[:space:]]+credentials_file:[[:space:]]*/etc/prometheus/secrets/metrics_token' ops/monitoring/prometheus/prometheus.production.yml && test \"\$(grep -Ec '^[[:space:]]+profile:[[:space:]]*(bot|control)\$' ops/monitoring/prometheus/prometheus.production.yml)\" = 3 && test \"\$(grep -Ec '^[[:space:]]+replica:[[:space:]]' ops/monitoring/prometheus/prometheus.production.yml)\" = 3 && grep -q 'ktor-control:8080' ops/monitoring/prometheus/prometheus.production.yml && grep -q 'ktor-bot-2:8080' ops/monitoring/prometheus/prometheus.production.yml"
+check "alertas y paneles solo usan metricas que existen en el codigo" "metrics_known"
+check "no hay secretos en claro bajo ops/ (JWT, sb_secret_, claves privadas, asignaciones con valor)" "no_secret_literals"
+check "artefactos de produccion presentes (Grafana, runbooks, decisiones)" \
+  "test -s ops/deploy/compose.env.example && test -s ops/monitoring/grafana/provisioning/datasources/prometheus.yml && test -s ops/monitoring/grafana/provisioning/dashboards/dashboards.yml && test -s ops/monitoring/grafana/dashboards/api-overview.json && test -s ops/monitoring/grafana/dashboards/jvm.json && test -s ops/monitoring/grafana/dashboards/dependencies.json && test -s docs/engineering/RUNTIME_DECISIONS.md && test -s docs/engineering/PRODUCTION_RUNBOOK.md && test -s docs/engineering/CLOUDFLARE_RUNBOOK.md"
 exit $fail
