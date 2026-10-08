@@ -1,4 +1,4 @@
-# max: 162
+# max: 156
 # REVIEWED EXCEPTIONS REGISTER: routes served by Ktor that the frozen openapi/ does not declare. NOT a spec: no semantics are invented here.
 # The list can only shrink: a row that is no longer routed or is now documented fails RouteInventoryTest; a new undocumented route fails until it is
 # reviewed and added here (and then `# max:` goes up on purpose). Legacy routes are enrolled, never deleted (no published-client telemetry yet).
@@ -45,21 +45,16 @@ GET	/api/v1/admin/analytics/estudio	ADMIN_CONTRACT_GAP	EP-038 -> D3-14	OC	caller
 GET	/api/v1/admin/analytics/marketing	ADMIN_CONTRACT_GAP	EP-039 -> D3-14	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorProductAnalyticsRepositoryImpl.kt:80 [method unverified]
 GET	/api/v1/admin/analytics/producto	ADMIN_CONTRACT_GAP	EP-040 -> D3-14	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorProductAnalyticsRepositoryImpl.kt:75 [method unverified]
 GET	/api/v1/admin/analytics/retencion	ADMIN_CONTRACT_GAP	EP-041 -> D3-14	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorProductAnalyticsRepositoryImpl.kt:77 [method unverified]
-GET	/api/v1/admin/comercial/productos	ADMIN_CONTRACT_GAP	EP-043	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt:83 [method unverified]
 POST	/api/v1/admin/comercial/productos	ADMIN_CONTRACT_GAP	EP-155 -> D7-18	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt:83 [method unverified]
-GET	/api/v1/admin/comercial/productos/{}/tarifas	ADMIN_CONTRACT_GAP	EP-044 -> D7-17	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-POST	/api/v1/admin/comercial/productos/{}/tarifas	ADMIN_CONTRACT_GAP	EP-156 -> D7-19	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt:63
+GET	/api/v1/admin/comercial/productos/{}/tarifas	ADMIN_CONTRACT_GAP	EP-044 -> D7-17	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending; FA13: successor GET /api/v1/admin/comercial/productos (D7-17, products with their tariffs) is in the spec and routed
+POST	/api/v1/admin/comercial/productos/{}/tarifas	ADMIN_CONTRACT_GAP	EP-156 -> D7-19	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt:63; FA13: successor PUT /api/v1/admin/comercial/productos/{codigo}/tarifas/{periodo}/{fase} (D7-19) is in the spec and routed; this route is unchanged
 GET	/api/v1/admin/dashboard	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-046 -> D3-15	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/DashboardApi.kt:21 via ADMIN_V1_DASHBOARD
-GET	/api/v1/admin/dashboard/overview	ADMIN_CONTRACT_GAP	EP-047	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorDashboardOverviewRepositoryImpl.kt:85 via ADMIN_V1_DASHBOARD_OVERVIEW [method unverified]
 DELETE	/api/v1/admin/examenes/{}/preguntas/{}	ADMIN_CONTRACT_GAP	EP-007 -> D2-32	NONE	no live caller in OC/OB (only a dead BackendRoutes constant; route matrix audit 2026-10-01); retire only after zero telemetry
 POST	/api/v1/admin/feedback/preguntas/{}/resolver	ADMIN_CONTRACT_GAP	EP-165	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorTesterRepositoryImpl.kt:54 via adminV1FeedbackPreguntaResolver
 GET	/api/v1/admin/market/packs	ADMIN_CONTRACT_GAP	EP-059 -> D7-17	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorMarketCatalogRepositoryImpl.kt:42 [method unverified]
 POST	/api/v1/admin/market/packs	ADMIN_CONTRACT_GAP	EP-169 -> D7-18	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorMarketCatalogRepositoryImpl.kt:42 [method unverified]
-GET	/api/v1/admin/market/popups	ADMIN_CONTRACT_GAP	EP-060	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorMarketCatalogRepositoryImpl.kt:66 [method unverified]
 POST	/api/v1/admin/market/popups	ADMIN_CONTRACT_GAP	EP-170	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorMarketCatalogRepositoryImpl.kt:66 [method unverified]
-GET	/api/v1/admin/market/promociones	ADMIN_CONTRACT_GAP	EP-061	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorMarketCatalogRepositoryImpl.kt:58 [method unverified]
 POST	/api/v1/admin/market/promociones	ADMIN_CONTRACT_GAP	EP-171	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorMarketCatalogRepositoryImpl.kt:58 [method unverified]
-GET	/api/v1/admin/market/servicios	ADMIN_CONTRACT_GAP	EP-062	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorMarketCatalogRepositoryImpl.kt:50 [method unverified]
 POST	/api/v1/admin/market/servicios	ADMIN_CONTRACT_GAP	EP-172	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorMarketCatalogRepositoryImpl.kt:50 [method unverified]
 GET	/api/v1/admin/moderacion	ADMIN_CONTRACT_GAP	EP-063 -> D5-25	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending; FA12: successor GET /api/v1/admin/reportes (D5-25) is in the spec and routed; this alias is a thin adapter over the same AdminV1Gateway.listReportes and keeps its {data} wrapper
 GET	/api/v1/admin/moderacion/acciones	ADMIN_CONTRACT_GAP	EP-064 -> D5-23	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
@@ -71,9 +66,8 @@ POST	/api/v1/admin/oposibots/usuarios	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	
 DELETE	/api/v1/admin/oposibots/usuarios/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	BOT-ADMIN-002	NONE	counter legacy_route_requests_total{endpoint="BOT-ADMIN-002"}; no live caller in OC/OB (route matrix audit 2026-10-01); retire only after zero telemetry
 GET	/api/v1/admin/oposibots/usuarios/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	BOT-ADMIN-002 -> D1-23	NONE	counter legacy_route_requests_total{endpoint="BOT-ADMIN-002"}; no live caller in OC/OB (route matrix audit 2026-10-01); retire only after zero telemetry
 PATCH	/api/v1/admin/oposibots/usuarios/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	BOT-ADMIN-002 -> D1-25	NONE	counter legacy_route_requests_total{endpoint="BOT-ADMIN-002"}; no live caller in OC/OB (route matrix audit 2026-10-01); retire only after zero telemetry
-GET	/api/v1/admin/planes	ADMIN_CONTRACT_GAP	EP-072	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-POST	/api/v1/admin/planes	ADMIN_CONTRACT_GAP	EP-175 -> D7-22	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-GET	/api/v1/admin/planes/{}/beneficios	ADMIN_CONTRACT_GAP	EP-073 -> D7-21	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
+POST	/api/v1/admin/planes	ADMIN_CONTRACT_GAP	EP-175 -> D7-22	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending; FA13: successor PUT /api/v1/admin/planes/{codigo} (D7-22) is in the spec and routed; this route is unchanged
+GET	/api/v1/admin/planes/{}/beneficios	ADMIN_CONTRACT_GAP	EP-073 -> D7-21	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending; FA13: successor GET /api/v1/admin/planes (D7-21, plans with their benefits) is in the spec and routed
 POST	/api/v1/admin/planes/{}/beneficios	ADMIN_CONTRACT_GAP	EP-176 -> D7-23	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 GET	/api/v1/admin/preguntas/{}/recursos	ADMIN_CONTRACT_GAP	EP-077	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAdminV1ContentRepositoryImpl.kt:558 via adminV1PreguntaRecursos [method unverified]
 POST	/api/v1/admin/preguntas/{}/recursos	ADMIN_CONTRACT_GAP	EP-179	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAdminV1ContentRepositoryImpl.kt:558 via adminV1PreguntaRecursos [method unverified]
@@ -156,7 +150,7 @@ POST	/content/solucionarios/{}/preguntas	ADMIN_CONTRACT_GAP	EP-207 -> D2-31	NONE
 PUT	/content/solucionarios/{}/preguntas	ADMIN_CONTRACT_GAP	EP-235 -> D2-31	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 DELETE	/content/solucionarios/{}/preguntas/{}	ADMIN_CONTRACT_GAP	EP-021 -> D2-32	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 PUT	/content/solucionarios/{}/preguntas/order	ADMIN_CONTRACT_GAP	EP-236 -> D2-34	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-GET	/dashboard/metrics	ADMIN_CONTRACT_GAP	EP-117 -> D3-15	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
+GET	/dashboard/metrics	ADMIN_CONTRACT_GAP	EP-117 -> D3-15	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending; FA13: successor GET /api/v1/admin/dashboard/overview (D3-15) is in the spec
 GET	/health	INFRA	D8-08	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorConnectionDiagnosticsRepositoryImpl.kt:42 via HEALTH
 GET	/search	ADMIN_CONTRACT_GAP	EP-122 -> D2-35	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 POST	/search/reindex	ADMIN_CONTRACT_GAP	EP-208	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending

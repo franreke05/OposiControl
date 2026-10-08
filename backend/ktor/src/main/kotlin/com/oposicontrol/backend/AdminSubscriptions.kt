@@ -2,6 +2,8 @@ package com.oposicontrol.backend
 
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 
 /**
@@ -17,18 +19,19 @@ import kotlinx.serialization.Serializable
  * periodo y fase, que es lo que permite representar "2,99 €/mes el primer año y
  * 4,99 € al renovar" sin duplicar el plan. Este fichero no los toca.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminPlanDto(
-    val id: String = "",
-    val codigo: String = "",
-    val nombre: String = "",
+    @EncodeDefault val id: String = "",
+    @EncodeDefault val codigo: String = "",
+    @EncodeDefault val nombre: String = "",
     val descripcion: String? = null,
     /** Orden de capacidad: un nivel mayor incluye lo que ofrece el menor. */
-    val nivel: Int = 0,
-    val activo: Boolean = true,
-    val visible: Boolean = true,
-    val posicion: Int = 1,
-    val beneficios: List<AdminPlanBenefitDto> = emptyList(),
+    @EncodeDefault val nivel: Int = 0,
+    @EncodeDefault val activo: Boolean = true,
+    @EncodeDefault val visible: Boolean = true,
+    @EncodeDefault val posicion: Int = 1,
+    @EncodeDefault val beneficios: List<AdminPlanBenefitDto> = emptyList(),
 )
 
 /**
@@ -38,11 +41,12 @@ data class AdminPlanDto(
  * beneficio determina cuál. Rellenar dos deja el beneficio ambiguo y cuál gane
  * dependería de qué lea primero el consumidor.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminPlanBenefitDto(
-    val id: String = "",
-    @SerialName("plan_id") val planId: String = "",
-    @SerialName("codigo_beneficio") val codigoBeneficio: String = "",
+    @EncodeDefault val id: String = "",
+    @EncodeDefault @SerialName("plan_id") val planId: String = "",
+    @EncodeDefault @SerialName("codigo_beneficio") val codigoBeneficio: String = "",
     @SerialName("valor_boolean") val valorBoolean: Boolean? = null,
     @SerialName("valor_integer") val valorInteger: Int? = null,
     @SerialName("valor_numeric") val valorNumeric: Double? = null,

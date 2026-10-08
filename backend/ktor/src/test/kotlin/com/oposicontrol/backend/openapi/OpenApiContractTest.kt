@@ -140,6 +140,15 @@ class OpenApiContractTest {
         "D5-29" to "GET /api/v1/admin/feedback/preguntas/{id}",
         // FA12: suscripciones (admin, solo lectura), TARGET.
         "D7-27" to "GET /api/v1/admin/suscripciones",
+        // FA13: lecturas de catalogo de administracion y resumen del panel, TARGET.
+        "D7-17" to "GET /api/v1/admin/comercial/productos",
+        "D7-21" to "GET /api/v1/admin/planes",
+        "D6-18" to "GET /api/v1/admin/market/servicios",
+        "D6-20" to "GET /api/v1/admin/market/promociones",
+        "D6-22" to "GET /api/v1/admin/market/popups",
+        "D3-15" to "GET /api/v1/admin/dashboard/overview",
+        "D7-22" to "PUT /api/v1/admin/planes/{codigo}",
+        "D7-19" to "PUT /api/v1/admin/comercial/productos/{codigo}/tarifas/{periodo}/{fase}",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
@@ -172,6 +181,11 @@ class OpenApiContractTest {
         "D2-55" to (100L to 25L),
         "D2-61" to (100L to 25L),
         "D4-10" to (200L to 100L),
+        "D7-17" to (100L to 100L),
+        "D7-21" to (100L to 100L),
+        "D6-18" to (100L to 100L),
+        "D6-20" to (100L to 100L),
+        "D6-22" to (100L to 100L),
     )
     private val nestedCursorLists = setOf("D2-56")
 

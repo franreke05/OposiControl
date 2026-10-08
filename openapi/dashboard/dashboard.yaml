@@ -1,0 +1,217 @@
+# ADMIN DASHBOARD contract (FA13): D3-15. The overview the OposiControl home screen already reads, documented as served.
+# Six independent blocks; a block that cannot be computed is absent and named in failedBlocks, and a metric that cannot be
+# computed is null and named in its block, so "unknown" never reaches the client as 0.
+# The legacy GET /api/v1/admin/dashboard and GET /dashboard/metrics are not part of this file.
+components:
+  pathItems:
+    AdminDashboardOverview:
+      get:
+        operationId: getAdminDashboardOverview
+        summary: 'Get the admin dashboard overview'
+        tags: [dashboard-admin]
+        x-contract-id: D3-15
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNKNOWN_DASHBOARD_SECTION, UNAUTHENTICATED, FORBIDDEN]
+        description: 'Bare object (no data wrapper). Six fixed-size blocks: system, attention, pulse, content, activity (the 8 most recent audit entries) and economy. Counts are computed by the database, never by fetching rows. sections selects blocks (comma-separated, case-insensitive); without it all six are computed; an unknown name is 400 UNKNOWN_DASHBOARD_SECTION and the message never repeats the client value. The call answers 200 even when a block fails: the block is then absent and its name is in failedBlocks. Inside a block a metric that could not be read is null and listed in failedMetrics; one the backend cannot compute yet is null and listed in unavailableMetrics or notInstrumented. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: sections
+            in: query
+            required: false
+            description: 'Comma-separated block names: system, attention, pulse, content, activity, economy.'
+            schema:
+              type: string
+        responses:
+          '200':
+            description: 'Dashboard overview.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/DashboardOverview'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'UNKNOWN_DASHBOARD_SECTION.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    DashboardBlockName:
+      type: string
+      enum: [system, attention, pulse, content, activity, economy]
+    MetricGap:
+      type: object
+      description: 'A metric the backend does not compute yet, with the reason.'
+      required: [key, reason]
+      properties:
+        key:
+          type: string
+        reason:
+          type: string
+    DashboardOverview:
+      type: object
+      required: [failedBlocks, generatedAt]
+      properties:
+        system:
+          $ref: '#/components/schemas/DashboardSystem'
+        attention:
+          $ref: '#/components/schemas/DashboardAttention'
+        pulse:
+          $ref: '#/components/schemas/DashboardPulse'
+        content:
+          $ref: '#/components/schemas/DashboardContent'
+        activity:
+          $ref: '#/components/schemas/DashboardActivity'
+        economy:
+          $ref: '#/components/schemas/DashboardEconomy'
+        failedBlocks:
+          type: array
+          description: 'Requested blocks that could not be computed (they are absent from the object).'
+          items:
+            $ref: '#/components/schemas/DashboardBlockName'
+        generatedAt:
+          type: string
+    DashboardSystem:
+      type: object
+      required: [health, generatedAt]
+      properties:
+        health:
+          type: object
+          required: [overallStatus, ktorStatus, supabaseStatus, updatedAt, notInstrumented]
+          properties:
+            overallStatus:
+              type: string
+            ktorStatus:
+              type: string
+            supabaseStatus:
+              type: string
+            updatedAt:
+              type: string
+            supabaseLatencyMs:
+              type: [integer, 'null']
+              minimum: 0
+            notInstrumented:
+              type: array
+              items:
+                type: string
+        generatedAt:
+          type: string
+    DashboardBlockAvailability:
+      type: object
+      description: 'Availability of the metrics of a block. A metric named here is null in the block.'
+      required: [generatedAt, unavailableMetrics, failedMetrics, notInstrumented]
+      properties:
+        generatedAt:
+          type: string
+        unavailableMetrics:
+          type: array
+          items:
+            type: string
+        failedMetrics:
+          type: array
+          items:
+            type: string
+        notInstrumented:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetricGap'
+    DashboardAttention:
+      allOf:
+        - $ref: '#/components/schemas/DashboardBlockAvailability'
+        - type: object
+          required: []
+          properties:
+            reportsPending:
+              type: [integer, 'null']
+            questionFeedbackPending:
+              type: [integer, 'null']
+            draftExams:
+              type: [integer, 'null']
+            subscriptionsExpiring7d:
+              type: [integer, 'null']
+    DashboardPulse:
+      allOf:
+        - $ref: '#/components/schemas/DashboardBlockAvailability'
+        - type: object
+          required: []
+          properties:
+            activeUsers30d:
+              type: [integer, 'null']
+            attemptsLast30d:
+              type: [integer, 'null']
+            publishedExams:
+              type: [integer, 'null']
+            globalErrorRate:
+              type: [number, 'null']
+    DashboardContent:
+      allOf:
+        - $ref: '#/components/schemas/DashboardBlockAvailability'
+        - type: object
+          required: []
+          properties:
+            totalExams:
+              type: [integer, 'null']
+            totalQuestions:
+              type: [integer, 'null']
+            totalResources:
+              type: [integer, 'null']
+            importBatches:
+              type: [integer, 'null']
+    DashboardActivity:
+      type: object
+      required: [entries, droppedEntries, generatedAt]
+      properties:
+        entries:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            required: [id, action, occurredAt]
+            properties:
+              id:
+                type: string
+              action:
+                type: string
+              targetTable:
+                type: [string, 'null']
+              targetId:
+                type: [string, 'null']
+              occurredAt:
+                type: string
+        droppedEntries:
+          type: integer
+          minimum: 0
+          description: 'Audit rows left out because they could not be presented.'
+        generatedAt:
+          type: string
+    DashboardEconomy:
+      allOf:
+        - $ref: '#/components/schemas/DashboardBlockAvailability'
+        - type: object
+          required: []
+          properties:
+            subscriptionsActive:
+              type: [integer, 'null']
+            subscriptionsExpiring30d:
+              type: [integer, 'null']
+            commercialProductsActive:
+              type: [integer, 'null']
+            grossRevenueCents:
+              type: [integer, 'null']
+            ticketsInCirculation:
+              type: [integer, 'null']

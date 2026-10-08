@@ -83,6 +83,9 @@ Checked against the data-free production DDL capture. Nothing below was implemen
 | D8-03, D8-04 support messages | an internal-note column on `mensajes_soporte`; for D8-04 also one function for "message + touch conversation + audit" | internal notes stay rejected with 422 (owner decision 2026-10-01) |
 | D5-28 feedback list (implemented) | `feedback_pregunta` has no resolution note column | `resolucionNota` is always null |
 | D7-27 subscription list (implemented) | `suscripciones` has no cancellation instant column | `canceladaEn` is always null |
+| D6-19 market service upsert | a function that replaces a service and its `efectos_servicio` rows in one transaction | not implemented; the existing save of the service row is unchanged |
+| D7-23 plan benefits replace | a function that replaces the `beneficios_plan` set of a plan in one transaction | not implemented; the existing one-benefit save is unchanged |
+| D7-29 promotion use log (not built yet) | an aggregate for the total discount (no function; row-by-row sums are unbounded) | to decide when it is built: nullable total or a function |
 
 Already known from the plan and unchanged: D5-30 (`feedback_pregunta.revisado_por`), D8-05 (`conversaciones_soporte.asignado_a`), D6-03 (redeem function), D3-14 (aggregate functions), D4-20/D4-21, D5-12, D7-07, D7-30, D1-20.
 
@@ -110,3 +113,24 @@ period (the design defines none).
 - Reports list (D5-25): page size 1..200, default 200 (what the current panel reads in one call); the design says 1..50.
 - Thread list (D5-20): `pendingReports` counts reports on the thread only in the "recent" mode and also reports on its replies in the "reported" mode.
 - Forum reports are matched by the entity types the database actually allows (`publicacion_oposired`, `comentario_oposired`); the previous values could never match, so "reported threads" was always empty.
+
+## 10. Design not defined (product or design owner must say; nothing was guessed)
+
+| Where | Open point | Effect today |
+|---|---|---|
+| D6-06 app popups, D6-22 / D6-23 admin popups | The contracts expose `ctas: [{etiqueta, accion, destino?}]`; the table stores two texts (`cta_principal`, `cta_secundario`). No mapping is defined. | D6-22 returns the two stored texts; D6-23 and D6-06 are not implemented |
+| D6-06 app popups | "Filter by user plan": how the user's plan is compared with `requiere_plan_minimo` (and what a user without a plan sees). | not implemented |
+| D6-22 admin popups | `metricas {mostrados, clicks, conversiones}`: which `popup_usuario_historial.evento` values count for each. | `conMetricas` not offered |
+| D6-21 promotion upsert | Discount types: the design says {porcentaje, importe}; the database allows {porcentaje, cantidad, tickets_extra}. | not implemented; the existing save accepts what the database accepts |
+| D6-20 promotions list | `vigente`: boundary rule of "currently valid" (inclusive or exclusive dates, null dates). | filter not offered |
+| D6-18 services list, D6-19 | Each effect has one `valor` in the design and three typed value columns in the table. | `efectos` not offered |
+| D7-17 products list | `q`: which columns the text search matches. | filter not offered |
+| D7-18 product upsert | Request field names: the design names (`tipo`, `planCodigo`, `etiqueta`) or the names the admin wire already uses (`tipoProducto`, `planId`, `etiquetaPromocional`). | not implemented |
+
+## 11. Defaults taken in the catalog reads and upserts (FA13), to confirm
+
+- Catalog lists return up to 100 rows by default (the design says 50): the current panel asks for the whole catalog in one call.
+- Plan and tariff upserts write the row in one statement and then the audit row; if the audit row fails the call fails, but the
+  row is already saved. Making both a single transaction needs a database function.
+- A plan code or product code in the URL is limited to 64 characters (letters, digits, underscore, dot, hyphen).
+- A tariff saved without `posicion` keeps the position it had (1 for a new one).

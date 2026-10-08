@@ -1,8 +1,11 @@
-# COMMERCE ADMIN read contracts (FA12): D7-27. Admin view of public.suscripciones, read-only.
+# COMMERCE ADMIN read contracts. FA12: D7-27 (admin view of public.suscripciones). FA13: the admin catalog reads D7-17
+# (commercial products), D7-21 (plans), D6-18 (market services), D6-20 (promotions) and D6-22 (popup rules).
 # Subscription state is written by the payment provider flow only (D7-03 and D7-04, DEC-031); there is no admin mutation.
-# Not part of this file: the commercial catalog and plan administration D7-17..D7-23 (their canonical wire differs from the
-# one the OposiControl client reads today and their writes need one database function per command), store mappings D7-20
-# (DEC-031) and the promotion use log D7-29.
+# The five catalog reads are served at the path the OposiControl client already calls: their items keep the field names
+# that client reads and the page only grows (items, total, limit, offset; data duplicates items until the client migrates).
+# FA13 also adds two catalog writes on new paths: D7-22 (plan upsert by codigo) and D7-19 (tariff upsert by product, period
+# and phase). Each is one INSERT .. ON CONFLICT statement on the production UNIQUE constraint, followed by its audit row.
+# Not part of this file: D7-18, D7-23, D6-19, D6-21, D6-23, store mappings D7-20 (DEC-031) and the promotion use log D7-29.
 components:
   pathItems:
     AdminSubscriptions:
@@ -66,6 +69,428 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '502':
             $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminCommercialProducts:
+      get:
+        operationId: listAdminCommercialProducts
+        summary: 'List commercial products with their tariffs (admin)'
+        tags: [commerce-admin]
+        x-contract-id: D7-17
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR]
+        description: 'productos_comerciales ordered by posicion and codigo, each with its tarifas. The item keeps the field names the OposiControl client already reads (tipoProducto, planId, etiquetaPromocional, tarifas); the design names tipo, planCodigo, etiqueta and tariffs are not emitted. Store mappings are not part of the item (D7-20, DEC-031). The design filter q is not offered: the design does not say which columns it matches. OFFSET because the catalog is a small admin grid with a total. Without parameters the whole first page of 100 rows is returned, which is what the current OposiControl client reads; the legacy data array duplicates items until that client migrates. An activo value other than true or false or an unknown tipo is 400 INVALID_FILTER; a non-integer limit or offset is 400 VALIDATION. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: activo
+            in: query
+            required: false
+            schema:
+              type: boolean
+          - name: tipo
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/ProductoTipo'
+          - $ref: '#/components/parameters/LimitCatalog'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'List commercial products with their tariffs (admin).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 100
+                          items:
+                            $ref: '#/components/schemas/ProductoComercial'
+                        data:
+                          type: array
+                          deprecated: true
+                          description: 'Legacy duplicate of items.'
+                          items:
+                            $ref: '#/components/schemas/ProductoComercial'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_FILTER.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminPlans:
+      get:
+        operationId: listAdminPlans
+        summary: 'List subscription plans with their benefits (admin)'
+        tags: [commerce-admin]
+        x-contract-id: D7-21
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR]
+        description: 'planes_suscripcion ordered by posicion, nivel and codigo, each with its beneficios. Prices are not here: they live in the tariffs of the commercial products. The item keeps the field names the admin wire already has (beneficios with snake_case value columns). OFFSET because the catalog is a small admin grid with a total. Without parameters the whole first page of 100 rows is returned, which is what the current OposiControl client reads; the legacy data array duplicates items until that client migrates. An activo value other than true or false is 400 INVALID_FILTER; a non-integer limit or offset is 400 VALIDATION. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: activo
+            in: query
+            required: false
+            schema:
+              type: boolean
+          - $ref: '#/components/parameters/LimitCatalog'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'List subscription plans with their benefits (admin).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 100
+                          items:
+                            $ref: '#/components/schemas/Plan'
+                        data:
+                          type: array
+                          deprecated: true
+                          description: 'Legacy duplicate of items.'
+                          items:
+                            $ref: '#/components/schemas/Plan'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_FILTER.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminMarketServices:
+      get:
+        operationId: listAdminMarketServices
+        summary: 'List market services (admin)'
+        tags: [commerce-admin]
+        x-contract-id: D6-18
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR]
+        description: 'servicios ordered by tipo_servicio and codigo. The item keeps the snake_case field names the OposiControl client already reads. efectos is not part of the item yet: the design gives each effect one valor while efectos_servicio stores three typed value columns, and the mapping is not defined. OFFSET because the catalog is a small admin grid with a total. Without parameters the whole first page of 100 rows is returned, which is what the current OposiControl client reads; the legacy data array duplicates items until that client migrates. An activo value other than true or false is 400 INVALID_FILTER; a non-integer limit or offset is 400 VALIDATION. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: activo
+            in: query
+            required: false
+            schema:
+              type: boolean
+          - $ref: '#/components/parameters/LimitCatalog'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'List market services (admin).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 100
+                          items:
+                            $ref: '#/components/schemas/Servicio'
+                        data:
+                          type: array
+                          deprecated: true
+                          description: 'Legacy duplicate of items.'
+                          items:
+                            $ref: '#/components/schemas/Servicio'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_FILTER.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminMarketPromotions:
+      get:
+        operationId: listAdminMarketPromotions
+        summary: 'List promotions (admin)'
+        tags: [commerce-admin]
+        x-contract-id: D6-20
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR]
+        description: 'promociones ordered by codigo. usos is the number of rows of usos_promocion_usuario of the promotion, counted by the database in the same query. The item keeps the snake_case field names the OposiControl client already reads. The design filter vigente is not offered: its boundary rule is not defined. OFFSET because the catalog is a small admin grid with a total. Without parameters the whole first page of 100 rows is returned, which is what the current OposiControl client reads; the legacy data array duplicates items until that client migrates. An activo value other than true or false is 400 INVALID_FILTER; a non-integer limit or offset is 400 VALIDATION. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: activo
+            in: query
+            required: false
+            schema:
+              type: boolean
+          - $ref: '#/components/parameters/LimitCatalog'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'List promotions (admin).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 100
+                          items:
+                            $ref: '#/components/schemas/Promocion'
+                        data:
+                          type: array
+                          deprecated: true
+                          description: 'Legacy duplicate of items.'
+                          items:
+                            $ref: '#/components/schemas/Promocion'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_FILTER.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminMarketPopups:
+      get:
+        operationId: listAdminMarketPopups
+        summary: 'List commercial popup rules (admin)'
+        tags: [commerce-admin]
+        x-contract-id: D6-22
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, UNAUTHENTICATED, FORBIDDEN, UPSTREAM_ERROR]
+        description: 'reglas_popup_comercial ordered by prioridad (highest first) and codigo. pantalla is an exact match. The item keeps the snake_case field names the OposiControl client already reads, with the two call-to-action texts cta_principal and cta_secundario as stored; the design array ctas and the metricas block (conMetricas) are not offered: their mapping from the stored columns is not defined. OFFSET because the catalog is a small admin grid with a total. Without parameters the whole first page of 100 rows is returned, which is what the current OposiControl client reads; the legacy data array duplicates items until that client migrates. An activo value other than true or false or a pantalla longer than 100 characters is 400 INVALID_FILTER; a non-integer limit or offset is 400 VALIDATION. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: activo
+            in: query
+            required: false
+            schema:
+              type: boolean
+          - name: pantalla
+            in: query
+            required: false
+            schema:
+              type: string
+              maxLength: 100
+          - $ref: '#/components/parameters/LimitCatalog'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'List commercial popup rules (admin).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 100
+                          items:
+                            $ref: '#/components/schemas/PopupRegla'
+                        data:
+                          type: array
+                          deprecated: true
+                          description: 'Legacy duplicate of items.'
+                          items:
+                            $ref: '#/components/schemas/PopupRegla'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_FILTER.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminPlan:
+      put:
+        operationId: upsertAdminPlan
+        summary: 'Create or update a subscription plan by codigo'
+        tags: [commerce-admin]
+        x-contract-id: D7-22
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, MALFORMED_BODY, UNAUTHENTICATED, FORBIDDEN, PLAN_NAME_REQUIRED, PLAN_LEVEL_NEGATIVE, PLAN_LEVEL_OUT_OF_RANGE, PLAN_POSITION_NEGATIVE, PLAN_VISIBLE_BUT_INACTIVE, UPSTREAM_ERROR]
+        description: 'Upsert by the natural key codigo, taken from the path and stored in lower case: INSERT .. ON CONFLICT (codigo) DO UPDATE in one statement, so repeating the request leaves the same plan and never a duplicate. The plan id is assigned by the database on creation and kept on update. An absent or null descripcion clears it. Benefits are not changed here (D7-23). Prices are not here: they live in the tariffs of the commercial products. An audit row (plan_suscripcion_guardado, actor = JWT sub) is written after the statement. Unknown body fields are 400 VALIDATION. 201 when the plan did not exist, 200 otherwise.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/CodigoPath'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanPutRequest'
+        responses:
+          '200':
+            description: 'Updated.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PlanEnvelope'
+          '201':
+            description: 'Created.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PlanEnvelope'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'PLAN_NAME_REQUIRED, PLAN_LEVEL_NEGATIVE, PLAN_LEVEL_OUT_OF_RANGE, PLAN_POSITION_NEGATIVE or PLAN_VISIBLE_BUT_INACTIVE.'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminCommercialProductTariff:
+      put:
+        operationId: upsertAdminCommercialProductTariff
+        summary: 'Create or update one tariff of a commercial product'
+        tags: [commerce-admin]
+        x-contract-id: D7-19
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, MALFORMED_BODY, UNAUTHENTICATED, FORBIDDEN, PRODUCT_NOT_FOUND, TARIFF_PRICE_NEGATIVE, TARIFF_CURRENCY_REQUIRED, TARIFF_POSITION_NEGATIVE, UPSTREAM_ERROR]
+        description: 'Upsert by the natural key (product codigo, periodo, fase), all taken from the path: INSERT .. ON CONFLICT (producto_id, periodo_facturacion, fase_precio) DO UPDATE in one statement, so two tariffs for the same period and phase cannot exist and repeating the request leaves the same tariff. Money is an integer number of cents. An absent posicion leaves the stored one unchanged. An unknown product codigo is 404 PRODUCT_NOT_FOUND; an unknown periodo or fase or an unknown body field is 400 VALIDATION. An audit row (tarifa_producto_guardada, actor = JWT sub) is written after the statement. 201 when the tariff did not exist, 200 otherwise.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/CodigoPath'
+          - name: periodo
+            in: path
+            required: true
+            schema:
+              $ref: '#/components/schemas/TarifaPeriodo'
+          - name: fase
+            in: path
+            required: true
+            schema:
+              $ref: '#/components/schemas/TarifaFase'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TarifaPutRequest'
+        responses:
+          '200':
+            description: 'Updated.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/TarifaEnvelope'
+          '201':
+            description: 'Created.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/TarifaEnvelope'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'PRODUCT_NOT_FOUND.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'TARIFF_PRICE_NEGATIVE, TARIFF_CURRENCY_REQUIRED or TARIFF_POSITION_NEGATIVE.'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+  parameters:
+    CodigoPath:
+      name: codigo
+      in: path
+      required: true
+      description: 'Natural key: 1 to 64 characters, letters, digits, underscore, dot or hyphen, starting with a letter or digit. Anything else is 400 VALIDATION.'
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'
+    LimitCatalog:
+      name: limit
+      in: query
+      required: false
+      description: 'Catalog page size 1..100, default 100 (the current client reads the whole catalog in one call). A non-integer value or a value below 1 is 400 VALIDATION; values above the max are clamped.'
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 100
   headers:
     NoStore:
       description: 'no-store'
@@ -113,3 +538,254 @@ components:
           type: [string, 'null']
           format: date-time
           description: 'null until suscripciones stores the cancellation instant (no such column in production yet).'
+    TarifaPeriodo:
+      type: string
+      description: 'CHECK tarifas_producto_comercial_periodo_facturacion_check.'
+      enum: [mensual, anual, unitario]
+    TarifaFase:
+      type: string
+      description: 'CHECK tarifas_producto_comercial_fase_precio_check.'
+      enum: [first_year, renewal, standard]
+    PlanPutRequest:
+      type: object
+      additionalProperties: false
+      required: [nombre, nivel, activo, visible, posicion]
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+        descripcion:
+          type: [string, 'null']
+        nivel:
+          type: integer
+          minimum: 0
+          maximum: 3
+        activo:
+          type: boolean
+        visible:
+          type: boolean
+          description: 'A visible plan must be active (422 PLAN_VISIBLE_BUT_INACTIVE otherwise).'
+        posicion:
+          type: integer
+          minimum: 0
+    PlanEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/Plan'
+    TarifaPutRequest:
+      type: object
+      additionalProperties: false
+      required: [precioCentimos, moneda, activo, visible]
+      properties:
+        precioCentimos:
+          type: integer
+          minimum: 0
+        moneda:
+          type: string
+          minLength: 1
+          description: 'Stored in upper case.'
+        activo:
+          type: boolean
+        visible:
+          type: boolean
+        posicion:
+          type: [integer, 'null']
+          minimum: 0
+    TarifaEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/Tarifa'
+    ProductoTipo:
+      type: string
+      description: 'Product types of productos_comerciales (CHECK productos_comerciales_tipo_producto_check).'
+      enum: [suscripcion, pack_tickets, compra_examen, servicio, consumible]
+    Tarifa:
+      type: object
+      description: 'A row of tarifas_producto_comercial. Money is an integer number of cents.'
+      required: [id, productoId, periodoFacturacion, fasePrecio, precioCentimos, moneda, activo, visible, posicion]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        productoId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        periodoFacturacion:
+          type: string
+        fasePrecio:
+          type: string
+        precioCentimos:
+          type: integer
+          minimum: 0
+        moneda:
+          type: string
+        activo:
+          type: boolean
+        visible:
+          type: boolean
+        posicion:
+          type: integer
+    ProductoComercial:
+      type: object
+      required: [id, codigo, tipoProducto, nombre, moneda, activo, visible, destacado, posicion, tarifas]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo:
+          type: string
+        tipoProducto:
+          type: string
+          description: 'See ProductoTipo. Open string: clients tolerate unknown values.'
+        nombre:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        planId:
+          type: [string, 'null']
+          format: uuid
+        precioCentimos:
+          type: [integer, 'null']
+          description: 'null when the product is sold through tariffs only.'
+        moneda:
+          type: string
+        cantidadTickets:
+          type: [integer, 'null']
+          description: 'OposiTickets a pack delivers; null when the product is not a pack.'
+        activo:
+          type: boolean
+        visible:
+          type: boolean
+        destacado:
+          type: boolean
+        etiquetaPromocional:
+          type: [string, 'null']
+        posicion:
+          type: integer
+        tarifas:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tarifa'
+    PlanBeneficio:
+      type: object
+      description: 'A row of beneficios_plan. Exactly the value column that applies to the benefit is set.'
+      required: [id, plan_id, codigo_beneficio]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        plan_id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo_beneficio:
+          type: string
+        valor_boolean:
+          type: [boolean, 'null']
+        valor_integer:
+          type: [integer, 'null']
+        valor_numeric:
+          type: [number, 'null']
+        valor_text:
+          type: [string, 'null']
+    Plan:
+      type: object
+      required: [id, codigo, nombre, nivel, activo, visible, posicion, beneficios]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo:
+          type: string
+        nombre:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        nivel:
+          type: integer
+        activo:
+          type: boolean
+        visible:
+          type: boolean
+        posicion:
+          type: integer
+        beneficios:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanBeneficio'
+    Servicio:
+      type: object
+      required: [id, codigo, nombre, tipo_servicio, activo]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo:
+          type: string
+        nombre:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        tipo_servicio:
+          type: string
+          description: 'servicios.tipo_servicio (CHECK servicios_tipo_servicio_check). Open string.'
+        precio_tickets:
+          type: [integer, 'null']
+        precio_centimos:
+          type: [integer, 'null']
+        activo:
+          type: boolean
+    Promocion:
+      type: object
+      required: [id, codigo, nombre, tipo_descuento, valor, activo, usos]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo:
+          type: string
+        nombre:
+          type: string
+        tipo_descuento:
+          type: string
+          description: 'promociones.tipo_descuento (CHECK promociones_tipo_descuento_check: porcentaje, cantidad, tickets_extra). Open string.'
+        valor:
+          type: number
+        activo:
+          type: boolean
+        valido_desde:
+          type: [string, 'null']
+        valido_hasta:
+          type: [string, 'null']
+        usos:
+          type: integer
+          minimum: 0
+    PopupRegla:
+      type: object
+      required: [id, codigo, evento_disparador, titulo, mensaje, prioridad, activo]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo:
+          type: string
+        evento_disparador:
+          type: string
+        titulo:
+          type: string
+        mensaje:
+          type: string
+        cta_principal:
+          type: [string, 'null']
+        cta_secundario:
+          type: [string, 'null']
+        pantalla:
+          type: [string, 'null']
+        momento:
+          type: [string, 'null']
+          description: 'antes, durante, despues, home or bloqueo (CHECK reglas_popup_comercial_momento_check).'
+        requiere_plan_minimo:
+          type: [string, 'null']
+        tipo_examen_objetivo:
+          type: [string, 'null']
+          description: 'rafaga, razonado or inmersivo.'
+        frecuencia_minima_horas:
+          type: [integer, 'null']
+        prioridad:
+          type: integer
+        activo:
+          type: boolean

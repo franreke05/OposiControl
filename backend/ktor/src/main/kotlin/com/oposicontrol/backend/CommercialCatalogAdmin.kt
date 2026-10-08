@@ -2,6 +2,8 @@ package com.oposicontrol.backend
 
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 
 /**
@@ -22,26 +24,27 @@ import kotlinx.serialization.Serializable
  *   es la autoridad; codificar aquí un enum adivinado rompería el guardado en
  *   cuanto la base admitiese un valor más, o rechazaría uno legítimo.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminProductoComercialDto(
-    val id: String = "",
-    val codigo: String = "",
-    val tipoProducto: String = "",
-    val nombre: String = "",
+    @EncodeDefault val id: String = "",
+    @EncodeDefault val codigo: String = "",
+    @EncodeDefault val tipoProducto: String = "",
+    @EncodeDefault val nombre: String = "",
     val descripcion: String? = null,
     val planId: String? = null,
     /** Precio en céntimos. Null cuando el producto sólo se vende por tarifas. */
     val precioCentimos: Int? = null,
-    val moneda: String = "EUR",
+    @EncodeDefault val moneda: String = "EUR",
     /** OposiTickets que entrega un pack. Null si el producto no es un pack. */
     val cantidadTickets: Int? = null,
-    val activo: Boolean = true,
-    val visible: Boolean = true,
+    @EncodeDefault val activo: Boolean = true,
+    @EncodeDefault val visible: Boolean = true,
     /** Marca de catálogo tipo "Más elegido" / "Mejor valor". */
-    val destacado: Boolean = false,
+    @EncodeDefault val destacado: Boolean = false,
     val etiquetaPromocional: String? = null,
-    val posicion: Int = 1,
-    val tarifas: List<AdminTarifaProductoDto> = emptyList(),
+    @EncodeDefault val posicion: Int = 1,
+    @EncodeDefault val tarifas: List<AdminTarifaProductoDto> = emptyList(),
 )
 
 /**
@@ -52,17 +55,18 @@ data class AdminProductoComercialDto(
  * 2,99 €/mes el primer año y 4,99 €/mes al renovar. Sin esas dos dimensiones no
  * se puede representar esa tabla de precios sin duplicar productos.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminTarifaProductoDto(
-    val id: String = "",
-    val productoId: String = "",
-    val periodoFacturacion: String = "",
-    val fasePrecio: String = "",
-    val precioCentimos: Int = 0,
-    val moneda: String = "EUR",
-    val activo: Boolean = true,
-    val visible: Boolean = true,
-    val posicion: Int = 1,
+    @EncodeDefault val id: String = "",
+    @EncodeDefault val productoId: String = "",
+    @EncodeDefault val periodoFacturacion: String = "",
+    @EncodeDefault val fasePrecio: String = "",
+    @EncodeDefault val precioCentimos: Int = 0,
+    @EncodeDefault val moneda: String = "EUR",
+    @EncodeDefault val activo: Boolean = true,
+    @EncodeDefault val visible: Boolean = true,
+    @EncodeDefault val posicion: Int = 1,
 )
 
 @Serializable

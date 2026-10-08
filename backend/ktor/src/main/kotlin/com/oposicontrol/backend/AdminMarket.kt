@@ -2,6 +2,8 @@ package com.oposicontrol.backend
 
 import io.ktor.http.HttpStatusCode
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 
 /**
@@ -47,28 +49,32 @@ data class AdminTicketPackDto(
  * columna ni se codifica aquí la regla económica de los potenciadores, que sigue
  * siendo decisión de producto.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminServiceDto(
-    val id: String = "",
-    val codigo: String = "",
-    val nombre: String = "",
+    @EncodeDefault val id: String = "",
+    @EncodeDefault val codigo: String = "",
+    @EncodeDefault val nombre: String = "",
     val descripcion: String? = null,
-    @SerialName("tipo_servicio") val tipoServicio: String = "",
+    @EncodeDefault @SerialName("tipo_servicio") val tipoServicio: String = "",
     @SerialName("precio_tickets") val precioTickets: Int? = null,
     @SerialName("precio_centimos") val precioCentimos: Int? = null,
-    val activo: Boolean = true,
+    @EncodeDefault val activo: Boolean = true,
 )
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminPromotionDto(
-    val id: String = "",
-    val codigo: String = "",
-    val nombre: String = "",
-    @SerialName("tipo_descuento") val tipoDescuento: String = "",
-    val valor: Double = 0.0,
-    val activo: Boolean = true,
+    @EncodeDefault val id: String = "",
+    @EncodeDefault val codigo: String = "",
+    @EncodeDefault val nombre: String = "",
+    @EncodeDefault @SerialName("tipo_descuento") val tipoDescuento: String = "",
+    @EncodeDefault val valor: Double = 0.0,
+    @EncodeDefault val activo: Boolean = true,
     @SerialName("valido_desde") val validoDesde: String? = null,
     @SerialName("valido_hasta") val validoHasta: String? = null,
+    /** D6-20: usos registrados de la promocion. Solo lectura (lo rellena el listado); null en la respuesta de un guardado. */
+    val usos: Int? = null,
 )
 
 /**
@@ -78,13 +84,14 @@ data class AdminPromotionDto(
  * el disparador, la pantalla, el momento, el plan mínimo y la frecuencia son
  * datos, no código.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminPopupRuleDto(
-    val id: String = "",
-    val codigo: String = "",
-    @SerialName("evento_disparador") val eventoDisparador: String = "",
-    val titulo: String = "",
-    val mensaje: String = "",
+    @EncodeDefault val id: String = "",
+    @EncodeDefault val codigo: String = "",
+    @EncodeDefault @SerialName("evento_disparador") val eventoDisparador: String = "",
+    @EncodeDefault val titulo: String = "",
+    @EncodeDefault val mensaje: String = "",
     @SerialName("cta_principal") val ctaPrincipal: String? = null,
     @SerialName("cta_secundario") val ctaSecundario: String? = null,
     val pantalla: String? = null,
@@ -92,8 +99,8 @@ data class AdminPopupRuleDto(
     @SerialName("requiere_plan_minimo") val requierePlanMinimo: String? = null,
     @SerialName("tipo_examen_objetivo") val tipoExamenObjetivo: String? = null,
     @SerialName("frecuencia_minima_horas") val frecuenciaMinimaHoras: Int? = null,
-    val prioridad: Int = 0,
-    val activo: Boolean = true,
+    @EncodeDefault val prioridad: Int = 0,
+    @EncodeDefault val activo: Boolean = true,
 )
 
 // ---------- Validación ----------

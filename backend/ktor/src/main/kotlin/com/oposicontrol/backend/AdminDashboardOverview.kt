@@ -1,7 +1,9 @@
 package com.oposicontrol.backend
 
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.get
@@ -1087,8 +1089,12 @@ fun Route.adminDashboardOverviewRoutes(gateway: AdminDashboardOverviewGateway) {
                 // donde se sabe qué franja es cuál. `overview` es la ÚNICA
                 // función `suspend` del gateway, y lo es exactamente por eso —
                 // no es el principio de convertir los 13 gateways a `suspend`.
-                is DashboardSectionsSelection.Selected ->
-                    call.respond(gateway.overview(selection.blocks))
+                is DashboardSectionsSelection.Selected -> {
+                    val overview = gateway.overview(selection.blocks)
+                    // D3-15 (FA13): el resumen es del instante en que se pide; nunca se cachea.
+                    call.response.header(HttpHeaders.CacheControl, "no-store")
+                    call.respond(overview)
+                }
             }
         }
     }

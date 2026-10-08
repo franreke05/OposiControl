@@ -1,6 +1,6 @@
 # OpenAPI extension plan (Slices 4-7 and unscheduled contracts)
 
-Status: FA11 implemented (news D4-01..D4-11, wallet reads D6-01/D6-02). FA12 implemented (section 9): moderation reads D5-20, D5-21, D5-22, D5-25, D5-26, D5-28, D5-29 and the admin subscription list D7-27. No migration, no database touched.
+Status: FA11 implemented (news D4-01..D4-11, wallet reads D6-01/D6-02). FA12 implemented (section 9): moderation reads D5-20, D5-21, D5-22, D5-25, D5-26, D5-28, D5-29 and the admin subscription list D7-27. FA13 implemented (section 10): admin catalog reads D7-17, D7-21, D6-18, D6-20, D6-22, dashboard overview D3-15 and the upserts D7-22, D7-19. No migration, no database touched.
 Date: 2026-10-08
 Base: branch `feature/canonical-api-slice-1` at `f3c53d3`
 Scope: every canonical contract of `canonical/contracts.jsonl` (218) that `openapi/` did not declare at the base (123), plus the three public catalog contracts of the first batch that it already declared.
@@ -99,9 +99,9 @@ The 123 are the contracts absent from `openapi/` at the base. FA11 (section 5) m
 | D7-03 | POST | `/api/v1/app/purchases/verify` | 7 | EXTERNAL_BLOCKED | DEC-031 | - | AdminAnalytics.kt, AppV1Routes.kt, AdminDashboardOverview.kt, AdminUserDetail.kt, AdminV1Routes.kt | compras_usuario, suscripciones | OK | needs a real store/provider verifier and credentials; proveedor values come from DEC-031 |
 | D7-04 | POST | `/api/v1/webhooks/payments/{proveedor}` | 7 | PRODUCT_BLOCKED | DEC-031 | - | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminUserDetail.kt, AdminV1Routes.kt, AppV1Routes.kt | suscripciones | MISSING_SCHEMA: provider notification inbox table | - |
 | D7-06 | POST | `/api/v1/app/subscription/trial` | 7 | PRODUCT_BLOCKED | DEC-034 | - | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminUserDetail.kt, AdminV1Routes.kt, AppV1Routes.kt | suscripciones | OK | - |
-| D7-17 | GET | `/api/v1/admin/comercial/productos` | 7 | SPEC_READY | - | `GET /api/v1/admin/comercial/productos/{}/tarifas`, `GET /api/v1/admin/market/packs` | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminV1Routes.kt, AppV1Routes.kt, CatalogGateway.kt | productos_comerciales, productos_store | OK | - |
-| D7-18 | PUT | `/api/v1/admin/comercial/productos/{codigo}` | 7 | SPEC_READY | - | `POST /api/v1/admin/comercial/productos`, `POST /api/v1/admin/market/packs` | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminV1Routes.kt, AppV1Routes.kt, CatalogGateway.kt, Observability.kt | productos_comerciales, auditoria_log | OK | - |
-| D7-19 | PUT | `/api/v1/admin/comercial/productos/{codigo}/tarifas/{periodo}/{fase}` | 7 | SPEC_READY | - | `POST /api/v1/admin/comercial/productos/{}/tarifas` | AdminSubscriptions.kt, AdminV1Routes.kt, AppV1Routes.kt, AdminDashboardOverview.kt, Observability.kt, OposiBotsUserAdminRoutes.kt | tarifas_producto_comercial, auditoria_log | OK | - |
+| D7-17 | GET | `/api/v1/admin/comercial/productos` | 7 | SPEC_READY | - | `GET /api/v1/admin/comercial/productos/{}/tarifas`, `GET /api/v1/admin/market/packs` | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminV1Routes.kt, AppV1Routes.kt, CatalogGateway.kt | productos_comerciales, productos_store | OK | IN SPEC + IMPLEMENTED (FA13). Same path as EP-043 (OC client): OFFSET page, `items` + legacy `data`; item keeps the client names (`tipoProducto`, `planId`, `etiquetaPromocional`, `tarifas`); no `storeMappings` (D7-20), no `q` |
+| D7-18 | PUT | `/api/v1/admin/comercial/productos/{codigo}` | 7 | SPEC_READY | - | `POST /api/v1/admin/comercial/productos`, `POST /api/v1/admin/market/packs` | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminV1Routes.kt, AppV1Routes.kt, CatalogGateway.kt, Observability.kt | productos_comerciales, auditoria_log | OK | NOT IN FA13, implementable: needs the lead to choose the request field names (design `tipo`/`planCodigo`/`etiqueta` vs the names D7-17 emits) |
+| D7-19 | PUT | `/api/v1/admin/comercial/productos/{codigo}/tarifas/{periodo}/{fase}` | 7 | SPEC_READY | - | `POST /api/v1/admin/comercial/productos/{}/tarifas` | AdminSubscriptions.kt, AdminV1Routes.kt, AppV1Routes.kt, AdminDashboardOverview.kt, Observability.kt, OposiBotsUserAdminRoutes.kt | tarifas_producto_comercial, auditoria_log | OK | IN SPEC + IMPLEMENTED (FA13). New path; one `ON CONFLICT (producto_id, periodo_facturacion, fase_precio)` statement + audit row |
 | D7-20 | PUT | `/api/v1/admin/comercial/productos/{codigo}/store-mappings/{proveedor}` | 7 | PRODUCT_BLOCKED | DEC-031 | - | AdminDashboardOverview.kt, AdminV1Routes.kt, Observability.kt, OposiBotsUserAdminRoutes.kt | productos_store, auditoria_log | OK | - |
 | D7-26 | INTERNAL | `(in-process) SubscriptionService.grantPlanContentCredits` | 7 | INTERNAL | - | - | CatalogGateway.kt | creditos_contenido_usuario | OK | in-process, no HTTP |
 | D1-20 | GET | `/api/v1/app/me/referrals` | unscheduled | VALUE_ONLY | DEC-037 | - | - | invitaciones_referido | MISSING_SCHEMA: perfiles_usuario.codigo_referido (stable per-user code) | earnedOt is 0 until the referral reward trigger is decided |
@@ -114,7 +114,7 @@ The 123 are the contracts absent from `openapi/` at the base. FA11 (section 5) m
 | D3-12 | POST | `/api/v1/admin/rendimiento/usuarios/{usuarioId}/reconstruir` | unscheduled | PRODUCT_BLOCKED | DEC-003, DEC-006 | - | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminV1Routes.kt, AppV1Routes.kt, AttemptGateway.kt | respuestas_intento | OK | - |
 | D3-13 | INTERNAL | `in-process: RefreshGlobalQuestionStats (+ exposed as dificultad field in admin question read)` | unscheduled | INTERNAL | - | - | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminV1Routes.kt, AppV1Routes.kt, AttemptGateway.kt | respuestas_intento | OK | in-process, no HTTP |
 | D3-14 | GET | `/api/v1/admin/analytics/{seccion}` | unscheduled | VALUE_ONLY | DEC-009 | `GET /api/v1/admin/analytics/comunidad`, `GET /api/v1/admin/analytics/economia`, `GET /api/v1/admin/analytics/estudio`, `GET /api/v1/admin/analytics/marketing`, `GET /api/v1/admin/analytics/producto`, `GET /api/v1/admin/analytics/retencion` | - | - | MISSING_SCHEMA: one SQL aggregate function per section (only admin_dashboard_active_users and admin_dashboard_economy_totals exist) | notaMediaComunidad nullable |
-| D3-15 | GET | `/api/v1/admin/dashboard/overview` | unscheduled | SPEC_READY | - | `GET /api/v1/admin/dashboard`, `GET /dashboard/metrics` | - | - | n/a | - |
+| D3-15 | GET | `/api/v1/admin/dashboard/overview` | unscheduled | SPEC_READY | - | `GET /api/v1/admin/dashboard`, `GET /dashboard/metrics` | - | - | n/a | IN SPEC + IMPLEMENTED (FA13). Same path as EP-047: the served shape, documented; `Cache-Control: no-store` added |
 | D4-02 | GET | `/api/v1/admin/noticias/{noticiaId}` | unscheduled | SPEC_READY | - | `GET /content/noticias/{}` | AdminGateway.kt, Application.kt, LegacyRoutes.kt, NewsGateway.kt, TagSearchGateway.kt | noticia | OK | - |
 | D4-08 | DELETE | `/api/v1/admin/noticias/{noticiaId}` | unscheduled | SPEC_READY | - | `DELETE /content/noticias/{}` | AdminGateway.kt, Application.kt, LegacyRoutes.kt, NewsGateway.kt, TagSearchGateway.kt | noticia | OK | - |
 | D4-16 | PATCH | `/api/v1/admin/preguntas/{preguntaId}/recursos/{recursoId}` | unscheduled | SPEC_READY | - | `PUT /content/preguntas/{}/recursos/order` | AdminDashboardOverview.kt, AdminV1Routes.kt, Observability.kt, OposiBotsUserAdminRoutes.kt | recursos_pregunta, auditoria_log | OK | - |
@@ -136,30 +136,30 @@ The 123 are the contracts absent from `openapi/` at the base. FA11 (section 5) m
 | D5-29 | GET | `/api/v1/admin/feedback/preguntas/{id}` | unscheduled | SPEC_READY | - | - | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminV1Routes.kt, AppV1Routes.kt | feedback_pregunta | OK | IN SPEC + IMPLEMENTED (FA12). Same path as EP-056: existing wire |
 | D5-31 | PUT | `/api/v1/admin/oposired/categorias/{id}` | unscheduled | PRODUCT_BLOCKED | DEC-023 | - | AdminV1Routes.kt | categorias_oposired | OK | - |
 | D6-04 | POST | `/api/v1/app/wallet/recompensas/{reglaCodigo}/reclamar` | unscheduled | PRODUCT_BLOCKED | DEC-036 | - | - | - | MISSING_SCHEMA: reward rule and claim tables | - |
-| D6-06 | GET | `/api/v1/app/popups` | unscheduled | SPEC_READY | - | - | AdminV1Routes.kt | reglas_popup_comercial, popup_usuario_historial | OK | - |
+| D6-06 | GET | `/api/v1/app/popups` | unscheduled | SPEC_READY | - | - | AdminV1Routes.kt | reglas_popup_comercial, popup_usuario_historial | OK | NOT IN FA13. DESIGN pending: `ctas` mapping and the plan filter rule against `requiere_plan_minimo` are not defined |
 | D6-11 | IN_PROCESS | `internal:ConsumableService.consume` | unscheduled | INTERNAL | DEC-006 | - | - | activaciones_servicio_usuario | OK | in-process; values on the decision |
 | D6-12 | GET | `/api/v1/admin/tickets` | unscheduled | SPEC_READY | - | `GET /admin/ticket-wallets` | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminV1Routes.kt, AdminRankings.kt, AdminUserDetail.kt, AdminUserProfileMapper.kt | carteras_usuario, perfiles_usuario | OK | NOT IN FA12. WIRE_CONFLICT: same path as EP-090, the OC client decodes a bare array |
 | D6-13 | GET | `/api/v1/admin/tickets/{usuarioId}/transacciones` | unscheduled | SPEC_READY | - | `GET /admin/ticket-wallets/{}/transactions` | AdminAnalytics.kt, AdminGateway.kt, AdminOposiTickets.kt, AdminV1Routes.kt, AdminDashboardOverview.kt, Observability.kt | transacciones_cartera, auditoria_log | OK | NOT IN FA12. WIRE_CONFLICT: same path as EP-091, the OC client decodes a bare array |
 | D6-15 | GET | `/api/v1/admin/tickets/resumen` | unscheduled | VALUE_ONLY | DEC-042 | - | AdminAnalytics.kt, AdminGateway.kt, AdminOposiTickets.kt, AdminV1Routes.kt | transacciones_cartera | OK | gastadosEquivalenteCentimos nullable |
-| D6-18 | GET | `/api/v1/admin/market/servicios` | unscheduled | SPEC_READY | - | - | AdminDashboardOverview.kt, AdminMarket.kt, AdminV1Routes.kt, Application.kt | efectos_servicio, servicios | OK | - |
-| D6-19 | POST | `/api/v1/admin/market/servicios` | unscheduled | SPEC_READY | - | - | AdminDashboardOverview.kt, AdminV1Routes.kt, Observability.kt, OposiBotsUserAdminRoutes.kt, AdminMarket.kt, Application.kt | efectos_servicio, auditoria_log, servicios | OK | - |
-| D6-20 | GET | `/api/v1/admin/market/promociones` | unscheduled | SPEC_READY | - | - | AdminMarket.kt, AdminV1Routes.kt | usos_promocion_usuario, promociones | OK | - |
-| D6-21 | POST | `/api/v1/admin/market/promociones` | unscheduled | SPEC_READY | - | - | AdminDashboardOverview.kt, AdminV1Routes.kt, Observability.kt, OposiBotsUserAdminRoutes.kt, AdminMarket.kt | auditoria_log, promociones | OK | - |
-| D6-22 | GET | `/api/v1/admin/market/popups` | unscheduled | SPEC_READY | - | - | AdminV1Routes.kt | reglas_popup_comercial, popup_usuario_historial | OK | - |
-| D6-23 | POST | `/api/v1/admin/market/popups` | unscheduled | SPEC_READY | - | - | AdminV1Routes.kt, AdminDashboardOverview.kt, Observability.kt, OposiBotsUserAdminRoutes.kt | reglas_popup_comercial, auditoria_log | OK | - |
-| D7-05 | GET | `/api/v1/app/me/billing-history` | unscheduled | SPEC_READY | - | `GET /api/v1/app/commercial/purchases`, `GET /api/v1/app/commercial/subscriptions` | AdminAnalytics.kt, AppV1Routes.kt, AdminDashboardOverview.kt, AdminUserDetail.kt, AdminV1Routes.kt | compras_usuario, suscripciones | OK | - |
+| D6-18 | GET | `/api/v1/admin/market/servicios` | unscheduled | SPEC_READY | - | - | AdminDashboardOverview.kt, AdminMarket.kt, AdminV1Routes.kt, Application.kt | efectos_servicio, servicios | OK | IN SPEC + IMPLEMENTED (FA13). Same path as EP-062: OFFSET page, `items` + legacy `data`; `efectos` not offered (value mapping undefined) |
+| D6-19 | POST | `/api/v1/admin/market/servicios` | unscheduled | SPEC_READY | - | - | AdminDashboardOverview.kt, AdminV1Routes.kt, Observability.kt, OposiBotsUserAdminRoutes.kt, AdminMarket.kt, Application.kt | efectos_servicio, auditoria_log, servicios | OK | NOT IN FA13. NEEDS_SCHEMA: no database function replaces a service and its effects in one transaction; the effect `valor` mapping is also undefined |
+| D6-20 | GET | `/api/v1/admin/market/promociones` | unscheduled | SPEC_READY | - | - | AdminMarket.kt, AdminV1Routes.kt | usos_promocion_usuario, promociones | OK | IN SPEC + IMPLEMENTED (FA13). Same path as EP-061: OFFSET page, `items` + legacy `data`, `usos`; filter `vigente` not offered (boundary rule undefined) |
+| D6-21 | POST | `/api/v1/admin/market/promociones` | unscheduled | SPEC_READY | - | - | AdminDashboardOverview.kt, AdminV1Routes.kt, Observability.kt, OposiBotsUserAdminRoutes.kt, AdminMarket.kt | auditoria_log, promociones | OK | NOT IN FA13. DESIGN/SCHEMA conflict: the design enum is {porcentaje, importe}, production CHECK `promociones_tipo_descuento_check` is {porcentaje, cantidad, tickets_extra} |
+| D6-22 | GET | `/api/v1/admin/market/popups` | unscheduled | SPEC_READY | - | - | AdminV1Routes.kt | reglas_popup_comercial, popup_usuario_historial | OK | IN SPEC + IMPLEMENTED (FA13). Same path as EP-060: OFFSET page, `items` + legacy `data`, filter `pantalla`; `ctas` and `metricas` not offered (mapping undefined) |
+| D6-23 | POST | `/api/v1/admin/market/popups` | unscheduled | SPEC_READY | - | - | AdminV1Routes.kt, AdminDashboardOverview.kt, Observability.kt, OposiBotsUserAdminRoutes.kt | reglas_popup_comercial, auditoria_log | OK | NOT IN FA13. DESIGN pending: `ctas` is required by the command and has no defined mapping to `cta_principal` / `cta_secundario` |
+| D7-05 | GET | `/api/v1/app/me/billing-history` | unscheduled | SPEC_READY | - | `GET /api/v1/app/commercial/purchases`, `GET /api/v1/app/commercial/subscriptions` | AdminAnalytics.kt, AppV1Routes.kt, AdminDashboardOverview.kt, AdminUserDetail.kt, AdminV1Routes.kt | compras_usuario, suscripciones | OK | NOT IN FA13, implementable (consumer plane; one keyset over two tables) |
 | D7-07 | POST | `/api/v1/app/subscription/cancellation-intent` | unscheduled | SPEC_READY | - | - | - | - | MISSING_SCHEMA: cancellation feedback table | - |
 | D7-10 | POST | `/api/v1/app/promotions/quote` | unscheduled | PRODUCT_BLOCKED | DEC-031 | - | AdminMarket.kt, AdminV1Routes.kt | promociones | OK | - |
 | D7-13 | GET | `/api/v1/app/me/payment-methods` | unscheduled | PRODUCT_BLOCKED | DEC-031 | - | - | - | MISSING_SCHEMA: payment method reference table | - |
 | D7-14 | POST | `/api/v1/app/me/payment-methods` | unscheduled | PRODUCT_BLOCKED | DEC-031 | - | - | - | MISSING_SCHEMA: payment method reference table | - |
 | D7-15 | DELETE | `/api/v1/app/me/payment-methods/{id}` | unscheduled | PRODUCT_BLOCKED | DEC-031 | - | - | - | MISSING_SCHEMA: payment method reference table | - |
 | D7-16 | PUT | `/api/v1/app/me/payment-methods/default` | unscheduled | PRODUCT_BLOCKED | DEC-031 | - | - | - | MISSING_SCHEMA: payment method reference table | - |
-| D7-21 | GET | `/api/v1/admin/planes` | unscheduled | SPEC_READY | - | `GET /api/v1/admin/planes/{}/beneficios` | AdminSubscriptions.kt, AdminV1Routes.kt, AppV1Routes.kt, CatalogGateway.kt | planes_suscripcion, beneficios_plan | OK | - |
-| D7-22 | PUT | `/api/v1/admin/planes/{codigo}` | unscheduled | SPEC_READY | - | `POST /api/v1/admin/planes` | AdminSubscriptions.kt, AdminV1Routes.kt, AppV1Routes.kt, CatalogGateway.kt, AdminDashboardOverview.kt, Observability.kt | planes_suscripcion, auditoria_log | OK | - |
-| D7-23 | PUT | `/api/v1/admin/planes/{codigo}/beneficios` | unscheduled | SPEC_READY | - | `POST /api/v1/admin/planes/{}/beneficios` | AdminSubscriptions.kt, AdminV1Routes.kt, AppV1Routes.kt, AdminDashboardOverview.kt, Observability.kt, OposiBotsUserAdminRoutes.kt | beneficios_plan, auditoria_log | OK | - |
+| D7-21 | GET | `/api/v1/admin/planes` | unscheduled | SPEC_READY | - | `GET /api/v1/admin/planes/{}/beneficios` | AdminSubscriptions.kt, AdminV1Routes.kt, AppV1Routes.kt, CatalogGateway.kt | planes_suscripcion, beneficios_plan | OK | IN SPEC + IMPLEMENTED (FA13). Same path as EP-072: OFFSET page, `items` + legacy `data` |
+| D7-22 | PUT | `/api/v1/admin/planes/{codigo}` | unscheduled | SPEC_READY | - | `POST /api/v1/admin/planes` | AdminSubscriptions.kt, AdminV1Routes.kt, AppV1Routes.kt, CatalogGateway.kt, AdminDashboardOverview.kt, Observability.kt | planes_suscripcion, auditoria_log | OK | IN SPEC + IMPLEMENTED (FA13). New path; one `ON CONFLICT (codigo)` statement + audit row |
+| D7-23 | PUT | `/api/v1/admin/planes/{codigo}/beneficios` | unscheduled | SPEC_READY | - | `POST /api/v1/admin/planes/{}/beneficios` | AdminSubscriptions.kt, AdminV1Routes.kt, AppV1Routes.kt, AdminDashboardOverview.kt, Observability.kt, OposiBotsUserAdminRoutes.kt | beneficios_plan, auditoria_log | OK | NOT IN FA13. NEEDS_SCHEMA: no database function replaces the benefit set of a plan in one transaction |
 | D7-24 | INTERNAL | `(in-process) ReferralService.grantReward` | unscheduled | INTERNAL | DEC-037 | - | AdminAnalytics.kt, AdminGateway.kt, AdminOposiTickets.kt, AdminV1Routes.kt | invitaciones_referido, transacciones_cartera | OK | in-process; behaviour blocked by the decision |
 | D7-27 | GET | `/api/v1/admin/suscripciones` | unscheduled | SPEC_READY | - | - | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminUserDetail.kt, AdminV1Routes.kt, AppV1Routes.kt | suscripciones | OK | IN SPEC + IMPLEMENTED (FA12). New path; `canceladaEn` null (suscripciones has no cancellation instant column); no keyset index on (inicio_en desc, id), admin-only table |
-| D7-29 | GET | `/api/v1/admin/market/promociones/{id}/usos` | unscheduled | SPEC_READY | - | - | - | usos_promocion_usuario | OK | - |
+| D7-29 | GET | `/api/v1/admin/market/promociones/{id}/usos` | unscheduled | SPEC_READY | - | - | - | usos_promocion_usuario | OK | NOT IN FA13, implementable (the `descuentoTotalCentimos` sum needs an aggregate; no function exists) |
 | D7-30 | GET | `/api/v1/admin/pagos/notificaciones` | unscheduled | SPEC_READY | - | - | - | - | MISSING_SCHEMA: provider notification inbox table | reads the provider notification inbox, which only D7-04 (DEC-031) fills |
 | D8-02 | GET | `/api/v1/admin/soporte/conversaciones` | unscheduled | SPEC_READY | - | `GET /admin/support/conversations`, `GET /api/v1/admin/soporte` | AdminV1Routes.kt | conversaciones_soporte, mensajes_soporte | OK | NOT IN FA12. WIRE_CONFLICT: same path as EP-088, the OC client decodes a bare array with other field names. NEEDS_SCHEMA for `asignadoA` (conversaciones_soporte.asignado_a) |
 | D8-03 | GET | `/api/v1/admin/soporte/conversaciones/{id}/mensajes` | unscheduled | SPEC_READY | - | `GET /admin/support/conversations/{}/messages` | AdminV1Routes.kt | mensajes_soporte | OK | NOT IN FA12. WIRE_CONFLICT: same path as EP-089, the OC client decodes a bare array. NEEDS_SCHEMA for `esNotaInterna` (mensajes_soporte has no internal-note column) |
@@ -342,6 +342,65 @@ Finding that the classification of section 3 missed: for most admin contracts of
 |---|---|---|
 | Lint | `npx --no-install --prefix tools/redocly redocly lint openapi/root.yaml --config openapi/redocly.yaml` | PASS (the same 3 explicitly ignored problems) |
 | Backend tests | `./gradlew :backend:ktor:test --console=plain` | 1691 tests, 1690 passed, 1 failed (the expected tripwire `openApiIsFrozenNothingUnderOpenapiDiffersFromHead`, which fails while `openapi/` differs from HEAD) |
+| Direct Supabase access | `bash scripts/verify-no-direct-supabase.sh` | PASS |
+| Ops config | `bash scripts/verify-ops-config.sh` | PASS |
+
+No migration was added, so the database gates were not run.
+
+## 10. Third batch: FA13 (implemented in this change)
+
+### 10.1 What is in the spec and served
+
+| Contract | File | x-slice | Pagination / idempotency | Notes |
+|---|---|---|---|---|
+| D7-17 `GET /api/v1/admin/comercial/productos` | `openapi/commerce/commerce.yaml` | null | OFFSET, limit 1..100 default 100 | filters `tipo`, `activo`; tariffs fetched for the products of the page only |
+| D7-21 `GET /api/v1/admin/planes` | commerce.yaml | null | OFFSET, 1..100 default 100 | filter `activo`; benefits fetched for the plans of the page only |
+| D6-18 `GET /api/v1/admin/market/servicios` | commerce.yaml | null | OFFSET, 1..100 default 100 | filter `activo` |
+| D6-20 `GET /api/v1/admin/market/promociones` | commerce.yaml | null | OFFSET, 1..100 default 100 | filter `activo`; `usos` counted by the database in the same query |
+| D6-22 `GET /api/v1/admin/market/popups` | commerce.yaml | null | OFFSET, 1..100 default 100 | filters `activo`, `pantalla` |
+| D3-15 `GET /api/v1/admin/dashboard/overview` | `openapi/dashboard/dashboard.yaml` | null | NONE | the served six-block shape; `sections`; 400 `UNKNOWN_DASHBOARD_SECTION` |
+| D7-22 `PUT /api/v1/admin/planes/{codigo}` | commerce.yaml | null | NATURAL (upsert by `codigo`) | 201 or 200, `{data: plan}`, audit `plan_suscripcion_guardado` |
+| D7-19 `PUT /api/v1/admin/comercial/productos/{codigo}/tarifas/{periodo}/{fase}` | commerce.yaml | 7 | NATURAL (upsert by product, period, phase) | 201 or 200, `{data: tariff}`, 404 `PRODUCT_NOT_FOUND`, audit `tarifa_producto_guardada` |
+
+All eight are `x-implementation: TARGET`. Code: `AdminCatalogReads.kt` (page envelope, request parsing, the two commands) and `AdminV1Gateway` (`pageProductosComerciales`, `pagePlanes`, `pageServices`, `pagePromotions`, `pagePopupRules`, `putPlan`, `putTarifa`); handlers in `AdminV1Routes.kt`; the overview route only gains its cache header. Tests: `AdminCatalogReadRoutesTest` (13) and `AdminCatalogWriteRoutesTest` (8). The legacy POST routes of the current client (`POST /api/v1/admin/planes`, `POST .../productos/{id}/tarifas`) are unchanged.
+
+### 10.2 How the design was mapped (decisions taken, reversible)
+
+- **The five catalog reads keep the client's field names** (lead instruction): camelCase product and tariff fields (`tipoProducto`, `planId`, `etiquetaPromocional`, `tarifas`), snake_case service, promotion, popup and benefit fields. The design names (`tipo`, `planCodigo`, `etiqueta`, `tariffs`, `benefits`, `valueBool`...) are not emitted.
+- **Default page size 100, not 50.** The current client asks for the whole catalog without parameters; before this change the read was unbounded. A default of 100 (the maximum) keeps today's catalogs complete and `total` shows when one stops fitting.
+- Fields the client already received only when different from their default are now always emitted (`@EncodeDefault`).
+- Left out because the design does not define them (section 10 of PRODUCT_DECISIONS_PENDING.md): `q` (D7-17), `storeMappings` (D7-17, DEC-031), `efectos` (D6-18), `vigente` (D6-20), `ctas` and `conMetricas`/`metricas` (D6-22).
+- D7-22 and D7-19 are each ONE `INSERT .. ON CONFLICT` statement on a production UNIQUE constraint, then the audit row (mandatory: a failed audit write is a 5xx, never a silent success). The design asks for statement and audit row in one database transaction; that needs a database function, which does not exist. The existing POST routes already write the same tables the same way. If the lead reads "money or entitlements" as covering price and plan DEFINITIONS, these two must move behind a function.
+- The bodies of D7-22 and D7-19 are parsed by a strict hand-written parser (unknown, missing or mistyped field is 400), not as `@CanonicalCommand` DTOs: the architecture rule for those DTOs forbids by NAME a field called `posicion` (it means ranking position there), and here `posicion` is the display order the contract requires. The news commands follow the same route. The lead may prefer to teach the rule the difference.
+- D7-22: the optional `If-Match` of the design family is not offered (no version column is exposed by the plan read). The path `codigo` is limited to 64 characters of letters, digits, `_`, `.`, `-`.
+- D3-15: `x-error-codes` lists the code the route already answers (`UNKNOWN_DASHBOARD_SECTION`); the design row only says 401, 403, 503.
+
+### 10.3 Not implemented in FA13
+
+| Contract | Class | Why |
+|---|---|---|
+| D6-19 | NEEDS_SCHEMA | no database function replaces a service and its effects in one transaction |
+| D7-23 | NEEDS_SCHEMA | no database function replaces the benefit set of a plan in one transaction |
+| D6-21 | DESIGN vs SCHEMA | design enum {porcentaje, importe}; production CHECK {porcentaje, cantidad, tickets_extra} |
+| D6-23 | DESIGN pending | `ctas` required, no mapping to `cta_principal` / `cta_secundario` |
+| D6-06 | DESIGN pending | `ctas` mapping and the plan filter rule are not defined |
+
+### 10.4 Implementable, not reached
+
+D7-18 (needs the request field names chosen), D7-29, D7-05. Count: 3.
+
+### 10.5 Proposed amendment row FA13 (text for CONTRACT_FREEZE.md, OposiBot repo)
+
+| ID | Fecha | Contrato / fichero | Cambio | Motivo | DEC |
+|---|---|---|---|---|---|
+| FA13 | 2026-10-08 | `openapi/commerce/commerce.yaml` (D7-17, D7-21, D6-18, D6-20, D6-22, D7-22, D7-19 anadidos junto a D7-27); NUEVO `openapi/dashboard/dashboard.yaml` (D3-15); `root.yaml` (8 paths, tag `dashboard-admin`, una frase en `info.description`) | AMPLIACION ADITIVA, sin tocar ninguna operacion ni schema congelado: 8 operaciones nuevas, todas `x-implementation: TARGET`. Cinco lecturas de catalogo OFFSET en la ruta que ya llama OposiControl (`items` + duplicado legacy `data`, `total`, `limit` 1..100 defecto 100, `offset`), con los nombres de campo que ese cliente ya lee; resumen del panel tal como se sirve (D3-15); dos upserts por clave natural en rutas nuevas (D7-22 por `codigo`, D7-19 por producto, periodo y fase), 201 o 200 con `{data}`. Manifiesto `freeze-manifest.sha256` regenerado (1 fichero nuevo, 2 cambiados) y `OpenApiContractTest` ampliado (8 rutas; las cinco lecturas en `offsetLists`). `undocumented-routes.tsv` baja de 162 a 156 | Contratos con el cable determinado por el diseno y por lo que ya se sirve, sobre tablas y restricciones UNIQUE que existen en produccion | FUERA: D6-19 y D7-23 (falta funcion atomica), D6-21 (enum del diseno distinto del CHECK), D6-23 y D6-06 (mapeo de `ctas` y regla de plan sin definir), D7-20 (DEC-031). Ratificacion del lead pendiente |
+
+### 10.6 Gates (2026-10-08, working tree, NOT committed)
+
+| Gate | Command | Result |
+|---|---|---|
+| Lint | `npx --no-install --prefix tools/redocly redocly lint openapi/root.yaml --config openapi/redocly.yaml` | PASS (the same 3 explicitly ignored problems) |
+| Backend tests | `./gradlew :backend:ktor:test --console=plain` | 1712 tests, 1711 passed, 1 failed (the expected tripwire `openApiIsFrozenNothingUnderOpenapiDiffersFromHead`) |
 | Direct Supabase access | `bash scripts/verify-no-direct-supabase.sh` | PASS |
 | Ops config | `bash scripts/verify-ops-config.sh` | PASS |
 

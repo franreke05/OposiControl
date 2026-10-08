@@ -1489,10 +1489,26 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         // aquí cambia la app sin desplegar nada.
         route("/comercial") {
             route("/productos") {
-                get { call.respond(AdminProductosComercialesResponse(withUpstreamIo { gateway.listProductosComerciales() })) }
+                // D7-17 (FA13): pagina OFFSET + filtros `tipo`/`activo`; `data` duplica `items` para el cliente actual.
+                get {
+                    val query = AdminCatalogQueries.parse(call.request.queryParameters, withTipo = true)
+                    val page = withUpstreamIo { gateway.pageProductosComerciales(query) }
+                    call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                    call.respond(page)
+                }
                 post {
                     val body = call.receive<AdminProductoComercialDto>()
                     call.respond(AdminProductoComercialResponse(withUpstreamIo { gateway.upsertProductoComercial(body) }))
+                }
+                // D7-19 (FA13): alta o cambio de UNA tarifa por su clave natural (producto, periodo, fase).
+                put("/{codigo}/tarifas/{periodo}/{fase}") {
+                    val codigo = AdminCatalogCommands.codigo(call.requiredPath("codigo"))
+                    val periodo = AdminCatalogCommands.periodo(call.requiredPath("periodo"))
+                    val fase = AdminCatalogCommands.fase(call.requiredPath("fase"))
+                    val body = AdminCatalogCommands.tarifa(call.canonicalRawBody().also { call.requireJsonContentIfBody(it) })
+                    val saved = withUpstreamIo { gateway.putTarifa(codigo, periodo, fase, body) }
+                    call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                    call.respond(if (saved.created) HttpStatusCode.Created else HttpStatusCode.OK, AdminTarifaProductoResponse(saved.value))
                 }
                 route("/{productoId}/tarifas") {
                     get {
@@ -1510,10 +1526,24 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         // Planes de suscripción y sus beneficios. Los precios NO están aquí:
         // viven en tarifas_producto_comercial, por periodo y fase.
         route("/planes") {
-            get { call.respond(AdminPlansResponse(withUpstreamIo { gateway.listPlanes() })) }
+            // D7-21 (FA13).
+            get {
+                val query = AdminCatalogQueries.parse(call.request.queryParameters)
+                val page = withUpstreamIo { gateway.pagePlanes(query) }
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(page)
+            }
             post {
                 val body = call.receive<AdminPlanDto>()
                 call.respond(AdminPlanResponse(withUpstreamIo { gateway.upsertPlan(body) }))
+            }
+            // D7-22 (FA13): alta o cambio de un plan por su clave natural `codigo`.
+            put("/{codigo}") {
+                val codigo = AdminCatalogCommands.codigo(call.requiredPath("codigo"))
+                val body = AdminCatalogCommands.plan(call.canonicalRawBody().also { call.requireJsonContentIfBody(it) })
+                val saved = withUpstreamIo { gateway.putPlan(codigo, body) }
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(if (saved.created) HttpStatusCode.Created else HttpStatusCode.OK, AdminPlanResponse(saved.value))
             }
             route("/{planId}/beneficios") {
                 get {
@@ -1538,21 +1568,39 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 }
             }
             route("/servicios") {
-                get { call.respond(AdminServicesResponse(withUpstreamIo { gateway.listServices() })) }
+                // D6-18 (FA13).
+                get {
+                    val query = AdminCatalogQueries.parse(call.request.queryParameters)
+                    val page = withUpstreamIo { gateway.pageServices(query) }
+                    call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                    call.respond(page)
+                }
                 post {
                     val body = call.receive<AdminServiceDto>()
                     call.respond(AdminServiceResponse(withUpstreamIo { gateway.upsertService(body) }))
                 }
             }
             route("/promociones") {
-                get { call.respond(AdminPromotionsResponse(withUpstreamIo { gateway.listPromotions() })) }
+                // D6-20 (FA13).
+                get {
+                    val query = AdminCatalogQueries.parse(call.request.queryParameters)
+                    val page = withUpstreamIo { gateway.pagePromotions(query) }
+                    call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                    call.respond(page)
+                }
                 post {
                     val body = call.receive<AdminPromotionDto>()
                     call.respond(AdminPromotionResponse(withUpstreamIo { gateway.upsertPromotion(body) }))
                 }
             }
             route("/popups") {
-                get { call.respond(AdminPopupRulesResponse(withUpstreamIo { gateway.listPopupRules() })) }
+                // D6-22 (FA13).
+                get {
+                    val query = AdminCatalogQueries.parse(call.request.queryParameters, withPantalla = true)
+                    val page = withUpstreamIo { gateway.pagePopupRules(query) }
+                    call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                    call.respond(page)
+                }
                 post {
                     val body = call.receive<AdminPopupRuleDto>()
                     call.respond(AdminPopupRuleResponse(withUpstreamIo { gateway.upsertPopupRule(body) }))
@@ -7255,6 +7303,32 @@ class AdminV1Gateway private constructor(
         }
     }
 
+    /**
+     * D7-17: una pagina del catalogo (mismo orden que [listProductosComerciales]) con el total exacto del filtro en la misma
+     * peticion. Las tarifas se piden SOLO para los productos de la pagina (ids que devuelve la base).
+     */
+    internal fun pageProductosComerciales(query: AdminCatalogQuery): AdminCatalogPage<AdminProductoComercialDto> {
+        val tipoFilter = query.tipo?.let {
+            require(it in AdminCatalogQueries.PRODUCT_TIPOS) { "tipo no valido." }
+            "&tipo_producto=eq.$it"
+        }.orEmpty()
+        val page = transport.getPage(
+            "/rest/v1/productos_comerciales?select=*${query.activoFilter}$tipoFilter&order=posicion.asc,codigo.asc${query.range}",
+        )
+        val productos = page.body.decodeList<ProductoComercialRow>()
+        val ids = productos.map { it.id }.filter { it.isUuid() }
+        val tarifas = if (ids.isEmpty()) {
+            emptyMap()
+        } else {
+            request(
+                "GET",
+                "/rest/v1/tarifas_producto_comercial?select=*&producto_id=in.(${ids.joinToString(",")})&order=posicion.asc",
+                null,
+            ).decodeList<TarifaProductoRow>().groupBy { it.productoId }
+        }
+        return AdminCatalogPage.of(productos.map { p -> p.toDto(tarifas[p.id].orEmpty().map { it.toDto() }) }, page.total, query)
+    }
+
     fun upsertProductoComercial(input: AdminProductoComercialDto): AdminProductoComercialDto {
         val valid = input.validated()
         val id = valid.id.ifBlank { UUID.randomUUID().toString() }
@@ -7423,6 +7497,129 @@ class AdminV1Gateway private constructor(
         return planes.map { plan -> plan.toDto(beneficiosPorPlan[plan.id].orEmpty()) }
     }
 
+    /**
+     * D7-22: upsert de un plan por `codigo` (en minusculas, como ya lo normaliza [validated]) en UNA sentencia
+     * (`INSERT .. ON CONFLICT (codigo) DO UPDATE`): repetir la misma peticion deja el mismo plan, sin duplicados y sin la
+     * carrera leer-luego-escribir. El id no viaja: lo pone la base al crear y se conserva al actualizar. `descripcion` ausente
+     * o null la BORRA (se envia el null explicito). La lectura previa solo decide 200 frente a 201.
+     */
+    internal fun putPlan(rawCodigo: String, cmd: PlanPutCommand): CatalogUpsert<AdminPlanDto> {
+        val valid = AdminPlanDto(
+            codigo = rawCodigo,
+            nombre = cmd.nombre,
+            descripcion = cmd.descripcion?.trim()?.takeIf { it.isNotEmpty() },
+            nivel = cmd.nivel,
+            activo = cmd.activo,
+            visible = cmd.visible,
+            posicion = cmd.posicion,
+        ).validated()
+        if (valid.nivel > AdminCatalogCommands.PLAN_NIVEL_MAX) {
+            throw BackendDomainException("PLAN_LEVEL_OUT_OF_RANGE", HttpStatusCode.UnprocessableEntity, "El nivel del plan debe estar entre 0 y 3.")
+        }
+        val codigo = AdminCatalogCommands.codigo(valid.codigo)
+        val existed = request("GET", "/rest/v1/planes_suscripcion?select=id&codigo=eq.${codigo.urlEncode()}&limit=1", null)
+            .decodeList<PlanRow>().isNotEmpty()
+        val row = buildJsonObject {
+            put("codigo", JsonPrimitive(codigo))
+            put("nombre", JsonPrimitive(valid.nombre))
+            put("descripcion", valid.descripcion?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("nivel", JsonPrimitive(valid.nivel))
+            put("activo", JsonPrimitive(valid.activo))
+            put("visible", JsonPrimitive(valid.visible))
+            put("posicion", JsonPrimitive(valid.posicion))
+        }
+        val saved = request(
+            "POST",
+            "/rest/v1/planes_suscripcion?on_conflict=codigo",
+            JsonArray(listOf(row)).toString(),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<PlanRow>().firstOrNull() ?: error("El plan no se pudo guardar.")
+        registrarAuditoria(
+            "plan_suscripcion_guardado",
+            "planes_suscripcion",
+            saved.id,
+            despues = buildJsonObject { put("codigo", JsonPrimitive(codigo)) },
+            required = true,
+        )
+        return CatalogUpsert(saved.toDto(listPlanBenefits(saved.id)), created = !existed)
+    }
+
+    /**
+     * D7-19: upsert de UNA tarifa por su clave natural (producto, periodo, fase) en una sentencia
+     * (`ON CONFLICT (producto_id, periodo_facturacion, fase_precio) DO UPDATE`, la restriccion UNIQUE de produccion). Con esa
+     * clave no pueden existir dos tarifas para el mismo periodo y fase, que es lo que la ruta anterior comprobaba a mano
+     * leyendo antes de escribir. Un producto desconocido es 404 PRODUCT_NOT_FOUND. `posicion` ausente no se toca.
+     */
+    internal fun putTarifa(productoCodigo: String, periodo: String, fase: String, cmd: TarifaPutCommand): CatalogUpsert<AdminTarifaProductoDto> {
+        require(periodo in AdminCatalogCommands.TARIFA_PERIODOS && fase in AdminCatalogCommands.TARIFA_FASES) { "periodo o fase no validos." }
+        val valid = AdminTarifaProductoDto(
+            periodoFacturacion = periodo,
+            fasePrecio = fase,
+            precioCentimos = cmd.precioCentimos,
+            moneda = cmd.moneda,
+            activo = cmd.activo,
+            visible = cmd.visible,
+            posicion = cmd.posicion ?: 1,
+        ).validated()
+        val codigo = AdminCatalogCommands.codigo(productoCodigo)
+        val productoId = request("GET", "/rest/v1/productos_comerciales?select=id&codigo=eq.${codigo.urlEncode()}&limit=1", null)
+            .decodeList<ProductoComercialRow>().firstOrNull()?.id?.takeIf { it.isUuid() }
+            ?: throw BackendDomainException("PRODUCT_NOT_FOUND", HttpStatusCode.NotFound, "El producto no existe.")
+        val existed = request(
+            "GET",
+            "/rest/v1/tarifas_producto_comercial?select=id&producto_id=eq.$productoId&periodo_facturacion=eq.$periodo&fase_precio=eq.$fase&limit=1",
+            null,
+        ).decodeList<TarifaProductoRow>().isNotEmpty()
+        val row = buildJsonObject {
+            put("producto_id", JsonPrimitive(productoId))
+            put("periodo_facturacion", JsonPrimitive(periodo))
+            put("fase_precio", JsonPrimitive(fase))
+            put("precio_centimos", JsonPrimitive(valid.precioCentimos))
+            put("moneda", JsonPrimitive(valid.moneda))
+            put("activo", JsonPrimitive(valid.activo))
+            put("visible", JsonPrimitive(valid.visible))
+            cmd.posicion?.let { put("posicion", JsonPrimitive(it)) }
+        }
+        val saved = request(
+            "POST",
+            "/rest/v1/tarifas_producto_comercial?on_conflict=producto_id,periodo_facturacion,fase_precio",
+            JsonArray(listOf(row)).toString(),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<TarifaProductoRow>().firstOrNull() ?: error("La tarifa no se pudo guardar.")
+        registrarAuditoria(
+            "tarifa_producto_guardada",
+            "tarifas_producto_comercial",
+            saved.id,
+            despues = buildJsonObject {
+                put("producto_id", JsonPrimitive(productoId))
+                put("periodo_facturacion", JsonPrimitive(periodo))
+                put("fase_precio", JsonPrimitive(fase))
+                put("precio_centimos", JsonPrimitive(valid.precioCentimos))
+            },
+            required = true,
+        )
+        return CatalogUpsert(saved.toDto(), created = !existed)
+    }
+
+    /** D7-21: una pagina de planes (mismo orden que [listPlanes]) con sus beneficios, pedidos solo para los planes de la pagina. */
+    internal fun pagePlanes(query: AdminCatalogQuery): AdminCatalogPage<AdminPlanDto> {
+        val page = transport.getPage(
+            "/rest/v1/planes_suscripcion?select=*${query.activoFilter}&order=posicion.asc,nivel.asc,codigo.asc${query.range}",
+        )
+        val planes = page.body.decodeList<PlanRow>()
+        val ids = planes.map { it.id }.filter { it.isUuid() }
+        val beneficios = if (ids.isEmpty()) {
+            emptyMap()
+        } else {
+            request(
+                "GET",
+                "/rest/v1/beneficios_plan?select=*&plan_id=in.(${ids.joinToString(",")})&order=codigo_beneficio.asc",
+                null,
+            ).decodeList<AdminPlanBenefitDto>().groupBy { it.planId }
+        }
+        return AdminCatalogPage.of(planes.map { plan -> plan.toDto(beneficios[plan.id].orEmpty()) }, page.total, query)
+    }
+
     fun upsertPlan(input: AdminPlanDto): AdminPlanDto {
         val valid = input.validated()
         val id = valid.id.ifBlank { UUID.randomUUID().toString() }
@@ -7557,6 +7754,12 @@ class AdminV1Gateway private constructor(
     fun listServices(): List<AdminServiceDto> =
         request("GET", "/rest/v1/servicios?select=*&order=tipo_servicio.asc,codigo.asc", null).decodeList()
 
+    /** D6-18: una pagina de servicios (mismo orden que [listServices]). */
+    internal fun pageServices(query: AdminCatalogQuery): AdminCatalogPage<AdminServiceDto> {
+        val page = transport.getPage("/rest/v1/servicios?select=*${query.activoFilter}&order=tipo_servicio.asc,codigo.asc${query.range}")
+        return AdminCatalogPage.of(page.body.decodeList<AdminServiceDto>(), page.total, query)
+    }
+
     fun upsertService(input: AdminServiceDto): AdminServiceDto {
         val row = input.validated().let { it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }) }
         val saved = request(
@@ -7572,8 +7775,24 @@ class AdminV1Gateway private constructor(
     fun listPromotions(): List<AdminPromotionDto> =
         request("GET", "/rest/v1/promociones?select=*&order=codigo.asc", null).decodeList()
 
+    /**
+     * D6-20: una pagina de promociones (mismo orden que [listPromotions]). `usos` es el numero de filas de
+     * `usos_promocion_usuario` de cada promocion, contado por la base en la MISMA consulta (embed `count`, sin N+1).
+     */
+    internal fun pagePromotions(query: AdminCatalogQuery): AdminCatalogPage<AdminPromotionDto> {
+        val page = transport.getPage(
+            "/rest/v1/promociones?select=*,usos_promocion_usuario(count)${query.activoFilter}&order=codigo.asc${query.range}",
+        )
+        val rows = json.decodeFromString<List<JsonObject>>(page.body).map { row ->
+            val usos = ((row["usos_promocion_usuario"] as? JsonArray)?.firstOrNull() as? JsonObject)?.get("count")?.let { (it as? JsonPrimitive)?.intOrNull }
+            json.decodeFromJsonElement(AdminPromotionDto.serializer(), JsonObject(row - "usos_promocion_usuario")).copy(usos = usos ?: 0)
+        }
+        return AdminCatalogPage.of(rows, page.total, query)
+    }
+
     fun upsertPromotion(input: AdminPromotionDto): AdminPromotionDto {
-        val row = input.validated().let { it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }) }
+        // `usos` es un dato derivado de lectura (D6-20): nunca se escribe, venga lo que venga en el cuerpo.
+        val row = input.validated().let { it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }, usos = null) }
         val saved = request(
             "POST",
             "/rest/v1/promociones",
@@ -7590,6 +7809,15 @@ class AdminV1Gateway private constructor(
             "/rest/v1/reglas_popup_comercial?select=*&order=prioridad.desc,codigo.asc",
             null,
         ).decodeList()
+
+    /** D6-22: una pagina de reglas de popup (mismo orden que [listPopupRules]); `pantalla` es coincidencia exacta, codificada. */
+    internal fun pagePopupRules(query: AdminCatalogQuery): AdminCatalogPage<AdminPopupRuleDto> {
+        val pantallaFilter = query.pantalla?.let { "&pantalla=eq.${it.urlEncode()}" }.orEmpty()
+        val page = transport.getPage(
+            "/rest/v1/reglas_popup_comercial?select=*${query.activoFilter}$pantallaFilter&order=prioridad.desc,codigo.asc${query.range}",
+        )
+        return AdminCatalogPage.of(page.body.decodeList<AdminPopupRuleDto>(), page.total, query)
+    }
 
     fun upsertPopupRule(input: AdminPopupRuleDto): AdminPopupRuleDto {
         val row = input.validated().let { it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }) }
