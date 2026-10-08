@@ -63,6 +63,7 @@ GET /api/v1/admin/importaciones/preguntas/{}
 GET /api/v1/admin/market/packs
 GET /api/v1/admin/market/popups
 GET /api/v1/admin/market/promociones
+GET /api/v1/admin/market/promociones/{}/usos
 GET /api/v1/admin/market/servicios
 GET /api/v1/admin/moderacion
 GET /api/v1/admin/moderacion/acciones

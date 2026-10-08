@@ -1,6 +1,6 @@
 # OpenAPI extension plan (Slices 4-7 and unscheduled contracts)
 
-Status: FA11 implemented (news D4-01..D4-11, wallet reads D6-01/D6-02). FA12 implemented (section 9): moderation reads D5-20, D5-21, D5-22, D5-25, D5-26, D5-28, D5-29 and the admin subscription list D7-27. FA13 implemented (section 10): admin catalog reads D7-17, D7-21, D6-18, D6-20, D6-22, dashboard overview D3-15 and the upserts D7-22, D7-19. No migration, no database touched.
+Status: FA11 implemented (news D4-01..D4-11, wallet reads D6-01/D6-02). FA12 implemented (section 9): moderation reads D5-20, D5-21, D5-22, D5-25, D5-26, D5-28, D5-29 and the admin subscription list D7-27. FA13 implemented (section 10): admin catalog reads D7-17, D7-21, D6-18, D6-20, D6-22, dashboard overview D3-15 and the upserts D7-22, D7-19. FA14 implemented (section 11): promotion use log D7-29. No migration, no database touched.
 Date: 2026-10-08
 Base: branch `feature/canonical-api-slice-1` at `f3c53d3`
 Scope: every canonical contract of `canonical/contracts.jsonl` (218) that `openapi/` did not declare at the base (123), plus the three public catalog contracts of the first batch that it already declared.
@@ -159,7 +159,7 @@ The 123 are the contracts absent from `openapi/` at the base. FA11 (section 5) m
 | D7-23 | PUT | `/api/v1/admin/planes/{codigo}/beneficios` | unscheduled | SPEC_READY | - | `POST /api/v1/admin/planes/{}/beneficios` | AdminSubscriptions.kt, AdminV1Routes.kt, AppV1Routes.kt, AdminDashboardOverview.kt, Observability.kt, OposiBotsUserAdminRoutes.kt | beneficios_plan, auditoria_log | OK | NOT IN FA13. NEEDS_SCHEMA: no database function replaces the benefit set of a plan in one transaction |
 | D7-24 | INTERNAL | `(in-process) ReferralService.grantReward` | unscheduled | INTERNAL | DEC-037 | - | AdminAnalytics.kt, AdminGateway.kt, AdminOposiTickets.kt, AdminV1Routes.kt | invitaciones_referido, transacciones_cartera | OK | in-process; behaviour blocked by the decision |
 | D7-27 | GET | `/api/v1/admin/suscripciones` | unscheduled | SPEC_READY | - | - | AdminAnalytics.kt, AdminDashboardOverview.kt, AdminUserDetail.kt, AdminV1Routes.kt, AppV1Routes.kt | suscripciones | OK | IN SPEC + IMPLEMENTED (FA12). New path; `canceladaEn` null (suscripciones has no cancellation instant column); no keyset index on (inicio_en desc, id), admin-only table |
-| D7-29 | GET | `/api/v1/admin/market/promociones/{id}/usos` | unscheduled | SPEC_READY | - | - | - | usos_promocion_usuario | OK | NOT IN FA13, implementable (the `descuentoTotalCentimos` sum needs an aggregate; no function exists) |
+| D7-29 | GET | `/api/v1/admin/market/promociones/{id}/usos` | unscheduled | SPEC_READY | - | - | - | usos_promocion_usuario | OK | IN SPEC + IMPLEMENTED (FA14). New path; cursor envelope with `stats` beside `items`; `descuentoTotalCentimos` null (no aggregate function) |
 | D7-30 | GET | `/api/v1/admin/pagos/notificaciones` | unscheduled | SPEC_READY | - | - | - | - | MISSING_SCHEMA: provider notification inbox table | reads the provider notification inbox, which only D7-04 (DEC-031) fills |
 | D8-02 | GET | `/api/v1/admin/soporte/conversaciones` | unscheduled | SPEC_READY | - | `GET /admin/support/conversations`, `GET /api/v1/admin/soporte` | AdminV1Routes.kt | conversaciones_soporte, mensajes_soporte | OK | NOT IN FA12. WIRE_CONFLICT: same path as EP-088, the OC client decodes a bare array with other field names. NEEDS_SCHEMA for `asignadoA` (conversaciones_soporte.asignado_a) |
 | D8-03 | GET | `/api/v1/admin/soporte/conversaciones/{id}/mensajes` | unscheduled | SPEC_READY | - | `GET /admin/support/conversations/{}/messages` | AdminV1Routes.kt | mensajes_soporte | OK | NOT IN FA12. WIRE_CONFLICT: same path as EP-089, the OC client decodes a bare array. NEEDS_SCHEMA for `esNotaInterna` (mensajes_soporte has no internal-note column) |
@@ -405,3 +405,40 @@ D7-18 (needs the request field names chosen), D7-29, D7-05. Count: 3.
 | Ops config | `bash scripts/verify-ops-config.sh` | PASS |
 
 No migration was added, so the database gates were not run.
+
+## 11. Fourth batch: FA14 (implemented in this change) and where the plan stands
+
+### 11.1 Done
+
+| Contract | File | Pagination | Notes |
+|---|---|---|---|
+| D7-29 `GET /api/v1/admin/market/promociones/{id}/usos` | `openapi/commerce/commerce.yaml` | CURSOR, limit 1..100 default 50 | `{items, nextCursor, stats}` (the design nests `items` and `stats` under `data`; the shared cursor envelope is used instead); three exact counters; `descuentoTotalCentimos` null until an aggregate function exists; 404 for an unknown promotion |
+
+Code: `AdminPromotionUses.kt`, `AdminV1Gateway.listPromotionUses`, handler in `AdminV1Routes.kt`. Tests: two more in `AdminCatalogReadRoutesTest` (15 in total). `TARGET`, read-only, no migration.
+
+Proposed amendment row FA14 (text for CONTRACT_FREEZE.md): `commerce/commerce.yaml` gains D7-29 (one read-only CURSOR operation, `x-implementation: TARGET`), `root.yaml` one path and one sentence; manifest regenerated (2 files changed); `OpenApiContractTest` extended (1 route, 1 cursor list). VALUE_ONLY by schema: `descuentoTotalCentimos` null. Lead ratification pending.
+
+### 11.2 Not reached in FA14 (the builder stopped here on purpose, to keep the quality of what is delivered)
+
+Still implementable, none started (21):
+
+| Group | Contracts | To check before building |
+|---|---|---|
+| Consumer reads (BOT) | D7-05, D5-01, D5-16, D4-19, D3-01, D3-03, D7-01 | D3-01, D3-03 and D7-01 are at paths a legacy app route already serves (`/api/v1/app/home`, `/estadisticas`, `/commercial/catalog`): same-path rule applies; D4-19 reads question resources and depends on the access rule (watch DEC-025); D5-16 `nivel` null (DEC-028) |
+| Admin reads (CONTROL) | D6-15 | `gastadosEquivalenteCentimos` null (DEC-042); same path as the served `/tickets/resumen` |
+| Admin writes | D7-18, D5-27 | D7-18: field names of D7-17 (lead decision taken); D5-27: same path as EP-181, must use `admin_grant_tickets` and answer 422 while the reward is undecided |
+| Consumer writes | D5-08, D5-14, D5-15, D5-06, D5-09, D5-10 | D5-15 is at a path a legacy app route serves; the others write forum content while the forum read contracts (D5-02, D5-03, D5-07) are still product-blocked, so check they make sense alone |
+| Question resources | D4-13, D4-14, D4-15, D4-16, D4-17 | They live under `/api/v1/admin/preguntas/{id}/recursos`, inside the protected question authoring code: need an explicit go-ahead from the lead before any change |
+
+### 11.3 Totals (123 contracts that `openapi/` did not declare at the base)
+
+| Bucket | Count | Contracts |
+|---|---|---|
+| In spec + implemented | 30 | FA11: D4-01..D4-11, D6-01, D6-02. FA12: D5-20, D5-21, D5-22, D5-25, D5-26, D5-28, D5-29, D7-27. FA13: D7-17, D7-21, D6-18, D6-20, D6-22, D3-15, D7-22, D7-19. FA14: D7-29 |
+| NEEDS_SCHEMA | 12 | D4-20, D4-21, D5-30, D6-03, D1-20, D3-14, D5-12, D7-07, D7-30, D8-05, D6-19, D7-23 |
+| Same-path wire conflict | 8 | D8-02, D8-03, D8-04, D5-23, D5-24, D6-12, D6-13, D6-14 |
+| Product or external blocked | 38 | the 37 of section 4 plus D7-03 |
+| Design not defined / precondition | 4 | D6-21, D6-23, D6-06; D3-05 (no ADR for DEC-038) |
+| Internal (no HTTP route) | 10 | section 3, class INTERNAL |
+| Still implementable | 21 | section 11.2 |
+| Total | 123 | |

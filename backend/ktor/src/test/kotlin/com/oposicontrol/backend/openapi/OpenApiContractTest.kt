@@ -149,6 +149,8 @@ class OpenApiContractTest {
         "D3-15" to "GET /api/v1/admin/dashboard/overview",
         "D7-22" to "PUT /api/v1/admin/planes/{codigo}",
         "D7-19" to "PUT /api/v1/admin/comercial/productos/{codigo}/tarifas/{periodo}/{fase}",
+        // FA14: usos de una promocion (admin, solo lectura), TARGET.
+        "D7-29" to "GET /api/v1/admin/market/promociones/{id}/usos",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
@@ -171,6 +173,7 @@ class OpenApiContractTest {
         "D5-25" to (200L to 200L),
         "D5-28" to (50L to 20L),
         "D7-27" to (100L to 50L),
+        "D7-29" to (100L to 50L),
     )
     private val offsetLists = mapOf(
         "D1-22" to (200L to 50L),

@@ -5,7 +5,8 @@
 # that client reads and the page only grows (items, total, limit, offset; data duplicates items until the client migrates).
 # FA13 also adds two catalog writes on new paths: D7-22 (plan upsert by codigo) and D7-19 (tariff upsert by product, period
 # and phase). Each is one INSERT .. ON CONFLICT statement on the production UNIQUE constraint, followed by its audit row.
-# Not part of this file: D7-18, D7-23, D6-19, D6-21, D6-23, store mappings D7-20 (DEC-031) and the promotion use log D7-29.
+# FA14 adds the promotion use log D7-29 (read-only).
+# Not part of this file: D7-18, D7-23, D6-19, D6-21, D6-23 and store mappings D7-20 (DEC-031).
 components:
   pathItems:
     AdminSubscriptions:
@@ -365,6 +366,62 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '502':
             $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminMarketPromotionUses:
+      get:
+        operationId: listAdminMarketPromotionUses
+        summary: 'List the uses of a promotion (admin)'
+        tags: [commerce-admin]
+        x-contract-id: D7-29
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN, NOT_FOUND, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR]
+        description: 'Keyset (usado_en desc, id desc) over usos_promocion_usuario of one promotion, plus stats for the whole promotion (not only the page). The three counters are exact counts made by the database. descuentoTotalCentimos is null until the database offers an aggregate for it (no function exists; a row-by-row sum would be unbounded). The design nests items and stats under data; here the shared cursor envelope is used (items and nextCursor at the top level, stats beside them). A promotion without uses is an empty page; an unknown promotion is 404; a non-uuid id is 400 VALIDATION. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            description: 'Promotion id.'
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitAdminCursor'
+        responses:
+          '200':
+            description: 'Promotion uses page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items, stats]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 100
+                          items:
+                            $ref: '#/components/schemas/PromocionUso'
+                        stats:
+                          $ref: '#/components/schemas/PromocionUsosStats'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
     AdminPlan:
       put:
         operationId: upsertAdminPlan
@@ -538,6 +595,42 @@ components:
           type: [string, 'null']
           format: date-time
           description: 'null until suscripciones stores the cancellation instant (no such column in production yet).'
+    PromocionUso:
+      type: object
+      required: [usuarioId, usadoEn, generoCompra]
+      properties:
+        usuarioId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        compraId:
+          type: [string, 'null']
+          format: uuid
+        descuentoCentimos:
+          type: [integer, 'null']
+        usadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        generoCompra:
+          type: boolean
+        renovoDespues:
+          type: [boolean, 'null']
+          description: 'null while it is not known whether the user renewed afterwards.'
+    PromocionUsosStats:
+      type: object
+      required: [usos, conversiones, renovaciones]
+      properties:
+        usos:
+          type: integer
+          minimum: 0
+        conversiones:
+          type: integer
+          minimum: 0
+          description: 'Uses that produced a purchase (genero_compra).'
+        renovaciones:
+          type: integer
+          minimum: 0
+          description: 'Uses followed by a renewal (renovo_despues).'
+        descuentoTotalCentimos:
+          type: [integer, 'null']
+          description: 'null until the database offers an aggregate for the total discount.'
     TarifaPeriodo:
       type: string
       description: 'CHECK tarifas_producto_comercial_periodo_facturacion_check.'

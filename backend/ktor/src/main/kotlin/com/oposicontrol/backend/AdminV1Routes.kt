@@ -1581,6 +1581,15 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 }
             }
             route("/promociones") {
+                // D7-29 (FA14): usos de una promocion, solo lectura.
+                get("/{id}/usos") {
+                    val id = call.requiredPath("id").validatedUuid("id").lowercase()
+                    val page = AdminPromotionUseQueries.parse(id, call.request.queryParameters)
+                    val uses = withUpstreamIo { gateway.listPromotionUses(id, page) }
+                        ?: throw CanonicalErrorCode.NOT_FOUND.exception("La promocion no existe.")
+                    call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                    call.respond(uses)
+                }
                 // D6-20 (FA13).
                 get {
                     val query = AdminCatalogQueries.parse(call.request.queryParameters)
@@ -7774,6 +7783,34 @@ class AdminV1Gateway private constructor(
 
     fun listPromotions(): List<AdminPromotionDto> =
         request("GET", "/rest/v1/promociones?select=*&order=codigo.asc", null).decodeList()
+
+    /**
+     * D7-29: una pagina de usos de la promocion [promocionId] (uuid ya validado), `usado_en DESC, id DESC`, y sus contadores
+     * exactos. `null` si la promocion no existe (la ruta responde 404): una promocion sin usos es una pagina vacia, no un 404.
+     */
+    internal fun listPromotionUses(promocionId: String, page: CursorPageRequest): AdminPromocionUsosPage? {
+        val id = promocionId.validatedUuid("id")
+        val exists = request("GET", "/rest/v1/promociones?select=id&id=eq.$id&limit=1", null).decodeList<JsonObject>().isNotEmpty()
+        if (!exists) return null
+        val after = KeysetPosition.fromCursorKeys(page.after)?.let {
+            val ts = it.timestamp.urlEncode()
+            "&or=(usado_en.lt.$ts,and(usado_en.eq.$ts,id.lt.${it.id}))"
+        }.orEmpty()
+        val rows = request(
+            "GET",
+            "/rest/v1/usos_promocion_usuario?select=${AdminPromotionUseQueries.COLUMNS}&promocion_id=eq.$id$after" +
+                "&order=usado_en.desc,id.desc&limit=${page.fetchLimit}",
+            null,
+        ).decodeList<PromocionUsoRow>()
+        val cut = page.page(rows) { KeysetPosition(it.usadoEn, it.id.lowercase()).toKeys() }
+        val scope = "/rest/v1/usos_promocion_usuario?select=id&promocion_id=eq.$id"
+        val stats = AdminPromocionUsosStats(
+            usos = exactCount(scope),
+            conversiones = exactCount("$scope&genero_compra=eq.true"),
+            renovaciones = exactCount("$scope&renovo_despues=eq.true"),
+        )
+        return AdminPromocionUsosPage(cut.items.map { AdminPromotionUseQueries.toDto(it) }, cut.nextCursor, stats)
+    }
 
     /**
      * D6-20: una pagina de promociones (mismo orden que [listPromotions]). `usos` es el numero de filas de

@@ -126,7 +126,12 @@ class AdminCatalogReadRoutesTest {
             "activo" to activo, "valido_desde" to null, "valido_hasta" to "2026-12-31T23:59:59+00:00",
         )
 
-        fun use(promotionId: String): String = row("usos_promocion_usuario", "usuario_id" to userUid, "promocion_id" to promotionId)
+        fun use(promotionId: String, minute: Int = 0, generoCompra: Boolean = false, renovo: Boolean? = null, descuento: Int? = 100): String = row(
+            "usos_promocion_usuario", "usuario_id" to userUid, "promocion_id" to promotionId, "compra_id" to null, "descuento_centimos" to descuento,
+            "genero_compra" to generoCompra, "renovo_despues" to renovo, "usado_en" to "2026-10-08T10:%02d:00+00:00".format(minute),
+        )
+
+        private val keyset = Regex("""^\((\w+)\.lt\.([^,]+),and\(\w+\.eq\.[^,]+,id\.lt\.([0-9a-f-]+)\)\)$""")
 
         fun popup(codigo: String, pantalla: String? = "home", prioridad: Int = 50, activo: Boolean = true): String = row(
             "reglas_popup_comercial", "codigo" to codigo, "evento_disparador" to "examen_bloqueado", "titulo" to "Titulo", "mensaje" to "Mensaje",
@@ -149,6 +154,10 @@ class AdminCatalogReadRoutesTest {
             q.forEach { (key, value) ->
                 rows = when {
                     key in setOf("select", "order", "limit", "offset") -> rows
+                    key == "or" -> {
+                        val (column, ts, id) = (keyset.matchEntire(value) ?: error("keyset inesperado: $value")).destructured
+                        rows.filter { r -> text(r, column)!!.compareTo(ts).let { c -> c < 0 || (c == 0 && text(r, "id")!! < id) } }
+                    }
                     value.startsWith("eq.") -> rows.filter { text(it, key) == value.removePrefix("eq.") }
                     value.startsWith("in.(") -> value.removePrefix("in.(").removeSuffix(")").split(',').toSet().let { set -> rows.filter { text(it, key) in set } }
                     else -> error("filtro inesperado: $key=$value")
@@ -433,6 +442,82 @@ class AdminCatalogReadRoutesTest {
         ok("D6-22", "?pantalla=home%26activo%3Deq.false")
         val last = upstream.sent.last { "reglas_popup_comercial" in it.uri().rawPath }.uri().rawQuery
         assertTrue("pantalla=eq.home%26activo%3Deq.false" in last, last)
+    }
+
+    // ================================================================== D7-29 usos de una promocion
+
+    private val ghost = "8f14e45f-ceea-467a-9a3e-1b2c3d4e5f60"
+
+    private suspend fun ApplicationTestBuilder.uses(promotionId: String, query: String = ""): String {
+        val response = call("/api/v1/admin/market/promociones/$promotionId/usos$query")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertEquals("no-store", response.headers[HttpHeaders.CacheControl])
+        conforms("D7-29", body)
+        return body
+    }
+
+    @Test
+    fun promotionUsesAreKeysetPagedNewestFirstWithExactStatsForTheWholePromotion() = testApplication {
+        application { module() }
+        val promo = upstream.promotion("VERANO")
+        val other = upstream.promotion("OTRA")
+        upstream.use(promo, 1, generoCompra = true, renovo = true)
+        upstream.use(promo, 2, generoCompra = true, renovo = false)
+        upstream.use(promo, 3, descuento = null)
+        upstream.use(other, 4, generoCompra = true)
+        val seen = mutableListOf<String>()
+        var cursor: String? = null
+        var pages = 0
+        do {
+            val body = obj(uses(promo, "?limit=2" + (cursor?.let { "&cursor=$it" } ?: "")))
+            seen += body["items"]!!.jsonArray.map { it.jsonObject["usadoEn"]!!.jsonPrimitive.content }
+            // Los contadores son de la promocion entera, no de la pagina, y solo de ESTA promocion.
+            val stats = body["stats"]!!.jsonObject
+            assertEquals(listOf(3, 2, 1), listOf("usos", "conversiones", "renovaciones").map { stats[it]!!.jsonPrimitive.int })
+            assertFalse("descuentoTotalCentimos" in stats, "no aggregate in the database: null (omitted), never a 0 or a partial sum")
+            cursor = (body["nextCursor"] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+            pages++
+        } while (cursor != null)
+        assertEquals(listOf("2026-10-08T10:03:00Z", "2026-10-08T10:02:00Z", "2026-10-08T10:01:00Z"), seen, "newest first, UTC instants")
+        assertEquals(2, pages)
+        val newest = obj(uses(promo, "?limit=1"))["items"]!!.jsonArray.single().jsonObject
+        assertFalse("descuentoCentimos" in newest || "compraId" in newest || "renovoDespues" in newest, "unknown values are null, not invented")
+        assertEquals("false", newest["generoCompra"]!!.jsonPrimitive.content)
+        assertTrue(upstream.requests.filter { "usos_promocion_usuario?select=id," in it }.all { "promocion_id=eq.$promo" in it && "limit=" in it })
+        assertTrue(upstream.sent.all { it.method() == "GET" }, "read-only")
+    }
+
+    @Test
+    fun aPromotionWithoutUsesIsAnEmptyPageAndAnUnknownPromotionIs404() = testApplication {
+        application { module() }
+        val promo = upstream.promotion("NUEVA")
+        val body = obj(uses(promo))
+        assertTrue(body["items"]!!.jsonArray.isEmpty())
+        assertEquals(0, body["stats"]!!.jsonObject["usos"]!!.jsonPrimitive.int)
+
+        suspend fun rejected(pathAndQuery: String, status: HttpStatusCode, code: String, noUpstream: Boolean) {
+            val before = upstream.sent.size
+            val response = call("/api/v1/admin/market/promociones/$pathAndQuery")
+            val envelope = obj(response.bodyAsText())
+            assertEquals(status, response.status, "$pathAndQuery -> $envelope")
+            assertEquals(code, envelope["code"]!!.jsonPrimitive.content, pathAndQuery)
+            assertTrue(envelope["requestId"]!!.jsonPrimitive.content.isNotBlank())
+            val op = docs.operations().first { it.contractId == "D7-29" }
+            assertTrue(status.value.toString() in docs.responses(op) && code in (op.op["x-error-codes"] as List<*>), "D7-29 does not declare $status $code")
+            if (noUpstream) assertEquals(before, upstream.sent.size, "$pathAndQuery reached the upstream")
+        }
+        rejected("$ghost/usos", HttpStatusCode.NotFound, "NOT_FOUND", noUpstream = false)
+        rejected("not-a-uuid/usos", HttpStatusCode.BadRequest, "VALIDATION", noUpstream = true)
+        rejected("$promo/usos?limit=0", HttpStatusCode.BadRequest, "VALIDATION", noUpstream = true)
+        rejected("$promo/usos?cursor=garbage", HttpStatusCode.BadRequest, "INVALID_CURSOR", noUpstream = true)
+        // Un cursor de otra promocion no sirve aqui.
+        val other = upstream.promotion("OTRA")
+        (1..2).forEach { upstream.use(other, it) }
+        val foreign = (obj(uses(other, "?limit=1"))["nextCursor"] as JsonPrimitive).content
+        rejected("$promo/usos?cursor=$foreign", HttpStatusCode.BadRequest, "INVALID_CURSOR", noUpstream = true)
+        assertEquals(HttpStatusCode.Unauthorized, call("/api/v1/admin/market/promociones/$promo/usos", token = null).status)
+        assertEquals(HttpStatusCode.Forbidden, call("/api/v1/admin/market/promociones/$promo/usos", token = userToken).status)
     }
 
     // ================================================================== D3-15 resumen del panel

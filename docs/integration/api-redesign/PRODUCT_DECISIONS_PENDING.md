@@ -85,7 +85,7 @@ Checked against the data-free production DDL capture. Nothing below was implemen
 | D7-27 subscription list (implemented) | `suscripciones` has no cancellation instant column | `canceladaEn` is always null |
 | D6-19 market service upsert | a function that replaces a service and its `efectos_servicio` rows in one transaction | not implemented; the existing save of the service row is unchanged |
 | D7-23 plan benefits replace | a function that replaces the `beneficios_plan` set of a plan in one transaction | not implemented; the existing one-benefit save is unchanged |
-| D7-29 promotion use log (not built yet) | an aggregate for the total discount (no function; row-by-row sums are unbounded) | to decide when it is built: nullable total or a function |
+| D7-29 promotion use log (implemented) | an aggregate function for the total discount (row-by-row sums are unbounded) | `descuentoTotalCentimos` is always null |
 
 Already known from the plan and unchanged: D5-30 (`feedback_pregunta.revisado_por`), D8-05 (`conversaciones_soporte.asignado_a`), D6-03 (redeem function), D3-14 (aggregate functions), D4-20/D4-21, D5-12, D7-07, D7-30, D1-20.
 

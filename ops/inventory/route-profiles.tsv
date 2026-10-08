@@ -69,6 +69,7 @@ GET	/api/v1/admin/importaciones/preguntas/{}	CONTROL	admin	Admin v1: importacion
 GET	/api/v1/admin/market/packs	CONTROL	admin	Admin v1: market/packs	OposiControl
 GET	/api/v1/admin/market/popups	CONTROL	admin	Admin v1: market/popups	OposiControl
 GET	/api/v1/admin/market/promociones	CONTROL	admin	Admin v1: market/promociones	OposiControl
+GET	/api/v1/admin/market/promociones/{}/usos	CONTROL	admin	Admin v1: usos de una promocion (solo lectura)	OposiControl
 GET	/api/v1/admin/market/servicios	CONTROL	admin	Admin v1: market/servicios	OposiControl
 GET	/api/v1/admin/moderacion	CONTROL	admin	Admin v1: moderacion	OposiControl
 GET	/api/v1/admin/moderacion/acciones	CONTROL	admin	Admin v1: moderacion/acciones	OposiControl
