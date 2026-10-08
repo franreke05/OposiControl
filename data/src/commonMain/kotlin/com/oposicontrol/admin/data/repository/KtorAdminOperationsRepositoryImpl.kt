@@ -154,6 +154,8 @@ private data class ExamAccessDto(
     val examTitle: String,
     val accessType: String,
     val isActive: Boolean,
+    val userId: String? = null,
+    val examId: String? = null,
 )
 
 @Serializable
@@ -229,6 +231,8 @@ private fun ExamAccessDto.toDomain() = ExamAccess(
     examTitle = examTitle,
     accessType = accessType,
     isActive = isActive,
+    userId = userId,
+    examId = examId,
 )
 
 private fun ExamAccess.toDto() = ExamAccessDto(
@@ -237,6 +241,8 @@ private fun ExamAccess.toDto() = ExamAccessDto(
     examTitle = examTitle,
     accessType = accessType,
     isActive = isActive,
+    userId = userId,
+    examId = examId,
 )
 
 private fun TicketWalletDto.toDomain() = TicketWallet(

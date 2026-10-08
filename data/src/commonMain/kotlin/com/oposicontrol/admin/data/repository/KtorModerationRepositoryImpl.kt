@@ -85,7 +85,7 @@ class KtorModerationRepositoryImpl(
         val path = BackendRoutes.adminV1ModerationActions()
         client.post(url(path)) {
             backendHeaders(); contentType(ContentType.Application.Json)
-            setBody(WarnUserBody(actionType = "advertencia", targetUser = userId, reason = message))
+            setBody(WarnUserBody(actionType = "advertencia", targetUserId = userId, reason = message))
         }.requireSuccess(path)
         Unit
     }
@@ -133,7 +133,8 @@ class KtorModerationRepositoryImpl(
     val idempotencyKey: String,
 )
 @Serializable private data class GrantTicketsResponse(val saldo: Int = 0)
-@Serializable private data class WarnUserBody(val actionType: String, val targetUser: String, val reason: String)
+// RC-01: el backend (WarnUserRequest) exige `targetUserId` (uuid); `targetUser` no existe en el contrato.
+@Serializable private data class WarnUserBody(val actionType: String, val targetUserId: String, val reason: String)
 
 private fun ReporteV1Dto.toDomain() = ForumReport(
     id = id,

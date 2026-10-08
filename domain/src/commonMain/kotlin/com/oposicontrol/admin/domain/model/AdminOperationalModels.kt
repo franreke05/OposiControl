@@ -13,6 +13,9 @@ data class ExamAccess(
     val examTitle: String,
     val accessType: String,
     val isActive: Boolean,
+    /** RC-06: ids canonicos (uuid) que devuelve el backend; null = fila sin ids (se cae al nombre, que el servidor rechaza si es ambiguo). */
+    val userId: String? = null,
+    val examId: String? = null,
 )
 
 data class TicketWallet(

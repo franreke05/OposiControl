@@ -50,4 +50,26 @@ class UserAccountNameAndSaveLimitsTest {
         assertTrue(state.saveBlockers.isNotEmpty())
         assertTrue(!state.canSave)
     }
+
+    // RC-05: la lista compacta busca por lo que ensena (username, nombre, etiqueta de rol), no por el correo real oculto ni UUID.
+    private val roles = mapOf("11111111-aaaa" to com.oposicontrol.admin.domain.model.Role(id = "11111111-aaaa", name = "Moderador", permissions = emptyList()))
+    private fun listed() = User(
+        id = "u", fullName = "Ana Garcia", email = "ana@hidden.example", roleIds = listOf("11111111-aaaa"),
+        isRegistered = true, createdAt = null, username = "ana.g",
+    )
+
+    @Test fun compactListMatchesUsernameNameAndRoleLabel() {
+        assertEquals(1, filterUsersForList(listOf(listed()), "ana.g", roles).size)
+        assertEquals(1, filterUsersForList(listOf(listed()), "garcia", roles).size)
+        assertEquals(1, filterUsersForList(listOf(listed()), "moderad", roles).size)
+    }
+
+    @Test fun compactListDoesNotMatchHiddenEmailOrRoleUuid() {
+        assertTrue(filterUsersForList(listOf(listed()), "hidden.example", roles).isEmpty())
+        assertTrue(filterUsersForList(listOf(listed()), "11111111", roles).isEmpty())
+    }
+
+    @Test fun compactListShortQueryDoesNotFilter() {
+        assertEquals(1, filterUsersForList(listOf(listed()), "z", roles).size)
+    }
 }

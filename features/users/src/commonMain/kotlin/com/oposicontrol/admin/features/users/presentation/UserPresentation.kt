@@ -475,3 +475,18 @@ fun userAdminAccessChanges(
     val has = editorRoleIds.any { it in adminRoleIds }
     return had != has
 }
+
+/**
+ * RC-05: filtro de la lista compacta. Se busca por lo que la fila ENSENA: nombre, [userAccountName] (username, o el campo
+ * email legado si no hay) y las etiquetas de rol ([userRoleSummary]); nunca por el correo real de GoTrue que la fila oculta
+ * ni por los UUID de rol. Con menos de 2 caracteres no se filtra.
+ */
+fun filterUsersForList(users: List<User>, query: String, rolesById: Map<String, Role>): List<User> {
+    val q = query.trim()
+    if (q.length < 2) return users
+    return users.filter { user ->
+        user.fullName.contains(q, ignoreCase = true) ||
+            userAccountName(user).contains(q, ignoreCase = true) ||
+            user.roleIds.isNotEmpty() && userRoleSummary(user, rolesById).contains(q, ignoreCase = true)
+    }
+}

@@ -67,6 +67,7 @@ import com.oposicontrol.admin.features.users.presentation.USER_ACCOUNT_FIELD_LAB
 import com.oposicontrol.admin.features.users.presentation.USER_EMAIL_UNAVAILABLE_NOTE
 import com.oposicontrol.admin.features.users.presentation.UsersIntent
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
+import com.oposicontrol.admin.features.users.presentation.filterUsersForList
 import com.oposicontrol.admin.features.users.presentation.userAccountKind
 import com.oposicontrol.admin.features.users.presentation.userAccountKindLabel
 import com.oposicontrol.admin.features.users.presentation.userAccountName
@@ -412,16 +413,7 @@ private fun AdminUsersSection(
                 message = users.error.message,
             )
             is UiAsync.Success -> {
-                val normalizedQuery = query.trim()
-                val filteredUsers = if (normalizedQuery.length >= 2) {
-                    users.value.filter { user ->
-                        user.fullName.contains(normalizedQuery, ignoreCase = true) ||
-                            user.email.contains(normalizedQuery, ignoreCase = true) ||
-                            user.roleIds.any { it.contains(normalizedQuery, ignoreCase = true) }
-                    }
-                } else {
-                    users.value
-                }
+                val filteredUsers = filterUsersForList(users.value, query, usersState.rolesById)
                 val visibleUsers = filteredUsers.take(AdminListPreviewLimit)
                 AdminUsersListToolbar(
                     total = users.value.size,
@@ -466,7 +458,7 @@ private fun AdminUsersSection(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    text = user.email,
+                                    text = userAccountName(user),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,

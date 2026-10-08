@@ -1,3 +1,4 @@
+import java.util.Base64
 import org.gradle.api.tasks.JavaExec
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -30,10 +31,39 @@ fun String.toBuildConfigString(): String {
 }
 
 val localSupabaseUrl = localEnvValue("SUPABASE_URL")
-val localSupabasePublicKey = localEnvValue("SUPABASE_ANON_KEY")
+// RC-11: espejo de AppConfigResolver.isSecretSupabaseKey (prefijo sb_secret_ o JWT con role=service_role, sin importar espacios).
+// Los dos marcadores viven en UNA linea: la lista de permitidos de verify-no-direct-supabase.sh fija 1 linea SECRET aqui.
+val secretSupabaseKeyMarkers = "sb_secret_" to "\"role\":\"service_role\""
+fun isSecretSupabaseKey(key: String): Boolean {
+    if (key.startsWith(secretSupabaseKeyMarkers.first, ignoreCase = true)) return true
+    val parts = key.split('.')
+    if (parts.size != 3) return false
+    val payload = runCatching { String(Base64.getUrlDecoder().decode(parts[1].trim())) }.getOrNull() ?: return false
+    return payload.filterNot { it.isWhitespace() }.contains(secretSupabaseKeyMarkers.second)
+}
+
+val rawSupabasePublicKey = localEnvValue("SUPABASE_ANON_KEY")
     .ifBlank { localEnvValue("SUPABASE_PUBLISHABLE_KEY") }
-    .takeUnless { it.startsWith("sb_secret_", ignoreCase = true) }
-    .orEmpty()
+// Nunca se hornea un secreto en el artefacto (defensa en profundidad); ademas el build FALLA en voz alta (verifySupabasePublicKey).
+val localSupabasePublicKey = rawSupabasePublicKey.takeUnless { isSecretSupabaseKey(it) }.orEmpty()
+val secretSupabaseKeyProblem: String? =
+    if (isSecretSupabaseKey(rawSupabasePublicKey)) "SUPABASE_ANON_KEY no puede ser una clave secreta (clave secreta o JWT con rol de servicio): usa la clave publica (anon/publishable)." else null
+
+val verifySupabasePublicKey = tasks.register("verifySupabasePublicKey") {
+    group = "verification"
+    description = "Falla el build (todos los flavors y escritorio) si SUPABASE_ANON_KEY es un secreto (clave secreta o JWT con rol de servicio)."
+    val problem = secretSupabaseKeyProblem
+    doLast { if (problem != null) throw GradleException(problem) }
+}
+
+// Todas las variantes Android (dev/staging/prod, debug/release) y las tareas de escritorio que hornean la clave en jvmArgs.
+tasks.configureEach {
+    if (Regex("^pre(Dev|Staging|Prod)(Debug|Release)Build$").matches(name) ||
+        Regex("^(run|runRelease.*|runDistributable|createDistributable|createReleaseDistributable|package(Release)?(Distribution.*|Dmg|Msi|Deb|UberJarForCurrentOS))$").matches(name)
+    ) {
+        dependsOn(verifySupabasePublicKey)
+    }
+}
 
 // INV-NETWORK-COMPLETE: AppConfigResolver lanza fuera de DEV sin SUPABASE_URL https. Los flavors Android staging/prod
 // toman SUPABASE_URL del mismo origen que dev/escritorio (variable de entorno o .env) y el BUILD falla en voz alta si falta

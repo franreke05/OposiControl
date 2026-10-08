@@ -34,4 +34,21 @@ done
 "${G[@]}" :composeApp:preDevDebugBuild --dry-run 2>&1 | grep -q 'verifyNonDevSupabaseConfig' && ko "dev no debe depender del guard" || ok "dev sin guard"
 "${G[@]}" "${D[@]}" --dry-run 2>&1 | grep -q 'verifyNonDevSupabaseConfig' && ok "createDistributable prod depende del guard" || ko "createDistributable prod sin guard"
 "${G[@]}" :composeApp:createDistributable --dry-run 2>&1 | grep -q 'verifyNonDevSupabaseConfig' && ko "escritorio sin -PoposiProduction no debe depender del guard" || ok "escritorio dev sin guard"
+# RC-11: ninguna clave secreta de Supabase (sb_secret_ o JWT service_role) puede acabar en un artefacto cliente: el build FALLA para
+# todas las variantes Android y el escritorio (con y sin -PoposiProduction). Valores sinteticos, no son claves reales.
+KEYMSG="SUPABASE_ANON_KEY no puede ser una clave secreta"
+b64u() { printf "%s" "$1" | base64 | tr -d "=
+" | tr "+/" "-_"; }
+SR_JWT="$(b64u "{\"alg\":\"HS256\"}").$(b64u "{\"iss\":\"supabase\",\"role\" : \"service_role\"}").sig"
+AN_JWT="$(b64u "{\"alg\":\"HS256\"}").$(b64u "{\"iss\":\"supabase\",\"role\":\"anon\"}").sig"
+K=:composeApp:verifySupabasePublicKey
+expect_fail "$KEYMSG" SUPABASE_URL=https://proj.supabase.co SUPABASE_ANON_KEY=sb_secret_syntheticvalue -- $K && ok "sb_secret_ => build falla con su mensaje" || ko "sb_secret_ no falla con el mensaje esperado"
+expect_fail "$KEYMSG" SUPABASE_URL=https://proj.supabase.co "SUPABASE_ANON_KEY=$SR_JWT" -- $K && ok "JWT service_role (con espacios) => build falla con su mensaje" || ko "JWT service_role no falla con el mensaje esperado"
+expect_pass SUPABASE_URL=https://proj.supabase.co "SUPABASE_ANON_KEY=$AN_JWT" -- $K && ok "JWT anon => build pasa" || ko "JWT anon falla"
+expect_pass SUPABASE_URL=https://proj.supabase.co SUPABASE_ANON_KEY=sb_publishable_syntheticvalue -- $K && ok "publishable => build pasa" || ko "publishable falla"
+expect_fail "$KEYMSG" SUPABASE_URL=https://proj.supabase.co "SUPABASE_ANON_KEY=$SR_JWT" -- :composeApp:createDistributable && ok "escritorio dev con service_role => falla" || ko "escritorio dev no bloquea service_role"
+for v in DevDebug StagingRelease ProdRelease; do
+  "${G[@]}" :composeApp:pre${v}Build --dry-run 2>&1 | grep -q "verifySupabasePublicKey" && ok "pre${v}Build depende del guard de clave" || ko "pre${v}Build sin guard de clave"
+done
+"${G[@]}" :composeApp:run --dry-run 2>&1 | grep -q "verifySupabasePublicKey" && ok "run de escritorio depende del guard de clave" || ko "run de escritorio sin guard de clave"
 exit $fail

@@ -92,12 +92,17 @@ class ExamAccessViewModel(
             return
         }
         updateState { it.copy(actionState = UiAsync.Loading) }
+        val selected = allAccesses.firstOrNull { it.id == currentState().selectedId }
         val item = ExamAccess(
             id = currentState().selectedId.orEmpty(),
             userName = currentState().editorUserName,
             examTitle = currentState().editorExamTitle,
             accessType = ExamAccessTypes.normalize(currentState().editorAccessType),
             isActive = currentState().editorIsActive,
+            // RC-06: se manda el id de la fila elegida mientras el nombre del editor no haya cambiado; un nombre nuevo va sin id
+            // (el servidor lo resuelve y responde 409 si es ambiguo).
+            userId = selected?.takeIf { it.userName == currentState().editorUserName }?.userId,
+            examId = selected?.takeIf { it.examTitle == currentState().editorExamTitle }?.examId,
         )
         when (val result = repository.upsertExamAccess(item)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
@@ -118,5 +123,7 @@ class ExamAccessViewModel(
         examTitle = examTitle,
         accessType = accessType,
         status = if (isActive) "active" else "inactive",
+        userId = userId,
+        examId = examId,
     )
 }

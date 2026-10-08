@@ -78,6 +78,30 @@ class ExamAccessViewModelTest {
     }
 
     @Test
+    fun `editing a loaded row sends its user and exam ids, a renamed user goes without id`() = runTest {
+        val repository = FakeRepository(
+            listOf(
+                ExamAccess(
+                    id = "a1", userName = "Ana", examTitle = "Examen A", accessType = "admin", isActive = true,
+                    userId = "00000000-0000-4000-8000-000000000001", examId = "00000000-0000-4000-8000-000000000002",
+                ),
+            ),
+        )
+        val viewModel = viewModel(repository)
+        advanceUntilIdle()
+        viewModel.dispatch(ExamAccessIntent.Save)
+        advanceUntilIdle()
+        assertEquals("00000000-0000-4000-8000-000000000001", repository.upserted.last().userId)
+        assertEquals("00000000-0000-4000-8000-000000000002", repository.upserted.last().examId)
+
+        viewModel.dispatch(ExamAccessIntent.UpdateUserName("Otra Persona"))
+        viewModel.dispatch(ExamAccessIntent.Save)
+        advanceUntilIdle()
+        assertEquals(null, repository.upserted.last().userId, "un nombre nuevo no arrastra el id anterior")
+        assertEquals("00000000-0000-4000-8000-000000000002", repository.upserted.last().examId)
+    }
+
+    @Test
     fun `the selector offers exactly the five canonical values`() {
         assertEquals(
             listOf("admin", "premium", "compra", "regalo", "promocion"),

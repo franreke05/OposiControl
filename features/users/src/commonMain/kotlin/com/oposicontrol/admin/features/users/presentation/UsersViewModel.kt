@@ -243,7 +243,14 @@ class UsersViewModel(
                     // El guardado no es atomico (PATCH nombre, POST roles, GET): un fallo parcial deja el servidor con
                     // parte del cambio. Se relee la fila para que la lista y la ficha no diverjan; el editor conserva
                     // lo tecleado para poder reintentar (el "sucio" se calcula contra la fila releida).
-                    refreshUserRow(user.id)
+                    val fresh = refreshUserRow(user.id)
+                    // RC-07 (FA8): un 409 VERSION_CONFLICT significa que otro admin cambio los roles. El editor vuelve a
+                    // los roles releidos: si no, el siguiente Save mandaria la seleccion vieja con `expectedRoleIds`
+                    // frescos y revertiria en silencio el cambio del otro admin. El nombre tecleado se conserva.
+                    val conflict = (result.error as? AppError.Validation)?.code.equals("VERSION_CONFLICT", ignoreCase = true)
+                    if (conflict && fresh != null) {
+                        updateState { if (it.selectedUserId == fresh.id) it.copy(editorRoleIds = fresh.roleIds.toSet()) else it }
+                    }
                 }
                 is AppResult.Success -> {
                     analyticsTracker.trackAction("user_saved", mapOf("user_id" to user.id))
@@ -276,12 +283,13 @@ class UsersViewModel(
         }
     }
 
-    private suspend fun refreshUserRow(userId: String) {
-        val fresh = (usersRepository.getUser(userId) as? AppResult.Success)?.value ?: return
+    private suspend fun refreshUserRow(userId: String): User? {
+        val fresh = (usersRepository.getUser(userId) as? AppResult.Success)?.value ?: return null
         updateState { state ->
             if (state.loadedUsers.none { it.id == fresh.id }) return@updateState state
             state.copy(users = UiAsync.Success(state.loadedUsers.map { if (it.id == fresh.id) fresh.keepingKnownFrom(it) else it }))
         }
+        return fresh
     }
 
     /** Clave nueva: usuario, importe (si se conoce), instante y secuencia local (dos aperturas en el mismo ms no colisionan). */

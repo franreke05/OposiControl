@@ -6,6 +6,8 @@ data class ExamAccessItem(
     val examTitle: String,
     val accessType: String,
     val status: String,
+    val userId: String? = null,
+    val examId: String? = null,
 )
 
 /**
