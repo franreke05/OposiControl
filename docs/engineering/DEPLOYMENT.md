@@ -22,6 +22,10 @@ El despliegue lo ejecuta un humano con el gate de produccion; CI solo VERIFICA (
    debe terminar con codigo 0; despues arrancar el contenedor con el entorno real y esperar `/health/ready` = 200.
    Slice 1 (migraciones `20260930100000..102300`): orden, hashes y clase de rollback en
    `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` del repo OposiBot.
+   Slice 3 (migraciones `20261008100000..100100`, runtime de examen; manifiesto `supabase/SLICE3_MIGRATIONS.txt`): se
+   aplican DESPUES de todas las de Slice 0/1 y ANTES de desplegar el Ktor de Slice 3. Prechequeo obligatorio en MAIN: cero
+   pares (usuario, examen) con mas de un intento `en_progreso` (si no, la 100000 se detiene con
+   `SLICE3_OPEN_ATTEMPT_DUPLICATES_GATE` sin aplicar nada). Rollback: bloque ROLLBACK de la 100100 y despues el de la 100000.
 
 ## Construir
 
@@ -132,7 +136,7 @@ roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compati
   del owner del contrato (D8-08 congelado).
 - CI (`.github/workflows/ci.yml`) verifica tests, lint OpenAPI y `scripts/verify-ops-config.sh`;
   `dbtest` corre sobre PostgreSQL 16 embebido (zonky). DB-CI-PG17: el job `db-pg17` aplica las migraciones pendientes
-  (`supabase/baseline/PENDING_MIGRATIONS.txt` = `2026092810*` + `SLICE1_MIGRATIONS.txt`) sobre PostgreSQL 17 (imagen Supabase
+  (`supabase/baseline/PENDING_MIGRATIONS.txt` = `2026092810*` + `SLICE1_MIGRATIONS.txt` + `SLICE3_MIGRATIONS.txt`) sobre PostgreSQL 17 (imagen Supabase
   fijada por digest) cargado SOLO con la forma de MAIN que tocan (`supabase/baseline/main_shape_subset.sql`), con VERIFY = 0,
   `assertions.sql` y rollback/re-aplicacion, mas su control negativo; NO carga el baseline completo de MAIN (decision del owner
   pendiente), asi que el gate local Supabase completo (baseline 55/55, schemadiff, e2e) sigue siendo el gate previo al despliegue.

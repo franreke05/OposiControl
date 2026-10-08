@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # DB-CI-PG17: gate REPRODUCIBLE de migraciones en PostgreSQL 17 (imagen de Supabase fijada por digest), sin secretos ni MAIN.
-#   1. Manifiesto: supabase/baseline/PENDING_MIGRATIONS.txt == supabase/migrations/2026092810*.sql + 2026093*.sql, y su parte
-#      2026093* == supabase/SLICE1_MIGRATIONS.txt; cada pendiente tiene bloque ROLLBACK y VERIFY (salvo NO_VERIFY, abajo).
+#   1. Manifiesto: supabase/baseline/PENDING_MIGRATIONS.txt == supabase/migrations/2026092810*.sql + 2026093*.sql + 202610*.sql; su parte
+#      2026093* == supabase/SLICE1_MIGRATIONS.txt y su parte 202610* == supabase/SLICE3_MIGRATIONS.txt (SLICE 3); cada pendiente
+#      tiene bloque ROLLBACK y VERIFY (salvo NO_VERIFY, abajo).
 #   2. Arranca un contenedor nuevo, carga supabase/baseline/main_shape_subset.sql con ON_ERROR_STOP=1 en UNA transaccion
 #      (cero errores tolerados) y toma la huella de catalogo F0.
 #   3. Aplica cada pendiente EN ORDEN con ON_ERROR_STOP=1 y ejecuta su VERIFY justo despues: cada fila debe ser
@@ -17,13 +18,14 @@ IMAGE="${PG17_IMAGE:-public.ecr.aws/supabase/postgres@sha256:658d1c9b09ae4f61b8e
 NO_VERIFY="20260928100100_idempotency_keys"
 fail() { echo "FAIL: $*"; exit 1; }
 
-boot=supabase/baseline/main_shape_subset.sql; pend=supabase/baseline/PENDING_MIGRATIONS.txt; man=supabase/SLICE1_MIGRATIONS.txt
-for f in "$boot" "$pend" "$man" supabase/baseline/assertions.sql; do [ -s "$f" ] || fail "$f vacio o ausente"; done
+boot=supabase/baseline/main_shape_subset.sql; pend=supabase/baseline/PENDING_MIGRATIONS.txt; man=supabase/SLICE1_MIGRATIONS.txt; man3=supabase/SLICE3_MIGRATIONS.txt
+for f in "$boot" "$pend" "$man" "$man3" supabase/baseline/assertions.sql; do [ -s "$f" ] || fail "$f vacio o ausente"; done
 pending="$(tr -d '\r' < "$pend" | grep -Ev '^[[:space:]]*(#|$)')"
 [ "$pending" = "$(echo "$pending" | sort -u)" ] || fail "$pend no esta ordenado o tiene duplicados"
-actual="$( (cd supabase/migrations && ls | grep -E '^(2026092810|2026093).*\.sql$' | sed 's/\.sql$//' | sort) )"
+actual="$( (cd supabase/migrations && ls | grep -E '^(2026092810|2026093|202610).*\.sql$' | sed 's/\.sql$//' | sort) )"
 [ "$pending" = "$actual" ] || { echo "FAIL: $pend y supabase/migrations difieren (< pendientes, > real):"; diff <(echo "$pending") <(echo "$actual"); exit 1; }
 [ "$(echo "$pending" | grep '^2026093')" = "$(tr -d '\r' < "$man" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (2026093*) y $man difieren"
+[ "$(echo "$pending" | grep '^202610')" = "$(tr -d '\r' < "$man3" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (202610*) y $man3 difieren"
 
 block() { # bloque comentado `-- NAME-BEGIN/END` (misma regla que Slice0Db.bloqueComentado): toda linea debe empezar por --
   awk -v n="$2" '$0 ~ "^[[:space:]]*-- "n"-END[[:space:]]*$" {e=1; exit} s {print} $0 ~ "^[[:space:]]*-- "n"-BEGIN[[:space:]]*$" {s=1} END {exit !(s && e)}' "$1" \

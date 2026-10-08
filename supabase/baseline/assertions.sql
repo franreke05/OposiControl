@@ -199,6 +199,143 @@ begin
   raise notice 'OK client guards, backstop, handle_new_auth_user, NO ACTION retention';
 end $$;
 
+-- ---------------------------------------------------------------- SLICE 3: exam runtime (20261008100000 + 20261008100100)
+-- Content rows are seeded with the content triggers off (session_replication_role = replica): the closure of the CI
+-- bootstrap does not carry every authoring helper those triggers call, and the authoring flow is not under test here.
+-- Everything after the seed runs with triggers ON (preparar_intento_examen, validar_y_calcular_respuesta_intento, FKs).
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en) values
+  ('e3000000-0000-0000-0000-000000000001','S3-EX1','e1000000-0000-0000-0000-000000000001','Slice 3','rafaga','gratuito',true,now() - interval '1 day'),
+  ('e3000000-0000-0000-0000-000000000002','S3-EX2','e1000000-0000-0000-0000-000000000001','Draft','rafaga','gratuito',false,null),
+  ('e3000000-0000-0000-0000-000000000003','S3-EX3','e1000000-0000-0000-0000-000000000001','Empty','rafaga','gratuito',true,now() - interval '1 day');
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+select ('f3000000-0000-0000-0000-00000000000' || n)::uuid, 'S3-P' || n, 'rafaga', 'Pregunta ' || n, n <> 5
+from generate_series(1, 6) n;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+select ('0a300000-0000-0000-000' || n || '-00000000000' || o)::uuid, ('f3000000-0000-0000-0000-00000000000' || n)::uuid, chr(64 + o), 'Opcion', o
+from generate_series(1, 6) n, generate_series(1, 2) o;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento)
+select ('f3000000-0000-0000-0000-00000000000' || n)::uuid, ('0a300000-0000-0000-000' || n || '-000000000001')::uuid, 'porque si'
+from generate_series(1, 6) n;
+-- EX1: P1..P4 evaluable, P5 archived (activa = false), P6 annulled BEFORE the start.
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, anulada, motivo_anulacion)
+select 'e3000000-0000-0000-0000-000000000001', ('f3000000-0000-0000-0000-00000000000' || n)::uuid, n * 10, n,
+       n = 6, case when n = 6 then 'tribunal' end
+from generate_series(1, 6) n;
+insert into public.etiquetas (id, nombre, slug) values ('7a300000-0000-0000-0000-000000000001', 'Tema 1', 's3-tema-1');
+insert into public.etiquetas_pregunta (pregunta_id, etiqueta_id)
+select ('f3000000-0000-0000-0000-00000000000' || n)::uuid, '7a300000-0000-0000-0000-000000000001' from generate_series(1, 4) n;
+set local session_replication_role = origin;
+
+do $$
+declare
+  ua constant uuid := 'a0000000-0000-0000-0000-00000000000a';
+  ub constant uuid := 'a0000000-0000-0000-0000-00000000000b';
+  ex constant uuid := 'e3000000-0000-0000-0000-000000000001';
+  p1 constant uuid := 'f3000000-0000-0000-0000-000000000001';
+  p2 constant uuid := 'f3000000-0000-0000-0000-000000000002';
+  p3 constant uuid := 'f3000000-0000-0000-0000-000000000003';
+  p4 constant uuid := 'f3000000-0000-0000-0000-000000000004';
+  ok1 constant uuid := '0a300000-0000-0000-0001-000000000001';
+  ko2 constant uuid := '0a300000-0000-0000-0002-000000000002';
+  ok3 constant uuid := '0a300000-0000-0000-0003-000000000001';
+  r jsonb; a uuid; a2 uuid;
+begin
+  -- D2-03 start: published only, non-empty only, one open attempt, frozen set without archived / annulled questions.
+  assert public.app_start_exam_attempt(ua, 'e3000000-0000-0000-0000-000000000002') ->> 'outcome' = 'EXAM_NOT_FOUND', 'draft exam is not startable';
+  assert public.app_start_exam_attempt(ua, gen_random_uuid()) ->> 'outcome' = 'EXAM_NOT_FOUND', 'unknown exam';
+  assert public.app_start_exam_attempt(ua, 'e3000000-0000-0000-0000-000000000003') ->> 'outcome' = 'EXAM_EMPTY', 'exam without questions';
+  r := public.app_start_exam_attempt(ua, ex);
+  assert r ->> 'outcome' = 'CREATED', 'start: ' || r;
+  a := (r ->> 'intento_id')::uuid;
+  r := public.app_start_exam_attempt(ua, ex);
+  assert r ->> 'outcome' = 'RESUMED' and (r ->> 'intento_id')::uuid = a, 'second start returns the open attempt: ' || r;
+  assert (select count(*) from public.intentos_examen where usuario_id = ua and examen_id = ex and estado = 'en_progreso') = 1, 'one open attempt';
+  assert (select array_agg(pregunta_id order by posicion) from public.preguntas_intento where intento_id = a) = array[p1, p2, p3, p4],
+    'frozen set = active and not annulled, in exam order';
+  assert (select array_agg(posicion order by posicion) from public.preguntas_intento where intento_id = a) = array[1, 2, 3, 4], 'positions renumbered 1..n';
+  assert (select total_preguntas = 4 and especialidad_snapshot_id = 'e1000000-0000-0000-0000-000000000001' and tipo_examen_snapshot = 'rafaga'
+            and intento_numero_usuario = 1 and motivo_fin is null from public.intentos_examen where id = a), 'attempt row at start';
+  perform pg_temp.expect(format($q$insert into public.intentos_examen (usuario_id, examen_id) values (%L, %L)$q$, ua, ex), '23505');
+  perform pg_temp.expect(format($q$update public.intentos_examen set especialidad_snapshot_id = 'e1000000-0000-0000-0000-000000000002' where id = %L$q$, a),
+    'P0001', 'INTENTO_ESPECIALIDAD_SNAPSHOT_INMUTABLE');
+
+  -- D2-09 answers: owner only, frozen set only, skip, revision, lock, first response.
+  assert public.app_record_attempt_answer(ub, a, p1, ok1, 100, 0, null) ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'another user''s attempt';
+  assert public.app_record_attempt_answer(ua, a, 'f3000000-0000-0000-0000-000000000006', null, 0, 0, null) ->> 'outcome' = 'QUESTION_NOT_IN_ATTEMPT', 'annulled-before-start question is not in the set';
+  assert public.app_record_attempt_answer(ua, a, p1, ko2, 0, 0, null) ->> 'outcome' = 'OPTION_NOT_IN_QUESTION', 'option of another question';
+  assert public.app_record_attempt_answer(ua, a, p1, ok1, 0, 3, null) = '{"outcome":"REVISION_CONFLICT","current_revision":0}'::jsonb, 'stale base revision';
+  r := public.app_record_attempt_answer(ua, a, p1, ok1, 999999999, 0, 2);
+  assert r = '{"outcome":"OK","estado":"ANSWERED","revision":1,"es_primera_respuesta":true,"respondidas":1,"noop":false}'::jsonb, 'first answer: ' || r;
+  assert (select es_correcta and primera_es_correcta and primera_opcion_id = ok1 and revision = 1 and actualizada_en is not null
+            and tiempo_respuesta_ms < 60000 and (metadatos ->> 'tiempoRecortado')::boolean and (metadatos ->> 'nivelConfianza')::int = 2
+            and posicion_pregunta = 1 and es_primer_intento_pregunta
+          from public.respuestas_intento where intento_id = a and pregunta_id = p1), 'stored answer (client time clamped to the server gap)';
+  assert public.app_record_attempt_answer(ua, a, p1, ok1, 5, 0, null) ->> 'noop' = 'true', 'same option again is a no-op';
+  assert public.app_record_attempt_answer(ua, a, p1, null, 5, 1, null) ->> 'outcome' = 'ANSWER_LOCKED', 'an answer is not cleared';
+  r := public.app_record_attempt_answer(ua, a, p2, null, 0, 0, null);
+  assert r ->> 'estado' = 'SKIPPED' and (r ->> 'revision')::int = 1 and r ->> 'es_primera_respuesta' = 'false' and (r ->> 'respondidas')::int = 1, 'skip: ' || r;
+  assert public.app_record_attempt_answer(ua, a, p2, ko2, 0, 0, null) = '{"outcome":"REVISION_CONFLICT","current_revision":1}'::jsonb, 'answering a skip needs its revision';
+  r := public.app_record_attempt_answer(ua, a, p2, ko2, 0, 1, null);
+  assert r ->> 'estado' = 'ANSWERED' and (r ->> 'revision')::int = 2 and r ->> 'es_primera_respuesta' = 'true' and (r ->> 'respondidas')::int = 2, 'skip then answer: ' || r;
+  assert (select primera_opcion_id is null and primera_es_correcta is null and opcion_seleccionada_id = ko2 and es_correcta = false and cambio_respuesta
+          from public.respuestas_intento where intento_id = a and pregunta_id = p2), 'the first submission (a skip) is immutable';
+  -- annulled between start and finish: nothing stored, not evaluable.
+  update public.preguntas_examen set anulada = true, motivo_anulacion = 'tribunal' where examen_id = ex and pregunta_id = p3;
+  r := public.app_record_attempt_answer(ua, a, p3, ok3, 0, 0, null);
+  assert r ->> 'estado' = 'ANNULLED' and (r ->> 'revision')::int = 0 and (r ->> 'respondidas')::int = 2, 'annulled question: ' || r;
+  assert not exists (select 1 from public.respuestas_intento where intento_id = a and pregunta_id = p3), 'annulled answer is not stored';
+  assert (select total_respondidas = 2 and ultima_pregunta_posicion = 2 from public.intentos_examen where id = a), 'live progress on the attempt';
+
+  -- D2-10 finish: totals over evaluable questions, frozen statuses, tag summary, idempotent.
+  assert public.app_finish_exam_attempt(ub, a) ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'another user cannot finish';
+  assert public.app_finish_exam_attempt(ua, a) = '{"outcome":"OK","already":false}'::jsonb, 'finish';
+  assert (select array_agg(estado_final order by posicion) from public.preguntas_intento where intento_id = a) = array['CORRECT', 'WRONG', 'ANNULLED', 'UNANSWERED'],
+    'statuses frozen at finish';
+  assert (select estado = 'finalizado' and motivo_fin = 'USER' and finalizado_en is not null and duracion_segundos >= 0 and total_preguntas = 4
+            and total_respondidas = 2 and total_correctas = 1 and total_falladas = 1 and total_sin_responder = 1 and porcentaje_acierto = 50
+          from public.intentos_examen where id = a), 'totals (the annulled question is in none of them)';
+  assert (select total_preguntas = 3 and correctas = 1 and falladas = 1 and sin_responder = 1 from public.resumen_intento_etiqueta where intento_id = a), 'tag summary';
+  update public.preguntas_examen set anulada = false, motivo_anulacion = null where examen_id = ex and pregunta_id = p3;
+  assert public.app_finish_exam_attempt(ua, a) = '{"outcome":"OK","already":true}'::jsonb, 'finish is idempotent';
+  assert (select array_agg(estado_final order by posicion) from public.preguntas_intento where intento_id = a) = array['CORRECT', 'WRONG', 'ANNULLED', 'UNANSWERED'],
+    'a later annulment change does not rewrite the frozen result';
+  assert public.app_record_attempt_answer(ua, a, p4, null, 0, 0, null) = '{"outcome":"ATTEMPT_NOT_IN_PROGRESS","estado":"finalizado"}'::jsonb, 'no answer after finish';
+  assert public.app_abandon_exam_attempt(ua, a, 1, 'salida_usuario') ->> 'outcome' = 'ATTEMPT_ALREADY_FINISHED', 'no abandon after finish';
+
+  -- retake + D2-11 abandon.
+  r := public.app_start_exam_attempt(ua, ex);
+  assert r ->> 'outcome' = 'CREATED' and (r ->> 'intento_id')::uuid <> a, 'a finished attempt does not block a retake: ' || r;
+  a2 := (r ->> 'intento_id')::uuid;
+  assert (select intento_numero_usuario = 2 and not es_primer_intento_examen from public.intentos_examen where id = a2), 'retake numbering';
+  r := public.app_record_attempt_answer(ua, a2, p1, ok1, 0, 0, null);
+  assert r ->> 'es_primera_respuesta' = 'false', 'a retake answer is not the user''s first response: ' || r;
+  assert public.app_abandon_exam_attempt(ua, a2, 9, 'salida_usuario') ->> 'outcome' = 'INVALID_POSITION', 'position beyond the attempt';
+  assert public.app_abandon_exam_attempt(ua, a2, 2, 'inactividad') ->> 'outcome' = 'INVALID_REASON', 'server-only reason';
+  assert public.app_abandon_exam_attempt(ub, a2, 2, 'otro') ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'another user cannot abandon';
+  assert public.app_abandon_exam_attempt(ua, a2, 2, 'salida_usuario') = '{"outcome":"OK","already":false}'::jsonb, 'abandon';
+  assert public.app_abandon_exam_attempt(ua, a2, 2, 'salida_usuario') = '{"outcome":"OK","already":true}'::jsonb, 'abandon is idempotent';
+  assert (select count(*) = 1 and min(motivo_detectado) = 'cerrar_examen' and min(posicion_pregunta) = 2 and min(pregunta_id::text) = p2::text
+            and min(tiempo_transcurrido_segundos) >= 0 from public.abandonos_examen where intento_id = a2), 'exactly one abandonos_examen row';
+  assert (select estado = 'abandonado' and abandonado_en_posicion = 2 and abandonado_en_pregunta_id = p2 from public.intentos_examen where id = a2), 'attempt abandoned';
+  assert public.app_finish_exam_attempt(ua, a2) ->> 'outcome' = 'ATTEMPT_ABANDONED', 'no finish after abandon';
+  raise notice 'OK slice 3 exam runtime (start, answer, finish, abandon)';
+end $$;
+
+-- clients cannot reach the Slice 3 commands nor write attempts directly
+set local role authenticated;
+select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-00000000000a', true);
+do $$
+begin
+  perform pg_temp.expect($q$select public.app_start_exam_attempt('a0000000-0000-0000-0000-00000000000a', 'e3000000-0000-0000-0000-000000000001')$q$, '42501');
+  perform pg_temp.expect($q$select public.app_finish_exam_attempt('a0000000-0000-0000-0000-00000000000a', gen_random_uuid())$q$, '42501');
+  perform pg_temp.expect($q$select public.app_abandon_exam_attempt('a0000000-0000-0000-0000-00000000000a', gen_random_uuid(), 1, 'otro')$q$, '42501');
+  perform pg_temp.expect($q$select public.app_record_attempt_answer('a0000000-0000-0000-0000-00000000000a', gen_random_uuid(), gen_random_uuid(), null, 0, 0, null)$q$, '42501');
+  perform pg_temp.expect($q$select private.app_congelar_preguntas_intento(gen_random_uuid(), gen_random_uuid())$q$, '42501');
+  raise notice 'OK slice 3 RPCs closed to clients';
+end $$;
+reset role;
+
 -- ---------------------------------------------------------------- grants / RLS matrix (DB-CI-PG17)
 -- Los VERIFY de cada migracion se ejecutan en scripts/db-pg17-gate.sh justo despues de aplicarla; esto es el estado FINAL.
 do $$
@@ -240,9 +377,22 @@ begin
                       'public.app_aceptar_documentos_legales(uuid,uuid[],text)', 'public.app_solicitar_eliminacion_cuenta(uuid)',
                       'public.app_registrar_revocacion_sesiones(uuid,text)', 'public.admin_sync_roles_audited(uuid,uuid[],uuid,uuid[])',
                       'public.admin_record_report_action(uuid,text,uuid,text,text)',
-                      'public.idem_begin(uuid,text,text,text,interval,interval)']) f
+                      'public.idem_begin(uuid,text,text,text,interval,interval)',
+                      -- SLICE 3 (20261008100100)
+                      'public.app_start_exam_attempt(uuid,uuid)',
+                      'public.app_record_attempt_answer(uuid,uuid,uuid,uuid,integer,integer,integer)',
+                      'public.app_finish_exam_attempt(uuid,uuid)', 'public.app_abandon_exam_attempt(uuid,uuid,integer,text)']) f
    where to_regprocedure(f) is null or not has_function_privilege('service_role', f::regprocedure, 'EXECUTE');
-  assert v is null, 'Slice 1 RPC missing or not executable by service_role: ' || v;
+  assert v is null, 'Slice 1 / Slice 3 RPC missing or not executable by service_role: ' || v;
+  -- 5b. SLICE 3: ninguna politica RLS deja a un cliente (PUBLIC, anon, authenticated) ESCRIBIR en las tablas de intento
+  --     (el camino de escritura es Ktor con service_role; las politicas de MAIN solo dejan SELECT de lo propio).
+  select string_agg(t || ' ' || p, ', ') into v
+    from unnest(array['public.intentos_examen', 'public.respuestas_intento', 'public.preguntas_intento']) t,
+         unnest(array['INSERT', 'UPDATE', 'DELETE']) p
+   where exists (select 1 from pg_policy pol
+                  where pol.polrelid = t::regclass and pol.polcmd in ('*', case p when 'INSERT' then 'a' when 'UPDATE' then 'w' else 'd' end)
+                    and pol.polroles && array[0::oid, 'anon'::regrole::oid, 'authenticated'::regrole::oid]);
+  assert v is null, 'client write policy on an attempt table: ' || v;
   -- 6. El esquema private no es alcanzable por los clientes.
   assert not has_schema_privilege('anon', 'private', 'USAGE') and not has_schema_privilege('authenticated', 'private', 'USAGE'),
     'client USAGE on schema private';

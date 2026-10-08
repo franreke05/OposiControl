@@ -7,6 +7,8 @@
 #   (b) el mismo grant al final de 20260930100300 -> el VERIFY de esa migracion (contador != 0)
 #   (c) error de sintaxis en una pendiente -> ON_ERROR_STOP
 #   (d) ROLLBACK de 102000 sin su drop function -> la huella tras el rollback no es la del bootstrap
+#   (e) grant execute de una RPC de SLICE 3 a authenticated -> el VERIFY de 20261008100100
+#   (f) el helper de congelado de SLICE 3 deja de excluir las anuladas -> la asercion de comportamiento de assertions.sql
 set -uo pipefail
 cd "$(dirname "$0")/.."
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -43,4 +45,12 @@ fresh; echo 'selec 1;' >> "$w/supabase/migrations/20260930100500_slice1_audit_ha
 expect_fail "(c) error de sintaxis" "20260930100500_slice1_audit_hardening no aplica"
 fresh; sed -i '/^-- drop function if exists public.admin_record_report_action/d' "$w/$last"; mutated "$w/$last"
 expect_fail "(d) rollback incompleto" "tras los ROLLBACK el catalogo no vuelve al bootstrap"
+# SLICE 3 (20261008100000 + 20261008100100): (e) EXECUTE de cliente sobre una RPC de comando -> su VERIFY; (f) el conjunto
+# congelado deja de excluir las anuladas -> la asercion de comportamiento de assertions.sql.
+s3=supabase/migrations/20261008100100_slice3_attempt_command_rpcs.sql
+fresh; echo 'grant execute on function public.app_finish_exam_attempt(uuid, uuid) to authenticated;' >> "$w/$s3"; mutated "$w/$s3"
+expect_fail "(e) EXECUTE de cliente sobre una RPC de Slice 3" "20261008100100_slice3_attempt_command_rpcs: VERIFY con contadores distintos de 0"
+fresh; sed -i 's/^    where pe.examen_id = p_examen_id and pe.anulada is not true and p.activa$/    where pe.examen_id = p_examen_id and p.activa/' "$w/$s3"; mutated "$w/$s3"
+expect_fail "(f) el intento congela tambien las preguntas anuladas" "assertions.sql"
+grep -q 'frozen set = active and not annulled' "$tmp/out" || { echo "TEST FAIL: (f) sin la asercion del conjunto congelado"; exit 1; }
 echo "db-pg17-gate.test OK ($n escenarios)"

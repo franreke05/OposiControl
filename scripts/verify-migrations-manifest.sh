@@ -34,3 +34,29 @@ for need in 20260930101900_admin_sync_roles_audited_expected 20260930102000_slic
 done
 [ "$(echo "$expected" | wc -l | tr -d ' ')" -ge 16 ] || { echo "FAIL: el manifiesto tiene menos de 16 migraciones Slice 1"; exit 1; }
 echo "ok:   manifiesto Slice 1 == migraciones 2026093* ($(echo "$actual" | wc -l | tr -d ' '))"
+# SLICE 3: mismo contrato para supabase/SLICE3_MIGRATIONS.txt y los supabase/migrations/202610*.sql (prefijo propio: las
+# migraciones de Slice 3 NO se renombran para caber en 2026093*). Manifiesto vacio/ausente, entrada de mas o de menos = fallo.
+man3=supabase/SLICE3_MIGRATIONS.txt
+[ -s "$man3" ] || { echo "FAIL: manifiesto vacio o ausente: $man3"; exit 1; }
+expected3="$(tr -d '\r' < "$man3" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
+[ -n "$expected3" ] || { echo "FAIL: manifiesto Slice 3 sin entradas"; exit 1; }
+actual3="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610.*\.sql$' | sed 's/\.sql$//' | sort) )"
+if [ "$actual3" != "$expected3" ]; then
+  echo "FAIL: el manifiesto Slice 3 y supabase/migrations/202610*.sql difieren (< manifiesto, > real):"
+  diff <(echo "$expected3") <(echo "$actual3")
+  exit 1
+fi
+# Toda migracion Slice 3 es POSTERIOR a la ultima de Slice 1 (se aplican despues de las pendientes de Slice 0/1).
+first3="$(echo "$expected3" | head -1 | cut -d_ -f1)"
+[ "$first3" -gt "$last" ] || { echo "FAIL: la migracion Slice 3 $first3 no es posterior a la ultima de Slice 1 ($last)"; exit 1; }
+# El runbook de despliegue cita el rango Slice 3 hasta la ULTIMA migracion del manifiesto.
+last3="$(echo "$expected3" | tail -1 | cut -d_ -f1)"
+if ! grep -qF "${first3}..${last3#20261008}" "$dep"; then
+  echo "FAIL: $dep no cita el rango Slice 3 ${first3}..${last3#20261008} (ultima migracion del manifiesto)"
+  exit 1
+fi
+# Las dos migraciones del runtime de examen deben seguir en el manifiesto (borrarlas de las dos partes a la vez no pasa).
+for need in 20261008100000_slice3_attempt_runtime_schema 20261008100100_slice3_attempt_command_rpcs; do
+  echo "$expected3" | grep -qx "$need" || { echo "FAIL: el manifiesto Slice 3 no lista $need"; exit 1; }
+done
+echo "ok:   manifiesto Slice 3 == migraciones 202610* ($(echo "$actual3" | wc -l | tr -d ' '))"
