@@ -6,17 +6,19 @@
 # la base de datos) en LOS DOS perfiles de despliegue: `combined` (por defecto) y `consumer` (SERVER_PROFILE=consumer, el del
 # despliegue partido). Si el contenedor muere durante el arranque falla al momento con sus registros (sin agotar intentos).
 # Uso: bash scripts/smoke-backend-image.sh [imagen]
-# Variables: SMOKE_IMAGE, SMOKE_PORT (18080), SMOKE_CONSUMER_PORT (18081), SMOKE_TRIES (30), SMOKE_SLEEP (2).
+# Variables: SMOKE_IMAGE, SMOKE_PORT (18080), SMOKE_CONSUMER_PORT (18081), SMOKE_CONTROL_PORT (18082), SMOKE_BOT_PORT (18083), SMOKE_TRIES (30), SMOKE_SLEEP (2).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 IMAGE="${1:-${SMOKE_IMAGE:-oposicontrol-backend:$(git rev-parse --short=12 HEAD)}}"
 PORT="${SMOKE_PORT:-18080}"
 CONSUMER_PORT="${SMOKE_CONSUMER_PORT:-18081}"
+CONTROL_PORT="${SMOKE_CONTROL_PORT:-18082}"
+BOT_PORT="${SMOKE_BOT_PORT:-18083}"
 TRIES="${SMOKE_TRIES:-30}"
 SLEEP="${SMOKE_SLEEP:-2}"
 NAME="oposicontrol-smoke-$$"
-cleanup() { docker rm -f "$NAME-combined" "$NAME-consumer" >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f "$NAME-combined" "$NAME-consumer" "$NAME-control" "$NAME-bot" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
 # Relleno no secreto, comun a los dos perfiles.
@@ -57,6 +59,11 @@ smoke_profile combined "$PORT" -e APP_ENV=staging "${PLACEHOLDERS[@]}" || exit 1
 # El perfil consumer exige el runtime de auth. APP_ENV=development SOLO para esta comprobacion de arranque: fuera de
 # desarrollo exigiria Valkey, HTTPS y TRUST_PROXY_HEADERS reales, que no existen en CI. El HMAC es relleno publico (>= 32).
 smoke_profile consumer "$CONSUMER_PORT" -e SERVER_PROFILE=consumer -e APP_ENV=development -e OPOSIBOTS_AUTH_ENABLED=true \
+  -e AUTH_RATE_LIMIT_MODE=memory -e AUTH_RATE_LIMIT_HMAC_SECRET=smoke-placeholder-hmac-filler-not-a-secret \
+  "${PLACEHOLDERS[@]}" || exit 1
+# Perfiles de produccion (compose.production.yaml): control no necesita el runtime de auth; bot lo exige como consumer.
+smoke_profile control "$CONTROL_PORT" -e SERVER_PROFILE=control -e APP_ENV=staging "${PLACEHOLDERS[@]}" || exit 1
+smoke_profile bot "$BOT_PORT" -e SERVER_PROFILE=bot -e APP_ENV=development -e OPOSIBOTS_AUTH_ENABLED=true \
   -e AUTH_RATE_LIMIT_MODE=memory -e AUTH_RATE_LIMIT_HMAC_SECRET=smoke-placeholder-hmac-filler-not-a-secret \
   "${PLACEHOLDERS[@]}" || exit 1
 exit 0

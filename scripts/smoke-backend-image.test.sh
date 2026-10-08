@@ -34,7 +34,7 @@ out="$(STUB_HEALTH=200 run)" || { echo "TEST FAIL: salud 200 debia pasar: $out";
 grep -q '^docker rm -f' "$tmp/log" || { echo "TEST FAIL: no limpia el contenedor"; exit 1; }
 grep 'docker run -d' "$tmp/log" | grep -q 'SERVER_PROFILE=consumer' || { echo "TEST FAIL: no arranca el perfil consumer"; exit 1; }
 [ "$(grep 'docker run -d' "$tmp/log" | grep -c 'SERVER_PROFILE=consumer')" = 1 ] \
-  && [ "$(grep -c 'docker run -d' "$tmp/log")" = 2 ] || { echo "TEST FAIL: se esperaban combined + consumer"; cat "$tmp/log"; exit 1; }
+  && [ "$(grep -c 'docker run -d' "$tmp/log")" = 4 ] && grep 'docker run -d' "$tmp/log" | grep -q 'SERVER_PROFILE=control' && grep 'docker run -d' "$tmp/log" | grep -q 'SERVER_PROFILE=bot' || { echo "TEST FAIL: se esperaban combined + consumer + control + bot"; cat "$tmp/log"; exit 1; }
 echo "$out" | grep -q 'SMOKE OK (consumer)' || { echo "TEST FAIL: sin OK del consumer: $out"; exit 1; }
 
 : > "$tmp/log"
