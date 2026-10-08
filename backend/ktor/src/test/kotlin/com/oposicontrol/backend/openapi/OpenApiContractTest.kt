@@ -116,10 +116,24 @@ class OpenApiContractTest {
         "D2-11" to "POST /api/v1/app/intentos/{attemptId}/abandonar",
         "D2-12" to "GET /api/v1/app/intentos/{attemptId}/resultado",
         "D2-65" to "GET /api/v1/app/intentos/{attemptId}/revision",
+        // FA11: noticias admin (D4-01..D4-11) y lecturas de wallet (D6-01, D6-02), TARGET.
+        "D4-01" to "GET /api/v1/admin/noticias",
+        "D4-02" to "GET /api/v1/admin/noticias/{noticiaId}",
+        "D4-03" to "POST /api/v1/admin/noticias",
+        "D4-04" to "PATCH /api/v1/admin/noticias/{noticiaId}",
+        "D4-05" to "POST /api/v1/admin/noticias/{noticiaId}/publicar",
+        "D4-06" to "POST /api/v1/admin/noticias/{noticiaId}/programar",
+        "D4-07" to "POST /api/v1/admin/noticias/{noticiaId}/archivar",
+        "D4-08" to "DELETE /api/v1/admin/noticias/{noticiaId}",
+        "D4-09" to "POST /api/v1/admin/noticias/assets",
+        "D4-10" to "GET /api/v1/admin/tipos-noticia",
+        "D4-11" to "PUT /api/v1/admin/tipos-noticia/{codigo}",
+        "D6-01" to "GET /api/v1/app/wallet",
+        "D6-02" to "GET /api/v1/app/wallet/movimientos",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
-    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09")
+    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D4-03", "D4-09")
     private val idempotencyOptional = setOf("D2-06", "D2-10")
 
     /** contractId -> (max, default) del limit de las listas paginadas. */
@@ -131,6 +145,8 @@ class OpenApiContractTest {
         "D2-41" to (100L to 50L),
         "D2-08" to (20L to 10L),
         "D2-65" to (50L to 20L),
+        "D4-01" to (100L to 50L),
+        "D6-02" to (50L to 20L),
     )
     private val offsetLists = mapOf(
         "D1-22" to (200L to 50L),
@@ -140,6 +156,7 @@ class OpenApiContractTest {
         "D2-51" to (200L to 100L),
         "D2-55" to (100L to 25L),
         "D2-61" to (100L to 25L),
+        "D4-10" to (200L to 100L),
     )
     private val nestedCursorLists = setOf("D2-56")
 

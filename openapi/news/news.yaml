@@ -1,0 +1,695 @@
+# NEWS ADMIN contracts (FA11): D4-01..D4-11. Successors of the legacy /content/noticias* and /admin/news-types* routes.
+# Source of truth: public.noticia, public.tipo_noticia and the public Storage bucket news-assets, written only through Ktor.
+# No product decision is involved: the app news feed (D4-18, DEC-030) is NOT part of this file.
+components:
+  pathItems:
+    AdminNews:
+      get:
+        operationId: listAdminNews
+        summary: 'List news articles (admin)'
+        tags: [news-admin]
+        x-contract-id: D4-01
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [ADMIN]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, INVALID_CURSOR, UNAUTHENTICATED, FORBIDDEN]
+        description: 'Keyset (actualizado_en desc, id). Summary rows only (no texto, no capas). An unknown estado, a non-uuid especialidadId/tipoNoticiaId or a q longer than 100 characters is 400 INVALID_FILTER. Cache no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: estado
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/NoticiaEstado'
+          - name: especialidadId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: tipoNoticiaId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: q
+            in: query
+            required: false
+            description: 'Case-insensitive match on titulo.'
+            schema:
+              type: string
+              maxLength: 100
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitAdminCursor'
+        responses:
+          '200':
+            description: 'News page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/NoticiaResumen'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, INVALID_FILTER or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+      post:
+        operationId: createAdminNewsDraft
+        summary: 'Create a news draft'
+        tags: [news-admin]
+        x-contract-id: D4-03
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, FORBIDDEN, IDEMPOTENCY_KEY_IN_PROGRESS, INACTIVE_TIPO_OR_ESPECIALIDAD, ASSET_PATH_UNKNOWN, IDEMPOTENCY_KEY_REUSED]
+        description: 'Idempotency-Key (canonical store, 24h replay). Always creates estado draft; estado, publicarDesde and publishedAt are server-owned and change only through the publicar, programar and archivar commands. One transaction: the specialty and the news type must exist and be active, then insert. backgroundPath and imagenPath must be paths returned by the asset upload (D4-09).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoticiaCreateRequest'
+        responses:
+          '201':
+            description: 'Created (estado draft).'
+            headers:
+              Location:
+                description: 'URI of the created news article.'
+                required: true
+                schema:
+                  type: string
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/NoticiaAdmin'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'INACTIVE_TIPO_OR_ESPECIALIDAD, ASSET_PATH_UNKNOWN or IDEMPOTENCY_KEY_REUSED.'
+    AdminNewsItem:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/NoticiaIdPath'
+      get:
+        operationId: getAdminNews
+        summary: 'Get a news article (admin)'
+        tags: [news-admin]
+        x-contract-id: D4-02
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NEWS_NOT_FOUND]
+        description: 'Full article with its layers. The ETag is the article version. Cache no-store.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'News article.'
+            headers:
+              ETag:
+                $ref: '#/components/headers/NewsETag'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/NoticiaAdmin'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NEWS_NOT_FOUND.'
+      patch:
+        operationId: updateAdminNewsContent
+        summary: 'Update the content of a news article'
+        tags: [news-admin]
+        x-contract-id: D4-04
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NEWS_NOT_FOUND, NEWS_NOT_EDITABLE, PRECONDITION_FAILED, INACTIVE_TIPO_OR_ESPECIALIDAD, ASSET_PATH_UNKNOWN]
+        description: 'Content only: estado, publicarDesde and publishedAt are not writable here. If-Match with the current version is mandatory and makes the command idempotent (conditional UPDATE where actualizado_en = version). Only draft and scheduled articles are editable; published or archived is 409 NEWS_NOT_EDITABLE. A stale version is 412 PRECONDITION_FAILED.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: If-Match
+            in: header
+            required: true
+            description: 'Current NoticiaAdmin.version (the ETag of D4-02), sent verbatim. Missing is 400 VALIDATION.'
+            schema:
+              type: string
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoticiaPatchRequest'
+        responses:
+          '200':
+            description: 'News article with its new version.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/NoticiaAdmin'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NEWS_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'NEWS_NOT_EDITABLE.'
+          '412':
+            $ref: '../common/errors.yaml#/components/responses/PreconditionFailed'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'INACTIVE_TIPO_OR_ESPECIALIDAD or ASSET_PATH_UNKNOWN.'
+      delete:
+        operationId: deleteAdminNews
+        summary: 'Delete a news article'
+        tags: [news-admin]
+        x-contract-id: D4-08
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NEWS_NOT_FOUND]
+        description: 'Idempotent by effect: a repeat is 404 NEWS_NOT_FOUND. The row is deleted in one transaction; its news-assets objects are removed after the commit (best effort, orphans are logged).'
+        security:
+          - bearerAuth: []
+        responses:
+          '204':
+            description: 'Deleted.'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NEWS_NOT_FOUND.'
+    AdminNewsPublish:
+      post:
+        operationId: publishAdminNews
+        summary: 'Publish a news article'
+        tags: [news-admin]
+        x-contract-id: D4-05
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NEWS_NOT_FOUND, INVALID_TRANSITION, NEWS_INCOMPLETE]
+        description: 'Empty body. Idempotent by state: an already published article returns 200 with the same publishedAt (set once, server clock). An archived article is 409 INVALID_TRANSITION.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/NoticiaIdPath'
+        responses:
+          '200':
+            description: 'News article (estado published).'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/NoticiaAdmin'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NEWS_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'INVALID_TRANSITION.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'NEWS_INCOMPLETE.'
+    AdminNewsSchedule:
+      post:
+        operationId: scheduleAdminNews
+        summary: 'Schedule a news article'
+        tags: [news-admin]
+        x-contract-id: D4-06
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, NOT_FUTURE_INSTANT, UNAUTHENTICATED, FORBIDDEN, NEWS_NOT_FOUND, INVALID_TRANSITION]
+        description: 'Idempotent: the same publicarDesde is a 200 no-op. Visibility is evaluated at read time; there is no publishing job. A published or archived article is 409 INVALID_TRANSITION.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/NoticiaIdPath'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NoticiaScheduleRequest'
+        responses:
+          '200':
+            description: 'News article (estado scheduled).'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/NoticiaAdmin'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or NOT_FUTURE_INSTANT.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NEWS_NOT_FOUND.'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'INVALID_TRANSITION.'
+    AdminNewsArchive:
+      post:
+        operationId: archiveAdminNews
+        summary: 'Archive a news article'
+        tags: [news-admin]
+        x-contract-id: D4-07
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, NEWS_NOT_FOUND]
+        description: 'Empty body. Idempotent by state: an archived article returns 200.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/NoticiaIdPath'
+        responses:
+          '200':
+            description: 'News article (estado archived).'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/NoticiaAdmin'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NEWS_NOT_FOUND.'
+    AdminNewsAssets:
+      post:
+        operationId: uploadAdminNewsAsset
+        summary: 'Upload a news image or background'
+        tags: [news-admin]
+        x-contract-id: D4-09
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, FORBIDDEN, IDEMPOTENCY_KEY_IN_PROGRESS, PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE, IDEMPOTENCY_KEY_REUSED]
+        description: 'Idempotency-Key (canonical store). image/png, image/jpeg, image/webp or image/gif up to 10 MiB. The server chooses the object path (news/<uuid>.<ext>, immutable) in the public bucket news-assets; an object no article references is an orphan.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            multipart/form-data:
+              schema:
+                $ref: '#/components/schemas/NoticiaAssetUpload'
+              encoding:
+                file:
+                  contentType: 'image/png, image/jpeg, image/webp, image/gif'
+        responses:
+          '201':
+            description: 'Stored.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/NoticiaAsset'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '413':
+            $ref: '../common/errors.yaml#/components/responses/PayloadTooLarge'
+          '415':
+            $ref: '../common/errors.yaml#/components/responses/UnsupportedMediaType'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'IDEMPOTENCY_KEY_REUSED.'
+    AdminNewsTypes:
+      get:
+        operationId: listAdminNewsTypes
+        summary: 'List news types (admin grid)'
+        tags: [news-admin]
+        x-contract-id: D4-10
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [ADMIN]
+        x-pagination: OFFSET
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN]
+        description: 'Ordered by posicion. Cache private, max-age 60.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: includeInactive
+            in: query
+            required: false
+            schema:
+              type: boolean
+              default: true
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitOffset200Default100'
+          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+        responses:
+          '200':
+            description: 'News type page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/OffsetPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/TipoNoticia'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+    AdminNewsType:
+      put:
+        operationId: upsertAdminNewsType
+        summary: 'Create or update a news type by codigo'
+        tags: [news-admin]
+        x-contract-id: D4-11
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, SLUG_CONFLICT]
+        description: 'Upsert by the natural key codigo (immutable, taken from the path): INSERT .. ON CONFLICT (codigo) DO UPDATE in one transaction. There is no hard delete (noticia references the type with RESTRICT): retiring a type is activo=false.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: codigo
+            in: path
+            required: true
+            description: 'Natural key of the news type.'
+            schema:
+              type: string
+              minLength: 1
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TipoNoticiaPutRequest'
+        responses:
+          '200':
+            description: 'Updated.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/TipoNoticia'
+          '201':
+            description: 'Created.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/TipoNoticia'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'SLUG_CONFLICT.'
+  headers:
+    NewsETag:
+      description: 'Current article version (equals NoticiaAdmin.version). The client sends it back as If-Match on PATCH /api/v1/admin/noticias/{noticiaId}.'
+      required: true
+      schema:
+        type: string
+  schemas:
+    NoticiaEstado:
+      type: string
+      enum: [draft, scheduled, published, archived]
+    NoticiaTipoFondo:
+      type: string
+      enum: [A, B, C]
+    NoticiaCapa:
+      type: object
+      description: 'One layer of the article layout. Opaque JSON object owned by the OposiControl news editor; the server stores it as given (noticia.capas jsonb array) and does not interpret it.'
+      additionalProperties: true
+    NoticiaResumen:
+      type: object
+      required: [id, titulo, estado, especialidadId, tipoNoticiaId, actualizadoEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: string
+        estado:
+          $ref: '#/components/schemas/NoticiaEstado'
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipoNoticiaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        publicarDesde:
+          type: [string, 'null']
+          format: date-time
+        publishedAt:
+          type: [string, 'null']
+          format: date-time
+        imagenUrl:
+          type: [string, 'null']
+          format: uri
+          description: 'Public URL of imagenPath in news-assets.'
+        actualizadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    NoticiaAdmin:
+      type: object
+      required: [id, titulo, capas, tipoFondo, especialidadId, tipoNoticiaId, estado, version]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: string
+        texto:
+          type: [string, 'null']
+        capas:
+          type: array
+          items:
+            $ref: '#/components/schemas/NoticiaCapa'
+        tipoFondo:
+          $ref: '#/components/schemas/NoticiaTipoFondo'
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipoNoticiaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        backgroundPath:
+          type: [string, 'null']
+        imagenPath:
+          type: [string, 'null']
+        backgroundUrl:
+          type: [string, 'null']
+          format: uri
+          description: 'Public URL of backgroundPath in news-assets.'
+        imagenUrl:
+          type: [string, 'null']
+          format: uri
+          description: 'Public URL of imagenPath in news-assets.'
+        estado:
+          $ref: '#/components/schemas/NoticiaEstado'
+        publicarDesde:
+          type: [string, 'null']
+          format: date-time
+        publishedAt:
+          type: [string, 'null']
+          format: date-time
+          description: 'Set once by the first publish (server clock).'
+        version:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+          description: 'Optimistic concurrency version (noticia.actualizado_en).'
+    NoticiaCreateRequest:
+      type: object
+      required: [titulo, capas, tipoFondo, especialidadId, tipoNoticiaId]
+      additionalProperties: false
+      properties:
+        titulo:
+          type: string
+          minLength: 1
+          description: 'Not blank after trimming.'
+        texto:
+          type: string
+        capas:
+          type: array
+          items:
+            $ref: '#/components/schemas/NoticiaCapa'
+        tipoFondo:
+          $ref: '#/components/schemas/NoticiaTipoFondo'
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipoNoticiaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        backgroundPath:
+          type: string
+        imagenPath:
+          type: string
+    NoticiaPatchRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        titulo:
+          type: string
+          minLength: 1
+        texto:
+          type: string
+        capas:
+          type: array
+          items:
+            $ref: '#/components/schemas/NoticiaCapa'
+        tipoFondo:
+          $ref: '#/components/schemas/NoticiaTipoFondo'
+        especialidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipoNoticiaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        backgroundPath:
+          type: [string, 'null']
+        imagenPath:
+          type: [string, 'null']
+    NoticiaScheduleRequest:
+      type: object
+      required: [publicarDesde]
+      additionalProperties: false
+      properties:
+        publicarDesde:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+          description: 'UTC instant strictly in the future (server clock).'
+    NoticiaAssetUpload:
+      type: object
+      required: [file]
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+        rol:
+          type: string
+          enum: [background, imagen]
+    NoticiaAsset:
+      type: object
+      required: [path, publicUrl, mime, bytes]
+      properties:
+        path:
+          type: string
+        publicUrl:
+          type: string
+          format: uri
+        mime:
+          type: string
+        bytes:
+          type: integer
+          minimum: 0
+    TipoNoticia:
+      type: object
+      required: [id, codigo, nombre, slug, activo, posicion]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        codigo:
+          type: string
+        nombre:
+          type: string
+        slug:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        activo:
+          type: boolean
+        posicion:
+          type: integer
+    TipoNoticiaPutRequest:
+      type: object
+      required: [nombre, slug, activo, posicion]
+      additionalProperties: false
+      properties:
+        nombre:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          minLength: 1
+        descripcion:
+          type: string
+        activo:
+          type: boolean
+        posicion:
+          type: integer
