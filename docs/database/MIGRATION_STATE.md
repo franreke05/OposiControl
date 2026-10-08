@@ -1,5 +1,37 @@
 # Migration State
 
+## Slice 0 + Slice 1 expand set applied to MAIN — 2026-10-08 (alternative A)
+
+Seven forward-only migrations were applied to MAIN (`ndiooyyqtaeysnedywer`), one at a time, each with its VERIFY block at 0,
+its repo version recorded in `supabase_migrations.schema_migrations`, and the protected-content catalog fingerprint
+(functions, triggers, policies, columns, constraints, grants of the question/exam/specialty/import objects) compared after
+every step: unchanged.
+
+| Version | Name |
+|---|---|
+| `20260923120000` | `news_published_at` |
+| `20260928100000` | `identity_canonical_profile_expand` |
+| `20260928100100` | `idempotency_keys` |
+| `20260930100000` | `slice1_profile_guards` |
+| `20260930100100` | `slice1_legal_attribution_detail` |
+| `20260930100200` | `slice1_profile_command_rpcs` |
+| `20260930100300` | `slice1_account_deletion_requests` |
+
+- History: 54 versions, last `20260930100300`. Applied with the Supabase CLI (`db query --linked -f <file>` + `migration repair
+  --status applied <version>`), so the recorded version equals the repo file version (no new divergence like `news_canvas_schema`
+  `20260923090948` vs `20260923103000`, which stays history-only).
+- Preconditions met: logical backup taken and restore-verified before the first write (outside Git; evidence file
+  `BACKUP_EVIDENCE.txt` + `SHA256SUMS` next to the dump); owner ratified FA7 and FA9 and chose alternative A (2026-10-08);
+  prechecks on MAIN: `public.usuario` = 0 rows (backfill is a no-op), 0 profiles with onboarding completed, no username
+  duplicates, 3 specialties, every object owned by `postgres`.
+- Data after apply: 4 users, 4 profiles (`estado_cuenta` = `activa`), 2 exams, 203 questions, 812 options, 218 audit rows:
+  identical to before. New tables `idempotency_keys`, `aceptaciones_legales`, `solicitudes_eliminacion_cuenta`: RLS enabled,
+  0 rows, no client grants. No public table without RLS; no SECURITY DEFINER command executable by `anon`/`authenticated`.
+- STILL PENDING on MAIN (apply at the Ktor cutover, runbook step 0): `20260930100500` .. `20260930102300` (12, starting with the
+  two contract migrations 5 and 6), `20261008100000` .. `20261008100200` (Slice 3) and any later file. `PENDING_MIGRATIONS.txt`
+  and `main_shape_subset.sql` still describe MAIN as of 2026-09-29 for the PG17 gate; regenerating the baseline from the
+  current MAIN is a follow-up.
+
 ## Database Redesign V1 closure — 2026-08-21
 
 Three controlled MAIN migrations were applied after read-only preflight:
