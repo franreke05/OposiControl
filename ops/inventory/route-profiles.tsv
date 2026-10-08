@@ -1,0 +1,250 @@
+# ROUTE -> PROFILE MATRIX (versioned, reviewed by hand). One row per route served by SERVER_PROFILE=combined.
+# Gate: RouteProfileGateTest (every combined route exactly once, no stale rows; routes mounted per profile == rows of the profile's classes).
+# Columns (TAB-separated): METHOD, PATH (params normalised to {}), PROFILE, AUTH, PURPOSE, CLIENT_CONSUMER
+# PROFILE in {BOT, CONTROL, SHARED, AUTH, INTERNAL, HEALTH, METRICS}. Mounting: bot = BOT+SHARED+AUTH+HEALTH+METRICS;
+#   control = CONTROL+SHARED+HEALTH+METRICS; combined = all (incl. INTERNAL, dev-only). 'consumer' (legacy minimal) is NOT derived from this file.
+# AUTH in {none, user-jwt, admin, static-token-optional}. CLIENT_CONSUMER in {OposiBot, OposiControl, none}.
+# Classification is explicit per row, never inferred from the URL prefix: e.g. /tags, /search, /search/reindex, /dashboard/metrics are CONTROL
+# although they live outside /admin; /api/v1/app/legal/documents is BOT (shares canonicalProfileRoutes with AUTH, needs the auth runtime).
+DELETE	/admin/users/{}	CONTROL	admin	Admin legacy: users/{}	OposiControl
+DELETE	/api/v1/admin/comunidades-autonomas/{}	CONTROL	admin	Admin v1: comunidades-autonomas/{}	OposiControl
+DELETE	/api/v1/admin/especialidades/{}	CONTROL	admin	Admin v1: especialidades/{}	OposiControl
+DELETE	/api/v1/admin/etiquetas/{}	CONTROL	admin	Admin v1: etiquetas/{}	OposiControl
+DELETE	/api/v1/admin/examenes/{}	CONTROL	admin	Admin v1: examenes/{}	OposiControl
+DELETE	/api/v1/admin/examenes/{}/portada	CONTROL	admin	Admin v1: examenes/{}/portada	OposiControl
+DELETE	/api/v1/admin/examenes/{}/preguntas/{}	CONTROL	admin	Admin v1: examenes/{}/preguntas/{}	OposiControl
+DELETE	/api/v1/admin/oposibots/usuarios/{}	CONTROL	admin	Admin v1: oposibots/usuarios/{}	OposiControl
+DELETE	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiControl
+DELETE	/api/v1/admin/preguntas/{}/examenes/{}	CONTROL	admin	Admin v1: preguntas/{}/examenes/{}	OposiControl
+DELETE	/api/v1/admin/preguntas/{}/recursos/{}	CONTROL	admin	Admin v1: preguntas/{}/recursos/{}	OposiControl
+DELETE	/api/v1/app/me	AUTH	user-jwt	Canonical profile/account: DELETE me	OposiBot
+DELETE	/content/comunidades/{}	CONTROL	admin	Legacy content: comunidades/{}	OposiControl
+DELETE	/content/especialidades/{}	CONTROL	admin	Legacy content: especialidades/{}	OposiControl
+DELETE	/content/etiquetas/{}	CONTROL	admin	Legacy content: etiquetas/{}	OposiControl
+DELETE	/content/noticias/{}	CONTROL	admin	Legacy content: noticias/{}	OposiControl
+DELETE	/content/preguntas/{}/recursos/{}	CONTROL	admin	Legacy content: preguntas/{}/recursos/{}	OposiControl
+DELETE	/content/rafaga/{}	CONTROL	admin	Legacy content: rafaga/{}	OposiControl
+DELETE	/content/rafaga/{}/preguntas/{}	CONTROL	admin	Legacy content: rafaga/{}/preguntas/{}	OposiControl
+DELETE	/content/solucionarios/{}	CONTROL	admin	Legacy content: solucionarios/{}	OposiControl
+DELETE	/content/solucionarios/{}/portada	CONTROL	admin	Legacy content: solucionarios/{}/portada	OposiControl
+DELETE	/content/solucionarios/{}/preguntas/{}	CONTROL	admin	Legacy content: solucionarios/{}/preguntas/{}	OposiControl
+GET	/admin/audit	CONTROL	admin	Admin legacy: audit	OposiControl
+GET	/admin/exam-access	CONTROL	admin	Admin legacy: exam-access	OposiControl
+GET	/admin/moderation/actions	CONTROL	admin	Admin legacy: moderation/actions	OposiControl
+GET	/admin/news-types	CONTROL	admin	Admin legacy: news-types	OposiControl
+GET	/admin/roles	CONTROL	admin	Admin legacy: roles	OposiControl
+GET	/admin/settings	CONTROL	admin	Admin legacy: settings	OposiControl
+GET	/admin/support/conversations	CONTROL	admin	Admin legacy: support/conversations	OposiControl
+GET	/admin/support/conversations/{}/messages	CONTROL	admin	Admin legacy: support/conversations/{}/messages	OposiControl
+GET	/admin/ticket-wallets	CONTROL	admin	Admin legacy: ticket-wallets	OposiControl
+GET	/admin/ticket-wallets/{}/transactions	CONTROL	admin	Admin legacy: ticket-wallets/{}/transactions	OposiControl
+GET	/admin/users	CONTROL	admin	Admin legacy: users	OposiControl
+GET	/admin/users/{}	CONTROL	admin	Admin legacy: users/{}	OposiControl
+GET	/api/v1/admin/accesos	CONTROL	admin	Admin v1: accesos	OposiControl
+GET	/api/v1/admin/ajustes	CONTROL	admin	Admin v1: ajustes	OposiControl
+GET	/api/v1/admin/analytics/comunidad	CONTROL	admin	Admin v1: analytics/comunidad	OposiControl
+GET	/api/v1/admin/analytics/economia	CONTROL	admin	Admin v1: analytics/economia	OposiControl
+GET	/api/v1/admin/analytics/estudio	CONTROL	admin	Admin v1: analytics/estudio	OposiControl
+GET	/api/v1/admin/analytics/marketing	CONTROL	admin	Admin v1: analytics/marketing	OposiControl
+GET	/api/v1/admin/analytics/producto	CONTROL	admin	Admin v1: analytics/producto	OposiControl
+GET	/api/v1/admin/analytics/retencion	CONTROL	admin	Admin v1: analytics/retencion	OposiControl
+GET	/api/v1/admin/auditoria	CONTROL	admin	Admin v1: auditoria	OposiControl
+GET	/api/v1/admin/comercial/productos	CONTROL	admin	Admin v1: comercial/productos	OposiControl
+GET	/api/v1/admin/comercial/productos/{}/tarifas	CONTROL	admin	Admin v1: comercial/productos/{}/tarifas	OposiControl
+GET	/api/v1/admin/comunidades-autonomas	CONTROL	admin	Admin v1: comunidades-autonomas	OposiControl
+GET	/api/v1/admin/dashboard	CONTROL	admin	Admin v1: dashboard	OposiControl
+GET	/api/v1/admin/dashboard/overview	CONTROL	admin	Admin v1: dashboard/overview	OposiControl
+GET	/api/v1/admin/especialidades	CONTROL	admin	Admin v1: especialidades	OposiControl
+GET	/api/v1/admin/especialidades/{}/capacidades	CONTROL	admin	Admin v1: especialidades/{}/capacidades	OposiControl
+GET	/api/v1/admin/estado-sistema	CONTROL	admin	Admin v1: estado-sistema	OposiControl
+GET	/api/v1/admin/etiquetas	CONTROL	admin	Admin v1: etiquetas	OposiControl
+GET	/api/v1/admin/examenes	CONTROL	admin	Admin v1: examenes	OposiControl
+GET	/api/v1/admin/examenes/{}	CONTROL	admin	Admin v1: examenes/{}	OposiControl
+GET	/api/v1/admin/examenes/{}/preguntas	CONTROL	admin	Admin v1: examenes/{}/preguntas	OposiControl
+GET	/api/v1/admin/feedback/preguntas	CONTROL	admin	Admin v1: feedback/preguntas	OposiControl
+GET	/api/v1/admin/feedback/preguntas/{}	CONTROL	admin	Admin v1: feedback/preguntas/{}	OposiControl
+GET	/api/v1/admin/importaciones/preguntas	CONTROL	admin	Admin v1: importaciones/preguntas	OposiControl
+GET	/api/v1/admin/importaciones/preguntas/{}	CONTROL	admin	Admin v1: importaciones/preguntas/{}	OposiControl
+GET	/api/v1/admin/market/packs	CONTROL	admin	Admin v1: market/packs	OposiControl
+GET	/api/v1/admin/market/popups	CONTROL	admin	Admin v1: market/popups	OposiControl
+GET	/api/v1/admin/market/promociones	CONTROL	admin	Admin v1: market/promociones	OposiControl
+GET	/api/v1/admin/market/servicios	CONTROL	admin	Admin v1: market/servicios	OposiControl
+GET	/api/v1/admin/moderacion	CONTROL	admin	Admin v1: moderacion	OposiControl
+GET	/api/v1/admin/moderacion/acciones	CONTROL	admin	Admin v1: moderacion/acciones	OposiControl
+GET	/api/v1/admin/moderacion/actions	CONTROL	admin	Admin v1: moderacion/actions	OposiControl
+GET	/api/v1/admin/moderacion/hilos	CONTROL	admin	Admin v1: moderacion/hilos	OposiControl
+GET	/api/v1/admin/moderacion/hilos/{}	CONTROL	admin	Admin v1: moderacion/hilos/{}	OposiControl
+GET	/api/v1/admin/moderacion/hilos/{}/respuestas	CONTROL	admin	Admin v1: moderacion/hilos/{}/respuestas	OposiControl
+GET	/api/v1/admin/moderacion/reportes	CONTROL	admin	Admin v1: moderacion/reportes	OposiControl
+GET	/api/v1/admin/oposibots/usuarios	CONTROL	admin	Admin v1: oposibots/usuarios	OposiControl
+GET	/api/v1/admin/oposibots/usuarios/{}	CONTROL	admin	Admin v1: oposibots/usuarios/{}	OposiControl
+GET	/api/v1/admin/planes	CONTROL	admin	Admin v1: planes	OposiControl
+GET	/api/v1/admin/planes/{}/beneficios	CONTROL	admin	Admin v1: planes/{}/beneficios	OposiControl
+GET	/api/v1/admin/preguntas	CONTROL	admin	Admin v1: preguntas	OposiControl
+GET	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiControl
+GET	/api/v1/admin/preguntas/{}/examenes	CONTROL	admin	Admin v1: preguntas/{}/examenes	OposiControl
+GET	/api/v1/admin/preguntas/{}/recursos	CONTROL	admin	Admin v1: preguntas/{}/recursos	OposiControl
+GET	/api/v1/admin/rankings/global	CONTROL	admin	Admin v1: rankings/global	OposiControl
+GET	/api/v1/admin/rankings/liga/{}	CONTROL	admin	Admin v1: rankings/liga/{}	OposiControl
+GET	/api/v1/admin/rankings/ligas	CONTROL	admin	Admin v1: rankings/ligas	OposiControl
+GET	/api/v1/admin/rankings/usuario/{}	CONTROL	admin	Admin v1: rankings/usuario/{}	OposiControl
+GET	/api/v1/admin/rankings/usuarios	CONTROL	admin	Admin v1: rankings/usuarios	OposiControl
+GET	/api/v1/admin/reportes	CONTROL	admin	Admin v1: reportes	OposiControl
+GET	/api/v1/admin/reportes/{}	CONTROL	admin	Admin v1: reportes/{}	OposiControl
+GET	/api/v1/admin/roles	CONTROL	admin	Admin v1: roles	OposiControl
+GET	/api/v1/admin/settings	CONTROL	admin	Admin v1: settings	OposiControl
+GET	/api/v1/admin/soporte	CONTROL	admin	Admin v1: soporte	OposiControl
+GET	/api/v1/admin/soporte/conversaciones	CONTROL	admin	Admin v1: soporte/conversaciones	OposiControl
+GET	/api/v1/admin/soporte/conversaciones/{}/mensajes	CONTROL	admin	Admin v1: soporte/conversaciones/{}/mensajes	OposiControl
+GET	/api/v1/admin/tickets	CONTROL	admin	Admin v1: tickets	OposiControl
+GET	/api/v1/admin/tickets/resumen	CONTROL	admin	Admin v1: tickets/resumen	OposiControl
+GET	/api/v1/admin/tickets/{}/transacciones	CONTROL	admin	Admin v1: tickets/{}/transacciones	OposiControl
+GET	/api/v1/admin/tienda/articulos	CONTROL	admin	Admin v1: tienda/articulos	OposiControl
+GET	/api/v1/admin/tienda/ofertas	CONTROL	admin	Admin v1: tienda/ofertas	OposiControl
+GET	/api/v1/admin/tienda/rafagas	CONTROL	admin	Admin v1: tienda/rafagas	OposiControl
+GET	/api/v1/admin/tienda/recursos-temporales	CONTROL	admin	Admin v1: tienda/recursos-temporales	OposiControl
+GET	/api/v1/admin/usuarios	CONTROL	admin	Admin v1: usuarios	OposiControl
+GET	/api/v1/admin/usuarios/{}	CONTROL	admin	Admin v1: usuarios/{}	OposiControl
+GET	/api/v1/admin/usuarios/{}/detalle	CONTROL	admin	Admin v1: usuarios/{}/detalle	OposiControl
+GET	/api/v1/app/commercial/catalog	BOT	user-jwt	Consumer app API: commercial/catalog	OposiBot
+GET	/api/v1/app/commercial/purchases	BOT	user-jwt	Consumer app API: commercial/purchases	OposiBot
+GET	/api/v1/app/commercial/subscriptions	BOT	user-jwt	Consumer app API: commercial/subscriptions	OposiBot
+GET	/api/v1/app/estadisticas	BOT	user-jwt	Consumer app API: estadisticas	OposiBot
+GET	/api/v1/app/examenes	BOT	user-jwt	Consumer app API: examenes	OposiBot
+GET	/api/v1/app/examenes/{}	BOT	user-jwt	Consumer app API: examenes/{}	OposiBot
+GET	/api/v1/app/home	BOT	user-jwt	Consumer app API: home	OposiBot
+GET	/api/v1/app/legal/documents	BOT	none	Legal documents (public, IP rate limit; mounted with the consumer auth runtime)	OposiBot
+GET	/api/v1/app/me	AUTH	user-jwt	Canonical profile/account: GET me	OposiBot
+GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
+GET	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
+GET	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
+GET	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl
+GET	/content/noticias	CONTROL	admin	Legacy content: noticias	OposiControl
+GET	/content/noticias/{}	CONTROL	admin	Legacy content: noticias/{}	OposiControl
+GET	/content/rafaga	CONTROL	admin	Legacy content: rafaga	OposiControl
+GET	/content/rafaga/{}/preguntas	CONTROL	admin	Legacy content: rafaga/{}/preguntas	OposiControl
+GET	/content/solucionarios	CONTROL	admin	Legacy content: solucionarios	OposiControl
+GET	/content/solucionarios/{}/preguntas	CONTROL	admin	Legacy content: solucionarios/{}/preguntas	OposiControl
+GET	/dashboard/metrics	CONTROL	admin	Admin legacy (outside /admin prefix): /dashboard/metrics	OposiControl
+GET	/health	HEALTH	none	Legacy health (restartEnabled flag); OposiControl diagnostics	OposiControl
+GET	/health/live	HEALTH	none	Liveness probe	none
+GET	/health/ready	HEALTH	none	Readiness probe (Supabase critical dependency)	none
+GET	/metrics	METRICS	static-token-optional	Prometheus scrape (Bearer METRICS_SCRAPE_TOKEN if set; METRICS_ENABLED=false -> 404)	none
+GET	/search	CONTROL	admin	Admin legacy (outside /admin prefix): /search	OposiControl
+GET	/tags	CONTROL	admin	Admin legacy (outside /admin prefix): /tags	OposiControl
+GET	/v1/auth/me	AUTH	user-jwt	Consumer auth: me	OposiBot
+GET	/v1/especialidades	SHARED	none	Public read: especialidades	OposiControl
+GET	/v1/examenes	SHARED	none	Public read: examenes	OposiControl
+GET	/v1/examenes/{}	SHARED	none	Public read: examenes/{}	none
+GET	/v1/examenes/{}/preguntas	SHARED	none	Public read: examenes/{}/preguntas	none
+PATCH	/api/v1/admin/comunidades-autonomas/{}	CONTROL	admin	Admin v1: comunidades-autonomas/{}	OposiControl
+PATCH	/api/v1/admin/especialidades/{}	CONTROL	admin	Admin v1: especialidades/{}	OposiControl
+PATCH	/api/v1/admin/etiquetas/{}	CONTROL	admin	Admin v1: etiquetas/{}	OposiControl
+PATCH	/api/v1/admin/examenes/{}	CONTROL	admin	Admin v1: examenes/{}	OposiControl
+PATCH	/api/v1/admin/examenes/{}/preguntas/orden	CONTROL	admin	Admin v1: examenes/{}/preguntas/orden	OposiControl
+PATCH	/api/v1/admin/importaciones/staging/{}	CONTROL	admin	Admin v1: importaciones/staging/{}	OposiControl
+PATCH	/api/v1/admin/oposibots/usuarios/{}	CONTROL	admin	Admin v1: oposibots/usuarios/{}	OposiControl
+PATCH	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiControl
+PATCH	/api/v1/admin/preguntas/{}/recursos/{}	CONTROL	admin	Admin v1: preguntas/{}/recursos/{}	OposiControl
+PATCH	/api/v1/admin/usuarios/{}	CONTROL	admin	Admin v1: usuarios/{}	OposiControl
+PATCH	/api/v1/app/me/profile	AUTH	user-jwt	Canonical profile/account: PATCH me/profile	OposiBot
+POST	/admin/audit	CONTROL	admin	Admin legacy: audit	OposiControl
+POST	/admin/backend/restart	INTERNAL	admin	Dev-only process restart (OPOSICONTROL_ENABLE_BACKEND_RESTART + dev APP_ENV); combined only	OposiControl
+POST	/admin/dev/restart-connection	INTERNAL	admin	Dev-only process restart (OPOSICONTROL_ENABLE_BACKEND_RESTART + dev APP_ENV); combined only	OposiControl
+POST	/admin/exam-access	CONTROL	admin	Admin legacy: exam-access	OposiControl
+POST	/admin/exam-access/{}	CONTROL	admin	Admin legacy: exam-access/{}	OposiControl
+POST	/admin/moderation/actions	CONTROL	admin	Admin legacy: moderation/actions	OposiControl
+POST	/admin/news-types	CONTROL	admin	Admin legacy: news-types	OposiControl
+POST	/admin/news-types/{}	CONTROL	admin	Admin legacy: news-types/{}	OposiControl
+POST	/admin/roles	CONTROL	admin	Admin legacy: roles	OposiControl
+POST	/admin/roles/{}	CONTROL	admin	Admin legacy: roles/{}	OposiControl
+POST	/admin/settings	CONTROL	admin	Admin legacy: settings	OposiControl
+POST	/admin/support/conversations/{}/messages	CONTROL	admin	Admin legacy: support/conversations/{}/messages	OposiControl
+POST	/admin/ticket-wallets/{}/transactions	CONTROL	admin	Admin legacy: ticket-wallets/{}/transactions	OposiControl
+POST	/admin/users	CONTROL	admin	Admin legacy: users	OposiControl
+POST	/admin/users/{}	CONTROL	admin	Admin legacy: users/{}	OposiControl
+POST	/api/v1/admin/accesos	CONTROL	admin	Admin v1: accesos	OposiControl
+POST	/api/v1/admin/comercial/productos	CONTROL	admin	Admin v1: comercial/productos	OposiControl
+POST	/api/v1/admin/comercial/productos/{}/tarifas	CONTROL	admin	Admin v1: comercial/productos/{}/tarifas	OposiControl
+POST	/api/v1/admin/comunidades-autonomas	CONTROL	admin	Admin v1: comunidades-autonomas	OposiControl
+POST	/api/v1/admin/especialidades	CONTROL	admin	Admin v1: especialidades	OposiControl
+POST	/api/v1/admin/etiquetas	CONTROL	admin	Admin v1: etiquetas	OposiControl
+POST	/api/v1/admin/examenes	CONTROL	admin	Admin v1: examenes	OposiControl
+POST	/api/v1/admin/examenes/{}/archivar	CONTROL	admin	Admin v1: examenes/{}/archivar	OposiControl
+POST	/api/v1/admin/examenes/{}/despublicar	CONTROL	admin	Admin v1: examenes/{}/despublicar	OposiControl
+POST	/api/v1/admin/examenes/{}/portada	CONTROL	admin	Admin v1: examenes/{}/portada	OposiControl
+POST	/api/v1/admin/examenes/{}/publicar	CONTROL	admin	Admin v1: examenes/{}/publicar	OposiControl
+POST	/api/v1/admin/feedback/preguntas/{}/resolver	CONTROL	admin	Admin v1: feedback/preguntas/{}/resolver	OposiControl
+POST	/api/v1/admin/importaciones/preguntas	CONTROL	admin	Admin v1: importaciones/preguntas	OposiControl
+POST	/api/v1/admin/importaciones/preguntas/pdf	CONTROL	admin	Admin v1: importaciones/preguntas/pdf	OposiControl
+POST	/api/v1/admin/importaciones/{}/importar	CONTROL	admin	Admin v1: importaciones/{}/importar	OposiControl
+POST	/api/v1/admin/market/packs	CONTROL	admin	Admin v1: market/packs	OposiControl
+POST	/api/v1/admin/market/popups	CONTROL	admin	Admin v1: market/popups	OposiControl
+POST	/api/v1/admin/market/promociones	CONTROL	admin	Admin v1: market/promociones	OposiControl
+POST	/api/v1/admin/market/servicios	CONTROL	admin	Admin v1: market/servicios	OposiControl
+POST	/api/v1/admin/moderacion/actions	CONTROL	admin	Admin v1: moderacion/actions	OposiControl
+POST	/api/v1/admin/oposibots/usuarios	CONTROL	admin	Admin v1: oposibots/usuarios	OposiControl
+POST	/api/v1/admin/planes	CONTROL	admin	Admin v1: planes	OposiControl
+POST	/api/v1/admin/planes/{}/beneficios	CONTROL	admin	Admin v1: planes/{}/beneficios	OposiControl
+POST	/api/v1/admin/preguntas	CONTROL	admin	Admin v1: preguntas	OposiControl
+POST	/api/v1/admin/preguntas/{}/examenes	CONTROL	admin	Admin v1: preguntas/{}/examenes	OposiControl
+POST	/api/v1/admin/preguntas/{}/recursos	CONTROL	admin	Admin v1: preguntas/{}/recursos	OposiControl
+POST	/api/v1/admin/preguntas/{}/recursos/archivo	CONTROL	admin	Admin v1: preguntas/{}/recursos/archivo	OposiControl
+POST	/api/v1/admin/reportes/{}/resolver	CONTROL	admin	Admin v1: reportes/{}/resolver	OposiControl
+POST	/api/v1/admin/soporte/conversaciones/{}/mensajes	CONTROL	admin	Admin v1: soporte/conversaciones/{}/mensajes	OposiControl
+POST	/api/v1/admin/tickets/conceder	CONTROL	admin	Admin v1: tickets/conceder	OposiControl
+POST	/api/v1/admin/tickets/{}/transacciones	CONTROL	admin	Admin v1: tickets/{}/transacciones	OposiControl
+POST	/api/v1/admin/tienda/articulos	CONTROL	admin	Admin v1: tienda/articulos	OposiControl
+POST	/api/v1/admin/tienda/ofertas	CONTROL	admin	Admin v1: tienda/ofertas	OposiControl
+POST	/api/v1/admin/tienda/rafagas	CONTROL	admin	Admin v1: tienda/rafagas	OposiControl
+POST	/api/v1/admin/tienda/recursos-temporales	CONTROL	admin	Admin v1: tienda/recursos-temporales	OposiControl
+POST	/api/v1/admin/usuarios/{}/roles	CONTROL	admin	Admin v1: usuarios/{}/roles	OposiControl
+POST	/api/v1/admin/usuarios/{}/tickets	CONTROL	admin	Admin v1: usuarios/{}/tickets	OposiControl
+POST	/api/v1/app/eventos	BOT	user-jwt	Consumer app API: eventos	OposiBot
+POST	/api/v1/app/examenes/{}/iniciar	BOT	user-jwt	Consumer app API: examenes/{}/iniciar	OposiBot
+POST	/api/v1/app/feedback/pregunta	BOT	user-jwt	Consumer app API: feedback/pregunta	OposiBot
+POST	/api/v1/app/intentos/{}/finalizar	BOT	user-jwt	Consumer app API: intentos/{}/finalizar	OposiBot
+POST	/api/v1/app/intentos/{}/responder	BOT	user-jwt	Consumer app API: intentos/{}/responder	OposiBot
+POST	/api/v1/app/me/legal-acceptances	AUTH	user-jwt	Canonical profile/account: POST me/legal-acceptances	OposiBot
+POST	/api/v1/app/me/onboarding	AUTH	user-jwt	Canonical profile/account: POST me/onboarding	OposiBot
+POST	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
+POST	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
+POST	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl
+POST	/content/noticias	CONTROL	admin	Legacy content: noticias	OposiControl
+POST	/content/noticias/assets	CONTROL	admin	Legacy content: noticias/assets	OposiControl
+POST	/content/preguntas/{}/recursos	CONTROL	admin	Legacy content: preguntas/{}/recursos	OposiControl
+POST	/content/preguntas/{}/recursos/{}/upload	CONTROL	admin	Legacy content: preguntas/{}/recursos/{}/upload	OposiControl
+POST	/content/rafaga	CONTROL	admin	Legacy content: rafaga	OposiControl
+POST	/content/rafaga/{}/preguntas	CONTROL	admin	Legacy content: rafaga/{}/preguntas	OposiControl
+POST	/content/solucionarios	CONTROL	admin	Legacy content: solucionarios	OposiControl
+POST	/content/solucionarios/{}/portada	CONTROL	admin	Legacy content: solucionarios/{}/portada	OposiControl
+POST	/content/solucionarios/{}/preguntas	CONTROL	admin	Legacy content: solucionarios/{}/preguntas	OposiControl
+POST	/search/reindex	CONTROL	admin	Admin legacy (outside /admin prefix): /search/reindex	OposiControl
+POST	/v1/auth/email/exchange	AUTH	none	Consumer auth: email/exchange	OposiBot
+POST	/v1/auth/email/resend	AUTH	none	Consumer auth: email/resend	OposiBot
+POST	/v1/auth/login	AUTH	none	Consumer auth: login	OposiBot
+POST	/v1/auth/logout	AUTH	user-jwt	Consumer auth: logout	OposiBot
+POST	/v1/auth/oauth/apple	AUTH	none	Consumer auth: oauth/apple	OposiBot
+POST	/v1/auth/oauth/google	AUTH	none	Consumer auth: oauth/google	OposiBot
+POST	/v1/auth/recover	AUTH	none	Consumer auth: recover	OposiBot
+POST	/v1/auth/refresh	AUTH	none	Consumer auth: refresh	OposiBot
+POST	/v1/auth/register	AUTH	none	Consumer auth: register	OposiBot
+POST	/v1/auth/register/profile	AUTH	user-jwt	Consumer auth: register/profile	OposiBot
+POST	/v1/auth/reset-password	AUTH	none	Consumer auth: reset-password	OposiBot
+PUT	/admin/exam-access/{}	CONTROL	admin	Admin legacy: exam-access/{}	OposiControl
+PUT	/admin/news-types/{}	CONTROL	admin	Admin legacy: news-types/{}	OposiControl
+PUT	/admin/roles/{}	CONTROL	admin	Admin legacy: roles/{}	OposiControl
+PUT	/admin/settings	CONTROL	admin	Admin legacy: settings	OposiControl
+PUT	/admin/users/{}	CONTROL	admin	Admin legacy: users/{}	OposiControl
+PUT	/api/v1/admin/especialidades/{}/capacidades	CONTROL	admin	Admin v1: especialidades/{}/capacidades	OposiControl
+PUT	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
+PUT	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
+PUT	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl
+PUT	/content/noticias	CONTROL	admin	Legacy content: noticias	OposiControl
+PUT	/content/preguntas/{}/recursos/order	CONTROL	admin	Legacy content: preguntas/{}/recursos/order	OposiControl
+PUT	/content/rafaga	CONTROL	admin	Legacy content: rafaga	OposiControl
+PUT	/content/rafaga/{}/preguntas	CONTROL	admin	Legacy content: rafaga/{}/preguntas	OposiControl
+PUT	/content/rafaga/{}/preguntas/order	CONTROL	admin	Legacy content: rafaga/{}/preguntas/order	OposiControl
+PUT	/content/solucionarios	CONTROL	admin	Legacy content: solucionarios	OposiControl
+PUT	/content/solucionarios/{}/preguntas	CONTROL	admin	Legacy content: solucionarios/{}/preguntas	OposiControl
+PUT	/content/solucionarios/{}/preguntas/order	CONTROL	admin	Legacy content: solucionarios/{}/preguntas/order	OposiControl

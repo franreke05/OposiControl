@@ -143,12 +143,25 @@ fun main() {
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
     val host = System.getenv("HOST").orEmpty().ifBlank { "0.0.0.0" }
 
-    embeddedServer(
+    // Cierre ordenado ante SIGTERM: `start(wait = true)` registra el shutdown hook y lo ejecuta con estos plazos. Netty deja de
+    // aceptar conexiones y espera hasta `shutdownGracePeriod` a que las peticiones en vuelo terminen (hasta
+    // `shutdownTimeout` como tope duro); luego `ApplicationStopped` cierra los recursos (Valkey, HttpClient).
+    val graceMillis = System.getenv("SHUTDOWN_GRACE_PERIOD_MS")?.toLongOrNull()?.takeIf { it >= 0 } ?: 5_000L
+    val timeoutMillis = System.getenv("SHUTDOWN_TIMEOUT_MS")?.toLongOrNull()?.takeIf { it >= graceMillis } ?: 25_000L
+    val server = embeddedServer(
         Netty,
         host = host,
         port = port,
         module = Application::module,
-    ).start(wait = true)
+    )
+    // `shutdownTimeout` acota el cierre de la aplicacion (ApplicationStopped); el drenaje de Netty lo acota `stop(grace, timeout)`.
+    server.engineConfig.shutdownGracePeriod = graceMillis
+    server.engineConfig.shutdownTimeout = timeoutMillis
+    // Hook propio y `start(wait = false)`: el hook de `start(wait = true)` llama a `stop()` con el timeout = grace (valores por
+    // defecto de Ktor); aqui el tope duro es `timeoutMillis`. SIGTERM -> deja de aceptar, drena en vuelo, cierra recursos.
+    Runtime.getRuntime().addShutdownHook(Thread({ server.stop(graceMillis, timeoutMillis) }, "ktor-graceful-shutdown"))
+    server.start(wait = false)
+    Thread.currentThread().join()
 }
 
 /**
@@ -494,9 +507,15 @@ fun Application.module() {
         explicitNulls = false
         prettyPrint = false
     }
-    val serverProfile = System.getenv("SERVER_PROFILE").orEmpty().ifBlank { "combined" }
-    val consumerOnly = serverProfile.equals("consumer", ignoreCase = true)
-    val authRuntime = OposiBotsAuthRuntime.fromEnvironment(json, required = consumerOnly)
+    val serverProfile = ServerProfile.parse(System.getenv("SERVER_PROFILE"))
+    val consumerOnly = serverProfile == ServerProfile.CONSUMER
+    // `control` no monta ninguna ruta de consumidor: no construye el runtime de auth (ni exige Valkey/GoTrue). `bot` y
+    // `consumer` lo exigen; `combined` lo monta solo si esta configurado (historico).
+    val authRuntime = if (serverProfile == ServerProfile.CONTROL) {
+        null
+    } else {
+        OposiBotsAuthRuntime.fromEnvironment(json, required = consumerOnly || serverProfile == ServerProfile.BOT)
+    }
     // MASTER-ARCH-008: cierre ordenado de los recursos del runtime de auth (Valkey, HttpClient) al parar.
     authRuntime?.let { runtime -> monitor.subscribe(ApplicationStopped) { runtime.close() } }
     installBackendPrometheusMetrics()
@@ -504,26 +523,24 @@ fun Application.module() {
         configureConsumerAuthOnly(authRuntime ?: error("Auth consumer no configurado."))
         return
     }
-    val gateway = SupabaseContentGateway.fromEnvironment(json)
-        ?: error(missingSupabaseConfigurationMessage("servir contenido desde Ktor"))
-    val newsGateway = SupabaseNewsGateway.fromEnvironment(json)
-        ?: error(missingSupabaseConfigurationMessage("servir noticias desde Ktor"))
-    val tagSearchGateway = SupabaseTagSearchGateway.fromEnvironment(json)
-        ?: error(missingSupabaseConfigurationMessage("servir busqueda desde Ktor"))
-    val adminGateway = SupabaseAdminGateway.fromEnvironment(json)
-        ?: error(missingSupabaseConfigurationMessage("servir admin desde Ktor"))
-    val adminAnalyticsGateway = AdminAnalyticsGateway.fromEnvironment(json)
-        ?: error(missingSupabaseConfigurationMessage("servir analitica desde Ktor"))
-    val adminRankingsGateway = AdminRankingsGateway.fromEnvironment(json)
-        ?: error(missingSupabaseConfigurationMessage("servir rankings desde Ktor"))
-    val adminDashboardOverviewGateway = AdminDashboardOverviewGateway.fromEnvironment(json)
-        ?: error(missingSupabaseConfigurationMessage("servir el dashboard agregado desde Ktor"))
+    // Los gateways de administracion solo se construyen (y exigen configuracion) si el perfil monta rutas admin.
+    fun <T : Any> adminOnly(purpose: String, build: () -> T?): T? =
+        if (serverProfile.mountsControl) build() ?: error(missingSupabaseConfigurationMessage(purpose)) else null
+    val gateway = adminOnly("servir contenido desde Ktor") { SupabaseContentGateway.fromEnvironment(json) }
+    val newsGateway = adminOnly("servir noticias desde Ktor") { SupabaseNewsGateway.fromEnvironment(json) }
+    val tagSearchGateway = adminOnly("servir busqueda desde Ktor") { SupabaseTagSearchGateway.fromEnvironment(json) }
+    val adminGateway = adminOnly("servir admin desde Ktor") { SupabaseAdminGateway.fromEnvironment(json) }
+    val adminAnalyticsGateway = adminOnly("servir analitica desde Ktor") { AdminAnalyticsGateway.fromEnvironment(json) }
+    val adminRankingsGateway = adminOnly("servir rankings desde Ktor") { AdminRankingsGateway.fromEnvironment(json) }
+    val adminDashboardOverviewGateway = adminOnly("servir el dashboard agregado desde Ktor") {
+        AdminDashboardOverviewGateway.fromEnvironment(json)
+    }
     val v1Gateway = SupabaseV1Gateway.fromEnvironment(json)
         ?: error(missingSupabaseConfigurationMessage("servir API V1 desde Ktor"))
-    val adminV1Gateway = AdminV1Gateway.fromEnvironment(json)
-        ?: error(missingSupabaseConfigurationMessage("servir admin API V1 desde Ktor"))
-    val oposiBotsUserAdminGateway = SupabaseOposiBotsUserAdminGateway.fromEnvironment(json)
-        ?: error(missingSupabaseConfigurationMessage("servir la administracion de usuarios de OposiBots"))
+    val adminV1Gateway = adminOnly("servir admin API V1 desde Ktor") { AdminV1Gateway.fromEnvironment(json) }
+    val oposiBotsUserAdminGateway = adminOnly("servir la administracion de usuarios de OposiBots") {
+        SupabaseOposiBotsUserAdminGateway.fromEnvironment(json)
+    }
     val appV1Gateway = AppV1Gateway.fromEnvironment(json)
         ?: error(missingSupabaseConfigurationMessage("servir app API V1 desde Ktor"))
     val supabaseUrl = System.getenv("SUPABASE_URL")?.trimEnd('/').orEmpty()
@@ -536,19 +553,6 @@ fun Application.module() {
         appEnv,
         System.getenv("OPOSICONTROL_ALLOW_DEV_USER")?.toBooleanStrictOrNull() ?: false,
     )
-    install(ContentNegotiation) {
-        json(json)
-    }
-    // Observability foundation (Observability.kt): request correlation, logs
-    // estrategicos, health/readiness. No toca OposiBot -- ver KDoc del archivo.
-    installRequestCorrelation()
-    installBackendStatusPages()
-    // MASTER2-SEC-002 / MASTER3-OBS-003: tope global de cuerpo (no multipart), explicito aqui (ya no es un efecto lateral de
-    // `installBackendStatusPages()`); el 413 sale con el sobre canonico de StatusPages.
-    installRequestBodyLimit()
-    install(Authentication) {
-        gatewayBearerAuth(appEnv, jwtVerifier::subFrom)
-    }
     val routingDeps = CombinedRoutingDeps(
         contentGateway = gateway,
         newsGateway = newsGateway,
@@ -565,63 +569,136 @@ fun Application.module() {
         allowDevUser = allowDevUser,
         appEnv = appEnv,
         authRuntime = authRuntime,
-        identityResolver = PostgrestCanonicalProfileDirectory.fromEnvironment()?.let {
-            CanonicalIdentityResolver(jwtVerifier::subFrom, it)
+        identityResolver = if (serverProfile.mountsBot) {
+            PostgrestCanonicalProfileDirectory.fromEnvironment()?.let {
+                CanonicalIdentityResolver(jwtVerifier::subFrom, it)
+            }
+        } else {
+            null
         },
     )
-    routing { installCombinedRoutes(routingDeps) }
+    configureServerProfile(serverProfile, json, routingDeps)
 }
 
 /**
- * Dependencias del arbol de rutas del perfil `combined`. Extraido de [module] SIN cambiar rutas, plugins ni orden para
- * que el inventario (`RouteInventoryTest`) recorra el arbol REAL con gateways de prueba, en vez de una copia a mano.
+ * Plugins + rutas de un perfil NO `consumer`. Extraido de [module] SIN cambiar plugins ni orden para que las pruebas
+ * (inventario por perfil, statelessness) monten exactamente el cableado de produccion con gateways de prueba.
+ */
+internal fun Application.configureServerProfile(profile: ServerProfile, json: Json, deps: CombinedRoutingDeps) {
+    require(profile != ServerProfile.CONSUMER) { "consumer se configura con configureConsumerAuthOnly" }
+    install(ContentNegotiation) {
+        json(json)
+    }
+    // Observability foundation (Observability.kt): request correlation, logs
+    // estrategicos, health/readiness. No toca OposiBot -- ver KDoc del archivo.
+    installRequestCorrelation()
+    installBackendStatusPages()
+    // MASTER2-SEC-002 / MASTER3-OBS-003: tope global de cuerpo (no multipart), explicito aqui (ya no es un efecto lateral de
+    // `installBackendStatusPages()`); el 413 sale con el sobre canonico de StatusPages.
+    installRequestBodyLimit()
+    // `gateway-auth` solo lo usan las rutas admin: `bot` no lo monta ni lo necesita.
+    if (profile.mountsControl) {
+        install(Authentication) {
+            gatewayBearerAuth(deps.appEnv, deps.jwtVerifier::subFrom)
+        }
+    }
+    routing { installProfileRoutes(profile, deps) }
+}
+
+/**
+ * Dependencias del arbol de rutas de los perfiles `bot`, `control` y `combined`. Extraido de [module] SIN cambiar rutas,
+ * plugins ni orden para que el inventario (`RouteInventoryTest`, `RouteProfileGateTest`) recorra el arbol REAL con
+ * gateways de prueba, en vez de una copia a mano.
+ *
+ * Los gateways de administracion son nulos cuando el perfil no los monta (`bot`); [installControlRoutes] los exige.
  */
 internal class CombinedRoutingDeps(
-    val contentGateway: SupabaseContentGateway,
-    val newsGateway: SupabaseNewsGateway,
-    val tagSearchGateway: SupabaseTagSearchGateway,
-    val adminGateway: SupabaseAdminGateway,
-    val adminAnalyticsGateway: AdminAnalyticsGateway,
-    val adminRankingsGateway: AdminRankingsGateway,
-    val adminDashboardOverviewGateway: AdminDashboardOverviewGateway,
+    val contentGateway: SupabaseContentGateway?,
+    val newsGateway: SupabaseNewsGateway?,
+    val tagSearchGateway: SupabaseTagSearchGateway?,
+    val adminGateway: SupabaseAdminGateway?,
+    val adminAnalyticsGateway: AdminAnalyticsGateway?,
+    val adminRankingsGateway: AdminRankingsGateway?,
+    val adminDashboardOverviewGateway: AdminDashboardOverviewGateway?,
     val v1Gateway: SupabaseV1Gateway,
-    val adminV1Gateway: AdminV1Gateway,
-    val oposiBotsUserAdminGateway: OposiBotsUserAdminGateway,
+    val adminV1Gateway: AdminV1Gateway?,
+    val oposiBotsUserAdminGateway: OposiBotsUserAdminGateway?,
     val appV1Gateway: AppV1Gateway,
     val jwtVerifier: SupabaseJwtVerifier,
     val allowDevUser: Boolean,
     val appEnv: String,
     val authRuntime: OposiBotsAuthRuntime?,
     val identityResolver: CanonicalIdentityResolver?,
+    /** Sonda de dependencia critica de `/health/ready` (Supabase). Inyectable para probar el 503; produccion usa la real. */
+    val readinessCheck: () -> String = ::checkSupabaseReachable,
 )
 
-internal fun Route.installCombinedRoutes(deps: CombinedRoutingDeps): Unit = with(deps) {
+/** Perfil historico: todo. Conjunto de rutas identico al de siempre. */
+internal fun Route.installCombinedRoutes(deps: CombinedRoutingDeps) = installProfileRoutes(ServerProfile.COMBINED, deps)
+
+/**
+ * Monta las rutas de [profile] (matriz: `ops/inventory/route-profiles.tsv`), agrupando los instaladores existentes:
+ * infra (HEALTH+METRICS) y SHARED en todos; BOT (AUTH + `/api/v1/app/...`) en `bot`/`combined`; CONTROL (todo lo tras
+ * `gateway-auth`) en `control`/`combined`. El orden de montaje de `combined` es el historico.
+ */
+internal fun Route.installProfileRoutes(profile: ServerProfile, deps: CombinedRoutingDeps) {
+    require(profile != ServerProfile.CONSUMER) { "consumer se configura con configureConsumerAuthOnly" }
+    installInfraRoutes(deps)
+    installSharedRoutes(deps)
+    if (profile.mountsBot) installBotRoutes(deps)
+    if (profile.mountsControl) installControlRoutes(deps, includeInternal = profile == ServerProfile.COMBINED)
+}
+
+/** HEALTH + METRICS: presentes en todos los perfiles. `/health/ready` refleja la dependencia critica real (Supabase). */
+internal fun Route.installInfraRoutes(deps: CombinedRoutingDeps) {
+    prometheusMetricsRoute()
+    legacyHealthRoute(
+        appEnv = System.getenv("APP_ENV"),
+        restartFlag = System.getenv("OPOSICONTROL_ENABLE_BACKEND_RESTART"),
+    )
+    // /health/live y /health/ready (Observability.kt): mas precisos que
+    // /health (que se deja igual, por compatibilidad con lo que ya lo
+    // consulta). Publicos a proposito, igual que /health -- un balanceador
+    // u orquestador no puede mandar el Bearer de gateway-auth.
+    observabilityHealthRoutes(deps.readinessCheck)
+}
+
+/** SHARED: lecturas publicas `/v1/...` (sin auth). Las consumen OposiBot y el diagnostico de OposiControl. */
+internal fun Route.installSharedRoutes(deps: CombinedRoutingDeps) {
+    v1Routes(deps.v1Gateway)
+}
+
+/** BOT + AUTH: `/api/v1/app/...` (JWT de usuario en el handler) y, con runtime de auth, `/v1/auth/...` + perfil canonico. */
+internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
+    appV1Routes(
+        appV1Gateway,
+        jwtVerifier,
+        allowDevUser,
+        identityResolver = identityResolver,
+    )
+    authRuntime?.let {
+        oposiBotsAuthRoutes(it)
+        // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).
+        canonicalProfileRoutes(it)
+    }
+}
+
+private fun <T : Any> T?.requiredForControl(name: String): T =
+    this ?: error("El perfil con rutas admin necesita $name.")
+
+/** CONTROL: toda la superficie admin / contenido / legacy admin, tras `authenticate("gateway-auth")`. */
+internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeInternal: Boolean): Unit = with(deps) {
+    val contentGateway = deps.contentGateway.requiredForControl("contentGateway")
+    val newsGateway = deps.newsGateway.requiredForControl("newsGateway")
+    val tagSearchGateway = deps.tagSearchGateway.requiredForControl("tagSearchGateway")
+    val adminGateway = deps.adminGateway.requiredForControl("adminGateway")
+    val adminAnalyticsGateway = deps.adminAnalyticsGateway.requiredForControl("adminAnalyticsGateway")
+    val adminRankingsGateway = deps.adminRankingsGateway.requiredForControl("adminRankingsGateway")
+    val adminDashboardOverviewGateway = deps.adminDashboardOverviewGateway.requiredForControl("adminDashboardOverviewGateway")
+    val adminV1Gateway = deps.adminV1Gateway.requiredForControl("adminV1Gateway")
+    val oposiBotsUserAdminGateway = deps.oposiBotsUserAdminGateway.requiredForControl("oposiBotsUserAdminGateway")
     val gateway = contentGateway
     run {
-        prometheusMetricsRoute()
-        legacyHealthRoute(
-            appEnv = System.getenv("APP_ENV"),
-            restartFlag = System.getenv("OPOSICONTROL_ENABLE_BACKEND_RESTART"),
-        )
-        // /health/live y /health/ready (Observability.kt): mas precisos que
-        // /health (que se deja igual, por compatibilidad con lo que ya lo
-        // consulta). Publicos a proposito, igual que /health -- un balanceador
-        // u orquestador no puede mandar el Bearer de gateway-auth.
-        observabilityHealthRoutes()
-        v1Routes(v1Gateway)
-        appV1Routes(
-            appV1Gateway,
-            jwtVerifier,
-            allowDevUser,
-            identityResolver = PostgrestCanonicalProfileDirectory.fromEnvironment()?.let {
-                CanonicalIdentityResolver(jwtVerifier::subFrom, it)
-            },
-        )
-        authRuntime?.let {
-            oposiBotsAuthRoutes(it)
-            // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).
-            canonicalProfileRoutes(it)
-        }
         authenticate("gateway-auth") {
             // Confina el token estático a superficies legacy locales y exige rol
             // admin a cualquier JWT. Sustituye a un intercept en fase Plugins que
@@ -661,36 +738,8 @@ internal fun Route.installCombinedRoutes(deps: CombinedRoutingDeps): Unit = with
                     },
                 ),
             )
-            post("/admin/backend/restart") {
-                val restart = BackendRestartRequest.fromEnvironment()
-                if (restart == null) {
-                    call.respond(
-                        HttpStatusCode.Forbidden,
-                        ErrorDto(
-                            error = "backend_restart_disabled",
-                            message = "Reinicio backend desactivado. Define OPOSICONTROL_ENABLE_BACKEND_RESTART=true en desarrollo.",
-                        ),
-                    )
-                } else {
-                    call.respond(HttpStatusCode.Accepted, mapOf("status" to "restarting"))
-                    restart.schedule()
-                }
-            }
-            post("/admin/dev/restart-connection") {
-                val restart = BackendRestartRequest.fromEnvironment(ngrokHost = call.ngrokHostForRestart())
-                if (restart == null) {
-                    call.respond(
-                        HttpStatusCode.Forbidden,
-                        ErrorDto(
-                            error = "backend_restart_disabled",
-                            message = "Reconexion desactivada. Define OPOSICONTROL_ENABLE_BACKEND_RESTART=true en desarrollo.",
-                        ),
-                    )
-                } else {
-                    call.respond(HttpStatusCode.Accepted, mapOf("status" to "reconnecting"))
-                    restart.schedule()
-                }
-            }
+            // INTERNAL (dev-only): reinicio del proceso. Solo en `combined`; `bot`/`control` no lo montan.
+            if (includeInternal) installDevRestartRoutes()
             route("/content") {
                 route("/especialidades") {
                     get { call.respond(gateway.listEspecialidades()) }
@@ -2450,5 +2499,39 @@ internal fun Route.newsContentRoutes(
             onRemoved(id)
             call.respond(HttpStatusCode.NoContent)
         }.legacyRoute(LegacyEndpoints.EP_015)
+    }
+}
+
+/** INTERNAL: reinicio de proceso solo para desarrollo (guardado por `gateway-auth` y `OPOSICONTROL_ENABLE_BACKEND_RESTART`). Handlers sin cambios. */
+private fun Route.installDevRestartRoutes() {
+    post("/admin/backend/restart") {
+        val restart = BackendRestartRequest.fromEnvironment()
+        if (restart == null) {
+            call.respond(
+                HttpStatusCode.Forbidden,
+                ErrorDto(
+                    error = "backend_restart_disabled",
+                    message = "Reinicio backend desactivado. Define OPOSICONTROL_ENABLE_BACKEND_RESTART=true en desarrollo.",
+                ),
+            )
+        } else {
+            call.respond(HttpStatusCode.Accepted, mapOf("status" to "restarting"))
+            restart.schedule()
+        }
+    }
+    post("/admin/dev/restart-connection") {
+        val restart = BackendRestartRequest.fromEnvironment(ngrokHost = call.ngrokHostForRestart())
+        if (restart == null) {
+            call.respond(
+                HttpStatusCode.Forbidden,
+                ErrorDto(
+                    error = "backend_restart_disabled",
+                    message = "Reconexion desactivada. Define OPOSICONTROL_ENABLE_BACKEND_RESTART=true en desarrollo.",
+                ),
+            )
+        } else {
+            call.respond(HttpStatusCode.Accepted, mapOf("status" to "reconnecting"))
+            restart.schedule()
+        }
     }
 }

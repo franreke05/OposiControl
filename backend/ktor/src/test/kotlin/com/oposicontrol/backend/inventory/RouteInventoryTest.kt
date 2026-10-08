@@ -1,5 +1,6 @@
 package com.oposicontrol.backend.inventory
 
+import com.oposicontrol.backend.ServerProfile
 import com.oposicontrol.backend.openapi.OpenApiDocs
 import io.ktor.server.routing.get
 import java.io.File
@@ -29,6 +30,8 @@ class RouteInventoryTest {
     // recorrido real: ver CombinedRouteFixture
     private val combined: List<WalkedRoute> by lazy { CombinedRouteFixture.walkCombined() }
     private val consumer: List<WalkedRoute> by lazy { CombinedRouteFixture.walkConsumer() }
+    private val bot: List<WalkedRoute> by lazy { CombinedRouteFixture.walkProfile(ServerProfile.BOT) }
+    private val control: List<WalkedRoute> by lazy { CombinedRouteFixture.walkProfile(ServerProfile.CONTROL) }
 
     // ------------------------------------------------------------------ comparadores puros (los ejercitan los controles negativos)
 
@@ -105,8 +108,12 @@ class RouteInventoryTest {
     fun theRouteTreeEqualsTheCommittedManifests() {
         val combinedKeys = combined.map { it.key }.toSortedSet()
         val consumerKeys = consumer.map { it.key }.toSortedSet()
+        val botKeys = bot.map { it.key }.toSortedSet()
+        val controlKeys = control.map { it.key }.toSortedSet()
         val v = manifestViolations("routes.combined.txt", combinedKeys, writeOrRead("routes.combined.txt", combinedKeys)) +
-            manifestViolations("routes.consumer.txt", consumerKeys, writeOrRead("routes.consumer.txt", consumerKeys))
+            manifestViolations("routes.consumer.txt", consumerKeys, writeOrRead("routes.consumer.txt", consumerKeys)) +
+            manifestViolations("routes.bot.txt", botKeys, writeOrRead("routes.bot.txt", botKeys)) +
+            manifestViolations("routes.control.txt", controlKeys, writeOrRead("routes.control.txt", controlKeys))
         assertTrue(v.isEmpty(), v.joinToString("\n"))
     }
 
