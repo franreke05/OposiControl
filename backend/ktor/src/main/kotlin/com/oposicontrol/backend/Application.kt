@@ -563,6 +563,22 @@ fun Application.module() {
         null
     }
     val catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it) }
+    // FA11 (D4-01..D4-11): noticias canonicas. UN servicio compartido con `/content/noticias*`; la auditoria usa el actor del JWT.
+    val newsRuntime = adminOnly("servir noticias canonicas desde Ktor") {
+        val idempotency = PostgrestIdempotencyStore.fromEnvironment() ?: return@adminOnly null
+        val news = newsGateway ?: return@adminOnly null
+        val search = tagSearchGateway ?: return@adminOnly null
+        val audit = adminV1Gateway ?: return@adminOnly null
+        NewsRuntime(
+            NewsService(
+                gateway = news,
+                audit = NewsAuditSink { accion, tabla, registroId, antes, despues -> audit.registrarAuditoria(accion, tabla, registroId, antes, despues) },
+                onIndexed = search::indexNoticia,
+                onRemoved = { search.remove("noticia", it) },
+            ),
+            idempotency,
+        )
+    }
     val routingDeps = CombinedRoutingDeps(
         contentGateway = gateway,
         newsGateway = newsGateway,
@@ -581,6 +597,7 @@ fun Application.module() {
         authRuntime = authRuntime,
         identityResolver = canonicalIdentityResolver,
         catalogRuntime = catalogRuntime,
+        newsRuntime = newsRuntime,
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
             catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter) }
@@ -644,6 +661,8 @@ internal class CombinedRoutingDeps(
     internal val catalogRuntime: CatalogRuntime? = null,
     /** SLICE 3 (D2-03, D2-07..D2-12, D2-65). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val attemptRuntime: AttemptRuntime? = null,
+    /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
+    internal val newsRuntime: NewsRuntime? = null,
 )
 
 /** Perfil historico: todo. Conjunto de rutas identico al de siempre. */
@@ -732,6 +751,8 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
             installAdminAuditActor()
             adminRoutes(adminGateway, adminV1Gateway)
             adminV1Routes(adminV1Gateway)
+            // FA11: noticias canonicas de administracion (D4-01..D4-11), mismo servicio que `/content/noticias*`.
+            adminNewsRoutes(deps.newsRuntime)
             adminRankingsRoutes(adminRankingsGateway)
             adminAnalyticsRoutes(adminAnalyticsGateway)
             adminDashboardOverviewRoutes(adminDashboardOverviewGateway)
@@ -942,6 +963,11 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
                     newsGateway = newsGateway,
                     onIndexed = tagSearchGateway::indexNoticia,
                     onRemoved = { tagSearchGateway.remove("noticia", it) },
+                    news = deps.newsRuntime?.service ?: NewsService(
+                        newsGateway,
+                        onIndexed = tagSearchGateway::indexNoticia,
+                        onRemoved = { tagSearchGateway.remove("noticia", it) },
+                    ),
                 )
             }
             get("/tags") {
@@ -2465,11 +2491,14 @@ internal fun Route.newsContentRoutes(
     newsGateway: NewsGateway,
     onIndexed: (NoticiaDto) -> Unit,
     onRemoved: (String) -> Unit,
+    // Servicio COMPARTIDO con `/api/v1/admin/noticias*`: las reglas (estado, contenido, auditoria, indexado) viven ahi; estas
+    // rutas solo traducen el cable legacy (NoticiaDto) y devuelven la misma forma de siempre.
+    news: NewsService = NewsService(newsGateway, onIndexed = onIndexed, onRemoved = onRemoved),
 ) {
     route("/noticias") {
         get {
             call.respond(
-                newsGateway.listNoticias(
+                news.listLegacy(
                     limit = sanitizeNewsLimit(call.request.queryParameters["limit"]),
                     offset = sanitizeNewsOffset(call.request.queryParameters["offset"]),
                 ),
@@ -2477,7 +2506,7 @@ internal fun Route.newsContentRoutes(
         }.legacyRoute(LegacyEndpoints.EP_111)
         // Releer una noticia sin arrastrar la biblioteca entera.
         get("/{noticiaId}") {
-            val noticia = newsGateway.findNoticia(call.requiredPath("noticiaId"))
+            val noticia = news.findLegacy(call.requiredPath("noticiaId"))
                 ?: return@get call.respond(
                     HttpStatusCode.NotFound,
                     ErrorDto(error = "noticia_no_encontrada", message = "La noticia no existe."),
@@ -2491,7 +2520,7 @@ internal fun Route.newsContentRoutes(
                     requiredMimePrefix = "image/",
                     defaultFileName = "news-asset",
                 )
-                newsGateway.uploadAsset(
+                news.uploadAssetLegacy(
                     NewsUploadedFile(
                         fileName = file.fileName,
                         mimeType = file.mimeType,
@@ -2501,19 +2530,15 @@ internal fun Route.newsContentRoutes(
             }
         }.legacyRoute(LegacyEndpoints.EP_200)
         post {
-            val saved = newsGateway.saveNoticia(call.receive())
-            onIndexed(saved)
+            val saved = news.saveLegacy(call.receive())
             call.respond(HttpStatusCode.Created, saved)
         }.legacyRoute(LegacyEndpoints.EP_199)
         put {
-            val saved = newsGateway.saveNoticia(call.receive())
-            onIndexed(saved)
+            val saved = news.saveLegacy(call.receive())
             call.respond(saved)
         }.legacyRoute(LegacyEndpoints.EP_229)
         delete("/{noticiaId}") {
-            val id = call.requiredPath("noticiaId")
-            newsGateway.deleteNoticia(id)
-            onRemoved(id)
+            news.deleteLegacy(call.requiredPath("noticiaId"))
             call.respond(HttpStatusCode.NoContent)
         }.legacyRoute(LegacyEndpoints.EP_015)
     }

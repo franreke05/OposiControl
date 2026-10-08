@@ -54,16 +54,17 @@ object LegacyEndpoints {
     val SLICE_0_DEPRECATED_AT: Instant = Instant.parse("2026-09-28T00:00:00Z")
 
     val EP_046 = LegacyEndpoint("EP-046", "GET", "/api/v1/admin/dashboard", "/api/v1/admin/dashboard/overview", SLICE_0_DEPRECATED_AT)
-    // MASTER5-OPENAPI-002: las sucesoras de noticias/tipos-noticia (/api/v1/admin/noticias, /tipos-noticia) NO existen
-    // como ruta ni en el OpenAPI congelado (TARGET futuro); sin sucesora direccionable no se anuncia `Link` (igual que APP-*).
-    // EP-046 y EP-144 si tienen sucesora ruteada en AdminV1Routes.
-    val EP_015 = LegacyEndpoint("EP-015", "DELETE", "/content/noticias/{noticiaId}", null, SLICE_0_DEPRECATED_AT)
-    val EP_025 = LegacyEndpoint("EP-025", "GET", "/admin/news-types", null, SLICE_0_DEPRECATED_AT)
-    val EP_111 = LegacyEndpoint("EP-111", "GET", "/content/noticias", null, SLICE_0_DEPRECATED_AT)
-    val EP_145 = LegacyEndpoint("EP-145", "POST", "/admin/news-types", null, SLICE_0_DEPRECATED_AT)
-    val EP_199 = LegacyEndpoint("EP-199", "POST", "/content/noticias", null, SLICE_0_DEPRECATED_AT)
-    val EP_200 = LegacyEndpoint("EP-200", "POST", "/content/noticias/assets", null, SLICE_0_DEPRECATED_AT)
-    val EP_229 = LegacyEndpoint("EP-229", "PUT", "/content/noticias", null, SLICE_0_DEPRECATED_AT)
+    // FA11 (D4-01..D4-11): las sucesoras canonicas de noticias y tipos de noticia YA estan ruteadas (NewsRoutes.kt) y comparten
+    // servicio (NewsService) con estas rutas. El `Link` solo se emite cuando el id de la sucesora viaja en la URL legacy
+    // (EP-015); en EP-229 el id va en el cuerpo y en EP-145 el `codigo`: ahi la sucesora queda registrada pero sin `Link`.
+    // Ninguna se retira: el contador `legacy_route_requests_total` tiene que llegar a cero (y el cliente OC migrar) antes.
+    val EP_015 = LegacyEndpoint("EP-015", "DELETE", "/content/noticias/{noticiaId}", "/api/v1/admin/noticias/{noticiaId}", SLICE_0_DEPRECATED_AT)
+    val EP_025 = LegacyEndpoint("EP-025", "GET", "/admin/news-types", "/api/v1/admin/tipos-noticia", SLICE_0_DEPRECATED_AT)
+    val EP_111 = LegacyEndpoint("EP-111", "GET", "/content/noticias", "/api/v1/admin/noticias", SLICE_0_DEPRECATED_AT)
+    val EP_145 = LegacyEndpoint("EP-145", "POST", "/admin/news-types", "/api/v1/admin/tipos-noticia/{codigo}", SLICE_0_DEPRECATED_AT)
+    val EP_199 = LegacyEndpoint("EP-199", "POST", "/content/noticias", "/api/v1/admin/noticias", SLICE_0_DEPRECATED_AT)
+    val EP_200 = LegacyEndpoint("EP-200", "POST", "/content/noticias/assets", "/api/v1/admin/noticias/assets", SLICE_0_DEPRECATED_AT)
+    val EP_229 = LegacyEndpoint("EP-229", "PUT", "/content/noticias", "/api/v1/admin/noticias/{noticiaId}", SLICE_0_DEPRECATED_AT)
     val EP_144 = LegacyEndpoint("EP-144", "POST", "/admin/moderation/actions", "/api/v1/admin/moderacion/actions", SLICE_0_DEPRECATED_AT)
 
     val SLICE_0: List<LegacyEndpoint> = listOf(EP_046, EP_015, EP_025, EP_111, EP_145, EP_199, EP_200, EP_229, EP_144)

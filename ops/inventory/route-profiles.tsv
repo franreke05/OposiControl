@@ -13,6 +13,7 @@ DELETE	/api/v1/admin/etiquetas/{}	CONTROL	admin	Admin v1: etiquetas/{}	OposiCont
 DELETE	/api/v1/admin/examenes/{}	CONTROL	admin	Admin v1: examenes/{}	OposiControl
 DELETE	/api/v1/admin/examenes/{}/portada	CONTROL	admin	Admin v1: examenes/{}/portada	OposiControl
 DELETE	/api/v1/admin/examenes/{}/preguntas/{}	CONTROL	admin	Admin v1: examenes/{}/preguntas/{}	OposiControl
+DELETE	/api/v1/admin/noticias/{}	CONTROL	admin	Admin news: delete	OposiControl
 DELETE	/api/v1/admin/oposibots/usuarios/{}	CONTROL	admin	Admin v1: oposibots/usuarios/{}	OposiControl
 DELETE	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiControl
 DELETE	/api/v1/admin/preguntas/{}/examenes/{}	CONTROL	admin	Admin v1: preguntas/{}/examenes/{}	OposiControl
@@ -76,6 +77,8 @@ GET	/api/v1/admin/moderacion/hilos	CONTROL	admin	Admin v1: moderacion/hilos	Opos
 GET	/api/v1/admin/moderacion/hilos/{}	CONTROL	admin	Admin v1: moderacion/hilos/{}	OposiControl
 GET	/api/v1/admin/moderacion/hilos/{}/respuestas	CONTROL	admin	Admin v1: moderacion/hilos/{}/respuestas	OposiControl
 GET	/api/v1/admin/moderacion/reportes	CONTROL	admin	Admin v1: moderacion/reportes	OposiControl
+GET	/api/v1/admin/noticias	CONTROL	admin	Admin news: list	OposiControl
+GET	/api/v1/admin/noticias/{}	CONTROL	admin	Admin news: detail	OposiControl
 GET	/api/v1/admin/oposibots/usuarios	CONTROL	admin	Admin v1: oposibots/usuarios	OposiControl
 GET	/api/v1/admin/oposibots/usuarios/{}	CONTROL	admin	Admin v1: oposibots/usuarios/{}	OposiControl
 GET	/api/v1/admin/planes	CONTROL	admin	Admin v1: planes	OposiControl
@@ -103,6 +106,7 @@ GET	/api/v1/admin/tienda/articulos	CONTROL	admin	Admin v1: tienda/articulos	Opos
 GET	/api/v1/admin/tienda/ofertas	CONTROL	admin	Admin v1: tienda/ofertas	OposiControl
 GET	/api/v1/admin/tienda/rafagas	CONTROL	admin	Admin v1: tienda/rafagas	OposiControl
 GET	/api/v1/admin/tienda/recursos-temporales	CONTROL	admin	Admin v1: tienda/recursos-temporales	OposiControl
+GET	/api/v1/admin/tipos-noticia	CONTROL	admin	Admin news: types list	OposiControl
 GET	/api/v1/admin/usuarios	CONTROL	admin	Admin v1: usuarios	OposiControl
 GET	/api/v1/admin/usuarios/{}	CONTROL	admin	Admin v1: usuarios/{}	OposiControl
 GET	/api/v1/admin/usuarios/{}/detalle	CONTROL	admin	Admin v1: usuarios/{}/detalle	OposiControl
@@ -149,6 +153,7 @@ PATCH	/api/v1/admin/etiquetas/{}	CONTROL	admin	Admin v1: etiquetas/{}	OposiContr
 PATCH	/api/v1/admin/examenes/{}	CONTROL	admin	Admin v1: examenes/{}	OposiControl
 PATCH	/api/v1/admin/examenes/{}/preguntas/orden	CONTROL	admin	Admin v1: examenes/{}/preguntas/orden	OposiControl
 PATCH	/api/v1/admin/importaciones/staging/{}	CONTROL	admin	Admin v1: importaciones/staging/{}	OposiControl
+PATCH	/api/v1/admin/noticias/{}	CONTROL	admin	Admin news: update content	OposiControl
 PATCH	/api/v1/admin/oposibots/usuarios/{}	CONTROL	admin	Admin v1: oposibots/usuarios/{}	OposiControl
 PATCH	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiControl
 PATCH	/api/v1/admin/preguntas/{}/recursos/{}	CONTROL	admin	Admin v1: preguntas/{}/recursos/{}	OposiControl
@@ -189,6 +194,11 @@ POST	/api/v1/admin/market/popups	CONTROL	admin	Admin v1: market/popups	OposiCont
 POST	/api/v1/admin/market/promociones	CONTROL	admin	Admin v1: market/promociones	OposiControl
 POST	/api/v1/admin/market/servicios	CONTROL	admin	Admin v1: market/servicios	OposiControl
 POST	/api/v1/admin/moderacion/actions	CONTROL	admin	Admin v1: moderacion/actions	OposiControl
+POST	/api/v1/admin/noticias	CONTROL	admin	Admin news: create draft	OposiControl
+POST	/api/v1/admin/noticias/assets	CONTROL	admin	Admin news: asset upload	OposiControl
+POST	/api/v1/admin/noticias/{}/archivar	CONTROL	admin	Admin news: archive	OposiControl
+POST	/api/v1/admin/noticias/{}/programar	CONTROL	admin	Admin news: schedule	OposiControl
+POST	/api/v1/admin/noticias/{}/publicar	CONTROL	admin	Admin news: publish	OposiControl
 POST	/api/v1/admin/oposibots/usuarios	CONTROL	admin	Admin v1: oposibots/usuarios	OposiControl
 POST	/api/v1/admin/planes	CONTROL	admin	Admin v1: planes	OposiControl
 POST	/api/v1/admin/planes/{}/beneficios	CONTROL	admin	Admin v1: planes/{}/beneficios	OposiControl
@@ -245,6 +255,7 @@ PUT	/admin/roles/{}	CONTROL	admin	Admin legacy: roles/{}	OposiControl
 PUT	/admin/settings	CONTROL	admin	Admin legacy: settings	OposiControl
 PUT	/admin/users/{}	CONTROL	admin	Admin legacy: users/{}	OposiControl
 PUT	/api/v1/admin/especialidades/{}/capacidades	CONTROL	admin	Admin v1: especialidades/{}/capacidades	OposiControl
+PUT	/api/v1/admin/tipos-noticia/{}	CONTROL	admin	Admin news: type upsert	OposiControl
 PUT	/api/v1/app/intentos/{}/respuestas/{}	BOT	user-jwt	Consumer app API: intentos/{}/respuestas/{} (D2-09)	OposiBot
 PUT	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 PUT	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl

@@ -250,6 +250,12 @@ class Master5KtorRestLoop5Test {
         // GATE SLICE 3: sucesoras de las dos rutas legacy de intento retiradas (D2-03 y D2-09, AttemptRoutes.kt).
         "/api/v1/app/examenes/{id}/intentos" to "post(\"/examenes/{examId}/intentos\")",
         "/api/v1/app/intentos/{id}/respuestas/{preguntaId}" to "put(\"/respuestas/{preguntaId}\")",
+        // FA11: sucesoras de noticias y tipos de noticia (D4-01..D4-11, NewsRoutes.kt).
+        "/api/v1/admin/noticias" to "route(\"/noticias\")",
+        "/api/v1/admin/noticias/{noticiaId}" to "route(\"/{noticiaId}\")",
+        "/api/v1/admin/noticias/assets" to "routeTemplate = \"/api/v1/admin/noticias/assets\"",
+        "/api/v1/admin/tipos-noticia" to "route(\"/tipos-noticia\")",
+        "/api/v1/admin/tipos-noticia/{codigo}" to "put(\"/{codigo}\")",
     )
 
     @Test
@@ -261,12 +267,9 @@ class Master5KtorRestLoop5Test {
         val sources = File("src/main/kotlin/com/oposicontrol/backend").walkTopDown().filter { it.extension == "kt" }
             .joinToString("\n") { it.readText() }
         routedSuccessors.forEach { (successor, marker) -> assertTrue(marker in sources, "sucesora $successor: marca $marker no encontrada") }
-        // Las 7 de noticias/tipos-noticia no tienen sucesora ruteada todavia.
-        assertEquals(
-            setOf("EP-015", "EP-025", "EP-111", "EP-145", "EP-199", "EP-200", "EP-229"),
-            all.filter { it.successorPath == null && it.endpointId.startsWith("EP-") }.map { it.endpointId }.toSet(),
-        )
-        assertFalse(advertised.any { "noticias" in it })
+        // FA11: las 7 de noticias/tipos-noticia YA tienen sucesora ruteada: ninguna EP legacy queda sin sucesora.
+        assertEquals(emptySet<String>(), all.filter { it.successorPath == null && it.endpointId.startsWith("EP-") }.map { it.endpointId }.toSet())
+        assertTrue(advertised.any { "noticias" in it })
     }
 
     // ------------------------------------------------------------------ MASTER5-API-005

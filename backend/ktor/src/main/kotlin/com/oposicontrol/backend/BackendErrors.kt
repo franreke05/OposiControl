@@ -950,6 +950,17 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     REVISION_CONFLICT(HttpStatusCode.Conflict, "La respuesta ha cambiado en otro dispositivo. Recarga el intento."),
     QUESTION_NOT_IN_ATTEMPT(HttpStatusCode.UnprocessableEntity, "La pregunta no pertenece al intento."),
     OPTION_NOT_IN_QUESTION(HttpStatusCode.UnprocessableEntity, "La opcion no pertenece a la pregunta."),
+
+    // Noticias admin (`openapi/news/news.yaml`, D4-01..D4-11).
+    NEWS_NOT_FOUND(HttpStatusCode.NotFound, "La noticia no existe."),
+    NEWS_NOT_EDITABLE(HttpStatusCode.Conflict, "Solo se pueden editar las noticias en borrador o programadas."),
+    INVALID_TRANSITION(HttpStatusCode.Conflict, "La noticia no puede pasar a ese estado desde el actual."),
+    NEWS_INCOMPLETE(HttpStatusCode.UnprocessableEntity, "La noticia no tiene contenido y no se puede publicar."),
+    NOT_FUTURE_INSTANT(HttpStatusCode.BadRequest, "La fecha de publicacion tiene que ser posterior a ahora."),
+    INACTIVE_TIPO_OR_ESPECIALIDAD(HttpStatusCode.UnprocessableEntity, "El tipo de noticia o la especialidad no existe o no esta activo."),
+    ASSET_PATH_UNKNOWN(HttpStatusCode.UnprocessableEntity, "La ruta del recurso no corresponde a un archivo subido."),
+    SLUG_CONFLICT(HttpStatusCode.Conflict, "Ya existe un tipo de noticia con ese slug."),
+    INVALID_FILTER(HttpStatusCode.BadRequest, "Algun filtro de la lista no es valido."),
     ;
 
     fun exception(

@@ -7,6 +7,7 @@ DELETE /api/v1/admin/etiquetas/{}
 DELETE /api/v1/admin/examenes/{}
 DELETE /api/v1/admin/examenes/{}/portada
 DELETE /api/v1/admin/examenes/{}/preguntas/{}
+DELETE /api/v1/admin/noticias/{}
 DELETE /api/v1/admin/oposibots/usuarios/{}
 DELETE /api/v1/admin/preguntas/{}
 DELETE /api/v1/admin/preguntas/{}/examenes/{}
@@ -69,6 +70,8 @@ GET /api/v1/admin/moderacion/hilos
 GET /api/v1/admin/moderacion/hilos/{}
 GET /api/v1/admin/moderacion/hilos/{}/respuestas
 GET /api/v1/admin/moderacion/reportes
+GET /api/v1/admin/noticias
+GET /api/v1/admin/noticias/{}
 GET /api/v1/admin/oposibots/usuarios
 GET /api/v1/admin/oposibots/usuarios/{}
 GET /api/v1/admin/planes
@@ -96,6 +99,7 @@ GET /api/v1/admin/tienda/articulos
 GET /api/v1/admin/tienda/ofertas
 GET /api/v1/admin/tienda/rafagas
 GET /api/v1/admin/tienda/recursos-temporales
+GET /api/v1/admin/tipos-noticia
 GET /api/v1/admin/usuarios
 GET /api/v1/admin/usuarios/{}
 GET /api/v1/admin/usuarios/{}/detalle
@@ -125,6 +129,7 @@ PATCH /api/v1/admin/etiquetas/{}
 PATCH /api/v1/admin/examenes/{}
 PATCH /api/v1/admin/examenes/{}/preguntas/orden
 PATCH /api/v1/admin/importaciones/staging/{}
+PATCH /api/v1/admin/noticias/{}
 PATCH /api/v1/admin/oposibots/usuarios/{}
 PATCH /api/v1/admin/preguntas/{}
 PATCH /api/v1/admin/preguntas/{}/recursos/{}
@@ -162,6 +167,11 @@ POST /api/v1/admin/market/popups
 POST /api/v1/admin/market/promociones
 POST /api/v1/admin/market/servicios
 POST /api/v1/admin/moderacion/actions
+POST /api/v1/admin/noticias
+POST /api/v1/admin/noticias/assets
+POST /api/v1/admin/noticias/{}/archivar
+POST /api/v1/admin/noticias/{}/programar
+POST /api/v1/admin/noticias/{}/publicar
 POST /api/v1/admin/oposibots/usuarios
 POST /api/v1/admin/planes
 POST /api/v1/admin/planes/{}/beneficios
@@ -198,6 +208,7 @@ PUT /admin/roles/{}
 PUT /admin/settings
 PUT /admin/users/{}
 PUT /api/v1/admin/especialidades/{}/capacidades
+PUT /api/v1/admin/tipos-noticia/{}
 PUT /content/comunidades
 PUT /content/especialidades
 PUT /content/etiquetas

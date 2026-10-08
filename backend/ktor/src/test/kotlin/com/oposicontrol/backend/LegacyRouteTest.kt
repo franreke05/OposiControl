@@ -67,8 +67,8 @@ class LegacyRouteTest {
         val unresolved = client.get("/legacy/sin-parametro")
         assertEquals("@1790553600", unresolved.headers[LegacyHeaders.DEPRECATION])
         assertNull(unresolved.headers[HttpHeaders.Link], "sin valor para {cosaId} no hay sucesor direccionable")
-        // MASTER5-OPENAPI-002 (cambio deliberado): EP-229/EP-145 (plantilla sin variable en la URL legacy) ya no anuncian sucesora.
-        assertEquals(emptySet<String>(), LegacyEndpoints.SLICE_0.filter { "{" in it.successorPath.orEmpty() && "{" !in it.legacyPath }.map { it.endpointId }.toSet())
+        // FA11: EP-229/EP-145 llevan el id / el `codigo` en el cuerpo, no en la URL legacy: su sucesora esta registrada pero sin Link.
+        assertEquals(setOf("EP-145", "EP-229"), LegacyEndpoints.SLICE_0.filter { "{" in it.successorPath.orEmpty() && "{" !in it.legacyPath }.map { it.endpointId }.toSet())
     }
 
     @Test
@@ -192,11 +192,8 @@ class LegacyRouteTest {
             LegacyEndpoints.SLICE_0.map { it.endpointId }.toSet(),
         )
         assertTrue(LegacyEndpoints.SLICE_0.all { it.sunsetAt == null })
-        // MASTER5-OPENAPI-002 (cambio deliberado): las 7 rutas de noticias no tienen sucesora ruteada -> sin successorPath.
-        assertEquals(
-            setOf("EP-015", "EP-025", "EP-111", "EP-145", "EP-199", "EP-200", "EP-229"),
-            LegacyEndpoints.SLICE_0.filter { it.successorPath == null }.map { it.endpointId }.toSet(),
-        )
+        // FA11: las 7 rutas de noticias / tipos de noticia tienen ya su sucesora canonica ruteada (NewsRoutes.kt).
+        assertEquals(emptySet<String>(), LegacyEndpoints.SLICE_0.filter { it.successorPath == null }.map { it.endpointId }.toSet())
         assertTrue(LegacyEndpoints.SLICE_0.all { it.successorPath == null || it.successorPath!!.startsWith("/api/v1/") })
         assertTrue(LegacyEndpoints.SLICE_0.none { it.endpointId in setOf("EP-124", "EP-218", "EP-192") })
     }
@@ -219,12 +216,12 @@ class LegacyRouteTest {
         }
         val auth = "Bearer test"
         val list = client.get("/content/noticias") { header(HttpHeaders.Authorization, auth) }
-        assertNull(list.headers[HttpHeaders.Link], "MASTER5-OPENAPI-002: la sucesora de noticias no existe, no se anuncia")
+        assertEquals("</api/v1/admin/noticias>; rel=\"successor-version\"", list.headers[HttpHeaders.Link], "FA11: la sucesora D4-01 esta ruteada")
         assertNotNull(list.headers[LegacyHeaders.DEPRECATION])
         val one = client.get("/content/noticias/x") { header(HttpHeaders.Authorization, auth) }
         assertNull(one.headers[LegacyHeaders.DEPRECATION])
         val removed = client.delete("/content/noticias/x") { header(HttpHeaders.Authorization, auth) }
-        assertNull(removed.headers[HttpHeaders.Link])
+        assertEquals("</api/v1/admin/noticias/x>; rel=\"successor-version\"", removed.headers[HttpHeaders.Link], "FA11: D4-08 con el id real de la URL")
         assertNotNull(removed.headers[LegacyHeaders.DEPRECATION])
         val created = client.post("/content/noticias") {
             header(HttpHeaders.Authorization, auth)

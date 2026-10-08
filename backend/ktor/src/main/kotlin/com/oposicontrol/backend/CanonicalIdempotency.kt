@@ -11,6 +11,7 @@ import io.ktor.server.application.createRouteScopedPlugin
 import io.ktor.server.application.hooks.CallFailed
 import io.ktor.server.application.hooks.ResponseBodyReadyForSend
 import io.ktor.server.application.hooks.ResponseSent
+import io.ktor.server.auth.AuthenticationChecked
 import io.ktor.server.request.contentType
 import io.ktor.server.request.httpMethod
 import io.ktor.server.request.receiveChannel
@@ -422,6 +423,14 @@ class CanonicalIdempotencyConfig {
      * reciba un 400 IDEMPOTENCY_KEY_* ni llegue al almacen, y fijan las cabeceras que tambien lleva una repeticion.
      */
     var before: suspend (ApplicationCall) -> Unit = {}
+
+    /**
+     * FA11 (plano admin): `onCall` corre en la fase de preparacion de la llamada, ANTES de la autenticacion de Ktor, asi que ahi
+     * no hay principal ni 401/403 de rol. Las rutas admin (instaladas bajo `authenticate("gateway-auth")` con
+     * [AdminAuthorizationPlugin]) piden `true`: la clave se valida y se reclama DESPUES de `AuthenticationChecked`, con el
+     * principal ya autenticado y autorizado. Las rutas de la app (identidad propia por JWT) mantienen `false`.
+     */
+    var afterAuthentication: Boolean = false
 }
 
 private val IdempotencyClaimKey = AttributeKey<IdempotencyClaim>("canonical-idempotency-claim")
@@ -462,9 +471,9 @@ val CanonicalIdempotency = createRouteScopedPlugin("CanonicalIdempotency", ::Can
     require(config.routeTemplate.startsWith("/")) { "CanonicalIdempotency necesita routeTemplate" }
     val paramNames = TEMPLATE_PARAM.findAll(config.routeTemplate).map { it.groupValues[1] }.toList()
 
-    onCall { call ->
+    val claimKey: suspend (ApplicationCall) -> Unit = claim@{ call ->
         config.before(call)
-        val key = IdempotencyKey.parse(call.request.headers[IdempotencyHeaders.KEY], config.required) ?: return@onCall
+        val key = IdempotencyKey.parse(call.request.headers[IdempotencyHeaders.KEY], config.required) ?: return@claim
         val actorId = config.actor(call)
         val method = call.request.httpMethod.value.uppercase()
         val pathParams = paramNames.associateWith { call.parameters[it].orEmpty() }
@@ -488,6 +497,8 @@ val CanonicalIdempotency = createRouteScopedPlugin("CanonicalIdempotency", ::Can
                 throw CanonicalErrorCode.IDEMPOTENCY_KEY_IN_PROGRESS.exception(retryAfterSeconds = 1)
         }
     }
+
+    if (config.afterAuthentication) on(AuthenticationChecked) { call -> claimKey(call) } else onCall { call -> claimKey(call) }
 
     // Una excepcion del handler la responde el StatusPages de la APLICACION,
     // fuera del pipeline de esta ruta: aqui se libera la clave ANTES de que salga
