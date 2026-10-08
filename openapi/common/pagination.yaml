@@ -130,3 +130,13 @@ components:
         type: integer
         minimum: 0
         default: 0
+    OffsetStrict:
+      name: offset
+      in: query
+      required: false
+      description: 'Zero-based offset 0..100000 (strict, D1-22). A negative, non-integer or greater than 100000 value is rejected with 400 VALIDATION, issue offset/OUT_OF_RANGE; it is never clamped.'
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 100000
+        default: 0

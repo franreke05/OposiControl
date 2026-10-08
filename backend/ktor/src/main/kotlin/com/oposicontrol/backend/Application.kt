@@ -636,7 +636,7 @@ internal fun Route.installCombinedRoutes(deps: CombinedRoutingDeps): Unit = with
             }
             // MASTER-OBS-002: el `sub` del JWT como actor de toda auditoría administrativa.
             installAdminAuditActor()
-            adminRoutes(adminGateway)
+            adminRoutes(adminGateway, adminV1Gateway)
             adminV1Routes(adminV1Gateway)
             adminRankingsRoutes(adminRankingsGateway)
             adminAnalyticsRoutes(adminAnalyticsGateway)

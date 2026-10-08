@@ -262,8 +262,11 @@ internal class SupabaseOposiBotsAuthGateway(
             throw failure
         }
         if (!updated.status.isSuccessStatus()) {
-            // MASTER-AUTH-006: la contraseña NO cambio -> solo muere la sesion de recuperacion, no las demas.
-            revokeMintedSession(recovery.accessToken, context, scope = "local")
+            // MASTER-AUTH-006: un 4xx definitivo = la contraseña NO cambio -> solo muere la sesion de recuperacion.
+            // RC-09: un 5xx/408 (proxy, timeout de upstream) es resultado DESCONOCIDO, igual que la excepcion de arriba:
+            // la contraseña pudo cambiar -> deny-by-default, revoke `scope=global`. El error original se propaga igual.
+            val outcomeUnknown = updated.status.value >= 500 || updated.status == HttpStatusCode.RequestTimeout
+            revokeMintedSession(recovery.accessToken, context, scope = if (outcomeUnknown) "global" else "local")
             // MASTER3-AUTH-002: /verify ya consumio el token de recuperacion (un solo uso); un rechazo de la contraseña por
             // GoTrue (weak/same_password) es 400 VALIDATION, no 401, y el cliente debe pedir un enlace nuevo.
             throw mapCredentialError(updated, purpose = AuthPurpose.PASSWORD_RESET)

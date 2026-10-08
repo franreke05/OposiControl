@@ -23,21 +23,21 @@ import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 
-fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
+/** [moderation]: el gateway canonico cuyo servicio de moderacion usa el adaptador EP-144 (RC-01). */
+fun Route.adminRoutes(gateway: SupabaseAdminGateway, moderation: AdminV1Gateway) {
     route("/admin") {
         get("/users") { call.respond(gateway.listUsers()) }
         get("/users/{userId}") { call.respond(gateway.getUser(call.requiredPath("userId"))) }
-        post("/users") { call.respond(HttpStatusCode.Created, gateway.saveUser(call.receive())) }
-        post("/users/{userId}") { call.respond(HttpStatusCode.Created, gateway.saveUser(call.receive())) }
-        put("/users/{userId}") { call.respond(gateway.saveUser(call.receive())) }
-        delete("/users/{userId}") {
-            gateway.deleteUser(call.requiredPath("userId"))
-            call.respond(HttpStatusCode.NoContent)
-        }
+        // RC-10 (MASTERF1-API-002): escritores legacy sin llamador vivo, retirados con 410 (mismo patron que EP-150 y la
+        // cartera legacy): el cuerpo NO se lee y no hay I/O upstream antes del rechazo. Contados por `legacyRoute`.
+        post("/users") { rejectLegacyAdminWriter() }.legacyRoute(LegacyEndpoints.EP_152)
+        post("/users/{userId}") { rejectLegacyAdminWriter() }.legacyRoute(LegacyEndpoints.EP_153)
+        put("/users/{userId}") { rejectLegacyAdminWriter() }.legacyRoute(LegacyEndpoints.EP_224)
+        delete("/users/{userId}") { rejectLegacyAdminWriter() }.legacyRoute(LegacyEndpoints.EP_001)
         get("/roles") { call.respond(gateway.listRoles()) }
-        post("/roles") { call.respond(HttpStatusCode.Created, gateway.saveRole(call.receive())) }
-        post("/roles/{roleId}") { call.respond(HttpStatusCode.Created, gateway.saveRole(call.receive())) }
-        put("/roles/{roleId}") { call.respond(gateway.saveRole(call.receive())) }
+        post("/roles") { rejectLegacyAdminWriter() }.legacyRoute(LegacyEndpoints.EP_147)
+        post("/roles/{roleId}") { rejectLegacyAdminWriter() }.legacyRoute(LegacyEndpoints.EP_148)
+        put("/roles/{roleId}") { rejectLegacyAdminWriter() }.legacyRoute(LegacyEndpoints.EP_222)
         get("/settings") { call.respond(gateway.settings()) }
         post("/settings") { call.respond(call.receive<AdminSettingsDto>()) }
         put("/settings") { call.respond(call.receive<AdminSettingsDto>()) }
@@ -78,12 +78,42 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway) {
         }
         get("/moderation/actions") { call.respond(gateway.listModerationActions()) }
         post("/moderation/actions") {
-            call.respond(HttpStatusCode.Created, gateway.appendModerationAction(call.receive()))
+            // RC-01: EP-144 es un ADAPTADOR fino sobre el MISMO servicio canonico que `POST /api/v1/admin/moderacion/actions`
+            // ([AdminV1Gateway.applyModerationAction]): objetivo = uuid, actor = `sub` del JWT (403 al token estatico antes de
+            // leer el cuerpo); el `executor` del cliente se IGNORA y la respuesta devuelve el actor real.
+            val actorId = call.moderationActorOrForbidden()
+            val input = call.receive<AdminModerationActionDto>()
+            val command = ModerationCommand.fromLegacy(input)
+            withUpstreamIo { moderation.applyModerationAction(actorId, command) }
+            call.respond(
+                HttpStatusCode.Created,
+                AdminModerationActionDto(
+                    id = "",
+                    actionType = input.actionType,
+                    targetUser = command.targetUserId,
+                    executor = actorId,
+                    reason = command.reason,
+                    createdAt = "",
+                ),
+            )
         }.legacyRoute(LegacyEndpoints.EP_144)
     }
     get("/dashboard/metrics") {
         call.respond(gateway.dashboardMetrics())
     }
+}
+
+/**
+ * RC-10: rechazo de los escritores legacy de usuarios/roles. No recibe el gateway: por construccion no puede hacer I/O
+ * upstream. Las sucesoras auditadas y con la guarda MASTER-AUTH-001 son las rutas `/api/v1/admin/usuarios/...`.
+ */
+internal fun rejectLegacyAdminWriter(): Nothing {
+    throw BackendDomainException(
+        "ADMIN_LEGACY_ROUTE_DISABLED",
+        HttpStatusCode.Gone,
+        "La escritura legacy de usuarios/roles esta deshabilitada (sin guarda de cuentas administrativas ni auditoria). " +
+            "Usa las rutas /api/v1/admin/usuarios/{id} (PATCH) y /api/v1/admin/usuarios/{id}/roles (POST), que la aplican.",
+    )
 }
 
 class SupabaseAdminGateway internal constructor(
@@ -104,51 +134,10 @@ class SupabaseAdminGateway internal constructor(
             ?: throw IllegalArgumentException("Usuario no encontrado.")
     }
 
-    fun saveUser(input: AdminUserDto): AdminUserDto {
-        require(input.email.isNotBlank()) { "El usuario necesita email." }
-        val saved = request(
-            method = "POST",
-            path = "/rest/v1/usuario?on_conflict=id",
-            body = json.encodeToString(listOf(input.toRow())),
-            prefer = "resolution=merge-duplicates,return=representation",
-        ).decodeList<UsuarioRow>().first()
-        replaceUserRoles(saved.id ?: error("Supabase no devolvio id de usuario."), input.roleIds)
-        appendAudit(
-            AdminAuditEventDto(
-                id = "",
-                actorName = "backend-admin",
-                action = "USER_UPSERT",
-                target = saved.id.toString(),
-                occurredAt = Instant.now().toString(),
-                metadata = mapOf("email" to input.email),
-            ),
-        )
-        return saved.toDto(input.roleIds)
-    }
-
-    fun deleteUser(userId: String) {
-        request(
-            method = "DELETE",
-            path = "/rest/v1/usuario?id=eq.${userId.toIntId()}",
-            body = null,
-            prefer = "return=minimal",
-        )
-    }
-
     fun listRoles(): List<AdminRoleDto> = emptyListOnMissingLegacySchema("listRoles") {
         request("GET", "/rest/v1/app_role?select=id,name,description&order=name.asc", null)
             .decodeList<RoleRow>()
             .map { it.toDto() }
-    }
-
-    fun saveRole(input: AdminRoleDto): AdminRoleDto {
-        require(input.name.isNotBlank()) { "El rol necesita nombre." }
-        return request(
-            method = "POST",
-            path = "/rest/v1/app_role?on_conflict=id",
-            body = json.encodeToString(listOf(input.toRow())),
-            prefer = "resolution=merge-duplicates,return=representation",
-        ).decodeList<RoleRow>().first().toDto()
     }
 
     fun settings(): AdminSettingsDto = adminSettingsFromEnvironment()
@@ -363,30 +352,6 @@ class SupabaseAdminGateway internal constructor(
             }
     }
 
-    fun appendModerationAction(input: AdminModerationActionDto): AdminModerationActionDto {
-        require(input.reason.isNotBlank()) { "La accion necesita razon." }
-        require(input.actionType in VALID_MODERATION_ACTION_TYPES) { "Tipo de accion de moderacion no valido." }
-        val target = findUser(input.targetUser)
-        val actor = findUser(input.executor)
-        val saved = request(
-            "POST",
-            "/rest/v1/moderation_action",
-            json.encodeToString(listOf(input.toRow(target.id.requireId("usuario objetivo"), actor.id.requireId("actor")))),
-            prefer = "return=representation",
-        ).decodeList<ModerationActionRow>().first()
-        appendAudit(
-            AdminAuditEventDto(
-                id = "",
-                actorName = actor.displayName(),
-                action = "MODERATION_ACTION_CREATE",
-                target = "moderation_action:${saved.id}",
-                occurredAt = Instant.now().toString(),
-                metadata = mapOf("target_usuario_id" to target.id.toString(), "action_type" to input.actionType),
-            ),
-        )
-        return input.copy(id = saved.id?.toString().orEmpty(), createdAt = "")
-    }
-
     fun dashboardMetrics(): AdminDashboardMetricsDto = fallbackOnMissingLegacySchema("dashboardMetrics", ::emptyDashboardMetrics) {
         val specialties = especialidades()
         val exams = examenes()
@@ -443,16 +408,6 @@ class SupabaseAdminGateway internal constructor(
             .decodeList<UserRoleRow>()
             .groupBy { it.usuarioId }
             .mapValues { (_, rows) -> rows.mapNotNull { rolesById[it.roleId]?.id?.toString() } }
-    }
-
-    private fun replaceUserRoles(userId: Int, roleIds: List<String>) {
-        request("DELETE", "/rest/v1/user_role?usuario_id=eq.$userId", null)
-        val rows = roleIds.mapNotNull { roleId ->
-            roleId.toIntOrNull()?.let { UserRoleInsertRow(usuarioId = userId, roleId = it) }
-        }
-        if (rows.isNotEmpty()) {
-            request("POST", "/rest/v1/user_role", json.encodeToString(rows), prefer = "return=minimal")
-        }
     }
 
     private fun supportMessages(): List<SupportMessageRow> {
@@ -539,14 +494,6 @@ class SupabaseAdminGateway internal constructor(
     )
 
     companion object {
-        private val VALID_MODERATION_ACTION_TYPES = setOf(
-            "warning",
-            "mute",
-            "close_conversation",
-            "ban",
-            "internal_note",
-        )
-
         /**
          * F-01/F-02: clave por [SupabaseRequestAuthPolicy.secretFromEnvironment] y
          * cabeceras por [supabaseElevatedAuth]. Leía sólo `SUPABASE_SERVICE_ROLE_KEY`
@@ -607,6 +554,9 @@ data class AdminExamAccessDto(
     val examTitle: String,
     val accessType: String,
     val isActive: Boolean,
+    /** RC-06: ids exactos (uuid). En `POST /api/v1/admin/accesos` se prefieren a `userName`/`examTitle`; opcionales. */
+    val userId: String? = null,
+    val examId: String? = null,
 )
 
 @Serializable
@@ -723,9 +673,6 @@ private data class RoleRow(val id: Int? = null, val name: String, val descriptio
 private data class UserRoleRow(@SerialName("usuario_id") val usuarioId: Int, @SerialName("role_id") val roleId: Int)
 
 @Serializable
-private data class UserRoleInsertRow(@SerialName("usuario_id") val usuarioId: Int, @SerialName("role_id") val roleId: Int)
-
-@Serializable
 private data class AuditRow(
     val id: Long? = null,
     @SerialName("actor_auth_user_id") val actorAuthUserId: String? = null,
@@ -809,14 +756,6 @@ private data class ModerationActionRow(
 )
 
 @Serializable
-private data class ModerationActionInsertRow(
-    @SerialName("target_usuario_id") val targetUsuarioId: Int,
-    @SerialName("actor_usuario_id") val actorUsuarioId: Int,
-    @SerialName("action_type") val actionType: String,
-    val reason: String,
-)
-
-@Serializable
 private data class EspecialidadAdminRow(val id: Int? = null, val nombre: String)
 
 @Serializable
@@ -843,12 +782,6 @@ private fun UsuarioRow.toDto(roleIds: List<String>) = AdminUserDto(
     createdAt = "",
 )
 
-private fun AdminUserDto.toRow() = UsuarioRow(
-    id = id.toIntOrNull(),
-    email = email,
-    nombre = fullName,
-)
-
 private fun RoleRow.toDto() = AdminRoleDto(
     id = id?.toString().orEmpty(),
     name = name,
@@ -857,12 +790,6 @@ private fun RoleRow.toDto() = AdminRoleDto(
         .map(String::trim)
         .filter(String::isNotBlank)
         .map { AdminPermissionDto(key = it, label = it) },
-)
-
-private fun AdminRoleDto.toRow() = RoleRow(
-    id = id.toIntOrNull(),
-    name = name,
-    description = permissions.joinToString(",") { it.key },
 )
 
 private fun AdminAuditEventDto.toRow(): AuditRow {
@@ -907,13 +834,6 @@ private fun TicketTransactionRow.toDto(signedAmount: Double? = null) = AdminTick
     amount = signedAmount ?: if (tipo == "debito") -monto else monto,
     reason = razon,
     occurredAt = "",
-)
-
-private fun AdminModerationActionDto.toRow(targetUserId: Int, actorUserId: Int) = ModerationActionInsertRow(
-    targetUsuarioId = targetUserId,
-    actorUsuarioId = actorUserId,
-    actionType = actionType.ifBlank { "warning" },
-    reason = reason,
 )
 
 private fun UsuarioRow.displayName(): String = nombre.orEmpty().ifBlank { email.orEmpty() }

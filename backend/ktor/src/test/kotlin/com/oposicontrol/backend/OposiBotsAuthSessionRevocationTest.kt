@@ -14,6 +14,7 @@ import kotlinx.serialization.json.Json
 import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
@@ -146,6 +147,38 @@ class OposiBotsAuthSessionRevocationTest {
         assertEquals("Bearer recovery-access", logout.headers[HttpHeaders.Authorization])
     }
 
+    /**
+     * RC-09 (MASTERF1-AUTH-001 / MASTERF2-AUTH-002): un 5xx/408 del PUT /auth/v1/user es resultado DESCONOCIDO (la
+     * contraseña pudo cambiar tras un 502/504 de proxy) -> revoke GLOBAL, y el error original sigue propagandose.
+     */
+    @Test
+    fun aPasswordUpdateAnsweredWithGateway5xxOrTimeoutRevokesEverySession() = runTest {
+        for (status in listOf(HttpStatusCode.BadGateway, HttpStatusCode.GatewayTimeout, HttpStatusCode.InternalServerError)) {
+            val h = harness(verifyBody = session(access = "recovery-access"), userPutStatus = status)
+            val failure = assertFailsWith<OposiBotsAuthProblem>("PUT -> $status") {
+                h.gateway.reset(OposiBotsResetPasswordRequest("token-hash", "new-password-123"), context)
+            }
+            assertEquals(HttpStatusCode.ServiceUnavailable, failure.status, "PUT -> $status: error original (unavailable) propagado")
+            assertEquals(listOf("scope=global"), h.logouts().map { it.url.encodedQuery }, "PUT -> $status")
+            assertEquals("Bearer recovery-access", h.logouts().single().headers[HttpHeaders.Authorization])
+        }
+        val timeout = harness(verifyBody = session(access = "recovery-access"), userPutStatus = HttpStatusCode.RequestTimeout)
+        assertFails { timeout.gateway.reset(OposiBotsResetPasswordRequest("token-hash", "new-password-123"), context) }
+        assertEquals(listOf("scope=global"), timeout.logouts().map { it.url.encodedQuery }, "PUT -> 408")
+    }
+
+    /** RC-09: un 4xx definitivo (weak_password) sigue revocando SOLO la sesion de recuperacion. */
+    @Test
+    fun aDefinitiveWeakPasswordRejectionKeepsTheLocalRevoke() = runTest {
+        val h = harness(
+            verifyBody = session(access = "recovery-access"),
+            userPutStatus = HttpStatusCode.BadRequest,
+            userPutBody = """{"error_code":"weak_password","msg":"Password should be at least 12 characters"}""",
+        )
+        assertFails { h.gateway.reset(OposiBotsResetPasswordRequest("token-hash", "new-password-123"), context) }
+        assertEquals(listOf("scope=local"), h.logouts().map { it.url.encodedQuery })
+    }
+
     /** MASTER7-AUTH-001: si ademas falla el revoke global, el reset sigue FALLANDO con el error original (nunca exito). */
     @Test
     fun aFailedGlobalRevokeAfterAnUnknownPasswordUpdateStillFailsTheReset() = runTest {
@@ -181,6 +214,7 @@ class OposiBotsAuthSessionRevocationTest {
         verifyBody: String = session(),
         userPutStatus: HttpStatusCode = HttpStatusCode.OK,
         userPutThrows: Boolean = false,
+        userPutBody: String = "{}",
         logoutStatus: HttpStatusCode = HttpStatusCode.NoContent,
         logoutThrows: Boolean = false,
         appleIdToken: String = "",
@@ -195,7 +229,7 @@ class OposiBotsAuthSessionRevocationTest {
                 request.url.host == "appleid.apple.com" -> respond(ByteReadChannel("""{"id_token":"$appleIdToken"}"""), HttpStatusCode.OK, json)
                 path == "/auth/v1/token" -> respond(ByteReadChannel(session()), HttpStatusCode.OK, json)
                 path == "/auth/v1/verify" -> respond(ByteReadChannel(verifyBody), HttpStatusCode.OK, json)
-                path == "/auth/v1/user" && request.method == HttpMethod.Put -> if (userPutThrows) error("put transport failure") else respond(ByteReadChannel("{}"), userPutStatus, json)
+                path == "/auth/v1/user" && request.method == HttpMethod.Put -> if (userPutThrows) error("put transport failure") else respond(ByteReadChannel(userPutBody), userPutStatus, json)
                 path == "/auth/v1/logout" -> if (logoutThrows) error("logout transport failure") else respond(ByteReadChannel(""), logoutStatus, json)
                 path == "/rest/v1/rpc/oposibots_claim_oauth_credential" -> respond(ByteReadChannel("{}"), claimStatus, json)
                 path == "/rest/v1/perfiles_usuario" -> respond(

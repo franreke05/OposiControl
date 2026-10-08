@@ -235,9 +235,16 @@ class AdminRoleSyncSuperadminAndAuditTest {
             assertEquals(HttpStatusCode.BadRequest, r.status, "$bad: ${r.bodyAsText()}")
         }
         assertTrue(stub.auditBodies().isEmpty(), "ninguna fila de auditoria")
-        for (good in listOf("advertencia", "suspension", "ban")) {
-            assertEquals(HttpStatusCode.Created, warn(adminActor, """{"targetUserId":"$plainUser","actionType":"$good","reason":"x"}""").status, good)
+        // RC-01 (cambio DELIBERADO): antes `suspension` y `ban` respondian 201 escribiendo solo una fila de auditoria, sin
+        // ningun efecto sobre la cuenta. Ahora solo `advertencia` (efecto definido) es 201; los tipos sin aplicacion son
+        // 422 MODERATION_ACTION_NOT_ENFORCED y tampoco auditan nada.
+        assertEquals(HttpStatusCode.Created, warn(adminActor, """{"targetUserId":"$plainUser","actionType":"advertencia","reason":"x"}""").status)
+        for (notEnforced in listOf("suspension", "ban")) {
+            val r = warn(adminActor, """{"targetUserId":"$plainUser","actionType":"$notEnforced","reason":"x"}""")
+            assertEquals(HttpStatusCode.UnprocessableEntity, r.status, notEnforced)
+            assertTrue("MODERATION_ACTION_NOT_ENFORCED" in r.bodyAsText(), r.bodyAsText())
         }
+        assertEquals(1, stub.auditBodies().size, "solo la advertencia deja fila")
     }
 
     @Test
@@ -245,8 +252,9 @@ class AdminRoleSyncSuperadminAndAuditTest {
         val stub = Stub()
         application { module(stub) }
         val tooLong = "a".repeat(1_001)
-        assertEquals(HttpStatusCode.BadRequest, warn(adminActor, """{"targetUserId":"$plainUser","actionType":"ban","reason":"$tooLong"}""").status)
-        assertEquals(HttpStatusCode.Created, warn(adminActor, """{"targetUserId":"$plainUser","actionType":"ban","reason":"${"a".repeat(1_000)}"}""").status)
+        // RC-01: `ban` ya no es un tipo aceptado (422); el limite del motivo se fija con la advertencia.
+        assertEquals(HttpStatusCode.BadRequest, warn(adminActor, """{"targetUserId":"$plainUser","actionType":"advertencia","reason":"$tooLong"}""").status)
+        assertEquals(HttpStatusCode.Created, warn(adminActor, """{"targetUserId":"$plainUser","actionType":"advertencia","reason":"${"a".repeat(1_000)}"}""").status)
     }
 
     private suspend fun io.ktor.server.testing.ApplicationTestBuilder.warn(actor: String, json: String): HttpResponse =

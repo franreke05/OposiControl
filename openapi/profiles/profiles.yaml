@@ -425,7 +425,7 @@ components:
           - bearerAuth: []
         parameters:
           - $ref: '../common/pagination.yaml#/components/parameters/LimitOffset200Default50'
-          - $ref: '../common/pagination.yaml#/components/parameters/Offset'
+          - $ref: '../common/pagination.yaml#/components/parameters/OffsetStrict'
           - name: q
             in: query
             required: false

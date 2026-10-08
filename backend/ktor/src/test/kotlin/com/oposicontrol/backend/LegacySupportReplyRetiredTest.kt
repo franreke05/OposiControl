@@ -45,6 +45,12 @@ class LegacySupportReplyRetiredTest {
         },
     )
 
+    /** RC-01: el gateway canonico que usa el adaptador EP-144; registra en el mismo [sent] (debe quedar vacio). */
+    private fun moderationGateway() = AdminV1Gateway.forTesting(
+        "https://stub.supabase.test", "test-service-role-key", Json { ignoreUnknownKeys = true },
+        V1StubHttpClient({ request -> sent += "${request.method()} ${request.uri()}" }) { V1StubResponse(201, "") },
+    )
+
     private fun Application.legacyModule() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
         installRequestCorrelation()
@@ -53,7 +59,7 @@ class LegacySupportReplyRetiredTest {
         routing {
             authenticate("gateway-auth") {
                 installAdminAuditActor()
-                adminRoutes(gateway())
+                adminRoutes(gateway(), moderationGateway())
             }
         }
     }

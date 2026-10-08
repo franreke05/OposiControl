@@ -98,6 +98,20 @@ object LegacyEndpoints {
         "APP-INTENTO-RESPONDER", "POST", "/api/v1/app/intentos/{id}/responder", null, SLICE_1_DEPRECATED_AT,
     )
 
+    // RC-10 (MASTERF1-API-002): escritores legacy de `public.usuario` / `app_role` SIN llamador vivo en OC/OB (route matrix
+    // audit 2026-10-01). Escribian sin la guarda MASTER-AUTH-001 (borrado de cuentas administrativas) ni auditoria
+    // obligatoria: responden 410 Gone ANTES de leer el cuerpo o tocar upstream. La ruta sigue montada y contada (una build
+    // antigua instalada es desconocida): solo se borra con el contador a cero. Sin sucesora direccionable (null).
+    val EP_152 = LegacyEndpoint("EP-152", "POST", "/admin/users", null, SLICE_1_DEPRECATED_AT)
+    val EP_153 = LegacyEndpoint("EP-153", "POST", "/admin/users/{userId}", null, SLICE_1_DEPRECATED_AT)
+    val EP_224 = LegacyEndpoint("EP-224", "PUT", "/admin/users/{userId}", null, SLICE_1_DEPRECATED_AT)
+    val EP_001 = LegacyEndpoint("EP-001", "DELETE", "/admin/users/{userId}", null, SLICE_1_DEPRECATED_AT)
+    val EP_147 = LegacyEndpoint("EP-147", "POST", "/admin/roles", null, SLICE_1_DEPRECATED_AT)
+    val EP_148 = LegacyEndpoint("EP-148", "POST", "/admin/roles/{roleId}", null, SLICE_1_DEPRECATED_AT)
+    val EP_222 = LegacyEndpoint("EP-222", "PUT", "/admin/roles/{roleId}", null, SLICE_1_DEPRECATED_AT)
+
+    val RETIRED_ADMIN_WRITERS: List<LegacyEndpoint> = listOf(EP_152, EP_153, EP_224, EP_001, EP_147, EP_148, EP_222)
+
     val SLICE_1_APP: List<LegacyEndpoint> = listOf(
         APP_HOME, APP_ESTADISTICAS, APP_COMMERCIAL_CATALOG, APP_COMMERCIAL_PURCHASES, APP_COMMERCIAL_SUBSCRIPTIONS,
         APP_EVENTOS, APP_FEEDBACK_PREGUNTA, APP_INICIAR, APP_RESPONDER,

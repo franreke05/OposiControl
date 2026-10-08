@@ -20,9 +20,9 @@ POST	/admin/news-types	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-145 -> D4-11
 POST	/admin/news-types/{}	ADMIN_CONTRACT_GAP	EP-146 -> D4-11	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 PUT	/admin/news-types/{}	ADMIN_CONTRACT_GAP	EP-221 -> D4-11	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 GET	/admin/roles	ADMIN_CONTRACT_GAP	EP-026 -> D1-29	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-POST	/admin/roles	ADMIN_CONTRACT_GAP	EP-147	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-POST	/admin/roles/{}	ADMIN_CONTRACT_GAP	EP-148	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-PUT	/admin/roles/{}	ADMIN_CONTRACT_GAP	EP-222	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
+POST	/admin/roles	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-147	NONE	counter legacy_route_requests_total{endpoint="EP-147"}; no live caller in OC/OB (route matrix audit 2026-10-01); RC-10: answers 410 ADMIN_LEGACY_ROUTE_DISABLED before any body read or upstream I/O; retire only after zero telemetry
+POST	/admin/roles/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-148	NONE	counter legacy_route_requests_total{endpoint="EP-148"}; no live caller in OC/OB (route matrix audit 2026-10-01); RC-10: answers 410 ADMIN_LEGACY_ROUTE_DISABLED before any body read or upstream I/O; retire only after zero telemetry
+PUT	/admin/roles/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-222	NONE	counter legacy_route_requests_total{endpoint="EP-222"}; no live caller in OC/OB (route matrix audit 2026-10-01); RC-10: answers 410 ADMIN_LEGACY_ROUTE_DISABLED before any body read or upstream I/O; retire only after zero telemetry
 GET	/admin/settings	ADMIN_CONTRACT_GAP	EP-027	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 POST	/admin/settings	ADMIN_CONTRACT_GAP	EP-149	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 PUT	/admin/settings	ADMIN_CONTRACT_GAP	EP-223	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
@@ -33,11 +33,11 @@ GET	/admin/ticket-wallets	ADMIN_CONTRACT_GAP	EP-030 -> D6-12	NONE	no live caller
 GET	/admin/ticket-wallets/{}/transactions	ADMIN_CONTRACT_GAP	EP-031 -> D6-13	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 POST	/admin/ticket-wallets/{}/transactions	ADMIN_CONTRACT_GAP	EP-151 -> D6-14	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 GET	/admin/users	ADMIN_CONTRACT_GAP	EP-032 -> D1-22	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-POST	/admin/users	ADMIN_CONTRACT_GAP	EP-152 -> D1-25	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-DELETE	/admin/users/{}	ADMIN_CONTRACT_GAP	EP-001	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
+POST	/admin/users	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-152 -> D1-25	NONE	counter legacy_route_requests_total{endpoint="EP-152"}; no live caller in OC/OB (route matrix audit 2026-10-01); RC-10: answers 410 ADMIN_LEGACY_ROUTE_DISABLED before any body read or upstream I/O; retire only after zero telemetry
+DELETE	/admin/users/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-001	NONE	counter legacy_route_requests_total{endpoint="EP-001"}; no live caller in OC/OB (route matrix audit 2026-10-01); RC-10: answers 410 ADMIN_LEGACY_ROUTE_DISABLED before any body read or upstream I/O; retire only after zero telemetry
 GET	/admin/users/{}	ADMIN_CONTRACT_GAP	EP-033 -> D1-23	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-POST	/admin/users/{}	ADMIN_CONTRACT_GAP	EP-153 -> D1-25	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
-PUT	/admin/users/{}	ADMIN_CONTRACT_GAP	EP-224 -> D1-25	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
+POST	/admin/users/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-153 -> D1-25	NONE	counter legacy_route_requests_total{endpoint="EP-153"}; no live caller in OC/OB (route matrix audit 2026-10-01); RC-10: answers 410 ADMIN_LEGACY_ROUTE_DISABLED before any body read or upstream I/O; retire only after zero telemetry
+PUT	/admin/users/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-224 -> D1-25	NONE	counter legacy_route_requests_total{endpoint="EP-224"}; no live caller in OC/OB (route matrix audit 2026-10-01); RC-10: answers 410 ADMIN_LEGACY_ROUTE_DISABLED before any body read or upstream I/O; retire only after zero telemetry
 GET	/api/v1/admin/ajustes	ADMIN_CONTRACT_GAP	EP-035	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 GET	/api/v1/admin/analytics/comunidad	ADMIN_CONTRACT_GAP	EP-036 -> D3-14	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorProductAnalyticsRepositoryImpl.kt:78 [method unverified]
 GET	/api/v1/admin/analytics/economia	ADMIN_CONTRACT_GAP	EP-037 -> D3-14	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorProductAnalyticsRepositoryImpl.kt:79 [method unverified]

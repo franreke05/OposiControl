@@ -2,6 +2,7 @@ package com.oposicontrol.backend
 
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.Parameters
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.auth.UserIdPrincipal
 import io.ktor.server.auth.principal
@@ -270,8 +271,56 @@ internal val ACCIONES_MODERACION: Map<String, String> = mapOf(
     "avisar" to "advertir", "banear" to "bloquear_usuario", "resuelto_sin_accion" to "descartar",
 )
 
-/** MASTER7-API-007: tipos de accion de `POST /moderacion/actions` (entran en `auditoria_log.accion` como `<tipo>_usuario`). */
-internal val MODERATION_ACTION_TYPES: Set<String> = setOf("advertencia", "suspension", "ban")
+/**
+ * MASTER7-API-007 / RC-01: tipos de accion de `POST /moderacion/actions` con efecto DEFINIDO (entran en
+ * `auditoria_log.accion` como `<tipo>_usuario`; la advertencia ES esa fila). Solo `advertencia`.
+ */
+internal val MODERATION_ACTION_TYPES: Set<String> = setOf("advertencia")
+
+/**
+ * RC-01: tipos conocidos SIN aplicacion en V1 (no existe suspension/ban efectivo: solo se escribiria una fila de
+ * auditoria y la cuenta seguiria activa). 422 MODERATION_ACTION_NOT_ENFORCED, nunca un 201 sin efecto. Incluye el
+ * vocabulario legacy de EP-144 (`mute`, `close_conversation`, `internal_note`).
+ */
+internal val MODERATION_ACTION_TYPES_NOT_ENFORCED: Set<String> =
+    setOf("suspension", "ban", "mute", "close_conversation", "internal_note")
+
+/**
+ * RC-01: EL comando canonico de moderacion, validado ANTES de cualquier I/O. `target` = uuid validado (nunca texto libre
+ * resuelto por nombre); el actor NO forma parte del comando: lo pone el servidor desde el `sub` del JWT.
+ */
+internal data class ModerationCommand(val targetUserId: String, val actionType: String, val reason: String) {
+    companion object {
+        fun validated(targetUserId: String, actionType: String, reason: String, targetField: String = "targetUserId"): ModerationCommand {
+            val target = targetUserId.trim().validatedUuid(targetField)
+            if (actionType in MODERATION_ACTION_TYPES_NOT_ENFORCED) {
+                throw BackendDomainException(
+                    "MODERATION_ACTION_NOT_ENFORCED",
+                    HttpStatusCode.UnprocessableEntity,
+                    "Ese tipo de accion de moderacion no tiene efecto en esta version; solo se admite la advertencia.",
+                )
+            }
+            require(actionType in MODERATION_ACTION_TYPES) { "actionType no valido." }
+            require(reason.length <= AUDIT_TEXT_MAX) { "reason supera $AUDIT_TEXT_MAX caracteres." }
+            return ModerationCommand(target, actionType, reason)
+        }
+
+        /**
+         * EP-144 (legacy, `AdminModerationActionDto`): adaptador PURO al comando canonico. `targetUser` debe ser el uuid
+         * (sin busqueda por nombre/email en `public.usuario`); `executor` se IGNORA (el actor es el JWT); `warning` es la
+         * advertencia canonica.
+         */
+        fun fromLegacy(input: AdminModerationActionDto): ModerationCommand {
+            require(input.reason.isNotBlank()) { "La accion necesita razon." }
+            val actionType = if (input.actionType == "warning") "advertencia" else input.actionType
+            return validated(input.targetUser, actionType, input.reason, targetField = "targetUser")
+        }
+    }
+}
+
+/** RC-01: el actor de una escritura de moderacion es SIEMPRE el uuid del JWT; el token estatico no firma: 403. */
+internal fun ApplicationCall.moderationActorOrForbidden(): String =
+    actorIdFromPrincipalName(principal<UserIdPrincipal>()?.name) ?: throw CanonicalErrorCode.FORBIDDEN.exception()
 
 internal fun String.toForoSnippet(maxLength: Int = 240): String {
     val trimmed = trim()
@@ -1323,12 +1372,12 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             get("/actions") { call.respond(withUpstreamIo { gateway.listModerationActions() }) }
             get("/acciones") { call.respond(withUpstreamIo { gateway.listModerationActions() }) }
             post("/actions") {
+                // RC-01: actor = `sub` del JWT (403 al token estatico ANTES de leer el cuerpo o tocar Supabase).
+                val actorId = call.moderationActorOrForbidden()
                 val req = call.receive<WarnUserRequest>()
-                req.targetUserId.validatedUuid("targetUserId")
                 // MASTER7-API-007: allow-list (el valor entra en `auditoria_log.accion` y en el log) y motivo acotado.
-                require(req.actionType in MODERATION_ACTION_TYPES) { "actionType no valido." }
-                require(req.reason.length <= AUDIT_TEXT_MAX) { "reason supera $AUDIT_TEXT_MAX caracteres." }
-                withUpstreamIo { gateway.warnUser(req.targetUserId, req.actionType, req.reason) }
+                val command = ModerationCommand.validated(req.targetUserId, req.actionType, req.reason)
+                withUpstreamIo { gateway.applyModerationAction(actorId, command) }
                 call.respond(HttpStatusCode.Created, OkDto())
             }
             get("/hilos") {
@@ -2710,6 +2759,9 @@ internal class PdfImportRejectedException(message: String) : RuntimeException(me
 
 /** Lotes por peticion del resumen: 50 uuid en la URL son ~1.9 KB, muy por debajo de cualquier limite. */
 private const val LOTE_SUMMARY_IDS_PER_REQUEST = 50
+
+/** RC-04: ids por peticion `perfiles_usuario?usuario_id=in.(...)` (~3.7 KB de URL con uuids de 36 caracteres). */
+private const val PERFILES_IDS_PER_REQUEST = 100
 
 /** Tamano de pagina del resumen; el fin de la lectura lo decide `Content-Range`, no este numero. */
 private const val LOTE_SUMMARY_PAGE_SIZE = 1000
@@ -6446,12 +6498,14 @@ class AdminV1Gateway private constructor(
     }
 
     fun listTicketWallets(): List<AdminTicketWalletDto> {
-        val usersById = perfilesUsuario().associateBy { it.usuarioId }
         val specialtiesById = request("GET", "/rest/v1/especialidades?select=id,nombre", null)
             .decodeList<EspecialidadNombreRow>()
             .associateBy { it.id }
-        return request("GET", "/rest/v1/carteras_usuario?select=*&order=actualizado_en.desc", null)
+        val wallets = request("GET", "/rest/v1/carteras_usuario?select=*&order=actualizado_en.desc", null)
             .decodeList<CarteraRow>()
+        // RC-04: perfiles de EXACTAMENTE los ids referenciados (fila completa: hace falta especialidadPrincipalId).
+        val usersById = perfilesByIds(wallets.map { it.usuarioId })
+        return wallets
             .map { row ->
                 val user = usersById[row.usuarioId]
                 AdminTicketWalletDto(
@@ -6498,14 +6552,15 @@ class AdminV1Gateway private constructor(
     }
 
     fun listSupportConversations(): List<AdminSupportConversationDto> {
-        val usersById = perfilesUsuario().associateBy { it.usuarioId }
         val latestByConversation = request(
             "GET",
             "/rest/v1/mensajes_soporte?select=*&order=creado_en.desc&limit=1000",
             null,
         ).decodeList<SoporteMensajeRow>().groupBy { it.conversacionId }
-        return request("GET", "/rest/v1/conversaciones_soporte?select=*&order=actualizado_en.desc", null)
+        val conversations = request("GET", "/rest/v1/conversaciones_soporte?select=*&order=actualizado_en.desc", null)
             .decodeList<SoporteConversacionRow>()
+        val usersById = perfilesByIds(conversations.map { it.usuarioId })
+        return conversations
             .map { row ->
                 val latest = latestByConversation[row.id].orEmpty().maxByOrNull { it.creadoEn.orEmpty() }
                 AdminSupportConversationDto(
@@ -6521,12 +6576,13 @@ class AdminV1Gateway private constructor(
 
     fun listSupportMessages(rawConversationId: String): List<AdminSupportMessageDto> {
         val conversationId = rawConversationId.validatedUuid("id")
-        val usersById = perfilesUsuario().associateBy { it.usuarioId }
-        return request(
+        val messages = request(
             "GET",
             "/rest/v1/mensajes_soporte?select=*&conversacion_id=eq.$conversationId&order=creado_en.asc",
             null,
-        ).decodeList<SoporteMensajeRow>().map { row ->
+        ).decodeList<SoporteMensajeRow>()
+        val usersById = perfilesByIds(messages.map { it.remitenteId })
+        return messages.map { row ->
             AdminSupportMessageDto(
                 id = row.id,
                 conversationId = row.conversacionId,
@@ -6562,7 +6618,10 @@ class AdminV1Gateway private constructor(
         val conversationId = rawConversationId.validatedUuid("id")
         val senderId = actorId.validatedUuid("actorId")
         require(input.text.isNotBlank()) { "El mensaje no puede estar vacio." }
-        val senderProfile = perfilesUsuario().firstOrNull { it.usuarioId == senderId }
+        // RC-04 (MASTERF1-API-008): una sola lectura por id (eq), no la ventana de los 1000 perfiles mas nuevos.
+        // El nombre del autor sale SOLO de la fila cuyo id es el actor: nunca de otra fila que devuelva el upstream.
+        val senderProfile = request("GET", "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$senderId&limit=1", null)
+            .decodeList<PerfilUsuarioRow>().firstOrNull { it.usuarioId == senderId }
         val saved = request(
             "POST",
             "/rest/v1/mensajes_soporte",
@@ -6599,21 +6658,25 @@ class AdminV1Gateway private constructor(
     }
 
     fun listExamAccesses(): List<AdminExamAccessDto> {
-        val usersById = perfilesUsuario().associateBy { it.usuarioId }
         val examsById = request("GET", "/rest/v1/examenes?select=id,titulo", null)
             .decodeList<ExamenTituloRow>()
             .associateBy { it.id }
-        return request(
+        val accesses = request(
             "GET",
             "/rest/v1/contenido_desbloqueado_usuario?select=*&examen_id=not.is.null&order=creado_en.desc",
             null,
-        ).decodeList<ContenidoDesbloqueadoRow>().map { row ->
+        ).decodeList<ContenidoDesbloqueadoRow>()
+        val usersById = perfilesByIds(accesses.map { it.usuarioId })
+        return accesses.map { row ->
             AdminExamAccessDto(
                 id = row.id,
                 userName = usersById[row.usuarioId].displayName(row.usuarioId),
                 examTitle = row.examenId?.let { examsById[it]?.titulo }.orEmpty().ifBlank { "Examen ${row.examenId}" },
                 accessType = row.motivo.orEmpty().ifBlank { "manual" },
                 isActive = row.validoHasta?.let { expiresAt -> runCatching { Instant.parse(expiresAt).isAfter(Instant.now()) }.getOrDefault(true) } ?: true,
+                // RC-06: ids de la fila para que el editor reenvie el usuario/examen EXACTO, no su nombre visible.
+                userId = row.usuarioId,
+                examId = row.examenId,
             )
         }
     }
@@ -6626,14 +6689,15 @@ class AdminV1Gateway private constructor(
      * cualquier lectura o escritura: un valor fuera del conjunto se rechaza con 422
      * y no sale ni una petición hacia PostgREST.
      *
-     * DEUDA P2 conocida (no se toca aquí): `userName` y `examTitle` se resuelven por
-     * nombre/título ([findPerfil]/[findExamen]) recorriendo la tabla completa; un
-     * título duplicado o un nombre ambiguo elige el primero. Debería recibir ids.
+     * RC-06 (MASTERF2-API-008): una concesion (derecho de acceso) apunta a EXACTAMENTE un usuario y un examen. Se
+     * prefieren `userId`/`examId` (uuid validado); sin ellos, `userName`/`examTitle` se resuelven en el SERVIDOR con
+     * filtros `eq` (sin la ventana de los 1000 perfiles mas nuevos): mas de una coincidencia = 409 y no se escribe nada
+     * (nunca la primera), ninguna = 404. Un `userName`/`examTitle` con forma de uuid se trata como id (compatible).
      */
     fun upsertExamAccess(input: AdminExamAccessDto): AdminExamAccessDto {
         val motivo = canonicalUnlockReasonOrReject(input.accessType)
-        val user = findPerfil(input.userName)
-        val exam = findExamen(input.examTitle)
+        val user = findPerfil(input.userId, input.userName)
+        val exam = findExamen(input.examId, input.examTitle)
         val row = ContenidoDesbloqueadoInsertRow(
             id = input.id.ifBlank { UUID.randomUUID().toString() },
             usuarioId = user.usuarioId,
@@ -6653,17 +6717,20 @@ class AdminV1Gateway private constructor(
                 examTitle = exam.titulo,
                 accessType = it.motivo.orEmpty().ifBlank { "manual" },
                 isActive = true,
+                userId = user.usuarioId,
+                examId = exam.id,
             )
         }
     }
 
     fun listModerationActions(): List<AdminModerationActionDto> {
-        val usersById = perfilesUsuario().associateBy { it.usuarioId }
         val reportsById = request("GET", "/rest/v1/reportes_contenido?select=*", null)
             .decodeList<ReporteRow>()
             .associateBy { it.id }
-        return request("GET", "/rest/v1/acciones_moderacion?select=*&order=creado_en.desc&limit=200", null)
+        val actions = request("GET", "/rest/v1/acciones_moderacion?select=*&order=creado_en.desc&limit=200", null)
             .decodeList<AccionModeracionRow>()
+        val usersById = perfilesByIds(actions.flatMap { listOf(reportsById[it.reporteId]?.reportadoPor, it.moderadorId) })
+        return actions
             .map { row ->
                 val report = reportsById[row.reporteId]
                 AdminModerationActionDto(
@@ -7403,14 +7470,20 @@ class AdminV1Gateway private constructor(
             .decodeList<AuditoriaRow>()
             .map { it.toDto() }
 
-    fun warnUser(userId: String, actionType: String, reason: String) {
-        userId.validatedUuid("userId")
+    /**
+     * RC-01: EL servicio canonico de moderacion, comun a `POST /api/v1/admin/moderacion/actions` y al adaptador legacy
+     * EP-144. [actorId] es el uuid verificado del JWT y debe ser el MISMO actor de contexto que firma la fila de
+     * auditoria ([AdminAuditActor], instalado desde el mismo principal): si no coinciden no se escribe nada.
+     */
+    internal fun applyModerationAction(actorId: String, command: ModerationCommand) {
+        val actor = actorId.validatedUuid("actorId")
+        check(AdminAuditActor.current() == actor) { "El actor de moderacion no coincide con el actor auditado de la peticion." }
         // MASTER-OBS-002: el motivo ya no se descarta; queda en `despues` de la fila de auditoria.
         registrarAuditoria(
-            "${actionType}_usuario",
+            "${command.actionType}_usuario",
             "perfiles_usuario",
-            userId,
-            despues = buildJsonObject { put("motivo", JsonPrimitive(reason.take(AUDIT_TEXT_MAX))) },
+            command.targetUserId,
+            despues = buildJsonObject { put("motivo", JsonPrimitive(command.reason.take(AUDIT_TEXT_MAX))) },
             // MASTER7-API-007: la advertencia ES la fila de auditoria; si no se escribe no hay 201.
             required = true,
         )
@@ -7562,25 +7635,62 @@ class AdminV1Gateway private constructor(
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<AdminCampanaRafagaDto>().first()
 
-    private fun perfilesUsuario(): List<PerfilUsuarioRow> =
-        request("GET", "/rest/v1/perfiles_usuario?select=*&order=creado_en.desc&limit=1000", null)
-            .decodeList()
-
-    private fun findPerfil(query: String): PerfilUsuarioRow {
-        val normalized = query.trim().lowercase()
-        return perfilesUsuario().firstOrNull {
-            it.usuarioId == query ||
-                it.username.orEmpty().lowercase() == normalized ||
-                it.nombreMostrar.orEmpty().lowercase() == normalized
-        } ?: throw IllegalArgumentException("No se encontro usuario real para '$query'.")
+    /**
+     * RC-04 (MASTERF2-API-003): perfiles de EXACTAMENTE los ids referenciados, independiente del tamaño de la tabla (antes:
+     * los 1000 mas nuevos, y el resto se mostraba como uuid). Ids validados (uuid canonico), sin repetidos y en bloques de
+     * [PERFILES_IDS_PER_REQUEST] por `usuario_id=in.(...)`. Fila completa (`especialidadPrincipalId` incluida).
+     */
+    private fun perfilesByIds(ids: Collection<String?>): Map<String, PerfilUsuarioRow> {
+        val distinct = ids.filterNotNull().filter { it.isNotBlank() }.map { it.validatedUuid("usuarioId") }.distinct()
+        if (distinct.isEmpty()) return emptyMap()
+        return distinct.chunked(PERFILES_IDS_PER_REQUEST).flatMap { chunk ->
+            request("GET", "/rest/v1/perfiles_usuario?select=*&usuario_id=in.(${chunk.joinToString(",")})", null)
+                .decodeList<PerfilUsuarioRow>()
+        }.associateBy { it.usuarioId }
     }
 
-    private fun findExamen(query: String): ExamenTituloRow {
-        val normalized = query.trim().lowercase()
-        return request("GET", "/rest/v1/examenes?select=id,titulo", null)
-            .decodeList<ExamenTituloRow>()
-            .firstOrNull { it.id == query || it.titulo.lowercase() == normalized }
-            ?: throw IllegalArgumentException("No se encontro examen real para '$query'.")
+    /** RC-06: exactamente un perfil: por [userId] (o un [userName] con forma de uuid) o por username/nombre visible exacto. */
+    private fun findPerfil(userId: String?, userName: String): PerfilUsuarioRow {
+        val id = userId?.takeIf { it.isNotBlank() }?.validatedUuid("userId") ?: userName.trim().takeIf { it.isUuid() }?.lowercase()
+        val matches = if (id != null) {
+            request("GET", "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$id&limit=1", null).decodeList<PerfilUsuarioRow>()
+        } else {
+            val name = userName.trim()
+            require(name.isNotEmpty()) { "userId o userName es obligatorio." }
+            listOf("username", "nombre_mostrar").flatMap { column ->
+                request("GET", "/rest/v1/perfiles_usuario?select=*&$column=eq.${name.urlEncode()}&limit=2", null)
+                    .decodeList<PerfilUsuarioRow>()
+            }.distinctBy { it.usuarioId }
+        }
+        return singleMatchOrReject(matches, "EXAM_ACCESS_USER", "usuario")
+    }
+
+    /** RC-06: exactamente un examen: por [examId] (o un [examTitle] con forma de uuid) o por titulo exacto. */
+    private fun findExamen(examId: String?, examTitle: String): ExamenTituloRow {
+        val id = examId?.takeIf { it.isNotBlank() }?.validatedUuid("examId") ?: examTitle.trim().takeIf { it.isUuid() }?.lowercase()
+        val filter = if (id != null) {
+            "id=eq.$id"
+        } else {
+            val title = examTitle.trim()
+            require(title.isNotEmpty()) { "examId o examTitle es obligatorio." }
+            "titulo=eq.${title.urlEncode()}"
+        }
+        return singleMatchOrReject(
+            request("GET", "/rest/v1/examenes?select=id,titulo&$filter&limit=2", null).decodeList<ExamenTituloRow>(),
+            "EXAM_ACCESS_EXAM",
+            "examen",
+        )
+    }
+
+    /** Cero coincidencias = 404; mas de una = 409 (nunca la primera). El mensaje no repite la entrada del cliente. */
+    private fun <T> singleMatchOrReject(matches: List<T>, codePrefix: String, label: String): T = when (matches.size) {
+        1 -> matches.single()
+        0 -> throw BackendDomainException("${codePrefix}_NOT_FOUND", HttpStatusCode.NotFound, "No existe el $label indicado.")
+        else -> throw BackendDomainException(
+            "${codePrefix}_AMBIGUOUS",
+            HttpStatusCode.Conflict,
+            "Mas de un $label coincide con ese nombre: selecciona uno concreto (envia su id).",
+        )
     }
 
     /**

@@ -458,7 +458,9 @@ class OpenApiContractTest {
                 }
                 in offsetLists -> {
                     assertEquals("OFFSET", declared, op.label)
-                    assertTrue(refs.any { it.endsWith("common/pagination.yaml#/components/parameters/Offset") }, "${op.label} offset param")
+                    // RC-12 (FA10): D1-22 valida estricto (parseStrict, 400 OUT_OF_RANGE) y usa `OffsetStrict`; el resto, `Offset`.
+                    val offsetParam = if (op.contractId == "D1-22") "OffsetStrict" else "Offset"
+                    assertTrue(refs.any { it.endsWith("common/pagination.yaml#/components/parameters/$offsetParam") }, "${op.label} offset param $offsetParam")
                     assertTrue("cursor" !in names, "${op.label} must not take cursor")
                     assertLimit(op, params, offsetLists.getValue(op.contractId))
                     assertTrue(envelope?.endsWith("common/pagination.yaml#/components/schemas/OffsetPageEnvelope") == true, "${op.label} OffsetPageEnvelope")

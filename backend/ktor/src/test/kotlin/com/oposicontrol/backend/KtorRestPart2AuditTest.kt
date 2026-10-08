@@ -290,6 +290,38 @@ class KtorRestPart2AuditTest {
         assertTrue(sent.isEmpty(), "ninguna peticion invalida sale a la base: ${sent.map { it.uri }}")
     }
 
+    /**
+     * RC-12 (MASTERF1-OPENAPI-001 / MASTERF2-OPENAPI-002, FA10): caso de conformidad dirigido por el CONTRATO. Los
+     * limites de `offset` se leen de la especificacion congelada de D1-22 (no se repiten aqui): el valor maximo declarado
+     * se sirve (200) y min-1 / max+1 / no entero dan exactamente el 400 VALIDATION offset/OUT_OF_RANGE que la descripcion
+     * documenta. Con el texto anterior ("negative values are treated as 0", sin `maximum`) este caso falla.
+     */
+    @Test
+    fun theD122OffsetBoundsComeFromTheFrozenSpecAndTheServerAnswersExactlyThem() = testApplication {
+        val docs = OpenApiDocs.locate()
+        val d122 = docs.operations().single { it.contractId == "D1-22" }
+        val offset = docs.parameters(d122).map { it.value as Map<*, *> }.single { it["name"] == "offset" && it["in"] == "query" }
+        val schema = offset["schema"] as Map<*, *>
+        val min = (schema["minimum"] as? Number)?.toLong() ?: error("D1-22 offset sin minimum")
+        val max = (schema["maximum"] as? Number)?.toLong() ?: error("D1-22 offset sin maximum: el servidor rechaza > ${AdminPageRequest.MAX_OFFSET}")
+        assertEquals(AdminPageRequest.MAX_OFFSET.toLong(), max, "maximum del contrato == tope de parseStrict")
+        val description = offset["description"] as String
+        assertTrue("OUT_OF_RANGE" in description && "400" in description, "la descripcion documenta el 400: $description")
+        assertFalse("treated as 0" in description, "el contrato no puede prometer un recorte que el servidor no hace: $description")
+
+        val sent = CopyOnWriteArrayList<Sent>()
+        application { adminModule(sent, listResponder()) }
+        for (accepted in listOf(min, max)) {
+            assertEquals(HttpStatusCode.OK, client.get("/api/v1/admin/usuarios?offset=$accepted").status, "offset=$accepted")
+        }
+        for (rejected in listOf("${min - 1}", "${max + 1}", "1.5")) {
+            val response = client.get("/api/v1/admin/usuarios?offset=$rejected")
+            assertEquals(HttpStatusCode.BadRequest, response.status, "offset=$rejected")
+            assertEquals("VALIDATION", Json.parseToJsonElement(response.bodyAsText()).jsonObject["code"]!!.jsonPrimitive.content)
+            assertEquals(listOf("offset" to "OUT_OF_RANGE"), issuesOf(response.bodyAsText()), "offset=$rejected")
+        }
+    }
+
     @Test
     fun validPagingStillWorksAndALimitAboveTheMaxIsClamped() = testApplication {
         val sent = CopyOnWriteArrayList<Sent>()
