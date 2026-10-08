@@ -27,6 +27,7 @@ every step: unchanged.
 - Data after apply: 4 users, 4 profiles (`estado_cuenta` = `activa`), 2 exams, 203 questions, 812 options, 218 audit rows:
   identical to before. New tables `idempotency_keys`, `aceptaciones_legales`, `solicitudes_eliminacion_cuenta`: RLS enabled,
   0 rows, no client grants. No public table without RLS; no SECURITY DEFINER command executable by `anon`/`authenticated`.
+- 2026-10-08 (later): `20261008100400_slice2_content_grant_client_write_revoke` applied to MAIN on its own (order-independent, narrowing only: policy `contenido_desbloqueado_admin_all` dropped, INSERT/UPDATE/DELETE on `contenido_desbloqueado_usuario` revoked from `anon`/`authenticated`). VERIFY 4 checks at 0, history 55 versions, protected-content fingerprint unchanged, 0 grant rows before and after. Proven by `Slice2ContentGrantClientWriteMigrationTest` (user and plain admin denied, service_role allowed).
 - STILL PENDING on MAIN (apply at the Ktor cutover, runbook step 0): `20260930100500` .. `20260930102300` (12, starting with the
   two contract migrations 5 and 6), `20261008100000` .. `20261008100200` (Slice 3) and any later file. `PENDING_MIGRATIONS.txt`
   and `main_shape_subset.sql` still describe MAIN as of 2026-09-29 for the PG17 gate; regenerating the baseline from the
