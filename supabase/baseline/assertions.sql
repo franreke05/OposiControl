@@ -585,3 +585,17 @@ begin
 end $$;
 
 rollback;
+
+-- 20261008100400: un admin con JWT de usuario ya no escribe concesiones de contenido por la Data API; lee las suyas.
+do $$
+begin
+  assert not has_table_privilege('authenticated', 'public.contenido_desbloqueado_usuario', 'INSERT'), 'authenticated conserva INSERT en contenido_desbloqueado_usuario';
+  assert not has_table_privilege('authenticated', 'public.contenido_desbloqueado_usuario', 'UPDATE'), 'authenticated conserva UPDATE en contenido_desbloqueado_usuario';
+  assert not has_table_privilege('authenticated', 'public.contenido_desbloqueado_usuario', 'DELETE'), 'authenticated conserva DELETE en contenido_desbloqueado_usuario';
+  assert not has_table_privilege('anon', 'public.contenido_desbloqueado_usuario', 'INSERT'), 'anon tiene INSERT en contenido_desbloqueado_usuario';
+  assert has_table_privilege('authenticated', 'public.contenido_desbloqueado_usuario', 'SELECT'), 'authenticated perdio SELECT en contenido_desbloqueado_usuario';
+  assert has_table_privilege('service_role', 'public.contenido_desbloqueado_usuario', 'INSERT'), 'service_role perdio INSERT en contenido_desbloqueado_usuario';
+  assert not exists (select 1 from pg_policy p where p.polrelid = 'public.contenido_desbloqueado_usuario'::regclass and p.polpermissive and p.polcmd in ('a', 'w', 'd', '*')), 'queda una politica permisiva de escritura en contenido_desbloqueado_usuario';
+  assert exists (select 1 from pg_policy p where p.polrelid = 'public.contenido_desbloqueado_usuario'::regclass and p.polname = 'contenido_desbloqueado_select_propio' and p.polcmd = 'r'), 'falta contenido_desbloqueado_select_propio';
+end;
+$$;
