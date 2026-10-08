@@ -139,7 +139,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with: { node-version: 22 }
       - run: node --test scripts/db-pg17-bootstrap-extract.test.mjs
-      - run: docker pull public.ecr.aws/supabase/postgres@sha256:658d1c9b09ae4f61b8e95087b6859181b4b7d6940d769cf7b605609c8aad43e9
+      # El registro publico limita por IP compartida (toomanyrequests): reintento acotado con espera; sigue fallando si no baja.
+      - run: for i in 1 2 3 4 5 6; do docker pull public.ecr.aws/supabase/postgres@sha256:658d1c9b09ae4f61b8e95087b6859181b4b7d6940d769cf7b605609c8aad43e9 && exit 0; sleep $((i * 20)); done; exit 1
       - run: bash scripts/db-pg17-gate.sh
       - run: bash scripts/db-pg17-gate.test.sh
   # CI-OC-RELEASE: la distribucion de escritorio (jlink + jpackage app-image, sin WiX ni dpkg) se construye con la configuracion
