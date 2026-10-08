@@ -1,26 +1,26 @@
 # Deployment
 
 Estado: `NOT_VERIFIED` (runbook escrito, aun no ejercitado; ningun despliegue realizado desde este repo).
-El despliegue lo ejecuta un humano con el gate de produccion; nada de esto corre en CI.
+El despliegue lo ejecuta un humano con el gate de produccion; CI solo VERIFICA (tests, build y humo de la imagen, db-pg17 en PostgreSQL 17...) y nunca despliega ni toca MAIN. El gate de produccion de OposiBot (`SLICE_1_PRODUCTION_GATE.md`) es la autoridad unica de clasificacion y rollback de las migraciones.
 
 ## Orden obligatorio: parar el Ktor viejo, migrar, luego desplegar
 
-0. (MASTER6-CICD-001) Ventana de mantenimiento: las migraciones 6-9 de Slice 1 (`20260930100800..101600`) son contract y el Ktor VIEJO
-   (previo a Slice 1) queda PROHIBIDO contra ellas (gate de produccion, seccion 2). Por tanto, ANTES del paso 1 se PARA el Ktor viejo
+0. (MASTER6-CICD-001, RC-14) Ventana de mantenimiento: la clase de CADA migracion 1-16 (una sola por migracion) esta en la tabla de la seccion 1 del gate de produccion, la autoridad unica; este runbook solo la resume (EXPAND 1-4 y 9-13; EXPAND-COMPATIBLE 7-8; CONTRACT 5 y 6; HARDENING 14-16, que estrechan privilegios/politicas de clientes; la 13, `20260930102000`, es EXPAND y ademas ESTRECHA la politica INSERT de clientes de `reportes_contenido` sin cambiar de clase) y no puede contradecirla ni contradecir el parrafo Rollback. El Ktor VIEJO
+   (previo a Slice 1) queda PROHIBIDO desde la 6 (contract; cadena 6-9, gate de produccion, seccion 2). Por tanto, ANTES del paso 1 se PARA el Ktor viejo
    (`docker stop oposicontrol-ktor`; Caddy responde 502 durante la ventana) y no se rearranca esa imagen: el siguiente arranque es el
    Ktor nuevo del paso 2. Anotar en el registro del gate la hora de parada y de arranque nuevo (ventana de caida ACEPTADA, minutos).
-   Las migraciones que solo anaden objetos (1-4, 10, 11) no exigen la parada, pero se sigue el mismo orden por simplicidad.
+   Las migraciones 1-5 y 10-16 son compatibles con el Ktor viejo y no exigen por si solas la parada, pero se sigue el mismo orden por simplicidad. Si algo falla a mitad, manda la regla de roll-forward con ventana maxima (30 minutos desde la parada) de la seccion 9 del gate.
 1. Aplicar migraciones de `supabase/migrations/` a la base (con backup/PITR verificado).
 2. Desplegar Ktor. Sin las migraciones la pasarela responde 503 (falla cerrado), asi que
    el orden inverso rompe el trafico.
 3. Verificar la version desplegada por la imagen, no por `/health` (hoy devuelve una cadena `build` fija):
    `docker inspect <contenedor> --format '{{.Config.Image}} {{index .Config.Labels "org.opencontainers.image.revision"}}'`
    debe dar `oposicontrol-backend:<sha12>` y el commit completo esperado; ademas `/health/ready` = 200.
-   MASTER6-CICD-002 (imagen de loop 5+, `/app` de root y no escribible; la imagen aun NO se ha construido ni arrancado en este entorno, sin Docker):
+   MASTER6-CICD-002 (imagen de loop 5+, `/app` de root y no escribible; la construye y arranca en CI el job `backend-image` con variables de relleno (run `37002108682` en verde); queda la comprobacion con el entorno REAL):
    con la imagen construida, comprobar que corre como `app` y que el codigo no es escribible pero `/tmp` si:
    `docker run --rm --entrypoint sh oposicontrol-backend:<sha12> -c 'test "$(id -un)" = app && ! touch /app/x 2>/dev/null && touch /tmp/x'`
    debe terminar con codigo 0; despues arrancar el contenedor con el entorno real y esperar `/health/ready` = 200.
-   Slice 1 (migraciones `20260930100000..102100`): orden, hashes y clase de rollback en
+   Slice 1 (migraciones `20260930100000..102300`): orden, hashes y clase de rollback en
    `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` del repo OposiBot.
 
 ## Construir
@@ -41,14 +41,14 @@ bash scripts/build-backend-image.sh   # exige arbol limpio (sin cambios, sin arc
   estricta. Tras subir una dependencia se regenera EN LINUX (CI-GRADLE-VERIF; en Windows faltan variantes Linux), p. ej. en
   `eclipse-temurin:21-jdk-jammy` como uid no root (embedded-postgres de `:backend:dbtest` no arranca como root), con
   `ANDROID_HOME` apuntando a un SDK y un `GRADLE_USER_HOME` vacio, con EXACTAMENTE la lista del paso de deriva del job `tests`:
-  `./gradlew --no-configuration-cache --write-verification-metadata sha256 :backend:ktor:dependencies --configuration runtimeClasspath :composeApp:dependencies --configuration jvmRuntimeClasspath :backend:ktor:installDist :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest :composeApp:jvmTest :core:common:jvmTest :core:network:jvmTest :core:ui:jvmTest :features:analytics:jvmTest :features:auth:jvmTest :features:dashboard:jvmTest :features:exam-access:jvmTest :features:forum:jvmTest :features:imports:jvmTest :features:news:jvmTest :features:opositester:jvmTest :features:questions:jvmTest :features:rankings:jvmTest :features:settings:jvmTest :features:specialties:jvmTest :features:store:jvmTest :features:support:jvmTest`
+  `./gradlew --no-configuration-cache --write-verification-metadata sha256 :backend:ktor:dependencies --configuration runtimeClasspath :composeApp:dependencies --configuration jvmRuntimeClasspath :backend:ktor:installDist :backend:ktor:test :backend:dbtest:test :composeApp:compileKotlinJvm :data:jvmTest :domain:jvmTest :features:users:jvmTest :features:reports:jvmTest :core:database:jvmTest :composeApp:jvmTest :core:common:jvmTest :core:network:jvmTest :core:ui:jvmTest :features:analytics:jvmTest :features:auth:jvmTest :features:dashboard:jvmTest :features:exam-access:jvmTest :features:exams:jvmTest :features:forum:jvmTest :features:imports:jvmTest :features:news:jvmTest :features:opositester:jvmTest :features:questions:jvmTest :features:rankings:jvmTest :features:settings:jvmTest :features:specialties:jvmTest :features:store:jvmTest :features:support:jvmTest`
   (si `dependency-audit` audita mas configuraciones se anaden aqui y en CI). `dependency-audit` audita contra OSV el
   `runtimeClasspath` del backend y el `jvmRuntimeClasspath` del cliente admin (`scripts/osv-ignore.json` vacio); el
   `releaseRuntimeClasspath` Android queda como seguimiento y las klibs de iOS fuera de alcance (no son coordenadas Maven).
   El diff debe ser solo de altas: un sha256 distinto para una coordenada existente es una senal de cadena de suministro que se
   investiga, no se acepta. `scripts/verify-ci-jvmtest-coverage.sh` (job `ops-static`, con control negativo) exige que TODO modulo con
   `src/jvmTest` o `src/commonTest` figure como `:modulo:jvmTest` en la linea de pruebas del job `tests`, en la lista de deriva y en
-  esta; las excepciones solo van, justificadas, en `scripts/ci-jvmtest-allowlist.tsv`. CI repite ese comando y exige `git diff --exit-code`. Fuera de esa lista quedan iOS, MSI/DMG y el
+  esta; las excepciones solo van, justificadas, en `scripts/ci-jvmtest-allowlist.tsv` (hoy VACIA: `:features:exams:jvmTest` corre en CI con `-Pci.quarantine=true`, que cuarentena SOLO `ExamWorkspaceResponsiveTest.en1366LaBarraDeGuardarSeVeEnteraYAlBajarElFormularioLlegaASuMinimo`, que falla en Linux y es verde en Windows; DEBT-CI-001 en `docs/registry/TECH_DEBT.md`; el script rechaza cualquier comodin en `excludeTestsMatching`). CI repite ese comando y exige `git diff --exit-code`. Fuera de esa lista quedan iOS, MSI/DMG y el
   release Android: necesitan su propio `--write-verification-metadata` la primera vez que se usen. `:composeApp:createDistributable`
   (jlink + jpackage app-image, CI-OC-RELEASE) ya tiene sus artefactos (generados en Linux) y lo verifica en estricto el job
   `desktop-release-linux`; si cambia la version de Compose se regenera tambien con
@@ -121,7 +121,7 @@ Reejecutar el contenedor con la imagen `rollback-<fecha>` (solo valido mientras 
 contract de Slice 1 no esten aplicadas). Las migraciones de Slice 1 NO son todas expand: `20260930100500`
 redefine funciones (rollback manual verbatim) y `20260930100800` retira el indice unico global de
 `eventos_app` (contract; el rollback de BD solo es posible mientras `cross_user_shared_keys = 0`, si no,
-roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compatibles y reversibles (la 101600 solo anade un overload: se revierte el Ktor de loop 2 ANTES de retirarla). `20260930101730` (indice unico parcial de `tickets_grant`, MASTER3-OBS-002) es aditiva y compatible con cualquier Ktor; su rollback solo borra el indice. `20260930101850` (MASTER4-OBS-001) solo anade `admin_sync_roles_audited`: compatible con el Ktor de loop 2/3; se revierte el Ktor de loop 4 ANTES de retirarla. `20260930101900` (MASTER6-IDEM-003) solo anade la sobrecarga de 4 argumentos de `admin_sync_roles_audited` y `20260930102000` (MASTER6-API-001) anade `admin_record_report_action` y la columna `accion_pendiente` y solo ESTRECHA la politica de INSERT de clientes `reportes_contenido_insert_auth`: compatibles con el Ktor anterior (service_role); se revierte ANTES el Ktor que las llama. Clasificacion por fichero, orden y hashes:
+roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compatibles y reversibles (la 101600 solo anade un overload: se revierte el Ktor de loop 2 ANTES de retirarla). `20260930101730` (indice unico parcial de `tickets_grant`, MASTER3-OBS-002) es aditiva y compatible con cualquier Ktor; su rollback solo borra el indice. `20260930101850` (MASTER4-OBS-001) solo anade `admin_sync_roles_audited`: compatible con el Ktor de loop 2/3; se revierte el Ktor de loop 4 ANTES de retirarla. `20260930101900` (MASTER6-IDEM-003) solo anade la sobrecarga de 4 argumentos de `admin_sync_roles_audited` y `20260930102000` (MASTER6-API-001) anade `admin_record_report_action` y la columna `accion_pendiente` y solo ESTRECHA la politica de INSERT de clientes `reportes_contenido_insert_auth`: compatibles con el Ktor anterior (service_role); se revierte ANTES el Ktor que las llama. `20260930102100`, `20260930102200` y `20260930102300` (HARDENING, solo hacia delante, independientes del Ktor porque Ktor escribe como service_role) estrechan privilegios y politicas de clientes: su ROLLBACK de BD (orden inverso 16..1, gate seccion 4) existe pero reabre lo que cerraron, y con la 6 aplicada el rollback del Ktor ya no es una opcion (roll forward con ventana maxima, gate seccion 9). Una sola clase por migracion, la de la tabla del gate. Clasificacion por fichero, orden y hashes:
 `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` (repo OposiBot). Ninguna se revierte automaticamente.
 
 ## Pendiente (registrado, no ejercitado)
@@ -142,10 +142,10 @@ roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compati
 
 ## Notas de la ronda 3 (remediacion completa, 2026-10-01)
 
-- Migraciones `20260930101900` y `20260930102000`: son NUEVAS y no estan publicadas, asi que se enmendaron EN SITIO (respecto al historial publicado siguen siendo solo hacia delante). Sus hashes de `SLICE_1_PRODUCTION_GATE.md` se calculan UNA vez sobre el blob del commit a desplegar (`NEW_SHA`); antes de desplegar se repite el gate PG17 local completo. La 101900 ya no lee `auth.users` (delega en la guarda de `admin_sync_roles(uuid, uuid[])`); la 102000 usa la columna `reportes_contenido.accion_pendiente` y no una clave de tiempo.
+- Migraciones `20260930101900` y `20260930102000`: HISTORICO (superado por la ronda 8): eran NUEVAS y no estaban publicadas, asi que se enmendaron EN SITIO; HOY estan PUBLICADAS e INMUTABLES (solo hacia delante, sin enmienda en sitio, ni siquiera de comentarios). Sus hashes de `SLICE_1_PRODUCTION_GATE.md` se calculan UNA vez sobre el blob del commit a desplegar (`NEW_SHA`); antes de desplegar se repite el gate PG17 local completo. La 101900 ya no lee `auth.users` (delega en la guarda de `admin_sync_roles(uuid, uuid[])`); la 102000 usa la columna `reportes_contenido.accion_pendiente` y no una clave de tiempo.
 - Ktor viejo y la 102000 (hechos verificados con `git show main:`): `resolverReporte` viejo insertaba la accion PRIMERO y despues hacia el PATCH con `revisado_en` (reloj de Ktor), sin guarda de estado; por eso todo cierre historico lee `accion_pendiente = false` y nunca se reanuda. Parar el Ktor viejo ANTES de migrar y no rearrancarlo: un Ktor viejo que re-resolviera un reporte en vuelo anadiria una accion sin limpiar la marca.
 - `OPOSICONTROL_ENABLE_BACKEND_RESTART=true` ya no habilita el reinicio fuera de un `APP_ENV` de desarrollo y `/health` solo publica `restartEnabled` en desarrollo. Tras desplegar el Ktor nuevo, comprobar que `/health` no lleva esa clave y quitar la variable del entorno del servidor.
-- Los jobs `db-pg17`, `desktop-release-linux`, la deriva de `verification-metadata.xml` y las pruebas POSIX solo se ejercitan en el CI de Linux; hasta su primera ejecucion no cuentan como prueba (B-28 en `SLICE_1_OPEN_BLOCKERS.md` de OposiBot).
+- Los jobs `db-pg17`, `desktop-release-linux`, la deriva de `verification-metadata.xml` y las pruebas POSIX solo se ejercitan en el CI de Linux; se ejecutaron en verde en el CI de Linux (run `37002108682`, SHA `f0e8ee0`; B-28 cerrado para ese SHA y se repite tras la ronda 8).
 
 ## Nota de la ronda 6 (decision del owner 4, 2026-10-02)
 
@@ -153,5 +153,18 @@ roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compati
 
 ## Nota de la ronda 7 (registro veraz, 2026-10-02)
 
-- NO PROBADO en Linux hasta el primer CI verde: la guarda de la distribucion de escritorio de produccion (`verifyNonDevSupabaseConfig` con `-PoposiProduction=true`; solo mensaje y cableado en seco, `jvmRun`/`runDistributable` no estan cubiertas), la guarda de flavors Android (`scripts/verify-android-flavor-config.sh`; no se construyen en CI) y el control negativo de la deriva de Gradle (`scripts/verify-gradle-drift-negative-control.sh`). No se valida `SUPABASE_ANON_KEY` (la decision del owner cubre la URL).
+- NO PROBADO en Linux hasta el primer CI verde (SUPERADO: el run `37002108682` los ejecuto en verde; `jvmRun`/`runDistributable` siguen sin cubrirse): la guarda de la distribucion de escritorio de produccion (`verifyNonDevSupabaseConfig` con `-PoposiProduction=true`; solo mensaje y cableado en seco, `jvmRun`/`runDistributable` no estan cubiertas), la guarda de flavors Android (`scripts/verify-android-flavor-config.sh`; no se construyen en CI) y el control negativo de la deriva de Gradle (`scripts/verify-gradle-drift-negative-control.sh`). No se valida `SUPABASE_ANON_KEY` (la decision del owner cubre la URL).
 - Residual de la migracion `20260930102100`: volver a ejecutarla revoca y registra una tabla futura solo si es de `postgres`; una tabla de `supabase_admin` hace FALLAR CERRADA la re-ejecucion (`CLIENT_DDL_PRIVILEGES_PREFLIGHT`, dueno no utilizable) y se corrige en la migracion de esa tabla o por el propietario de la plataforma. MAINTAIN sigue concedido. Detalle: DELTA KO13 de OposiBot.
+
+## Nota de la ronda 8 (R8b-DB, 2026-10-06)
+
+- Migracion NUEVA `20260930102200_slice1_roles_usuario_client_write_revoke.sql` (RC-02, MASTERF1-DB-001; solo hacia delante, independiente del Ktor, despues de la 102100): borra la politica `roles_usuario_admin_all` y revoca INSERT/UPDATE/DELETE de `roles_usuario` a `anon`/`authenticated`. Un admin normal ya no puede darse `superadmin` ni borrar el ultimo superadmin por la Data API; los roles solo se escriben con las RPC SECURITY DEFINER de sincronizacion (Ktor, `service_role`). Lectura propia/admin intacta (`roles_usuario_select_propio`). Antes de aplicar, revisar los titulares de `superadmin`/`admin` (consulta de solo lectura en la cabecera, HISTORICAL DATA).
+- Migracion NUEVA `20260930102300_slice1_report_insert_bounds.sql` (RC-08, MASTERF2-DB-002; despues de la 102000): la politica `reportes_contenido_insert_auth` exige ademas `creado_en = now()` y `actualizado_en = now()` (un valor explicito distinto se rechaza con 42501) y dos CHECK de 2000 caracteres en `motivo`/`descripcion`. Si hay filas historicas fuera de rango el CHECK queda NOT VALID (aplica a filas nuevas) y la fila VERIFY informativa `report_text_bound_not_validated` lo dice.
+
+## Nota de la ronda 8 (R8b-CICD, 2026-10-06)
+
+- Estado publicado: las migraciones `20260930100000..102100` estan PUBLICADAS en `origin/feature/canonical-api-slice-1` (SHA `f0e8ee0d5562a5f19383d1806be7cf4bdc2b2006`) y son INMUTABLES: nada se edita (ni comentarios); todo SQL nuevo va en un fichero NUEVO posterior al ultimo del manifiesto. La `20260930102200` y la `20260930102300` lo son desde su primer commit. Se retira cualquier licencia de enmienda en sitio.
+- CI verde registrado: OposiControl run `37002108682` (`f0e8ee0`, jobs `ops-static`, `tests`, `dependency-audit`, `secret-scan`, `openapi-lint`, `desktop-release-linux`, `backend-image`, `db-pg17`) y OposiBot run `37002096225` (`bf6f144`). Cubren 1..14; la ronda 8 necesita un run verde nuevo sobre sus SHA (se anota en el gate, seccion 9).
+- Roll-forward con ventana maxima: el reloj arranca en `docker stop oposicontrol-ktor`; antes de aplicar la 6 se puede volver a la imagen `rollback-<fecha>`; con la 6 aplicada la imagen vieja no se rearranca nunca (se corrige y se sigue adelante) y la ventana maxima de caida es de 30 minutos (decision escrita a los 15 entre roll forward y rollback completo de BD 16..1, este ultimo solo con `cross_user_shared_keys = 0`); pasada la ventana decide el owner. Detalle: gate de OposiBot, seccion 9.
+- Precondicion de gate: el propietario debe haber ratificado FA7 y FA9 (TECHNICAL_CORRECTION; FA8 ya esta APPROVED) o decidido su reversion ANTES del apply en MAIN (gate seccion 9; no bloquea fusionar la rama).
+- CI: `:features:exams:jvmTest` entra en la linea de pruebas y en la de deriva de `verification-metadata.xml` (la deriva se regenera EN LINUX en el job `tests`); `scripts/verify-no-direct-supabase.sh` excluye solo los source sets de test exactos (`src/test`, `src/<x>Test`), de modo que `features/opositester` y `core/testing` en `src/commonMain` ya se escanean (RC-03).

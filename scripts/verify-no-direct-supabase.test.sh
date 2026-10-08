@@ -26,6 +26,10 @@ fresh; mkdir -p "$w/data/src/jvmTest/kotlin"; add data/src/jvmTest/kotlin/MockTe
 fresh; add composeApp/src/commonMain/Url.kt 'val u = "https://api.example.com//path" // /rest/v1'; pass "// dentro de una cadena y comentario real"
 
 # --- controles negativos
+# RC-03: solo los source sets de test exactos se excluyen; paquetes de produccion con "test" en el nombre se escanean
+fresh; mkdir -p "$w/features/opositester/src/commonMain/kotlin/com/oposicontrol/admin/features/opositester"; add features/opositester/src/commonMain/kotlin/com/oposicontrol/admin/features/opositester/X.kt 'val p = "/rest/v1/x"'; expect_fail "/rest/v1 en features/opositester/src/commonMain" "opositester/src/commonMain/kotlin/com/oposicontrol/admin/features/opositester/X.kt:1"
+fresh; mkdir -p "$w/core/testing/src/commonMain/kotlin/com/oposicontrol/admin/core/testing"; add core/testing/src/commonMain/kotlin/com/oposicontrol/admin/core/testing/Y.kt 'val p = "/rest/v1/x"'; expect_fail "/rest/v1 en core/testing/src/commonMain" "core/testing/src/commonMain/kotlin/com/oposicontrol/admin/core/testing/Y.kt:1"
+fresh; mkdir -p "$w/features/opositester/src/commonTest/kotlin" "$w/core/testing/src/jvmTest/kotlin" "$w/data/src/test/kotlin"; add features/opositester/src/commonTest/kotlin/X.kt 'val p = "/rest/v1/x"'; add core/testing/src/jvmTest/kotlin/Y.kt 'val p = "/rest/v1/x"'; add data/src/test/kotlin/Z.kt 'val p = "/rest/v1/x"'; pass "mismo literal en src/commonTest, src/jvmTest y src/test (source sets de test exactos) sigue excluido"
 fresh; add composeApp/src/commonMain/Foo.kt 'suspend fun f(client: C) = client.get("$url/rest/v1/users")'; expect_fail "/rest/v1" "Foo.kt:1"
 fresh; add composeApp/src/commonMain/Foo.kt 'val p = "/storage/v1/object/x"'; expect_fail "/storage/v1" "Foo.kt:1"
 fresh; add composeApp/src/commonMain/Foo.kt 'val p = "/functions/v1/x"'; expect_fail "/functions/v1" "Foo.kt:1"

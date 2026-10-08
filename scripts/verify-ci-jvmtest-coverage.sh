@@ -14,6 +14,13 @@ doc=docs/engineering/DEPLOYMENT.md
 allow=scripts/ci-jvmtest-allowlist.tsv
 [ -f "$ci" ] || { echo "FAIL: falta $ci"; exit 1; }
 
+# Cuarentena (RC-13): solo de UN test, nunca de un modulo ni de una clase: excludeTestsMatching("<paquete.Clase>.<metodo>") exacto, sin comodines.
+while IFS= read -r bf; do
+  q="$(grep -A3 'excludeTestsMatching(' "$bf" | tr -d '
+' | grep -o 'excludeTestsMatching([^)]*)' || true)"
+  case "$q" in *'*'*) bad "$bf: excludeTestsMatching con comodin (la cuarentena es de un test exacto, no de un modulo/clase)";; esac
+done < <(find composeApp core domain data features -maxdepth 4 -name build.gradle.kts -not -path '*/build/*' 2>/dev/null)
+
 test_line="$(grep -E '^[[:space:]]*-[[:space:]]+run:[[:space:]]+\./gradlew[[:space:]].*--rerun-tasks' "$ci" | grep -v -- '--write-verification-metadata' || true)"
 write_line="$(grep -E '^[[:space:]]*-[[:space:]]+run:[[:space:]]+\./gradlew[[:space:]].*--write-verification-metadata' "$ci" || true)"
 doc_line="$(grep -F -- '--write-verification-metadata sha256' "$doc" 2>/dev/null | grep -F ':jvmTest' || true)"

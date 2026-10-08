@@ -1,2 +1,1 @@
 # Excepciones de verify-ci-jvmtest-coverage.sh: `:modulo<TAB>justificacion` (obligatoria). Vacio = todo modulo con pruebas corre en CI.
-:features:exams	NEEDS_MINITU/UI owner: en Linux (contenedor eclipse-temurin:21-jdk-jammy con libfontconfig/libgl) falla ExamWorkspaceResponsiveTest.en1366LaBarraDeGuardarSeVeEnteraYAlBajarElFormularioLlegaASuMinimo (1 de 315; verde en Windows): el formulario no desplaza la cabecera con la rueda. Se anade a CI al arreglar la prueba; evidencia en audit/full/evidence/oca-linux-jvmtest-all.log

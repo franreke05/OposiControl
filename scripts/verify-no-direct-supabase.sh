@@ -6,7 +6,7 @@
 # egreso no-Ktor (openConnection, NSURLSession, Sentry.init...) solo en la lista, y los ficheros que llaman a client.get/post/...
 # (HTTPCALL, cuenta `*`) tambien: un fichero HTTP nuevo exige darlo de alta a proposito. El backend/ queda fuera (credenciales de servidor).
 #
-# Escaneo de CODIGO (comentarios y KDoc de .kt/.kts/.swift se eliminan; las pruebas *Test* no cuentan) con una lista
+# Escaneo de CODIGO (comentarios y KDoc de .kt/.kts/.swift se eliminan; solo se excluyen los source sets de test exactos src/test y src/<x>Test, nunca paquetes como opositester o core/testing) con una lista
 # de permitidos EXPLICITA y fijada por fichero y numero de lineas: ops/inventory/direct-supabase-allowlist.tsv
 # (id<TAB>fichero<TAB>lineas<TAB>motivo). Una aparicion de mas, de menos o en otro fichero FALLA.
 # SCAN_ROOT apunta a otro arbol (lo usa la prueba). Un escaneo de 0 ficheros FALLA (nunca vacuo). Nunca abre .env*.
@@ -21,8 +21,8 @@ roots=""; for d in $dirs; do [ -d "$d" ] && roots="$roots $d"; done
 files="$( { find $roots -type f \( -name '*.kt' -o -name '*.kts' -o -name '*.swift' -o -name '*.properties' -o -name '*.xcconfig' \
     -o -name '*.plist' -o -name 'AndroidManifest.xml' -o -name '*.toml' -o -name '*.json' \) \
     -not -path '*/build/*' -not -path '*/.gradle/*' -not -path '*/.git/*' -not -path '*/node_modules/*' \
-    -not -path '*/src/*[Tt]est*/*' -not -name '.env*' 2>/dev/null
-  for f in build.gradle.kts settings.gradle.kts gradle.properties gradle/libs.versions.toml; do [ -f "$f" ] && echo "$f"; done; } | sort -u )"
+    -not -name '.env*' 2>/dev/null
+  for f in build.gradle.kts settings.gradle.kts gradle.properties gradle/libs.versions.toml; do [ -f "$f" ] && echo "$f"; done; } | sort -u | grep -Ev '(^|/)src/(test|[A-Za-z0-9]*Test)/' )"
 [ -n "$files" ] || { echo "FAIL: el escaneo no encontro ningun fichero (arbol vacio o CLIENT_DIRS erroneo)"; exit 1; }
 nfiles="$(echo "$files" | wc -l | tr -d ' ')"
 

@@ -35,4 +35,16 @@ fresh; sed -i '/--rerun-tasks/ s# :core:common:jvmTest##' "$w/.github/workflows/
 fresh; sed -i '/--rerun-tasks/ s# :core:common:jvmTest##' "$w/.github/workflows/ci.yml"; printf ':core:common\t \n' >> "$w/scripts/ci-jvmtest-allowlist.tsv"; ko "excepcion sin justificacion"
 fresh; printf ':core:common\tobsoleta: ya esta en CI\n' >> "$w/scripts/ci-jvmtest-allowlist.tsv"; ko "excepcion obsoleta"
 fresh; printf ':features:ghost\tno existe\n' >> "$w/scripts/ci-jvmtest-allowlist.tsv"; ko "excepcion de modulo inexistente"
+# 7) RC-13: una cuarentena con comodin (modulo o clase entera) falla; la exacta (la real del repo) pasa.
+fresh; mkdir -p "$w/features/exams"; cp features/exams/build.gradle.kts "$w/features/exams/"; ok "cuarentena exacta de un test"
+fresh; mkdir -p "$w/features/exams"; printf 'tasks.withType<Test>().configureEach { filter { excludeTestsMatching("com.x.*") } }
+' > "$w/features/exams/build.gradle.kts"; ko "cuarentena con comodin de paquete"
+grep -q 'comodin' "$tmp/out" || { echo "TEST FAIL: no nombra el comodin"; exit 1; }
+fresh; mkdir -p "$w/features/exams"; printf 'filter {
+  excludeTestsMatching(
+    "com.x.Clase." +
+      "*",
+  )
+}
+' > "$w/features/exams/build.gradle.kts"; ko "cuarentena con comodin en cadena multilinea"
 echo "verify-ci-jvmtest-coverage.test OK"
