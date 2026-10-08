@@ -27,7 +27,7 @@ actual="$( (cd supabase/migrations && ls | grep -E '^(2026092810|2026093|202610)
 [ "$(echo "$pending" | grep '^2026093')" = "$(tr -d '\r' < "$man" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (2026093*) y $man difieren"
 [ "$(echo "$pending" | grep '^202610' | grep -Ev '^[0-9]+_slice[27]_')" = "$(tr -d '\r' < "$man3" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (202610*) y $man3 difieren"
 [ "$(echo "$pending" | grep -E '^202610[0-9]*_slice2_')" = "$(tr -d '\r' < "$man2" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (202610*_slice2_*) y $man2 difieren"
-[ "$(echo "$pending" | grep -E '^202610[0-9]*_slice7_')" = "$(tr -d '' < "$man7" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (202610*_slice7_*) y $man7 difieren"
+[ "$(echo "$pending" | grep -E '^202610[0-9]*_slice7_')" = "$(tr -d '\r' < "$man7" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (202610*_slice7_*) y $man7 difieren"
 
 block() { # bloque comentado `-- NAME-BEGIN/END` (misma regla que Slice0Db.bloqueComentado): toda linea debe empezar por --
   awk -v n="$2" '$0 ~ "^[[:space:]]*-- "n"-END[[:space:]]*$" {e=1; exit} s {print} $0 ~ "^[[:space:]]*-- "n"-BEGIN[[:space:]]*$" {s=1} END {exit !(s && e)}' "$1" \

@@ -421,6 +421,9 @@ class AdminCatalogWriteRoutesTest {
             "D7-18", productPath, body("\"posicion\":1" to "\"posicion\":1,\"planId\":\"eeeeeeee-0000-4000-8000-999999999999\""),
             HttpStatusCode.UnprocessableEntity, "PRODUCT_PLAN_NOT_FOUND",
         )
+        // Reemplazo completo: sin planId un producto de suscripcion dejaria sin plan a sus suscriptores; sin cantidad, un pack sin tickets.
+        rejected("D7-18", productPath, body("\"tipoProducto\":\"pack_tickets\"" to "\"tipoProducto\":\"suscripcion\"", "\"cantidadTickets\":10," to ""), HttpStatusCode.UnprocessableEntity, "PRODUCT_PLAN_REQUIRED")
+        rejected("D7-18", productPath, body("\"cantidadTickets\":10," to ""), HttpStatusCode.UnprocessableEntity, "PRODUCT_TICKETS_REQUIRED")
         assertTrue(upstream.tables.getValue("productos_comerciales").isEmpty())
     }
 

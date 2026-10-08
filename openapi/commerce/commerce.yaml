@@ -481,7 +481,7 @@ components:
         x-roles: [ADMIN]
         x-pagination: NONE
         x-idempotency: NATURAL
-        x-error-codes: [VALIDATION, MALFORMED_BODY, UNAUTHENTICATED, FORBIDDEN, PRODUCT_NAME_REQUIRED, PRODUCT_CURRENCY_REQUIRED, PRODUCT_TICKETS_NOT_POSITIVE, PRODUCT_POSITION_NEGATIVE, PRODUCT_HIGHLIGHTED_BUT_HIDDEN, PRODUCT_PLAN_NOT_FOUND, UPSTREAM_ERROR]
+        x-error-codes: [VALIDATION, MALFORMED_BODY, UNAUTHENTICATED, FORBIDDEN, PRODUCT_NAME_REQUIRED, PRODUCT_CURRENCY_REQUIRED, PRODUCT_TICKETS_NOT_POSITIVE, PRODUCT_POSITION_NEGATIVE, PRODUCT_HIGHLIGHTED_BUT_HIDDEN, PRODUCT_PLAN_NOT_FOUND, PRODUCT_PLAN_REQUIRED, PRODUCT_TICKETS_REQUIRED, UPSTREAM_ERROR]
         description: 'Upsert by the natural key codigo, taken from the path: INSERT .. ON CONFLICT (codigo) DO UPDATE in one statement, so repeating the request leaves the same product and never a duplicate. The product id is assigned by the database on creation and kept on update. The body uses the field names the product list D7-17 emits (tipoProducto, planId, etiquetaPromocional), not the design names (tipo, planCodigo, etiqueta). An absent or null descripcion, cantidadTickets, planId or etiquetaPromocional clears the stored value. The price is not part of this command: it lives in the tariffs (D7-19); the stored precioCentimos is left unchanged. A planId that does not exist is 422 PRODUCT_PLAN_NOT_FOUND. An unknown tipoProducto, a planId that is not a uuid, a text over its limit or an unknown body field is 400 VALIDATION. An audit row (producto_comercial_guardado, actor = JWT sub) is written after the statement. No If-Match: the product read exposes no version. 201 when the product did not exist, 200 otherwise.'
         security:
           - bearerAuth: []

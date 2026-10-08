@@ -93,7 +93,7 @@ echo "ok:   manifiesto Slice 2 == migraciones 202610*_slice2_* ($(echo "$actual2
 # indice keyset del libro de movimientos de D6-02). Comparten prefijo de fecha con Slice 3/2 y se distinguen por el nombre.
 man7=supabase/SLICE7_MIGRATIONS.txt
 [ -s "$man7" ] || { echo "FAIL: manifiesto vacio o ausente: $man7"; exit 1; }
-expected7="$(tr -d '' < "$man7" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
+expected7="$(tr -d '\r' < "$man7" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
 [ -n "$expected7" ] || { echo "FAIL: manifiesto Slice 7 sin entradas"; exit 1; }
 actual7="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610[0-9]*_slice7_.*.sql$' | sed 's/.sql$//' | sort) )"
 if [ "$actual7" != "$expected7" ]; then

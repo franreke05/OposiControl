@@ -7644,13 +7644,22 @@ class AdminV1Gateway private constructor(
             etiquetaPromocional = cmd.etiquetaPromocional,
             posicion = cmd.posicion,
         ).validated()
+        // D7-18 es un reemplazo completo: sin esta guarda, omitir planId en un producto de suscripcion escribiria NULL y dejaria
+        // sin plan a todos sus suscriptores (el entitlement se resuelve en vivo por producto -> plan). Igual con los packs de tickets.
+        if (valid.tipoProducto == "suscripcion" && valid.planId == null) {
+            throw BackendDomainException("PRODUCT_PLAN_REQUIRED", HttpStatusCode.UnprocessableEntity, "Un producto de suscripcion necesita planId.")
+        }
+        if (valid.tipoProducto == "pack_tickets" && valid.cantidadTickets == null) {
+            throw BackendDomainException("PRODUCT_TICKETS_REQUIRED", HttpStatusCode.UnprocessableEntity, "Un pack de tickets necesita cantidadTickets.")
+        }
         val planId = valid.planId?.also { id ->
             require(id.isUuid()) { "planId no valido." }
             val exists = request("GET", "/rest/v1/planes_suscripcion?select=id&id=eq.$id&limit=1", null).decodeList<PlanRow>().isNotEmpty()
             if (!exists) throw BackendDomainException("PRODUCT_PLAN_NOT_FOUND", HttpStatusCode.UnprocessableEntity, "El plan indicado no existe.")
         }
-        val existed = request("GET", "/rest/v1/productos_comerciales?select=id&codigo=eq.${codigo.urlEncode()}&limit=1", null)
-            .decodeList<ProductoComercialRow>().isNotEmpty()
+        val previous = request("GET", "/rest/v1/productos_comerciales?select=*&codigo=eq.${codigo.urlEncode()}&limit=1", null)
+            .decodeList<ProductoComercialRow>().firstOrNull()
+        val existed = previous != null
         val row = buildJsonObject {
             put("codigo", JsonPrimitive(codigo))
             put("tipo_producto", JsonPrimitive(valid.tipoProducto))
@@ -7675,8 +7684,16 @@ class AdminV1Gateway private constructor(
             "producto_comercial_guardado",
             "productos_comerciales",
             saved.id,
+            antes = previous?.let { before ->
+                buildJsonObject {
+                    put("plan_id", before.planId?.let { JsonPrimitive(it) } ?: JsonNull)
+                    put("cantidad_tickets", before.cantidadTickets?.let { JsonPrimitive(it) } ?: JsonNull)
+                }
+            },
             despues = buildJsonObject {
                 put("codigo", JsonPrimitive(codigo))
+                put("plan_id", planId?.let { JsonPrimitive(it) } ?: JsonNull)
+                put("cantidad_tickets", valid.cantidadTickets?.let { JsonPrimitive(it) } ?: JsonNull)
                 put("tipo_producto", JsonPrimitive(valid.tipoProducto))
                 put("activo", JsonPrimitive(valid.activo))
                 put("visible", JsonPrimitive(valid.visible))
