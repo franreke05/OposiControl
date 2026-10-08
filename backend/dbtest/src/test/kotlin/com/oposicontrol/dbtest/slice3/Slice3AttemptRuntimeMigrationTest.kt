@@ -27,7 +27,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * SLICE 3: migraciones 20261008100000 (esquema) y 20261008100100 (RPC de comando) sobre la forma de MAIN.
+ * SLICE 3: migraciones 20261008100000 (esquema), 20261008100100 (RPC de comando) y 20261008100200 (endurecimiento, que
+ * redefine las RPC: todo lo de aqui corre contra las RPC ENDURECIDAS) sobre la forma de MAIN. Lo propio del endurecimiento
+ * (marcador, sin congelado tardio, origen, indices) esta en [Slice3AttemptHardeningMigrationTest].
  *
  * Cada garantia lleva su CONTROL NEGATIVO: el mismo escenario sin la pieza que la da tiene que fallar, para que un test
  * verde no pueda deberse a que el escenario no ejercita nada.
@@ -89,7 +91,12 @@ class Slice3AttemptRuntimeMigrationTest {
         // El owner decide cual queda abierto; despues la migracion aplica.
         c.ejecutar("update public.intentos_examen set estado = 'abandonado' where id = (select id from public.intentos_examen order by creado_en, id limit 1)")
         Slice3Db.aplicarMigraciones(c)
+        // 20261008100200: el intento abierto que queda lo creo el arranque antiguo (sin marcador): no se reanuda, se cierra y
+        // se crea uno nuevo. Nunca hay mas de uno abierto.
+        assertEquals("CREATED", c.iniciar(UA, EX).first)
         assertEquals("RESUMED", c.iniciar(UA, EX).first)
+        assertEquals("1", c.unico("select count(*) from public.intentos_examen where estado = 'en_progreso'"))
+        assertEquals("3", c.unico("select count(*) from public.intentos_examen"), "ningun intento se borra")
     }
 
     @Test
@@ -253,16 +260,22 @@ class Slice3AttemptRuntimeMigrationTest {
         )
     }
 
+    /**
+     * GATE SLICE 3 (F-01): este test afirmaba lo contrario ("el intento legacy se congela tarde y se puede responder y
+     * finalizar"), que ERA el hueco: el arranque antiguo no pasa por EntitlementPolicy. Con 20261008100200 ese intento no
+     * existe para ningun comando y nunca se congela. El comportamiento anterior queda como control negativo en
+     * [Slice3AttemptHardeningMigrationTest].
+     */
     @Test
-    fun anAttemptOpenedByTheLegacyStartIsFrozenLateAndCanBeAnsweredAndFinished() = Slice3Db.escenario { c ->
+    fun anAttemptOpenedByTheLegacyStartIsNeverFrozenAnsweredOrFinished() = Slice3Db.escenario { c ->
         // El `POST /examenes/{id}/iniciar` antiguo inserta la fila sin congelar preguntas.
         c.ejecutar("insert into public.intentos_examen (id, usuario_id, examen_id, total_preguntas) values ('1e9ac100-0000-4000-8000-000000000001', '$UA', '$EX', 4)")
         val intento = "1e9ac100-0000-4000-8000-000000000001"
-        assertEquals("RESUMED", c.iniciar(UA, EX).first, "el arranque canonico reanuda el intento legacy abierto")
-        assertEquals("OK", c.responder(UA, intento, p(1), o(1, 1), 0)["outcome"])
-        assertEquals("4", c.unico("select count(*) from public.preguntas_intento where intento_id = '$intento'"), "conjunto congelado en el primer comando")
-        assertEquals("OK", c.finalizar(UA, intento)["outcome"])
-        assertEquals(listOf(listOf("1", "1", "0", "3")), c.filas("select total_respondidas, total_correctas, total_falladas, total_sin_responder from public.intentos_examen where id = '$intento'"))
+        assertEquals("ATTEMPT_NOT_FOUND", c.responder(UA, intento, p(1), o(1, 1), 0)["outcome"])
+        assertEquals("ATTEMPT_NOT_FOUND", c.finalizar(UA, intento)["outcome"])
+        assertEquals("0", c.unico("select count(*) from public.preguntas_intento where intento_id = '$intento'"), "sin congelado tardio")
+        assertEquals("0", c.unico("select count(*) from public.respuestas_intento where intento_id = '$intento'"))
+        assertEquals("en_progreso", c.unico("select estado from public.intentos_examen where id = '$intento'"), "un comando rechazado no lo toca")
     }
 
     // ------------------------------------------------------------------ D2-11 abandon
@@ -337,7 +350,7 @@ class Slice3AttemptRuntimeMigrationTest {
         val antes = c.unico(forma)
         Slice3Db.aplicarMigraciones(c)
         Slice3Db.aplicarMigraciones(c) // idempotentes
-        for (migracion in listOf(Slice3Db.SCHEMA, Slice3Db.RPCS)) {
+        for (migracion in listOf(Slice3Db.SCHEMA, Slice3Db.RPCS, Slice3Db.HARDENING)) {
             val filas = c.filas(Slice0Db.verifyDe(migracion))
             assertTrue(filas.isNotEmpty(), "$migracion: VERIFY sin filas")
             assertEquals(emptyList(), filas.filter { it[1] != "0" }, "$migracion: VERIFY con contadores distintos de 0")
@@ -346,14 +359,21 @@ class Slice3AttemptRuntimeMigrationTest {
         val intento = c.iniciar(UA, EX).second!!
         c.responder(UA, intento, p(1), o(1, 1), 0)
 
+        c.ejecutar(Slice0Db.rollbackDe(Slice3Db.HARDENING))
         c.ejecutar(Slice0Db.rollbackDe(Slice3Db.RPCS))
         c.ejecutar(Slice0Db.rollbackDe(Slice3Db.SCHEMA))
         assertEquals(antes, c.unico(forma), "el rollback deja las columnas de MAIN")
-        assertEquals("0", c.unico("select count(*) from pg_proc where proname in ('app_start_exam_attempt', 'app_record_attempt_answer', 'app_finish_exam_attempt', 'app_abandon_exam_attempt', 'app_congelar_preguntas_intento', 'tg_intentos_examen_especialidad_snapshot_inmutable')"))
+        assertEquals("0", c.unico("select count(*) from pg_proc where proname in ('app_start_exam_attempt', 'app_record_attempt_answer', 'app_finish_exam_attempt', 'app_abandon_exam_attempt', 'app_congelar_preguntas_intento', 'tg_intentos_examen_especialidad_snapshot_inmutable', 'tg_intentos_examen_creado_por_comando_inmutable')"))
         assertNull(c.unico("select to_regclass('public.ux_intentos_examen_abierto')::text"))
+        assertNull(c.unico("select to_regclass('public.idx_respuestas_intento_primera_opcion_id')::text"))
+        assertNull(c.unico("select to_regclass('public.idx_intentos_examen_especialidad_snapshot_id')::text"))
         assertEquals("1", c.unico("select count(*) from public.respuestas_intento where intento_id = '$intento'"), "el rollback no borra respuestas ni intentos")
 
         Slice3Db.aplicarMigraciones(c)
-        assertEquals("RESUMED", c.iniciar(UA, EX).first, "re-aplicadas, el intento abierto sigue siendo el mismo")
+        // El rollback de 20261008100200 quita la columna del marcador (lo dice su cabecera): el intento abierto vuelve a ser
+        // "uno que el comando no creo", asi que el siguiente arranque lo cierra y crea otro. Sus datos siguen ahi.
+        assertEquals("CREATED", c.iniciar(UA, EX).first)
+        assertEquals("abandonado", c.unico("select estado from public.intentos_examen where id = '$intento'"))
+        assertEquals("1", c.unico("select count(*) from public.respuestas_intento where intento_id = '$intento'"))
     }
 }

@@ -55,8 +55,10 @@ if ! grep -qF "${first3}..${last3#20261008}" "$dep"; then
   echo "FAIL: $dep no cita el rango Slice 3 ${first3}..${last3#20261008} (ultima migracion del manifiesto)"
   exit 1
 fi
-# Las dos migraciones del runtime de examen deben seguir en el manifiesto (borrarlas de las dos partes a la vez no pasa).
-for need in 20261008100000_slice3_attempt_runtime_schema 20261008100100_slice3_attempt_command_rpcs; do
+# Las migraciones del runtime de examen deben seguir en el manifiesto (borrarlas de las dos partes a la vez no pasa). La
+# 100200 (endurecimiento del gate: marcador de comando, sin congelado tardio) cierra un bypass de acceso: no es opcional.
+for need in 20261008100000_slice3_attempt_runtime_schema 20261008100100_slice3_attempt_command_rpcs \
+  20261008100200_slice3_attempt_hardening; do
   echo "$expected3" | grep -qx "$need" || { echo "FAIL: el manifiesto Slice 3 no lista $need"; exit 1; }
 done
 echo "ok:   manifiesto Slice 3 == migraciones 202610* ($(echo "$actual3" | wc -l | tr -d ' '))"

@@ -12,8 +12,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * SLICE 3: soporte para probar las migraciones REALES del runtime de examen sobre el PostgreSQL embebido (nunca MAIN).
  *
  * La forma de MAIN NO se copia a mano: se carga `supabase/baseline/main_shape_subset.sql`, el mismo fichero GENERADO
- * (verbatim de la captura de catalogo de MAIN) que usa el gate de PostgreSQL 17 del CI, y encima las dos migraciones de
- * Slice 3 tal cual estan en el repositorio. Solo se quitan sus dos `CREATE EXTENSION` (los binarios embebidos no traen
+ * (verbatim de la captura de catalogo de MAIN) que usa el gate de PostgreSQL 17 del CI, y encima las tres migraciones de
+ * Slice 3 tal cual estan en el repositorio (esquema, RPC de comando y el endurecimiento 20261008100200 que las redefine). Solo se quitan sus dos `CREATE EXTENSION` (los binarios embebidos no traen
  * `uuid-ossp`; `gen_random_uuid()` es nativo) y la palabra `MAINTAIN` de sus GRANT / REVOKE (privilegio de PG17; el
  * embebido es PG16), y se ponen los stubs minimos de `auth` que en Supabase pone GoTrue.
  *
@@ -24,6 +24,9 @@ import java.util.concurrent.atomic.AtomicInteger
 object Slice3Db {
     const val SCHEMA = "supabase/migrations/20261008100000_slice3_attempt_runtime_schema.sql"
     const val RPCS = "supabase/migrations/20261008100100_slice3_attempt_command_rpcs.sql"
+
+    /** Gate de Slice 3 (F-01 / F-05 / F-06): marcador `creado_por_comando`, dos indices de FK y las RPC redefinidas. */
+    const val HARDENING = "supabase/migrations/20261008100200_slice3_attempt_hardening.sql"
     private const val MAIN_SUBSET = "supabase/baseline/main_shape_subset.sql"
 
     const val UA = "a3000000-0000-0000-0000-00000000000a"
@@ -91,22 +94,27 @@ object Slice3Db {
         set session_replication_role = origin;
     """.trimIndent()
 
-    /** Base nueva: stubs de `auth` + forma de MAIN (+ las dos migraciones de Slice 3 si [migraciones]) + siembra. */
-    fun <T> escenario(migraciones: Boolean = true, bloque: (Connection) -> T): T {
+    /**
+     * Base nueva: stubs de `auth` + forma de MAIN (+ las migraciones de Slice 3 si [migraciones]) + siembra.
+     * [endurecimiento] = false deja SOLO 20261008100000 + 20261008100100 (las RPC tal como se publicaron): es el control
+     * negativo de las garantias que da 20261008100200.
+     */
+    fun <T> escenario(migraciones: Boolean = true, endurecimiento: Boolean = true, bloque: (Connection) -> T): T {
         val nombre = "slice3_" + contador.incrementAndGet()
         PostgresHarness.conexionMaestra().use { it.ejecutar("create database $nombre") }
         return PostgresHarness.baseLlamada(nombre).use { c ->
             c.ejecutar(PRERREQUISITOS)
             c.ejecutar(subsetMain)
             c.ejecutar(SIEMBRA)
-            if (migraciones) aplicarMigraciones(c)
+            if (migraciones) aplicarMigraciones(c, endurecimiento)
             bloque(c)
         }
     }
 
-    fun aplicarMigraciones(c: Connection) {
+    fun aplicarMigraciones(c: Connection, endurecimiento: Boolean = true) {
         c.aplicar(SCHEMA)
         c.aplicar(RPCS)
+        if (endurecimiento) c.aplicar(HARDENING)
     }
 }
 

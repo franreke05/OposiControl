@@ -199,7 +199,8 @@ begin
   raise notice 'OK client guards, backstop, handle_new_auth_user, NO ACTION retention';
 end $$;
 
--- ---------------------------------------------------------------- SLICE 3: exam runtime (20261008100000 + 20261008100100)
+-- ---------------------------------------------------------------- SLICE 3: exam runtime (20261008100000 + 20261008100100 + 20261008100200)
+-- The commands asserted below are the bodies REDEFINED by 20261008100200 (hardening).
 -- Content rows are seeded with the content triggers off (session_replication_role = replica): the closure of the CI
 -- bootstrap does not carry every authoring helper those triggers call, and the authoring flow is not under test here.
 -- Everything after the seed runs with triggers ON (preparar_intento_examen, validar_y_calcular_respuesta_intento, FKs).
@@ -322,6 +323,71 @@ begin
   raise notice 'OK slice 3 exam runtime (start, answer, finish, abandon)';
 end $$;
 
+-- SLICE 3 hardening (20261008100200, gate review F-01 / F-05 / F-06): an attempt that app_start_exam_attempt did not
+-- create does not exist for any command and is never frozen; the commands serve origen_intento = 'examen' only; the
+-- marker is immutable; the two FKs of 20261008100000 have their index.
+do $$
+declare
+  ua constant uuid := 'a0000000-0000-0000-0000-00000000000a';
+  ub constant uuid := 'a0000000-0000-0000-0000-00000000000b';
+  ex constant uuid := 'e3000000-0000-0000-0000-000000000001';
+  p1 constant uuid := 'f3000000-0000-0000-0000-000000000001';
+  ok1 constant uuid := '0a300000-0000-0000-0001-000000000001';
+  legacy constant uuid := '1e9ac100-0000-4000-8000-000000000001';
+  repaso constant uuid := '4e9a5000-0000-4000-8000-000000000001';
+  r jsonb; a uuid;
+begin
+  assert (select count(*) = 2 and bool_and(creado_por_comando = 'app_start_exam_attempt')
+          from public.intentos_examen where usuario_id = ua and examen_id = ex), 'every attempt of the start command carries the marker';
+
+  -- what the retired legacy start did: the bare row, no entitlement check, no frozen set.
+  insert into public.intentos_examen (id, usuario_id, examen_id, total_preguntas) values (legacy, ub, ex, 4);
+  assert (select creado_por_comando is null from public.intentos_examen where id = legacy), 'a direct insert has no marker';
+  assert public.app_record_attempt_answer(ub, legacy, p1, ok1, 0, 0, null) = '{"outcome":"ATTEMPT_NOT_FOUND"}'::jsonb, 'unmarked attempt: answer';
+  assert public.app_record_attempt_answer(ub, legacy, p1, null, 0, 0, null) = '{"outcome":"ATTEMPT_NOT_FOUND"}'::jsonb, 'unmarked attempt: skip';
+  assert public.app_finish_exam_attempt(ub, legacy) = '{"outcome":"ATTEMPT_NOT_FOUND"}'::jsonb, 'unmarked attempt: finish';
+  assert public.app_abandon_exam_attempt(ub, legacy, 1, 'salida_usuario') = '{"outcome":"ATTEMPT_NOT_FOUND"}'::jsonb, 'unmarked attempt: abandon';
+  assert not exists (select 1 from public.preguntas_intento where intento_id = legacy), 'no late freeze';
+  assert not exists (select 1 from public.respuestas_intento where intento_id = legacy), 'nothing stored for an unmarked attempt';
+  assert (select estado = 'en_progreso' and finalizado_en is null from public.intentos_examen where id = legacy), 'a refused command does not touch the row';
+
+  -- the marker is written on INSERT by the start command only.
+  perform pg_temp.expect(format($q$update public.intentos_examen set creado_por_comando = 'app_start_exam_attempt' where id = %L$q$, legacy),
+    'P0001', 'INTENTO_CREADO_POR_COMANDO_INMUTABLE');
+  perform pg_temp.expect(format($q$update public.intentos_examen set creado_por_comando = null where usuario_id = %L and examen_id = %L$q$, ua, ex),
+    'P0001', 'INTENTO_CREADO_POR_COMANDO_INMUTABLE');
+  perform pg_temp.expect(format($q$insert into public.intentos_examen (usuario_id, examen_id, estado, creado_por_comando) values (%L, %L, 'abandonado', 'otro')$q$, ub, ex), '23514');
+
+  -- the canonical start never resumes it: it closes it (kept, never deleted) and creates a marked attempt with its set.
+  r := public.app_start_exam_attempt(ub, ex);
+  assert r ->> 'outcome' = 'CREATED' and (r ->> 'intento_id')::uuid <> legacy, 'start does not resume an unmarked attempt: ' || r;
+  a := (r ->> 'intento_id')::uuid;
+  assert (select estado = 'abandonado' and creado_por_comando is null and metadatos ->> 'motivo' = 'intento_sin_marcador_de_comando'
+            and metadatos ->> 'cerradoPor' = 'app_start_exam_attempt' from public.intentos_examen where id = legacy), 'the unmarked open attempt is closed';
+  assert not exists (select 1 from public.preguntas_intento where intento_id = legacy), 'and still has no frozen set';
+  assert (select creado_por_comando = 'app_start_exam_attempt' and origen_intento = 'examen' from public.intentos_examen where id = a), 'new attempt is marked';
+  assert (select count(*) from public.preguntas_intento where intento_id = a) = 4, 'new attempt frozen at start';
+  assert (select count(*) from public.intentos_examen where usuario_id = ub and examen_id = ex and estado = 'en_progreso') = 1, 'still one open attempt';
+  r := public.app_start_exam_attempt(ub, ex);
+  assert r ->> 'outcome' = 'RESUMED' and (r ->> 'intento_id')::uuid = a, 'a marked attempt is resumed: ' || r;
+  assert public.app_finish_exam_attempt(ub, legacy) ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'closed, it still does not exist for the commands';
+
+  -- F-06: a non-exam attempt is not served by the exam commands (even if it carried the marker).
+  insert into public.intentos_examen (id, usuario_id, examen_id, origen_intento, creado_por_comando)
+  values (repaso, ua, null, 'repaso_random', 'app_start_exam_attempt');
+  assert public.app_record_attempt_answer(ua, repaso, p1, ok1, 0, 0, null) ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'repaso attempt: answer';
+  assert public.app_finish_exam_attempt(ua, repaso) ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'repaso attempt: finish';
+  assert public.app_abandon_exam_attempt(ua, repaso, 1, 'otro') ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'repaso attempt: abandon';
+  assert (select estado = 'en_progreso' from public.intentos_examen where id = repaso), 'repaso attempt untouched';
+
+  -- F-05: the two FKs added by 20261008100000 are indexed (partial, exact definition).
+  assert (select count(*) from pg_index i
+           where i.indisvalid and i.indisready and i.indpred is not null
+             and i.indexrelid in (to_regclass('public.idx_respuestas_intento_primera_opcion_id'),
+                                  to_regclass('public.idx_intentos_examen_especialidad_snapshot_id'))) = 2, 'FK indexes';
+  raise notice 'OK slice 3 hardening (command marker, no late freeze, exam origin only, FK indexes)';
+end $$;
+
 -- clients cannot reach the Slice 3 commands nor write attempts directly
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-00000000000a', true);
@@ -332,6 +398,10 @@ begin
   perform pg_temp.expect($q$select public.app_abandon_exam_attempt('a0000000-0000-0000-0000-00000000000a', gen_random_uuid(), 1, 'otro')$q$, '42501');
   perform pg_temp.expect($q$select public.app_record_attempt_answer('a0000000-0000-0000-0000-00000000000a', gen_random_uuid(), gen_random_uuid(), null, 0, 0, null)$q$, '42501');
   perform pg_temp.expect($q$select private.app_congelar_preguntas_intento(gen_random_uuid(), gen_random_uuid())$q$, '42501');
+  -- 20261008100200: a client can neither forge the command marker nor write an attempt at all.
+  perform pg_temp.expect($q$insert into public.intentos_examen (usuario_id, examen_id, creado_por_comando) values ('a0000000-0000-0000-0000-00000000000a', 'e3000000-0000-0000-0000-000000000001', 'app_start_exam_attempt')$q$, '42501');
+  perform pg_temp.expect($q$update public.intentos_examen set creado_por_comando = 'app_start_exam_attempt' where usuario_id = 'a0000000-0000-0000-0000-00000000000a'$q$, '42501');
+  perform pg_temp.expect($q$select private.tg_intentos_examen_creado_por_comando_inmutable()$q$, '42501');
   raise notice 'OK slice 3 RPCs closed to clients';
 end $$;
 reset role;
@@ -378,7 +448,7 @@ begin
                       'public.app_registrar_revocacion_sesiones(uuid,text)', 'public.admin_sync_roles_audited(uuid,uuid[],uuid,uuid[])',
                       'public.admin_record_report_action(uuid,text,uuid,text,text)',
                       'public.idem_begin(uuid,text,text,text,interval,interval)',
-                      -- SLICE 3 (20261008100100)
+                      -- SLICE 3 (20261008100100, redefined by 20261008100200)
                       'public.app_start_exam_attempt(uuid,uuid)',
                       'public.app_record_attempt_answer(uuid,uuid,uuid,uuid,integer,integer,integer)',
                       'public.app_finish_exam_attempt(uuid,uuid)', 'public.app_abandon_exam_attempt(uuid,uuid,integer,text)']) f

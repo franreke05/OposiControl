@@ -31,7 +31,7 @@ The subset follows the precedent the repo already accepts: `backend/dbtest` comm
 - The real engine: Supabase `postgres` 17.6.1.171, pinned by digest. It provides the `auth` schema and `auth.uid()`, plus the `anon`, `authenticated` and `service_role` roles.
 - The MAIN shape of every object the pending set touches, loaded with zero errors tolerated.
 - The pending set applied in order with `ON_ERROR_STOP=1`. Each migration's `VERIFY` block runs right after it, and every counter must be 0. An empty result or a missing block fails the gate. The one exception is `20260928100100`, which predates the VERIFY convention and is covered by the matrix below.
-- Behavioural assertions: the state gate of the RPCs, onboarding and replay, deletion requests, the anon/authenticated boundaries, client guards and NO ACTION retention; Slice 3 exam runtime (start / answer / finish / abandon commands, frozen set, annulled questions, one open attempt, commands closed to clients).
+- Behavioural assertions: the state gate of the RPCs, onboarding and replay, deletion requests, the anon/authenticated boundaries, client guards and NO ACTION retention; Slice 3 exam runtime (start / answer / finish / abandon commands, frozen set, annulled questions, one open attempt, commands closed to clients) and its hardening (`20261008100200`: an attempt the start command did not create is not found by any command and never frozen, immutable command marker, exam-origin only, FK indexes).
 - The final grants/RLS matrix:
   - RLS is enabled on every table.
   - Server-only tables grant no client privilege.
