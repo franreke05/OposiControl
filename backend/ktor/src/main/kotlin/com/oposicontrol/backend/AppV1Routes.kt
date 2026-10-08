@@ -81,16 +81,9 @@ fun Route.appV1Routes(
         get("/home") {
             call.respond(gateway.home(call.usuarioId(verifier, allowDevUser, identityResolver)))
         }.legacyRoute(LegacyEndpoints.APP_HOME)
-        get("/examenes") {
-            call.usuarioId(verifier, allowDevUser, identityResolver) // requiere sesion
-            call.respond(AppExamenesResponse(gateway.listExamenes()))
-        }
-        get("/examenes/{id}") {
-            call.usuarioId(verifier, allowDevUser, identityResolver)
-            val detalle = gateway.examenDetalle(call.requiredPath("id"))
-                ?: return@get call.respond(io.ktor.http.HttpStatusCode.NotFound, ErrorDto("not_found", "Examen no encontrado."))
-            call.respond(detalle)
-        }
+        // SLICE 2: `GET /examenes` (D2-01) y `GET /examenes/{examId}` (D2-02) viven ahora en [catalogRoutes] con el cable
+        // canonico (paginado, sin cuerpos de pregunta). Los metodos del gateway `listExamenes` / `examenDetalle` se
+        // conservan: `home` y los flujos de intento de SLICE 3 aun los usan.
         post("/examenes/{id}/iniciar") {
             val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(io.ktor.http.HttpStatusCode.Created, AppIntentoResponse(gateway.iniciar(uid, call.requiredPath("id"))))

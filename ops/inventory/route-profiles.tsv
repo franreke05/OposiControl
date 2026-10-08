@@ -115,6 +115,8 @@ GET	/api/v1/app/examenes/{}	BOT	user-jwt	Consumer app API: examenes/{}	OposiBot
 GET	/api/v1/app/home	BOT	user-jwt	Consumer app API: home	OposiBot
 GET	/api/v1/app/legal/documents	BOT	none	Legal documents (public, IP rate limit; mounted with the consumer auth runtime)	OposiBot
 GET	/api/v1/app/me	AUTH	user-jwt	Canonical profile/account: GET me	OposiBot
+GET	/api/v1/app/me/entitlement	BOT	user-jwt	Consumer app API: me/entitlement (D7-02)	OposiBot
+GET	/api/v1/app/me/examenes	BOT	user-jwt	Consumer app API: me/examenes (D2-13)	OposiBot
 GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
 GET	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 GET	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl

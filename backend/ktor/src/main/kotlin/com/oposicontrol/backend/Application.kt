@@ -553,6 +553,13 @@ fun Application.module() {
         appEnv,
         System.getenv("OPOSICONTROL_ALLOW_DEV_USER")?.toBooleanStrictOrNull() ?: false,
     )
+    val canonicalIdentityResolver = if (serverProfile.mountsBot) {
+        PostgrestCanonicalProfileDirectory.fromEnvironment()?.let {
+            CanonicalIdentityResolver(jwtVerifier::subFrom, it)
+        }
+    } else {
+        null
+    }
     val routingDeps = CombinedRoutingDeps(
         contentGateway = gateway,
         newsGateway = newsGateway,
@@ -569,13 +576,8 @@ fun Application.module() {
         allowDevUser = allowDevUser,
         appEnv = appEnv,
         authRuntime = authRuntime,
-        identityResolver = if (serverProfile.mountsBot) {
-            PostgrestCanonicalProfileDirectory.fromEnvironment()?.let {
-                CanonicalIdentityResolver(jwtVerifier::subFrom, it)
-            }
-        } else {
-            null
-        },
+        identityResolver = canonicalIdentityResolver,
+        catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it) },
     )
     configureServerProfile(serverProfile, json, routingDeps)
 }
@@ -631,6 +633,8 @@ internal class CombinedRoutingDeps(
     val identityResolver: CanonicalIdentityResolver?,
     /** Sonda de dependencia critica de `/health/ready` (Supabase). Inyectable para probar el 503; produccion usa la real. */
     val readinessCheck: () -> String = ::checkSupabaseReachable,
+    /** SLICE 2 (D2-01/02/13, D7-02). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val catalogRuntime: CatalogRuntime? = null,
 )
 
 /** Perfil historico: todo. Conjunto de rutas identico al de siempre. */
@@ -676,6 +680,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
         allowDevUser,
         identityResolver = identityResolver,
     )
+    // SLICE 2: catalogo y derechos del consumidor (D2-01, D2-02, D2-13, D7-02).
+    catalogRoutes(catalogRuntime)
     authRuntime?.let {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).
