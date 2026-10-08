@@ -34,6 +34,8 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '403':
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     WalletMovements:
@@ -86,6 +88,8 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '403':
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
   headers:

@@ -9,6 +9,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.UUID
@@ -222,7 +225,7 @@ class SupabaseNewsGateway private constructor(
             // sería arbitrario. La biblioteca necesita lo más reciente arriba.
             path = "/rest/v1/noticia?select=*&order=creado_en.desc&limit=$limit&offset=$offset",
             body = null,
-        ).decodeList<SupabaseNoticiaRow>()
+        ).let { decodeNoticiaRowsTolerant(json, it) }
         return rows.map { row -> row.toDto() }
     }
 
@@ -232,7 +235,7 @@ class SupabaseNewsGateway private constructor(
             method = "GET",
             path = "/rest/v1/noticia?id=eq.$noticiaId&select=*&limit=1",
             body = null,
-        ).decodeList<SupabaseNoticiaRow>().firstOrNull()?.toDto()
+        ).let { decodeNoticiaRowsTolerant(json, it) }.firstOrNull()?.toDto()
     }
 
     override fun saveNoticia(input: NoticiaDto): NoticiaDto {
@@ -245,7 +248,7 @@ class SupabaseNewsGateway private constructor(
             path = "/rest/v1/noticia?on_conflict=id",
             body = json.encodeToString(listOf(row)),
             prefer = "resolution=merge-duplicates,return=representation",
-        ).decodeList<SupabaseNoticiaRow>().first()
+        ).let { decodeNoticiaRowsTolerant(json, it) }.first()
         return saved.toDto()
     }
 
@@ -495,6 +498,18 @@ internal fun String.isCanonicalUuid(): Boolean =
  * significara dos cosas y que la composición no se pudiera consultar.
  */
 @Serializable
+/**
+ * Lectura legacy tolerante: las rutas canonicas guardan `capas` como objetos opacos, y el lector legacy las tipa
+ * (`NoticiaLayerDto`). Una fila cuyas capas no encajan NO tumba la pagina entera: esa fila se lee sin capas
+ * (el resto de sus campos intacto). Cualquier otro fallo de forma sigue propagandose.
+ */
+internal fun decodeNoticiaRowsTolerant(json: Json, text: String): List<SupabaseNoticiaRow> =
+    json.parseToJsonElement(text).jsonArray.map { element ->
+        runCatching { json.decodeFromJsonElement<SupabaseNoticiaRow>(element) }.getOrElse {
+            json.decodeFromJsonElement<SupabaseNoticiaRow>(JsonObject(element.jsonObject + ("capas" to JsonArray(emptyList()))))
+        }
+    }
+
 internal data class SupabaseNoticiaRow(
     // Nulo en alta: PostgREST omite el campo (`explicitNulls = false`) y Postgres
     // aplica `gen_random_uuid()`. En edición viaja y `on_conflict=id` fusiona.
