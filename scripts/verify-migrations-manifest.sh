@@ -85,7 +85,7 @@ for v2 in $(echo "$expected2" | cut -d_ -f1); do
 done
 # La lectura de D2-13 COLECCION debe seguir en el manifiesto (sustituirla en las dos partes a la vez no pasa): el Ktor que
 # la llama responde 503 sin ella.
-for need in 20261008100300_slice2_my_exams_read_rpc; do
+for need in 20261008100300_slice2_my_exams_read_rpc 20261008100400_slice2_content_grant_client_write_revoke; do
   echo "$expected2" | grep -qx "$need" || { echo "FAIL: el manifiesto Slice 2 no lista $need"; exit 1; }
 done
 echo "ok:   manifiesto Slice 2 == migraciones 202610*_slice2_* ($(echo "$actual2" | wc -l | tr -d ' '))"
