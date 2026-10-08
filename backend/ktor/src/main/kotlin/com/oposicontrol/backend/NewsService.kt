@@ -110,7 +110,7 @@ internal object NewsRules {
     const val Q_MAX = 100
 
     /** `news/<uuid>/<nombre>` (lo que sube [NewsGateway.uploadAsset]) o `news/<uuid>.<ext>` (forma del contrato). */
-    val ASSET_PATH = Regex("^news/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(/[A-Za-z0-9._-]{1,200}|\\.[A-Za-z0-9]{1,8})$")
+    val ASSET_PATH = Regex("^news/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(/[A-Za-z0-9][A-Za-z0-9._-]{0,199}|\\.[A-Za-z0-9]{1,8})$")
 
     /** Una noticia sin texto ni capas con contenido no tiene nada que publicar (misma regla que el guardado legacy). */
     fun hasContent(texto: String?, capaContents: Sequence<String?>): Boolean =

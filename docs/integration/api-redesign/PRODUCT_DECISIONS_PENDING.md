@@ -61,3 +61,12 @@ External: D7-03 (payment provider verification) needs the provider chosen in DEC
   anything else -> otros.
 - `porOrigen` covers the current month; periods use Europe/Madrid, week starts on Monday.
 - Balance, recent movements and earnings are separate reads (no single snapshot); a read RPC would give one.
+
+## 6. Noted by the final review (2026-10-08), not blocking
+
+- Scheduled news: with the current read policy a `scheduled` article never becomes visible on its date by itself (no
+  publishing job; the public policy requires `published`). Decide the mechanism before the consumer feed (D4-18): either
+  `programar` stores `published` with a future `publicar_desde`, or the feed includes `scheduled` rows whose date has passed.
+- Legacy news list decodes `capas` strictly while the canonical route stores them as opaque objects: a canonical article with
+  a mistyped known layer key would break the legacy list page until fixed (admin only).
+- Wallet reads answer 502 `UPSTREAM_CONTRACT_ERROR` on corrupt upstream rows; `openapi/wallet/wallet.yaml` declares 503 only.
