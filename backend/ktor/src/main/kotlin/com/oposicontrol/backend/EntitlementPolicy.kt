@@ -89,14 +89,24 @@ internal data class ExamGrantFact(val motivo: String, val validFrom: Instant, va
 /** La proyeccion `estado_premium_usuario`. */
 internal data class PremiumFact(val esPremium: Boolean, val status: String, val endsAt: Instant?) {
     /**
-     * Premium VIGENTE: la proyeccion lo marca, el estado no es uno de los que no dan acceso y `fin_en` no ha pasado
+     * Premium VIGENTE: la proyeccion lo marca, el estado es EXPLICITAMENTE uno de los que dan acceso y `fin_en` no ha pasado
      * (Q-04: nada en la base caduca la fila cuando `fin_en` vence, asi que se re-comprueba al leer).
      */
     fun activeAt(now: Instant): Boolean =
-        esPremium && status !in NON_ACCESS_STATUSES && (endsAt == null || endsAt.isAfter(now))
+        esPremium && status in ACCESS_STATUSES && (endsAt == null || endsAt.isAfter(now))
 
     companion object {
-        private val NON_ACCESS_STATUSES = setOf("pausada", "caducada", "sin_suscripcion")
+        /**
+         * Lista BLANCA (deny-by-default): un estado desconocido NO da acceso aunque `es_premium` sea true. Los seis valores del
+         * CHECK `estado_premium_usuario_estado_suscripcion_check` de MAIN, clasificados uno a uno:
+         *   activa, periodo_prueba -> acceso; cancelada -> acceso hasta `fin_en` (la renovacion esta cancelada, el periodo
+         *   pagado sigue vigente); pausada, caducada, sin_suscripcion -> sin acceso.
+         * Es el mismo conjunto que `EntitlementService.LIVE_STATUSES` (CatalogService.kt).
+         */
+        internal val ACCESS_STATUSES = setOf("activa", "periodo_prueba", "cancelada")
+
+        /** Los estados del CHECK de MAIN que NO dan acceso (documentados para que la clasificacion sea total). */
+        internal val NON_ACCESS_STATUSES = setOf("pausada", "caducada", "sin_suscripcion")
     }
 }
 

@@ -277,6 +277,11 @@ internal class AttemptService(
             "RESUMED" -> false
             "EXAM_NOT_FOUND" -> throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
             "EXAM_EMPTY" -> throw CanonicalErrorCode.EXAM_EMPTY.exception()
+            // El contrato congelado no define un codigo propio para "mas de 200 preguntas servibles" (x-error-codes de D2-03:
+            // ... EXAM_NOT_FOUND, EXAM_EMPTY ...). Es el mismo caso de negocio que EXAM_EMPTY: el examen, tal como esta
+            // publicado, no tiene un conjunto de preguntas que se pueda servir (409, no lo arregla un reintento), y no un
+            // fallo del servicio de datos (antes caia en 502 UPSTREAM_CONTRACT_ERROR).
+            "EXAM_TOO_LARGE" -> throw CanonicalErrorCode.EXAM_EMPTY.exception(EXAM_TOO_LARGE_MESSAGE)
             else -> throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
         }
         val attemptId = outcome.intentoId?.takeIf { it.isUuid() } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
@@ -646,6 +651,9 @@ internal class AttemptService(
         private val ATTEMPT_STATES = setOf("en_progreso", "finalizado", "abandonado")
         private val END_REASONS = setOf("USER", "TIMEOUT")
         private val START_MODES = setOf("NORMAL", "DEMO")
+
+        /** `EXAM_TOO_LARGE` de `app_start_exam_attempt`: sale como 409 EXAM_EMPTY (el contrato no tiene codigo propio). */
+        internal const val EXAM_TOO_LARGE_MESSAGE = "El examen no se puede empezar: supera el maximo de preguntas de un intento."
         private val ANSWER_STATES = setOf("ANSWERED", "SKIPPED", "ANNULLED")
         private val ABANDON_REASONS = setOf("salida_usuario", "otro")
         private val REVIEW_STATUSES = setOf("CORRECT", "WRONG", "SKIPPED", "UNANSWERED", "ANNULLED")

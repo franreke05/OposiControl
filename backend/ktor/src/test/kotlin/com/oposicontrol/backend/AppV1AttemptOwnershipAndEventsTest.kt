@@ -67,7 +67,8 @@ class AppV1AttemptOwnershipAndEventsTest {
             routing { appV1Routes(g, SupabaseJwtVerifier("https://stub.supabase.test", Json), allowDevUser = true) }
         }
         val calls = listOf(
-            "/api/v1/app/intentos/$foreignAttempt/responder" to """{"preguntaId":"$question","opcionSeleccionadaId":"$otherQuestion"}""",
+            // GATE SLICE 3: `POST /intentos/{id}/responder` esta RETIRADA (410 antes de cualquier I/O, propio o ajeno): lo afirma
+            // LegacyAttemptRoutesRetiredTest. Su sucesora D2-09 da el mismo 404 para un intento ajeno (AttemptRoutesTest).
             // SLICE 3: `POST /intentos/{attemptId}/finalizar` es ahora D2-10 en attemptRoutes (misma URL, ya no en appV1Routes).
             // Su 404 ATTEMPT_NOT_FOUND para un intento ajeno, sin WWW-Authenticate, lo afirma
             // AttemptRoutesTest.aForeignOrUnknownAttemptIsTheSame404OnEveryAttemptRoute.

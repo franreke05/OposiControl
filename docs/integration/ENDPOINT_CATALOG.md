@@ -134,8 +134,8 @@ Common: Domain `app`; Authorization `JWT_REQUIRED`, with documented dev fallback
 | `APP-001` | GET | `/api/v1/app/home` | `SOURCE_VERIFIED` |
 | `APP-002` | GET | `/api/v1/app/examenes` | `SOURCE_VERIFIED` |
 | `APP-003` | GET | `/api/v1/app/examenes/{id}` | `SOURCE_VERIFIED` |
-| `APP-004` | POST | `/api/v1/app/examenes/{id}/iniciar` | `SOURCE_VERIFIED` |
-| `APP-005` | POST | `/api/v1/app/intentos/{id}/responder` | `SOURCE_VERIFIED` |
+| `APP-004` | POST | `/api/v1/app/examenes/{id}/iniciar` | `SOURCE_VERIFIED` — RETIRED 2026-10-08: `410 LEGACY_ATTEMPT_ROUTE_RETIRED`; use `POST /api/v1/app/examenes/{examId}/intentos` (D2-03) |
+| `APP-005` | POST | `/api/v1/app/intentos/{id}/responder` | `SOURCE_VERIFIED` — RETIRED 2026-10-08: `410 LEGACY_ATTEMPT_ROUTE_RETIRED`; use `PUT /api/v1/app/intentos/{attemptId}/respuestas/{preguntaId}` (D2-09) |
 | `APP-006` | POST | `/api/v1/app/intentos/{id}/finalizar` | `SOURCE_VERIFIED` |
 | `APP-007` | GET | `/api/v1/app/estadisticas` | `SOURCE_VERIFIED` |
 | `APP-008` | GET | `/api/v1/app/reto-diario` | `SOURCE_VERIFIED` |
@@ -191,6 +191,8 @@ Changed behaviour on existing endpoints:
 |---|---|
 | `GET /api/v1/admin/usuarios` | Accepts `limit`/`offset` (clamped, hard max) and returns `total`/`limit`/`offset` alongside `data`. Additive: existing consumers read `data` and ignore unknown keys. |
 | `GET /api/v1/admin/dashboard` | Adds `unavailableMetrics`; numeric fields for listed metrics are serialization filler, not data. |
+| `POST /api/v1/app/examenes/{id}/iniciar` (`APP-004`) | Now `410 Gone` (`LEGACY_ATTEMPT_ROUTE_RETIRED`, Slice 3 gate 2026-10-08) before authentication, any body read or upstream call: it opened attempts without the entitlement policy. Use `POST /api/v1/app/examenes/{examId}/intentos` (D2-03). Still mounted and counted (`legacy_route_requests_total{endpoint="APP-EXAMEN-INICIAR"}`). |
+| `POST /api/v1/app/intentos/{id}/responder` (`APP-005`) | Now `410 Gone` (`LEGACY_ATTEMPT_ROUTE_RETIRED`, Slice 3 gate 2026-10-08): it returned `esCorrecta`/`opcionCorrectaId` mid-attempt. Use `PUT /api/v1/app/intentos/{attemptId}/respuestas/{preguntaId}` (D2-09), which never returns correctness. Still mounted and counted. |
 | `POST /admin/ticket-wallets/{id}/transactions` | Now `410 Gone`. The non-atomic balance write is closed; use `POST /api/v1/admin/tickets/{usuarioId}/transacciones`. Legacy reads unchanged. |
 
 ## Desktop Control Center — vertical 2 (2026-09-02)
@@ -342,8 +344,8 @@ Cambios aditivos, verificados en código (`AppV1Routes.kt`, `SupabaseV1Gateway.k
 | Endpoint | Cambio |
 |---|---|
 | `GET /api/v1/app/examenes/{id}` (`APP-003`) | Sirve todas las preguntas activas en su posición; cada una trae `anulada` (siempre presente) y `motivoAnulacion` (sólo si anulada). Nuevo `totalEvaluables` = activas y no anuladas |
-| `POST /api/v1/app/examenes/{id}/iniciar` (`APP-004`) | `total_preguntas` del intento = evaluables (activas y no anuladas) |
-| `POST /api/v1/app/intentos/{id}/responder` (`APP-005`) | Sobre una anulada: 200 con `anulada=true`, `esCorrecta=false` (sin significado) y `opcionCorrectaId`; no guarda respuesta ni puntúa. **La app debe leer `anulada` antes de `esCorrecta`** |
+| `POST /api/v1/app/examenes/{id}/iniciar` (`APP-004`) | `total_preguntas` del intento = evaluables (activas y no anuladas). **RETIRADA el 2026-10-08 (410)**: ver D2-03 |
+| `POST /api/v1/app/intentos/{id}/responder` (`APP-005`) | Sobre una anulada: 200 con `anulada=true`, `esCorrecta=false` (sin significado) y `opcionCorrectaId`; no guarda respuesta ni puntúa. **La app debe leer `anulada` antes de `esCorrecta`**. **RETIRADA el 2026-10-08 (410)**: ver D2-09 |
 | `POST /api/v1/app/intentos/{id}/finalizar` (`APP-006`) | Excluye respuestas de anuladas; `total_sin_responder = max(0, evaluables − respondidas)`. Fórmula sin cambios: `porcentaje = correctas/respondidas`, `puntuacion = correctas` |
 | `GET /v1/examenes/{examenId}/preguntas` (`V1-004`, Ráfaga público) | Cada pregunta trae `anulada` y `motivoAnulacion`. Este endpoint no puntúa |
 | `PATCH /api/v1/admin/importaciones/staging/{id}` (`ADMIN-012`) | El item lleva `anulada`/`motivoAnulacion`; el PATCH reemplaza la fila entera (un cliente que omita `anulada` la desanula, DEBT-055) |

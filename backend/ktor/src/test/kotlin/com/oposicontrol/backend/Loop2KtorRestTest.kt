@@ -392,7 +392,7 @@ class Loop2KtorRestTest {
     // ------------------------------------------------------------------ MASTER2-OPENAPI-006
 
     @Test
-    fun theNineLegacyAppRoutesCarryDeprecationAndNoLinkBecauseNoSuccessorIsRouted() = testApplication {
+    fun theNineLegacyAppRoutesCarryDeprecationAndOnlyARoutedResolvableSuccessorIsLinked() = testApplication {
         val gateway = appGateway(CopyOnWriteArrayList())
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
@@ -417,9 +417,18 @@ class Loop2KtorRestTest {
             assertEquals(expectedDeprecation, response.headers[LegacyHeaders.DEPRECATION], "$method $path")
             links[path] = response.headers[HttpHeaders.Link]
         }
-        // MASTER3-API-003: las sucesoras (Slice 3) aun no existen como ruta: ninguna ruta APP-* anuncia un Link.
-        assertTrue(links.values.all { it == null }, links.toString())
-        assertTrue(LegacyEndpoints.SLICE_1_APP.all { it.successorPath == null })
+        // MASTER3-API-003: una ruta APP-* solo anuncia un Link cuando su sucesora existe como ruta. Desde Slice 3 existen las
+        // dos de intento (D2-03, D2-09) y las rutas legacy estan retiradas (410, LegacyAttemptRoutesRetiredTest): `iniciar`
+        // anuncia D2-03 con el id REAL del examen; `responder` no (la pregunta de D2-09 iba en el cuerpo legacy: sin URI
+        // resoluble no hay Link). Las otras 7 siguen sin sucesora ruteada y sin Link.
+        val startPath = "/api/v1/app/examenes/$attempt/iniciar"
+        assertEquals("</api/v1/app/examenes/$attempt/intentos>; rel=\"successor-version\"", links[startPath])
+        assertTrue((links - startPath).values.all { it == null }, links.toString())
+        assertEquals(
+            LegacyEndpoints.RETIRED_ATTEMPT_ROUTES.toSet(),
+            LegacyEndpoints.SLICE_1_APP.filter { it.successorPath != null }.toSet(),
+            "solo las dos rutas de intento retiradas registran sucesora",
+        )
         assertNull(links["/api/v1/app/home"], "sin sucesora congelada no se anuncia un Link")
         assertTrue(LegacyEndpoints.SLICE_1_APP.all { it.sunsetAt == null })
         assertEquals(LegacyEndpoints.SLICE_1_APP.size, LegacyEndpoints.SLICE_1_APP.map { it.endpointId }.toSet().size)

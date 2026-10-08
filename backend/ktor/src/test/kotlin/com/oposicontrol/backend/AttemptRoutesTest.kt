@@ -85,6 +85,9 @@ class AttemptRoutesTest {
         var finishOutcome = """{"outcome":"OK","already":false}"""
         var abandonOutcome = """{"outcome":"OK","already":false}"""
         var attemptRow: String? = null
+
+        /** `intentos_examen.creado_por_comando` de la fila: false = intento que NO creo `app_start_exam_attempt` (legacy). */
+        var attemptHasCommandMarker = true
         var frozen = "[]"
         var questionPage: (String) -> String = { "[]" }
         var reviewPage: (String) -> String = { "[]" }
@@ -107,7 +110,11 @@ class AttemptRoutesTest {
                 uri.contains("/rest/v1/examenes?select=id,codigo_examen") -> "[]"
                 // El intento solo existe para SU dueno y SU id: cualquier otro filtro devuelve vacio, como PostgREST.
                 uri.contains("/rest/v1/intentos_examen?select=id,examen_id,estado,motivo_fin") ->
-                    attemptRow?.takeIf { uri.contains("&id=eq.$attempt&usuario_id=eq.$TEST_UID&origen_intento=eq.examen") }?.let { "[$it]" } ?: "[]"
+                    attemptRow?.takeIf {
+                        uri.contains("&id=eq.$attempt&usuario_id=eq.$TEST_UID&origen_intento=eq.examen") &&
+                            // Como PostgREST: el filtro del marcador solo deja pasar la fila que lo tiene.
+                            (attemptHasCommandMarker || !uri.contains("&creado_por_comando=not.is.null"))
+                    }?.let { "[$it]" } ?: "[]"
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final&") -> frozen
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,preguntas(soluciones_pregunta") -> resultQuestions
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,preguntas(") && uri.contains("soluciones_pregunta") -> reviewPage(uri)
@@ -344,6 +351,14 @@ class AttemptRoutesTest {
         upstream.startOutcome = """{"outcome":"EXAM_NOT_FOUND"}"""
         assertEquals("EXAM_NOT_FOUND", code(client.call(HttpMethod.Post, start, key = key).bodyAsText()), "un error libera la clave: el reintento re-ejecuta")
         assertEquals(2, upstream.rpcBodies("app_start_exam_attempt").size)
+        // GATE SLICE 3 (F-09a): mas de 200 preguntas servibles es un examen no empezable (409 EXAM_EMPTY, el codigo canonico
+        // mas cercano del contrato congelado), no un 502 del servicio de datos.
+        upstream.startOutcome = """{"outcome":"EXAM_TOO_LARGE","total":201}"""
+        val tooLarge = client.call(HttpMethod.Post, start, key = key)
+        assertEquals(HttpStatusCode.Conflict, tooLarge.status, tooLarge.bodyAsText())
+        assertEquals("EXAM_EMPTY", code(tooLarge.bodyAsText()))
+        assertEquals(AttemptService.EXAM_TOO_LARGE_MESSAGE, obj(tooLarge.bodyAsText())["message"]!!.jsonPrimitive.content)
+        assertEquals(3, upstream.rpcBodies("app_start_exam_attempt").size)
     }
 
     @Test
@@ -814,6 +829,36 @@ class AttemptRoutesTest {
             assertFalse(body.contains(other), "el 404 no repite el id")
         }
         assertFalse(upstream.urls.any { "preguntas_intento" in it || "respuestas_intento" in it || "soluciones" in it }, "nada del intento ajeno se lee")
+    }
+
+    /**
+     * GATE SLICE 3 (F-01): un intento del propio usuario que NO creo `app_start_exam_attempt` (lo abrio el `iniciar` legacy,
+     * sin EntitlementPolicy) no existe para ninguna ruta: las lecturas lo filtran por `creado_por_comando` y las RPC
+     * endurecidas (20261008100200) responden ATTEMPT_NOT_FOUND. Control negativo: sin el filtro en AttemptGateway.attempt el
+     * upstream de pruebas devuelve la fila y D2-07 / D2-08 / D2-12 / D2-65 responden 200 con el contenido.
+     */
+    @Test
+    fun anOwnAttemptThatTheStartCommandDidNotCreateIsA404OnEveryAttemptRoute() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = finishedRow()
+        upstream.attemptHasCommandMarker = false
+        upstream.answerOutcome = """{"outcome":"ATTEMPT_NOT_FOUND"}"""
+        upstream.finishOutcome = """{"outcome":"ATTEMPT_NOT_FOUND"}"""
+        upstream.abandonOutcome = """{"outcome":"ATTEMPT_NOT_FOUND"}"""
+        everyAttemptRoute().forEach { route ->
+            val response = client.callRoute(route)
+            val body = response.bodyAsText()
+            assertEquals(HttpStatusCode.NotFound, response.status, "${route[0]} ${route[1]}: $body")
+            assertEquals("ATTEMPT_NOT_FOUND", code(body), route[1])
+        }
+        assertTrue(
+            upstream.urls.filter { "/rest/v1/intentos_examen" in it }.let { reads -> reads.isNotEmpty() && reads.all { "&creado_por_comando=not.is.null" in it } },
+            "toda lectura del intento exige el marcador del comando",
+        )
+        assertFalse(upstream.urls.any { "preguntas_intento" in it || "respuestas_intento" in it || "soluciones" in it }, "nada del intento sin marcador se lee")
+        // Control positivo: el mismo intento CON el marcador si se sirve (el 404 de arriba no es vacuo).
+        upstream.attemptHasCommandMarker = true
+        assertEquals(HttpStatusCode.OK, client.call(HttpMethod.Get, "/api/v1/app/intentos/$attempt").status)
     }
 
     @Test

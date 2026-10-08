@@ -17,8 +17,8 @@ import kotlinx.serialization.serializer
 // =====================================================================
 // Pasarela del runtime de examen (SLICE 3: D2-03, D2-07..D2-12, D2-65). PostgREST con la clave de servicio.
 //
-// - ESCRITURAS: solo las cuatro RPC atomicas de `20261008100100_slice3_attempt_command_rpcs.sql` (SECURITY DEFINER,
-//   EXECUTE solo `service_role`). Devuelven `{outcome: ...}`; traducirlo al sobre canonico es de [AttemptService].
+// - ESCRITURAS: solo las cuatro RPC atomicas de `20261008100100_slice3_attempt_command_rpcs.sql`, endurecidas por
+//   `20261008100200_slice3_attempt_hardening.sql` (SECURITY DEFINER, EXECUTE solo `service_role`). Devuelven `{outcome: ...}`; traducirlo al sobre canonico es de [AttemptService].
 // - LECTURAS: SIEMPRE con `usuario_id = <sub del JWT>` en el filtro del intento (un intento ajeno no existe), y siempre
 //   ACOTADAS (un intento tiene como mucho [MAX_ATTEMPT_QUESTIONS] preguntas). Ninguna regla de negocio aqui.
 // - SEC-004: `soluciones_pregunta` solo se lee en [reviewPage] y [resultQuestions], que el servicio llama UNICAMENTE con
@@ -216,11 +216,15 @@ internal class AttemptGateway(
 
     // ---------- lecturas ----------
 
-    /** El intento de EXAMEN de ese usuario, o `null` (inexistente, ajeno u otro origen: indistinguibles a proposito). */
+    /**
+     * El intento de EXAMEN de ese usuario creado por el comando canonico, o `null` (inexistente, ajeno, de otro origen o sin
+     * el marcador `creado_por_comando` de `app_start_exam_attempt`: indistinguibles a proposito). Un intento que no paso por
+     * D2-03 no paso por EntitlementPolicy: para D2-07 / D2-08 / D2-12 / D2-65 no existe (20261008100200, F-01).
+     */
     fun attempt(userId: String, attemptId: String): AttemptRow? {
         require(userId.isUuid() && attemptId.isUuid()) { "ids" }
         val query = "/rest/v1/intentos_examen?select=$ATTEMPT_COLUMNS&id=eq.$attemptId&usuario_id=eq.$userId" +
-            "&origen_intento=eq.examen&limit=1"
+            "&origen_intento=eq.examen&creado_por_comando=not.is.null&limit=1"
         return decodeList<AttemptRow>(upstream.get(query)).firstOrNull()
     }
 

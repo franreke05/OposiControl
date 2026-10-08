@@ -79,10 +79,8 @@ object LegacyEndpoints {
 
     val SLICE_1: List<LegacyEndpoint> = listOf(EP_124, EP_218)
 
-    // MASTER2-OPENAPI-006: las 9 rutas vivas de `/api/v1/app` (AppV1Routes.kt) que el contrato congelado no declara. Ninguna
-    // tiene sucesora ROUTEADA todavia (MASTER3-API-003): `iniciar` -> `POST /api/v1/app/examenes/{examId}/intentos` y
-    // `responder` -> `/api/v1/app/intentos/{attemptId}/respuestas/{preguntaId}` son TARGET de Slice 3 y solo
-    // recibiran `Link` cuando existan (anunciar la coleccion truncada apuntaba a URIs inexistentes/no relacionadas).
+    // MASTER2-OPENAPI-006: las 9 rutas vivas de `/api/v1/app` (AppV1Routes.kt) que el contrato congelado no declara. Las 7
+    // primeras no tienen sucesora ROUTEADA todavia (MASTER3-API-003): no anuncian `Link`.
     // Criterio de retirada: contador `legacy_route_requests_total{endpoint="APP-*"}` a cero tras la release canonica de OB.
     val APP_HOME = LegacyEndpoint("APP-HOME", "GET", "/api/v1/app/home", null, SLICE_1_DEPRECATED_AT)
     val APP_ESTADISTICAS = LegacyEndpoint("APP-ESTADISTICAS", "GET", "/api/v1/app/estadisticas", null, SLICE_1_DEPRECATED_AT)
@@ -91,12 +89,23 @@ object LegacyEndpoints {
     val APP_COMMERCIAL_SUBSCRIPTIONS = LegacyEndpoint("APP-COMMERCIAL-SUBSCRIPTIONS", "GET", "/api/v1/app/commercial/subscriptions", null, SLICE_1_DEPRECATED_AT)
     val APP_EVENTOS = LegacyEndpoint("APP-EVENTOS", "POST", "/api/v1/app/eventos", null, SLICE_1_DEPRECATED_AT)
     val APP_FEEDBACK_PREGUNTA = LegacyEndpoint("APP-FEEDBACK-PREGUNTA", "POST", "/api/v1/app/feedback/pregunta", null, SLICE_1_DEPRECATED_AT)
+    // GATE SLICE 3 (F-01 / F-02): `iniciar` y `responder` estan RETIRADAS: responden 410 LEGACY_ATTEMPT_ROUTE_RETIRED antes
+    // de autenticar, leer el cuerpo o tocar upstream ([rejectLegacyAttemptRoute]). `iniciar` abria intentos sin pasar por
+    // EntitlementPolicy (D7-25) y `responder` devolvia la correccion al momento (D2-09 la oculta) contra el examen vivo. Sin
+    // llamador vivo (la app consumidora no tiene ninguna llamada de examen). Siguen montadas y contadas; sus sucesoras YA
+    // estan ruteadas (Slice 3, AttemptRoutes.kt): D2-03 `POST /examenes/{examId}/intentos` (el `Link` usa el `{id}` de la
+    // ruta legacy, que es el mismo examen) y D2-09 `PUT /intentos/{attemptId}/respuestas/{preguntaId}` (la pregunta viajaba
+    // en el cuerpo legacy, que no se lee: sin URI resoluble no se emite `Link`; la sucesora queda registrada aqui).
     val APP_INICIAR = LegacyEndpoint(
-        "APP-EXAMEN-INICIAR", "POST", "/api/v1/app/examenes/{id}/iniciar", null, SLICE_1_DEPRECATED_AT,
+        "APP-EXAMEN-INICIAR", "POST", "/api/v1/app/examenes/{id}/iniciar", "/api/v1/app/examenes/{id}/intentos", SLICE_1_DEPRECATED_AT,
     )
     val APP_RESPONDER = LegacyEndpoint(
-        "APP-INTENTO-RESPONDER", "POST", "/api/v1/app/intentos/{id}/responder", null, SLICE_1_DEPRECATED_AT,
+        "APP-INTENTO-RESPONDER", "POST", "/api/v1/app/intentos/{id}/responder",
+        "/api/v1/app/intentos/{id}/respuestas/{preguntaId}", SLICE_1_DEPRECATED_AT,
     )
+
+    /** Las dos rutas legacy de intento retiradas en el gate de Slice 3 (410 sin I/O). */
+    val RETIRED_ATTEMPT_ROUTES: List<LegacyEndpoint> get() = listOf(APP_INICIAR, APP_RESPONDER)
 
     // RC-10 (MASTERF1-API-002): escritores legacy de `public.usuario` / `app_role` SIN llamador vivo en OC/OB (route matrix
     // audit 2026-10-01). Escribian sin la guarda MASTER-AUTH-001 (borrado de cuentas administrativas) ni auditoria

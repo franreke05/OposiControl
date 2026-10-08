@@ -54,6 +54,22 @@ class AppForbidden(message: String) : RuntimeException(message)
  */
 internal fun attemptNotOwned(): BackendDomainException = CanonicalErrorCode.ATTEMPT_NOT_FOUND.exception()
 
+/**
+ * GATE SLICE 3 (F-01 / F-02): rechazo de `POST /examenes/{id}/iniciar` y `POST /intentos/{id}/responder`. No recibe el
+ * gateway, el verificador ni la llamada: por construccion no puede autenticar contra upstream, leer el cuerpo ni escribir.
+ * `iniciar` insertaba `intentos_examen` comprobando solo activo/publicado (nunca EntitlementPolicy, D7-25) y `responder`
+ * devolvia `esCorrecta`/`opcionCorrectaId` al momento contra el examen vivo. Las sucesoras aplican la politica, congelan el
+ * conjunto y ocultan la correccion hasta finalizar.
+ */
+internal fun rejectLegacyAttemptRoute(): Nothing {
+    throw BackendDomainException(
+        "LEGACY_ATTEMPT_ROUTE_RETIRED",
+        HttpStatusCode.Gone,
+        "Esta ruta de examen antigua esta retirada. Usa POST /api/v1/app/examenes/{examId}/intentos para empezar o reanudar " +
+            "un intento y PUT /api/v1/app/intentos/{attemptId}/respuestas/{preguntaId} para responder.",
+    )
+}
+
 /** MASTER6-API-006: vocabulario del CHECK vivo `feedback_pregunta_tipo_feedback_check` (baseline). */
 internal val FEEDBACK_TYPES: Set<String> =
     setOf("mal_redactada", "respuesta_incorrecta", "explicacion_insuficiente", "fuente_dudosa", "recurso_roto", "otro")
@@ -84,14 +100,10 @@ fun Route.appV1Routes(
         // SLICE 2: `GET /examenes` (D2-01) y `GET /examenes/{examId}` (D2-02) viven ahora en [catalogRoutes] con el cable
         // canonico (paginado, sin cuerpos de pregunta). Los metodos del gateway `listExamenes` / `examenDetalle` se
         // conservan: `home` y los flujos de intento de SLICE 3 aun los usan.
-        post("/examenes/{id}/iniciar") {
-            val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
-            call.respond(io.ktor.http.HttpStatusCode.Created, AppIntentoResponse(gateway.iniciar(uid, call.requiredPath("id"))))
-        }.legacyRoute(LegacyEndpoints.APP_INICIAR)
-        post("/intentos/{id}/responder") {
-            val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
-            call.respond(gateway.responder(uid, call.requiredPath("id"), call.receive()))
-        }.legacyRoute(LegacyEndpoints.APP_RESPONDER)
+        // GATE SLICE 3 (F-01 / F-02): RETIRADAS. 410 antes de autenticar, leer el cuerpo o tocar upstream; siguen montadas y
+        // contadas (`legacyRoute`) hasta tener cero trafico. Sucesoras: D2-03 y D2-09 en [attemptRoutes].
+        post("/examenes/{id}/iniciar") { rejectLegacyAttemptRoute() }.legacyRoute(LegacyEndpoints.APP_INICIAR)
+        post("/intentos/{id}/responder") { rejectLegacyAttemptRoute() }.legacyRoute(LegacyEndpoints.APP_RESPONDER)
         // SLICE 3: `POST /intentos/{attemptId}/finalizar` (D2-10) vive ahora en [attemptRoutes] con el cable canonico
         // (`AttemptResult`) y una RPC atomica. La URL es la misma, asi que la ruta legacy no puede convivir con ella.
         get("/estadisticas") {

@@ -247,6 +247,9 @@ class Master5KtorRestLoop5Test {
         "/api/v1/admin/moderacion/actions" to "post(\"/actions\")",
         "/api/v1/app/me" to "route(\"/me\")",
         "/api/v1/app/me/onboarding" to "post(\"/onboarding\")",
+        // GATE SLICE 3: sucesoras de las dos rutas legacy de intento retiradas (D2-03 y D2-09, AttemptRoutes.kt).
+        "/api/v1/app/examenes/{id}/intentos" to "post(\"/examenes/{examId}/intentos\")",
+        "/api/v1/app/intentos/{id}/respuestas/{preguntaId}" to "put(\"/respuestas/{preguntaId}\")",
     )
 
     @Test

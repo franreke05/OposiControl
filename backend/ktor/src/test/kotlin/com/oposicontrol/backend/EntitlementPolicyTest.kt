@@ -81,6 +81,33 @@ class EntitlementPolicyTest {
         assertEquals(AccessState.LOCKED, check(exam(), UserAccessFacts(premium = premium(flag = false))).state, "es_premium false")
     }
 
+    /**
+     * GATE SLICE 3 (F-08): lista BLANCA. Un `estado_suscripcion` que la politica no conoce NO da acceso aunque
+     * `es_premium` sea true y `fin_en` siga en el futuro (antes solo se negaban tres estados y cualquier otro pasaba).
+     */
+    @Test
+    fun anUnknownSubscriptionStatusNeverGrantsAccessEvenWithThePremiumFlag() {
+        listOf("en_gracia", "trial", "ACTIVA", "activa ", "", "active", "reembolsada").forEach { status ->
+            val verdict = check(exam(), UserAccessFacts(premium = premium(status = status, end = null)))
+            assertEquals(AccessDecision.DENY, verdict.decision, "'$status'")
+            assertEquals(AccessState.LOCKED, verdict.state, "'$status'")
+            assertEquals(false, PremiumFact(true, status, future).activeAt(now), "'$status'")
+        }
+    }
+
+    /** Los seis valores del CHECK `estado_premium_usuario_estado_suscripcion_check` de MAIN quedan clasificados, uno a uno. */
+    @Test
+    fun everyStatusOfTheMainCheckIsClassifiedExplicitly() {
+        val mainCheck = setOf("sin_suscripcion", "activa", "periodo_prueba", "pausada", "cancelada", "caducada")
+        assertEquals(setOf("activa", "periodo_prueba", "cancelada"), PremiumFact.ACCESS_STATUSES)
+        assertEquals(setOf("pausada", "caducada", "sin_suscripcion"), PremiumFact.NON_ACCESS_STATUSES)
+        assertEquals(mainCheck, PremiumFact.ACCESS_STATUSES + PremiumFact.NON_ACCESS_STATUSES, "clasificacion total")
+        assertEquals(emptySet(), PremiumFact.ACCESS_STATUSES intersect PremiumFact.NON_ACCESS_STATUSES, "y disjunta")
+        mainCheck.forEach { status ->
+            assertEquals(status in PremiumFact.ACCESS_STATUSES, PremiumFact(true, status, future).activeAt(now), status)
+        }
+    }
+
     @Test
     fun precedenceIsFreeThenGrantedThenSubscriptionThenDemoThenLocked() {
         val all = UserAccessFacts(premium = premium(), grants = listOf(grant()))
