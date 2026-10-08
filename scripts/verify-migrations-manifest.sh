@@ -40,7 +40,8 @@ man3=supabase/SLICE3_MIGRATIONS.txt
 [ -s "$man3" ] || { echo "FAIL: manifiesto vacio o ausente: $man3"; exit 1; }
 expected3="$(tr -d '\r' < "$man3" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
 [ -n "$expected3" ] || { echo "FAIL: manifiesto Slice 3 sin entradas"; exit 1; }
-actual3="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610.*\.sql$' | sed 's/\.sql$//' | sort) )"
+# Las 202610*_slice2_*.sql (SLICE 2, mas abajo) tienen su propio manifiesto: toda otra 202610* es de Slice 3.
+actual3="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610.*\.sql$' | grep -Ev '^[0-9]+_slice2_' | sed 's/\.sql$//' | sort) )"
 if [ "$actual3" != "$expected3" ]; then
   echo "FAIL: el manifiesto Slice 3 y supabase/migrations/202610*.sql difieren (< manifiesto, > real):"
   diff <(echo "$expected3") <(echo "$actual3")
@@ -62,3 +63,29 @@ for need in 20261008100000_slice3_attempt_runtime_schema 20261008100100_slice3_a
   echo "$expected3" | grep -qx "$need" || { echo "FAIL: el manifiesto Slice 3 no lista $need"; exit 1; }
 done
 echo "ok:   manifiesto Slice 3 == migraciones 202610* ($(echo "$actual3" | wc -l | tr -d ' '))"
+# SLICE 2: mismo contrato para supabase/SLICE2_MIGRATIONS.txt y los supabase/migrations/202610*_slice2_*.sql (lecturas de
+# catalogo que se apoyan en el esquema de Slice 3: comparten prefijo de fecha y se distinguen por el nombre).
+man2=supabase/SLICE2_MIGRATIONS.txt
+[ -s "$man2" ] || { echo "FAIL: manifiesto vacio o ausente: $man2"; exit 1; }
+expected2="$(tr -d '\r' < "$man2" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
+[ -n "$expected2" ] || { echo "FAIL: manifiesto Slice 2 sin entradas"; exit 1; }
+actual2="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610[0-9]*_slice2_.*\.sql$' | sed 's/\.sql$//' | sort) )"
+if [ "$actual2" != "$expected2" ]; then
+  echo "FAIL: el manifiesto Slice 2 y supabase/migrations/202610*_slice2_*.sql difieren (< manifiesto, > real):"
+  diff <(echo "$expected2") <(echo "$actual2")
+  exit 1
+fi
+# Toda migracion Slice 2 es POSTERIOR a la ultima de Slice 3: la lectura de "mis examenes" exige el marcador de comando
+# de la 20261008100200 (su PREFLIGHT se detiene sin el).
+first2="$(echo "$expected2" | head -1 | cut -d_ -f1)"
+[ "$first2" -gt "$last3" ] || { echo "FAIL: la migracion Slice 2 $first2 no es posterior a la ultima de Slice 3 ($last3)"; exit 1; }
+# El runbook de despliegue cita CADA migracion Slice 2 por su version completa.
+for v2 in $(echo "$expected2" | cut -d_ -f1); do
+  grep -qF "$v2" "$dep" || { echo "FAIL: $dep no cita la migracion Slice 2 $v2"; exit 1; }
+done
+# La lectura de D2-13 COLECCION debe seguir en el manifiesto (sustituirla en las dos partes a la vez no pasa): el Ktor que
+# la llama responde 503 sin ella.
+for need in 20261008100300_slice2_my_exams_read_rpc; do
+  echo "$expected2" | grep -qx "$need" || { echo "FAIL: el manifiesto Slice 2 no lista $need"; exit 1; }
+done
+echo "ok:   manifiesto Slice 2 == migraciones 202610*_slice2_* ($(echo "$actual2" | wc -l | tr -d ' '))"

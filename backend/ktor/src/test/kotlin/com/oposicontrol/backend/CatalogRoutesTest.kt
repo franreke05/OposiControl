@@ -72,7 +72,12 @@ class CatalogRoutesTest {
         var openAttempt = "[]"
         var latestAttempts = "[]"
         var myGrants: (String) -> String = { "[]" }
-        var grantCommunities = "[]"
+
+        /** `app_my_exams_collection` (20261008100300): recibe el cuerpo JSON de la llamada y devuelve la respuesta de PostgREST. */
+        var collection: (JsonObject) -> V1StubResponse = { V1StubResponse(200, """{"items":[],"grupos":[]}""") }
+        val collectionCalls: List<JsonObject>
+            get() = sent.filter { it.uri().toString().contains(COLLECTION_RPC) }
+                .map { Json.parseToJsonElement(readRequestBody(it)).jsonObject }
         var grantFacts = "[]"
         var capabilities = "[]"
         var premium = "[]"
@@ -84,6 +89,8 @@ class CatalogRoutesTest {
         fun respond(rawUri: String): V1StubResponse {
             val uri = URLDecoder.decode(rawUri, Charsets.UTF_8)
             if (failOn != null && uri.contains(failOn!!)) return V1StubResponse(500, """{"message":"boom"}""")
+            // El transporte graba la peticion ANTES de pedir la respuesta: la ultima grabada es la de esta llamada.
+            if (uri.contains(COLLECTION_RPC)) return collection(Json.parseToJsonElement(readRequestBody(sent.last())).jsonObject)
             val body = when {
                 uri.contains("/storage/v1/object/sign/") -> signed
                 uri.contains("/rest/v1/estado_premium_usuario") -> premium
@@ -91,7 +98,6 @@ class CatalogRoutesTest {
                 uri.contains("/rest/v1/creditos_contenido_usuario") -> credits
                 uri.contains("/rest/v1/capacidades_especialidad") -> capabilities
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=examen_id,motivo") -> grantFacts
-                uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=examen_id,examenes!inner(id,comunidades") -> grantCommunities
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=id,valido_desde") -> myGrants(uri)
                 uri.contains("/rest/v1/intentos_examen?select=id&usuario_id") -> openAttempt
                 uri.contains("/rest/v1/intentos_examen?select=id,examen_id,estado") -> latestAttempts
@@ -103,9 +109,48 @@ class CatalogRoutesTest {
             }
             return V1StubResponse(200, body)
         }
+
+        companion object {
+            const val COLLECTION_RPC = "/rest/v1/rpc/app_my_exams_collection"
+        }
     }
 
     private val upstream = Upstream()
+
+    /** Una fila de `app_my_exams_collection`: el examen (metadatos), su clave de orden y su intento mas reciente (o ninguno). */
+    private data class CollectionEntry(val examId: String, val ordenEn: String, val examJson: String, val attemptJson: String? = null) {
+        val json: String get() = """{"orden_en":"$ordenEn","examenes":$examJson,"intento":${attemptJson ?: "null"}}"""
+    }
+
+    private fun attemptRef(id: String, estado: String, respondidas: Int, total: Int) =
+        """{"id":"$id","estado":"$estado","total_respondidas":$respondidas,"total_preguntas":$total}"""
+
+    /**
+     * Doble de la funcion de lectura con SU contrato de paginacion (el real lo prueban `backend/dbtest` y el gate de PG17):
+     * orden `(orden_en, id)` descendente, keyset estricto `< (p_despues_en, p_despues_id)`, `p_limite` filas y los grupos de
+     * TODO el conjunto solo si `p_con_grupos`. Asi el viaje de ida y vuelta del cursor de Ktor se prueba de verdad.
+     */
+    private fun collectionOf(entries: List<CollectionEntry>, groups: String = "[]"): (JsonObject) -> V1StubResponse = { call ->
+        val order = compareByDescending<CollectionEntry> { java.time.OffsetDateTime.parse(it.ordenEn).toInstant() }.thenByDescending { it.examId }
+        val afterAt = call["p_despues_en"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }?.jsonPrimitive?.content
+        val afterId = call["p_despues_id"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }?.jsonPrimitive?.content
+        check((afterAt == null) == (afterId == null)) { "cursor incompleto: la funcion real lo rechaza (22023)" }
+        val rows = entries.sortedWith(order)
+            .filter { afterAt == null || order.compare(CollectionEntry(afterId!!, afterAt, "{}"), it) < 0 }
+            .take(call.getValue("p_limite").jsonPrimitive.content.toInt())
+        val withGroups = call.getValue("p_con_grupos").jsonPrimitive.content == "true"
+        V1StubResponse(200, """{"items":[${rows.joinToString(",") { it.json }}],"grupos":${if (withGroups) groups else "null"}}""")
+    }
+
+    private suspend fun HttpClient.myExams(query: String): JsonObject {
+        val response = getAs("/api/v1/app/me/examenes?$query")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertConforms("D2-13", body)
+        return JsonObjectOf(body)
+    }
+
+    private fun JsonObject.examIds(): List<String> = this["items"]!!.jsonArray.map { it.jsonObject["examen"]!!.jsonObject["id"]!!.jsonPrimitive.content }
 
     private fun Application.catalogModule() {
         install(ContentNegotiation) { json(testJson) }
@@ -443,7 +488,7 @@ class CatalogRoutesTest {
     }
 
     @Test
-    fun adquiridosAndColeccionListActiveGrantsWithTheLatestAttemptAndColeccionHasGroups() = testApplication {
+    fun adquiridosListsActiveGrantsWithTheLatestAttemptAndHasNoGroups() = testApplication {
         application { catalogModule() }
         upstream.myGrants = {
             "[" + """{"id":"$grantId","valido_desde":"2026-09-20T10:00:00+00:00","examenes":${exam(e1, acceso = "premium", comunidad = "MAD")}},""" +
@@ -451,11 +496,6 @@ class CatalogRoutesTest {
         }
         upstream.grantFacts = "[${grantFact(e1)},${grantFact(e2)}]"
         upstream.latestAttempts = """[{"id":"$intento","examen_id":"$e1","estado":"finalizado","total_respondidas":10,"total_preguntas":10}]"""
-        upstream.grantCommunities = """[{"examen_id":"$e1","examenes":{"id":"$e1","comunidades_autonomas":{"codigo":"MAD"}}},""" +
-            """{"examen_id":"$e2","examenes":{"id":"$e2","comunidades_autonomas":{"codigo":"MAD"}}},""" +
-            """{"examen_id":"$e3","examenes":{"id":"$e3","comunidades_autonomas":{"codigo":"AND"}}},""" +
-            """{"examen_id":"$e3","examenes":{"id":"$e3","comunidades_autonomas":{"codigo":"AND"}}},""" +
-            """{"examen_id":"$e4","examenes":{"id":"$e4","comunidades_autonomas":null}}]"""
         val adquiridos = client.getAs("/api/v1/app/me/examenes?vista=ADQUIRIDOS").bodyAsText()
         assertConforms("D2-13", adquiridos)
         val items = JsonObjectOf(adquiridos)["items"]!!.jsonArray.map { it.jsonObject }
@@ -468,11 +508,203 @@ class CatalogRoutesTest {
         assertTrue(grants.contains("&usuario_id=eq.$TEST_UID&examen_id=not.is.null"), grants)
         assertTrue(grants.contains("&valido_desde=lte.2026-10-08T12:00:00Z&and=(or(valido_hasta.is.null,valido_hasta.gt.2026-10-08T12:00:00Z))"), "solo concesiones vigentes: $grants")
         assertTrue(grants.contains("&order=valido_desde.desc,id.desc&limit=21"), grants)
+        assertTrue(upstream.collectionCalls.isEmpty(), "ADQUIRIDOS no usa la funcion de la coleccion")
+    }
 
-        val coleccion = client.getAs("/api/v1/app/me/examenes?vista=COLECCION").bodyAsText()
-        assertConforms("D2-13", coleccion)
-        val groups = JsonObjectOf(coleccion)["grupos"]!!.jsonArray.map { it.jsonObject }
-        assertEquals(listOf("AND" to 1, "MAD" to 2), groups.map { it["comunidadCodigo"]!!.jsonPrimitive.content to it["total"]!!.jsonPrimitive.content.toInt() })
+    // ------------------------------------------------------------------- D2-13 vista = COLECCION (20261008100300)
+
+    @Test
+    fun coleccionIsTheUnionOfGrantedAndAttemptedExamsWithThePolicyAccessStateAndExactGroups() = testApplication {
+        application { catalogModule() }
+        // Lo que devuelve la funcion: UN elemento por examen, ya ordenado. e1 concedido + intento abierto; e2 SOLO intentado
+        // (sin concesion: antes no aparecia nunca en COLECCION); e3 SOLO concedido; e4 intentado y gratuito, sin comunidad.
+        upstream.collection = collectionOf(
+            listOf(
+                CollectionEntry(e1, "2026-10-07T09:00:00.5+00:00", exam(e1, acceso = "premium", comunidad = "MAD", cover = "exam-covers/$e1/a.png"), attemptRef(intento, "en_progreso", 4, 8)),
+                CollectionEntry(e2, "2026-10-06T09:00:00+00:00", exam(e2, acceso = "premium", comunidad = "MAD"), attemptRef("bbbbbbbb-bbbb-4bbb-8bbb-000000000002", "finalizado", 10, 10)),
+                CollectionEntry(e3, "2026-09-20T10:00:00+00:00", exam(e3, acceso = "premium", comunidad = "AND")),
+                CollectionEntry(e4, "2026-09-01T10:00:00+00:00", exam(e4, acceso = "gratuito", comunidad = null), attemptRef("bbbbbbbb-bbbb-4bbb-8bbb-000000000004", "abandonado", 0, 0)),
+            ),
+            groups = """[{"comunidad_codigo":"AND","total":1},{"comunidad_codigo":"MAD","total":2}]""",
+        )
+        upstream.grantFacts = "[${grantFact(e1)},${grantFact(e3, motivo = "regalo")}]"
+        upstream.signed = """[{"path":"exam-covers/$e1/a.png","signedURL":"/object/sign/exam-resources/exam-covers/$e1/a.png?token=t"}]"""
+        val response = client.getAs("/api/v1/app/me/examenes?vista=COLECCION")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertEquals("private, max-age=30", response.headers[HttpHeaders.CacheControl])
+        assertConforms("D2-13", body)
+        val page = JsonObjectOf(body)
+        val items = page["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf(e1, e2, e3, e4), page.examIds(), "un elemento por examen, en el orden de la funcion")
+        // accessState sale de la MISMA EntitlementPolicy: concedido / intentado pero ya sin derecho / concedido / gratuito.
+        assertEquals(listOf("GRANTED", "LOCKED", "GRANTED", "FREE"), items.map { it["accessState"]!!.jsonPrimitive.content })
+        assertEquals(listOf(intento, "bbbbbbbb-bbbb-4bbb-8bbb-000000000002", null, "bbbbbbbb-bbbb-4bbb-8bbb-000000000004"), items.map { it["intentoId"]?.jsonPrimitive?.content })
+        assertEquals(listOf("en_progreso", "finalizado", null, "abandonado"), items.map { it["estadoIntento"]?.jsonPrimitive?.content })
+        assertEquals(listOf(0.5, 1.0, null, null), items.map { it["progreso"]?.jsonPrimitive?.content?.toDouble() }, "sin intento o sin preguntas no se inventa progreso")
+        assertTrue(items.all { it["nota"] == null && it["calificacion"] == null }, "DEC-013 / Q-08: sin nota ni calificacion")
+        assertEquals("https://stub.supabase.test/storage/v1/object/sign/exam-resources/exam-covers/$e1/a.png?token=t", items[0]["examen"]!!.jsonObject["portadaUrl"]!!.jsonPrimitive.content)
+        assertNull(items[3]["examen"]!!.jsonObject["comunidadCodigo"])
+        assertEquals(setOf("id", "titulo", "tipoExamen", "comunidadCodigo", "portadaUrl"), items[0]["examen"]!!.jsonObject.keys, "solo los campos del contrato")
+        assertEquals(
+            listOf("AND" to 1, "MAD" to 2),
+            page["grupos"]!!.jsonArray.map { it.jsonObject["comunidadCodigo"]!!.jsonPrimitive.content to it.jsonObject["total"]!!.jsonPrimitive.content.toInt() },
+            "los grupos son los de la funcion (todo el conjunto filtrado), no un recuento de la pagina",
+        )
+        assertNull(page["nextCursor"])
+
+        // UNA llamada a la funcion, con el `sub` del JWT y sin filtros; ninguna lectura directa "parcial" de concesiones o intentos.
+        val call = upstream.collectionCalls.single()
+        assertEquals(
+            setOf("p_usuario_id", "p_tipo_examen", "p_comunidad_id", "p_anio", "p_despues_en", "p_despues_id", "p_limite", "p_con_grupos"),
+            call.keys,
+        )
+        assertEquals(TEST_UID, call["p_usuario_id"]!!.jsonPrimitive.content)
+        listOf("p_tipo_examen", "p_comunidad_id", "p_anio", "p_despues_en", "p_despues_id").forEach {
+            assertEquals(kotlinx.serialization.json.JsonNull, call[it], it)
+        }
+        assertEquals("21", call["p_limite"]!!.jsonPrimitive.content, "limit + 1 para saber si hay mas")
+        assertEquals("true", call["p_con_grupos"]!!.jsonPrimitive.content, "primera pagina: con grupos")
+        assertTrue(upstream.urls.none { it.contains("contenido_desbloqueado_usuario?select=id,valido_desde") || it.contains("/rest/v1/intentos_examen") }, upstream.urls.toString())
+        // Hechos de acceso por LOTES para la pagina (una lectura por tabla).
+        assertEquals(1, upstream.urls.count { it.contains("/rest/v1/estado_premium_usuario") })
+        assertTrue(upstream.urls.single { it.contains("/rest/v1/contenido_desbloqueado_usuario") }.contains("usuario_id=eq.$TEST_UID&examen_id=in.($e1,$e2,$e3,$e4)"))
+        assertNoQuestionTables()
+    }
+
+    @Test
+    fun coleccionSendsTheValidatedFiltersAndOnlyTheJwtSubjectToTheReadRpc() = testApplication {
+        application { catalogModule() }
+        val foreign = "dddddddd-dddd-4ddd-8ddd-000000000009"
+        val page = client.myExams("vista=COLECCION&tipoExamen=guiado&comunidadId=${com.uppercase()}&anio=2024&limit=500&usuarioId=$foreign&userId=$foreign&p_usuario_id=$foreign&especialidadId=$foreign")
+        assertEquals(emptyList(), page.examIds())
+        assertEquals(JsonArray(emptyList()), page["grupos"], "coleccion vacia: grupos vacios, no null")
+        val call = upstream.collectionCalls.single()
+        assertEquals(TEST_UID, call["p_usuario_id"]!!.jsonPrimitive.content, "el usuario es SIEMPRE el sub del JWT")
+        assertEquals("razonado", call["p_tipo_examen"]!!.jsonPrimitive.content, "el sinonimo legacy se normaliza")
+        assertEquals(com, call["p_comunidad_id"]!!.jsonPrimitive.content)
+        assertEquals("2024", call["p_anio"]!!.jsonPrimitive.content)
+        assertEquals("51", call["p_limite"]!!.jsonPrimitive.content, "limit recortado a 50 (+1)")
+        assertFalse(call.toString().contains("dddddddd"), "ningun usuario del query llega a la funcion: $call")
+        assertEquals(1, upstream.sent.size, "coleccion vacia: ni derechos ni portadas")
+    }
+
+    @Test
+    fun coleccionCursorWalksEveryPageWithTiesWithoutDuplicatesOrGapsAndIsBoundToViewAndFilters() = testApplication {
+        application { catalogModule() }
+        // Cinco examenes; tres comparten EXACTAMENTE la misma clave de orden (el desempate es el id del examen).
+        val tie = "2026-10-05T08:00:00.123456+00:00"
+        val entries = listOf(
+            CollectionEntry(e2, tie, exam(e2)),
+            CollectionEntry(e4, "2026-10-07T09:00:00+00:00", exam(e4), attemptRef(intento, "en_progreso", 1, 4)),
+            CollectionEntry(e1, tie, exam(e1)),
+            CollectionEntry(e3, tie, exam(e3)),
+            CollectionEntry("aaaaaaaa-aaaa-4aaa-8aaa-000000000005", "2026-09-01T00:00:00+00:00", exam("aaaaaaaa-aaaa-4aaa-8aaa-000000000005")),
+        )
+        upstream.collection = collectionOf(entries, groups = """[{"comunidad_codigo":"MAD","total":5}]""")
+        val seen = mutableListOf<String>()
+        val cursors = mutableListOf<String>()
+        var cursor: String? = null
+        var pages = 0
+        do {
+            val page = client.myExams("vista=COLECCION&limit=2" + (cursor?.let { "&cursor=$it" } ?: ""))
+            pages++
+            assertTrue(page.examIds().size <= 2, "nunca mas de limit")
+            // Los grupos (de TODO el conjunto) solo con la primera pagina; despues null.
+            if (cursor == null) assertEquals("5", page["grupos"]!!.jsonArray[0].jsonObject["total"]!!.jsonPrimitive.content) else assertNull(page["grupos"])
+            seen += page.examIds()
+            cursor = page["nextCursor"]?.jsonPrimitive?.content?.also { cursors += it }
+        } while (cursor != null && pages < 10)
+        assertEquals(listOf(e4, e3, e2, e1, "aaaaaaaa-aaaa-4aaa-8aaa-000000000005"), seen, "todas, una vez, en orden (orden_en desc, id desc)")
+        assertEquals(3, pages)
+        val calls = upstream.collectionCalls
+        assertEquals(listOf("3", "3", "3"), calls.map { it["p_limite"]!!.jsonPrimitive.content })
+        assertEquals(listOf("true", "false", "false"), calls.map { it["p_con_grupos"]!!.jsonPrimitive.content })
+        // El cursor lleva la clave EXACTA (microsegundos incluidos) del ultimo elemento servido: aqui, en mitad del empate.
+        assertEquals(tie, calls[1]["p_despues_en"]!!.jsonPrimitive.content)
+        assertEquals(e3, calls[1]["p_despues_id"]!!.jsonPrimitive.content)
+        assertEquals(tie, calls[2]["p_despues_en"]!!.jsonPrimitive.content)
+        assertEquals(e1, calls[2]["p_despues_id"]!!.jsonPrimitive.content)
+
+        // El cursor de COLECCION no vale en otra vista ni con otros filtros, y nada de eso llega al upstream.
+        val before = upstream.sent.size
+        listOf("vista=ADQUIRIDOS&limit=2", "vista=EN_CURSO&limit=2", "vista=COLECCION&limit=2&anio=2020", "vista=COLECCION&limit=2&tipoExamen=rafaga").forEach {
+            val response = client.getAs("/api/v1/app/me/examenes?$it&cursor=${cursors.first()}")
+            assertEquals(HttpStatusCode.BadRequest, response.status, it)
+            assertEquals("INVALID_CURSOR", code(response.bodyAsText()), it)
+        }
+        // Un cursor bien firmado para COLECCION pero con claves que no son [instante, uuid] tampoco llega a la funcion.
+        val scope = CursorScope(
+            listOf("orden_en desc", "id desc"),
+            mapOf("vista" to "COLECCION", "tipoExamen" to null, "especialidadId" to null, "comunidadId" to null, "anio" to null),
+        )
+        val wellFormed = PageCursorCodec.encode(listOf(kotlinx.serialization.json.JsonPrimitive(tie), kotlinx.serialization.json.JsonPrimitive(e3)), scope.fingerprint())
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/me/examenes?vista=COLECCION&cursor=$wellFormed").status, "control: la huella construida aqui es la de la ruta")
+        val accepted = upstream.sent.size
+        listOf(
+            listOf(kotlinx.serialization.json.JsonPrimitive("2026-10-05T08:00:00+00:00'); drop"), kotlinx.serialization.json.JsonPrimitive(e3)),
+            listOf(kotlinx.serialization.json.JsonPrimitive(tie), kotlinx.serialization.json.JsonPrimitive("not-a-uuid")),
+            listOf(kotlinx.serialization.json.JsonPrimitive(tie)),
+        ).forEach { keys ->
+            val response = client.getAs("/api/v1/app/me/examenes?vista=COLECCION&cursor=${PageCursorCodec.encode(keys, scope.fingerprint())}")
+            assertEquals("INVALID_CURSOR", code(response.bodyAsText()), keys.toString())
+        }
+        assertEquals(accepted, upstream.sent.size, "ningun cursor invalido llega al upstream")
+        assertTrue(accepted > before, "solo el cursor valido de control llego")
+    }
+
+    @Test
+    fun coleccionWithoutTheReadRpcInstalledIs503AndNeverFallsBackToThePartialAnswer() = testApplication {
+        application { catalogModule() }
+        // Hay concesiones que la respuesta parcial antigua habria servido: no se sirven.
+        upstream.myGrants = { """[{"id":"$grantId","valido_desde":"2026-09-20T10:00:00+00:00","examenes":${exam(e1)}}]""" }
+        upstream.collection = {
+            V1StubResponse(404, """{"code":"PGRST202","details":"Searched for the function public.app_my_exams_collection","hint":null,"message":"Could not find the function"}""")
+        }
+        val response = client.getAs("/api/v1/app/me/examenes?vista=COLECCION")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.ServiceUnavailable, response.status, body)
+        assertEquals("UPSTREAM_UNAVAILABLE", code(body))
+        assertFalse(body.contains("PGRST202") || body.contains("app_my_exams_collection") || body.contains("items"), "ni detalle del upstream ni datos parciales: $body")
+        assertEquals(1, upstream.sent.size, "solo la llamada a la funcion: sin lectura de respaldo")
+        assertTrue(upstream.urls.single().endsWith(Upstream.COLLECTION_RPC))
+        // Las otras dos vistas no dependen de la funcion.
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/me/examenes?vista=ADQUIRIDOS").status)
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO").status)
+    }
+
+    @Test
+    fun coleccionUpstreamFailuresAndMalformedRowsAreCanonicalErrorsWithoutPartialData() = testApplication {
+        application { catalogModule() }
+        // Un PGRST202 que solo aparece como TEXTO (eco de un dato) no es "falta la funcion": es un fallo normal del upstream.
+        upstream.collection = { V1StubResponse(500, """{"code":"XX000","details":"PGRST202","hint":null,"message":"boom"}""") }
+        var response = client.getAs("/api/v1/app/me/examenes?vista=COLECCION")
+        assertEquals(HttpStatusCode.BadGateway, response.status)
+        assertEquals("UPSTREAM_ERROR", code(response.bodyAsText()))
+        assertFalse(response.bodyAsText().contains("boom"), "el detalle del upstream no sale")
+
+        val good = CollectionEntry(e1, "2026-10-07T09:00:00+00:00", exam(e1)).json
+        listOf(
+            """[]""",
+            """"nope"""",
+            """{"grupos":[]}""",
+            """{"items":[{"orden_en":"ayer","examenes":${exam(e1)},"intento":null}],"grupos":null}""",
+            """{"items":[{"orden_en":"2026-10-07T09:00:00+00:00","examenes":${exam("not-a-uuid")},"intento":null}],"grupos":null}""",
+            """{"items":[$good,{"orden_en":"2026-10-07T09:00:00+00:00","intento":null}],"grupos":null}""",
+        ).forEach { malformed ->
+            upstream.collection = { V1StubResponse(200, malformed) }
+            response = client.getAs("/api/v1/app/me/examenes?vista=COLECCION")
+            assertEquals(HttpStatusCode.BadGateway, response.status, malformed)
+            assertEquals("UPSTREAM_CONTRACT_ERROR", code(response.bodyAsText()), malformed)
+        }
+        // Un tipo de examen que el contrato no conoce tampoco se sirve.
+        upstream.collection = { V1StubResponse(200, """{"items":[{"orden_en":"2026-10-07T09:00:00+00:00","examenes":${exam(e1, tipo = "otro")},"intento":null}],"grupos":null}""") }
+        assertEquals("UPSTREAM_CONTRACT_ERROR", code(client.getAs("/api/v1/app/me/examenes?vista=COLECCION").bodyAsText()))
+        // Un estado de intento desconocido no se emite (el contrato cierra el enum): el elemento sale sin estado.
+        upstream.collection = collectionOf(listOf(CollectionEntry(e1, "2026-10-07T09:00:00+00:00", exam(e1), attemptRef(intento, "raro", 1, 2))))
+        val item = client.myExams("vista=COLECCION")["items"]!!.jsonArray[0].jsonObject
+        assertNull(item["estadoIntento"])
+        assertEquals(intento, item["intentoId"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -587,6 +819,7 @@ class CatalogRoutesTest {
         "/api/v1/app/examenes",
         "/api/v1/app/examenes/$e1",
         "/api/v1/app/me/examenes?vista=EN_CURSO",
+        "/api/v1/app/me/examenes?vista=COLECCION",
         "/api/v1/app/me/entitlement",
     )
 
@@ -642,7 +875,8 @@ class CatalogRoutesTest {
         upstream.examById = { "[${exam(e1, acceso = "premium")}]" }
         upstream.attempts = { """[{"id":"$intento","estado":"en_progreso","total_respondidas":1,"total_preguntas":2,"actualizado_en":"2026-10-07T09:00:00+00:00","examenes":${exam(e1)}}]""" }
         upstream.myGrants = { """[{"id":"$grantId","valido_desde":"2026-09-20T10:00:00+00:00","examenes":${exam(e1)}}]""" }
-        allPaths.plus("/api/v1/app/me/examenes?vista=COLECCION").plus("/api/v1/app/examenes?includeFacets=true").forEach {
+        upstream.collection = collectionOf(listOf(CollectionEntry(e1, "2026-10-07T09:00:00+00:00", exam(e1), attemptRef(intento, "finalizado", 2, 2))))
+        allPaths.plus("/api/v1/app/me/examenes?vista=ADQUIRIDOS").plus("/api/v1/app/examenes?includeFacets=true").forEach {
             assertEquals(HttpStatusCode.OK, client.getAs(it).status, it)
         }
         assertNoQuestionTables()

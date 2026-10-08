@@ -31,6 +31,14 @@ El despliegue lo ejecuta un humano con el gate de produccion; CI solo VERIFICA (
    (`SLICE3_HARDENING_PREFLIGHT_REPORT`) de cuantos intentos abiertos no llevan el marcador (esperado en MAIN: 0; los que
    haya dejan de ser visibles para las rutas de Slice 3). Rollback: bloque ROLLBACK de la 100200, despues el de la 100100 y
    despues el de la 100000 (si solo se revierte la 100200, re-aplicar la 100100 para recuperar los cuerpos anteriores de las RPC).
+   Slice 2 (migracion `20261008100300`, lectura de "mis examenes" D2-13 `vista=COLECCION`; manifiesto
+   `supabase/SLICE2_MIGRATIONS.txt`): solo crea la funcion de LECTURA `public.app_my_exams_collection` (STABLE, SECURITY
+   DEFINER, EXECUTE solo `service_role`); ni tablas, ni indices, ni filas. Se aplica DESPUES de la 100200 (su PREFLIGHT
+   `SLICE2_MY_EXAMS_PREFLIGHT` se detiene sin `intentos_examen.creado_por_comando`) y ANTES de desplegar el Ktor que la
+   llama: sin ella ese build responde 503 `UPSTREAM_UNAVAILABLE` en `vista=COLECCION` (no hay respaldo parcial); `EN_CURSO`
+   y `ADQUIRIDOS` no la usan. Su prechequeo solo INFORMA (`SLICE2_MY_EXAMS_PREFLIGHT_REPORT`) de si existen los dos indices
+   de MAIN en los que se apoya (`idx_contenido_desbloqueado_usuario_usuario_id`, `idx_intentos_examen_usuario_examen`;
+   esperado: 2). Rollback: su bloque ROLLBACK (borra la funcion), antes que los de Slice 3.
 
 ## Construir
 

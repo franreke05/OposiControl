@@ -1,6 +1,6 @@
 # DB-CI-PG17: migraciones pendientes de desplegar sobre MAIN (rango de docs/engineering/DEPLOYMENT.md), una version completa sin .sql por linea.
 # Debe ser EXACTAMENTE supabase/migrations/2026092810*.sql + supabase/SLICE1_MIGRATIONS.txt + supabase/SLICE3_MIGRATIONS.txt
-# (202610*, SLICE 3) (lo exige scripts/db-pg17-gate.sh).
+# (202610*, SLICE 3) + supabase/SLICE2_MIGRATIONS.txt (202610*_slice2_*, SLICE 2) (lo exige scripts/db-pg17-gate.sh).
 20260928100000_identity_canonical_profile_expand
 20260928100100_idempotency_keys
 20260930100000_slice1_profile_guards
@@ -22,3 +22,4 @@
 20261008100000_slice3_attempt_runtime_schema
 20261008100100_slice3_attempt_command_rpcs
 20261008100200_slice3_attempt_hardening
+20261008100300_slice2_my_exams_read_rpc

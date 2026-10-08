@@ -1,7 +1,7 @@
 -- GENERADO por scripts/db-pg17-bootstrap-extract.mjs (no editar a mano; ver supabase/baseline/README.md).
 -- Forma de MAIN (DDL de catalogo, SIN filas) de los objetos que tocan las migraciones pendientes, copiada verbatim de
 -- la captura READ-ONLY de MAIN del gate local. NO es el baseline completo de MAIN.
--- Tablas (28): public.abandonos_examen, public.acciones_moderacion, public.atribucion_usuario, public.auditoria_log, public.comunidades_autonomas, public.comunidades_objetivo_usuario, public.documentos_legales, public.especialidades, public.etiquetas, public.etiquetas_pregunta, public.eventos_app, public.examenes, public.intentos_examen, public.lotes_importacion_preguntas, public.opciones_pregunta, public.perfiles_usuario, public.perfiles_usuario_detalle, public.preguntas, public.preguntas_examen, public.preguntas_intento, public.reportes_contenido, public.respuestas_intento, public.resumen_intento_etiqueta, public.roles_app, public.roles_usuario, public.sesiones_estudio, public.soluciones_pregunta, public.usuario
+-- Tablas (29): public.abandonos_examen, public.acciones_moderacion, public.atribucion_usuario, public.auditoria_log, public.comunidades_autonomas, public.comunidades_objetivo_usuario, public.contenido_desbloqueado_usuario, public.documentos_legales, public.especialidades, public.etiquetas, public.etiquetas_pregunta, public.eventos_app, public.examenes, public.intentos_examen, public.lotes_importacion_preguntas, public.opciones_pregunta, public.perfiles_usuario, public.perfiles_usuario_detalle, public.preguntas, public.preguntas_examen, public.preguntas_intento, public.reportes_contenido, public.respuestas_intento, public.resumen_intento_etiqueta, public.roles_app, public.roles_usuario, public.sesiones_estudio, public.soluciones_pregunta, public.usuario
 -- Funciones (20): private.tg_examenes_bloquear_cambio_tipo, private.tg_examenes_publicado_no_vacio, private.tg_examenes_total_preguntas_guard, private.tg_examenes_total_preguntas_insert, private.tg_preguntas_activa_total_preguntas, private.tg_preguntas_bloquear_cambio_tipo, private.tg_preguntas_codigo_pregunta, private.tg_preguntas_examen_total_preguntas, public.admin_role_code_canonical, public.admin_sync_roles, public.es_admin, public.es_moderador_o_admin, public.establecer_actualizado_en, public.handle_new_auth_user, public.preparar_intento_examen, public.record_event, public.validar_pregunta_examen, public.validar_pregunta_examen_mismo_tipo, public.validar_solucion_opcion_misma_pregunta, public.validar_y_calcular_respuesta_intento
 -- Secuencias (0): -
 SET check_function_bodies = false;
@@ -18,6 +18,7 @@ CREATE TABLE public.atribucion_usuario (usuario_id uuid NOT NULL, fuente text, c
 CREATE TABLE public.auditoria_log (id uuid NOT NULL DEFAULT gen_random_uuid(), usuario_id uuid, accion text NOT NULL, tabla_afectada text, registro_id uuid, antes jsonb, despues jsonb, ip text, user_agent text, creado_en timestamp with time zone NOT NULL DEFAULT now());
 CREATE TABLE public.comunidades_autonomas (id uuid NOT NULL DEFAULT gen_random_uuid(), codigo text NOT NULL, nombre text NOT NULL, slug text NOT NULL, activa boolean NOT NULL DEFAULT true, posicion integer NOT NULL DEFAULT 1, creado_en timestamp with time zone NOT NULL DEFAULT now(), actualizado_en timestamp with time zone NOT NULL DEFAULT now());
 CREATE TABLE public.comunidades_objetivo_usuario (usuario_id uuid NOT NULL, comunidad_id uuid NOT NULL, prioridad integer NOT NULL DEFAULT 1, creado_en timestamp with time zone NOT NULL DEFAULT now());
+CREATE TABLE public.contenido_desbloqueado_usuario (id uuid NOT NULL DEFAULT gen_random_uuid(), usuario_id uuid NOT NULL, examen_id uuid, pregunta_id uuid, motivo text NOT NULL, valido_desde timestamp with time zone NOT NULL DEFAULT now(), valido_hasta timestamp with time zone, creado_en timestamp with time zone NOT NULL DEFAULT now());
 CREATE TABLE public.documentos_legales (id uuid NOT NULL DEFAULT gen_random_uuid(), tipo_documento text NOT NULL, version text NOT NULL, titulo text NOT NULL, contenido text NOT NULL, activo boolean NOT NULL DEFAULT false, publicado_en timestamp with time zone, creado_en timestamp with time zone NOT NULL DEFAULT now(), actualizado_en timestamp with time zone NOT NULL DEFAULT now());
 CREATE TABLE public.especialidades (id uuid NOT NULL DEFAULT gen_random_uuid(), codigo text NOT NULL, nombre text NOT NULL, slug text NOT NULL, descripcion text, activa boolean NOT NULL DEFAULT true, posicion integer NOT NULL DEFAULT 1, creado_en timestamp with time zone NOT NULL DEFAULT now(), actualizado_en timestamp with time zone NOT NULL DEFAULT now());
 CREATE TABLE public.etiquetas (id uuid NOT NULL DEFAULT gen_random_uuid(), nombre text NOT NULL, slug text NOT NULL, descripcion text, color_hex text, activa boolean NOT NULL DEFAULT true, creado_en timestamp with time zone NOT NULL DEFAULT now(), actualizado_en timestamp with time zone NOT NULL DEFAULT now());
@@ -46,6 +47,7 @@ ALTER TABLE public.atribucion_usuario ADD CONSTRAINT atribucion_usuario_pkey PRI
 ALTER TABLE public.auditoria_log ADD CONSTRAINT auditoria_log_pkey PRIMARY KEY (id);
 ALTER TABLE public.comunidades_autonomas ADD CONSTRAINT comunidades_autonomas_pkey PRIMARY KEY (id);
 ALTER TABLE public.comunidades_objetivo_usuario ADD CONSTRAINT comunidades_objetivo_usuario_pkey PRIMARY KEY (usuario_id, comunidad_id);
+ALTER TABLE public.contenido_desbloqueado_usuario ADD CONSTRAINT contenido_desbloqueado_usuario_pkey PRIMARY KEY (id);
 ALTER TABLE public.documentos_legales ADD CONSTRAINT documentos_legales_pkey PRIMARY KEY (id);
 ALTER TABLE public.especialidades ADD CONSTRAINT especialidades_pkey PRIMARY KEY (id);
 ALTER TABLE public.etiquetas ADD CONSTRAINT etiquetas_pkey PRIMARY KEY (id);
@@ -92,6 +94,8 @@ ALTER TABLE public.abandonos_examen ADD CONSTRAINT abandonos_examen_posicion_pre
 ALTER TABLE public.abandonos_examen ADD CONSTRAINT abandonos_examen_tiempo_transcurrido_segundos_check CHECK (((tiempo_transcurrido_segundos IS NULL) OR (tiempo_transcurrido_segundos >= 0)));
 ALTER TABLE public.abandonos_examen ADD CONSTRAINT abandonos_examen_total_preguntas_check CHECK (((total_preguntas IS NULL) OR (total_preguntas >= 0)));
 ALTER TABLE public.acciones_moderacion ADD CONSTRAINT acciones_moderacion_tipo_accion_check CHECK ((tipo_accion = ANY (ARRAY['ocultar'::text, 'restaurar'::text, 'eliminar'::text, 'advertir'::text, 'bloquear_usuario'::text, 'descartar'::text])));
+ALTER TABLE public.contenido_desbloqueado_usuario ADD CONSTRAINT contenido_desbloqueado_objetivo_chk CHECK (((examen_id IS NOT NULL) OR (pregunta_id IS NOT NULL)));
+ALTER TABLE public.contenido_desbloqueado_usuario ADD CONSTRAINT contenido_desbloqueado_usuario_motivo_check CHECK ((motivo = ANY (ARRAY['premium'::text, 'compra'::text, 'regalo'::text, 'admin'::text, 'promocion'::text])));
 ALTER TABLE public.documentos_legales ADD CONSTRAINT documentos_legales_tipo_documento_check CHECK ((tipo_documento = ANY (ARRAY['privacidad'::text, 'terminos'::text, 'cookies'::text, 'aviso_legal'::text])));
 ALTER TABLE public.eventos_app ADD CONSTRAINT eventos_app_duracion_ms_check CHECK (((duracion_ms IS NULL) OR (duracion_ms >= 0)));
 ALTER TABLE public.eventos_app ADD CONSTRAINT eventos_app_event_version_positive CHECK ((event_version > 0));
@@ -163,6 +167,9 @@ ALTER TABLE public.atribucion_usuario ADD CONSTRAINT atribucion_usuario_usuario_
 ALTER TABLE public.auditoria_log ADD CONSTRAINT auditoria_log_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE SET NULL;
 ALTER TABLE public.comunidades_objetivo_usuario ADD CONSTRAINT comunidades_objetivo_usuario_comunidad_id_fkey FOREIGN KEY (comunidad_id) REFERENCES public.comunidades_autonomas(id);
 ALTER TABLE public.comunidades_objetivo_usuario ADD CONSTRAINT comunidades_objetivo_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+ALTER TABLE public.contenido_desbloqueado_usuario ADD CONSTRAINT contenido_desbloqueado_usuario_examen_id_fkey FOREIGN KEY (examen_id) REFERENCES public.examenes(id) ON DELETE CASCADE;
+ALTER TABLE public.contenido_desbloqueado_usuario ADD CONSTRAINT contenido_desbloqueado_usuario_pregunta_id_fkey FOREIGN KEY (pregunta_id) REFERENCES public.preguntas(id) ON DELETE CASCADE;
+ALTER TABLE public.contenido_desbloqueado_usuario ADD CONSTRAINT contenido_desbloqueado_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE;
 ALTER TABLE public.etiquetas_pregunta ADD CONSTRAINT etiquetas_pregunta_etiqueta_id_fkey FOREIGN KEY (etiqueta_id) REFERENCES public.etiquetas(id) ON DELETE CASCADE;
 ALTER TABLE public.etiquetas_pregunta ADD CONSTRAINT etiquetas_pregunta_pregunta_id_fkey FOREIGN KEY (pregunta_id) REFERENCES public.preguntas(id) ON DELETE CASCADE;
 ALTER TABLE public.eventos_app ADD CONSTRAINT eventos_app_sesion_id_fkey FOREIGN KEY (sesion_id) REFERENCES public.sesiones_estudio(id) ON DELETE SET NULL;
@@ -212,6 +219,9 @@ CREATE INDEX idx_acciones_moderacion_reporte_id ON public.acciones_moderacion US
 CREATE INDEX idx_atribucion_usuario_referido_por ON public.atribucion_usuario USING btree (referido_por);
 CREATE INDEX idx_auditoria_log_usuario_id ON public.auditoria_log USING btree (usuario_id);
 CREATE INDEX idx_comunidades_objetivo_usuario_comunidad_id ON public.comunidades_objetivo_usuario USING btree (comunidad_id);
+CREATE INDEX idx_contenido_desbloqueado_usuario_examen_id ON public.contenido_desbloqueado_usuario USING btree (examen_id);
+CREATE INDEX idx_contenido_desbloqueado_usuario_pregunta_id ON public.contenido_desbloqueado_usuario USING btree (pregunta_id);
+CREATE INDEX idx_contenido_desbloqueado_usuario_usuario_id ON public.contenido_desbloqueado_usuario USING btree (usuario_id);
 CREATE INDEX idx_etiquetas_pregunta_etiqueta ON public.etiquetas_pregunta USING btree (etiqueta_id);
 CREATE INDEX idx_eventos_app_creado ON public.eventos_app USING btree (creado_en);
 CREATE INDEX idx_eventos_app_nombre ON public.eventos_app USING btree (nombre_evento);
@@ -838,6 +848,7 @@ ALTER TABLE public.atribucion_usuario ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.auditoria_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.comunidades_autonomas ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.comunidades_objetivo_usuario ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.contenido_desbloqueado_usuario ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.documentos_legales ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.especialidades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.etiquetas ENABLE ROW LEVEL SECURITY;
@@ -866,6 +877,8 @@ CREATE POLICY acciones_moderacion_staff_all ON public.acciones_moderacion AS PER
 CREATE POLICY auditoria_admin_select ON public.auditoria_log AS PERMISSIVE FOR SELECT TO authenticated USING (es_admin());
 CREATE POLICY comunidades_admin_all ON public.comunidades_autonomas AS PERMISSIVE FOR ALL TO authenticated USING (es_admin()) WITH CHECK (es_admin());
 CREATE POLICY comunidades_select_publico ON public.comunidades_autonomas AS PERMISSIVE FOR SELECT TO anon, authenticated USING (((activa = true) OR es_admin()));
+CREATE POLICY contenido_desbloqueado_admin_all ON public.contenido_desbloqueado_usuario AS PERMISSIVE FOR ALL TO authenticated USING (es_admin()) WITH CHECK (es_admin());
+CREATE POLICY contenido_desbloqueado_select_propio ON public.contenido_desbloqueado_usuario AS PERMISSIVE FOR SELECT TO authenticated USING (((usuario_id = ( SELECT auth.uid() AS uid)) OR es_admin()));
 CREATE POLICY documentos_legales_select_publico ON public.documentos_legales AS PERMISSIVE FOR SELECT TO anon, authenticated USING (((activo = true) OR es_admin()));
 CREATE POLICY especialidades_admin_all ON public.especialidades AS PERMISSIVE FOR ALL TO authenticated USING (es_admin()) WITH CHECK (es_admin());
 CREATE POLICY especialidades_select_publico ON public.especialidades AS PERMISSIVE FOR SELECT TO anon, authenticated USING (((activa = true) OR es_admin()));
@@ -931,6 +944,10 @@ GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON
 GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.comunidades_autonomas TO service_role;
 REVOKE ALL ON TABLE public.comunidades_objetivo_usuario FROM PUBLIC, anon, authenticated, service_role;
 GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.comunidades_objetivo_usuario TO service_role;
+REVOKE ALL ON TABLE public.contenido_desbloqueado_usuario FROM PUBLIC, anon, authenticated, service_role;
+GRANT MAINTAIN, SELECT ON TABLE public.contenido_desbloqueado_usuario TO anon;
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.contenido_desbloqueado_usuario TO authenticated;
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.contenido_desbloqueado_usuario TO service_role;
 REVOKE ALL ON TABLE public.documentos_legales FROM PUBLIC, anon, authenticated, service_role;
 GRANT MAINTAIN, SELECT ON TABLE public.documentos_legales TO anon;
 GRANT MAINTAIN, SELECT ON TABLE public.documentos_legales TO authenticated;

@@ -4,8 +4,14 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.put
 import kotlinx.serialization.serializer
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -14,7 +20,9 @@ import java.time.OffsetDateTime
 
 // =====================================================================
 // Pasarela de catalogo y derechos de SLICE 2 (D2-01, D2-02, D2-13, D7-02): SOLO lecturas PostgREST con la clave de
-// servicio sobre tablas MAIN EXISTENTES. Ninguna regla de negocio: eso es de [CatalogService] / [EntitlementPolicy].
+// servicio sobre tablas MAIN EXISTENTES, mas UNA funcion de lectura (`app_my_exams_collection`, migracion
+// 20261008100300: la union de D2-13 COLECCION, que PostgREST no sabe paginar). Ninguna regla de negocio: eso es de
+// [CatalogService] / [EntitlementPolicy].
 //
 // - Solo se leen columnas de METADATOS del examen (nunca `preguntas*`, `opciones*`, soluciones: SEC-004).
 // - "Publicado" = `activo AND publicado_en IS NOT NULL AND publicado_en <= now` (RLS `examenes_select_activos` +
@@ -26,6 +34,9 @@ import java.time.OffsetDateTime
 internal interface CatalogUpstream {
     fun get(path: String): String
 
+    /** Funcion de LECTURA de Postgres (nombre desnudo). La unica que usa esta pasarela es [CatalogGateway.MY_COLLECTION_RPC]. */
+    fun rpc(function: String, body: String): String
+
     /** Firma por LOTES (una peticion a Storage). Un fallo NO rompe la lectura: el llamante lo trata como "sin portada". */
     fun signCovers(paths: Collection<String>, ttlSeconds: Int): Map<String, String?>
 }
@@ -35,6 +46,8 @@ internal class TransportCatalogUpstream(
     private val bucket: String = DEFAULT_BUCKET,
 ) : CatalogUpstream {
     override fun get(path: String): String = transport.get(path)
+
+    override fun rpc(function: String, body: String): String = transport.rpc(function, body)
 
     override fun signCovers(paths: Collection<String>, ttlSeconds: Int): Map<String, String?> =
         transport.storageSignedUrls(bucket, paths, ttlSeconds)
@@ -103,14 +116,29 @@ internal data class AttemptBriefRow(
     @SerialName("total_preguntas") val totalPreguntas: Int = 0,
 )
 
+/** El intento mas reciente del usuario en un examen de su coleccion (solo intentos creados por el comando canonico). */
 @Serializable
-internal data class ExamRefRow(
-    val id: String? = null,
-    @SerialName("comunidades_autonomas") val comunidad: CommunityRef? = null,
+internal data class CollectionAttemptRef(
+    val id: String,
+    val estado: String,
+    @SerialName("total_respondidas") val totalRespondidas: Int = 0,
+    @SerialName("total_preguntas") val totalPreguntas: Int = 0,
+)
+
+/** Una fila de `app_my_exams_collection`: UN examen de la coleccion, su clave de orden y su intento mas reciente. */
+@Serializable
+internal data class MyCollectionRow(
+    @SerialName("orden_en") val ordenEn: String,
+    val examenes: CatalogExamRow,
+    val intento: CollectionAttemptRef? = null,
 )
 
 @Serializable
-private data class GrantCommunityRow(@SerialName("examen_id") val examenId: String, val examenes: ExamRefRow)
+internal data class CollectionGroupRow(@SerialName("comunidad_codigo") val comunidadCodigo: String, val total: Int)
+
+/** Lo que devuelve `app_my_exams_collection`: la pagina (ya ordenada) y, si se pidieron, los grupos de TODO el conjunto filtrado. */
+@Serializable
+internal data class MyCollectionPage(val items: List<MyCollectionRow>, val grupos: List<CollectionGroupRow>? = null)
 
 @Serializable
 private data class OpenAttemptRow(val id: String)
@@ -254,7 +282,7 @@ internal class CatalogGateway(
         return decodeList(upstream.get(query.toString()))
     }
 
-    /** ADQUIRIDOS / COLECCION: concesiones VIGENTES (cualquier motivo, Q-07) sobre examenes publicados, `valido_desde DESC, id DESC`. */
+    /** ADQUIRIDOS: concesiones VIGENTES (cualquier motivo, Q-07) sobre examenes publicados, `valido_desde DESC, id DESC`. */
     fun myActiveGrants(userId: String, filter: CatalogFilter, after: KeysetPosition?, fetchLimit: Int, now: Instant): List<MyGrantRow> {
         val query = StringBuilder("/rest/v1/contenido_desbloqueado_usuario?select=id,valido_desde,examenes!inner($EXAM_COLUMNS)")
         query.append("&usuario_id=eq.$userId&examen_id=not.is.null")
@@ -268,19 +296,53 @@ internal class CatalogGateway(
         return decodeList(upstream.get(query.toString()))
     }
 
-    /** Examenes distintos con concesion vigente (para los grupos por comunidad). Pide `max + 1`. */
-    fun myActiveGrantCommunities(userId: String, filter: CatalogFilter, now: Instant, max: Int): List<Pair<String, String?>> {
-        val query = StringBuilder("/rest/v1/contenido_desbloqueado_usuario?select=examen_id,examenes!inner(id,comunidades_autonomas(codigo))")
-        query.append("&usuario_id=eq.$userId&examen_id=not.is.null")
-        query.append(publishedPredicate("examenes.", now))
-        query.append(filterPredicate("examenes.", filter))
-        val nowText = encodeQuery(now.toString())
-        query.append("&valido_desde=lte.$nowText&or=(valido_hasta.is.null,valido_hasta.gt.$nowText)")
-        query.append("&order=valido_desde.desc,id.desc&limit=").append(max + 1)
-        return decodeList<GrantCommunityRow>(upstream.get(query.toString())).map { it.examenId to it.examenes.comunidad?.codigo }
+    /**
+     * COLECCION (D2-13): UNA pagina de la union "examenes con concesion vigente" + "examenes con un intento del comando
+     * canonico", un elemento por examen, `orden_en DESC, id DESC`; con [withGroups], ademas el conteo por comunidad de TODO
+     * el conjunto filtrado. La calcula entera `public.app_my_exams_collection` (20261008100300): solo examenes publicados,
+     * solo filas de [userId], limite acotado dentro de la funcion. Pide [fetchLimit] (= limit + 1).
+     *
+     * Si la funcion NO esta instalada (PostgREST `PGRST202`: build desplegado antes que su migracion) es 503
+     * UPSTREAM_UNAVAILABLE. NO hay respaldo a la respuesta parcial basada en concesiones: una coleccion a la que le faltan
+     * los examenes intentados seria un dato falso servido como bueno.
+     */
+    fun myCollection(userId: String, filter: CatalogFilter, after: KeysetPosition?, fetchLimit: Int, withGroups: Boolean): MyCollectionPage {
+        require(userId.isUuid()) { "userId" }
+        val body = buildJsonObject {
+            put("p_usuario_id", userId)
+            put("p_tipo_examen", filter.kind?.wire?.let(::JsonPrimitive) ?: JsonNull)
+            put("p_comunidad_id", filter.communityId?.let(::JsonPrimitive) ?: JsonNull)
+            put("p_anio", filter.year?.let(::JsonPrimitive) ?: JsonNull)
+            put("p_despues_en", after?.timestamp?.let(::JsonPrimitive) ?: JsonNull)
+            put("p_despues_id", after?.id?.let(::JsonPrimitive) ?: JsonNull)
+            put("p_limite", fetchLimit)
+            put("p_con_grupos", withGroups)
+        }
+        val raw = try {
+            upstream.rpc(MY_COLLECTION_RPC, body.toString())
+        } catch (failure: IllegalStateException) {
+            // Se mira el `code` que pone PostgREST, nunca el texto del mensaje (ver [supabaseErrorCode]).
+            if (supabaseErrorCode(failure.message.orEmpty()) == RPC_NOT_FOUND) {
+                throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(cause = failure)
+            }
+            throw failure
+        }
+        // PostgREST devuelve el jsonb de la funcion tal cual (objeto); se admite tambien la lista de una fila.
+        val row = when (val element = json.parseToJsonElement(raw)) {
+            is JsonObject -> element
+            is JsonArray -> element.singleOrNull() as? JsonObject
+            else -> null
+        } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val page = runCatching { json.decodeFromJsonElement<MyCollectionPage>(row) }
+            .getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
+        // La clave de orden viaja en el cursor: una que no sea [instante, uuid] no puede salir de aqui.
+        if (page.items.any { parseInstantOrNull(it.ordenEn) == null || !it.examenes.id.isUuid() }) {
+            throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        }
+        return page
     }
 
-    /** El intento mas reciente por examen entre [examIds] (para ADQUIRIDOS / COLECCION). Acotado: sin el no se inventa progreso. */
+    /** El intento mas reciente por examen entre [examIds] (para ADQUIRIDOS). Acotado: sin el no se inventa progreso. */
     fun latestAttempts(userId: String, examIds: Collection<String>): Map<String, AttemptBriefRow> {
         if (examIds.isEmpty()) return emptyMap()
         val query = "/rest/v1/intentos_examen?select=id,examen_id,estado,total_respondidas,total_preguntas" +
@@ -368,6 +430,12 @@ internal class CatalogGateway(
             "id,codigo_examen,titulo,descripcion,tipo_examen,tipo_acceso,especialidad_id,total_preguntas,duracion_minutos,anio," +
                 "portada_storage_path,publicado_en,demo_disponible,comunidades_autonomas(codigo)"
         internal const val LATEST_ATTEMPTS_FETCH_LIMIT = 500
+
+        /** `supabase/migrations/20261008100300_slice2_my_exams_read_rpc.sql` (STABLE, EXECUTE solo `service_role`). */
+        internal const val MY_COLLECTION_RPC = "app_my_exams_collection"
+
+        /** Codigo de PostgREST para "no encuentro la funcion" (falta una migracion): infraestructura, no dominio. */
+        private const val RPC_NOT_FOUND = "PGRST202"
         internal const val GRANT_FACTS_FETCH_LIMIT = 500
     }
 }

@@ -11,6 +11,9 @@
 #   (f) el helper de congelado de SLICE 3 deja de excluir las anuladas -> la asercion de comportamiento de assertions.sql
 #   (g) el endurecimiento de SLICE 3 (20261008100200) pierde la guarda marcador/origen de los comandos -> su VERIFY
 #   (h) el trigger de inmutabilidad del marcador deja de rechazar -> la asercion de comportamiento de assertions.sql
+#   (i) grant execute de la lectura de SLICE 2 (20261008100300, D2-13 COLECCION) a authenticated -> su VERIFY
+#   (j) esa lectura deja de exigir examen publicado (serviria borradores) -> su VERIFY
+#   (k) esa lectura acepta concesiones caducadas -> la asercion de comportamiento de assertions.sql
 set -uo pipefail
 cd "$(dirname "$0")/.."
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -64,4 +67,16 @@ grep -q 'VERIFY hardening_command_without_marker_or_origin_guard = 3' "$tmp/out"
 fresh; sed -i 's/^  if new.creado_por_comando is distinct from old.creado_por_comando then$/  if false then/' "$w/$s3h"; mutated "$w/$s3h"
 expect_fail "(h) el marcador de comando deja de ser inmutable" "assertions.sql"
 grep -q 'INTENTO_CREADO_POR_COMANDO_INMUTABLE' "$tmp/out" || { echo "TEST FAIL: (h) sin la asercion del marcador inmutable"; exit 1; }
+# SLICE 2 (20261008100300, lectura de "mis examenes" D2-13 COLECCION): (i) EXECUTE de cliente -> su VERIFY; (j) sin la guarda
+# de examen publicado -> su VERIFY; (k) una concesion caducada vuelve a contar (el VERIFY no lo ve) -> la asercion de comportamiento.
+s2=supabase/migrations/20261008100300_slice2_my_exams_read_rpc.sql
+fresh; echo 'grant execute on function public.app_my_exams_collection(uuid, text, uuid, integer, timestamp with time zone, uuid, integer, boolean) to authenticated;' >> "$w/$s2"; mutated "$w/$s2"
+expect_fail "(i) EXECUTE de cliente sobre la lectura de Slice 2" "20261008100300_slice2_my_exams_read_rpc: VERIFY con contadores distintos de 0"
+grep -q 'VERIFY my_exams_rpc_executable_by_clients = 1' "$tmp/out" || { echo "TEST FAIL: (i) sin el contador de EXECUTE de cliente"; exit 1; }
+fresh; sed -i 's/^    where e.activo and e.publicado_en is not null and e.publicado_en <= v_ahora$/    where true/' "$w/$s2"; mutated "$w/$s2"
+expect_fail "(j) la coleccion sin la guarda de examen publicado" "20261008100300_slice2_my_exams_read_rpc: VERIFY con contadores distintos de 0"
+grep -q 'VERIFY my_exams_rpc_without_published_guard = 1' "$tmp/out" || { echo "TEST FAIL: (j) sin el contador de la guarda de publicado"; exit 1; }
+fresh; sed -i '/^      and cd.valido_desde <= v_ahora and (cd.valido_hasta is null or cd.valido_hasta > v_ahora)$/d' "$w/$s2"; mutated "$w/$s2"
+expect_fail "(k) la coleccion acepta concesiones caducadas" "assertions.sql"
+grep -q 'my exams collection = valid grant or command attempt, published only' "$tmp/out" || { echo "TEST FAIL: (k) sin la asercion de la coleccion"; exit 1; }
 echo "db-pg17-gate.test OK ($n escenarios)"

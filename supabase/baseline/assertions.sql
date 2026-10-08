@@ -388,6 +388,101 @@ begin
   raise notice 'OK slice 3 hardening (command marker, no late freeze, exam origin only, FK indexes)';
 end $$;
 
+-- ---------------------------------------------------------------- SLICE 2: "my exams" collection read (20261008100300, D2-13 vista = COLECCION)
+-- Collection of a user = published exams with a VALID grant or with an attempt created by the start command; one item
+-- per exam; order (orden_en desc, id desc); groups per comunidad over the whole filtered set. Users C and D have no
+-- other grant or attempt. Rows are seeded with triggers off so that every instant is the one written here.
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, anio) values
+  ('52000000-0000-0000-0000-000000000001','S2-X1','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X1','rafaga','premium',true,now() - interval '9 day',2024),
+  ('52000000-0000-0000-0000-000000000002','S2-X2','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X2','rafaga','premium',true,now() - interval '9 day',2023),
+  ('52000000-0000-0000-0000-000000000003','S2-X3','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000002','X3','razonado','premium',true,now() - interval '9 day',2024),
+  ('52000000-0000-0000-0000-000000000004','S2-X4','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X4 draft','rafaga','premium',false,null,2024),
+  ('52000000-0000-0000-0000-000000000005','S2-X5','e1000000-0000-0000-0000-000000000001',null,'X5 expired grant','rafaga','premium',true,now() - interval '9 day',2024),
+  ('52000000-0000-0000-0000-000000000006','S2-X6','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X6 legacy attempt','rafaga','premium',true,now() - interval '9 day',2024),
+  ('52000000-0000-0000-0000-000000000007','S2-X7','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000002','X7 other user','rafaga','premium',true,now() - interval '9 day',2024),
+  ('52000000-0000-0000-0000-000000000008','S2-X8','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X8 scheduled','rafaga','premium',true,now() + interval '1 day',2024),
+  ('52000000-0000-0000-0000-000000000009','S2-X9','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X9 archived','rafaga','premium',false,now() - interval '9 day',2024);
+insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values
+  ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000001','compra',now() - interval '3 day',null),
+  ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000001','regalo',now() - interval '8 day',now() + interval '1 day'),
+  ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000003','admin',now() - interval '5 day',null),
+  ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000004','compra',now() - interval '1 hour',null),
+  ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000005','compra',now() - interval '4 day',now() - interval '1 minute'),
+  ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000005','promocion',now() + interval '1 day',null),
+  ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000008','compra',now() - interval '1 hour',null),
+  ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000009','compra',now() - interval '1 hour',null),
+  ('a0000000-0000-0000-0000-00000000000d','52000000-0000-0000-0000-000000000007','compra',now() - interval '1 hour',null);
+insert into public.intentos_examen (id, usuario_id, examen_id, estado, origen_intento, creado_por_comando, total_preguntas, total_respondidas, actualizado_en) values
+  ('52a00000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000002','abandonado','examen','app_start_exam_attempt',10,2,now() - interval '6 day'),
+  ('52a00000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000002','finalizado','examen','app_start_exam_attempt',10,10,now() - interval '1 day'),
+  ('52a00000-0000-0000-0000-000000000003','a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000003','en_progreso','examen','app_start_exam_attempt',8,4,now() - interval '2 hour'),
+  ('52a00000-0000-0000-0000-000000000004','a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000006','finalizado','examen',null,10,10,now() - interval '1 minute'),
+  ('52a00000-0000-0000-0000-000000000005','a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000004','finalizado','examen','app_start_exam_attempt',10,10,now() - interval '1 minute'),
+  ('52a00000-0000-0000-0000-000000000006','a0000000-0000-0000-0000-00000000000d','52000000-0000-0000-0000-000000000007','en_progreso','examen','app_start_exam_attempt',5,1,now() - interval '1 minute'),
+  ('52a00000-0000-0000-0000-000000000007','a0000000-0000-0000-0000-00000000000d','52000000-0000-0000-0000-000000000001','finalizado','examen','app_start_exam_attempt',5,5,now() - interval '1 minute');
+set local session_replication_role = origin;
+
+create function pg_temp.titulos(p jsonb) returns text language sql as $$
+  select coalesce(string_agg(i -> 'examenes' ->> 'titulo', ',' order by n), '')
+  from jsonb_array_elements(p -> 'items') with ordinality t(i, n)
+$$;
+
+do $$
+declare
+  uc constant uuid := 'a0000000-0000-0000-0000-00000000000c';
+  ud constant uuid := 'a0000000-0000-0000-0000-00000000000d';
+  c2 constant uuid := 'c1000000-0000-0000-0000-000000000002';
+  r jsonb; r2 jsonb; i jsonb;
+begin
+  -- Union, published only, valid grants only, command attempts only, own rows only; newest activity first.
+  r := public.app_my_exams_collection(uc, null, null, null, null, null, 21, true);
+  assert pg_temp.titulos(r) = 'X3,X2,X1',
+    'my exams collection = valid grant or command attempt, published only: ' || pg_temp.titulos(r);
+  assert r -> 'grupos' = '[{"comunidad_codigo":"C1","total":2},{"comunidad_codigo":"C2","total":1}]'::jsonb, 'groups over the whole set: ' || (r -> 'grupos');
+  -- X3: granted AND attempted -> ONE item, ordered by its attempt (newer than its grant), carrying the open attempt.
+  i := r -> 'items' -> 0;
+  assert (i ->> 'orden_en')::timestamptz = now() - interval '2 hour'
+     and i -> 'intento' = '{"id":"52a00000-0000-0000-0000-000000000003","estado":"en_progreso","total_respondidas":4,"total_preguntas":8}'::jsonb,
+    'granted and attempted exam: ' || i;
+  -- X2: attempted only (no grant) -> listed with its most recently updated attempt.
+  i := r -> 'items' -> 1;
+  assert i -> 'intento' ->> 'id' = '52a00000-0000-0000-0000-000000000002' and i -> 'intento' ->> 'estado' = 'finalizado', 'latest attempt: ' || i;
+  -- X1: granted only -> no attempt; the other user's attempt on X1 is not offered. Latest valid grant is the key.
+  i := r -> 'items' -> 2;
+  assert i -> 'intento' = 'null'::jsonb and (i ->> 'orden_en')::timestamptz = now() - interval '3 day', 'granted only: ' || i;
+  -- Exam METADATA only, exactly these keys (no question content, no score).
+  assert (select array_agg(k order by k) from jsonb_object_keys(i) k) = array['examenes', 'intento', 'orden_en']
+     and (select array_agg(k order by k) from jsonb_object_keys(i -> 'examenes') k)
+         = array['comunidades_autonomas', 'demo_disponible', 'especialidad_id', 'id', 'portada_storage_path', 'tipo_acceso', 'tipo_examen', 'titulo'],
+    'item shape: ' || i;
+
+  -- Keyset: page of 1 + the look-ahead, then continue after the last returned key. No duplicate, no gap.
+  r := public.app_my_exams_collection(uc, null, null, null, null, null, 1, false);
+  assert pg_temp.titulos(r) = 'X3' and r -> 'grupos' = 'null'::jsonb, 'first page of one, groups only on request: ' || r;
+  r2 := public.app_my_exams_collection(uc, null, null, null, (r -> 'items' -> 0 ->> 'orden_en')::timestamptz,
+                                       (r -> 'items' -> 0 -> 'examenes' ->> 'id')::uuid, 21, false);
+  assert pg_temp.titulos(r2) = 'X2,X1', 'page after the cursor: ' || pg_temp.titulos(r2);
+  -- The limit is bounded inside the function.
+  assert jsonb_array_length(public.app_my_exams_collection(uc, null, null, null, null, null, 0, false) -> 'items') = 1, 'limit below 1 is 1';
+  assert jsonb_array_length(public.app_my_exams_collection(uc, null, null, null, null, null, 100000, false) -> 'items') = 3, 'huge limit is clamped';
+  perform pg_temp.expect(format($q$select public.app_my_exams_collection(%L, null, null, null, now(), null, 21, false)$q$, uc), '22023', 'APP_MY_EXAMS_CURSOR_INCOMPLETE');
+
+  -- Filters narrow the items AND the groups.
+  r := public.app_my_exams_collection(uc, null, c2, null, null, null, 21, true);
+  assert pg_temp.titulos(r) = 'X3' and r -> 'grupos' = '[{"comunidad_codigo":"C2","total":1}]'::jsonb, 'comunidad filter: ' || r;
+  assert pg_temp.titulos(public.app_my_exams_collection(uc, 'rafaga', null, 2024, null, null, 21, false)) = 'X1', 'tipo + anio filter';
+  assert public.app_my_exams_collection(uc, 'inmersivo', null, null, null, null, 21, true) = '{"items":[],"grupos":[]}'::jsonb, 'empty collection';
+
+  -- Another user sees only its own rows; nobody (null) sees nothing.
+  assert pg_temp.titulos(public.app_my_exams_collection(ud, null, null, null, null, null, 21, false)) = 'X7 other user,X1',
+    'other user: ' || pg_temp.titulos(public.app_my_exams_collection(ud, null, null, null, null, null, 21, false));
+  assert public.app_my_exams_collection(null, null, null, null, null, null, 21, true) = '{"items":[],"grupos":[]}'::jsonb, 'null user';
+  -- Read only: nothing was written by any of the calls above.
+  assert (select count(*) from public.contenido_desbloqueado_usuario) = 9 and (select count(*) from public.intentos_examen where id::text like '52a%') = 7, 'read only';
+  raise notice 'OK slice 2 my exams collection (union, published only, own rows, keyset, groups)';
+end $$;
+
 -- clients cannot reach the Slice 3 commands nor write attempts directly
 set local role authenticated;
 select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-00000000000a', true);
@@ -402,7 +497,25 @@ begin
   perform pg_temp.expect($q$insert into public.intentos_examen (usuario_id, examen_id, creado_por_comando) values ('a0000000-0000-0000-0000-00000000000a', 'e3000000-0000-0000-0000-000000000001', 'app_start_exam_attempt')$q$, '42501');
   perform pg_temp.expect($q$update public.intentos_examen set creado_por_comando = 'app_start_exam_attempt' where usuario_id = 'a0000000-0000-0000-0000-00000000000a'$q$, '42501');
   perform pg_temp.expect($q$select private.tg_intentos_examen_creado_por_comando_inmutable()$q$, '42501');
+  -- SLICE 2 (20261008100300): the collection read is server-only too, even for the caller's own id.
+  perform pg_temp.expect($q$select public.app_my_exams_collection('a0000000-0000-0000-0000-00000000000a', null, null, null, null, null, 21, true)$q$, '42501');
   raise notice 'OK slice 3 RPCs closed to clients';
+end $$;
+reset role;
+set local role anon;
+do $$
+begin
+  perform pg_temp.expect($q$select public.app_my_exams_collection('a0000000-0000-0000-0000-00000000000c', null, null, null, null, null, 21, true)$q$, '42501');
+  raise notice 'OK slice 2 collection read closed to anon';
+end $$;
+reset role;
+-- ...and the server path is open: service_role reads the collection of the user Ktor names.
+set local role service_role;
+do $$
+begin
+  assert jsonb_array_length(public.app_my_exams_collection('a0000000-0000-0000-0000-00000000000c', null, null, null, null, null, 21, false) -> 'items') = 3,
+    'service_role reads the collection';
+  raise notice 'OK slice 2 collection read open to service_role';
 end $$;
 reset role;
 
@@ -451,9 +564,11 @@ begin
                       -- SLICE 3 (20261008100100, redefined by 20261008100200)
                       'public.app_start_exam_attempt(uuid,uuid)',
                       'public.app_record_attempt_answer(uuid,uuid,uuid,uuid,integer,integer,integer)',
-                      'public.app_finish_exam_attempt(uuid,uuid)', 'public.app_abandon_exam_attempt(uuid,uuid,integer,text)']) f
+                      'public.app_finish_exam_attempt(uuid,uuid)', 'public.app_abandon_exam_attempt(uuid,uuid,integer,text)',
+                      -- SLICE 2 (20261008100300)
+                      'public.app_my_exams_collection(uuid,text,uuid,integer,timestamp with time zone,uuid,integer,boolean)']) f
    where to_regprocedure(f) is null or not has_function_privilege('service_role', f::regprocedure, 'EXECUTE');
-  assert v is null, 'Slice 1 / Slice 3 RPC missing or not executable by service_role: ' || v;
+  assert v is null, 'Slice 1 / Slice 2 / Slice 3 RPC missing or not executable by service_role: ' || v;
   -- 5b. SLICE 3: ninguna politica RLS deja a un cliente (PUBLIC, anon, authenticated) ESCRIBIR en las tablas de intento
   --     (el camino de escritura es Ktor con service_role; las politicas de MAIN solo dejan SELECT de lo propio).
   select string_agg(t || ' ' || p, ', ') into v

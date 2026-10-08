@@ -197,7 +197,10 @@ internal fun parseMyExamsQuery(params: Parameters): MyExamsQuery {
     if (issues.isNotEmpty() || view == null) throw validationError(*issues.toTypedArray())
     val sort = when (view) {
         MyExamsView.EN_CURSO -> listOf("actualizado_en desc", "id desc")
-        MyExamsView.ADQUIRIDOS, MyExamsView.COLECCION -> listOf("valido_desde desc", "id desc")
+        MyExamsView.ADQUIRIDOS -> listOf("valido_desde desc", "id desc")
+        // La union concesion/intento se ordena por su ultima actividad (`app_my_exams_collection`). Huella propia: un cursor
+        // de COLECCION emitido con el orden anterior (por concesion) deja de valer en vez de paginar con otra clave.
+        MyExamsView.COLECCION -> listOf("orden_en desc", "id desc")
     }
     val page = CursorPageRequest.of(
         cursor = params["cursor"],
@@ -306,7 +309,7 @@ internal class CatalogService(
                     nextCursor = page.nextCursor,
                 )
             }
-            MyExamsView.ADQUIRIDOS, MyExamsView.COLECCION -> {
+            MyExamsView.ADQUIRIDOS -> {
                 val rows = gateway.myActiveGrants(uid, query.filter, after, query.page.fetchLimit, now)
                 val page = query.page.page(rows) { KeysetPosition(it.validoDesde, it.id).toKeys() }
                 val exams = page.items.map { it.examenes }
@@ -319,21 +322,28 @@ internal class CatalogService(
                         myItem(grant.examenes, verdicts, covers, attempt?.id, attempt?.estado, attempt?.totalRespondidas ?: 0, attempt?.totalPreguntas ?: 0)
                     },
                     nextCursor = page.nextCursor,
-                    grupos = if (query.view == MyExamsView.COLECCION && query.page.after == null) groups(uid, query.filter, now) else null,
+                )
+            }
+            // COLECCION = examenes con concesion VIGENTE UNION examenes intentados (Q-07), un elemento por examen. La union, su
+            // orden estable y los grupos (conteo EXACTO por comunidad de todo el conjunto filtrado, Q-06) los calcula la funcion
+            // de lectura; aqui solo se anade lo que es de Ktor: la MISMA politica de acceso y la firma de portadas. Los grupos
+            // se piden con la primera pagina (sin cursor); en las siguientes van a `null`, que el contrato admite.
+            MyExamsView.COLECCION -> {
+                val collection = gateway.myCollection(uid, query.filter, after, query.page.fetchLimit, withGroups = after == null)
+                val page = query.page.page(collection.items) { KeysetPosition(it.ordenEn, it.examenes.id).toKeys() }
+                val exams = page.items.map { it.examenes }
+                val verdicts = accessFor(uid, exams, now)
+                val covers = signedCovers(exams)
+                MyExamsPage(
+                    items = page.items.map { row ->
+                        val attempt = row.intento
+                        myItem(row.examenes, verdicts, covers, attempt?.id, attempt?.estado, attempt?.totalRespondidas ?: 0, attempt?.totalPreguntas ?: 0)
+                    },
+                    nextCursor = page.nextCursor,
+                    grupos = collection.grupos?.map { MyExamGroup(it.comunidadCodigo, it.total) },
                 )
             }
         }
-    }
-
-    /** Conteo por comunidad sobre TODO el conjunto filtrado; si no cabe en el tope, `null` (el contrato lo admite) y nunca un parcial. */
-    private fun groups(userId: String, filter: CatalogFilter, now: Instant): List<MyExamGroup>? {
-        val rows = gateway.myActiveGrantCommunities(userId, filter, now, GROUP_ROWS_MAX)
-        if (rows.size > GROUP_ROWS_MAX) return null
-        return rows.distinctBy { it.first }
-            .mapNotNull { it.second }
-            .groupingBy { it }.eachCount()
-            .map { MyExamGroup(it.key, it.value) }
-            .sortedBy { it.comunidadCodigo }
     }
 
     private fun myItem(
@@ -411,7 +421,6 @@ internal class CatalogService(
     companion object {
         const val COVER_URL_TTL_SECONDS = 3600
         const val FACET_ROWS_MAX = 2000
-        const val GROUP_ROWS_MAX = 500
         private val ATTEMPT_STATES = setOf("en_progreso", "finalizado", "abandonado")
     }
 }
