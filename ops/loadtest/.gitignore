@@ -1,0 +1,4 @@
+fixtures/fixtures.json
+fixtures/*.local.json
+results/*
+!results/.gitkeep

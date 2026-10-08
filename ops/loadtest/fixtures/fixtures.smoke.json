@@ -1,0 +1,15 @@
+{
+  "_comment": "Dummy values for the stub smoke only (no real account, no real token).",
+  "examIds": ["00000000-0000-4000-8000-000000000001"],
+  "writableExamIds": ["00000000-0000-4000-8000-000000000001"],
+  "users": [
+    {
+      "email": "smoke@example.invalid",
+      "password": "not-a-real-password",
+      "token": "smoke.token.value",
+      "refreshToken": "smoke-refresh",
+      "openAttemptId": "00000000-0000-4000-8000-0000000000a1",
+      "finishedAttemptId": "00000000-0000-4000-8000-0000000000b1"
+    }
+  ]
+}

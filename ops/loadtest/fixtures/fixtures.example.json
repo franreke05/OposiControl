@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to fixtures/fixtures.json (git-ignored). TEST accounts on a DISPOSABLE project only. Never put real user tokens here.",
+  "examIds": ["00000000-0000-4000-8000-000000000001"],
+  "writableExamIds": ["00000000-0000-4000-8000-000000000001"],
+  "users": [
+    {
+      "email": "loadtest-0001@example.invalid",
+      "password": "SET-ME-FOR-AUTH-SCENARIO-ONLY",
+      "token": "ACCESS_JWT_MINTED_OUT_OF_BAND",
+      "refreshToken": "OPTIONAL",
+      "openAttemptId": "00000000-0000-4000-8000-0000000000a1",
+      "finishedAttemptId": "00000000-0000-4000-8000-0000000000b1"
+    }
+  ]
+}

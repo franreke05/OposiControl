@@ -1,0 +1,44 @@
+# k6 without a local install. LOCAL / STAGING targets only (the scripts refuse production hosts, see lib/guard.js).
+#
+#   Smoke (stub, no backend):  docker compose -f ops/loadtest/docker-compose.loadtest.yaml --profile smoke up -d stub
+#                              docker compose -f ops/loadtest/docker-compose.loadtest.yaml run --rm k6 run scenarios/read_heavy.js
+#   Real run:                  BASE_URL=http://host.docker.internal:8080 FIXTURES_FILE=/loadtest/fixtures/fixtures.json PROFILE=100 \
+#                              docker compose -f ops/loadtest/docker-compose.loadtest.yaml run --rm k6 run scenarios/read_heavy.js
+name: oposibots-loadtest
+
+services:
+  k6:
+    image: grafana/k6:0.55.0
+    working_dir: /loadtest
+    volumes:
+      - ./:/loadtest
+    environment:
+      BASE_URL: ${BASE_URL:-http://stub:8080}
+      PROFILE: ${PROFILE:-100}
+      RAMP_UP: ${RAMP_UP:-2m}
+      HOLD: ${HOLD:-5m}
+      RAMP_DOWN: ${RAMP_DOWN:-1m}
+      FIXTURES_FILE: ${FIXTURES_FILE:-/loadtest/fixtures/fixtures.json}
+      RESULTS_DIR: /loadtest/results
+      RUN_ID: ${RUN_ID:-run}
+      THRESHOLD_ERROR_RATE: ${THRESHOLD_ERROR_RATE:-}
+      THRESHOLD_P95_MS: ${THRESHOLD_P95_MS:-}
+      THRESHOLD_P99_MS: ${THRESHOLD_P99_MS:-}
+      THRESHOLD_WRITE_P95_MS: ${THRESHOLD_WRITE_P95_MS:-}
+      THRESHOLD_WRITE_P99_MS: ${THRESHOLD_WRITE_P99_MS:-}
+      NO_THRESHOLDS: ${NO_THRESHOLDS:-}
+      ALLOW_CUSTOM_PROFILE: ${ALLOW_CUSTOM_PROFILE:-}
+      MIXED_WRITE_RATIO: ${MIXED_WRITE_RATIO:-}
+      ANSWERS_PER_ATTEMPT: ${ANSWERS_PER_ATTEMPT:-}
+      I_UNDERSTAND_THIS_IS_NOT_PRODUCTION: ${I_UNDERSTAND_THIS_IS_NOT_PRODUCTION:-}
+      LOADTEST_ALLOW_WRITES: ${LOADTEST_ALLOW_WRITES:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    entrypoint: ["k6"]
+    profiles: ["run"]
+
+  stub:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./stub/nginx.conf:/etc/nginx/nginx.conf:ro
+    profiles: ["smoke"]
