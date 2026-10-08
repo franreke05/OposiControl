@@ -179,3 +179,17 @@ Open points that remain even after that decision:
 - Product upsert (D7-18): field names of the product list, not of the design; the price cannot be set here (only through
   tariffs); a missing plan is 422; text limits 200 / 2000 / 100 characters (name, description, promotional label); the row and
   its audit row are two steps, as in the plan and tariff upserts.
+
+## 13. Noted by the last review (2026-10-09), not blocking
+
+- Fixed: a subscription product can no longer be saved without its plan (D7-18), nor a ticket pack without its amount.
+- Admin catalog lists (products, plans, services, promotions, popups) are now bounded to 100 rows per page and the current
+  admin client reads only the first page: harmless at today's catalog size; the client must page on `total` before a list
+  grows past 100.
+- D7-22 (plan), D7-19 (tariff), D7-18 (product): upsert then mandatory audit row are two steps (no DB function): if the
+  audit insert fails the change is stored and the caller gets 500; a retry is idempotent and writes the audit row. The
+  contract does not declare that 500 yet. The plan audit row does not record `nivel` before/after.
+- Forum "reported" mode reads up to 500 pending reports without an order and sends long id lists upstream: bound and
+  order it before the moderation queue can grow.
+- Decisions needed: promote or retire the four legacy-marked app paths (home D3-01, stats D3-03, store D7-01, report
+  D5-15); owner go-ahead for the question-resource contracts D4-13..D4-17 (inside the protected authoring flow).
