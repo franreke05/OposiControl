@@ -90,6 +90,8 @@ private fun initializeSentry() {
             ?.trim()
             ?.takeIf { it.isNotBlank() }
         options.tracesSampleRate = tracesSampleRate
+        // Distingue bot / control / combined en cada evento (el valor ya lo valida ServerProfile.parse al arrancar).
+        options.setTag("profile", System.getenv("SERVER_PROFILE").orEmpty().trim().lowercase().ifBlank { "combined" })
         options.isSendDefaultPii = false
         options.isAttachStacktrace = true
         // MASTER-OBS-004: los mensajes de excepcion incluyen fragmentos de cuerpos de error de Supabase (emails,
