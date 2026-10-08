@@ -1,0 +1,102 @@
+# BILLING read contracts of the current user (FA15): D7-05. Purchases and subscriptions of the JWT sub, read-only.
+# Source of truth: compras_usuario and suscripciones. The user is always the JWT sub; there is never a userId parameter.
+# Purchase COMMANDS and provider verification are not part of this file (D7-03, D7-04 and the rest of DEC-031).
+components:
+  pathItems:
+    BillingHistory:
+      get:
+        operationId: listMyBillingHistory
+        summary: 'List the purchases and subscriptions of the current user'
+        tags: [billing]
+        x-contract-id: D7-05
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR, UPSTREAM_UNAVAILABLE]
+        description: 'One list over two tables, newest first: keyset (occurredAt desc, id desc). occurredAt is the creation instant of a purchase row and the start instant of a subscription. An unknown kind is 400 INVALID_FILTER. Provider data (provider name, external transaction id, validation payload) is never returned. Read-only: it replaces the two unpaginated legacy lists /commercial/purchases and /commercial/subscriptions, which stay served. Cache private, no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: kind
+            in: query
+            required: false
+            description: 'Only purchases or only subscriptions. Absent = both.'
+            schema:
+              $ref: '#/components/schemas/BillingKind'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'Billing history page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/PrivateNoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/BillingEntry'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, INVALID_FILTER or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    PrivateNoStore:
+      description: 'private, no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['private, no-store']
+  schemas:
+    BillingKind:
+      type: string
+      enum: [purchase, subscription]
+    BillingEntry:
+      type: object
+      required: [kind, id, productoCodigo, tipo, estado, occurredAt]
+      properties:
+        kind:
+          $ref: '#/components/schemas/BillingKind'
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        productoCodigo:
+          type: string
+        tipo:
+          type: string
+          description: 'Product type. A purchase carries the stored type (opositickets, premium, servicio, contenido); a subscription is always suscripcion. Open string: clients tolerate unknown values.'
+        estado:
+          type: string
+          description: 'Stored state. Purchase: pendiente, pagada, cancelada, reembolsada, fallida. Subscription: activa, pausada, cancelada, caducada, periodo_prueba. Open string: clients tolerate unknown values.'
+        precioCentimos:
+          type: [integer, 'null']
+          minimum: 0
+          description: 'Price of a purchase in cents. Always null for a subscription (the table stores no price).'
+        moneda:
+          type: [string, 'null']
+          description: 'Currency of a purchase. Always null for a subscription.'
+        occurredAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        startsAt:
+          type: [string, 'null']
+          format: date-time
+          description: 'Subscription start. Null for a purchase.'
+        endsAt:
+          type: [string, 'null']
+          format: date-time
+          description: 'Subscription end, when it has one. Null for a purchase.'

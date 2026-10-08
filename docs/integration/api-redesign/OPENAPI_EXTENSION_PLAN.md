@@ -442,3 +442,77 @@ Still implementable, none started (21):
 | Internal (no HTTP route) | 10 | section 3, class INTERNAL |
 | Still implementable | 21 | section 11.2 |
 | Total | 123 | |
+
+## 12. Fifth batch: FA15 (implemented in this change) and where the plan stands
+
+Sections 11.2 and 11.3 are superseded by 12.3 and 12.4.
+
+### 12.1 Done
+
+| Contract | File | Profile | Pagination / idempotency | Notes |
+|---|---|---|---|---|
+| D7-05 `GET /api/v1/app/me/billing-history` | `openapi/billing/billing.yaml` (new) | BOT | CURSOR, limit 1..50 default 20 | purchases and subscriptions of the JWT sub in one list, newest first; filter `kind`; `{items, nextCursor}` |
+| D5-01 `GET /api/v1/app/oposired/categorias` | `openapi/community/community.yaml` (new) | BOT | NONE (server cap 50) | active categories ordered by `posicion`, `nombre`; `{items}`; `Cache-Control: private, max-age=300` |
+| D5-16 `GET /api/v1/app/opositester/me` | community.yaml | BOT | NONE | bare object; own counters; zeros when the user has no row; `nivel` null (DEC-028) |
+| D7-18 `PUT /api/v1/admin/comercial/productos/{codigo}` | `openapi/commerce/commerce.yaml` | CONTROL | NATURAL (upsert by `codigo`) | 201 or 200, `{data: product}`, audit `producto_comercial_guardado`, 422 `PRODUCT_*` |
+
+All four are `x-implementation: TARGET`, `x-slice: null`. No migration, no RPC.
+
+Code. Consumer reads: `AppReadsRoutes.kt` (routes, `AppReadsRuntime`), `AppReadsService.kt` (rules, wire), `AppReadsGateway.kt` (PostgREST reads through the shared service-key transport); wired in `Application.kt` (`installBotRoutes`, `CombinedRoutingDeps.appReadsRuntime`). Product upsert: `ProductoPutCommand` and `AdminCatalogCommands.producto` in `AdminCatalogReads.kt`, `AdminV1Gateway.putProducto` and the handler in `AdminV1Routes.kt` (next to the plan and tariff upserts; no protected function touched). Tests: `AppReadsRoutesTest` (14, new) and four more in `AdminCatalogWriteRoutesTest` (12 in total). Inventory: four rows in `route-profiles.tsv`; `routes.bot.txt`, `routes.control.txt` and `routes.combined.txt` regenerated; `undocumented-routes.tsv` unchanged (156: the four routes are new and documented).
+
+### 12.2 How the design was mapped (decisions taken, reversible)
+
+- **Identity (the three reads).** `CanonicalIdentityResolver.activeIdentity` before any parameter is parsed or any read is sent: 401, 403 `ACCOUNT_BLOCKED` / `ACCOUNT_DELETION_PENDING` / `PROFILE_MISSING`, and 403 for an unknown account state. No user parameter exists; every own-data query carries `usuario_id=eq.<JWT sub>`. Without a runtime the routes are mounted and answer 500.
+- **D7-05.** The design nests the page under `data`; the shared `CursorPageEnvelope` (`items`) is used, as in FA14. Two tables, one list: `limit + 1` rows are read from each table after the same `(instant, id)` position and merged by `(instant desc, id desc)`. `occurredAt` is `creado_en` for a purchase (the only NOT NULL instant of the row; `comprada_en` is null while a purchase is pending) and `inicio_en` for a subscription. `tipo` is the stored `tipo_producto` for a purchase and the literal `suscripcion` for a subscription (the table has no type column). `precioCentimos` and `moneda` are null for a subscription (no price column). Columns are explicit: provider, external ids and the validation payload are never selected. The cursor fingerprint includes `kind`. The two unpaginated legacy lists `/commercial/purchases` and `/commercial/subscriptions` are unchanged.
+- **D5-01.** No ETag (the design mentions one): only `Cache-Control`. The catalog is the same for every user, so no user filter is sent.
+- **D5-16.** `nivel_opositester` is stored (default `normal`) but is not selected: DEC-028 has not defined the levels.
+- **D7-18.** Request field names are the ones D7-17 emits (lead decision): `tipoProducto`, `planId` (uuid), `etiquetaPromocional`; the design names `tipo`, `planCodigo`, `etiqueta` are rejected as unknown fields. `tipoProducto` is the production CHECK (`suscripcion`, `pack_tickets`, `compra_examen`, `servicio`, `consumible`). One `INSERT .. ON CONFLICT (codigo)` statement, then the mandatory audit row (same two-step shape as D7-22 and D7-19: not one database transaction, no function exists). The price is not part of the command: `precio_centimos` is never written (null on creation, kept on update); prices are the tariffs (D7-19). Absent or null optional fields clear the stored value. A `planId` that does not exist is 422 `PRODUCT_PLAN_NOT_FOUND` (checked before the write); the design says 409 for a foreign key, the backend already answers 422 for a missing reference. Text limits (not product rules): `nombre` 200, `descripcion` 2000, `etiquetaPromocional` 100, `moneda` 8. No `If-Match` (the read exposes no version). Business rules are the existing `AdminProductoComercialDto.validated()`; the legacy `POST /api/v1/admin/comercial/productos` is unchanged.
+
+### 12.3 Contracts of the FA15 list that were NOT implemented, and why
+
+| Contract | Class | Why |
+|---|---|---|
+| D3-01, D3-03, D7-01, D5-15 | Legacy-marked path | `/api/v1/app/home`, `/estadisticas`, `/commercial/catalog` and `POST /feedback/pregunta` carry `.legacyRoute(...)`: `Deprecation` header, retirement counter, a `RETIRE_AFTER_TELEMETRY` row in `legacy-route-register.tsv` and a legacy row in `undocumented-routes.tsv`. The gates make "legacy-marked" and "declared in `openapi/`" mutually exclusive (`RouteInventoryTest`: a documented route may not stay in the undocumented register; `LegacyRouteRegisterTest`: a legacy-marked route must be in both registers) and `Loop2KtorRestTest` pins the nine legacy app endpoints. Declaring one of these paths canonical means un-marking it (no more deprecation, no retirement) and editing those pinned assertions: a decision for the lead, not a builder change. |
+| D3-01 (also) | Design | `retoDiario` must be the D2-05 shape and D2-05 is in the spec but not served; `examenes` and `retoDiario` already exist in the legacy response with other element shapes and another selection rule, so they cannot grow by adding fields. |
+| D3-03 (also) | Design / schema | `totales.falladas`, `totales.sinResponder`, `ultimas100` and the `examenId` scope have no stored source (`estadisticas_usuario` has neither column and is not per exam) and no defined formula; computing them means unbounded row reads. |
+| D7-01 (also) | Design | `tipo` enum {opositickets, servicio, plan} against the stored types; `precioTickets`, `tipoServicio`, `efectos` are columns of `servicios`, not of the catalog (DEC-033 not executed); `storeSku` depends on DEC-031. |
+| D5-15 (also) | Schema | `target` and `recursoId` have no column in `feedback_pregunta`; the canonical command requires an `Idempotency-Key` header the legacy request does not send. |
+| D4-19 | Design / precondition | `guardado` needs the saved-resource store of D4-20 / D4-21 (NEEDS_SCHEMA); the access rule when `examenId` is absent is not defined; the attempt review D2-65 already withholds resources until DEC-025. |
+| D6-15 | NEEDS_SCHEMA | every field is a SUM / GROUP BY over `transacciones_cartera` and `carteras_usuario`; no aggregate function exists and summing fetched rows is unbounded (same finding as D3-14 and the D7-29 total). The served `/tickets/resumen` keeps its counters and its `unavailableMetrics`. |
+| D5-27 | Same-path wire conflict | the OposiControl client posts `{accion, notas, ticketsReporter}` to this path without `Idempotency-Key`; the canonical command requires the header and `resultado` (whose value `validado` is not a stored state), embeds the D5-24 action (NEEDS_SCHEMA) and returns another shape. The served route already grants only through `admin_grant_tickets` with the deterministic key `report-reward:<id>`; it was not touched. |
+| D5-14 | NEEDS_SCHEMA + product | no UNIQUE index for the pending-report dedupe (reporter, type, entity), no function for "insert + `reportes_enviados` + 1" in one transaction, no rule for the 429 limit; and no reportable target exists without a blocked feature (posts and comments: forum reads blocked; question and resource: DEC-026). |
+
+Not touched by instruction (reported as they were): D4-13..D4-17 (inside the protected question authoring flow), D5-08, D5-06, D5-09, D5-10 (forum writes whose reads are product-blocked).
+
+### 12.4 Totals (123 contracts that `openapi/` did not declare at the base)
+
+| Bucket | Count | Contracts |
+|---|---|---|
+| In spec + implemented | 34 | FA11: D4-01..D4-11, D6-01, D6-02. FA12: D5-20, D5-21, D5-22, D5-25, D5-26, D5-28, D5-29, D7-27. FA13: D7-17, D7-21, D6-18, D6-20, D6-22, D3-15, D7-22, D7-19. FA14: D7-29. FA15: D7-05, D5-01, D5-16, D7-18 |
+| NEEDS_SCHEMA | 14 | D4-20, D4-21, D5-30, D6-03, D1-20, D3-14, D5-12, D7-07, D7-30, D8-05, D6-19, D7-23, D6-15, D5-14 |
+| Same-path wire conflict (admin client) | 9 | D8-02, D8-03, D8-04, D5-23, D5-24, D6-12, D6-13, D6-14, D5-27 |
+| Legacy-marked path (retire or promote: lead decision) | 4 | D3-01, D3-03, D7-01, D5-15 |
+| Product or external blocked | 38 | the 37 of section 4 plus D7-03 |
+| Design not defined / precondition | 5 | D6-21, D6-23, D6-06; D3-05 (no ADR for DEC-038); D4-19 |
+| Internal (no HTTP route) | 10 | section 3, class INTERNAL |
+| Not touched by instruction | 9 | D4-13..D4-17 (protected authoring flow); D5-08, D5-06, D5-09, D5-10 (forum writes) |
+| Total | 123 | |
+
+Implementable without a decision, a schema object or a client migration: none left.
+
+### 12.5 Proposed amendment row FA15 (text for CONTRACT_FREEZE.md, OposiBot repo)
+
+| ID | Fecha | Contrato / fichero | Cambio | Motivo | DEC |
+|---|---|---|---|---|---|
+| FA15 | 2026-10-09 | NUEVOS `openapi/billing/billing.yaml` (D7-05) y `openapi/community/community.yaml` (D5-01, D5-16); `openapi/commerce/commerce.yaml` (D7-18 anadido); `root.yaml` (4 paths, tags `billing` y `community`, una frase en `info.description`) | AMPLIACION ADITIVA, sin tocar ninguna operacion ni schema congelado: 4 operaciones nuevas, todas `x-implementation: TARGET`. Tres lecturas de consumidor ligadas al `sub` del JWT: historial de compras y suscripciones por cursor (D7-05, `kind`), catalogo acotado de categorias de OposiRed (D5-01) y contadores propios de OposiTester (D5-16). Un upsert de administracion por clave natural en ruta nueva: producto comercial por `codigo` (D7-18), 201 o 200 con `{data}`, con los nombres de campo que emite D7-17. Manifiesto `freeze-manifest.sha256` regenerado (2 ficheros nuevos, 2 cambiados) y `OpenApiContractTest` ampliado (4 rutas; D7-05 en `cursorLists`). `undocumented-routes.tsv` no cambia (156) | Contratos con el cable determinado por el diseno sobre tablas y la restriccion UNIQUE `productos_comerciales_codigo_key` que existen en produccion; ninguna decision de producto cambia su comportamiento | VALUE_ONLY: `nivel` (D5-16) null hasta DEC-028. FUERA: D3-01, D3-03, D7-01, D5-15 (ruta marcada legacy), D4-19, D6-15, D5-27, D5-14 (seccion 12.3). Ratificacion del lead pendiente |
+
+### 12.6 Gates (2026-10-09, working tree, NOT committed)
+
+| Gate | Command | Result |
+|---|---|---|
+| Lint | `npx --no-install --prefix tools/redocly redocly lint openapi/root.yaml --config openapi/redocly.yaml` | PASS (the same 3 explicitly ignored problems) |
+| Backend tests | `./gradlew :backend:ktor:test --console=plain` | 1732 tests, 1731 passed, 1 failed (the expected tripwire `openApiIsFrozenNothingUnderOpenapiDiffersFromHead`) |
+| Direct Supabase access | `bash scripts/verify-no-direct-supabase.sh` | PASS |
+| Ops config | `bash scripts/verify-ops-config.sh` | PASS |
+
+No migration was added, so the database gates were not run.

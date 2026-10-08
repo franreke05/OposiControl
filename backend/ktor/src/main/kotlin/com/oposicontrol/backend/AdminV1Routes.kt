@@ -1500,6 +1500,14 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     val body = call.receive<AdminProductoComercialDto>()
                     call.respond(AdminProductoComercialResponse(withUpstreamIo { gateway.upsertProductoComercial(body) }))
                 }
+                // D7-18 (FA15): alta o cambio de un producto por su clave natural `codigo` (nombres de campo de D7-17).
+                put("/{codigo}") {
+                    val codigo = AdminCatalogCommands.codigo(call.requiredPath("codigo"))
+                    val body = AdminCatalogCommands.producto(call.canonicalRawBody().also { call.requireJsonContentIfBody(it) })
+                    val saved = withUpstreamIo { gateway.putProducto(codigo, body) }
+                    call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                    call.respond(if (saved.created) HttpStatusCode.Created else HttpStatusCode.OK, AdminProductoComercialResponse(saved.value))
+                }
                 // D7-19 (FA13): alta o cambio de UNA tarifa por su clave natural (producto, periodo, fase).
                 put("/{codigo}/tarifas/{periodo}/{fase}") {
                     val codigo = AdminCatalogCommands.codigo(call.requiredPath("codigo"))
@@ -7608,6 +7616,74 @@ class AdminV1Gateway private constructor(
             required = true,
         )
         return CatalogUpsert(saved.toDto(), created = !existed)
+    }
+
+    /**
+     * D7-18 (FA15): upsert de un producto comercial por `codigo` en UNA sentencia (`INSERT .. ON CONFLICT (codigo) DO UPDATE`,
+     * la restriccion UNIQUE `productos_comerciales_codigo_key` de produccion): repetir la peticion deja el mismo producto y
+     * nunca un duplicado (la ruta POST anterior creaba otro cuando el id llegaba en blanco). El id no viaja: lo pone la base al
+     * crear y se conserva al actualizar. Los opcionales ausentes o null (`descripcion`, `cantidadTickets`, `planId`,
+     * `etiquetaPromocional`) se BORRAN (null explicito). `precio_centimos` no se envia: en un alta queda null y en un cambio
+     * conserva el guardado (el precio se administra con las tarifas, D7-19). Un `planId` que no existe es 422
+     * PRODUCT_PLAN_NOT_FOUND antes de escribir. Las reglas de negocio son las de [AdminProductoComercialDto.validated].
+     */
+    internal fun putProducto(rawCodigo: String, cmd: ProductoPutCommand): CatalogUpsert<AdminProductoComercialDto> {
+        require(cmd.tipoProducto in AdminCatalogQueries.PRODUCT_TIPOS) { "tipoProducto no valido." }
+        val codigo = AdminCatalogCommands.codigo(rawCodigo)
+        val valid = AdminProductoComercialDto(
+            codigo = codigo,
+            tipoProducto = cmd.tipoProducto,
+            nombre = cmd.nombre,
+            descripcion = cmd.descripcion,
+            planId = cmd.planId,
+            moneda = cmd.moneda,
+            cantidadTickets = cmd.cantidadTickets,
+            activo = cmd.activo,
+            visible = cmd.visible,
+            destacado = cmd.destacado,
+            etiquetaPromocional = cmd.etiquetaPromocional,
+            posicion = cmd.posicion,
+        ).validated()
+        val planId = valid.planId?.also { id ->
+            require(id.isUuid()) { "planId no valido." }
+            val exists = request("GET", "/rest/v1/planes_suscripcion?select=id&id=eq.$id&limit=1", null).decodeList<PlanRow>().isNotEmpty()
+            if (!exists) throw BackendDomainException("PRODUCT_PLAN_NOT_FOUND", HttpStatusCode.UnprocessableEntity, "El plan indicado no existe.")
+        }
+        val existed = request("GET", "/rest/v1/productos_comerciales?select=id&codigo=eq.${codigo.urlEncode()}&limit=1", null)
+            .decodeList<ProductoComercialRow>().isNotEmpty()
+        val row = buildJsonObject {
+            put("codigo", JsonPrimitive(codigo))
+            put("tipo_producto", JsonPrimitive(valid.tipoProducto))
+            put("nombre", JsonPrimitive(valid.nombre))
+            put("descripcion", valid.descripcion?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("plan_id", planId?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("moneda", JsonPrimitive(valid.moneda))
+            put("cantidad_tickets", valid.cantidadTickets?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("activo", JsonPrimitive(valid.activo))
+            put("visible", JsonPrimitive(valid.visible))
+            put("destacado", JsonPrimitive(valid.destacado))
+            put("etiqueta_promocional", valid.etiquetaPromocional?.let { JsonPrimitive(it) } ?: JsonNull)
+            put("posicion", JsonPrimitive(valid.posicion))
+        }
+        val saved = request(
+            "POST",
+            "/rest/v1/productos_comerciales?on_conflict=codigo",
+            JsonArray(listOf(row)).toString(),
+            prefer = "resolution=merge-duplicates,return=representation",
+        ).decodeList<ProductoComercialRow>().firstOrNull()?.takeIf { it.id.isUuid() } ?: error("El producto comercial no se pudo guardar.")
+        registrarAuditoria(
+            "producto_comercial_guardado",
+            "productos_comerciales",
+            saved.id,
+            despues = buildJsonObject {
+                put("codigo", JsonPrimitive(codigo))
+                put("tipo_producto", JsonPrimitive(valid.tipoProducto))
+                put("activo", JsonPrimitive(valid.activo))
+                put("visible", JsonPrimitive(valid.visible))
+            },
+            required = true,
+        )
+        return CatalogUpsert(saved.toDto(tarifas = listTarifas(saved.id)), created = !existed)
     }
 
     /** D7-21: una pagina de planes (mismo orden que [listPlanes]) con sus beneficios, pedidos solo para los planes de la pagina. */

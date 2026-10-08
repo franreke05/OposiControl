@@ -125,8 +125,11 @@ GET	/api/v1/app/intentos/{}/resultado	BOT	user-jwt	Consumer app API: intentos/{}
 GET	/api/v1/app/intentos/{}/revision	BOT	user-jwt	Consumer app API: intentos/{}/revision (D2-65)	OposiBot
 GET	/api/v1/app/legal/documents	BOT	none	Legal documents (public, IP rate limit; mounted with the consumer auth runtime)	OposiBot
 GET	/api/v1/app/me	AUTH	user-jwt	Canonical profile/account: GET me	OposiBot
+GET	/api/v1/app/me/billing-history	BOT	user-jwt	Consumer app API: me/billing-history (D7-05)	OposiBot
 GET	/api/v1/app/me/entitlement	BOT	user-jwt	Consumer app API: me/entitlement (D7-02)	OposiBot
 GET	/api/v1/app/me/examenes	BOT	user-jwt	Consumer app API: me/examenes (D2-13)	OposiBot
+GET	/api/v1/app/oposired/categorias	BOT	user-jwt	Consumer app API: oposired/categorias (D5-01)	OposiBot
+GET	/api/v1/app/opositester/me	BOT	user-jwt	Consumer app API: opositester/me (D5-16)	OposiBot
 GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
 GET	/api/v1/app/wallet	BOT	user-jwt	Consumer wallet balance	OposiBot
 GET	/api/v1/app/wallet/movimientos	BOT	user-jwt	Consumer wallet movements	OposiBot
@@ -258,6 +261,7 @@ PUT	/admin/news-types/{}	CONTROL	admin	Admin legacy: news-types/{}	OposiControl
 PUT	/admin/roles/{}	CONTROL	admin	Admin legacy: roles/{}	OposiControl
 PUT	/admin/settings	CONTROL	admin	Admin legacy: settings	OposiControl
 PUT	/admin/users/{}	CONTROL	admin	Admin legacy: users/{}	OposiControl
+PUT	/api/v1/admin/comercial/productos/{}	CONTROL	admin	Admin v1: alta o cambio de un producto comercial por codigo	OposiControl
 PUT	/api/v1/admin/comercial/productos/{}/tarifas/{}/{}	CONTROL	admin	Admin v1: alta o cambio de una tarifa por producto, periodo y fase	OposiControl
 PUT	/api/v1/admin/especialidades/{}/capacidades	CONTROL	admin	Admin v1: especialidades/{}/capacidades	OposiControl
 PUT	/api/v1/admin/planes/{}	CONTROL	admin	Admin v1: alta o cambio de un plan por codigo	OposiControl

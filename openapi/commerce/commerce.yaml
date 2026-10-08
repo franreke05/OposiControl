@@ -6,7 +6,8 @@
 # FA13 also adds two catalog writes on new paths: D7-22 (plan upsert by codigo) and D7-19 (tariff upsert by product, period
 # and phase). Each is one INSERT .. ON CONFLICT statement on the production UNIQUE constraint, followed by its audit row.
 # FA14 adds the promotion use log D7-29 (read-only).
-# Not part of this file: D7-18, D7-23, D6-19, D6-21, D6-23 and store mappings D7-20 (DEC-031).
+# FA15 adds the product upsert D7-18 on a new path (by codigo), with the field names D7-17 emits.
+# Not part of this file: D7-23, D6-19, D6-21, D6-23 and store mappings D7-20 (DEC-031).
 components:
   pathItems:
     AdminSubscriptions:
@@ -469,6 +470,53 @@ components:
             description: 'PLAN_NAME_REQUIRED, PLAN_LEVEL_NEGATIVE, PLAN_LEVEL_OUT_OF_RANGE, PLAN_POSITION_NEGATIVE or PLAN_VISIBLE_BUT_INACTIVE.'
           '502':
             $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+    AdminCommercialProduct:
+      put:
+        operationId: upsertAdminCommercialProduct
+        summary: 'Create or update a commercial product by codigo'
+        tags: [commerce-admin]
+        x-contract-id: D7-18
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, MALFORMED_BODY, UNAUTHENTICATED, FORBIDDEN, PRODUCT_NAME_REQUIRED, PRODUCT_CURRENCY_REQUIRED, PRODUCT_TICKETS_NOT_POSITIVE, PRODUCT_POSITION_NEGATIVE, PRODUCT_HIGHLIGHTED_BUT_HIDDEN, PRODUCT_PLAN_NOT_FOUND, UPSTREAM_ERROR]
+        description: 'Upsert by the natural key codigo, taken from the path: INSERT .. ON CONFLICT (codigo) DO UPDATE in one statement, so repeating the request leaves the same product and never a duplicate. The product id is assigned by the database on creation and kept on update. The body uses the field names the product list D7-17 emits (tipoProducto, planId, etiquetaPromocional), not the design names (tipo, planCodigo, etiqueta). An absent or null descripcion, cantidadTickets, planId or etiquetaPromocional clears the stored value. The price is not part of this command: it lives in the tariffs (D7-19); the stored precioCentimos is left unchanged. A planId that does not exist is 422 PRODUCT_PLAN_NOT_FOUND. An unknown tipoProducto, a planId that is not a uuid, a text over its limit or an unknown body field is 400 VALIDATION. An audit row (producto_comercial_guardado, actor = JWT sub) is written after the statement. No If-Match: the product read exposes no version. 201 when the product did not exist, 200 otherwise.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/CodigoPath'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductoPutRequest'
+        responses:
+          '200':
+            description: 'Updated.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ProductoEnvelope'
+          '201':
+            description: 'Created.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ProductoEnvelope'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'PRODUCT_NAME_REQUIRED, PRODUCT_CURRENCY_REQUIRED, PRODUCT_TICKETS_NOT_POSITIVE, PRODUCT_POSITION_NEGATIVE, PRODUCT_HIGHLIGHTED_BUT_HIDDEN or PRODUCT_PLAN_NOT_FOUND.'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
     AdminCommercialProductTariff:
       put:
         operationId: upsertAdminCommercialProductTariff
@@ -696,6 +744,52 @@ components:
       type: string
       description: 'Product types of productos_comerciales (CHECK productos_comerciales_tipo_producto_check).'
       enum: [suscripcion, pack_tickets, compra_examen, servicio, consumible]
+    ProductoPutRequest:
+      type: object
+      additionalProperties: false
+      required: [tipoProducto, nombre, moneda, destacado, posicion, activo, visible]
+      properties:
+        tipoProducto:
+          $ref: '#/components/schemas/ProductoTipo'
+        nombre:
+          type: string
+          minLength: 1
+          maxLength: 200
+        descripcion:
+          type: [string, 'null']
+          maxLength: 2000
+        cantidadTickets:
+          type: [integer, 'null']
+          minimum: 1
+          description: 'OposiTickets a pack delivers (422 PRODUCT_TICKETS_NOT_POSITIVE when below 1).'
+        planId:
+          type: [string, 'null']
+          format: uuid
+          description: 'Plan the product sells; it must exist (422 PRODUCT_PLAN_NOT_FOUND otherwise).'
+        moneda:
+          type: string
+          minLength: 1
+          maxLength: 8
+          description: 'Stored in upper case.'
+        destacado:
+          type: boolean
+          description: 'A highlighted product must be visible (422 PRODUCT_HIGHLIGHTED_BUT_HIDDEN otherwise).'
+        etiquetaPromocional:
+          type: [string, 'null']
+          maxLength: 100
+        posicion:
+          type: integer
+          minimum: 0
+        activo:
+          type: boolean
+        visible:
+          type: boolean
+    ProductoEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/ProductoComercial'
     Tarifa:
       type: object
       description: 'A row of tarifas_producto_comercial. Money is an integer number of cents.'

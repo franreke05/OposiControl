@@ -327,6 +327,116 @@ class AdminCatalogWriteRoutesTest {
         assertTrue(upstream.tables.getValue("tarifas_producto_comercial").isEmpty())
     }
 
+    // ================================================================== D7-18 producto (FA15)
+
+    private val productPath = "/api/v1/admin/comercial/productos/PACK_100"
+    private val productBody =
+        """{"tipoProducto":"pack_tickets","nombre":" Pack 100 ","descripcion":"Cien OT","cantidadTickets":100,"moneda":"eur","destacado":true,"etiquetaPromocional":"Mejor valor","posicion":2,"activo":true,"visible":true}"""
+
+    @Test
+    fun theProductCommandRejectsAnUnauthenticatedCallerAndANonAdminBeforeReadingAnything() = testApplication {
+        application { module() }
+        assertEquals(HttpStatusCode.Unauthorized, put(productPath, productBody, token = null).status)
+        val forbidden = put(productPath, productBody, token = userToken)
+        assertEquals(HttpStatusCode.Forbidden, forbidden.status)
+        assertEquals("FORBIDDEN", obj(forbidden.bodyAsText())["code"]!!.jsonPrimitive.content)
+        assertTrue(upstream.sent.isEmpty() && upstream.audits.isEmpty())
+    }
+
+    @Test
+    fun aProductIsCreatedThenUpdatedByCodigoWithTheFieldNamesOfTheProductList() = testApplication {
+        application { module() }
+        val created = saved("D7-18", productPath, productBody, HttpStatusCode.Created)
+        assertEquals("PACK_100", created["codigo"]!!.jsonPrimitive.content)
+        assertEquals("pack_tickets", created["tipoProducto"]!!.jsonPrimitive.content)
+        assertEquals("Pack 100", created["nombre"]!!.jsonPrimitive.content, "the name is trimmed")
+        assertEquals("EUR", created["moneda"]!!.jsonPrimitive.content, "the currency is stored in upper case")
+        assertEquals(100, created["cantidadTickets"]!!.jsonPrimitive.int)
+        assertEquals("Mejor valor", created["etiquetaPromocional"]!!.jsonPrimitive.content)
+        assertTrue(created["tarifas"]!!.jsonArray.isEmpty())
+        // Mismos nombres que emite D7-17: el elemento guardado valida contra el elemento de la lista.
+        val listItem = docs.resolveRef("commerce/commerce.yaml#/components/schemas/ProductoComercial", docs.rootFile)
+        val problems = mutableListOf<String>()
+        checker.validate(listItem, created, "$", problems)
+        assertTrue(problems.isEmpty(), problems.joinToString("\n"))
+
+        // Repetir la MISMA peticion: mismo producto, mismo id, 200, ningun duplicado.
+        val again = saved("D7-18", productPath, productBody, HttpStatusCode.OK)
+        assertEquals(created["id"], again["id"])
+        assertEquals(1, upstream.tables.getValue("productos_comerciales").size)
+
+        // Un precio guardado por otra via no lo toca este comando; los opcionales ausentes se BORRAN.
+        upstream.tables.getValue("productos_comerciales").single()["precio_centimos"] = JsonPrimitive(999)
+        val plan = upstream.id()
+        upstream.tables.getValue("planes_suscripcion") += mutableMapOf<String, JsonElement>("id" to JsonPrimitive(plan), "codigo" to JsonPrimitive("premium"))
+        val changed = saved(
+            "D7-18",
+            productPath,
+            """{"tipoProducto":"suscripcion","nombre":"Premium","planId":"${plan.uppercase()}","moneda":"EUR","destacado":false,"posicion":0,"activo":true,"visible":false}""",
+            HttpStatusCode.OK,
+        )
+        assertEquals(created["id"], changed["id"])
+        assertEquals("suscripcion", changed["tipoProducto"]!!.jsonPrimitive.content)
+        assertEquals(plan, changed["planId"]!!.jsonPrimitive.content, "the plan id is stored in lower case")
+        assertEquals(999, changed["precioCentimos"]!!.jsonPrimitive.int, "the stored price is not part of this command")
+        listOf("descripcion", "cantidadTickets", "etiquetaPromocional").forEach { assertFalse(it in changed, "an absent $it clears the stored one") }
+
+        val statements = upstream.sent.filter { it.method() == "POST" && "productos_comerciales" in it.uri().toString() }
+        assertEquals(3, statements.size, "one upsert statement per command")
+        assertTrue(statements.all { "on_conflict=codigo" in it.uri().toString() })
+        statements.forEach { assertFalse("precio_centimos" in readRequestBody(it), "the price column is never written") }
+        assertEquals(3, upstream.audits.size)
+        upstream.audits.forEach { audit ->
+            assertEquals("producto_comercial_guardado", audit["accion"]!!.jsonPrimitive.content)
+            assertEquals(adminUid, audit["usuario_id"]!!.jsonPrimitive.content, "the actor is the JWT sub")
+            assertEquals(created["id"], audit["registro_id"])
+        }
+    }
+
+    @Test
+    fun anInvalidProductCommandIsRejectedBeforeAnyWrite() = testApplication {
+        application { module() }
+        fun body(vararg replace: Pair<String, String>): String =
+            replace.fold("""{"tipoProducto":"pack_tickets","nombre":"P","cantidadTickets":10,"moneda":"EUR","destacado":false,"posicion":1,"activo":true,"visible":true}""") { acc, (from, to) -> acc.replace(from, to) }
+        rejected("D7-18", "/api/v1/admin/comercial/productos/bad%20code", productBody, HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", "/api/v1/admin/comercial/productos/a%26select%3D*", productBody, HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, "{not json", HttpStatusCode.BadRequest, "MALFORMED_BODY")
+        rejected("D7-18", productPath, body("\"nombre\":\"P\"," to ""), HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, body("pack_tickets" to "opositickets"), HttpStatusCode.BadRequest, "VALIDATION")
+        // Los nombres del diseno y los campos del servidor no se aceptan: solo los de D7-17.
+        rejected("D7-18", productPath, body("\"tipoProducto\"" to "\"tipo\""), HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, body("\"posicion\":1" to "\"posicion\":1,\"planCodigo\":\"premium\""), HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, body("\"posicion\":1" to "\"posicion\":1,\"precioCentimos\":100"), HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, body("\"posicion\":1" to "\"posicion\":1,\"id\":\"x\""), HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, body("\"posicion\":1" to "\"posicion\":1,\"planId\":\"no-uuid\""), HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, body("\"cantidadTickets\":10" to "\"cantidadTickets\":1.5"), HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, body("\"nombre\":\"P\"" to "\"nombre\":\"${"x".repeat(201)}\""), HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, body("\"nombre\":\"P\"" to "\"nombre\":\"P\",\"descripcion\":\"${"x".repeat(2001)}\""), HttpStatusCode.BadRequest, "VALIDATION")
+        rejected("D7-18", productPath, body("\"nombre\":\"P\"" to "\"nombre\":\"  \""), HttpStatusCode.UnprocessableEntity, "PRODUCT_NAME_REQUIRED")
+        rejected("D7-18", productPath, body("\"moneda\":\"EUR\"" to "\"moneda\":\" \""), HttpStatusCode.UnprocessableEntity, "PRODUCT_CURRENCY_REQUIRED")
+        rejected("D7-18", productPath, body("\"cantidadTickets\":10" to "\"cantidadTickets\":0"), HttpStatusCode.UnprocessableEntity, "PRODUCT_TICKETS_NOT_POSITIVE")
+        rejected("D7-18", productPath, body("\"posicion\":1" to "\"posicion\":-1"), HttpStatusCode.UnprocessableEntity, "PRODUCT_POSITION_NEGATIVE")
+        rejected("D7-18", productPath, body("\"destacado\":false" to "\"destacado\":true", "\"visible\":true" to "\"visible\":false"), HttpStatusCode.UnprocessableEntity, "PRODUCT_HIGHLIGHTED_BUT_HIDDEN")
+        rejected(
+            "D7-18", productPath, body("\"posicion\":1" to "\"posicion\":1,\"planId\":\"eeeeeeee-0000-4000-8000-999999999999\""),
+            HttpStatusCode.UnprocessableEntity, "PRODUCT_PLAN_NOT_FOUND",
+        )
+        assertTrue(upstream.tables.getValue("productos_comerciales").isEmpty())
+    }
+
+    @Test
+    fun aFailedProductWriteIs502AndAFailedAuditRowIsNeverReportedAsSuccess() = testApplication {
+        application { module() }
+        upstream.failWrites = true
+        val failed = put(productPath, productBody)
+        assertEquals(HttpStatusCode.BadGateway, failed.status)
+        assertEquals("UPSTREAM_ERROR", obj(failed.bodyAsText())["code"]!!.jsonPrimitive.content)
+        assertTrue(upstream.audits.isEmpty(), "nothing was saved, so nothing is audited")
+        upstream.failWrites = false
+        upstream.failAudit = true
+        assertTrue(put(productPath, productBody).status.value >= 500, "the audit row is mandatory")
+    }
+
     // ================================================================== las rutas POST del cliente actual
 
     @Test

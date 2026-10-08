@@ -14,8 +14,11 @@ GET /api/v1/app/intentos/{}/resultado
 GET /api/v1/app/intentos/{}/revision
 GET /api/v1/app/legal/documents
 GET /api/v1/app/me
+GET /api/v1/app/me/billing-history
 GET /api/v1/app/me/entitlement
 GET /api/v1/app/me/examenes
+GET /api/v1/app/oposired/categorias
+GET /api/v1/app/opositester/me
 GET /api/v1/app/reto-diario
 GET /api/v1/app/wallet
 GET /api/v1/app/wallet/movimientos

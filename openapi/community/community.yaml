@@ -1,0 +1,122 @@
+# COMMUNITY read contracts of the app (FA15): D5-01 (OposiRed category catalog) and D5-16 (own OposiTester counters).
+# Source of truth: categorias_oposired and estado_opositester_usuario. The user is always the JWT sub.
+# The forum itself (feed, posts, comments, reactions: D5-02..D5-13) depends on open product decisions and is not here.
+components:
+  pathItems:
+    OposiRedCategories:
+      get:
+        operationId: listOposiRedCategories
+        summary: 'List the active OposiRed categories'
+        tags: [community]
+        x-contract-id: D5-01
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR, UPSTREAM_UNAVAILABLE]
+        description: 'Bounded catalog: only active categories, ordered by posicion then nombre, at most 50 (server cap, no pagination). The same list for every user. Cache private, max-age=300.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Active categories.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/PrivateMaxAge300'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      maxItems: 50
+                      items:
+                        $ref: '#/components/schemas/OposiRedCategoria'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    OposiTesterMe:
+      get:
+        operationId: getMyOposiTesterStatus
+        summary: 'Get the OposiTester counters of the current user'
+        tags: [community]
+        x-contract-id: D5-16
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR, UPSTREAM_UNAVAILABLE]
+        description: 'Bare object (no data wrapper). Own counters only: the row of the JWT sub. A user who never sent a report has no row and gets zeros. nivel is null until DEC-028 defines the levels (value only). Cache private, no-store.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Own OposiTester counters.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/PrivateNoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/OposiTesterEstado'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    PrivateNoStore:
+      description: 'private, no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['private, no-store']
+    PrivateMaxAge300:
+      description: 'private, max-age=300'
+      required: true
+      schema:
+        type: string
+        enum: ['private, max-age=300']
+  schemas:
+    OposiRedCategoria:
+      type: object
+      required: [id, nombre, slug, posicion]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        nombre:
+          type: string
+        slug:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        posicion:
+          type: integer
+    OposiTesterEstado:
+      type: object
+      required: [reportesEnviados, reportesValidados, ticketsGanados]
+      properties:
+        reportesEnviados:
+          type: integer
+          minimum: 0
+        reportesValidados:
+          type: integer
+          minimum: 0
+        ticketsGanados:
+          type: integer
+          minimum: 0
+        nivel:
+          type: [string, 'null']
+          description: 'null until DEC-028 (OposiTester levels).'

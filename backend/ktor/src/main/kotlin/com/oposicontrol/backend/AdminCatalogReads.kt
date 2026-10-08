@@ -77,6 +77,25 @@ internal data class TarifaPutCommand(
     val posicion: Int? = null,
 )
 
+/**
+ * D7-18 (FA15) `PUT /api/v1/admin/comercial/productos/{codigo}`: el codigo va en la ruta. Los campos llevan los nombres que
+ * emite D7-17 (`tipoProducto`, `planId`, `etiquetaPromocional`), no los del diseno (`tipo`, `planCodigo`, `etiqueta`):
+ * decision del lead, para que lectura y escritura del catalogo hablen igual. El precio NO viaja: vive en las tarifas (D7-19).
+ */
+internal data class ProductoPutCommand(
+    val tipoProducto: String,
+    val nombre: String,
+    val descripcion: String? = null,
+    val cantidadTickets: Int? = null,
+    val planId: String? = null,
+    val moneda: String,
+    val destacado: Boolean,
+    val etiquetaPromocional: String? = null,
+    val posicion: Int,
+    val activo: Boolean,
+    val visible: Boolean,
+)
+
 /** El recurso guardado y si se CREO (201) o ya existia (200). */
 internal data class CatalogUpsert<T>(val value: T, val created: Boolean)
 
@@ -148,6 +167,40 @@ internal object AdminCatalogCommands {
         val visible = body.bool("visible")
         val posicion = body.int("posicion")
         return body.build { PlanPutCommand(nombre!!, descripcion, nivel!!, activo!!, visible!!, posicion!!) }
+    }
+
+    /** Topes de texto de D7-18 (puntos de codigo). No son reglas de producto: acotan lo que un cuerpo puede escribir en una fila. */
+    const val PRODUCTO_NOMBRE_MAX = 200
+    const val PRODUCTO_DESCRIPCION_MAX = 2_000
+    const val PRODUCTO_ETIQUETA_MAX = 100
+    const val PRODUCTO_MONEDA_MAX = 8
+
+    /**
+     * Cuerpo de D7-18. `tipoProducto` fuera del CHECK de produccion, `planId` que no es un uuid o un texto por encima de su
+     * tope son 400 VALIDATION aqui, antes de cualquier lectura. Las reglas de negocio (422 `PRODUCT_*`) son las de
+     * [AdminProductoComercialDto.validated], las mismas que aplica la ruta POST del cliente actual.
+     */
+    fun producto(raw: ByteArray): ProductoPutCommand {
+        val body = Body(
+            raw,
+            setOf("tipoProducto", "nombre", "descripcion", "cantidadTickets", "planId", "moneda", "destacado", "etiquetaPromocional", "posicion", "activo", "visible"),
+        )
+        fun bounded(name: String, value: String?, max: Int): String? =
+            value?.also { if (it.codePointCount(0, it.length) > max) body.issues += ErrorIssue(name, CanonicalIssue.OUT_OF_RANGE) }
+        val tipo = body.string("tipoProducto")?.also { if (it !in AdminCatalogQueries.PRODUCT_TIPOS) body.issues += ErrorIssue("tipoProducto", CanonicalIssue.INVALID_FORMAT) }
+        val nombre = bounded("nombre", body.string("nombre"), PRODUCTO_NOMBRE_MAX)
+        val descripcion = bounded("descripcion", body.string("descripcion", required = false), PRODUCTO_DESCRIPCION_MAX)
+        val cantidadTickets = body.int("cantidadTickets", required = false)
+        val planId = body.string("planId", required = false)?.also { if (!it.isUuid()) body.issues += ErrorIssue("planId", CanonicalIssue.INVALID_FORMAT) }
+        val moneda = bounded("moneda", body.string("moneda"), PRODUCTO_MONEDA_MAX)
+        val destacado = body.bool("destacado")
+        val etiqueta = bounded("etiquetaPromocional", body.string("etiquetaPromocional", required = false), PRODUCTO_ETIQUETA_MAX)
+        val posicion = body.int("posicion")
+        val activo = body.bool("activo")
+        val visible = body.bool("visible")
+        return body.build {
+            ProductoPutCommand(tipo!!, nombre!!, descripcion, cantidadTickets, planId?.lowercase(), moneda!!, destacado!!, etiqueta, posicion!!, activo!!, visible!!)
+        }
     }
 
     /** Cuerpo de D7-19. El precio es un ENTERO de centimos: un decimal es 400, nunca se redondea. */

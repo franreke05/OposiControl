@@ -565,6 +565,8 @@ fun Application.module() {
     val catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it) }
     // SLICE 7: lecturas de cartera (D6-01, D6-02), solo lectura, misma credencial de servicio.
     val walletRuntime = canonicalIdentityResolver?.let { WalletRuntime.fromEnvironment(it) }
+    // FA15: lecturas de consumidor (D7-05, D5-01, D5-16), solo lectura, misma credencial de servicio.
+    val appReadsRuntime = canonicalIdentityResolver?.let { AppReadsRuntime.fromEnvironment(it) }
     // FA11 (D4-01..D4-11): noticias canonicas. UN servicio compartido con `/content/noticias*`; la auditoria usa el actor del JWT.
     val newsRuntime = adminOnly("servir noticias canonicas desde Ktor") {
         val idempotency = PostgrestIdempotencyStore.fromEnvironment() ?: return@adminOnly null
@@ -600,6 +602,7 @@ fun Application.module() {
         identityResolver = canonicalIdentityResolver,
         catalogRuntime = catalogRuntime,
         walletRuntime = walletRuntime,
+        appReadsRuntime = appReadsRuntime,
         newsRuntime = newsRuntime,
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
@@ -668,6 +671,8 @@ internal class CombinedRoutingDeps(
     internal val attemptRuntime: AttemptRuntime? = null,
     /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
     internal val newsRuntime: NewsRuntime? = null,
+    /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val appReadsRuntime: AppReadsRuntime? = null,
 )
 
 /** Perfil historico: todo. Conjunto de rutas identico al de siempre. */
@@ -717,6 +722,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     catalogRoutes(catalogRuntime)
     // SLICE 7: cartera del consumidor, solo lectura (D6-01, D6-02).
     walletRoutes(walletRuntime)
+    // FA15: historial de compras y suscripciones, categorias de OposiRed y contadores de OposiTester (D7-05, D5-01, D5-16).
+    appReadsRoutes(appReadsRuntime)
     // SLICE 3: runtime de examen del consumidor (D2-03, D2-07, D2-08, D2-09, D2-10, D2-11, D2-12, D2-65).
     attemptRoutes(attemptRuntime)
     authRuntime?.let {

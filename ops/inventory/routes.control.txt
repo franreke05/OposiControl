@@ -209,6 +209,7 @@ PUT /admin/news-types/{}
 PUT /admin/roles/{}
 PUT /admin/settings
 PUT /admin/users/{}
+PUT /api/v1/admin/comercial/productos/{}
 PUT /api/v1/admin/comercial/productos/{}/tarifas/{}/{}
 PUT /api/v1/admin/especialidades/{}/capacidades
 PUT /api/v1/admin/planes/{}

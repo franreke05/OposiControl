@@ -3,7 +3,7 @@
 Single list of what the backend is NOT implementing because a product (or owner-level security) decision is open.
 A blocked capability does not block its slice: everything else in the slice is implemented or scheduled.
 Source of the contract ids and DEC ids: `OPENAPI_EXTENSION_PLAN.md` (this folder) and the decision register
-`PHASE3_DECISION_GATE.md` (OposiBot repo). Updated 2026-10-08.
+`PHASE3_DECISION_GATE.md` (OposiBot repo). Updated 2026-10-09.
 
 ## 1. Contracts blocked by an open product decision (37)
 
@@ -36,6 +36,7 @@ External: D7-03 (payment provider verification) needs the provider chosen in DEC
 | `comparativa`, `probabilidadPlaza`, `pctAciertoGlobal` | result D2-12 | DEC-004, DEC-016, DEC-019 |
 | explanation / resources in review | D2-65 | DEC-025, DEC-040 |
 | `recompensas` | wallet D6-01 | DEC-036 |
+| `nivel` | own OposiTester counters D5-16 | DEC-028 |
 
 ## 3. Defaults taken by engineering that the owner may want to change
 
@@ -125,7 +126,7 @@ period (the design defines none).
 | D6-20 promotions list | `vigente`: boundary rule of "currently valid" (inclusive or exclusive dates, null dates). | filter not offered |
 | D6-18 services list, D6-19 | Each effect has one `valor` in the design and three typed value columns in the table. | `efectos` not offered |
 | D7-17 products list | `q`: which columns the text search matches. | filter not offered |
-| D7-18 product upsert | Request field names: the design names (`tipo`, `planCodigo`, `etiqueta`) or the names the admin wire already uses (`tipoProducto`, `planId`, `etiquetaPromocional`). | not implemented |
+| D7-18 product upsert | RESOLVED in FA15: the request uses the names the product list emits (`tipoProducto`, `planId`, `etiquetaPromocional`). | implemented (section 12.3) |
 
 ## 11. Defaults taken in the catalog reads and upserts (FA13), to confirm
 
@@ -134,3 +135,47 @@ period (the design defines none).
   row is already saved. Making both a single transaction needs a database function.
 - A plan code or product code in the URL is limited to 64 characters (letters, digits, underscore, dot, hyphen).
 - A tariff saved without `posicion` keeps the position it had (1 for a new one).
+
+## 12. Added by FA15 (2026-10-09)
+
+### 12.1 Four app paths are both "legacy, to retire" and canonical in the design (decision for the lead)
+
+| Contract | Path | Today |
+|---|---|---|
+| D3-01 | `GET /api/v1/app/home` | legacy-marked: `Deprecation` header, retirement counter, register class "retire after telemetry" |
+| D3-03 | `GET /api/v1/app/estadisticas` | same |
+| D7-01 | `GET /api/v1/app/commercial/catalog` | same |
+| D5-15 | `POST /api/v1/app/feedback/pregunta` | same |
+
+The design keeps these paths and extends them. The repository gates treat a path as either legacy (to retire) or declared in the
+contract, never both. Options, none taken: promote the path (remove the deprecation and the retirement row, then extend the
+response); or keep retiring it and give the canonical contract a new path. Nothing was changed for these four.
+
+Open points that remain even after that decision:
+
+- D3-01: the daily challenge block must have the shape of D2-05, which is specified but not served; the legacy response already
+  has `examenes` and `retoDiario` with another element shape and another selection rule (first five published exams, not filtered
+  by the user's specialty).
+- D3-03: failed and unanswered totals, the "last 100" block and the per-exam scope have no stored source and no formula.
+- D7-01: product type values of the design differ from the stored ones; ticket price, service type and effects live in the
+  services table (DEC-033 not executed); the store identifier depends on DEC-031; custom top-up is DEC-032.
+- D5-15: `target` and `recursoId` have no column.
+
+### 12.2 Not implemented in FA15 for a missing schema object or an undefined rule
+
+| Contract | Missing | Effect today |
+|---|---|---|
+| D6-15 ticket economy summary | an aggregate function (sums by type and by period over the ledger, total of balances) | not implemented; the existing summary keeps its counters and lists the sums as unavailable |
+| D5-14 user report | a UNIQUE index for "one pending report per reporter and target", a function for "insert + sent counter" in one transaction, the rate limit rule; and a target a user can actually see (forum reads are blocked; question and resource reports are DEC-026) | not implemented; users cannot file a report through the backend |
+| D4-19 question resources for the app | the saved-resource store (`guardado`), the access rule when no exam is given, and DEC-025 (the attempt review already withholds resources) | not implemented |
+| D5-27 report resolution (canonical) | same path as the route the admin panel calls, with another body and a required `Idempotency-Key`; needs the panel to move first (section 8) | the existing route is unchanged; it grants the reward only through the atomic, idempotent grant function |
+
+### 12.3 Defaults taken in FA15, to confirm
+
+- Billing history (D7-05): a purchase is dated by the creation of its row (a pending purchase has no purchase date yet); a
+  subscription by its start. A subscription shows no price (the table stores none) and its type is always `suscripcion`.
+- Forum categories (D5-01): at most 50, cached by the client for five minutes; no ETag.
+- OposiTester (D5-16): the stored level is not shown until DEC-028 defines the levels.
+- Product upsert (D7-18): field names of the product list, not of the design; the price cannot be set here (only through
+  tariffs); a missing plan is 422; text limits 200 / 2000 / 100 characters (name, description, promotional label); the row and
+  its audit row are two steps, as in the plan and tariff upserts.
