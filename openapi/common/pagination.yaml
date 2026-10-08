@@ -4,7 +4,7 @@
 #   unsigned (owner/authorization filters re-applied every request). Undecodable, wrong v
 #   or f mismatch -> 400 INVALID_CURSOR. limit missing -> default; non-integer or < 1 ->
 #   400 VALIDATION (OUT_OF_RANGE); > max -> clamped to max.
-# OFFSET: only for the OC admin grids D1-22, D2-20, D2-35, D2-37, D2-51, D2-55, D2-61.
+# OFFSET: only for the OC admin grids D1-22, D2-20, D2-35, D2-37, D2-51, D2-55, D2-61, D4-10.
 #   Response {items, total?, limit, offset}; total null when the count fails, never a fake 0.
 # Operations declare x-pagination: CURSOR | OFFSET | NONE and compose the page envelope
 # with allOf (items are typed per operation).

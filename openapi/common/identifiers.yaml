@@ -129,3 +129,9 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/Uuid'
+    NoticiaIdPath:
+      name: noticiaId
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'

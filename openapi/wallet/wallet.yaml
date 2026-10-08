@@ -1,0 +1,215 @@
+# WALLET read contracts (FA11): D6-01, D6-02. OposiTickets (OT) balance and ledger of the current user.
+# Source of truth: transacciones_cartera (append-only ledger), carteras_usuario (balance projection) and
+# activaciones_servicio_usuario. The user is always the JWT sub; there is never a userId parameter.
+# Wallet COMMANDS are not part of this file: redeem D6-03 (values on DEC-035), reward claim D6-04 (DEC-036),
+# purchases D7-03 and the payment webhook D7-04 (DEC-031).
+components:
+  pathItems:
+    Wallet:
+      get:
+        operationId: getMyWallet
+        summary: 'Get the current user wallet summary'
+        tags: [wallet]
+        x-contract-id: D6-01
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, UPSTREAM_UNAVAILABLE]
+        description: 'Bare object (no data wrapper). One consistent read-only snapshot: balance, earnings by period and origin, the 5 most recent movements and the consumable inventory (active ones plus those of the last 30 days). Periods (hoy, semana, mes) are computed in Europe/Madrid (technical default). recompensas is null until DEC-036 defines the reward catalog (value only; the claim command D6-04 is not in this contract). Cache private, no-store.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Wallet summary.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/PrivateNoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/WalletSummary'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    WalletMovements:
+      get:
+        operationId: listMyWalletMovements
+        summary: 'List the current user wallet movements'
+        tags: [wallet]
+        x-contract-id: D6-02
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_FILTER, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, UPSTREAM_UNAVAILABLE]
+        description: 'Keyset (creado_en desc, id) over the append-only ledger of the JWT sub. An unknown tipo or origen is 400 INVALID_FILTER. The tipo filter lists the ledger types that exist today; DEC-040 may only ADD types, and the response tipo is an open string for that reason.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: tipo
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/LedgerTipo'
+          - name: origen
+            in: query
+            required: false
+            schema:
+              $ref: '#/components/schemas/MovimientoOrigenFiltro'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'Movement page.'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/Movimiento'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, INVALID_FILTER or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    PrivateNoStore:
+      description: 'private, no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['private, no-store']
+  schemas:
+    LedgerTipo:
+      type: string
+      description: 'Ledger types of transacciones_cartera (CHECK transacciones_cartera_tipo_check). DEC-040 may add types.'
+      enum: [recarga, pack_tickets, gasto, compra_examen, compra_servicio, ajuste, devolucion, regalo, reto_diario, bonus_racha, referido, reporte_validado, potenciador, protector]
+    MovimientoOrigen:
+      type: string
+      description: 'Origin category, derived by the server from the ledger tipo. otros groups every movement outside the named categories.'
+      enum: [recompensas, compras, rachas, retos, invitaciones, opositester, otros]
+    MovimientoOrigenFiltro:
+      type: string
+      description: 'Origin categories accepted as a filter.'
+      enum: [recompensas, compras, rachas, retos, invitaciones, opositester]
+    ConsumibleEstado:
+      type: string
+      description: 'Cancelled activations are never returned.'
+      enum: [activa, usada, caducada]
+    MovimientoReferencia:
+      type: [object, 'null']
+      description: 'What the movement refers to (for example an exam or a service), when it refers to something.'
+      required: []
+      properties:
+        tipo:
+          type: [string, 'null']
+        id:
+          type: [string, 'null']
+          format: uuid
+        titulo:
+          type: [string, 'null']
+    Movimiento:
+      type: object
+      required: [id, tipo, origen, cantidad, saldoAnterior, saldoResultante, creadoEn]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipo:
+          type: string
+          description: 'Ledger type (see LedgerTipo). Open string: clients tolerate unknown values.'
+        origen:
+          type: string
+          description: 'Origin category (see MovimientoOrigen). Open string: clients tolerate unknown values.'
+        cantidad:
+          type: integer
+          description: 'Signed OT amount: positive credits, negative debits.'
+        saldoAnterior:
+          type: integer
+          minimum: 0
+        saldoResultante:
+          type: integer
+          minimum: 0
+        referencia:
+          $ref: '#/components/schemas/MovimientoReferencia'
+        descripcion:
+          type: [string, 'null']
+        creadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    WalletSummary:
+      type: object
+      required: [saldo, ganancias, recientes, consumibles, actualizadoEn]
+      properties:
+        saldo:
+          type: integer
+          minimum: 0
+        ganancias:
+          type: object
+          description: 'OT earned (credits only) in the current day, week and month, Europe/Madrid.'
+          required: [hoy, semana, mes, porOrigen]
+          properties:
+            hoy:
+              type: integer
+              minimum: 0
+            semana:
+              type: integer
+              minimum: 0
+            mes:
+              type: integer
+              minimum: 0
+            porOrigen:
+              type: array
+              items:
+                type: object
+                required: [origen, cantidad]
+                properties:
+                  origen:
+                    $ref: '#/components/schemas/MovimientoOrigen'
+                  cantidad:
+                    type: integer
+                    minimum: 0
+        recientes:
+          type: array
+          maxItems: 5
+          items:
+            $ref: '#/components/schemas/Movimiento'
+        consumibles:
+          type: array
+          items:
+            type: object
+            required: [activacionId, servicioCodigo, estado]
+            properties:
+              activacionId:
+                $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+              servicioCodigo:
+                type: string
+              estado:
+                $ref: '#/components/schemas/ConsumibleEstado'
+              usosRestantes:
+                type: [integer, 'null']
+                minimum: 0
+              activaHasta:
+                type: [string, 'null']
+                format: date-time
+        recompensas:
+          type: [array, 'null']
+          description: 'null until DEC-036 (reward catalog). The item shape is not frozen yet.'
+          items:
+            type: object
+        actualizadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
