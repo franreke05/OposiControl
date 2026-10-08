@@ -107,7 +107,7 @@ GET	/api/v1/admin/usuarios	CONTROL	admin	Admin v1: usuarios	OposiControl
 GET	/api/v1/admin/usuarios/{}	CONTROL	admin	Admin v1: usuarios/{}	OposiControl
 GET	/api/v1/admin/usuarios/{}/detalle	CONTROL	admin	Admin v1: usuarios/{}/detalle	OposiControl
 GET	/api/v1/app/commercial/catalog	BOT	user-jwt	Consumer app API: commercial/catalog	OposiBot
-GET	/api/v1/app/commercial/purchases	BOT	user-jwt	Consumer app API: commercial/purchases	OposiBot
+GET	/api/v1/app/commercial/purchases	BOT	user-jwt	Consumer app: commercial purchases list	OposiBot
 GET	/api/v1/app/commercial/subscriptions	BOT	user-jwt	Consumer app API: commercial/subscriptions	OposiBot
 GET	/api/v1/app/estadisticas	BOT	user-jwt	Consumer app API: estadisticas	OposiBot
 GET	/api/v1/app/examenes	BOT	user-jwt	Consumer app API: examenes	OposiBot

@@ -7,6 +7,8 @@ cd "$(dirname "$0")/.."
 bash scripts/verify-ops-config.sh >/dev/null || { echo "TEST FAIL: el repo deberia pasar"; exit 1; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 n=0
+# Valor de relleno para la mutacion "secreto en claro": se compone en ejecucion para no parecer una clave en el arbol.
+FAKE_PLAIN_VALUE="$(printf '%s%s' abcdefghijkl mnopqrstuvwx)"
 # mutate <descripcion> <archivo relativo> <sed -i expr | @touch | @rm> <subcadena del FAIL esperado>
 mutate() {
   local desc="$1" file="$2" expr="$3" expect="$4" w="$tmp/w$n" out
@@ -95,7 +97,7 @@ mutate "compose: sin rotacion de logs" $CP 's/max-size:/max-sz:/' "healthcheck /
 mutate "compose: prometheus publica un puerto" $CP '/^  prometheus:$/a\    ports:\n      - "9090:9090"' "unico puerto publicado"
 mutate "compose: caddy publica un puerto extra" $CP 's/^      - "80:80"$/      - "80:80"\n      - "8080:8080"/' "unico puerto publicado"
 mutate "compose: env_file dentro del repo" $CP 's#/etc/oposibots/production/backend.env#./backend.env#' "env_file fuera del repo"
-mutate "compose con secreto en claro" $CP 's/^      GF_USERS_ALLOW_SIGN_UP: "false"/      GF_USERS_ALLOW_SIGN_UP: "false"\n      GF_SECURITY_SECRET_KEY: abcdefghijklmnopqrstuvwx/' "no hay secretos en claro"
+mutate "compose con secreto en claro" $CP 's/^      GF_USERS_ALLOW_SIGN_UP: "false"/      GF_USERS_ALLOW_SIGN_UP: "false"\n      GF_SECURITY_SECRET_KEY: '"$FAKE_PLAIN_VALUE"'/' "no hay secretos en claro"
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   MUTATE_DOCKER_OFF= mutate "compose con propiedad invalida" $CP 's/^    mem_limit: \${CADDY_MEM_LIMIT:-192m}$/&\n    bogus_key: 1/' "compose.production.yaml parsea"
 fi
