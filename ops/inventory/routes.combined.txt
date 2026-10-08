@@ -120,6 +120,8 @@ GET /api/v1/app/me
 GET /api/v1/app/me/entitlement
 GET /api/v1/app/me/examenes
 GET /api/v1/app/reto-diario
+GET /api/v1/app/wallet
+GET /api/v1/app/wallet/movimientos
 GET /content/comunidades
 GET /content/especialidades
 GET /content/etiquetas

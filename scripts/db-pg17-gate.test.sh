@@ -14,6 +14,8 @@
 #   (i) grant execute de la lectura de SLICE 2 (20261008100300, D2-13 COLECCION) a authenticated -> su VERIFY
 #   (j) esa lectura deja de exigir examen publicado (serviria borradores) -> su VERIFY
 #   (k) esa lectura acepta concesiones caducadas -> la asercion de comportamiento de assertions.sql
+#   (l) el indice keyset de SLICE 7 (20261008100500, D6-02) se crea sin el orden DESC -> su POSTCHECK (la migracion no aplica)
+#   (m) el ROLLBACK de SLICE 7 no borra el indice -> la huella tras el rollback no es la del bootstrap
 set -uo pipefail
 cd "$(dirname "$0")/.."
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -79,4 +81,11 @@ grep -q 'VERIFY my_exams_rpc_without_published_guard = 1' "$tmp/out" || { echo "
 fresh; sed -i '/^      and cd.valido_desde <= v_ahora and (cd.valido_hasta is null or cd.valido_hasta > v_ahora)$/d' "$w/$s2"; mutated "$w/$s2"
 expect_fail "(k) la coleccion acepta concesiones caducadas" "assertions.sql"
 grep -q 'my exams collection = valid grant or command attempt, published only' "$tmp/out" || { echo "TEST FAIL: (k) sin la asercion de la coleccion"; exit 1; }
+# SLICE 7 (20261008100500, indice keyset del libro de cartera, D6-02): (l) indice sin el orden DESC -> su POSTCHECK; (m) ROLLBACK que no lo borra.
+s7=supabase/migrations/20261008100500_slice7_wallet_ledger_keyset_index.sql
+fresh; sed -i 's/^  on public.transacciones_cartera (usuario_id, creado_en desc, id desc);$/  on public.transacciones_cartera (usuario_id, creado_en, id);/' "$w/$s7"; mutated "$w/$s7"
+expect_fail "(l) indice keyset de Slice 7 sin el orden DESC" "20261008100500_slice7_wallet_ledger_keyset_index no aplica"
+grep -q 'WALLET_LEDGER_KEYSET_INDEX_POSTCHECK' "$tmp/out" || { echo "TEST FAIL: (l) sin el POSTCHECK del indice"; exit 1; }
+fresh; sed -i 's/^-- drop index if exists public.idx_transacciones_cartera_usuario_creado_id;$/-- select 1;/' "$w/$s7"; mutated "$w/$s7"
+expect_fail "(m) ROLLBACK de Slice 7 sin borrar el indice" "tras los ROLLBACK el catalogo no vuelve al bootstrap"
 echo "db-pg17-gate.test OK ($n escenarios)"

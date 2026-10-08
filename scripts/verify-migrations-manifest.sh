@@ -40,8 +40,8 @@ man3=supabase/SLICE3_MIGRATIONS.txt
 [ -s "$man3" ] || { echo "FAIL: manifiesto vacio o ausente: $man3"; exit 1; }
 expected3="$(tr -d '\r' < "$man3" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
 [ -n "$expected3" ] || { echo "FAIL: manifiesto Slice 3 sin entradas"; exit 1; }
-# Las 202610*_slice2_*.sql (SLICE 2, mas abajo) tienen su propio manifiesto: toda otra 202610* es de Slice 3.
-actual3="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610.*\.sql$' | grep -Ev '^[0-9]+_slice2_' | sed 's/\.sql$//' | sort) )"
+# Las 202610*_slice2_*.sql (SLICE 2) y 202610*_slice7_*.sql (SLICE 7), mas abajo, tienen su propio manifiesto: toda otra 202610* es de Slice 3.
+actual3="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610.*\.sql$' | grep -Ev '^[0-9]+_slice[27]_' | sed 's/\.sql$//' | sort) )"
 if [ "$actual3" != "$expected3" ]; then
   echo "FAIL: el manifiesto Slice 3 y supabase/migrations/202610*.sql difieren (< manifiesto, > real):"
   diff <(echo "$expected3") <(echo "$actual3")
@@ -89,3 +89,29 @@ for need in 20261008100300_slice2_my_exams_read_rpc 20261008100400_slice2_conten
   echo "$expected2" | grep -qx "$need" || { echo "FAIL: el manifiesto Slice 2 no lista $need"; exit 1; }
 done
 echo "ok:   manifiesto Slice 2 == migraciones 202610*_slice2_* ($(echo "$actual2" | wc -l | tr -d ' '))"
+# SLICE 7: mismo contrato para supabase/SLICE7_MIGRATIONS.txt y los supabase/migrations/202610*_slice7_*.sql (lecturas de cartera:
+# indice keyset del libro de movimientos de D6-02). Comparten prefijo de fecha con Slice 3/2 y se distinguen por el nombre.
+man7=supabase/SLICE7_MIGRATIONS.txt
+[ -s "$man7" ] || { echo "FAIL: manifiesto vacio o ausente: $man7"; exit 1; }
+expected7="$(tr -d '' < "$man7" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
+[ -n "$expected7" ] || { echo "FAIL: manifiesto Slice 7 sin entradas"; exit 1; }
+actual7="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610[0-9]*_slice7_.*.sql$' | sed 's/.sql$//' | sort) )"
+if [ "$actual7" != "$expected7" ]; then
+  echo "FAIL: el manifiesto Slice 7 y supabase/migrations/202610*_slice7_*.sql difieren (< manifiesto, > real):"
+  diff <(echo "$expected7") <(echo "$actual7")
+  exit 1
+fi
+# Toda migracion Slice 7 es POSTERIOR a la ultima de Slice 2 y de Slice 3 (se aplican despues).
+first7="$(echo "$expected7" | head -1 | cut -d_ -f1)"
+last2="$(echo "$expected2" | tail -1 | cut -d_ -f1)"
+[ "$first7" -gt "$last2" ] || { echo "FAIL: la migracion Slice 7 $first7 no es posterior a la ultima de Slice 2 ($last2)"; exit 1; }
+[ "$first7" -gt "$last3" ] || { echo "FAIL: la migracion Slice 7 $first7 no es posterior a la ultima de Slice 3 ($last3)"; exit 1; }
+# El runbook de despliegue cita CADA migracion Slice 7 por su version completa.
+for v7 in $(echo "$expected7" | cut -d_ -f1); do
+  grep -qF "$v7" "$dep" || { echo "FAIL: $dep no cita la migracion Slice 7 $v7"; exit 1; }
+done
+# El indice keyset de D6-02 debe seguir en el manifiesto (sustituirlo en las dos partes a la vez no pasa).
+for need in 20261008100500_slice7_wallet_ledger_keyset_index; do
+  echo "$expected7" | grep -qx "$need" || { echo "FAIL: el manifiesto Slice 7 no lista $need"; exit 1; }
+done
+echo "ok:   manifiesto Slice 7 == migraciones 202610*_slice7_* ($(echo "$actual7" | wc -l | tr -d ' '))"

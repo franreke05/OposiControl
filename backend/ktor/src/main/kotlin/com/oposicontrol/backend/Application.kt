@@ -563,6 +563,8 @@ fun Application.module() {
         null
     }
     val catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it) }
+    // SLICE 7: lecturas de cartera (D6-01, D6-02), solo lectura, misma credencial de servicio.
+    val walletRuntime = canonicalIdentityResolver?.let { WalletRuntime.fromEnvironment(it) }
     // FA11 (D4-01..D4-11): noticias canonicas. UN servicio compartido con `/content/noticias*`; la auditoria usa el actor del JWT.
     val newsRuntime = adminOnly("servir noticias canonicas desde Ktor") {
         val idempotency = PostgrestIdempotencyStore.fromEnvironment() ?: return@adminOnly null
@@ -597,6 +599,7 @@ fun Application.module() {
         authRuntime = authRuntime,
         identityResolver = canonicalIdentityResolver,
         catalogRuntime = catalogRuntime,
+        walletRuntime = walletRuntime,
         newsRuntime = newsRuntime,
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
@@ -659,6 +662,8 @@ internal class CombinedRoutingDeps(
     val readinessCheck: () -> String = ::checkSupabaseReachable,
     /** SLICE 2 (D2-01/02/13, D7-02). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val catalogRuntime: CatalogRuntime? = null,
+    /** SLICE 7 (D6-01, D6-02). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val walletRuntime: WalletRuntime? = null,
     /** SLICE 3 (D2-03, D2-07..D2-12, D2-65). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val attemptRuntime: AttemptRuntime? = null,
     /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
@@ -710,6 +715,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     )
     // SLICE 2: catalogo y derechos del consumidor (D2-01, D2-02, D2-13, D7-02).
     catalogRoutes(catalogRuntime)
+    // SLICE 7: cartera del consumidor, solo lectura (D6-01, D6-02).
+    walletRoutes(walletRuntime)
     // SLICE 3: runtime de examen del consumidor (D2-03, D2-07, D2-08, D2-09, D2-10, D2-11, D2-12, D2-65).
     attemptRoutes(attemptRuntime)
     authRuntime?.let {

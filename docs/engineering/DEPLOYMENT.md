@@ -39,6 +39,9 @@ El despliegue lo ejecuta un humano con el gate de produccion; CI solo VERIFICA (
    y `ADQUIRIDOS` no la usan. Su prechequeo solo INFORMA (`SLICE2_MY_EXAMS_PREFLIGHT_REPORT`) de si existen los dos indices
    de MAIN en los que se apoya (`idx_contenido_desbloqueado_usuario_usuario_id`, `idx_intentos_examen_usuario_examen`;
    esperado: 2). Rollback: su bloque ROLLBACK (borra la funcion), antes que los de Slice 3.
+   Slice 7 (migracion `20261008100500`, indice keyset `idx_transacciones_cartera_usuario_creado_id` sobre `transacciones_cartera (usuario_id, creado_en desc, id desc)` para D6-02 `GET /api/v1/app/wallet/movimientos`; manifiesto
+   `supabase/SLICE7_MIGRATIONS.txt`): solo crea ese indice (SHARE lock breve: el libro es pequeno); ni columnas, ni politicas, ni filas. Es independiente del orden de despliegue del Ktor (la lectura funciona sin el indice, mas lenta). Su prechequeo `WALLET_LEDGER_KEYSET_INDEX_PREFLIGHT`
+   se detiene si el indice existe con otra definicion. Rollback: su bloque ROLLBACK (borra el indice), antes que los de Slice 2.
 
 ## Construir
 
@@ -149,7 +152,7 @@ roll forward). `20260930100900`, `20260930101500` y `20260930101600` son compati
   del owner del contrato (D8-08 congelado).
 - CI (`.github/workflows/ci.yml`) verifica tests, lint OpenAPI y `scripts/verify-ops-config.sh`;
   `dbtest` corre sobre PostgreSQL 16 embebido (zonky). DB-CI-PG17: el job `db-pg17` aplica las migraciones pendientes
-  (`supabase/baseline/PENDING_MIGRATIONS.txt` = `2026092810*` + `SLICE1_MIGRATIONS.txt` + `SLICE3_MIGRATIONS.txt`) sobre PostgreSQL 17 (imagen Supabase
+  (`supabase/baseline/PENDING_MIGRATIONS.txt` = `2026092810*` + `SLICE1_MIGRATIONS.txt` + `SLICE3_MIGRATIONS.txt` + `SLICE2_MIGRATIONS.txt` + `SLICE7_MIGRATIONS.txt`) sobre PostgreSQL 17 (imagen Supabase
   fijada por digest) cargado SOLO con la forma de MAIN que tocan (`supabase/baseline/main_shape_subset.sql`), con VERIFY = 0,
   `assertions.sql` y rollback/re-aplicacion, mas su control negativo; NO carga el baseline completo de MAIN (decision del owner
   pendiente), asi que el gate local Supabase completo (baseline 55/55, schemadiff, e2e) sigue siendo el gate previo al despliegue.
