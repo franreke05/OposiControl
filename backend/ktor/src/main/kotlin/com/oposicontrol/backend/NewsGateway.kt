@@ -497,7 +497,6 @@ internal fun String.isCanonicalUuid(): Boolean =
  * DENTRO de `texto` con un prefijo, lo que hacía que una misma columna
  * significara dos cosas y que la composición no se pudiera consultar.
  */
-@Serializable
 /**
  * Lectura legacy tolerante: las rutas canonicas guardan `capas` como objetos opacos, y el lector legacy las tipa
  * (`NoticiaLayerDto`). Una fila cuyas capas no encajan NO tumba la pagina entera: esa fila se lee sin capas
@@ -510,6 +509,7 @@ internal fun decodeNoticiaRowsTolerant(json: Json, text: String): List<SupabaseN
         }
     }
 
+@Serializable
 internal data class SupabaseNoticiaRow(
     // Nulo en alta: PostgREST omite el campo (`explicitNulls = false`) y Postgres
     // aplica `gen_random_uuid()`. En edición viaja y `on_conflict=id` fusiona.
