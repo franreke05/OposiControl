@@ -83,7 +83,7 @@
 			reverse_proxy ktor-control:8080 {
 				header_up X-Forwarded-For {client_ip}
 				header_up X-Request-Id {http.request.uuid}
-				# Salud pasiva y activa. Una unica instancia: sin alternativa, un 503 de Caddy es el comportamiento correcto.
+				# Salud activa. Una unica instancia: sin alternativa, un 503 de Caddy es el comportamiento correcto.
 				health_uri /health/ready
 				health_interval 15s
 				health_timeout 6s
@@ -108,14 +108,18 @@
 				lb_try_interval 250ms
 				header_up X-Forwarded-For {client_ip}
 				header_up X-Request-Id {http.request.uuid}
+				# Salud ACTIVA: es la unica que saca una replica de rotacion por su ESTADO (readiness real, con Supabase).
 				health_uri /health/ready
 				health_interval 10s
 				health_timeout 6s
 				health_status 2xx
-				fail_duration 30s
+				# Salud PASIVA solo por fallos de CONEXION/transporte (replica caida o reiniciando): 2 en 10 s la apartan
+				# 10 s y lb_retries reintenta en la otra. A proposito NO hay `unhealthy_status` ni `unhealthy_latency`: un
+				# 5xx o una respuesta lenta casi siempre vienen de una dependencia COMPARTIDA por las dos replicas (Supabase
+				# -> 502/504; Valkey -> el limitador falla cerrado con 503), y expulsarlas por eso apartaba las DOS a la vez
+				# y convertia una degradacion parcial en una caida total (503 de Caddy para todo, tambien lo que si funciona).
+				fail_duration 10s
 				max_fails 2
-				unhealthy_status 5xx
-				unhealthy_latency 25s
 				transport http {
 					dial_timeout 3s
 					# Ktor corta a Supabase a los 20 s (UPSTREAM_REQUEST_TIMEOUT_MS); 25 s deja margen al 504 propio.

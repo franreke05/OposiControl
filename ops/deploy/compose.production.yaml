@@ -11,8 +11,11 @@
 #   docker compose --env-file /etc/oposibots/production/compose.env -f ops/deploy/compose.production.yaml config -q
 #   docker compose --env-file /etc/oposibots/production/compose.env -f ops/deploy/compose.production.yaml up -d
 #
-# Secretos: SOLO en ficheros fuera del repo (`env_file` = /etc/oposibots/production/backend.env). Este fichero no contiene
-# ningun valor secreto; los nombres estan en ops/deploy/backend.env.example.
+# Secretos: SOLO en ficheros fuera del repo, UNO POR PERFIL (minimo privilegio): los contenedores `bot` cargan
+# backend.common.env + backend.bot.env y `control` carga backend.common.env + backend.control.env (todos en
+# /etc/oposibots/production). Un contenedor bot NO recibe los secretos de administracion (token estatico del gateway
+# admin) y control NO recibe los del runtime de auth de consumidor (HMAC del limitador, Valkey, Apple). Este fichero no
+# contiene ningun valor secreto; los nombres estan en ops/deploy/backend.{common,bot,control}.env.example.
 #
 # Puertos: SOLO caddy publica (80/443). Prometheus, Grafana, Valkey y Ktor viven en la red interna sin `ports:`.
 
@@ -25,12 +28,19 @@ x-logging: &logging
     max-file: "5"
     compress: "true"
 
-# Plantilla comun de los tres contenedores Ktor (MISMA imagen, distinto SERVER_PROFILE).
+# Entorno por perfil. Va en cada servicio y NO en la plantilla x-ktor: una lista heredada con `<<` no se puede ampliar,
+# y un `env_file` comun a los tres es justo lo que daba a los bot los secretos de administracion.
+x-env-bot: &env-bot
+  - ${BACKEND_COMMON_ENV_FILE:-/etc/oposibots/production/backend.common.env}
+  - ${BACKEND_BOT_ENV_FILE:-/etc/oposibots/production/backend.bot.env}
+x-env-control: &env-control
+  - ${BACKEND_COMMON_ENV_FILE:-/etc/oposibots/production/backend.common.env}
+  - ${BACKEND_CONTROL_ENV_FILE:-/etc/oposibots/production/backend.control.env}
+
+# Plantilla comun de los tres contenedores Ktor (MISMA imagen, distinto SERVER_PROFILE y distinto entorno: ver arriba).
 x-ktor: &ktor
   image: ${BACKEND_IMAGE:?BACKEND_IMAGE es obligatoria (oposicontrol-backend:<sha12> o @sha256:...)}
   restart: unless-stopped
-  env_file:
-    - ${BACKEND_ENV_FILE:-/etc/oposibots/production/backend.env}
   # La JVM arranca como `app` (uid 10001), /app es de solo lectura para ella y los temporales de ffmpeg van a /tmp.
   read_only: true
   tmpfs:
@@ -94,7 +104,7 @@ services:
     logging: *logging
     networks:
       edge:
-        # IP fija: es el valor literal de TRUSTED_PROXY_HOSTS en backend.env (el backend solo admite literales IP).
+        # IP fija: es el valor literal de TRUSTED_PROXY_HOSTS en backend.bot.env (el backend solo admite literales IP).
         ipv4_address: ${CADDY_IPV4:-172.28.0.10}
     depends_on:
       - ktor-bot-1
@@ -104,6 +114,7 @@ services:
   ktor-bot-1:
     <<: *ktor
     hostname: ktor-bot-1
+    env_file: *env-bot
     environment:
       SERVER_PROFILE: bot
       # JAVA_TOOL_OPTIONS REEMPLAZA al ENV de la imagen: se repite java.awt.headless. Heap al 60 % del limite de memoria
@@ -117,6 +128,7 @@ services:
   ktor-bot-2:
     <<: *ktor
     hostname: ktor-bot-2
+    env_file: *env-bot
     environment:
       SERVER_PROFILE: bot
       JAVA_TOOL_OPTIONS: ${BOT_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+ExitOnOutOfMemoryError}
@@ -126,6 +138,7 @@ services:
   ktor-control:
     <<: *ktor
     hostname: ktor-control
+    env_file: *env-control
     environment:
       SERVER_PROFILE: control
       # ffmpeg es un SUBPROCESO de este contenedor (compresion de video/audio de recursos de pregunta, hasta 120 s) y su
@@ -143,7 +156,7 @@ services:
     image: ${VALKEY_IMAGE:-valkey/valkey:8.1-alpine}
     restart: unless-stopped
     environment:
-      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD es obligatoria (la misma que va dentro de VALKEY_URL en backend.env)}
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:?VALKEY_PASSWORD es obligatoria (la misma que va dentro de VALKEY_URL en backend.bot.env)}
     command:
       - sh
       - -c
@@ -177,7 +190,7 @@ services:
     volumes:
       - ../monitoring/prometheus/prometheus.production.yml:/etc/prometheus/prometheus.yml:ro
       - ../monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
-      # Mismo valor que METRICS_SCRAPE_TOKEN de backend.env. Fichero FUERA del repo, modo 0400.
+      # Mismo valor que METRICS_SCRAPE_TOKEN de backend.common.env. Fichero FUERA del repo, modo 0400.
       - ${METRICS_TOKEN_FILE:-/etc/oposibots/production/metrics_token}:/etc/prometheus/secrets/metrics_token:ro
       - prometheus-data:/prometheus
     cpus: 0.5

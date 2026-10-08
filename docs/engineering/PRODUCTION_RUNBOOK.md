@@ -1,7 +1,7 @@
 # Runbook de produccion (un host)
 
 Estado: `NOT_VERIFIED` (escrito, no ejercitado; nada desplegado desde este repo). Complementa `DEPLOYMENT.md` (orden obligatorio migraciones -> Ktor y gate de produccion).
-Artefactos: `ops/deploy/compose.production.yaml`, `ops/deploy/backend.env.example`, `ops/deploy/compose.env.example`, `ops/caddy/Caddyfile.production`,
+Artefactos: `ops/deploy/compose.production.yaml`, `ops/deploy/backend.{common,bot,control}.env.example`, `ops/deploy/compose.env.example`, `ops/caddy/Caddyfile.production`,
 `ops/monitoring/prometheus/{prometheus.production.yml,alert_rules.yml}`, `ops/monitoring/grafana/**`. Decisiones: `RUNTIME_DECISIONS.md`. Borde: `CLOUDFLARE_RUNBOOK.md`.
 
 Aviso de capacidad: bot-1, bot-2 y control comparten el mismo host; **no son 3x capacidad** (ver cabecera del compose).
@@ -27,7 +27,7 @@ Acceso a Grafana: `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAd
 | `prometheus-data` | TSDB, 15 d / 4 GB | si | opcional |
 | `grafana-data` | usuarios y preferencias de Grafana (dashboards vienen del repo) | si | opcional |
 | `tmpfs /tmp` (Ktor, 512 MB) | temporales de ffmpeg | no | no |
-| bind `/etc/oposibots/production/*` | `backend.env`, `compose.env`, `metrics_token`, `origin/` | fuera del repo, root, 0600 | gestor de secretos |
+| bind `/etc/oposibots/production/*` | `backend.common.env`, `backend.bot.env`, `backend.control.env`, `compose.env`, `metrics_token`, `origin/` | fuera del repo, root, 0600 | gestor de secretos |
 | (sin volumen) valkey | contadores de limite | no, por diseno | no |
 
 ## RESOURCE_LIMITS (marcadores a re-medir en el host real)
@@ -47,9 +47,20 @@ Los limites de CPU son topes, no reservas: con menos nucleos que la suma, los co
 ## ENV_REQUIREMENTS (solo nombres)
 
 * `compose.env` (interpolacion): `BACKEND_IMAGE`, `API_HOST`, `VALKEY_PASSWORD`, `GRAFANA_ADMIN_PASSWORD` y opcionales; lista en `ops/deploy/compose.env.example`.
-* `backend.env` (los tres Ktor, `env_file`): lista completa en `ops/deploy/backend.env.example`. Imprescindibles fuera de desarrollo: `APP_ENV`, `SUPABASE_URL`,
-  `SUPABASE_SECRET_KEY` (o `SUPABASE_SERVICE_ROLE_KEY`), `SUPABASE_PUBLISHABLE_KEY`, `OPOSIBOTS_AUTH_ENABLED`, `AUTH_RATE_LIMIT_MODE=valkey`, `AUTH_RATE_LIMIT_HMAC_SECRET` (>= 32 car., **identico en los tres**),
-  `VALKEY_URL`, `TRUST_PROXY_HEADERS=true`, `TRUSTED_PROXY_HOSTS` (IP literal de Caddy, por defecto la `.10` de `EDGE_SUBNET`), `METRICS_SCRAPE_TOKEN`, `OPOSICONTROL_BACKEND_TOKEN`.
+* Entorno de los Ktor: **un fichero por perfil** (minimo privilegio; antes un unico `backend.env` daba a los contenedores bot el token
+  estatico de administracion). El reparto sale del codigo (que lee cada perfil), no de la costumbre:
+  * `backend.common.env` (los tres Ktor; nombres en `ops/deploy/backend.common.env.example`): `APP_ENV`, `SUPABASE_URL`,
+    `SUPABASE_SECRET_KEY` (o `SUPABASE_SERVICE_ROLE_KEY`), `METRICS_SCRAPE_TOKEN`, y los opcionales de log, timeouts, bucket de examen y Sentry.
+  * `backend.bot.env` (SOLO `ktor-bot-1` y `ktor-bot-2`, el MISMO fichero; nombres en `ops/deploy/backend.bot.env.example`): el runtime de
+    auth de consumidor (`OposiBotsAuthConfiguration.kt`, que `control` no construye): `SUPABASE_PUBLISHABLE_KEY`, `AUTH_RATE_LIMIT_MODE=valkey`,
+    `AUTH_RATE_LIMIT_HMAC_SECRET` (>= 32 car., **identico en las dos replicas bot**), `VALKEY_URL`, `TRUST_PROXY_HEADERS=true`,
+    `TRUSTED_PROXY_HOSTS` (IP literal de Caddy, por defecto la `.10` de `EDGE_SUBNET`), `OPOSIBOTS_AUTH_ENABLED`, captcha, recuperacion y Apple.
+  * `backend.control.env` (SOLO `ktor-control`; nombres en `ops/deploy/backend.control.env.example`): `OPOSICONTROL_BACKEND_TOKEN` (secreto de
+    administracion: **nunca** en los otros dos ficheros), `ENABLE_VERBOSE_NETWORK_LOGS`, `SUPABASE_BUCKET_NEWS_ASSETS`.
+  * Migrar desde un `backend.env` unico: repartir sus lineas en los tres ficheros segun los `.example` y borrar el antiguo. Comprobar el
+    resultado sin imprimir valores: `$C config --format json | jq '.services["ktor-bot-1"].environment | has("OPOSICONTROL_BACKEND_TOKEN")'` debe dar `false`.
+  * `scripts/verify-ops-config.sh` falla si un servicio bot referencia el fichero de control (o al reves), si la plantilla comun vuelve a
+    traer un `env_file`, o si una variable aparece en mas de un `.example`.
 * Ficheros: `/etc/oposibots/production/metrics_token` (mismo valor que `METRICS_SCRAPE_TOKEN`), `/etc/oposibots/production/origin/{origin.pem,origin.key}`.
 * **No definir** las variables de solo desarrollo (`OPOSICONTROL_ALLOW_DEV_*`, `OPOSICONTROL_ENABLE_BACKEND_RESTART`, ...).
 
@@ -100,7 +111,7 @@ $C exec -T prometheus sh -c 'wget -qO- --header="Authorization: Bearer $(cat /et
 ## Rollback (imagen anterior)
 
 1. Localizar el tag previo: `docker image ls oposicontrol-backend` (los tags son `<sha12>`; el desplegado esta en `BACKEND_IMAGE`).
-2. Editar `BACKEND_IMAGE` en `/etc/oposibots/production/compose.env` al tag anterior (y `SENTRY_RELEASE` en `backend.env`).
+2. Editar `BACKEND_IMAGE` en `/etc/oposibots/production/compose.env` al tag anterior (y `SENTRY_RELEASE` en `backend.common.env`).
 3. Por replica, de una en una para no cortar el servicio: `$C up -d --no-deps ktor-bot-1` -> `healthy` -> `$C up -d --no-deps ktor-bot-2` -> `$C up -d --no-deps ktor-control`.
 4. Verificar con la etiqueta `org.opencontainers.image.revision` y `/health/ready` = 200.
 5. Las migraciones NO se revierten con este rollback: manda la clase de rollback por migracion del gate de produccion (`DEPLOYMENT.md`); el Ktor viejo esta prohibido desde la migracion 6.
