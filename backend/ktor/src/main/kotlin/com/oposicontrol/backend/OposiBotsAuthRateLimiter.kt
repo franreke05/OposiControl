@@ -47,6 +47,19 @@ internal enum class OposiBotsAuthOperation(
     PROFILE_WRITE(60, 20, 300),
     LEGAL_LIST(60, 60, 300),
     ACCOUNT_DELETION(10, 3, 3_600),
+
+    // SLICE 3 (SEC-008): runtime de examen. Limite por usuario (JWT sub); el de IP no se consulta.
+    /** D2-03: abrir o reanudar un intento. */
+    ATTEMPT_START(60, 30, 300),
+
+    /** D2-09: una respuesta por pregunta (hasta 200 por intento) mas reintentos y el vaciado de la cola offline. */
+    ATTEMPT_ANSWER(1_200, 600, 60),
+
+    /** D2-10 / D2-11: cerrar (finalizar o abandonar) un intento. */
+    ATTEMPT_CLOSE(60, 30, 300),
+
+    /** D2-65: paginas de la revision. */
+    ATTEMPT_REVIEW(240, 120, 60),
 }
 
 internal data class OposiBotsRateLimitDecision(

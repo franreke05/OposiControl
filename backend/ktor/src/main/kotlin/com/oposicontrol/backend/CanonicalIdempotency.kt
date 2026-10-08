@@ -415,6 +415,13 @@ class CanonicalIdempotencyConfig {
 
     var ttl: Duration = IDEMPOTENCY_DEFAULT_TTL
     var lease: Duration = IDEMPOTENCY_DEFAULT_LEASE
+
+    /**
+     * SLICE 3: corre ANTES de mirar la cabecera (por defecto nada). Las rutas de intento resuelven aqui la identidad
+     * (401 / 403 de cuenta) y validan los ids de ruta, para que una peticion sin autenticar o mal formada nunca
+     * reciba un 400 IDEMPOTENCY_KEY_* ni llegue al almacen, y fijan las cabeceras que tambien lleva una repeticion.
+     */
+    var before: suspend (ApplicationCall) -> Unit = {}
 }
 
 private val IdempotencyClaimKey = AttributeKey<IdempotencyClaim>("canonical-idempotency-claim")
@@ -456,6 +463,7 @@ val CanonicalIdempotency = createRouteScopedPlugin("CanonicalIdempotency", ::Can
     val paramNames = TEMPLATE_PARAM.findAll(config.routeTemplate).map { it.groupValues[1] }.toList()
 
     onCall { call ->
+        config.before(call)
         val key = IdempotencyKey.parse(call.request.headers[IdempotencyHeaders.KEY], config.required) ?: return@onCall
         val actorId = config.actor(call)
         val method = call.request.httpMethod.value.uppercase()

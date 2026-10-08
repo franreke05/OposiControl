@@ -8,6 +8,10 @@ GET /api/v1/app/estadisticas
 GET /api/v1/app/examenes
 GET /api/v1/app/examenes/{}
 GET /api/v1/app/home
+GET /api/v1/app/intentos/{}
+GET /api/v1/app/intentos/{}/preguntas
+GET /api/v1/app/intentos/{}/resultado
+GET /api/v1/app/intentos/{}/revision
 GET /api/v1/app/legal/documents
 GET /api/v1/app/me
 GET /api/v1/app/me/entitlement
@@ -25,7 +29,9 @@ GET /v1/examenes/{}/preguntas
 PATCH /api/v1/app/me/profile
 POST /api/v1/app/eventos
 POST /api/v1/app/examenes/{}/iniciar
+POST /api/v1/app/examenes/{}/intentos
 POST /api/v1/app/feedback/pregunta
+POST /api/v1/app/intentos/{}/abandonar
 POST /api/v1/app/intentos/{}/finalizar
 POST /api/v1/app/intentos/{}/responder
 POST /api/v1/app/me/legal-acceptances
@@ -41,3 +47,4 @@ POST /v1/auth/refresh
 POST /v1/auth/register
 POST /v1/auth/register/profile
 POST /v1/auth/reset-password
+PUT /api/v1/app/intentos/{}/respuestas/{}

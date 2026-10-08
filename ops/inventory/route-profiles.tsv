@@ -113,6 +113,10 @@ GET	/api/v1/app/estadisticas	BOT	user-jwt	Consumer app API: estadisticas	OposiBo
 GET	/api/v1/app/examenes	BOT	user-jwt	Consumer app API: examenes	OposiBot
 GET	/api/v1/app/examenes/{}	BOT	user-jwt	Consumer app API: examenes/{}	OposiBot
 GET	/api/v1/app/home	BOT	user-jwt	Consumer app API: home	OposiBot
+GET	/api/v1/app/intentos/{}	BOT	user-jwt	Consumer app API: intentos/{} (D2-07)	OposiBot
+GET	/api/v1/app/intentos/{}/preguntas	BOT	user-jwt	Consumer app API: intentos/{}/preguntas (D2-08)	OposiBot
+GET	/api/v1/app/intentos/{}/resultado	BOT	user-jwt	Consumer app API: intentos/{}/resultado (D2-12)	OposiBot
+GET	/api/v1/app/intentos/{}/revision	BOT	user-jwt	Consumer app API: intentos/{}/revision (D2-65)	OposiBot
 GET	/api/v1/app/legal/documents	BOT	none	Legal documents (public, IP rate limit; mounted with the consumer auth runtime)	OposiBot
 GET	/api/v1/app/me	AUTH	user-jwt	Canonical profile/account: GET me	OposiBot
 GET	/api/v1/app/me/entitlement	BOT	user-jwt	Consumer app API: me/entitlement (D7-02)	OposiBot
@@ -204,8 +208,10 @@ POST	/api/v1/admin/usuarios/{}/roles	CONTROL	admin	Admin v1: usuarios/{}/roles	O
 POST	/api/v1/admin/usuarios/{}/tickets	CONTROL	admin	Admin v1: usuarios/{}/tickets	OposiControl
 POST	/api/v1/app/eventos	BOT	user-jwt	Consumer app API: eventos	OposiBot
 POST	/api/v1/app/examenes/{}/iniciar	BOT	user-jwt	Consumer app API: examenes/{}/iniciar	OposiBot
+POST	/api/v1/app/examenes/{}/intentos	BOT	user-jwt	Consumer app API: examenes/{}/intentos (D2-03)	OposiBot
 POST	/api/v1/app/feedback/pregunta	BOT	user-jwt	Consumer app API: feedback/pregunta	OposiBot
-POST	/api/v1/app/intentos/{}/finalizar	BOT	user-jwt	Consumer app API: intentos/{}/finalizar	OposiBot
+POST	/api/v1/app/intentos/{}/abandonar	BOT	user-jwt	Consumer app API: intentos/{}/abandonar (D2-11)	OposiBot
+POST	/api/v1/app/intentos/{}/finalizar	BOT	user-jwt	Consumer app API: intentos/{}/finalizar (D2-10)	OposiBot
 POST	/api/v1/app/intentos/{}/responder	BOT	user-jwt	Consumer app API: intentos/{}/responder	OposiBot
 POST	/api/v1/app/me/legal-acceptances	AUTH	user-jwt	Canonical profile/account: POST me/legal-acceptances	OposiBot
 POST	/api/v1/app/me/onboarding	AUTH	user-jwt	Canonical profile/account: POST me/onboarding	OposiBot
@@ -239,6 +245,7 @@ PUT	/admin/roles/{}	CONTROL	admin	Admin legacy: roles/{}	OposiControl
 PUT	/admin/settings	CONTROL	admin	Admin legacy: settings	OposiControl
 PUT	/admin/users/{}	CONTROL	admin	Admin legacy: users/{}	OposiControl
 PUT	/api/v1/admin/especialidades/{}/capacidades	CONTROL	admin	Admin v1: especialidades/{}/capacidades	OposiControl
+PUT	/api/v1/app/intentos/{}/respuestas/{}	BOT	user-jwt	Consumer app API: intentos/{}/respuestas/{} (D2-09)	OposiBot
 PUT	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 PUT	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
 PUT	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl

@@ -68,7 +68,9 @@ class AppV1AttemptOwnershipAndEventsTest {
         }
         val calls = listOf(
             "/api/v1/app/intentos/$foreignAttempt/responder" to """{"preguntaId":"$question","opcionSeleccionadaId":"$otherQuestion"}""",
-            "/api/v1/app/intentos/$foreignAttempt/finalizar" to "{}",
+            // SLICE 3: `POST /intentos/{attemptId}/finalizar` es ahora D2-10 en attemptRoutes (misma URL, ya no en appV1Routes).
+            // Su 404 ATTEMPT_NOT_FOUND para un intento ajeno, sin WWW-Authenticate, lo afirma
+            // AttemptRoutesTest.aForeignOrUnknownAttemptIsTheSame404OnEveryAttemptRoute.
             "/api/v1/app/feedback/pregunta" to """{"preguntaId":"$question","intentoId":"$foreignAttempt"}""",
             "/api/v1/app/eventos" to """{"nombreEvento":"x","intentoId":"$foreignAttempt","idempotencyKey":"k-1"}""",
         )

@@ -562,6 +562,7 @@ fun Application.module() {
     } else {
         null
     }
+    val catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it) }
     val routingDeps = CombinedRoutingDeps(
         contentGateway = gateway,
         newsGateway = newsGateway,
@@ -579,7 +580,11 @@ fun Application.module() {
         appEnv = appEnv,
         authRuntime = authRuntime,
         identityResolver = canonicalIdentityResolver,
-        catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it) },
+        catalogRuntime = catalogRuntime,
+        // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
+        attemptRuntime = canonicalIdentityResolver?.let { resolver ->
+            catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter) }
+        },
     )
     configureServerProfile(serverProfile, json, routingDeps)
 }
@@ -637,6 +642,8 @@ internal class CombinedRoutingDeps(
     val readinessCheck: () -> String = ::checkSupabaseReachable,
     /** SLICE 2 (D2-01/02/13, D7-02). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val catalogRuntime: CatalogRuntime? = null,
+    /** SLICE 3 (D2-03, D2-07..D2-12, D2-65). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val attemptRuntime: AttemptRuntime? = null,
 )
 
 /** Perfil historico: todo. Conjunto de rutas identico al de siempre. */
@@ -684,6 +691,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     )
     // SLICE 2: catalogo y derechos del consumidor (D2-01, D2-02, D2-13, D7-02).
     catalogRoutes(catalogRuntime)
+    // SLICE 3: runtime de examen del consumidor (D2-03, D2-07, D2-08, D2-09, D2-10, D2-11, D2-12, D2-65).
+    attemptRoutes(attemptRuntime)
     authRuntime?.let {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).

@@ -92,10 +92,8 @@ fun Route.appV1Routes(
             val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(gateway.responder(uid, call.requiredPath("id"), call.receive()))
         }.legacyRoute(LegacyEndpoints.APP_RESPONDER)
-        post("/intentos/{id}/finalizar") {
-            val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
-            call.respond(AppIntentoResponse(gateway.finalizar(uid, call.requiredPath("id"))))
-        }
+        // SLICE 3: `POST /intentos/{attemptId}/finalizar` (D2-10) vive ahora en [attemptRoutes] con el cable canonico
+        // (`AttemptResult`) y una RPC atomica. La URL es la misma, asi que la ruta legacy no puede convivir con ella.
         get("/estadisticas") {
             call.respond(AppEstadisticasResponse(gateway.estadisticas(call.usuarioId(verifier, allowDevUser, identityResolver))))
         }.legacyRoute(LegacyEndpoints.APP_ESTADISTICAS)

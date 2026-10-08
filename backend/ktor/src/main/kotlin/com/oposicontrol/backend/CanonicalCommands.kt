@@ -12,6 +12,7 @@ import kotlinx.serialization.descriptors.StructureKind
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.serializer
 
@@ -179,9 +180,9 @@ private const val UNKNOWN_FIELD_PLACEHOLDER = "(desconocido)"
  *
  * Ningun mensaje repite la entrada del cliente.
  */
-internal suspend inline fun <reified T> ApplicationCall.receiveCanonicalCommand(): T {
+internal suspend inline fun <reified T> ApplicationCall.receiveCanonicalCommand(nullableFields: Set<String> = emptySet()): T {
     requireCanonicalCommandType(T::class.java)
-    return decodeCanonicalCommand(serializer<T>(), canonicalRawBody().also { requireJsonContentIfBody(it) })
+    return decodeCanonicalCommand(serializer<T>(), canonicalRawBody().also { requireJsonContentIfBody(it) }, nullableFields)
 }
 
 /**
@@ -206,16 +207,22 @@ internal const val MAX_VALIDATION_ISSUES = 20
  * el test de arquitectura.
  */
 @OptIn(ExperimentalSerializationApi::class)
-internal fun <T> decodeCanonicalCommand(strategy: DeserializationStrategy<T>, rawBody: ByteArray): T {
+internal fun <T> decodeCanonicalCommand(
+    strategy: DeserializationStrategy<T>,
+    rawBody: ByteArray,
+    /** SLICE 3: campos de PRIMER nivel que el esquema congelado declara nullable (un `null` explicito = ausente). */
+    nullableFields: Set<String> = emptySet(),
+): T {
     val text = String(rawBody, Charsets.UTF_8).ifBlank { "{}" }
-    val element = try {
+    val parsed = try {
         CanonicalCommandJson.parseToJsonElement(text)
     } catch (_: SerializationException) {
         throw CanonicalErrorCode.MALFORMED_BODY.exception()
     } catch (_: IllegalArgumentException) {
         throw CanonicalErrorCode.MALFORMED_BODY.exception()
     }
-    if (element !is JsonObject) throw CanonicalErrorCode.MALFORMED_BODY.exception()
+    if (parsed !is JsonObject) throw CanonicalErrorCode.MALFORMED_BODY.exception()
+    val element = if (nullableFields.isEmpty()) parsed else JsonObject(parsed.filterNot { (key, value) -> key in nullableFields && value is JsonNull })
     // MASTER-API-006: en estos comandos NADA se borra con `null` y los esquemas no son nullable: un `null` explicito
     // (en cualquier nivel) es 400 VALIDATION INVALID_FORMAT con la ruta del campo, para todos los comandos.
     firstExplicitNull(element)?.let { throw validationError(ErrorIssue(if (SAFE_FIELD_PATH.matches(it)) it else "body", CanonicalIssue.INVALID_FORMAT)) }

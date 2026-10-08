@@ -122,6 +122,9 @@ internal data class Entitlement(
     val credits: List<ContentCredit>,
 )
 
+/** Lo que D2-03 necesita saber antes de abrir un intento: el examen publicado y la decision de D7-25. */
+internal data class ExamStartAccess(val examId: String, val kind: ExamKind, val verdict: AccessVerdict)
+
 // ---------- peticiones ya validadas ----------
 
 internal data class ExamListQuery(val filter: CatalogFilter, val includeFacets: Boolean, val page: CursorPageRequest)
@@ -354,6 +357,18 @@ internal class CatalogService(
         estadoIntento = attemptState?.takeIf { it in ATTEMPT_STATES },
         progreso = if (attemptId != null && total > 0) (answered.toDouble() / total).coerceIn(0.0, 1.0) else null,
     )
+
+    // ----- D7-25 para el arranque de intento (SLICE 3, D2-03) -----
+
+    /**
+     * El examen PUBLICADO y el veredicto de [EntitlementPolicy] para ese usuario, o `null` si el examen no existe, es un
+     * borrador o esta archivado (indistinguibles). Es la MISMA politica y los mismos hechos que D2-01/D2-02: el arranque
+     * de intento no tiene reglas de acceso propias. Bloqueante: el llamante ya esta en el pool de IO.
+     */
+    internal fun startAccess(userId: String, examId: String, now: Instant): ExamStartAccess? {
+        val row = gateway.getPublished(examId, now) ?: return null
+        return ExamStartAccess(row.id, row.kind(), accessFor(userId, listOf(row), now).getValue(row.id))
+    }
 
     // ----- D7-25 por lotes: los hechos del usuario se leen UNA vez por peticion -----
     private fun accessFor(userId: String, exams: List<CatalogExamRow>, now: Instant): Map<String, AccessVerdict> {
