@@ -1,7 +1,7 @@
 # Deployment plan (updated 2026-10-09 after the read-only server inventory)
 
-Status: PREPARED. Phase 1 migrations are applied on MAIN. Nothing has been changed on the server (one file was copied to
-the operator's home directory for validation: `~/Caddyfile.hostcaddy`, plus the inventory script). The cutover is not started.
+Status: CUTOVER DONE on 2026-10-09 (window 10:34 to 10:36 UTC, about 1 min 42 s without backend). Sections 1 to 5 are the
+plan as prepared; section 7 records what was executed.
 
 ## 1. SERVER_CURRENT_STATE (inventory 2026-10-09, read-only, as `opsadmin`)
 
@@ -90,3 +90,22 @@ Steps 1 to 4 do not touch the running backend or the edge. Step 5 onwards is the
   `Caddyfile.production` apply, which needs Caddy 2.8 or newer on the host or the Caddy container).
 - Merge the old monitoring stack into the new one (node-exporter and cAdvisor targets, single Prometheus).
 - Sentry real event and a load measurement on this host.
+
+
+## 7. Cutover record (2026-10-09)
+
+- Image `oposicontrol-backend:e41d4bee865b`, compose project `oposibots`, run directory
+  `/opt/oposicontrol-monitoring/oposibots-next/ops/deploy`, env files in `/home/opsadmin/oposibots-stack/env`.
+- 10:34:03 UTC old container `oposicontrol-ktor` stopped (kept, not removed; image also tagged `rollback-20261009`).
+- 10:34 to 10:35 UTC the 3 cutover migrations applied on MAIN (VERIFY 0, fingerprint unchanged, history 72).
+- 10:35:45 UTC host Caddy reloaded through the admin API with `Caddyfile.hostcaddy` (bots `127.0.0.1:18081/18082`,
+  control `127.0.0.1:18083`).
+- Public smoke on `https://api.oposibots.es`: live/ready/health 200, `/metrics` 404, restart route 404, public catalog 200,
+  protected app and admin routes 401.
+- After the switch: 6 containers healthy with 0 restarts, 0 ERROR lines and 0 responses 5xx, three Prometheus targets up,
+  no alert firing, Grafana healthy, Valkey answering, requests spread over both bots, about 6 GiB of memory available.
+- Sentry SDK: one INFO event sent from a one-off container of the production image through the application own
+  `initializeSentry` (tag `probe=cutover-sdk-verification`); the SDK reported the envelope as sent.
+- Evidence on the server: `/home/opsadmin/cutover-evidence/`.
+- STILL OPEN: step 7 (persist `/etc/caddy/Caddyfile`, needs root; until then a restart of the Caddy service would load the
+  old routing) and the authenticated smoke (login, one attempt, admin list) with a real authorised account.
