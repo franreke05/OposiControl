@@ -23,10 +23,8 @@ actual fun rememberQuestionResourceFilePicker(
 ): QuestionResourceFilePicker = remember(kind, onPicked) {
     QuestionResourceFilePicker(available = true) {
         val chooser = JFileChooser().apply {
-            filterFor(kind)?.let {
-                fileFilter = it
-                isAcceptAllFileFilterUsed = false
-            }
+            fileFilter = filterFor(kind)
+            isAcceptAllFileFilterUsed = false
         }
         if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
             val file: File = chooser.selectedFile
@@ -50,13 +48,10 @@ actual fun rememberQuestionResourceFilePicker(
  * de ofrecer algo que sí se podría subir —molesto pero visible—, en vez de dejar
  * subir algo que va a rechazar después de cruzar la red.
  */
-private fun filterFor(kind: QuestionResourceKind): FileNameExtensionFilter? = when (kind) {
+private fun filterFor(kind: QuestionResourceKind): FileNameExtensionFilter = when (kind) {
     QuestionResourceKind.IMAGEN -> FileNameExtensionFilter("Imágenes (PNG, JPG, WEBP, GIF)", "png", "jpg", "jpeg", "webp", "gif")
     QuestionResourceKind.AUDIO -> FileNameExtensionFilter("Audio (MP3, M4A, WAV)", "mp3", "m4a", "wav")
     QuestionResourceKind.VIDEO -> FileNameExtensionFilter("Vídeo (MP4)", "mp4")
-    QuestionResourceKind.PDF -> FileNameExtensionFilter("Documentos PDF", "pdf")
-    // Ninguno de los dos sube archivo; este selector no se abre para ellos.
-    QuestionResourceKind.TEXTO, QuestionResourceKind.ENLACE -> null
 }
 
 /**
@@ -78,6 +73,6 @@ private fun mimeTypeFor(fileName: String): String = when (fileName.substringAfte
     "m4a" -> "audio/mp4"
     "wav" -> "audio/wav"
     "mp4" -> "video/mp4"
-    "pdf" -> "application/pdf"
+
     else -> "application/octet-stream"
 }

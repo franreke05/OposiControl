@@ -182,6 +182,30 @@ internal object ImportFixtures {
         state.copy(selectedStagingId = row.id, editDraft = row)
     }
 
+    /** Texto real largo: el editor debe crecer y envolver enunciado y opciones sin recortar. */
+    fun revisionConTextoLargo(): ImportState = base().let { state ->
+        val longRow = row(
+            id = "s-long",
+            position = 1,
+            title = "El enfermo terminal puede sufrir diferentes tipos de dolor y requiere una valoración clínica completa:",
+            correct = "C",
+            status = "error",
+            error = "Campo duplicado: C. Opción D obligatoria.",
+            annulled = true,
+            annulmentReason = "Anulada por el tribunal por un error material en el enunciado.",
+        ).copy(
+            optionA = "El dolor somático es una sensación subjetiva inventada por el paciente",
+            optionB = "El dolor visceral está causado por lesión directa de estructuras nerviosas, ya sea por invasión directa tumoral o por infección de un paciente debilitado",
+            optionC = "El dolor neuropático lo describe como sensaciones quemantes, punzantes, de acorchamiento, hormigueo, tirantez, prurito o presión",
+            optionD = "El dolor somático es frecuente que se asocie a náuseas, vómitos y sudoración",
+        )
+        state.copy(
+            activeBatch = UiAsync.Success(batch(listOf(longRow))),
+            selectedStagingId = longRow.id,
+            editDraft = longRow,
+        )
+    }
+
     /** Duplicada candidata: se dice, no se fusiona. */
     fun revisionConDuplicado(): ImportState = base().copy(
         activeBatch = UiAsync.Success(

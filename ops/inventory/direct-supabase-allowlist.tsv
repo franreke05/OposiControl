@@ -5,6 +5,7 @@ APIKEY	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/AuthApi
 AUTH_V1	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/AdminSessionRefresh.kt	1	startsWith("/auth/v1/"): comprobacion de ruta para no refrescar la sesion en llamadas de auth, sin host
 APIKEY	core/network/src/commonMain/kotlin/com/oposicontrol/admin/core/network/ApiClientFactory.kt	1	header.equals("apikey"): redaccion de logs, no una llamada
 SECRET	composeApp/build.gradle.kts	1	guarda de build: blanquea una anon key con forma sb_secret_
+HOST	composeApp/build.gradle.kts	1	guarda de build verifyProductionDesktopConfig (rama de contenido): comprueba el sufijo de SUPABASE_URL para GoTrue, no es una llamada
 SECRET	core/common/src/commonMain/kotlin/com/oposicontrol/admin/core/common/config/AppConfigResolver.kt	3	guarda en runtime: rechaza sb_secret_/service_role como SUPABASE_ANON_KEY (no incrusta ningun valor)
 DATA_API	core/common/src/commonMain/kotlin/com/oposicontrol/admin/core/common/config/MediaUrlPolicy.kt	1	prefijo de ruta para VALIDAR URLs de medios publicos; no emite ninguna peticion
 BUCKET	composeApp/build.gradle.kts	3	NEEDS_OWNER: pista de bucket vestigial (ninguna lectura de negocio); retirar o mantener es decision del propietario

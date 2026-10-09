@@ -128,7 +128,8 @@ class ClientCallInventoryTest {
         assertEquals(c.sites, c.rows, c.line())
         assertEquals(0, c.unmapped, c.line() + "\n" + (entry + static).joinToString("\n"))
         assertEquals(0, c.unknown, c.line())
-        assertTrue(c.sites >= 122, "the counter found only ${c.sites} sites: vacuous")
+        // 121 desde la integracion de la rama de contenido (retiro createQuestionResource, un sitio menos).
+        assertTrue(c.sites >= 121,"the counter found only ${c.sites} sites: vacuous")
     }
 
     @Test

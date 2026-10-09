@@ -77,8 +77,8 @@ class AdminV1QuestionResourceCompressionTest {
         assertTrue(cuerpo.contains("\"bytes\":${subido.size}"), "los metadatos declaran el tamaño REAL: $cuerpo")
     }
 
-    /** Un `gzip` o un reenvasado rompen la descarga directa: el PDF viaja tal cual. */
-    @Test fun unPdfSubeByteAByte() = testApplication {
+    /** El PDF ya no es un tipo de recurso: se rechaza y no llega a Storage. */
+    @Test fun unPdfSeRechazaYNoSube() = testApplication {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
         val pdf = ("%PDF-1.4\n" + "1 0 obj\n<< /Type /Page >>\nendobj\n".repeat(500) + "%%EOF")
             .toByteArray(Charsets.ISO_8859_1)
@@ -88,11 +88,9 @@ class AdminV1QuestionResourceCompressionTest {
             setBody(multipart(pdf, "application/pdf", tipoRecurso = "pdf", recursoId = recursoId))
         }
 
-        assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
-        val subida = upstream.single { it.uri().rawPath.startsWith("/storage/v1/object/recursos-pregunta/") }
-        assertEquals("/storage/v1/object/recursos-pregunta/preguntas/$preguntaId/$recursoId.pdf", subida.uri().rawPath)
-        assertEquals("application/pdf", subida.headers().firstValue("Content-Type").orElse(""))
-        assertContentEquals(pdf, readRequestBodyBytes(subida), "el PDF sube byte a byte")
+        assertEquals(HttpStatusCode.UnprocessableEntity, response.status, response.bodyAsText())
+        assertTrue(response.bodyAsText().contains("question_resource_type_invalid"), response.bodyAsText())
+        assertTrue(upstream.none { it.uri().rawPath.startsWith("/storage/v1/object/recursos-pregunta/") }, "el PDF llegó a Storage")
     }
 
     /**

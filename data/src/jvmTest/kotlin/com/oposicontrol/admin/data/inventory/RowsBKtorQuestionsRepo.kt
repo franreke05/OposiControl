@@ -14,9 +14,9 @@ private const val Q = "/api/v1/admin/preguntas"
 private fun Env.repo() = KtorQuestionsRepositoryImpl(client, appConfig, session, adapter)
 
 private val DRAFT = QuestionDraft(statement = "s", type = QuestionType.RAFAGA, options = emptyList(), explanation = "e", source = "", active = true, difficulty = "")
-private val RESOURCE = QuestionResourceDraft(kind = QuestionResourceKind.TEXTO, title = "t", textBody = "b")
+private val RESOURCE = QuestionResourceDraft(kind = QuestionResourceKind.IMAGEN, title = "t")
 
-/** Filas del registrador (R4-REC-B): KtorQuestionsRepositoryImpl (13 sitios, una fila por metodo). */
+/** Filas del registrador (R4-REC-B): KtorQuestionsRepositoryImpl (12 sitios, una fila por metodo; la rama de contenido retiro createQuestionResource). */
 internal val ROWS_B_QUESTIONS_REPO: List<CallRow> = listOf(
     // todos los filtros opcionales activos: cada `parameter("x"` de listQuestions lo graba la fila (R6-HARDEN)
     CallRow(FILE, "listQuestions", get("$Q?activa&examenId&limit&offset&orden&q&tipo")) {
@@ -30,9 +30,8 @@ internal val ROWS_B_QUESTIONS_REPO: List<CallRow> = listOf(
     CallRow(FILE, "linkQuestionToExam", post("$Q/{}/examenes")) { repo().linkQuestionToExam("ID0", "ID1", null) },
     CallRow(FILE, "unlinkQuestionFromExam", delete("$Q/{}/examenes/{}")) { repo().unlinkQuestionFromExam("ID0", "ID1") },
     CallRow(FILE, "listQuestionResources", get("$Q/{}/recursos")) { repo().listQuestionResources("ID0") },
-    CallRow(FILE, "createQuestionResource", post("$Q/{}/recursos")) { repo().createQuestionResource("ID0", RESOURCE) },
     CallRow(FILE, "uploadQuestionResourceFile", post("$Q/{}/recursos/archivo")) {
-        repo().uploadQuestionResourceFile("ID0", "ID1", QuestionResourceDraft(kind = QuestionResourceKind.PDF, title = "t"), QuestionResourceFile("a.pdf", "application/pdf", byteArrayOf(1)))
+        repo().uploadQuestionResourceFile("ID0", "ID1", QuestionResourceDraft(kind = QuestionResourceKind.IMAGEN, title = "t"), QuestionResourceFile("a.pdf", "application/pdf", byteArrayOf(1)))
     },
     CallRow(FILE, "updateQuestionResource", patch("$Q/{}/recursos/{}")) { repo().updateQuestionResource("ID0", "ID1", RESOURCE) },
     CallRow(FILE, "deleteQuestionResource", delete("$Q/{}/recursos/{}")) { repo().deleteQuestionResource("ID0", "ID1") },

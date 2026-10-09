@@ -49,13 +49,9 @@ class IndependentResourceRuleContractTest {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(upstream, tipoGuardado = "rafaga")
 
-        // `texto` y no `audio`: desde KQ4 el material con archivo entra SÓLO por la
-        // ruta multipart, y un `audio` por JSON se rechaza antes por otro motivo
-        // (`QUESTION_RESOURCE_UPLOAD_REQUIRED`). Lo que se prueba aquí es la regla
-        // de tipo de PREGUNTA, así que el recurso tiene que ser uno que sí entra por JSON.
-        val error = assertFailsWith<BackendDomainException> {
-            gateway.addRecurso(preguntaId, AdminRecursoDto(tipoRecurso = "texto", titulo = "a", contenidoTexto = "t"))
-        }
+        // Los tres tipos de recurso entran SÓLO por la ruta multipart, que empieza por
+        // esta comprobación contra el tipo GUARDADO de la pregunta.
+        val error = assertFailsWith<BackendDomainException> { gateway.requireQuestionAcceptsResources(preguntaId) }
 
         assertEquals("QUESTION_TYPE_REJECTS_RESOURCES", error.errorCode)
         assertEquals(422, error.status.value)
@@ -74,11 +70,11 @@ class IndependentResourceRuleContractTest {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
         val gateway = gatewayWith(upstream, tipoGuardado = "inmersiva")
 
-        gateway.addRecurso(preguntaId, AdminRecursoDto(tipoRecurso = "texto", titulo = "a", contenidoTexto = "t"))
+        gateway.requireQuestionAcceptsResources(preguntaId)
 
         assertTrue(
-            upstream.any { it.method() == "POST" && it.uri().rawPath.contains("recursos_pregunta") },
-            "la inmersiva tiene que poder adjuntar: " + upstream.describe(),
+            upstream.any { it.uri().rawPath.contains("/rest/v1/preguntas") },
+            "la regla se comprueba contra la fila guardada: " + upstream.describe(),
         )
     }
 

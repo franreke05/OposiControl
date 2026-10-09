@@ -9,6 +9,9 @@ import androidx.compose.ui.window.rememberWindowState
 import com.oposicontrol.admin.app.bootstrap.JvmRuntimeConfigSource
 import com.oposicontrol.admin.core.common.platform.AppPlatformContext
 import io.sentry.Sentry
+import org.jetbrains.compose.resources.painterResource
+import oposicontrol.composeapp.generated.resources.Res
+import oposicontrol.composeapp.generated.resources.ic_logo
 import java.awt.Dimension
 
 /**
@@ -70,6 +73,8 @@ fun main() {
             onCloseRequest = ::exitApplication,
             state = windowState,
             title = "OposiControl Admin",
+            // Sin icono, la barra de tareas muestra el de Java.
+            icon = painterResource(Res.drawable.ic_logo),
         ) {
             LaunchedEffect(Unit) {
                 window.minimumSize = Dimension(1024, 640)

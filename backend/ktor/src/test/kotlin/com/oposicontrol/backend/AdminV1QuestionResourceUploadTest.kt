@@ -149,8 +149,8 @@ class AdminV1QuestionResourceUploadTest {
         assertTrue(upstream.none { it.method() == "POST" && it.uri().rawPath.endsWith("/recursos_pregunta") }, upstream.describe())
     }
 
-    /** Por JSON sólo entran `texto` y `enlace`; un `imagen` sin archivo no es un recurso que la app pueda pintar. */
-    @Test fun porJsonNoEntraMaterialQueNecesitaArchivoNiUnEnlaceSinEsquema() = testApplication {
+    /** Por JSON no entra nada: los tres tipos llevan archivo y enlace, texto y PDF ya no existen. */
+    @Test fun porJsonNoEntraNingunRecurso() = testApplication {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
         application { resourcesModule(gatewayWith(upstream, tipo = "inmersiva")) }
 
@@ -161,19 +161,15 @@ class AdminV1QuestionResourceUploadTest {
         assertEquals(HttpStatusCode.UnprocessableEntity, imagen.status, imagen.bodyAsText())
         assertTrue(imagen.bodyAsText().contains("question_resource_upload_required"), imagen.bodyAsText())
 
-        val enlaceMalo = client.post("/api/v1/admin/preguntas/$preguntaId/recursos") {
-            contentType(ContentType.Application.Json)
-            setBody("""{"tipoRecurso":"enlace","titulo":"t","urlExterna":"www.boe.es"}""")
+        listOf("enlace", "texto", "pdf").forEach { tipo ->
+            val rechazado = client.post("/api/v1/admin/preguntas/$preguntaId/recursos") {
+                contentType(ContentType.Application.Json)
+                setBody("""{"tipoRecurso":"$tipo","titulo":"t","urlExterna":"https://www.boe.es","contenidoTexto":"x"}""")
+            }
+            assertEquals(HttpStatusCode.UnprocessableEntity, rechazado.status, "$tipo: " + rechazado.bodyAsText())
+            assertTrue(rechazado.bodyAsText().contains("question_resource_type_invalid"), rechazado.bodyAsText())
         }
-        assertEquals(HttpStatusCode.UnprocessableEntity, enlaceMalo.status, enlaceMalo.bodyAsText())
-        assertTrue(enlaceMalo.bodyAsText().contains("question_resource_url_invalid"), enlaceMalo.bodyAsText())
         assertFalse(upstream.any { it.method() == "POST" && it.uri().rawPath.endsWith("/recursos_pregunta") }, upstream.describe())
-
-        val enlace = client.post("/api/v1/admin/preguntas/$preguntaId/recursos") {
-            contentType(ContentType.Application.Json)
-            setBody("""{"tipoRecurso":"enlace","titulo":"BOE","urlExterna":"https://www.boe.es"}""")
-        }
-        assertEquals(HttpStatusCode.Created, enlace.status, enlace.bodyAsText())
     }
 
     // -----------------------------------------------------------------

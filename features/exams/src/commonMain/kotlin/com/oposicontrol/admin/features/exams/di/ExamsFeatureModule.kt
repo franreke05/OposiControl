@@ -9,7 +9,6 @@ import com.oposicontrol.admin.domain.usecase.content.DeleteQuestionResourceUseCa
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.DeleteSpecialtyUseCase
-import com.oposicontrol.admin.domain.usecase.content.ClearExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.CreateContentDraftUseCase
 import com.oposicontrol.admin.domain.usecase.content.GetContentImportBatchUseCase
 import com.oposicontrol.admin.domain.usecase.content.ListContentImportBatchesUseCase
@@ -40,7 +39,6 @@ import com.oposicontrol.admin.domain.usecase.content.UpsertQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaQuestionUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertRafagaUseCase
 import com.oposicontrol.admin.domain.usecase.content.UpsertSpecialtyUseCase
-import com.oposicontrol.admin.domain.usecase.content.UploadExamCoverUseCase
 import com.oposicontrol.admin.domain.usecase.content.UploadQuestionResourceUseCase
 import com.oposicontrol.admin.features.exams.presentation.ExamsViewModel
 import com.oposicontrol.admin.features.exams.presentation.ContentUploadViewModel
@@ -81,8 +79,6 @@ val examsFeatureModule = module {
     factory { UpsertRafagaQuestionUseCase(get()) }
     factory { DeleteRafagaQuestionUseCase(get()) }
     factory { MoveRafagaQuestionUseCase(get()) }
-    factory { UploadExamCoverUseCase(get()) }
-    factory { ClearExamCoverUseCase(get()) }
     factory { ListContentImportBatchesUseCase(get()) }
     factory { GetContentImportBatchUseCase(get()) }
     factory { UploadPdfToStagingUseCase(get()) }
@@ -123,8 +119,6 @@ val examsFeatureModule = module {
             upsertRafagaQuestionUseCase = get(),
             deleteRafagaQuestionUseCase = get(),
             moveRafagaQuestionUseCase = get(),
-            uploadExamCoverUseCase = get(),
-            clearExamCoverUseCase = get(),
             uploadQuestionResourceUseCase = get(),
             deleteQuestionResourceUseCase = get(),
             analyticsTracker = get(),

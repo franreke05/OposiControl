@@ -58,8 +58,8 @@ import com.oposicontrol.admin.domain.repository.QuestionResourceKind
  *
  * **P0-4 cerrado.** «Añadir recurso» estaba `enabled = false, onClick = {}` con una
  * nota al lado porque toda la ruta de escritura faltaba en el cliente. Ahora existe:
- * alta por referencia (`texto`, `enlace`), subida de archivo (`imagen`, `audio`,
- * `video`, `pdf`) y archivado por fila, cada uno con su estado de carga y su error.
+ * subida de archivo —sólo `imagen`, `audio` y `video`— y archivado por fila, cada
+ * uno con su estado de carga y su error.
  */
 @Composable
 internal fun QuestionResourcesSection(
@@ -114,6 +114,13 @@ internal fun QuestionResourcesSection(
                         onIntent = onIntent,
                     )
                 }
+            }
+            if (detail != null && detail.lacksRequiredAudio()) {
+                Text(
+                    text = QUESTION_IMMERSIVE_NEEDS_AUDIO,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.warningInk,
+                )
             }
             // Un fallo de alta o de archivado se dice aquí, con el mensaje del
             // servidor: es lo que distingue un 422 «esta pregunta no admite
@@ -245,6 +252,9 @@ private fun QuestionResourceDialog(state: QuestionsState, onIntent: (QuestionsIn
                 )
                 QuestionSelect(
                     selectedLabel = questionResourceKindLabel(form.kind),
+                    // Los tres tipos que se pueden crear y ninguno más: ver
+                    // `QuestionResourceKind`. Un recurso antiguo de PDF, texto o
+                    // enlace se sigue viendo en la lista, pero no se puede añadir otro.
                     options = QuestionResourceKind.entries.map {
                         QuestionFilterOption(it, questionResourceKindLabel(it))
                     },
@@ -267,32 +277,12 @@ private fun QuestionResourceDialog(state: QuestionsState, onIntent: (QuestionsIn
                     placeholder = "Opcional",
                     enabled = !saving,
                 )
-                when {
-                    form.kind == QuestionResourceKind.ENLACE -> QuestionTextField(
-                        label = "Enlace",
-                        value = form.externalUrl,
-                        onValueChange = { onIntent(QuestionsIntent.UpdateResourceUrl(it)) },
-                        placeholder = "https://…",
-                        supportingText = "Un enlace no sube nada: se guarda la dirección tal cual.",
-                        enabled = !saving,
-                    )
-                    form.kind == QuestionResourceKind.TEXTO -> QuestionTextField(
-                        label = "Contenido",
-                        value = form.textBody,
-                        onValueChange = { onIntent(QuestionsIntent.UpdateResourceText(it)) },
-                        placeholder = "El texto que acompaña a la pregunta",
-                        singleLine = false,
-                        minHeight = QUESTION_RESOURCE_TEXT_HEIGHT,
-                        supportingText = "El texto vive en la propia ficha; no hay archivo que abrir.",
-                        enabled = !saving,
-                    )
-                    else -> QuestionResourceFileField(
-                        form = form,
-                        picker = picker,
-                        saving = saving,
-                        onIntent = onIntent,
-                    )
-                }
+                QuestionResourceFileField(
+                    form = form,
+                    picker = picker,
+                    saving = saving,
+                    onIntent = onIntent,
+                )
                 (state.resourceSaveState as? UiAsync.Error)?.let { failure ->
                     Text(
                         text = failure.error.humanMessage(),
@@ -398,19 +388,15 @@ internal fun questionResourceIcon(type: QuestionResourceType): AppIcon = when (t
 }
 
 /**
- * Los seis tipos, con el nombre que se lee.
+ * Los tres tipos que se pueden crear, con el nombre que se lee.
  *
- * Aparte de `questionResourceTypeLabel`, que traduce el tipo de LECTURA: aquél
- * colapsa `pdf` y `enlace` en «Documento», que como etiqueta de un recurso ya
- * guardado vale y como opción de un desplegable no —habría dos «Documento»—.
+ * Aparte de `questionResourceTypeLabel`, que traduce el tipo de LECTURA (y sí
+ * conoce el «Documento» de un recurso antiguo de PDF o enlace).
  */
 internal fun questionResourceKindLabel(kind: QuestionResourceKind): String = when (kind) {
     QuestionResourceKind.IMAGEN -> "Imagen"
     QuestionResourceKind.AUDIO -> "Audio"
     QuestionResourceKind.VIDEO -> "Vídeo"
-    QuestionResourceKind.PDF -> "PDF"
-    QuestionResourceKind.TEXTO -> "Texto"
-    QuestionResourceKind.ENLACE -> "Enlace"
 }
 
 /** Archivar un recurso no se puede deshacer desde esta consola, y se dice antes. */
@@ -418,10 +404,10 @@ internal const val QUESTION_RESOURCE_ARCHIVE_WARNING: String =
     "El recurso dejará de verse en la pregunta. No se borra de la base, pero hoy no hay forma de recuperarlo desde aquí."
 
 internal const val QUESTION_RESOURCE_UPLOAD_NOTE: String =
-    "El archivo se sube al almacenamiento privado y la aplicación lo abre con un enlace firmado. Máximo 50 MB."
+    "El archivo se comprime y se sube al almacenamiento privado; la aplicación lo abre con un enlace firmado."
 
 internal const val QUESTION_RESOURCE_PICKER_UNAVAILABLE_NOTE: String =
-    "Subir archivos se hace desde la aplicación de escritorio. Aquí sí puedes añadir recursos de texto o de enlace."
+    "Subir archivos se hace desde la aplicación de escritorio."
 
 /** Mismo ancho que el diálogo de vincular a examen: son dos formularios hermanos. */
 private val QUESTION_RESOURCE_DIALOG_WIDTH = 400.dp
@@ -433,5 +419,3 @@ private val QUESTION_RESOURCE_DIALOG_WIDTH = 400.dp
  */
 private val QUESTION_RESOURCE_FILENAME_WIDTH = 240.dp
 
-/** Alto del área de texto: cuatro líneas, lo que cabe sin que el diálogo desplace. */
-private val QUESTION_RESOURCE_TEXT_HEIGHT = 96.dp

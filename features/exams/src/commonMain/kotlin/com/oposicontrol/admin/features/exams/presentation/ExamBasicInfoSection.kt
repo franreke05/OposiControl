@@ -14,7 +14,7 @@ import com.oposicontrol.admin.core.ui.components.SemanticRole
 import com.oposicontrol.admin.core.ui.theme.Spacing
 
 /**
- * Quién es este examen: identidad, dónde vive y con qué imagen se guarda.
+ * Quién es este examen: identidad, dónde vive y qué portada le corresponde.
  *
  * Tres bloques, cada uno con su icono, su título y su descripción, y ninguno de
  * adorno. Los campos son exactamente los que la tabla `examenes` guarda y el
@@ -27,10 +27,8 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
  *  - **Comunidad** es opcional: sin ella el examen es nacional. El identificador
  *    de comunidad no se enseña jamás, sólo su nombre — y cuando el catálogo no
  *    se ha podido leer, tampoco se inventa uno (ver [ExamCommunityPicker]).
- *  - **Portada** vive aquí y no en Recursos porque es lo único que un examen
- *    tiene colgando de sí mismo: `portada_url` es una columna de `examenes`. Los
- *    recursos cuelgan de cada pregunta, que es otra cosa, y se suben por otro
- *    camino.
+ *  - **Portada** es una previsualización automática (`ExamCoverPreview`): se deduce del tipo y de
+ *    la comunidad del examen y no se sube, ni se elige, ni se guarda.
  *
  * Lo que NO está, y no por olvido:
  *
@@ -40,8 +38,6 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
  *  - Un contador de caracteres en la descripción. **No hay límite real** (D7):
  *    ni la columna ni el backend imponen uno, así que un «0/500» sería una
  *    restricción inventada que además se leería como oficial.
- *  - «Cómo se mostrará» encima de la portada (D3): ninguna parte de la app pinta
- *    hoy portadas y la proporción no está en ningún contrato.
  *
  * **Por qué sigue usando [FormSection] y no el contenedor de cristal.** El
  * contenido de una pestaña ya vive dentro del `GlassSectionSurface` del marco del
@@ -193,18 +189,17 @@ internal fun ExamBasicInfoSection(
             }
         }
 
-        // 3 · Portada — RETIRADA (decisión de producto, 2026-09-23).
-        //
-        // La portada de un examen no se sube: se compone con los componentes de
-        // la propia app, igual que las noticias. Subir un archivo aquí ofrecía
-        // una segunda forma de hacer lo mismo, peor y sin plantilla, y además
-        // «la API de la app todavía no la envía», así que el archivo subido no
-        // llegaba a verse en ningún sitio.
-        //
-        // `portada_url` sigue en `examenes` y los intents de portada siguen
-        // existiendo: esto retira la ENTRADA, no borra lo ya guardado. Quitar la
-        // columna y los intents es un paso aparte, cuando conste que nadie los
-        // usa. Ver `ExamsIntent.RequestClearExamCover`.
+        // -------------------------------------------------------------------
+        // 3 · Portada
+        // -------------------------------------------------------------------
+        FormSection(
+            title = "Portada",
+            description = EXAM_COVER_SUBTITLE,
+            icon = AppIcon.ASSETS,
+            iconRole = SemanticRole.INFO,
+        ) {
+            ExamCoverPreview(state = state)
+        }
     }
 }
 

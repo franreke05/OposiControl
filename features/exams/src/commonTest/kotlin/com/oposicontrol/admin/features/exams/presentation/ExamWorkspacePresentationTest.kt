@@ -3,6 +3,7 @@ package com.oposicontrol.admin.features.exams.presentation
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.domain.model.Community
+import com.oposicontrol.admin.domain.model.ExamCoverResolver
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamQuestion
 import com.oposicontrol.admin.domain.model.ExamStatus
@@ -1036,221 +1037,132 @@ class ExamWorkspacePresentationTest {
     }
 
     // -----------------------------------------------------------------------
-    // Portada
+    // Portada automática: (tipo + comunidad) → previsualización
     // -----------------------------------------------------------------------
 
-    /**
-     * En un examen NUEVO no se ofrece subir: se dice que se subirá al guardar.
-     *
-     * El editor anterior enseñaba «Guardar portada» en cuanto había un fichero
-     * elegido, también sin `selectedExamId`. Ese botón sólo podía producir
-     * «Guarda el examen antes de subir portada»: una acción que existe únicamente
-     * para fallar. El camino que sí funciona ya estaba en `saveExam`, que
-     * encadena la subida tras crear el examen — lo que faltaba era decirlo.
-     */
+    private fun comunidadIso(id: String, name: String, iso: String) = Community(
+        id = id,
+        name = name,
+        code = iso,
+        slug = name.lowercase(),
+        isActive = true,
+        sortOrder = 0,
+        createdAt = now,
+        updatedAt = now,
+    )
+
+    private val comunidades = UiAsync.Success(
+        listOf(comunidadIso("c-md", "Madrid", "ES-MD"), comunidadIso("c-an", "Andalucía", "ES-AN")),
+    )
+
     @Test
-    fun `un examen nuevo no ofrece subir la portada, avisa de que se sube al guardar`() {
-        val nuevo = ExamsState(
-            selectedExamId = null,
-            editorCoverLocalUri = "C:/tmp/portada.png",
-            editorCoverFileName = "portada.png",
-        )
-        val cover = examCoverPresentation(nuevo)
-        assertEquals(ExamCoverStage.PENDING_ON_CREATE, cover.stage)
-        assertFalse(cover.canUploadNow, "En un examen que no existe, subir sólo puede fallar")
-        assertEquals("Se subirá al crear el examen.", cover.statusText)
-        // Y se puede volver a «sin portada» sin elegir otra imagen (D3).
-        assertTrue(cover.canCancelSelection, "Una selección pendiente tiene que poder quitarse")
+    fun `una rafaga y un razonado muestran su portada comun sea cual sea la comunidad`() {
+        listOf(null, "c-md", "c-an").forEach { comunidad ->
+            val rafaga = examCoverPresentation(
+                ExamsState(editorTypeExam = "rafaga", editorCommunityId = comunidad, communities = comunidades),
+            )
+            assertEquals("cover_rafaga", rafaga.cover.assetKey)
+            assertEquals("Portada de Ráfaga", rafaga.headline)
+
+            val razonado = examCoverPresentation(
+                ExamsState(editorTypeExam = "razonado", editorCommunityId = comunidad, communities = comunidades),
+            )
+            assertEquals("cover_razonado", razonado.cover.assetKey)
+            assertEquals("Portada de Razonado", razonado.headline)
+        }
     }
 
     @Test
-    fun `con examen guardado la seleccion si se puede subir ya`() {
-        val existente = ExamsState(
-            selectedExamId = "ex-1",
-            editorCoverLocalUri = "C:/tmp/portada.png",
-            editorCoverFileName = "portada.png",
+    fun `un inmersivo muestra el vector de su comunidad y lo nombra`() {
+        val madrid = examCoverPresentation(
+            ExamsState(editorTypeExam = "inmersivo", editorCommunityId = "c-md", communities = comunidades),
         )
-        val cover = examCoverPresentation(existente)
-        assertEquals(ExamCoverStage.PENDING_UPLOAD, cover.stage)
-        assertTrue(cover.canUploadNow)
-        assertFalse(cover.canRemove, "Todavía no hay nada en el servidor que quitar")
+        assertEquals("vector_madrid", madrid.cover.assetKey)
+        assertEquals("Vector de Madrid", madrid.headline)
+        assertFalse(madrid.cover.isFallback)
+
+        val andalucia = examCoverPresentation(
+            ExamsState(editorTypeExam = "inmersivo", editorCommunityId = "c-an", communities = comunidades),
+        )
+        assertEquals("vector_andalucia", andalucia.cover.assetKey)
     }
 
-    /** Sustituir deja deshacer sin tocar el servidor. */
     @Test
-    fun `sustituir una portada guardada ofrece cancelar el cambio`() {
-        val sustituyendo = ExamsState(
-            selectedExamId = "ex-1",
-            editorCoverUrl = SIGNED_COVER_URL,
-            editorCoverStoragePath = STORED_COVER_PATH,
-            editorCoverMimeType = "image/png",
-            editorCoverLocalUri = "C:/tmp/nueva.png",
-            editorCoverFileName = "nueva.png",
-        )
-        val cover = examCoverPresentation(sustituyendo)
-        assertEquals(ExamCoverStage.REPLACING, cover.stage)
-        assertTrue(cover.canCancelSelection)
-        assertEquals("nueva.png", cover.fileName)
+    fun `cambiar el tipo o la comunidad cambia la portada sin guardar nada`() {
+        val base = ExamsState(editorTypeExam = "inmersivo", editorCommunityId = "c-md", communities = comunidades)
+
+        assertEquals("vector_madrid", examCoverPresentation(base).cover.assetKey)
+        assertEquals("vector_andalucia", examCoverPresentation(base.copy(editorCommunityId = "c-an")).cover.assetKey)
+        assertEquals("cover_razonado", examCoverPresentation(base.copy(editorTypeExam = "razonado")).cover.assetKey)
+        assertEquals("cover_rafaga", examCoverPresentation(base.copy(editorTypeExam = "rafaga")).cover.assetKey)
     }
 
-    /**
-     * Una portada guardada se reconoce por su RUTA y se nombra por su FORMATO (K5-3).
-     *
-     * Desde PW-8 el servidor la guarda como `exam-covers/<examen_id>/<uuid>.<ext>`
-     * y sirve una URL firmada que cambia en cada lectura: el último segmento es un
-     * uuid y la URL no es un dato estable. Mutaciones: volver a mirar la URL para
-     * decidir la etapa, o volver a enseñar el último segmento como nombre, ponen
-     * este test en rojo.
-     */
+    /** PROVISIONAL y sin decidir: un inmersivo sin comunidad cae a la portada genérica y lo explica. */
     @Test
-    fun `la portada guardada se reconoce por su ruta y se nombra por su formato`() {
-        val guardada = ExamsState(
-            selectedExamId = "ex-1",
-            editorCoverUrl = SIGNED_COVER_URL,
-            editorCoverStoragePath = STORED_COVER_PATH,
-            editorCoverMimeType = "image/png",
-        )
-        val cover = examCoverPresentation(guardada)
-        assertEquals(ExamCoverStage.STORED, cover.stage)
-        assertNull(cover.fileName, "El nombre de una portada guardada es un uuid: no se enseña")
-        assertEquals("Portada guardada (PNG)", cover.placeholderText)
-        assertNull(cover.previewPath, "La portada guardada no se previsualiza: pediría red desde un Composable")
-        assertTrue(cover.canRemove)
-        assertFalse(cover.canUploadNow, "No hay nada nuevo que subir")
+    fun `un inmersivo sin comunidad muestra la portada provisional y dice como conseguir el vector`() {
+        val sinComunidad = examCoverPresentation(ExamsState(editorTypeExam = "inmersivo", communities = comunidades))
 
-        // Sin URL (la firma falló en esa lectura) sigue guardada: manda la ruta.
-        assertEquals(ExamCoverStage.STORED, examCoverPresentation(guardada.copy(editorCoverUrl = "")).stage)
-        // Una URL sin ruta no es una portada guardada.
+        assertTrue(sinComunidad.cover.isFallback)
+        assertEquals("Portada provisional", sinComunidad.headline)
+        assertTrue(sinComunidad.detail.contains("elige una comunidad"))
+    }
+
+    @Test
+    fun `un inmersivo con una comunidad sin vector o con el catalogo caido no inventa el vector`() {
+        val sinVector = examCoverPresentation(
+            ExamsState(
+                editorTypeExam = "inmersivo",
+                editorCommunityId = "c-xx",
+                communities = UiAsync.Success(listOf(comunidadIso("c-xx", "Atlántida", "ES-XX"))),
+            ),
+        )
+        assertTrue(sinVector.cover.isFallback)
+        assertEquals("Todavía no hay vector para esta comunidad.", sinVector.detail)
+
+        val catalogoCaido = examCoverPresentation(
+            ExamsState(editorTypeExam = "inmersivo", editorCommunityId = "c-md", communities = UiAsync.Loading),
+        )
+        assertTrue(catalogoCaido.cover.isFallback, "sin catálogo no se sabe la comunidad: no se inventa")
+    }
+
+    @Test
+    fun `un tipo irreconocible no rompe la previsualizacion`() {
+        val cover = examCoverPresentation(ExamsState(editorTypeExam = "marciano"))
+
+        assertTrue(cover.cover.isFallback)
+        assertEquals("Portada provisional", cover.headline)
+    }
+
+    @Test
+    fun `cada tipo de portada tiene su visual y los vectores llevan las iniciales de la comunidad`() {
+        assertEquals("RÁF", examCoverVisual(ExamCoverResolver.RAFAGA_COVER).glyph)
+        assertEquals("RAZ", examCoverVisual(ExamCoverResolver.RAZONADO_COVER).glyph)
+        assertEquals("?", examCoverVisual(ExamCoverResolver.GENERIC_COVER).glyph)
+        assertEquals("MD", examCoverVisual(ExamCoverResolver.resolve("inmersivo", "ES-MD")).glyph)
+    }
+
+    @Test
+    fun `el subtitulo y el texto no hablan de subir elegir ni guardar la portada`() {
         assertEquals(
-            ExamCoverStage.EMPTY,
-            examCoverPresentation(guardada.copy(editorCoverStoragePath = "", editorCoverMimeType = "")).stage,
+            "La portada se asigna automáticamente según el tipo de examen y la comunidad autónoma.",
+            EXAM_COVER_SUBTITLE,
         )
-
-        assertEquals("Portada guardada (JPG)", storedCoverLabel("image/jpeg"))
-        assertEquals("Portada guardada (WEBP)", storedCoverLabel(" IMAGE/WEBP "))
-        assertEquals("Portada guardada", storedCoverLabel(""), "Un formato que no se sabe no se adivina")
-        assertEquals("Portada guardada", storedCoverLabel("image/gif"))
-    }
-
-    /**
-     * Una firma nueva de la MISMA portada no ensucia el editor (K5-3, EX-14).
-     *
-     * Cada lectura del servidor trae otra URL firmada. Comparar la URL anunciaba
-     * «cambios sin guardar» permanentes; se compara la ruta del objeto.
-     */
-    @Test
-    fun `una firma nueva de la misma portada no deja cambios sin guardar`() {
-        val guardado = exam("ex-1").copy(
-            coverUrl = "$SIGNED_COVER_URL-otra-lectura",
-            coverStoragePath = STORED_COVER_PATH,
-            coverMimeType = "image/png",
-        )
-        val editor = editorStateFor(guardado).copy(editorCoverUrl = SIGNED_COVER_URL)
-        assertFalse(hasUnsavedExamChanges(editor, guardado), "Otra firma de la misma portada no es un cambio")
-
-        val otraPortada = editor.copy(
-            editorCoverStoragePath = "exam-covers/ex-1/0b9d1f64-7c1e-4d8a-9a51-3f7e2c1d0a42.png",
-        )
-        assertTrue(hasUnsavedExamChanges(otraPortada, guardado), "Otra ruta sí es otra portada")
-    }
-
-    /**
-     * La vista previa sólo existe para un fichero LOCAL recién elegido (D3).
-     *
-     * Escritorio ya decodifica imágenes locales (Skia, fuera del hilo de
-     * interfaz). Una URL `http(s)` no se previsualiza nunca: sería red desde un
-     * Composable. Y ningún texto promete «cómo se mostrará» ni un «catálogo» que
-     * la app no tiene.
-     */
-    @Test
-    fun `la vista previa es solo de un fichero local`() {
-        val local = examCoverPresentation(
-            ExamsState(selectedExamId = null, editorCoverLocalUri = "C:/Users/ana/portada.png", editorCoverFileName = "portada.png"),
-        )
-        assertEquals("C:/Users/ana/portada.png", local.previewPath)
-        val remota = examCoverPresentation(
-            ExamsState(selectedExamId = "ex-1", editorCoverLocalUri = "https://cdn.example.com/a.png"),
-        )
-        assertNull(remota.previewPath, "Una URL no se previsualiza: sería red desde un Composable")
-        assertNull(examCoverPresentation(ExamsState()).previewPath)
-
-        val estados = listOf(
-            ExamsState(),
-            ExamsState(selectedExamId = "ex-1", editorCoverUrl = "https://x/y.png"),
-            ExamsState(selectedExamId = null, editorCoverLocalUri = "C:/a.png", editorCoverFileName = "a.png"),
-        )
-        estados.forEach { state ->
-            val texto = examCoverPresentation(state)
-                .let { "${it.statusText} ${it.placeholderText} ${it.pickLabel}" }
-                .lowercase()
-            listOf("cómo se mostrará", "catálogo", "se presenta en la app").forEach { prohibido ->
-                assertFalse(texto.contains(prohibido), "«$prohibido» promete algo que no existe: $texto")
+        val textos = listOf(EXAM_COVER_SUBTITLE) + listOf("rafaga", "razonado", "inmersivo", "x").map {
+            examCoverPresentation(ExamsState(editorTypeExam = it)).let { p -> "${p.headline} ${p.detail}" }
+        }
+        textos.forEach { texto ->
+            listOf("subir", "archivo", "jpg", "elegir imagen", "guardar cambios").forEach { prohibido ->
+                assertFalse(texto.lowercase().contains(prohibido), "«$prohibido» en: $texto")
             }
         }
     }
 
-    /** De una ruta local sólo se enseña el nombre del fichero, nunca el escritorio de nadie (D13). */
+    /** La portada sale de campos que ya cuentan: no añade ningún cambio propio al editor. */
     @Test
-    fun `de una ruta local solo se ensena el nombre del fichero`() {
-        val cover = examCoverPresentation(
-            ExamsState(selectedExamId = "ex-1", editorCoverLocalUri = "C:\\Users\\ana\\Escritorio\\portada tcae.png"),
-        )
-        assertEquals("portada tcae.png", cover.fileName)
-    }
+    fun `la portada no ensucia el editor por si misma y el legacy de storage tampoco`() {
+        val guardado = exam("ex-1").copy(coverStoragePath = "exam-covers/ex-1/x.png", coverMimeType = "image/png")
 
-    /** «Quitar selección» en toda selección pendiente, y «Quitando…» mientras se quita (D3). */
-    @Test
-    fun `la seleccion pendiente se puede quitar y la retirada no dice subiendo`() {
-        listOf(
-            ExamsState(selectedExamId = null, editorCoverLocalUri = "C:/a.png"),
-            ExamsState(selectedExamId = "ex-1", editorCoverLocalUri = "C:/a.png"),
-            ExamsState(
-                selectedExamId = "ex-1",
-                editorCoverUrl = SIGNED_COVER_URL,
-                editorCoverStoragePath = STORED_COVER_PATH,
-                editorCoverLocalUri = "C:/a.png",
-            ),
-        ).forEach { state ->
-            val cover = examCoverPresentation(state)
-            assertTrue(cover.canCancelSelection, "La selección pendiente en ${cover.stage} no se puede quitar")
-        }
-
-        val quitando = examCoverPresentation(
-            ExamsState(
-                selectedExamId = "ex-1",
-                editorCoverUrl = SIGNED_COVER_URL,
-                editorCoverStoragePath = STORED_COVER_PATH,
-                coverUploadState = UiAsync.Loading,
-            ),
-        )
-        assertEquals(ExamCoverStage.REMOVING, quitando.stage)
-        // «Quitando…» lo dice el marcador; la zona de acciones no lo repite (P2-4).
-        assertEquals("Quitando…", quitando.placeholderText)
-        assertNull(quitando.statusText)
-
-        val subiendo = examCoverPresentation(
-            ExamsState(selectedExamId = "ex-1", editorCoverLocalUri = "C:/a.png", coverUploadState = UiAsync.Loading),
-        )
-        assertEquals(ExamCoverStage.UPLOADING, subiendo.stage)
-        assertEquals("Subiendo…", subiendo.statusText)
-    }
-
-    /** El subtítulo de portada no afirma que la app la enseñe: la API de la app no la envía (D3). */
-    @Test
-    fun `el subtitulo de portada no promete la app`() {
-        assertFalse(EXAM_COVER_SUBTITLE.lowercase().contains("se presenta en la app"))
-        assertTrue(EXAM_COVER_SUBTITLE.contains("todavía no la envía"))
-        assertEquals("JPG, PNG o WEBP · Máximo 10 MB", EXAM_COVER_FORMATS)
-    }
-
-    /** «Guardar portada» competía con «Guardar cambios» y guardaban cosas distintas. */
-    @Test
-    fun `la accion de subir no se llama guardar`() {
-        val cover = examCoverPresentation(
-            ExamsState(selectedExamId = "ex-1", editorCoverLocalUri = "C:/a.png", editorCoverFileName = "a.png"),
-        )
-        assertTrue(cover.canUploadNow)
-        assertFalse(cover.pickLabel.lowercase().contains("guardar"))
+        assertFalse(hasUnsavedExamChanges(editorStateFor(guardado), guardado))
     }
 
     // -----------------------------------------------------------------------
@@ -1277,18 +1189,6 @@ class ExamWorkspacePresentationTest {
         assertTrue(examChecks(premium, null, 5).none { it.id == ExamCheckId.ACCESS_PRICE })
         val sinPrecio = state.copy(editorPriceTickets = "0")
         assertTrue(examChecks(sinPrecio, null, 5).none { it.id == ExamCheckId.ACCESS_PRICE })
-    }
-
-    /** La portada no viaja con «Guardar cambios», y el aviso tiene que decirlo. */
-    @Test
-    fun `el aviso de cambios sin guardar distingue la portada pendiente`() {
-        val exam = exam("a")
-        val conPortada = editorStateFor(exam).copy(editorCoverLocalUri = "C:/tmp/portada.png")
-        val detalle = examChecks(conPortada, exam, questionCount = 4)
-            .first { it.id == ExamCheckId.UNSAVED_CHANGES }
-            .detail
-            .orEmpty()
-        assertTrue(detalle.lowercase().contains("portada"), "Era: $detalle")
     }
 
     /**
@@ -1725,49 +1625,6 @@ class ExamWorkspacePresentationTest {
     }
 
     // -----------------------------------------------------------------------
-    // Portada sin repeticiones (P2-4)
-    // -----------------------------------------------------------------------
-
-    @Test
-    fun `la zona de acciones de la portada no repite lo que dice el marcador`() {
-        val estados = listOf(
-            ExamsState(),
-            ExamsState(selectedExamId = null, editorCoverLocalUri = "C:/a.png", editorCoverFileName = "a.png"),
-            ExamsState(selectedExamId = "ex-1", editorCoverLocalUri = "C:/a.png", editorCoverFileName = "a.png"),
-            ExamsState(
-                selectedExamId = "ex-1",
-                editorCoverUrl = SIGNED_COVER_URL,
-                editorCoverStoragePath = STORED_COVER_PATH,
-                editorCoverMimeType = "image/png",
-            ),
-            ExamsState(
-                selectedExamId = "ex-1",
-                editorCoverUrl = SIGNED_COVER_URL,
-                editorCoverStoragePath = STORED_COVER_PATH,
-                editorCoverLocalUri = "C:/a.png",
-            ),
-            ExamsState(selectedExamId = "ex-1", editorCoverLocalUri = "C:/a.png", coverUploadState = UiAsync.Loading),
-            ExamsState(
-                selectedExamId = "ex-1",
-                editorCoverUrl = SIGNED_COVER_URL,
-                editorCoverStoragePath = STORED_COVER_PATH,
-                coverUploadState = UiAsync.Loading,
-            ),
-        )
-        assertEquals(ExamCoverStage.entries.toSet(), estados.map { examCoverPresentation(it).stage }.toSet())
-        estados.forEach { state ->
-            val cover = examCoverPresentation(state)
-            val marcador = cover.placeholderText.lowercase().trimEnd('.', '…')
-            listOfNotNull(cover.fileName, cover.statusText).forEach { linea ->
-                assertFalse(
-                    linea.lowercase().contains(marcador),
-                    "En ${cover.stage} la zona de acciones repite «${cover.placeholderText}»: «$linea»",
-                )
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------------
     // Reparto de columnas
     // -----------------------------------------------------------------------
 
@@ -1884,11 +1741,6 @@ class ExamWorkspacePresentationTest {
         editorYear = exam.year?.toString().orEmpty(),
         editorDurationMinutes = exam.durationMinutes?.toString().orEmpty(),
         editorIsOfficial = exam.isOfficial,
-        editorCoverUrl = exam.coverUrl.orEmpty(),
-        // Como `selectExam`: la ruta y el tipo también se copian, y desde K5-3 la
-        // ruta es lo que decide si hay cambios en la portada.
-        editorCoverStoragePath = exam.coverStoragePath.orEmpty(),
-        editorCoverMimeType = exam.coverMimeType.orEmpty(),
         specialtyCapabilities = UiAsync.Success(capabilities(rafagas = true)),
     )
 
@@ -1934,11 +1786,3 @@ class ExamWorkspacePresentationTest {
         sortOrder = 0,
     )
 }
-
-/** Una ruta con la forma que exige el CHECK de M6: `exam-covers/<examen_id>/<uuid>.<ext>`. */
-private const val STORED_COVER_PATH: String = "exam-covers/ex-1/6f1c2b3a-9d4e-4f5a-8b6c-7d8e9f0a1b2c.png"
-
-/** Una URL firmada como las que sirve el backend desde PW-8: cambia en cada lectura. */
-private const val SIGNED_COVER_URL: String =
-    "https://example.supabase.co/storage/v1/object/sign/exam-resources/" +
-        "exam-covers/ex-1/6f1c2b3a-9d4e-4f5a-8b6c-7d8e9f0a1b2c.png?token=firma-1"

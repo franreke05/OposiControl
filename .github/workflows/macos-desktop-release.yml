@@ -1,0 +1,350 @@
+# Distribución macOS de OposiControl Desktop (OposiControl.app + .dmg).
+#
+# - `unsigned` (por defecto): build interna UNSIGNED_INTERNAL_BUILD, sólo para pruebas.
+# - `signed`: firma Developer ID + Hardened Runtime, notarización con notarytool
+#   (App Store Connect API key) y stapling. Exige los secretos de docs/release/MACOS_DISTRIBUTION.md.
+#
+# No publica releases: el resultado es un artifact descargable de la ejecución.
+name: macOS desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      signing:
+        description: "unsigned = build interna sin firma; signed = Developer ID + notarización"
+        type: choice
+        options: [unsigned, signed]
+        default: unsigned
+      version:
+        description: "Versión MAJOR.MINOR.PATCH (MAJOR > 0)"
+        type: string
+        default: "1.0.0"
+  # Cada push a estas ramas genera los DMG (sin firma) descargables en Actions.
+  push:
+    branches:
+      - feature/macos-desktop-distribution
+      - "release/desktop-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    env:
+      # Manual: lo que se elija. Push: firmada en cuanto exista el certificado en los secretos.
+      SIGNING: ${{ inputs.signing || (secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && 'signed' || 'unsigned') }}
+      APP_VERSION: ${{ inputs.version || '1.0.0' }}
+      ARCH: ${{ matrix.arch }}
+      # Valores PÚBLICOS que viajan dentro de la app (URL del proyecto y clave publishable).
+      SUPABASE_URL: ${{ secrets.OPOSI_SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.OPOSI_SUPABASE_PUBLISHABLE_KEY }}
+      SENTRY_DESKTOP_DSN: ${{ secrets.OPOSI_SENTRY_DESKTOP_DSN }}
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin, incluye jpackage)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up Gradle (cache de sólo lectura fuera de main)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Check runner architecture
+        run: |
+          set -euo pipefail
+          HOST="$(uname -m)"
+          case "$ARCH:$HOST" in
+            arm64:arm64|x64:x86_64) echo "Runner $HOST para $ARCH" ;;
+            *) echo "::error::Runner $HOST no produce $ARCH"; exit 1 ;;
+          esac
+          [[ "$APP_VERSION" =~ ^[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Versión inválida: $APP_VERSION"; exit 1; }
+          if [ "$SIGNING" = "signed" ]; then SUFFIX=""; else SUFFIX="-UNSIGNED_INTERNAL_BUILD"; fi
+          echo "DMG_NAME=OposiControl-macOS-${APP_VERSION}-${ARCH}${SUFFIX}.dmg" >> "$GITHUB_ENV"
+
+      - name: Verify production configuration
+        run: ./gradlew :composeApp:verifyProductionDesktopConfig -PoposiProduction=true --console=plain
+
+      - name: Tests de la app de escritorio (config runtime y navegación)
+        run: ./gradlew :composeApp:jvmTest --console=plain
+
+      # ---------------- Firma: keychain temporal ----------------
+      - name: Import Developer ID certificate into a temporary keychain
+        if: env.SIGNING == 'signed'
+        env:
+          P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for v in P12_BASE64 P12_PASSWORD TEAM_ID; do
+            [ -n "${!v}" ] || { echo "::error::Falta el secreto para $v (ver docs/release/MACOS_DISTRIBUTION.md)"; exit 1; }
+          done
+          KEYCHAIN="$RUNNER_TEMP/oposi-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          umask 077
+          printf '%s' "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')"
+          [ -n "$IDENTITY" ] || { echo "::error::El .p12 no contiene un certificado 'Developer ID Application' con su clave privada"; exit 1; }
+          [[ "$IDENTITY" == *"($TEAM_ID)" ]] || { echo "::error::La identidad no pertenece al Team ID configurado"; exit 1; }
+          echo "Identidad de firma: $IDENTITY"
+          {
+            echo "OPOSI_MACOS_SIGNING_IDENTITY=$IDENTITY"
+            echo "OPOSI_MACOS_KEYCHAIN=$KEYCHAIN"
+          } >> "$GITHUB_ENV"
+
+      # ---------------- App ----------------
+      - name: Build OposiControl.app
+        run: |
+          set -euo pipefail
+          SIGN_FLAG=false; [ "$SIGNING" = "signed" ] && SIGN_FLAG=true
+          ./gradlew :composeApp:createDistributable \
+            -PoposiProduction=true \
+            -PoposiVersion="$APP_VERSION" \
+            -PoposiBuildNumber="$GITHUB_RUN_NUMBER" \
+            -PoposiRelease="oposicontrol-desktop@$APP_VERSION+$GITHUB_RUN_NUMBER" \
+            -PoposiMacSign="$SIGN_FLAG" \
+            --console=plain
+          APP="$GITHUB_WORKSPACE/composeApp/build/compose/binaries/main/app/OposiControl.app"
+          [ -d "$APP" ] || { echo "::error::No existe $APP"; exit 1; }
+          echo "APP=$APP" >> "$GITHUB_ENV"
+
+      # ---------------- Firmas anidadas ----------------
+      - name: Inspect signatures (tal como las deja jpackage)
+        run: bash composeApp/packaging/macos/inspect-signatures.sh "$APP" | tee "$RUNNER_TEMP/signatures-as-built.txt"
+
+      - name: Launch as built (diagnóstico, no bloquea)
+        if: env.SIGNING == 'unsigned'
+        continue-on-error: true
+        run: bash composeApp/packaging/macos/launch-check.sh "$APP" "$RUNNER_TEMP/diagnostics" "${ARCH}-as-built"
+
+      - name: Ad-hoc re-sign, de dentro hacia fuera (build interna)
+        if: env.SIGNING == 'unsigned'
+        run: |
+          bash composeApp/packaging/macos/adhoc-sign.sh "$APP" composeApp/packaging/macos/entitlements.plist
+          bash composeApp/packaging/macos/inspect-signatures.sh "$APP" | tee "$RUNNER_TEMP/signatures-final.txt"
+          # El Hardened Runtime sobre una firma ad-hoc es lo que activa la validación de librerías
+          # y el rechazo "different Team IDs" en un Mac con SIP (el runner lo tiene desactivado
+          # y no lo reproduce): en la build interna no puede quedar en ningún binario.
+          if grep -F 'runtime)' "$RUNNER_TEMP/signatures-final.txt"; then
+            echo "::error::Quedan binarios con Hardened Runtime en la build ad-hoc"; exit 1
+          fi
+          echo "Ningún binario conserva Hardened Runtime"
+
+      - name: Inspect bundle
+        run: |
+          set -euo pipefail
+          PLIST="$APP/Contents/Info.plist"
+          plutil -lint "$PLIST"
+          get() { /usr/libexec/PlistBuddy -c "Print :$1" "$PLIST"; }
+          echo "CFBundleName=$(get CFBundleName)"
+          echo "CFBundleIdentifier=$(get CFBundleIdentifier)"
+          echo "CFBundleShortVersionString=$(get CFBundleShortVersionString)"
+          echo "CFBundleVersion=$(get CFBundleVersion)"
+          [ "$(get CFBundleName)" = "OposiControl" ] || { echo "::error::Nombre de bundle inesperado"; exit 1; }
+          [ "$(get CFBundleShortVersionString)" = "$APP_VERSION" ] || { echo "::error::Versión inesperada"; exit 1; }
+          ICON="$(get CFBundleIconFile)"
+          [ -f "$APP/Contents/Resources/$ICON" ] || [ -f "$APP/Contents/Resources/$ICON.icns" ] || { echo "::error::Falta el icono"; exit 1; }
+          echo "Icono: $ICON"
+          # Runtime embebido: la app no necesita Java instalado.
+          RUNTIME="$APP/Contents/runtime/Contents/Home"
+          [ -f "$RUNTIME/lib/server/libjvm.dylib" ] || { echo "::error::Sin runtime JVM embebido"; exit 1; }
+          grep -E '^(JAVA_VERSION|MODULES)=' "$RUNTIME/release"
+          echo "Arquitectura del runtime: $(lipo -archs "$RUNTIME/lib/server/libjvm.dylib")"
+          echo "Arquitectura del lanzador: $(lipo -archs "$APP/Contents/MacOS/OposiControl")"
+          EXPECTED=$([ "$ARCH" = "arm64" ] && echo arm64 || echo x86_64)
+          [ "$(lipo -archs "$RUNTIME/lib/server/libjvm.dylib")" = "$EXPECTED" ] || { echo "::error::Runtime de otra arquitectura"; exit 1; }
+          ls "$APP/Contents/app" | grep -E '^skiko-awt-runtime-macos-' || { echo "::error::Falta la librería nativa de Skiko"; exit 1; }
+          # Configuración de producción horneada en el lanzador (sin imprimir la clave).
+          CFG="$APP/Contents/app/OposiControl.cfg"
+          grep -q -- '-Doposi.BASE_URL=https://api.oposibots.es' "$CFG" || { echo "::error::No apunta a la API de producción"; exit 1; }
+          grep -q -- '-Doposi.APP_ENV=prod' "$CFG" || { echo "::error::APP_ENV no es prod"; exit 1; }
+          if grep -qiE 'localhost|127\.0\.0\.1|:8080' "$CFG"; then echo "::error::La configuración menciona un backend local"; exit 1; fi
+          grep -q -- '-Doposi.SUPABASE_URL=https://' "$CFG" || { echo "::error::Falta SUPABASE_URL"; exit 1; }
+          if grep -q 'sb_secret_' "$CFG"; then echo "::error::Clave secreta de Supabase en la app"; exit 1; fi
+          echo "Configuración de producción: OK"
+
+      - name: Code signature (informativo en unsigned, obligatorio en signed)
+        run: |
+          set -uo pipefail
+          codesign -dv --verbose=4 "$APP" 2>&1 | grep -E '^(Authority|TeamIdentifier|Signature|CodeDirectory|Timestamp|Runtime)' || true
+          if [ "$SIGNING" = "signed" ]; then
+            set -e
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            codesign -dv --verbose=4 "$APP" 2>&1 | grep -q '^Authority=Developer ID Application:' || { echo "::error::No es Developer ID"; exit 1; }
+            codesign -dv --verbose=4 "$APP" 2>&1 | grep -qE 'flags=.*runtime' || { echo "::error::Sin Hardened Runtime"; exit 1; }
+            codesign -dv --verbose=4 "$APP" 2>&1 | grep -q '^Timestamp=' || { echo "::error::Sin secure timestamp"; exit 1; }
+            codesign -d --entitlements - --xml "$APP" 2>/dev/null | plutil -p - || true
+          else
+            set -e
+            echo "UNSIGNED_INTERNAL_BUILD: firma ad-hoc coherente, sin Developer ID."
+            codesign --verify --deep --strict --verbose=2 "$APP"
+          fi
+          # Lanzador y libjli.dylib tienen que compartir Team ID (o ninguno de los dos tenerlo).
+          team() { codesign -d -vvv "$1" 2>&1 | sed -n 's/^TeamIdentifier=//p'; }
+          LIBJLI="$(find "$APP/Contents/runtime" -name libjli.dylib | head -1)"
+          T_MAIN="$(team "$APP/Contents/MacOS/OposiControl")"; T_JLI="$(team "$LIBJLI")"
+          echo "TeamIdentifier lanzador=${T_MAIN:-none} libjli=${T_JLI:-none} (${LIBJLI#"$APP"/})"
+          [ "${T_MAIN:-none}" = "${T_JLI:-none}" ] || { echo "::error::Team ID distinto entre lanzador y libjli.dylib"; exit 1; }
+
+      # ---------------- Notarización de la app ----------------
+      - name: Write App Store Connect API key
+        if: env.SIGNING == 'signed'
+        env:
+          API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for v in API_KEY_BASE64 API_KEY_ID API_ISSUER_ID; do
+            [ -n "${!v}" ] || { echo "::error::Falta el secreto para $v"; exit 1; }
+          done
+          umask 077
+          KEY_PATH="$RUNNER_TEMP/AuthKey_${API_KEY_ID}.p8"
+          printf '%s' "$API_KEY_BASE64" | base64 --decode > "$KEY_PATH"
+          {
+            echo "NOTARY_KEY_PATH=$KEY_PATH"
+            echo "NOTARY_KEY_ID=$API_KEY_ID"
+            echo "NOTARY_ISSUER=$API_ISSUER_ID"
+          } >> "$GITHUB_ENV"
+
+      - name: Notarize and staple OposiControl.app
+        if: env.SIGNING == 'signed'
+        run: |
+          set -euo pipefail
+          notarize() {
+            local file="$1" out="$RUNNER_TEMP/notary-$(basename "$1").json"
+            xcrun notarytool submit "$file" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" \
+              --issuer "$NOTARY_ISSUER" --wait --timeout 60m --output-format json > "$out"
+            local id status
+            id="$(plutil -extract id raw "$out")"; status="$(plutil -extract status raw "$out")"
+            echo "Notarización de $(basename "$file"): $status ($id)"
+            if [ "$status" != "Accepted" ]; then
+              xcrun notarytool log "$id" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" || true
+              echo "::error::Notarización no aceptada: $status"; exit 1
+            fi
+          }
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/OposiControl.zip"
+          notarize "$RUNNER_TEMP/OposiControl.zip"
+          xcrun stapler staple "$APP"
+          xcrun stapler validate "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+
+      # ---------------- Arranque controlado ----------------
+      - name: Launch smoke test (sin Java externo)
+        run: |
+          bash composeApp/packaging/macos/launch-check.sh "$APP" "$RUNNER_TEMP/diagnostics" "$ARCH"
+          echo "API de producción desde el runner: HTTP $(curl -sS -m 15 -o /dev/null -w '%{http_code}' https://api.oposibots.es/health)"
+
+      # ---------------- DMG ----------------
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/dmg"
+          rm -rf "$STAGE"; mkdir -p "$STAGE"
+          ditto "$APP" "$STAGE/OposiControl.app"
+          ln -s /Applications "$STAGE/Applications"
+          mkdir -p "$RUNNER_TEMP/out"
+          DMG="$RUNNER_TEMP/out/$DMG_NAME"
+          hdiutil create -volname "OposiControl" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          if [ "$SIGNING" = "signed" ]; then
+            codesign --sign "$OPOSI_MACOS_SIGNING_IDENTITY" --keychain "$OPOSI_MACOS_KEYCHAIN" --timestamp "$DMG"
+          fi
+          hdiutil verify "$DMG"
+          echo "DMG=$DMG" >> "$GITHUB_ENV"
+
+      - name: Notarize and staple DMG
+        if: env.SIGNING == 'signed'
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/notary-dmg.json"
+          xcrun notarytool submit "$DMG" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER" --wait --timeout 60m --output-format json > "$OUT"
+          STATUS="$(plutil -extract status raw "$OUT")"; ID="$(plutil -extract id raw "$OUT")"
+          echo "Notarización del DMG: $STATUS ($ID)"
+          if [ "$STATUS" != "Accepted" ]; then
+            xcrun notarytool log "$ID" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" || true
+            echo "::error::Notarización del DMG no aceptada: $STATUS"; exit 1
+          fi
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+
+      - name: Verify DMG contents
+        run: |
+          set -euo pipefail
+          MNT="$(mktemp -d)"
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MNT" >/dev/null
+          [ -d "$MNT/OposiControl.app" ] || { hdiutil detach "$MNT"; echo "::error::El DMG no contiene la app"; exit 1; }
+          [ -L "$MNT/Applications" ] || echo "::warning::Sin acceso directo a Aplicaciones"
+          if [ "$SIGNING" = "signed" ]; then
+            codesign --verify --deep --strict --verbose=2 "$MNT/OposiControl.app"
+            xcrun stapler validate "$MNT/OposiControl.app"
+          fi
+          # Lo que recibe Arturo: la app copiada fuera del DMG, arrancada desde ahí.
+          INSTALLED="$RUNNER_TEMP/installed"
+          rm -rf "$INSTALLED"; mkdir -p "$INSTALLED"
+          ditto "$MNT/OposiControl.app" "$INSTALLED/OposiControl.app"
+          hdiutil detach "$MNT" >/dev/null
+          codesign --verify --deep --strict --verbose=2 "$INSTALLED/OposiControl.app"
+          bash composeApp/packaging/macos/launch-check.sh "$INSTALLED/OposiControl.app" "$RUNNER_TEMP/diagnostics" "${ARCH}-from-dmg"
+          cd "$(dirname "$DMG")"
+          shasum -a 256 "$DMG_NAME" | tee "$DMG_NAME.sha256"
+          ls -lh
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DMG_NAME }}
+          path: |
+            ${{ runner.temp }}/out/${{ env.DMG_NAME }}
+            ${{ runner.temp }}/out/${{ env.DMG_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload diagnostics (captura y log del arranque)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-macos-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/diagnostics
+            ${{ runner.temp }}/signatures-*.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Remove temporary keychain and API key
+        if: always()
+        run: |
+          [ -n "${OPOSI_MACOS_KEYCHAIN:-}" ] && security delete-keychain "$OPOSI_MACOS_KEYCHAIN" || true
+          [ -n "${NOTARY_KEY_PATH:-}" ] && rm -f "$NOTARY_KEY_PATH" || true
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/OposiControl.zip"

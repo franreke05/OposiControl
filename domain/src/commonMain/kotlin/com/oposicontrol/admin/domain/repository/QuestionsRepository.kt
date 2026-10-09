@@ -26,7 +26,14 @@ enum class QuestionActiveFilter(val wireValue: String) {
 }
 
 /**
- * Los SEIS valores que admite el `CHECK` de `recursos_pregunta.tipo_recurso`.
+ * Los TRES tipos de recurso que se pueden CREAR: imagen, audio y vídeo, y siempre
+ * desde un archivo que se sube a Storage.
+ *
+ * Decisión de producto (2026-09-25): un recurso de pregunta es material que se ve
+ * o se oye. PDF, texto y enlace ya no se pueden añadir. La base sigue admitiendo
+ * esos valores en su `CHECK` y los recursos antiguos de esos tipos se siguen
+ * LEYENDO —[com.oposicontrol.admin.domain.model.QuestionResourceType] los
+ * conserva—, pero ninguna pantalla los crea y el servidor rechaza crearlos.
  *
  * Existe porque [com.oposicontrol.admin.domain.model.QuestionResourceType] es un tipo
  * de LECTURA y no sirve para escribir: colapsa `pdf`, `enlace` y lo desconocido en
@@ -41,29 +48,10 @@ enum class QuestionResourceKind(val wireValue: String) {
     IMAGEN("imagen"),
     AUDIO("audio"),
     VIDEO("video"),
-    PDF("pdf"),
-    TEXTO("texto"),
-    ENLACE("enlace"),
-    ;
-
-    /**
-     * Si el recurso SÓLO puede nacer de un archivo subido a Storage.
-     *
-     * Los cuatro de archivo ni siquiera tienen alta por JSON: el servidor responde
-     * `QUESTION_RESOURCE_UPLOAD_REQUIRED` porque una fila `imagen` sin objeto es una
-     * fila que la aplicación no puede pintar. Los otros dos se sostienen con su
-     * propio contenido —`url_externa` o `contenido_texto`— y no suben nada.
-     */
-    val requiresFile: Boolean get() = this == IMAGEN || this == AUDIO || this == VIDEO || this == PDF
 }
 
 /**
  * Lo que describe un recurso nuevo, sin el archivo.
- *
- * Los dos campos exclusivos son nulables y EXCLUYENTES por construcción: la base
- * tiene un `CHECK` por tipo —`texto` sólo con `contenidoTexto`, `enlace` sólo con
- * `urlExterna`, el resto sólo con ruta de Storage— y un borrador que llevara los
- * dos sólo podría acabar en un rechazo. Quien lo compone decide cuál va.
  *
  * [position] `null` = al final; el servidor escribe 1 si no hay nada que ordenar.
  */
@@ -71,10 +59,6 @@ data class QuestionResourceDraft(
     val kind: QuestionResourceKind,
     val title: String,
     val description: String = "",
-    /** Sólo [QuestionResourceKind.ENLACE]. El servidor exige `^https?://`. */
-    val externalUrl: String? = null,
-    /** Sólo [QuestionResourceKind.TEXTO]. */
-    val textBody: String? = null,
     val position: Int? = null,
 )
 
@@ -187,15 +171,6 @@ interface QuestionsRepository {
     /** Los recursos vivos de la pregunta, ordenados (`GET /preguntas/{id}/recursos`). */
     suspend fun listQuestionResources(questionId: String): AppResult<List<QuestionResource>>
 
-    /**
-     * Alta POR REFERENCIA (`POST /preguntas/{id}/recursos`): `texto` y `enlace`, los
-     * dos únicos tipos que no suben nada. Para los demás el servidor responde
-     * `QUESTION_RESOURCE_UPLOAD_REQUIRED` y hay que usar [uploadQuestionResourceFile].
-     */
-    suspend fun createQuestionResource(
-        questionId: String,
-        draft: QuestionResourceDraft,
-    ): AppResult<QuestionResource>
 
     /**
      * Alta CON ARCHIVO (`POST /preguntas/{id}/recursos/archivo`, multipart).
@@ -213,7 +188,7 @@ interface QuestionsRepository {
     ): AppResult<QuestionResource>
 
     /**
-     * Edita título, descripción, contenido de texto y posición
+     * Edita título, descripción y posición
      * (`PATCH /preguntas/{id}/recursos/{recursoId}`).
      *
      * No cambia el TIPO ni el archivo: el servidor no los escribe por esta ruta, y

@@ -247,20 +247,24 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     ),
     "QUESTION_RESOURCE_TYPE_INVALID" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
-        "Ese formato no se admite para este tipo de recurso: imagen (PNG, JPG, WEBP o GIF), audio (MP3, M4A " +
-            "o WAV), vídeo (MP4) o PDF.",
+        "Ese formato no se admite. Los recursos son sólo imagen (PNG, JPG, WEBP o GIF), audio (MP3, M4A o WAV) " +
+            "o vídeo (MP4).",
     ),
     "QUESTION_RESOURCE_TOO_LARGE" to DomainErrorDefinition(
         HttpStatusCode.PayloadTooLarge,
-        "El archivo supera el límite de 50 MB.",
+        "El archivo es demasiado grande para procesarlo en el servidor (más de 300 MB).",
     ),
     "QUESTION_RESOURCE_UPLOAD_REQUIRED" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
-        "Las imágenes, audios, vídeos y PDF se adjuntan subiendo el archivo, no escribiendo una ruta.",
+        "Las imágenes, audios y vídeos se adjuntan subiendo el archivo, no escribiendo una ruta.",
     ),
-    "QUESTION_RESOURCE_URL_INVALID" to DomainErrorDefinition(
+    "QUESTION_IMMERSIVE_REQUIRES_AUDIO" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
-        "El enlace tiene que empezar por http:// o https://.",
+        "Una pregunta inmersiva necesita al menos un audio para poder usarse. Añade el audio y vuelve a intentarlo.",
+    ),
+    "EXAM_PUBLISH_IMMERSIVE_WITHOUT_AUDIO" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "El examen tiene preguntas inmersivas sin audio. Añádeles un audio o quítalas del examen antes de publicar.",
     ),
     // IMPORTACIONES (IM3, KI0-6). Los mensajes hablan de lo que el administrador
     // tiene que HACER, no de la fila ni de la restricción que saltó: el cuerpo de

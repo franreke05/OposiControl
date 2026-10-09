@@ -731,39 +731,16 @@ class QuestionsViewModelTest {
         return viewModel
     }
 
-    /**
-     * El alta POR REFERENCIA llega al repositorio con el tipo y la URL que se
-     * escribieron. Mutación: un `onClick = {}` —lo que había— deja esta lista vacía.
-     */
-    @Test
-    fun addingALinkResourceCallsTheRepository() = runTest {
-        val repository = FakeQuestionsRepository(
-            listResult = AppResult.Success(listOf(listItem())),
-            detailResult = AppResult.Success(immersiveDetail()),
-            createResourceResult = AppResult.Success(resource()),
-            resourcesResult = AppResult.Success(listOf(resource())),
+    /** Abre el diálogo y deja listo un audio con título: lo mínimo que admite el alta. */
+    private fun QuestionsViewModel.fillAudioResource() {
+        dispatch(QuestionsIntent.RequestAddResource)
+        dispatch(QuestionsIntent.UpdateResourceKind(QuestionResourceKind.AUDIO))
+        dispatch(QuestionsIntent.UpdateResourceTitle("Audio del caso"))
+        dispatch(
+            QuestionsIntent.PickResourceFile(
+                QuestionResourceFile(fileName = "caso.mp3", mimeType = "audio/mpeg", bytes = byteArrayOf(1, 2, 3)),
+            ),
         )
-        val viewModel = openImmersiveQuestion(repository)
-
-        viewModel.dispatch(QuestionsIntent.RequestAddResource)
-        viewModel.dispatch(QuestionsIntent.UpdateResourceKind(QuestionResourceKind.ENLACE))
-        viewModel.dispatch(QuestionsIntent.UpdateResourceTitle("Sentencia completa"))
-        viewModel.dispatch(QuestionsIntent.UpdateResourceUrl("https://boe.es/doc"))
-        advanceUntilIdle()
-        viewModel.dispatch(QuestionsIntent.ConfirmAddResource)
-        advanceUntilIdle()
-
-        val (questionId, draft) = repository.createdResources.single()
-        assertEquals("q-1", questionId)
-        assertEquals(QuestionResourceKind.ENLACE, draft.kind)
-        assertEquals("Sentencia completa", draft.title)
-        assertEquals("https://boe.es/doc", draft.externalUrl)
-        // Un enlace NO sube archivo: la otra ruta ni se toca.
-        assertTrue(repository.uploadedResources.isEmpty())
-        // Y la lista que se pinta se relee del servidor, no se compone a mano.
-        assertEquals(listOf("q-1"), repository.listedResourcesFor)
-        assertIs<UiAsync.Success<Unit>>(viewModel.state.value.resourceSaveState)
-        assertFalse(viewModel.state.value.showResourceDialog)
     }
 
     /** Un tipo de archivo va por la ruta multipart, con el id de idempotencia. */
@@ -798,13 +775,12 @@ class QuestionsViewModelTest {
         assertEquals(QuestionResourceKind.AUDIO, draft.kind)
         assertEquals("caso.mp3", file.fileName)
         assertEquals("audio/mpeg", file.mimeType)
-        assertTrue(repository.createdResources.isEmpty(), "un archivo no se da de alta por JSON")
     }
 
     /**
      * Un rechazo del backend —el 422 «sólo las inmersivas admiten recursos», por
      * ejemplo— llega a la pantalla como error, con SU mensaje. Nunca como un éxito
-     * silencioso, que es lo que un botón sin ruta de escritura simulaba.
+     * silencioso.
      */
     @Test
     fun aBackendRejectionSurfacesAsAnErrorWithItsOwnMessage() = runTest {
@@ -812,16 +788,13 @@ class QuestionsViewModelTest {
         val repository = FakeQuestionsRepository(
             listResult = AppResult.Success(listOf(listItem())),
             detailResult = AppResult.Success(immersiveDetail()),
-            createResourceResult = AppResult.Failure(
+            uploadResourceResult = AppResult.Failure(
                 AppError.Validation(backendMessage, code = "QUESTION_TYPE_REJECTS_RESOURCES"),
             ),
         )
         val viewModel = openImmersiveQuestion(repository)
 
-        viewModel.dispatch(QuestionsIntent.RequestAddResource)
-        viewModel.dispatch(QuestionsIntent.UpdateResourceKind(QuestionResourceKind.TEXTO))
-        viewModel.dispatch(QuestionsIntent.UpdateResourceTitle("Extracto"))
-        viewModel.dispatch(QuestionsIntent.UpdateResourceText("El artículo 14 dice…"))
+        viewModel.fillAudioResource()
         advanceUntilIdle()
         viewModel.dispatch(QuestionsIntent.ConfirmAddResource)
         advanceUntilIdle()
@@ -879,57 +852,25 @@ class QuestionsViewModelTest {
     }
 
     /**
-     * Cambiar de tipo SUELTA lo que el nuevo tipo no admite. Sin esto, elegir un
-     * archivo y cambiar a «enlace» dejaría un estado desde el que se puede mandar
-     * una fila que el `CHECK` de la base rechaza.
+     * Cambiar de tipo SUELTA el archivo elegido: un `.mp3` no vale como imagen, y
+     * dejarlo elegido sólo llevaría a un rechazo del servidor al final de la subida.
      */
     @Test
-    fun switchingTheResourceKindDropsWhatThatKindCannotCarry() = runTest {
+    fun switchingTheResourceKindDropsTheChosenFile() = runTest {
         val repository = FakeQuestionsRepository(
             listResult = AppResult.Success(listOf(listItem())),
             detailResult = AppResult.Success(immersiveDetail()),
         )
         val viewModel = openImmersiveQuestion(repository)
 
-        viewModel.dispatch(QuestionsIntent.RequestAddResource)
-        viewModel.dispatch(QuestionsIntent.UpdateResourceKind(QuestionResourceKind.PDF))
-        viewModel.dispatch(
-            QuestionsIntent.PickResourceFile(
-                QuestionResourceFile(fileName = "boletin.pdf", mimeType = "application/pdf", bytes = byteArrayOf(9)),
-            ),
-        )
+        viewModel.fillAudioResource()
         advanceUntilIdle()
-        assertEquals("boletin.pdf", viewModel.state.value.resourceForm.file?.fileName)
+        assertEquals("caso.mp3", viewModel.state.value.resourceForm.file?.fileName)
 
-        viewModel.dispatch(QuestionsIntent.UpdateResourceKind(QuestionResourceKind.ENLACE))
-        advanceUntilIdle()
-        assertEquals(null, viewModel.state.value.resourceForm.file, "un enlace no lleva archivo")
-
-        viewModel.dispatch(QuestionsIntent.UpdateResourceUrl("https://boe.es/doc"))
         viewModel.dispatch(QuestionsIntent.UpdateResourceKind(QuestionResourceKind.IMAGEN))
         advanceUntilIdle()
-        assertEquals("", viewModel.state.value.resourceForm.externalUrl, "una imagen no lleva url externa")
-    }
-
-    /** Un archivo elegido sobre un tipo que no lo admite no entra en el estado. */
-    @Test
-    fun aFileCannotBeAttachedToATypeThatRejectsIt() = runTest {
-        val repository = FakeQuestionsRepository(
-            listResult = AppResult.Success(listOf(listItem())),
-            detailResult = AppResult.Success(immersiveDetail()),
-        )
-        val viewModel = openImmersiveQuestion(repository)
-
-        viewModel.dispatch(QuestionsIntent.RequestAddResource)
-        viewModel.dispatch(QuestionsIntent.UpdateResourceKind(QuestionResourceKind.TEXTO))
-        viewModel.dispatch(
-            QuestionsIntent.PickResourceFile(
-                QuestionResourceFile(fileName = "notas.txt", mimeType = "text/plain", bytes = byteArrayOf(1)),
-            ),
-        )
-        advanceUntilIdle()
-
-        assertEquals(null, viewModel.state.value.resourceForm.file)
+        assertEquals(null, viewModel.state.value.resourceForm.file, "el audio no vale como imagen")
+        assertEquals("Audio del caso", viewModel.state.value.resourceForm.title, "el título sobrevive")
     }
 
     /** Una pregunta sin guardar no tiene id al que colgar nada: no se llama al servidor. */
@@ -944,15 +885,12 @@ class QuestionsViewModelTest {
 
         assertFalse(viewModel.state.value.canAttachResources())
 
-        viewModel.dispatch(QuestionsIntent.RequestAddResource)
-        viewModel.dispatch(QuestionsIntent.UpdateResourceKind(QuestionResourceKind.ENLACE))
-        viewModel.dispatch(QuestionsIntent.UpdateResourceTitle("Enlace"))
-        viewModel.dispatch(QuestionsIntent.UpdateResourceUrl("https://boe.es/doc"))
+        viewModel.fillAudioResource()
         advanceUntilIdle()
         viewModel.dispatch(QuestionsIntent.ConfirmAddResource)
         advanceUntilIdle()
 
-        assertTrue(repository.createdResources.isEmpty())
+        assertTrue(repository.uploadedResources.isEmpty())
         assertIs<UiAsync.Error>(viewModel.state.value.resourceSaveState)
     }
 
@@ -965,49 +903,69 @@ class QuestionsViewModelTest {
         val repository = FakeQuestionsRepository(
             listResult = AppResult.Success(listOf(listItem())),
             detailResult = AppResult.Success(immersiveDetail()),
-            createResourceResult = AppResult.Success(resource()),
+            uploadResourceResult = AppResult.Success(resource()),
             resourcesResult = AppResult.Failure(AppError.Network("sin conexión")),
         )
         val viewModel = openImmersiveQuestion(repository)
 
-        viewModel.dispatch(QuestionsIntent.RequestAddResource)
-        viewModel.dispatch(QuestionsIntent.UpdateResourceKind(QuestionResourceKind.ENLACE))
-        viewModel.dispatch(QuestionsIntent.UpdateResourceTitle("Enlace"))
-        viewModel.dispatch(QuestionsIntent.UpdateResourceUrl("https://boe.es/doc"))
+        viewModel.fillAudioResource()
         advanceUntilIdle()
         viewModel.dispatch(QuestionsIntent.ConfirmAddResource)
         advanceUntilIdle()
 
-        assertEquals(1, repository.createdResources.size)
+        assertEquals(1, repository.uploadedResources.size)
         val failure = assertIs<UiAsync.Error>(viewModel.state.value.resourceSaveState)
         assertEquals(QUESTION_RESOURCES_STALE_NOTE, failure.error.message)
     }
 }
 
 /**
- * El formulario, sin ViewModel: las reglas por tipo son puras y se comprueban como
- * tales. Son las de la BASE —`texto` sólo con contenido, `enlace` sólo con URL
- * `http(s)`, el resto sólo con archivo—, no la del servidor sobre el tipo de la
- * pregunta, que no se reimplementa en ningún sitio del cliente.
+ * El formulario, sin ViewModel: las reglas son puras y se comprueban como tales.
+ * Los tres tipos (imagen, audio, vídeo) llevan siempre título y archivo.
  */
 class QuestionResourceFormTest {
 
+    private fun resource(type: QuestionResourceType) = QuestionResource(
+        id = "r", questionId = "q-1", type = type, title = "t", textBody = null,
+        storagePath = "p", publicUrl = null, mimeType = null, sortOrder = 0,
+    )
+
+    @Test
+    fun anImmersiveIsUsableOnlyWithAtLeastOneAudio() {
+        val base = QuestionDetail(
+            id = "q-1", code = "P", type = QuestionType.INMERSIVA, statement = "s", options = emptyList(),
+            explanation = "", source = "", active = true, difficulty = "media", resources = emptyList(),
+        )
+        assertTrue(base.lacksRequiredAudio(), "sin recursos")
+        assertTrue(base.copy(resources = listOf(resource(QuestionResourceType.IMAGE))).lacksRequiredAudio(), "sólo imagen")
+        assertFalse(base.copy(resources = listOf(resource(QuestionResourceType.AUDIO))).lacksRequiredAudio(), "con audio")
+        assertFalse(base.copy(type = QuestionType.RAFAGA).lacksRequiredAudio(), "una ráfaga no pide audio")
+    }
+
     private fun file() = QuestionResourceFile(fileName = "a.png", mimeType = "image/png", bytes = byteArrayOf(1))
+
+    @Test
+    fun onlyImageAudioAndVideoExist() {
+        assertEquals(
+            listOf("imagen", "audio", "video"),
+            QuestionResourceKind.entries.map { it.wireValue },
+        )
+    }
 
     @Test
     fun everyKindNeedsATitle() {
         QuestionResourceKind.entries.forEach { kind ->
             assertEquals(
                 "El recurso necesita un título.",
-                QuestionResourceForm(kind = kind, title = "   ").validationError(),
+                QuestionResourceForm(kind = kind, title = "   ", file = file()).validationError(),
                 "$kind sin título",
             )
         }
     }
 
     @Test
-    fun aFileKindWithoutAFileCannotBeSaved() {
-        QuestionResourceKind.entries.filter { it.requiresFile }.forEach { kind ->
+    fun everyKindWithoutAFileCannotBeSaved() {
+        QuestionResourceKind.entries.forEach { kind ->
             assertEquals(
                 "Elige el archivo que quieres subir.",
                 QuestionResourceForm(kind = kind, title = "Material").validationError(),
@@ -1018,47 +976,17 @@ class QuestionResourceFormTest {
     }
 
     @Test
-    fun aLinkNeedsAPublicHttpUrl() {
-        val form = QuestionResourceForm(kind = QuestionResourceKind.ENLACE, title = "Fuente")
-        assertEquals(
-            "El enlace tiene que empezar por http:// o https://.",
-            form.copy(externalUrl = "C:\\Users\\arturo\\audio.mp3").validationError(),
-        )
-        assertEquals(null, form.copy(externalUrl = "https://boe.es/doc").validationError())
-        assertEquals(null, form.copy(externalUrl = "http://boe.es/doc").validationError())
-    }
-
-    @Test
-    fun aTextResourceNeedsItsBody() {
-        val form = QuestionResourceForm(kind = QuestionResourceKind.TEXTO, title = "Extracto")
-        assertEquals("Escribe el contenido del recurso de texto.", form.validationError())
-        assertEquals(null, form.copy(textBody = "El artículo 14 dice…").validationError())
-    }
-
-    /**
-     * El borrador que viaja lleva SÓLO el campo de su tipo, aunque el estado
-     * arrastrara restos. Es la segunda barrera tras `withKind`, y la que garantiza
-     * que ningún cuerpo pueda llevar url y texto a la vez.
-     */
-    @Test
-    fun theDraftCarriesOnlyTheFieldOfItsKind() {
-        val dirty = QuestionResourceForm(
-            title = "Material",
-            externalUrl = "https://boe.es/doc",
-            textBody = "un texto",
-        )
-
-        val image = dirty.copy(kind = QuestionResourceKind.IMAGEN).toDraft()
-        assertEquals(null, image.externalUrl, "una imagen nunca manda url externa")
-        assertEquals(null, image.textBody)
-
-        val link = dirty.copy(kind = QuestionResourceKind.ENLACE).toDraft()
-        assertEquals("https://boe.es/doc", link.externalUrl)
-        assertEquals(null, link.textBody, "un enlace nunca manda contenido de texto")
-
-        val text = dirty.copy(kind = QuestionResourceKind.TEXTO).toDraft()
-        assertEquals("un texto", text.textBody)
-        assertEquals(null, text.externalUrl, "un texto nunca manda url externa")
+    fun theDraftCarriesTitleAndDescriptionTrimmed() {
+        val draft = QuestionResourceForm(
+            kind = QuestionResourceKind.VIDEO,
+            title = "  Caso  ",
+            description = " Plano general ",
+            file = file(),
+        ).toDraft()
+        assertEquals(QuestionResourceKind.VIDEO, draft.kind)
+        assertEquals("Caso", draft.title)
+        assertEquals("Plano general", draft.description)
+        assertEquals(null, draft.position)
     }
 }
 
@@ -1076,7 +1004,6 @@ private class FakeQuestionsRepository(
     private val linksResult: AppResult<List<QuestionExamLink>> = AppResult.Success(emptyList()),
     private val linkResult: AppResult<List<QuestionExamLink>>? = null,
     private val unlinkResult: AppResult<List<QuestionExamLink>>? = null,
-    private val createResourceResult: AppResult<QuestionResource>? = null,
     private val uploadResourceResult: AppResult<QuestionResource>? = null,
     private val deleteResourceResult: AppResult<QuestionResource>? = null,
     private val resourcesResult: AppResult<List<QuestionResource>> = AppResult.Success(emptyList()),
@@ -1161,7 +1088,6 @@ private class FakeQuestionsRepository(
     // --- Recursos (KQ4) ---
 
     /** Lo que llegó a cada ruta de escritura: es lo que prueba que la pantalla escribe de verdad. */
-    val createdResources = mutableListOf<Pair<String, QuestionResourceDraft>>()
     val uploadedResources = mutableListOf<Triple<String, QuestionResourceDraft, QuestionResourceFile>>()
     /** Los ids con los que se pidió cada subida: el reintento tiene que repetir el primero. */
     val uploadedResourceIds = mutableListOf<String>()
@@ -1171,14 +1097,6 @@ private class FakeQuestionsRepository(
     override suspend fun listQuestionResources(questionId: String): AppResult<List<QuestionResource>> {
         listedResourcesFor += questionId
         return resourcesResult
-    }
-
-    override suspend fun createQuestionResource(
-        questionId: String,
-        draft: QuestionResourceDraft,
-    ): AppResult<QuestionResource> {
-        createdResources += questionId to draft
-        return createResourceResult ?: AppResult.Failure(AppError.Validation("no create resource configured"))
     }
 
     override suspend fun uploadQuestionResourceFile(

@@ -544,7 +544,7 @@ Workspace de Exámenes en tres columnas (catálogo · editor con pestañas · ra
 ### Información básica — decisiones de producto aplicadas (con evidencia, sin escalar)
 - Recuento de preguntas mientras carga: el último recuento de la sesión o, si no lo hay, el servido (`total_preguntas`), **siempre marcado «sin confirmar»** y nunca como dato. El badge de la pestaña y las comprobaciones no lo usan; un error = sin cifra. Ver EXAM-002.
 - Código del examen **editable opcional** (el servidor genera `EX-xxxxxxxx` si llega vacío); nunca un código predicho ni el UUID. Duplicados bloqueados contra el catálogo (EXAM-005 cubre el residual).
-- Portada: la API de la app **no la envía** (`AppExamenDto` no la tiene), así que no hay «Cómo se mostrará». Vista previa real sólo del archivo local recién elegido (Skia, sin red); un examen nuevo guarda la selección y la sube con el id real al crear.
+- Portada: **SUPERSEDIDO por «Exam cover V1.1» (final de este documento)**: ya no hay subida ni selección; la portada se deduce del tipo y de la comunidad.
 - `community unavailable ≠ Nacional`: Nacional sólo para `comunidad_id == null` de un registro cargado o del default de un nuevo. Un fallo del catálogo dice «No disponible». «Comunidad no encontrada» no ofrece limpiar el vínculo.
 - «Sin duración» en lugar de «Sin límite de tiempo» (nada en el repo aplica la duración como límite) · se mantiene el título «Antes de publicar» (decisión del propietario), sin que ninguna fila afirme que el servidor lo exija · acción de página «Nuevo examen» y primario de la barra «Crear examen».
 
@@ -1107,3 +1107,58 @@ Detalle completo, con fichero:línea de lo aplicado y de lo registrado, en
 Los hallazgos Tier 2/3 restantes de los 8 informes tampoco se aplicaron
 (cambian comportamiento observable, piden un test que no existe o son decisión
 de producto/arquitectura); quedan documentados con precisión de línea.
+
+## Recursos de pregunta: sólo imagen, audio y vídeo; inmersiva exige audio (2026-09-25)
+
+Rama `feature/question-resources-audio-video` (sin merge ni push).
+
+- **Tipos**: los únicos recursos son `imagen`, `audio` y `video`, siempre con archivo. Se eliminan `pdf`, `texto` y `enlace` del cliente (`QuestionResourceKind`, formulario, selector de archivos, repositorio) y del backend (`QUESTION_RESOURCE_MIME` sin `application/pdf`; `POST /preguntas/{id}/recursos` por JSON rechaza todo con 422). Los recursos históricos de otros tipos siguen leyéndose.
+- **Sin tope de producto**: desaparece el «Máximo 50 MB» del popup y el `require` de cliente. El servidor conserva un techo TÉCNICO de 300 MB (el archivo se carga en memoria para comprimirlo; no puede ser ilimitado) y comprime antes de subir a Storage. NOT_VERIFIED: el límite por objeto del bucket `recursos-pregunta` en Supabase aplica al archivo ya comprimido; un archivo que siga por encima fallará en `storagePut` con error genérico.
+- **Inmersiva utilizable = al menos un audio activo**: `vincularPreguntaExamen` (422 `QUESTION_IMMERSIVE_REQUIRES_AUDIO`) y `publicarExamen` (422 `EXAM_PUBLISH_IMMERSIVE_WITHOUT_AUDIO`) lo imponen; la pregunta se guarda igualmente. El editor avisa con `lacksRequiredAudio()`. Ráfaga y razonada no piden nada.
+- **Riesgo**: los exámenes con inmersivas ya vinculadas SIN audio no podrán publicarse hasta añadirles uno (no se ha auditado el dato real en MAIN). La RPC `admin_link_question_to_exam` no se ha tocado: la regla vive en Ktor, por lo que otra vía que llame directamente a la RPC la esquivaría.
+- **Pruebas**: `:features:questions:jvmTest`, `:data:jvmTest`, `:domain:jvmTest`, `:features:exams:jvmTest`, `:backend:ktor:test` (incluye `ImmersiveAudioRuleTest`) en verde; `:composeApp:compileKotlinJvm` correcto. NOT_VERIFIED: recorrido en ventana real del popup.
+### OposiMarket: escaparate de exámenes publicados (2026-09-25)
+
+Rama `feature/oposimarket-published-exams`, desde `main` (`4530b73`). Nueva
+sección **«Exámenes publicados»** en OposiMarket, primera pestaña y la que abre
+por defecto: rejilla con todos los exámenes PUBLICADOS (ráfaga, razonado e
+inmersivo) y su portada, con búsqueda (título, especialidad, código) y filtro
+por tipo con recuento. Solo consulta; los datos se editan en Exámenes.
+
+- `CURRENT_IMPLEMENTATION`: el estado se filtra en cliente
+  (`publishedExams`: `PUBLISHED` y no borrado) sobre `refreshAllExams()`, que
+  devuelve el catálogo completo. Un fallo de carga es error con reintento, no un
+  escaparate vacío; sin publicados es `Empty` con su mensaje.
+- La portada se **compone** en la app (`ExamCoverArt`, 264×148, 16:9): fondo oscuro
+  `#131313` del diseño de Figma (nodo `59527:25808`, «icono/card») con la
+  ilustración vectorial dorada de la comunidad para los inmersivos, el viento
+  para las ráfagas y la brújula para los razonados. 21 vectores en
+  `features/store/src/commonMain/composeResources/drawable/cover_*.xml`
+  (convertidos de SVG a vector drawable para que carguen igual en escritorio,
+  Android e iOS; `cover_rafagas_xs` queda sin usar, es el tamaño compacto).
+  La ilustración sale de `coverArtworkFor` (pura y testeada: seed canónico de 19
+  comunidades; Cataluña usa Barcelona y Ceuta/Melilla comparten). Un inmersivo
+  sin comunidad, o con una que el diseño no cubre, usa el icono genérico:
+  no se inventa la de otra comunidad.
+- `PRODUCT_DECISION_PENDING`: pantalla por revisar por el producto tras ver las
+  portadas; falta el diseño de los inmersivos sin comunidad (examen nacional).
+- Tests: 13 nuevos en `features/store` (lógica pura + `MarketViewModel`) y un
+  banco visual (`PublishedExamsVisualHarness`, 7 capturas claro/oscuro/estados).
+## Exam cover V1.1 — portada automática (2026-09-21, sin commit)
+
+- **Contrato**: la portada de un examen NO se sube, NO se elige y NO se guarda. Se deduce siempre de `tipoExamen` + comunidad autónoma: Ráfaga → `cover_rafaga`, Razonado → `cover_razonado` (comunes a todas las comunidades), Inmersivo → vector de su comunidad (`vector_madrid`, `vector_andalucia`…). No hay columna nueva ni migración (se descartó `portada_key`).
+- **Resolver único**: `ExamCoverResolver` (`domain/.../model/ExamCoverResolver.kt`), con una copia gemela en OposiBot (`core/model/ExamCoverResolver.kt`). La comunidad se identifica por su código ISO 3166-2:ES (`comunidades_autonomas.codigo`, p. ej. `ES-MD`; 19 filas en MAIN). Los nombres `vector_*` son PROVISIONALES hasta recibir los vectores definitivos: el cambio es sólo la tabla `COMMUNITY_VECTORS`.
+- **OposiControl**: «Información básica → Portada» (y las pantallas clásica y móvil) es una previsualización automática (`ExamCoverPreview`, visual provisional dibujado en Compose). Eliminados el selector de archivos, «Subir ahora», «Quitar», el diálogo de borrado y el estado de subida del ViewModel.
+- **Ktor**: `AppExamenDto` gana `comunidadCodigo` (`GET /api/v1/app/examenes` y `/examenes/{id}`; `null` = nacional). Una sola lectura de `comunidades_autonomas` y sólo si algún examen tiene comunidad; si falla, el catálogo sale sin código.
+- **LEGACY conservado, sin uso desde la UI**: rutas `POST/DELETE /api/v1/admin/examenes/{id}/portada`, casos de uso `UploadExamCover`/`ClearExamCover` y método de repositorio, columnas `portada_storage_path`/`portada_mime_type` (M6), bucket `exam-resources/exam-covers/`. Retirada = decisión pendiente (DEBT-082).
+- **Sin decidir**: portada de un Inmersivo sin comunidad (nacional) o con una comunidad sin vector → hoy `cover_generica` provisional.
+- **Verificado**: Ktor 4 tests nuevos (`AppV1ExamCoverContractTest`) + regresión de portada/ciclo de vida; dominio 8 tests del resolver; features:exams 308 tests; OposiBot: el test del resolver compila en iOS (link/ejecución `SKIPPED` en Windows) y se ejecutó 7/7 en JVM con una copia temporal.
+- **Hechos comprobados en MAIN (lectura, 2026-09-21)** sobre Monetización de examen: `examenes` tiene además `comprable_con_tickets`, `dias_acceso_compra`, `demo_disponible`, `requiere_plan_codigo`, `creditos_inmersivos_necesarios`, que ni la UI ni el DTO exponen; `precio_tickets` es nullable con CHECK `>= 0`; el CHECK de acceso admite sólo `gratuito|premium` y ninguno relaciona acceso con precio. `rpc_purchase_articulo`, `rpc_grant_exam_access` y `can_access_exam` existen con firma `integer` sobre tablas que no existen (`articulo_tienda`, `examen`, `acceso_examen_usuario`): huérfanas. `productos_store`, `paquetes_opositickets`, `compras_usuario` y `contenido_desbloqueado_usuario` existen con 0 filas; `articulo_tienda`, `oferta_tienda`, `recurso_temporal_tienda` y `campana_rafaga` NO existen (DEBT-068).
+
+## Distribución macOS de escritorio (2026-09-25)
+
+Rama `feature/macos-desktop-distribution`. Workflow `.github/workflows/macos-desktop-release.yml` (runners `macos-15` arm64 y `macos-15-intel` x64): genera `OposiControl.app` + DMG con runtime Java 21 embebido, apuntando a `https://api.oposibots.es`. Dos DMG separados (no universal). Modo `unsigned` → `…-UNSIGNED_INTERNAL_BUILD.dmg`; modo `signed` → Developer ID + Hardened Runtime + `notarytool` + `stapler`, con secretos de GitHub (ver `docs/release/MACOS_DISTRIBUTION.md`). Gradle: `macOS { packageName = "OposiControl" … }`, `modules(...)` explícitos (también afectan al runtime de Windows: añade `java.sql`, `jdk.crypto.ec`…), tarea `verifyProductionDesktopConfig`. Windows sigue como `OposiControlAdmin` (verificado `createDistributable` + arranque en Windows). VERIFICADO 2026-09-25 (run 36137146759): DMG unsigned arm64 y x64 generados; la app arranca sin Java externo (libjvm del runtime embebido) hasta la pantalla de login; cfg con BASE_URL=https://api.oposibots.es y APP_ENV=prod. arm64 lleva firma ad-hoc de jpackage; x64 sin firma. PENDIENTE: credenciales Apple (build firmada/notarizada) y merge a main.
+
+## macOS: arranque roto en Mac real por firma ad-hoc + Hardened Runtime (2026-09-26)
+
+Evidencia de Arturo (arm64): `libjli.dylib: code signature not valid for use in process … different Team IDs`. Inspección en CI (run 36230133151): jpackage deja TODOS los Mach-O firmados ad-hoc (`TeamIdentifier=not set`) y con Hardened Runtime (`flags=0x10002(adhoc,runtime)`), salvo `libskiko` (`0x2`). Hardened Runtime activa la validación de librerías y un proceso ad-hoc no la supera en un Mac con SIP; el runner de GitHub tiene SIP desactivado, por eso no lo reproducía. Corrección (solo build interna): `composeApp/packaging/macos/adhoc-sign.sh` vuelve a firmar ad-hoc de dentro hacia fuera SIN Hardened Runtime; el workflow falla si queda algún binario con `runtime`, si lanzador y `libjli` difieren en Team ID o si la app copiada del DMG no sigue viva 40 s. `disable-library-validation` NO se ha añadido. NOT_VERIFIED: arranque en un Mac con SIP activo (pendiente de Arturo).

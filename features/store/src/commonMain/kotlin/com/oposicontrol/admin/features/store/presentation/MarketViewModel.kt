@@ -5,22 +5,42 @@ import com.oposicontrol.admin.core.common.coroutine.DispatcherProvider
 import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.core.common.result.map
+import com.oposicontrol.admin.domain.model.Community
+import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.MarketPopupRule
 import com.oposicontrol.admin.domain.model.MarketPromotion
 import com.oposicontrol.admin.domain.model.MarketService
 import com.oposicontrol.admin.domain.model.MarketTicketPack
 import com.oposicontrol.admin.domain.repository.MarketCatalogRepository
 
-/** Secciones del Market. Cada una es una tabla distinta y se carga por separado. */
-enum class MarketSection { PACKS, SERVICES, PROMOTIONS, POPUPS }
+/**
+ * Secciones del Market. Cada una es una tabla distinta y se carga por separado.
+ *
+ * `EXAMS` va primera: es el escaparate, lo que el usuario final ve al entrar en
+ * la tienda, y las otras cuatro son los precios y reglas que lo rodean.
+ */
+enum class MarketSection { EXAMS, PACKS, SERVICES, PROMOTIONS, POPUPS }
 
 sealed interface MarketIntent {
     data class SelectSection(val section: MarketSection) : MarketIntent
     data object Refresh : MarketIntent
+    data class SetExamTypeFilter(val filter: ExamTypeFilter) : MarketIntent
+    data class SetExamQuery(val query: String) : MarketIntent
 }
 
 data class MarketState(
-    val section: MarketSection = MarketSection.PACKS,
+    val section: MarketSection = MarketSection.EXAMS,
+    /** Solo los exámenes PUBLICADOS; `Empty` si no hay ninguno. */
+    val exams: UiAsync<List<Exam>> = UiAsync.Idle,
+    /**
+     * Comunidades para elegir la ilustración de la portada. Si no se pudieron
+     * cargar queda vacía y las portadas usan la ilustración genérica: es solo
+     * decoración, no un motivo para no enseñar los exámenes.
+     */
+    val examCommunities: List<Community> = emptyList(),
+    val examType: ExamTypeFilter = ExamTypeFilter.ALL,
+    val examQuery: String = "",
     val packs: UiAsync<List<MarketTicketPack>> = UiAsync.Idle,
     val services: UiAsync<List<MarketService>> = UiAsync.Idle,
     val promotions: UiAsync<List<MarketPromotion>> = UiAsync.Idle,
@@ -37,6 +57,7 @@ data class MarketState(
 class MarketViewModel(
     dispatcherProvider: DispatcherProvider,
     private val repository: MarketCatalogRepository,
+    private val examsSource: PublishedExamsSource,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<MarketState, MarketIntent>(
     initialState = MarketState(),
@@ -53,6 +74,8 @@ class MarketViewModel(
                 loadSection(intent.section)
             }
             MarketIntent.Refresh -> loadSection(currentState().section, force = true)
+            is MarketIntent.SetExamTypeFilter -> updateState { it.copy(examType = intent.filter) }
+            is MarketIntent.SetExamQuery -> updateState { it.copy(examQuery = intent.query) }
         }
     }
 
@@ -64,6 +87,13 @@ class MarketViewModel(
         if (!force && currentState().isLoaded(section)) return
         analyticsTracker.trackScreen("market_${section.name.lowercase()}")
         when (section) {
+            MarketSection.EXAMS -> {
+                updateState { it.copy(exams = UiAsync.Loading) }
+                val loaded = examsSource.load()
+                val result = loaded.map { publishedExams(it.exams) }.toUiAsync()
+                val communities = (loaded as? AppResult.Success)?.value?.communities.orEmpty()
+                updateState { it.copy(exams = result, examCommunities = communities) }
+            }
             MarketSection.PACKS -> {
                 updateState { it.copy(packs = UiAsync.Loading) }
                 val result = repository.getTicketPacks().toUiAsync()
@@ -89,6 +119,7 @@ class MarketViewModel(
 }
 
 private fun MarketState.isLoaded(section: MarketSection): Boolean = when (section) {
+    MarketSection.EXAMS -> exams is UiAsync.Success || exams is UiAsync.Empty
     MarketSection.PACKS -> packs is UiAsync.Success || packs is UiAsync.Empty
     MarketSection.SERVICES -> services is UiAsync.Success || services is UiAsync.Empty
     MarketSection.PROMOTIONS -> promotions is UiAsync.Success || promotions is UiAsync.Empty

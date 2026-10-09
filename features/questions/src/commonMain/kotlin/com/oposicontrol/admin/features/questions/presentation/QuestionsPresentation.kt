@@ -4,6 +4,7 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.ExamType
+import com.oposicontrol.admin.domain.model.QuestionDetail
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.model.QuestionType
@@ -549,6 +550,18 @@ fun questionResourceRows(resources: List<QuestionResource>): List<QuestionResour
     }
 
 const val QUESTION_RESOURCES_EMPTY: String = "Esta pregunta no tiene recursos vinculados."
+
+/** Lo que se dice de una inmersiva sin audio: se guarda, pero el servidor no la deja usar. */
+const val QUESTION_IMMERSIVE_NEEDS_AUDIO: String =
+    "Sin al menos un audio esta pregunta se queda guardada pero no se puede usar: " +
+        "no puede entrar en un examen ni publicarse. Añade un audio."
+
+/**
+ * Una inmersiva es utilizable sólo con al menos un audio. Regla del servidor
+ * (`QUESTION_IMMERSIVE_REQUIRES_AUDIO`); aquí se calcula para avisarlo en pantalla.
+ */
+fun QuestionDetail.lacksRequiredAudio(): Boolean =
+    type == QuestionType.INMERSIVA && resources.none { it.type == QuestionResourceType.AUDIO }
 
 // ---------------------------------------------------------------------------
 // Matriz de honestidad — la UI se pinta desde aquí
