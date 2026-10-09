@@ -31,7 +31,7 @@ dependencies {
     // 2.18.11 es el minimo sin avisos de la linea 2.18; java-jwt solo usa ObjectMapper/JsonNode basicos.
     implementation(platform("com.fasterxml.jackson:jackson-bom:2.18.11"))
     implementation("io.micrometer:micrometer-registry-prometheus")
-    implementation("io.lettuce:lettuce-core:6.5.5.RELEASE")
+    implementation("io.lettuce:lettuce-core:7.8.0.RELEASE")
     // Verificacion de JWT de Supabase (ES256). La clave EC se construye desde el JWKS publico.
     implementation("com.auth0:java-jwt:4.4.0")
     // Extraccion de texto de PDFs para importacion de rafagas.
