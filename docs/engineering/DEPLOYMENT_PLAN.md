@@ -1,124 +1,92 @@
-# Deployment plan (prepared 2026-10-09, nothing executed)
+# Deployment plan (updated 2026-10-09 after the read-only server inventory)
 
-Status: PREPARED, NOT EXECUTABLE YET. The host inventory is incomplete: SSH to the server is filtered from the
-workstation that prepared this plan, so everything inside the host is UNKNOWN until `ops/deploy/server-inventory-readonly.sh`
-is run there. Every number marked PLACEHOLDER must be replaced with a measured value before step 3.
+Status: PREPARED. Phase 1 migrations are applied on MAIN. Nothing has been changed on the server (one file was copied to
+the operator's home directory for validation: `~/Caddyfile.hostcaddy`, plus the inventory script). The cutover is not started.
 
-## 1. SERVER_CURRENT_STATE
+## 1. SERVER_CURRENT_STATE (inventory 2026-10-09, read-only, as `opsadmin`)
 
-### Observed from outside, without credentials (2026-10-09)
-
-| Fact | Value |
+| Item | Value |
 |---|---|
-| Public host | `api.oposibots.es` -> `49.12.232.217` (A record points straight at the server) |
-| Cloudflare | NOT in front today: response header `Server: Caddy`, no `cf-ray` |
-| TLS | Let's Encrypt, valid until 2026-12-20 (Caddy automatic certificates) |
-| Open ports seen | 443 open; 22 filtered from this network (also 2222, 2200, 22022) |
-| Topology | ONE backend serving both planes: `/api/v1/app/*` and `/api/v1/admin/*` answer 401 on the same host |
-| `/health/live`, `/health/ready` | 200 |
-| `/health` | `{"status":"ok","build":"20260512-no-legacy-columns","restartEnabled":"true"}` |
-| `/metrics` | 404 at the edge (blocked, as intended) |
-| `/admin/backend/restart` | route is mounted (405 to GET) and `restartEnabled` is true in production |
-| `/v1/especialidades` | 200 (public read) |
+| Host | `oposibots-prod-01`, `49.12.232.217`, Ubuntu 26.04.1 LTS, kernel 7.0; "system restart required" pending, 17 package updates pending |
+| CPU / RAM / disk | 4 vCPU (AMD EPYC-Genoa), 7.7 GiB RAM (6.4 GiB available), 2 GiB swap unused, 150 GB disk with 134 GB free |
+| Load | idle (99 % idle); the backend logged 4 requests in 30 hours, all from this inventory |
+| Docker | 29.8.0, Compose 5.5.1, overlayfs, json-file logging; `opsadmin` is in the `docker` group; `sudo` asks for a password |
+| Backend today | ONE container `oposicontrol-ktor` (`oposicontrol-ktor:v1` = commit `b899dc9`, 2026-09-23, before Slice 0), 466 MiB, no CPU or memory limit, published on `127.0.0.1:8080`, compose in `/opt/oposicontrol-deploy` (root-owned) |
+| Rollback images present | `oposicontrol-ktor:v1` (= `b899dc92…`) and `oposicontrol-ktor:rollback-0eeae46` |
+| Edge | Caddy 2.6.2 as a SYSTEM SERVICE (not a container), ports 80/443, admin API on `127.0.0.1:2019`, `/etc/caddy/Caddyfile` (root-owned): `/metrics` 404 + `reverse_proxy 127.0.0.1:8080`; automatic Let's Encrypt certificate valid until 2026-12-20; no Cloudflare in front |
+| Env file | `/etc/oposibots/production/backend.env` (root:docker 640): `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, the two bucket names, `OPOSICONTROL_ALLOW_DEV_USER=false`, `HOST`, `PORT`, `SENTRY_*`, `PROMETHEUS_URL`. No auth runtime variables: the consumer app is NOT served by production today |
+| Monitoring | `/opt/oposicontrol-monitoring` (owned by `opsadmin`): Prometheus v3.14.0 on `127.0.0.1:9090`, node-exporter, cAdvisor. No Grafana, no alert rules, no Valkey |
+| Source checkout | `/opt/oposicontrol` at `b899dc9` (images were built on the server) |
+| Not readable without root | firewall rules, listening sockets with process names, sshd effective config |
 
-Two things to fix in the cutover: the restart route is mounted in production (the new `bot` and `control` profiles do not
-mount it), and there is a single combined process (no isolation between consumer and admin traffic).
+Consequences for the plan:
+- The edge stays the HOST Caddy (2.6, automatic certificates). The stack runs WITHOUT the Caddy container
+  (`ops/deploy/compose.hostcaddy.override.yaml`) and the host Caddy gets `ops/caddy/Caddyfile.hostcaddy` (generated from
+  `Caddyfile.production`, validated with the server's own Caddy 2.6.2: "Valid configuration").
+- The image is built off the server and loaded there; the checkout in `/opt/oposicontrol` is not touched.
+- The consumer plane (two `bot` replicas with Valkey) is NEW on this host; today only the admin plane exists.
+- The admin client must be the build of this branch: a few callerless legacy admin routes now answer 410.
 
-### UNKNOWN until the inventory script runs
+## 2. RESOURCE_LIMITS for this host (4 vCPU, 7.7 GiB)
 
-OS and kernel, CPU cores, RAM, disk, Docker version, running containers and images, deployed git SHA and image tag,
-rollback image, compose and Caddyfile in use, env file locations and variable names, firewall rules, SSH port and
-allow-list, existing Valkey/Prometheus/Grafana, volumes, cron jobs.
+| Service | CPU limit | Memory limit | Note |
+|---|---|---|---|
+| ktor-bot-1, ktor-bot-2 | 1.0 each | 768 MiB each | measured peak 450 MiB per bot under local load |
+| ktor-control | 1.0 | 2 GiB | media compression and PDF parsing live here |
+| valkey | 0.25 | 96 MiB | rate-limit counters only |
+| prometheus (new stack) | 0.5 | 512 MiB | the old Prometheus stays until the monitoring stacks are merged |
+| grafana | 0.5 | 256 MiB | |
+| existing node-exporter, cAdvisor, old Prometheus | unlimited | about 220 MiB in use | |
 
-How to obtain it (either): allow SSH for the operator workstation, or run on the server
-`bash server-inventory-readonly.sh > inventory.txt 2>&1` and hand over `inventory.txt` (it prints no secret values).
+Sum of limits about 4.4 GiB plus about 0.7 GiB already in use by the old backend and monitoring during the transition:
+inside 7.7 GiB with more than 2 GiB of headroom for the OS, the host Caddy and page cache. CPU is oversubscribed on purpose
+(limits are ceilings); revisit after the first measurement on this host.
 
-## 2. Migrations: 17 pending on MAIN, in two phases
+## 3. Migrations on MAIN
 
-MAIN today: 55 versions, last applied `20261008100400`. The order below was rehearsed end to end on a restore of the MAIN
-backup (2026-10-09): phase 0 = what MAIN has today, then phase 1, then phase 2, every VERIFY block at 0, data unchanged,
-no public table without RLS.
+- Applied before today: 8. Applied today as PHASE 1 (pre-deploy, with the current backend running): 14, one at a time, each
+  VERIFY block at 0, history recorded with the repo version, protected-content fingerprint unchanged after every step
+  (only `table_grants` changes once, by design, at `20260930102100`). MAIN history: 69 versions, last `20261008100500`.
+  A fresh backup was taken first (`main-ndiooyyqtaeysnedywer-20261009T091146Z`). Production stayed healthy.
+- PHASE 2 = CUTOVER, still pending (3), inside the window:
+  `20260930100500_slice1_audit_hardening`, `20260930100800_slice1_event_idempotency_per_user`,
+  `20260930100900_slice1_record_event_concurrent_retry`.
 
-### Phase 1: PRE-DEPLOY (14) - safe while the current backend keeps running
+## 4. Cutover sequence for this server
 
-Additive or narrowing, no data written, the current backend calls nothing they change (it signs every database call with
-the service key; old function signatures are kept).
+Steps 1 to 4 do not touch the running backend or the edge. Step 5 onwards is the window.
 
-| Order | Version | What |
-|---|---|---|
-| 1 | `20260930101500_slice1_session_revocation_monotonic` | function body, same signature |
-| 2 | `20260930101600_admin_sync_roles_actor_guard` | new 3-argument overload; the 2-argument one stays |
-| 3 | `20260930101730_slice1_tickets_grant_audit_unique` | partial unique index on audit rows |
-| 4 | `20260930101850_admin_sync_roles_audited` | new function |
-| 5 | `20260930101900_admin_sync_roles_audited_expected` | new overload |
-| 6 | `20260930102000_slice1_report_action_once` | new function + one column with a constant default |
-| 7 | `20260930102100_slice1_client_ddl_privileges_revoke` | revokes TRUNCATE/TRIGGER/REFERENCES from client roles |
-| 8 | `20260930102200_slice1_roles_usuario_client_write_revoke` | clients can no longer write roles |
-| 9 | `20260930102300_slice1_report_insert_bounds` | report insert policy + two length checks |
-| 10 | `20261008100000_slice3_attempt_runtime_schema` | attempt columns + one-open-attempt unique index |
-| 11 | `20261008100100_slice3_attempt_command_rpcs` | new attempt functions |
-| 12 | `20261008100200_slice3_attempt_hardening` | creation marker, indexes |
-| 13 | `20261008100300_slice2_my_exams_read_rpc` | read function |
-| 14 | `20261008100500_slice7_wallet_ledger_keyset_index` | one index |
+1. Load the image `oposicontrol-backend:<sha12>` on the server (`docker save | ssh docker load`).
+2. Create the stack directory (owned by `opsadmin`, mode 700) with `compose.production.yaml`, the override, Prometheus and
+   Grafana provisioning, and the env files: `backend.common.env` (values copied on the server from the existing env file,
+   `APP_ENV=production`, new metrics token), `backend.bot.env` (publishable key, new HMAC secret, `VALKEY_URL`,
+   `TRUST_PROXY_HEADERS=true`, `TRUSTED_PROXY_HOSTS=172.28.0.1`), `backend.control.env`, `metrics_token`, `compose.env`.
+   Secrets are generated on the server and never printed.
+3. `docker compose config -q`; start Valkey, Prometheus, Grafana, then `ktor-control`, `ktor-bot-1`, `ktor-bot-2` on
+   `127.0.0.1:18083/18081/18082`. The old backend keeps serving on `127.0.0.1:8080`.
+4. Health and smoke against the loopback ports from the server (live, ready, 401 on protected routes, admin route on
+   control, no admin route on a bot).
+5. WINDOW: apply the 3 cutover migrations (VERIFY + fingerprint each).
+6. Switch the edge: `caddy validate`, then `caddy reload --config ~/Caddyfile.hostcaddy --adapter caddyfile` (through the
+   admin API, no root needed). Public smoke: health, `/metrics` 404, restart route 404, login, catalog, one attempt, admin list.
+7. Persist the edge config (needs root, one command): copy `Caddyfile.hostcaddy` over `/etc/caddy/Caddyfile` (keep the old
+   one as `Caddyfile.pre-cutover`), so a Caddy restart keeps the new routing.
+8. Stop the old container (`docker stop oposicontrol-ktor`, do not remove it); tag the old image `rollback-<date>`.
+9. Observability: three Prometheus targets up, Grafana dashboards loaded, one Sentry test event per profile.
 
-Known effect on the CURRENT backend after phase 1: its legacy `POST /api/v1/app/examenes/{id}/iniciar` answers 409 instead
-of opening a second attempt of the same exam (unique index). No client calls that route.
+## 5. Rollback
 
-Precheck before phase 1 (read only): `select usuario_id, examen_id, count(*) from public.intentos_examen where
-estado = 'en_progreso' and examen_id is not null group by 1, 2 having count(*) > 1` must return no row (today: 0 attempts).
+- Before step 5: stop the new stack; nothing else changed.
+- After step 6 and before migration `100800` is applied: `caddy reload` with the previous Caddyfile; the old backend is
+  still running.
+- After `100800`: roll forward only (the old image keeps working with the new schema according to the compatibility
+  review, but the runbook does not allow restarting it); fix and redeploy the new image.
 
-### Phase 2: CUTOVER (3) - inside the maintenance window, old backend stopped
+## 6. Open items
 
-| Order | Version | Why it waits |
-|---|---|---|
-| 15 | `20260930100500_slice1_audit_hardening` | redefines the signup trigger function (`handle_new_auth_user`) |
-| 16 | `20260930100800_slice1_event_idempotency_per_user` | replaces the global idempotency index: no way back to the old image afterwards |
-| 17 | `20260930100900_slice1_record_event_concurrent_retry` | depends on 16 |
-
-Window rule from the runbook: the clock starts when the old container stops; before 16 the old image can be restarted;
-after 16 only roll forward; maximum 30 minutes, decision at minute 15.
-
-Apply tool for both phases: `apply_one.sh` (one file, its VERIFY block, history recorded with the repo version) followed by
-the protected-content fingerprint comparison, exactly as used for the 8 already applied.
-
-## 3. Deployment sequence (each numbered step is one command block in DEPLOY_ASSIST, nothing runs unattended)
-
-0. Read-only preflight: inventory script; confirm free disk, Docker, current image tag = rollback tag.
-1. Capture the current deployment: `docker image tag <current> rollback-<date>`; copy of the Caddyfile, compose and env
-   file names; new MAIN backup (same method as `BACKUP_EVIDENCE.txt`).
-2. Phase 1 migrations on MAIN (can be days before the window).
-3. Files on the server: `compose.production.yaml`, `Caddyfile.production`, Prometheus and Grafana provisioning; split the
-   existing env file into `backend.common.env`, `backend.bot.env`, `backend.control.env` (names in the `.example` files);
-   create `metrics_token`; decide `ORIGIN_CERT_DIR` (see 5).
-4. Build or pull the image for the release SHA; `docker compose config -q`.
-5. Bring up Valkey, Prometheus, Grafana (no traffic impact).
-6. WINDOW: stop the old container; phase 2 migrations; start `ktor-control`, `ktor-bot-1`, `ktor-bot-2`; local health
-   (`/health/live`, `/health/ready` on each).
-7. Switch Caddy to the new Caddyfile (validate first, then reload); public health.
-8. Smoke: login, catalog, one attempt on a free exam, admin list, `/metrics` 404, restart route 404.
-9. Observability: three Prometheus targets up, dashboards loaded, one Sentry test event per profile.
-10. Cloudflare (separate, later): `CLOUDFLARE_RUNBOOK.md`.
-
-## 4. Decisions the plan needs before step 3
-
-- TLS at the origin: today Caddy obtains Let's Encrypt certificates by itself. `Caddyfile.production` expects an origin
-  certificate file (written for Cloudflare Full strict). Until Cloudflare is in front, either keep automatic certificates
-  (one-line change in the Caddyfile) or install an origin certificate. Recommended: keep automatic certificates for the
-  first cutover and move to the origin certificate with the Cloudflare step.
-- Supabase URL must be HTTPS for the `bot` profile outside development (it refuses to start otherwise): true for the hosted
-  project.
-- Valkey is new on this host unless the inventory shows one.
-
-## 5. RESOURCE_LIMITS
-
-All values in `compose.production.yaml` are PLACEHOLDER until the inventory gives real CPU and RAM:
-bot 1 CPU / 768 MiB each, control 2 GiB, about 5.1 GiB for the whole stack. Rule to derive them:
-`docs/engineering/SERVER_RESOURCE_PLAN.md`. Local measurement for orientation only: `PERFORMANCE_RESULTS_LOCAL.md`
-(bots reached their 1-CPU limit before memory mattered; peak 450 MiB per bot).
-
-## 6. Rollback
-
-- Before migration 16: stop the new containers, restore the previous Caddyfile, start the `rollback-<date>` image.
-- After migration 16: roll forward only (fix and redeploy the new image); database rollback blocks exist per migration and
-  were rehearsed, but 16 is reversible only while no two users share an idempotency key.
-- Phase 1 migrations do not need to be rolled back to return to the old image.
+- Root-only inventory (firewall, sshd) and step 7 need a root shell.
+- Pending OS restart and package updates: schedule separately, not during the cutover.
+- Cloudflare: later, `CLOUDFLARE_RUNBOOK.md` (then the origin certificate and the trusted-proxy block of
+  `Caddyfile.production` apply, which needs Caddy 2.8 or newer on the host or the Caddy container).
+- Merge the old monitoring stack into the new one (node-exporter and cAdvisor targets, single Prometheus).
+- Sentry real event and a load measurement on this host.
