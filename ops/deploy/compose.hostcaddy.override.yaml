@@ -16,3 +16,14 @@ services:
   ktor-control:
     ports:
       - "127.0.0.1:18083:8080"
+  # Prometheus entra ademas en la red del stack historico de monitorizacion para raspar node-exporter y cAdvisor.
+  prometheus:
+    volumes:
+      - ../monitoring/prometheus/host-exporters.yml:/etc/prometheus/scrape.d/host-exporters.yml:ro
+    networks:
+      host-monitoring: {}
+
+networks:
+  host-monitoring:
+    external: true
+    name: ${HOST_MONITORING_NETWORK:-oposicontrol-monitoring_monitoring}

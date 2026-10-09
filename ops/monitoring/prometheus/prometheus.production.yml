@@ -10,6 +10,10 @@ global:
 rule_files:
   - /etc/prometheus/alert_rules.yml
 
+# Jobs propios del host (node-exporter, cAdvisor): los monta compose.hostcaddy.override.yaml. Sin ficheros no anade nada.
+scrape_config_files:
+  - /etc/prometheus/scrape.d/*.yml
+
 scrape_configs:
   - job_name: prometheus
     static_configs:

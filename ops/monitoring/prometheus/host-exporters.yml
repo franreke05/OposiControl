@@ -1,0 +1,9 @@
+# Exporters que YA existen en el host de produccion (stack historico /opt/oposicontrol-monitoring). El panel de estado del
+# sistema (PrometheusMetrics.kt) calcula CPU y RAM con metricas node_*; sin este job salen como "No disponible".
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets: ["oposicontrol-node-exporter:9100"]
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["oposicontrol-cadvisor:8080"]
