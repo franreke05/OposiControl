@@ -8113,49 +8113,85 @@ class AdminV1Gateway private constructor(
     // on Supabase with the anon key + user JWT. Same tables/columns/ids
     // (legacy serial Int, not UUID) as before; only the origin of the HTTP
     // call moves behind the Ktor boundary. See KtorCommerceRepositoryImpl.
+    /**
+     * DEBT-068 / LEG-003 (PRODUCT_BLOCKED): las 4 tablas legacy de Tienda (`articulo_tienda`, `oferta_tienda`,
+     * `recurso_temporal_tienda`, `campana_rafaga`) no existen en MAIN y el producto no esta definido. Mientras no se
+     * aprovisionen, leer devuelve la lista vacia (no hay nada guardado) y escribir se rechaza con un 409 explicito, en vez
+     * de un 502 que parece una caida de Supabase. Cualquier otro fallo se propaga tal cual.
+     */
+    private fun IllegalStateException.isMissingLegacyStoreTable(): Boolean =
+        supabaseErrorCode(message.orEmpty()) == "PGRST205" || message.orEmpty().contains("PGRST205")
+
+    private inline fun <T> legacyStoreRead(block: () -> List<T>): List<T> =
+        try {
+            block()
+        } catch (error: IllegalStateException) {
+            if (error.isMissingLegacyStoreTable()) emptyList() else throw error
+        }
+
+    private inline fun <T> legacyStoreWrite(block: () -> T): T =
+        try {
+            block()
+        } catch (error: IllegalStateException) {
+            if (!error.isMissingLegacyStoreTable()) throw error
+            throw BackendDomainException(
+                "STORE_LEGACY_NOT_PROVISIONED",
+                HttpStatusCode.Conflict,
+                "La Tienda legacy no esta aprovisionada en este proyecto: no se puede guardar hasta que el producto se defina.",
+            )
+        }
+
     fun listArticulosTienda(): List<AdminArticuloTiendaDto> =
-        request("GET", "/rest/v1/articulo_tienda?select=*&order=nombre.asc", null).decodeList()
+        legacyStoreRead { request("GET", "/rest/v1/articulo_tienda?select=*&order=nombre.asc", null).decodeList() }
 
     fun upsertArticuloTienda(input: AdminArticuloTiendaDto): AdminArticuloTiendaDto =
-        request(
-            "POST",
-            "/rest/v1/articulo_tienda?on_conflict=id",
-            sbJson.encodeToString(listOf(input)),
-            prefer = "resolution=merge-duplicates,return=representation",
-        ).decodeList<AdminArticuloTiendaDto>().first()
+        legacyStoreWrite {
+            request(
+                "POST",
+                "/rest/v1/articulo_tienda?on_conflict=id",
+                sbJson.encodeToString(listOf(input)),
+                prefer = "resolution=merge-duplicates,return=representation",
+            ).decodeList<AdminArticuloTiendaDto>().first()
+        }
 
     fun listOfertasTienda(): List<AdminOfertaTiendaDto> =
-        request("GET", "/rest/v1/oferta_tienda?select=*&order=starts_at.desc", null).decodeList()
+        legacyStoreRead { request("GET", "/rest/v1/oferta_tienda?select=*&order=starts_at.desc", null).decodeList() }
 
     fun upsertOfertaTienda(input: AdminOfertaTiendaDto): AdminOfertaTiendaDto =
-        request(
-            "POST",
-            "/rest/v1/oferta_tienda?on_conflict=id",
-            sbJson.encodeToString(listOf(input)),
-            prefer = "resolution=merge-duplicates,return=representation",
-        ).decodeList<AdminOfertaTiendaDto>().first()
+        legacyStoreWrite {
+            request(
+                "POST",
+                "/rest/v1/oferta_tienda?on_conflict=id",
+                sbJson.encodeToString(listOf(input)),
+                prefer = "resolution=merge-duplicates,return=representation",
+            ).decodeList<AdminOfertaTiendaDto>().first()
+        }
 
     fun listRecursosTemporalesTienda(): List<AdminRecursoTemporalTiendaDto> =
-        request("GET", "/rest/v1/recurso_temporal_tienda?select=*&order=starts_at.desc", null).decodeList()
+        legacyStoreRead { request("GET", "/rest/v1/recurso_temporal_tienda?select=*&order=starts_at.desc", null).decodeList() }
 
     fun upsertRecursoTemporalTienda(input: AdminRecursoTemporalTiendaDto): AdminRecursoTemporalTiendaDto =
-        request(
-            "POST",
-            "/rest/v1/recurso_temporal_tienda?on_conflict=id",
-            sbJson.encodeToString(listOf(input)),
-            prefer = "resolution=merge-duplicates,return=representation",
-        ).decodeList<AdminRecursoTemporalTiendaDto>().first()
+        legacyStoreWrite {
+            request(
+                "POST",
+                "/rest/v1/recurso_temporal_tienda?on_conflict=id",
+                sbJson.encodeToString(listOf(input)),
+                prefer = "resolution=merge-duplicates,return=representation",
+            ).decodeList<AdminRecursoTemporalTiendaDto>().first()
+        }
 
     fun listCampanasRafaga(): List<AdminCampanaRafagaDto> =
-        request("GET", "/rest/v1/campana_rafaga?select=*&order=starts_at.desc", null).decodeList()
+        legacyStoreRead { request("GET", "/rest/v1/campana_rafaga?select=*&order=starts_at.desc", null).decodeList() }
 
     fun upsertCampanaRafaga(input: AdminCampanaRafagaDto): AdminCampanaRafagaDto =
-        request(
-            "POST",
-            "/rest/v1/campana_rafaga?on_conflict=id",
-            sbJson.encodeToString(listOf(input)),
-            prefer = "resolution=merge-duplicates,return=representation",
-        ).decodeList<AdminCampanaRafagaDto>().first()
+        legacyStoreWrite {
+            request(
+                "POST",
+                "/rest/v1/campana_rafaga?on_conflict=id",
+                sbJson.encodeToString(listOf(input)),
+                prefer = "resolution=merge-duplicates,return=representation",
+            ).decodeList<AdminCampanaRafagaDto>().first()
+        }
 
     /**
      * RC-04 (MASTERF2-API-003): perfiles de EXACTAMENTE los ids referenciados, independiente del tamaño de la tabla (antes:

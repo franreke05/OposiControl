@@ -109,3 +109,21 @@ Steps 1 to 4 do not touch the running backend or the edge. Step 5 onwards is the
 - Evidence on the server: `/home/opsadmin/cutover-evidence/`.
 - STILL OPEN: step 7 (persist `/etc/caddy/Caddyfile`, needs root; until then a restart of the Caddy service would load the
   old routing) and the authenticated smoke (login, one attempt, admin list) with a real authorised account.
+
+## 8. After the cutover (2026-10-09)
+
+- Step 7 done by the owner: `/etc/caddy/Caddyfile` is the new file (old one kept as `Caddyfile.pre-cutover`).
+- The production Prometheus also scrapes the host node-exporter and cAdvisor (`host-exporters.yml`, mounted by the host
+  override): the system status panel needs `node_*` metrics for CPU and RAM.
+- The closed content branch (`preview/todo`) was merged and redeployed the same day with a health-gated rolling script
+  (`~/redeploy-rolling.sh <image>` on the server: bot-1, bot-2, control, automatic return to the previous image). The script
+  also sets `SENTRY_RELEASE` to the image tag. `main` of both repositories is the single baseline.
+- Authenticated admin use by the owner: login and list screens answered 200.
+- Sentry SDK: one INFO event per profile from one-off containers of the deployed image through the application own
+  initialisation: environment `production`, tag `profile` = `bot` / `control`, envelope reported as sent. Reception in the
+  Sentry project was not checked from here (no access to the Sentry web or API).
+- Observed: the readiness probe to Supabase times out now and then on both bots at once; see DEBT-085 (`ReadinessGrace`).
+- MAIN: 72 versions in the history, RLS enabled on the 93 public tables, protected-content fingerprint unchanged.
+- Stale local worktrees (do not use as a base; kept for recovery): every `OposiControl-*` worktree other than a fresh
+  checkout of `origin/main`, in particular `OposiControl-MainRelease` (old `main`), `OposiControl-Recursos` (`preview/todo`,
+  merged) and `OposiControl` (`integration/oposicontrol-pre-infra`, merged).

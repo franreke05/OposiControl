@@ -608,7 +608,7 @@ private val readinessHttpClient: HttpClient = HttpClient.newBuilder()
  * backend perfectamente sano -- un fallo correlacionado, inmediato tras el
  * despliegue y apuntando a una dependencia que esta bien.
  */
-internal fun checkSupabaseReachable(
+internal fun probeSupabaseReachable(
     url: String? = System.getenv("SUPABASE_URL")?.trimEnd('/'),
     // La clave la resuelve el UNICO sitio que decide precedencia
     // (`SUPABASE_SECRET_KEY`, y si falta `SUPABASE_SERVICE_ROLE_KEY`). Si la
@@ -659,6 +659,7 @@ internal fun checkSupabaseReachable(
     } catch (error: Exception) {
         if (error.looksLikeUpstreamTimeout()) {
             logStrategicEvent(StrategicEvent.UPSTREAM_TIMEOUT, operation = "health_ready_supabase_check", errorType = error::class.simpleName)
+            return READINESS_TRANSIENT
         } else {
             // MASTER7-OBS-002: DNS/TLS/conexion rechazada: solo la clase de la excepcion, nunca su mensaje.
             logStrategicEvent(
@@ -670,6 +671,47 @@ internal fun checkSupabaseReachable(
         "DOWN"
     }
 }
+
+/** Valor INTERNO de [probeSupabaseReachable]: la sonda agoto su tiempo. Nunca sale por `/health/ready` (D8-08: UP|DOWN|UNKNOWN). */
+internal const val READINESS_TRANSIENT = "TRANSIENT"
+
+/** La sonda con el contrato de siempre: un timeout es `DOWN`. La usan los tests y quien no quiera el margen de gracia. */
+internal fun checkSupabaseReachable(
+    url: String? = System.getenv("SUPABASE_URL")?.trimEnd('/'),
+    apiKey: String? = SupabaseRequestAuthPolicy.secretFromEnvironment(),
+): String = probeSupabaseReachable(url, apiKey).let { if (it == READINESS_TRANSIENT) "DOWN" else it }
+
+/**
+ * Margen de gracia de `/health/ready` (observado en produccion el 2026-10-09): la sonda a Supabase agota sus 5 s de forma
+ * esporadica y en las dos replicas `bot` A LA VEZ (la causa esta en la dependencia, no en la replica). Caddy saca del
+ * balanceo a una replica con UNA sonda fallida, asi que cada episodio dejaba el plano sin upstream sano unos segundos,
+ * sin que sacar la replica arreglara nada. Un TIMEOUT aislado se tolera mientras la ultima sonda correcta sea reciente;
+ * una credencial rechazada, una conexion rechazada o un timeout sostenido siguen siendo `DOWN` como antes.
+ */
+internal class ReadinessGrace(
+    private val probe: () -> String,
+    private val graceMillis: Long = 30_000,
+    private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+) {
+    @Volatile private var lastUpAtMillis: Long? = null
+
+    fun check(): String = when (val result = probe()) {
+        "UP" -> {
+            lastUpAtMillis = nowMillis()
+            "UP"
+        }
+        READINESS_TRANSIENT -> {
+            val lastUp = lastUpAtMillis
+            if (lastUp != null && nowMillis() - lastUp <= graceMillis) "UP" else "DOWN"
+        }
+        else -> result
+    }
+}
+
+private val productionReadiness = ReadinessGrace(probe = { probeSupabaseReachable() })
+
+/** La sonda que usa produccion: la real con el margen de gracia de [ReadinessGrace]. */
+internal fun checkSupabaseReadiness(): String = productionReadiness.check()
 
 /**
  * Los checks de `/health/ready`, con la sonda FUERA del hilo de la peticion.
@@ -699,7 +741,7 @@ fun Route.healthLiveRoute() = get("/health/live") {
  * proposito -- igual que la ya existente `/health` -- porque orquestadores
  * externos (load balancer, k8s) no pueden mandar un Bearer token.
  */
-fun Route.observabilityHealthRoutes(supabaseCheck: () -> String = ::checkSupabaseReachable) {
+fun Route.observabilityHealthRoutes(supabaseCheck: () -> String = ::checkSupabaseReadiness) {
     healthLiveRoute()
     get("/health/ready") {
         val checks = readinessChecks(supabaseCheck)

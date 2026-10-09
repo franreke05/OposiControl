@@ -193,3 +193,11 @@ Open points that remain even after that decision:
   order it before the moderation queue can grow.
 - Decisions needed: promote or retire the four legacy-marked app paths (home D3-01, stats D3-03, store D7-01, report
   D5-15); owner go-ahead for the question-resource contracts D4-13..D4-17 (inside the protected authoring flow).
+
+## 14. Legacy store screens (2026-10-09): PRODUCT_BLOCKED
+
+The admin routes `/api/v1/admin/tienda/{articulos,ofertas,recursos-temporales,rafagas}` read four tables that do not exist
+in production, have no OpenAPI contract and no migration; the canonical commercial catalogue (products, plans, tickets) is a
+different model. Nothing was invented: reads answer an empty list and writes answer 409 `STORE_LEGACY_NOT_PROVISIONED`
+(before: 502). Decision for the owner: retire these routes and the screen that calls them, or define the store model so a
+schema can be created (DEBT-068, DEBT-084).

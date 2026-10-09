@@ -662,7 +662,7 @@ internal class CombinedRoutingDeps(
     val authRuntime: OposiBotsAuthRuntime?,
     val identityResolver: CanonicalIdentityResolver?,
     /** Sonda de dependencia critica de `/health/ready` (Supabase). Inyectable para probar el 503; produccion usa la real. */
-    val readinessCheck: () -> String = ::checkSupabaseReachable,
+    val readinessCheck: () -> String = ::checkSupabaseReadiness,
     /** SLICE 2 (D2-01/02/13, D7-02). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val catalogRuntime: CatalogRuntime? = null,
     /** SLICE 7 (D6-01, D6-02). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
