@@ -1,0 +1,18 @@
+# Override for a host where Caddy runs as a SYSTEM SERVICE (the current production server): the Caddy container of
+# compose.production.yaml is not started, and the three Ktor containers publish LOOPBACK-ONLY ports that the host Caddy
+# proxies to (ops/caddy/Caddyfile.hostcaddy). Nothing else is published.
+#   docker compose --env-file <compose.env> -f compose.production.yaml -f compose.hostcaddy.override.yaml up -d
+# The backend sees the host Caddy through the gateway of the `edge` network: TRUSTED_PROXY_HOSTS in backend.bot.env must
+# be that gateway address (172.28.0.1 with the default subnet), not the Caddy container address of the base file.
+services:
+  caddy:
+    profiles: ["container-caddy"]
+  ktor-bot-1:
+    ports:
+      - "127.0.0.1:18081:8080"
+  ktor-bot-2:
+    ports:
+      - "127.0.0.1:18082:8080"
+  ktor-control:
+    ports:
+      - "127.0.0.1:18083:8080"

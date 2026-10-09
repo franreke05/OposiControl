@@ -1,0 +1,100 @@
+# Caddyfile for the Caddy that runs as a SYSTEM SERVICE on the production host (Caddy 2.6.x, automatic certificates,
+# no Cloudflare in front). GENERATED from Caddyfile.production by scripts/gen-hostcaddy.mjs: same routing (control
+# matchers, bot pool, health, deny by default, /metrics and dev paths 404). Upstreams are the loopback ports published
+# by ops/deploy/compose.hostcaddy.override.yaml. Differences: no global trusted-proxy block and {remote_host} instead of
+# {client_ip} (both need Caddy >= 2.7 and a proxy in front); TLS stays automatic. Do not hand-edit: regenerate.
+api.oposibots.es {
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+				request>headers>Cookie delete
+				request>headers>Proxy-Authorization delete
+				request>headers>X-Api-Key delete
+				request>headers>Apikey delete
+				resp_headers>Set-Cookie delete
+				request>uri query {
+					delete token
+					delete access_token
+					delete refresh_token
+					delete code
+					delete apikey
+					delete password
+				}
+			}
+		}
+	}
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	header X-Request-Id {http.request.uuid}
+	@bounded {
+		not header Content-Type multipart/*
+	}
+	request_body @bounded {
+		max_size 2MB
+	}
+	route {
+		@metrics path /metrics /metrics/*
+		respond @metrics 404
+		@devonly path /admin/backend /admin/backend/* /admin/dev /admin/dev/*
+		respond @devonly 404
+		@control path /api/v1/admin /api/v1/admin/* /admin/audit /admin/audit/* /admin/exam-access /admin/exam-access/* /admin/moderation /admin/moderation/* /admin/news-types /admin/news-types/* /admin/roles /admin/roles/* /admin/settings /admin/settings/* /admin/support /admin/support/* /admin/ticket-wallets /admin/ticket-wallets/* /admin/users /admin/users/* /content/comunidades /content/comunidades/* /content/especialidades /content/especialidades/* /content/etiquetas /content/etiquetas/* /content/noticias /content/noticias/* /content/preguntas /content/preguntas/* /content/rafaga /content/rafaga/* /content/solucionarios /content/solucionarios/* /dashboard/metrics /tags /search /search/reindex
+		handle @control {
+			reverse_proxy 127.0.0.1:18083 {
+				header_up X-Forwarded-For {remote_host}
+				header_up X-Request-Id {http.request.uuid}
+				health_uri /health/ready
+				health_interval 15s
+				health_timeout 6s
+				health_status 2xx
+				transport http {
+					dial_timeout 3s
+					response_header_timeout 150s
+					keepalive 60s
+				}
+			}
+		}
+		@bot path /v1/auth/* /v1/especialidades /v1/examenes /v1/examenes/* /api/v1/app /api/v1/app/*
+		handle @bot {
+			reverse_proxy 127.0.0.1:18081 127.0.0.1:18082 {
+				lb_policy least_conn
+				lb_retries 2
+				lb_try_duration 3s
+				lb_try_interval 250ms
+				header_up X-Forwarded-For {remote_host}
+				header_up X-Request-Id {http.request.uuid}
+				health_uri /health/ready
+				health_interval 10s
+				health_timeout 6s
+				health_status 2xx
+				fail_duration 10s
+				max_fails 2
+				transport http {
+					dial_timeout 3s
+					response_header_timeout 25s
+					keepalive 60s
+				}
+			}
+		}
+		@health path /health /health/live /health/ready
+		handle @health {
+			reverse_proxy 127.0.0.1:18081 127.0.0.1:18082 {
+				lb_policy first
+				header_up X-Forwarded-For {remote_host}
+				transport http {
+					dial_timeout 2s
+					response_header_timeout 8s
+				}
+			}
+		}
+		handle {
+			respond 404
+		}
+	}
+}
