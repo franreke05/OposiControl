@@ -1,0 +1,11 @@
+# Fixtures de test y texto de puertas (no son secretos): cadenas falsas de los tests de redaccion, un JWT de ejemplo
+# (sub 1234567890), una clave de idempotencia de prueba y una ruta. Revisados el 2026-10-09 al integrar la rama de contenido.
+5e58ce03ec347c8913d8bf9ce3275340d872a982:backend/ktor/src/test/kotlin/com/oposicontrol/backend/KtorRestPart3AuditTest.kt:generic-api-key:120
+81e21cab73a959bba4367b191fd8f063b62175ec:scripts/verify-ops-config.test.sh:generic-api-key:98
+a73e166de9defe03dd55edf2b9d3a7f82dec6a91:backend/ktor/src/test/kotlin/com/oposicontrol/backend/Loop2KtorRestTest.kt:generic-api-key:406
+a73e166de9defe03dd55edf2b9d3a7f82dec6a91:backend/ktor/src/test/kotlin/com/oposicontrol/backend/Loop2KtorRestTest.kt:generic-api-key:407
+a73e166de9defe03dd55edf2b9d3a7f82dec6a91:backend/ktor/src/test/kotlin/com/oposicontrol/backend/Loop2KtorRestTest.kt:generic-api-key:409
+a73e166de9defe03dd55edf2b9d3a7f82dec6a91:backend/ktor/src/test/kotlin/com/oposicontrol/backend/Loop2KtorRestTest.kt:generic-api-key:420
+a73e166de9defe03dd55edf2b9d3a7f82dec6a91:backend/ktor/src/test/kotlin/com/oposicontrol/backend/Loop2KtorRestTest.kt:jwt:425
+b5d0cd11230257a0c011d5e43261c3b66e69d8b9:ops/inventory/route-profiles.tsv:generic-api-key:110
+e0e07c89b737e1d0ca04bbfd88e5002801af2250:backend/ktor/src/test/kotlin/com/oposicontrol/backend/AuthPlaneKtorSecLoop5Test.kt:generic-api-key:78
