@@ -74,3 +74,36 @@ fun formatPriceCents(priceCents: Int, currency: String): String {
     val cents = absolute % 100
     return "$sign${absolute / 100},${cents.toString().padStart(2, '0')} ${currency.uppercase()}"
 }
+
+/**
+ * Plan de suscripción. El precio NO vive aquí: lo fijan las tarifas del producto comercial que apunta a este plan.
+ */
+data class CommercialPlan(
+    val id: String,
+    val code: String,
+    val name: String,
+    val description: String? = null,
+    /** Nivel del plan (0..3 en producción): ordena qué plan incluye a cuál. */
+    val level: Int = 0,
+    val active: Boolean = true,
+    val visible: Boolean = true,
+    val position: Int = 1,
+    val benefits: List<PlanBenefit> = emptyList(),
+)
+
+/**
+ * Un beneficio de un plan: un código y EXACTAMENTE un valor (booleano, entero, decimal o texto). El backend rechaza un
+ * beneficio sin valor o con más de uno.
+ */
+data class PlanBenefit(
+    val id: String,
+    val planId: String,
+    val code: String,
+    val booleanValue: Boolean? = null,
+    val integerValue: Int? = null,
+    val numericValue: Double? = null,
+    val textValue: String? = null,
+) {
+    /** Cuántos de los cuatro valores vienen informados. Válido sólo si es 1. */
+    val filledValueCount: Int get() = listOfNotNull(booleanValue, integerValue, numericValue, textValue).size
+}

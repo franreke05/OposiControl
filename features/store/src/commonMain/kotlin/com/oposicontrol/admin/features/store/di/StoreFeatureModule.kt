@@ -13,6 +13,7 @@ import com.oposicontrol.admin.domain.usecase.commerce.UpsertLimitedResourceUseCa
 import com.oposicontrol.admin.domain.usecase.commerce.UpsertStoreItemUseCase
 import com.oposicontrol.admin.domain.usecase.commerce.UpsertStoreOfferUseCase
 import com.oposicontrol.admin.features.store.presentation.CommercialCatalogViewModel
+import com.oposicontrol.admin.features.store.presentation.CommercialPlansViewModel
 import com.oposicontrol.admin.features.store.presentation.MarketViewModel
 import com.oposicontrol.admin.features.store.presentation.PublishedCatalog
 import com.oposicontrol.admin.features.store.presentation.PublishedExamsSource
@@ -21,6 +22,7 @@ import org.koin.dsl.module
 
 val storeFeatureModule = module {
     factory { CommercialCatalogViewModel(dispatcherProvider = get(), repository = get(), analyticsTracker = get()) }
+    factory { CommercialPlansViewModel(dispatcherProvider = get(), repository = get(), analyticsTracker = get()) }
     factory {
         MarketViewModel(
             dispatcherProvider = get(),

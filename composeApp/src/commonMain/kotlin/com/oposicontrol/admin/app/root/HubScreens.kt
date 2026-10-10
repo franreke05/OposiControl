@@ -5,11 +5,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.DesktopTab
 import com.oposicontrol.admin.core.ui.components.DesktopTabs
@@ -25,8 +27,11 @@ import com.oposicontrol.admin.features.reports.presentation.ReportsScreen
 import com.oposicontrol.admin.features.roles.presentation.RolesScreen
 import com.oposicontrol.admin.features.settings.presentation.SettingsScreen
 import com.oposicontrol.admin.features.settings.presentation.SystemStatusScreen
+import com.oposicontrol.admin.features.store.presentation.CommercialCatalogIntent
 import com.oposicontrol.admin.features.store.presentation.CommercialCatalogScreen
-import com.oposicontrol.admin.features.store.presentation.StoreScreen
+import com.oposicontrol.admin.features.store.presentation.CommercialCatalogViewModel
+import com.oposicontrol.admin.features.store.presentation.CommercialPlansScreen
+import com.oposicontrol.admin.features.store.presentation.CommercialPlansViewModel
 import com.oposicontrol.admin.features.users.presentation.UsersScreen
 import org.koin.compose.koinInject
 
@@ -111,10 +116,26 @@ internal enum class CatalogHubTab(val id: String, val label: String, val icon: A
     PLANS("plans", "Planes", AppIcon.PLANS),
 }
 
+/**
+ * Productos y Planes comparten catálogo: una suscripción apunta a un plan. Los dos ViewModel viven en el hub —no en cada
+ * pestaña— para que cambiar de pestaña no tire un borrador a medias, y los planes guardados llegan al selector de
+ * Productos sin volver a pedirlos al servidor.
+ *
+ * La pestaña Planes era la tienda heredada (`tienda/...`), que escribe en tablas que producción no tiene; ahora es el
+ * catálogo canónico de planes y beneficios.
+ */
 @Composable
 internal fun CatalogHubScreen(initialTab: CatalogHubTab?) {
     var selectedTab by rememberSaveable { mutableStateOf((initialTab ?: CatalogHubTab.PRODUCTS).id) }
     LaunchedEffect(initialTab) { if (initialTab != null) selectedTab = initialTab.id }
+
+    val productsViewModel: CommercialCatalogViewModel = koinInject()
+    val plansViewModel: CommercialPlansViewModel = koinInject()
+    val plansState by plansViewModel.state.collectAsState()
+    val plans = plansState.plans
+    LaunchedEffect(plans) {
+        if (plans is UiAsync.Success) productsViewModel.dispatch(CommercialCatalogIntent.SyncPlans(plans.value))
+    }
 
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         DesktopTabs(
@@ -123,10 +144,8 @@ internal fun CatalogHubScreen(initialTab: CatalogHubTab?) {
             onSelect = { selectedTab = it },
         )
         when (selectedTab) {
-            // StoreScreen es la pantalla legacy que ya servía Planes antes de
-            // esta consolidación (AdminSection.STORE) — sin tocar por dentro.
-            CatalogHubTab.PLANS.id -> StoreScreen(viewModel = koinInject())
-            else -> CommercialCatalogScreen(viewModel = koinInject())
+            CatalogHubTab.PLANS.id -> CommercialPlansScreen(viewModel = plansViewModel)
+            else -> CommercialCatalogScreen(viewModel = productsViewModel)
         }
     }
 }

@@ -6,45 +6,95 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
+import com.oposicontrol.admin.domain.model.CommercialPlan
 import com.oposicontrol.admin.domain.model.CommercialProduct
 import com.oposicontrol.admin.domain.repository.CommercialCatalogRepository
 
 sealed interface CommercialCatalogIntent {
     data object Refresh : CommercialCatalogIntent
-    data class Select(val productId: String) : CommercialCatalogIntent
-    data class UpdateName(val value: String) : CommercialCatalogIntent
 
-    /** Precio tal y como se teclea ("12,99"); se convierte a céntimos al guardar. */
+    /** Los planes cambiaron en la pestaña Planes: el selector de una suscripción los recibe sin otra petición. */
+    data class SyncPlans(val plans: List<CommercialPlan>) : CommercialCatalogIntent
+
+    /** Abre un producto (o, con `null`, un borrador nuevo). Si hay cambios sin guardar, pide confirmación antes. */
+    data class Open(val productId: String?) : CommercialCatalogIntent
+    data object ConfirmOpen : CommercialCatalogIntent
+    data object DismissOpen : CommercialCatalogIntent
+
+    data class UpdateSearch(val value: String) : CommercialCatalogIntent
+    data class UpdateTypeFilter(val type: String?) : CommercialCatalogIntent
+    data class SetPage(val pageIndex: Int) : CommercialCatalogIntent
+    data class SelectTab(val tab: ProductTab) : CommercialCatalogIntent
+
+    data class UpdateCode(val value: String) : CommercialCatalogIntent
+    data class UpdateName(val value: String) : CommercialCatalogIntent
+    data class UpdateType(val value: String) : CommercialCatalogIntent
+    data class UpdateDescription(val value: String) : CommercialCatalogIntent
+
+    /** Precio tal y como se teclea («12,99»); se convierte a céntimos al guardar. */
     data class UpdatePrice(val value: String) : CommercialCatalogIntent
     data class UpdateTicketAmount(val value: String) : CommercialCatalogIntent
+    data class UpdatePlan(val planId: String?) : CommercialCatalogIntent
     data class UpdatePromotionalLabel(val value: String) : CommercialCatalogIntent
+    data class UpdatePosition(val value: String) : CommercialCatalogIntent
     data class ToggleActive(val value: Boolean) : CommercialCatalogIntent
     data class ToggleVisible(val value: Boolean) : CommercialCatalogIntent
     data class ToggleHighlighted(val value: Boolean) : CommercialCatalogIntent
     data object Save : CommercialCatalogIntent
+    data object Discard : CommercialCatalogIntent
+
+    /** Abre el formulario de una tarifa existente o, con `null`, el de una nueva. */
+    data class EditTariff(val tariffId: String?) : CommercialCatalogIntent
+    data class UpdateTariff(val draft: TariffDraft) : CommercialCatalogIntent
+    data object SaveTariff : CommercialCatalogIntent
+    data object CancelTariff : CommercialCatalogIntent
 }
 
 data class CommercialCatalogState(
+    /** Todos los productos descargados (el repositorio recorre las páginas del servidor). */
     val products: UiAsync<List<CommercialProduct>> = UiAsync.Loading,
+    /** Planes para el selector de una suscripción. Vacío si no se pudieron leer: el catálogo sigue funcionando. */
+    val plans: List<CommercialPlan> = emptyList(),
+    val plansUnavailable: Boolean = false,
+    val searchQuery: String = "",
+    val typeFilter: String? = null,
+    val pageIndex: Int = 0,
     val selectedId: String? = null,
-    val editorName: String = "",
-    val editorPrice: String = "",
-    val editorTicketAmount: String = "",
-    val editorPromotionalLabel: String = "",
-    val editorActive: Boolean = true,
-    val editorVisible: Boolean = true,
-    val editorHighlighted: Boolean = false,
+    val creatingNew: Boolean = false,
+    val tab: ProductTab = ProductTab.PRODUCT,
+    val draft: ProductDraft = ProductDraft(),
+    val tariffDraft: TariffDraft? = null,
+    /** Destino pendiente de confirmar cuando se intenta salir de una ficha con cambios. */
+    val pendingOpen: PendingOpen? = null,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
+    val tariffActionState: UiAsync<Unit> = UiAsync.Idle,
 ) {
-    val selected: CommercialProduct?
-        get() = (products as? UiAsync.Success)?.value?.firstOrNull { it.id == selectedId }
+    val allProducts: List<CommercialProduct> get() = (products as? UiAsync.Success)?.value.orEmpty()
+    val selected: CommercialProduct? get() = allProducts.firstOrNull { it.id == selectedId }
+    val visibleProducts: List<CommercialProduct> get() = allProducts.filter { productMatches(it, searchQuery, typeFilter) }
+
+    /** Hay algo en la ficha que no está en el servidor. */
+    val dirty: Boolean
+        get() = when {
+            creatingNew -> draft != ProductDraft()
+            else -> selected?.let { it.toDraft() != draft } ?: false
+        }
+
+    val problem: String?
+        get() = if (selectedId == null && !creatingNew) null else productProblem(
+            draft = draft,
+            isNew = creatingNew,
+            existingCodes = allProducts.filter { it.id != selectedId }.map { it.code }.toSet(),
+        )
 }
 
+data class PendingOpen(val productId: String?)
+
 /**
- * Catálogo comercial: planes, packs de OposiTickets y sus precios.
+ * Catálogo comercial: productos (planes, packs de OposiTickets, exámenes, servicios) y sus tarifas.
  *
- * Edita el catálogo que OposiBot enseña a los usuarios, de modo que cambiar un
- * precio o los OT de un pack deje de requerir un despliegue.
+ * Edita el catálogo que OposiBot enseña a los usuarios, de modo que cambiar un precio o los OT de un pack no requiere un
+ * despliegue. Todo pasa por el límite canónico de Ktor.
  */
 class CommercialCatalogViewModel(
     dispatcherProvider: DispatcherProvider,
@@ -55,118 +105,168 @@ class CommercialCatalogViewModel(
     dispatcherProvider = dispatcherProvider,
 ) {
     init {
+        analyticsTracker.trackScreen("commercial_catalog")
         dispatch(CommercialCatalogIntent.Refresh)
     }
 
     override suspend fun handleIntent(intent: CommercialCatalogIntent) {
         when (intent) {
             CommercialCatalogIntent.Refresh -> refresh()
-            is CommercialCatalogIntent.Select -> select(intent.productId)
-            is CommercialCatalogIntent.UpdateName -> updateState { it.copy(editorName = intent.value) }
-            is CommercialCatalogIntent.UpdatePrice -> updateState { it.copy(editorPrice = intent.value) }
-            is CommercialCatalogIntent.UpdateTicketAmount ->
-                updateState { it.copy(editorTicketAmount = intent.value) }
-            is CommercialCatalogIntent.UpdatePromotionalLabel ->
-                updateState { it.copy(editorPromotionalLabel = intent.value) }
-            is CommercialCatalogIntent.ToggleActive -> updateState { it.copy(editorActive = intent.value) }
-            is CommercialCatalogIntent.ToggleVisible -> updateState { it.copy(editorVisible = intent.value) }
-            is CommercialCatalogIntent.ToggleHighlighted ->
-                updateState { it.copy(editorHighlighted = intent.value) }
+            is CommercialCatalogIntent.SyncPlans -> updateState { it.copy(plans = intent.plans, plansUnavailable = false) }
+            is CommercialCatalogIntent.Open -> requestOpen(intent.productId)
+            CommercialCatalogIntent.ConfirmOpen -> currentState().pendingOpen?.let { open(it.productId) }
+            CommercialCatalogIntent.DismissOpen -> updateState { it.copy(pendingOpen = null) }
+            is CommercialCatalogIntent.UpdateSearch -> updateState { it.copy(searchQuery = intent.value, pageIndex = 0) }
+            is CommercialCatalogIntent.UpdateTypeFilter -> updateState { it.copy(typeFilter = intent.type, pageIndex = 0) }
+            is CommercialCatalogIntent.SetPage -> updateState { it.copy(pageIndex = intent.pageIndex) }
+            is CommercialCatalogIntent.SelectTab -> updateState { it.copy(tab = intent.tab) }
+            is CommercialCatalogIntent.UpdateCode -> edit { it.copy(code = intent.value) }
+            is CommercialCatalogIntent.UpdateName -> edit { it.copy(name = intent.value) }
+            is CommercialCatalogIntent.UpdateType -> edit { it.copy(type = intent.value) }
+            is CommercialCatalogIntent.UpdateDescription -> edit { it.copy(description = intent.value) }
+            is CommercialCatalogIntent.UpdatePrice -> edit { it.copy(price = intent.value) }
+            is CommercialCatalogIntent.UpdateTicketAmount -> edit { it.copy(ticketAmount = intent.value) }
+            is CommercialCatalogIntent.UpdatePlan -> edit { it.copy(planId = intent.planId) }
+            is CommercialCatalogIntent.UpdatePromotionalLabel -> edit { it.copy(promotionalLabel = intent.value) }
+            is CommercialCatalogIntent.UpdatePosition -> edit { it.copy(position = intent.value) }
+            is CommercialCatalogIntent.ToggleActive -> edit { it.copy(active = intent.value) }
+            is CommercialCatalogIntent.ToggleVisible -> edit { it.copy(visible = intent.value) }
+            is CommercialCatalogIntent.ToggleHighlighted -> edit { it.copy(highlighted = intent.value) }
             CommercialCatalogIntent.Save -> save()
+            CommercialCatalogIntent.Discard -> updateState { state ->
+                state.copy(draft = state.selected?.toDraft() ?: ProductDraft(), actionState = UiAsync.Idle)
+            }
+            is CommercialCatalogIntent.EditTariff -> editTariff(intent.tariffId)
+            is CommercialCatalogIntent.UpdateTariff -> updateState { it.copy(tariffDraft = intent.draft, tariffActionState = UiAsync.Idle) }
+            CommercialCatalogIntent.SaveTariff -> saveTariff()
+            CommercialCatalogIntent.CancelTariff -> updateState { it.copy(tariffDraft = null, tariffActionState = UiAsync.Idle) }
         }
     }
 
+    private fun edit(change: (ProductDraft) -> ProductDraft) {
+        updateState { it.copy(draft = change(it.draft), actionState = UiAsync.Idle) }
+    }
+
     private suspend fun refresh() {
-        analyticsTracker.trackScreen("commercial_catalog")
         updateState { it.copy(products = UiAsync.Loading) }
         when (val result = repository.getProducts()) {
             is AppResult.Failure -> updateState { it.copy(products = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
-                updateState {
-                    it.copy(
-                        products = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value),
-                    )
-                }
-                val current = currentState().selectedId
-                if (current == null) {
-                    result.value.firstOrNull()?.let { select(it.id) }
-                } else {
-                    select(current)
+                updateState { it.copy(products = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value)) }
+                val state = currentState()
+                when {
+                    state.creatingNew -> Unit
+                    // El producto abierto ya no existe: se abre el primero (o nada, si el catálogo quedó vacío).
+                    state.selectedId != null && state.selected == null ->
+                        result.value.firstOrNull()?.let { open(it.id) } ?: updateState { it.copy(selectedId = null, draft = ProductDraft()) }
+                    // Se relee la ficha abierta sólo si no había cambios: un refresco no puede tirar lo que se está escribiendo.
+                    state.selectedId != null -> if (!state.dirty) open(state.selectedId, keepTab = true)
+                    else -> result.value.firstOrNull()?.let { open(it.id) }
                 }
             }
         }
+        // Los planes sólo alimentan el selector de una suscripción: si fallan, el catálogo sigue siendo editable.
+        when (val plans = repository.getPlans()) {
+            is AppResult.Failure -> updateState { it.copy(plans = emptyList(), plansUnavailable = true) }
+            is AppResult.Success -> updateState { it.copy(plans = plans.value, plansUnavailable = false) }
+        }
     }
 
-    private fun select(productId: String) {
-        val product = (currentState().products as? UiAsync.Success)?.value
-            ?.firstOrNull { it.id == productId } ?: return
+    private fun requestOpen(productId: String?) {
+        val state = currentState()
+        if (productId != null && productId == state.selectedId && !state.creatingNew) return
+        if (state.dirty) {
+            updateState { it.copy(pendingOpen = PendingOpen(productId)) }
+        } else {
+            open(productId)
+        }
+    }
+
+    private fun open(productId: String?, keepTab: Boolean = false) {
+        val product = productId?.let { id -> currentState().allProducts.firstOrNull { it.id == id } }
         updateState {
             it.copy(
-                selectedId = product.id,
-                editorName = product.name,
-                editorPrice = product.priceCents?.let(::centsToInput).orEmpty(),
-                editorTicketAmount = product.ticketAmount?.toString().orEmpty(),
-                editorPromotionalLabel = product.promotionalLabel.orEmpty(),
-                editorActive = product.active,
-                editorVisible = product.visible,
-                editorHighlighted = product.highlighted,
+                selectedId = product?.id,
+                creatingNew = productId == null,
+                draft = product?.toDraft() ?: ProductDraft(),
+                tab = if (keepTab && product != null) it.tab else ProductTab.PRODUCT,
+                tariffDraft = null,
+                pendingOpen = null,
                 actionState = UiAsync.Idle,
+                tariffActionState = UiAsync.Idle,
             )
         }
     }
 
     private suspend fun save() {
-        val product = currentState().selected
-            ?: return updateState {
-                it.copy(actionState = UiAsync.Error(AppError.Validation("Selecciona un producto.")))
-            }
         val state = currentState()
-
-        val priceCents = if (state.editorPrice.isBlank()) {
-            null
-        } else {
-            parsePriceToCents(state.editorPrice)
-                ?: return updateState {
-                    it.copy(
-                        actionState = UiAsync.Error(
-                            AppError.Validation("El precio debe ser un importe válido, por ejemplo 12,99."),
-                        ),
-                    )
-                }
+        if (state.selectedId == null && !state.creatingNew) return
+        state.problem?.let { problem ->
+            updateState { it.copy(actionState = UiAsync.Error(AppError.Validation(problem))) }
+            return
         }
-
-        val ticketAmount = if (state.editorTicketAmount.isBlank()) {
-            null
-        } else {
-            state.editorTicketAmount.trim().toIntOrNull()
-                ?: return updateState {
-                    it.copy(
-                        actionState = UiAsync.Error(
-                            AppError.Validation("Los OposiTickets deben ser un número entero."),
-                        ),
-                    )
-                }
-        }
-
+        val product = state.draft.toProduct(base = state.selected) ?: return
         updateState { it.copy(actionState = UiAsync.Loading) }
-        val updated = product.copy(
-            name = state.editorName.trim(),
-            priceCents = priceCents,
-            ticketAmount = ticketAmount,
-            promotionalLabel = state.editorPromotionalLabel.trim().takeIf { it.isNotEmpty() },
-            active = state.editorActive,
-            visible = state.editorVisible,
-            highlighted = state.editorHighlighted,
-        )
-        when (val result = repository.saveProduct(updated)) {
+        when (val result = repository.saveProduct(product)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
-                analyticsTracker.trackAction(
-                    "commercial_product_save",
-                    mapOf("product_code" to result.value.code),
-                )
-                updateState { it.copy(actionState = UiAsync.Success(Unit)) }
-                refresh()
+                analyticsTracker.trackAction("commercial_product_save", mapOf("product_code" to result.value.code))
+                val saved = result.value
+                updateState { current ->
+                    val others = current.allProducts.filter { it.id != saved.id }
+                    val merged = if (current.allProducts.any { it.id == saved.id }) {
+                        current.allProducts.map { if (it.id == saved.id) saved else it }
+                    } else {
+                        others + saved
+                    }
+                    current.copy(
+                        products = UiAsync.Success(merged),
+                        selectedId = saved.id,
+                        creatingNew = false,
+                        draft = saved.toDraft(),
+                        actionState = UiAsync.Success(Unit),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun editTariff(tariffId: String?) {
+        val product = currentState().selected ?: return
+        val draft = tariffId?.let { id -> product.tariffs.firstOrNull { it.id == id }?.toDraft() } ?: TariffDraft()
+        updateState { it.copy(tariffDraft = draft, tariffActionState = UiAsync.Idle) }
+    }
+
+    private suspend fun saveTariff() {
+        val state = currentState()
+        val product = state.selected ?: return
+        val draft = state.tariffDraft ?: return
+        tariffProblem(draft, product.tariffs.filter { it.id != draft.id })?.let { problem ->
+            updateState { it.copy(tariffActionState = UiAsync.Error(AppError.Validation(problem))) }
+            return
+        }
+        val tariff = draft.toTariff(product.id, product.currency) ?: return
+        updateState { it.copy(tariffActionState = UiAsync.Loading) }
+        when (val result = repository.saveTariff(product.id, tariff)) {
+            is AppResult.Failure -> updateState { it.copy(tariffActionState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                analyticsTracker.trackAction("commercial_tariff_save", mapOf("product_code" to product.code))
+                val saved = result.value
+                updateState { current ->
+                    val updated = current.allProducts.map { existing ->
+                        if (existing.id != product.id) {
+                            existing
+                        } else {
+                            val tariffs = if (existing.tariffs.any { it.id == saved.id }) {
+                                existing.tariffs.map { if (it.id == saved.id) saved else it }
+                            } else {
+                                existing.tariffs + saved
+                            }
+                            existing.copy(tariffs = tariffs.sortedBy { it.position })
+                        }
+                    }
+                    current.copy(products = UiAsync.Success(updated), tariffDraft = null, tariffActionState = UiAsync.Success(Unit))
+                }
             }
         }
     }
@@ -208,4 +308,18 @@ internal fun parsePriceToCents(input: String): Int? {
 internal fun centsToInput(priceCents: Int): String {
     val cents = priceCents % 100
     return "${priceCents / 100},${cents.toString().padStart(2, '0')}"
+}
+
+/**
+ * Coste por ticket con cuatro decimales: a 100 OT por euro las diferencias entre
+ * packs viven en la tercera cifra, y redondear a dos las borraria justo cuando
+ * se necesitan para comparar.
+ */
+internal fun formatCentsPerTicket(centsPerTicket: Double): String {
+    // Se redondea, no se trunca: truncar sesga siempre a la baja y haría parecer
+    // que un pack sale algo más barato de lo que es.
+    val tenThousandths = kotlin.math.round(centsPerTicket * 10_000).toLong()
+    val units = tenThousandths / 10_000
+    val fraction = (tenThousandths % 10_000).toString().padStart(4, '0')
+    return "$units,$fraction"
 }
