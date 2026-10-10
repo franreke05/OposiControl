@@ -30,6 +30,7 @@ import com.oposicontrol.admin.core.ui.components.ButtonSize
 import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.DesktopIconButton
 import com.oposicontrol.admin.core.ui.components.DesktopVerticalScrollbar
+import com.oposicontrol.admin.core.ui.components.FormFeedback
 import com.oposicontrol.admin.core.ui.components.GhostButton
 import com.oposicontrol.admin.core.ui.components.GlassSearchBar
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
@@ -39,6 +40,8 @@ import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.core.ui.components.StatusTone
 import com.oposicontrol.admin.core.ui.components.WorkspaceCatalogRow
 import com.oposicontrol.admin.core.ui.components.WorkspaceFilterPill
+import com.oposicontrol.admin.core.ui.components.WorkspaceNotice
+import com.oposicontrol.admin.core.ui.components.WorkspaceNoticeTone
 import com.oposicontrol.admin.core.ui.components.WorkspacePager
 import com.oposicontrol.admin.core.ui.components.WorkspacePill
 import com.oposicontrol.admin.core.ui.components.WorkspaceSaveBar
@@ -126,6 +129,8 @@ internal fun <T> StoreCatalogPane(
     rowIcon: AppIcon = icon,
     onCreate: (() -> Unit)? = null,
     createLabel: String = "Nuevo",
+    refreshing: Boolean = false,
+    refreshFailed: Boolean = false,
 ) {
     val hasFilters = searchQuery.isNotBlank() || selectedFilter != null
     val window = catalogWindow(items, pageIndex)
@@ -143,15 +148,26 @@ internal fun <T> StoreCatalogPane(
         modifier = modifier,
         action = {
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalAlignment = Alignment.CenterVertically) {
-                if (totalDownloaded > 0) WorkspacePill(text = totalDownloaded.toString())
+                when {
+                    refreshing -> WorkspacePill(text = "Actualizando…")
+                    totalDownloaded > 0 -> WorkspacePill(text = totalDownloaded.toString())
+                }
                 DesktopIconButton(
                     label = "Actualizar $noun",
                     size = Sizing.iconButtonSmall,
+                    enabled = !refreshing,
                     onClick = onRefresh,
                 ) { AppIconImage(AppIcon.REFRESH, size = 14.dp) }
             }
         },
     ) {
+        if (refreshFailed) {
+            WorkspaceNotice(
+                tone = WorkspaceNoticeTone.WARNING,
+                title = "No se pudo actualizar",
+                detail = "Se enseña lo último que se leyó. Vuelve a intentarlo con el botón de actualizar.",
+            )
+        }
         GlassSearchBar(
             value = searchQuery,
             onValueChange = onSearchChange,
@@ -296,6 +312,19 @@ internal fun UnsavedChangesDialog(visible: Boolean, onConfirm: () -> Unit, onDis
     )
 }
 
+/**
+ * Lo que dice la ficha tras guardar. Si el servidor conservó un campo que se envió vacío ([notice]), eso sustituye al
+ * «guardado» en verde: los dos a la vez se contradicen, y el que importa es el aviso.
+ */
+@Composable
+internal fun StoreSaveFeedback(state: UiAsync<Unit>, notice: String?, savingText: String, savedText: String) {
+    if (notice != null && state is UiAsync.Success) {
+        WorkspaceNotice(tone = WorkspaceNoticeTone.WARNING, title = "Guardado, salvo un campo que no se pudo vaciar", detail = notice)
+    } else {
+        FormFeedback(state = state, loadingText = savingText, successText = savedText)
+    }
+}
+
 /** Estado de un elemento comercial dicho con palabra, icono (lo pone `StatusChip`) y tono. */
 internal data class CommerceStatus(val label: String, val tone: StatusTone)
 
@@ -323,12 +352,14 @@ internal fun parseNonNegativeInt(text: String): Int? {
 internal fun StoreChildRow(
     title: String,
     value: String,
-    editing: Boolean,
-    onEdit: () -> Unit,
     modifier: Modifier = Modifier,
+    editing: Boolean = false,
+    /** `null` = fila de sólo lectura (un uso de promoción): no se enseña un botón que no haría nada. */
+    onEdit: (() -> Unit)? = null,
     subtitle: String? = null,
     status: CommerceStatus? = null,
     editLabel: String = "Editar",
+    editIcon: AppIcon = AppIcon.EDIT,
 ) {
     val tokens = GlassTheme.tokens
     Row(
@@ -369,12 +400,14 @@ internal fun StoreChildRow(
             overflow = TextOverflow.Ellipsis,
         )
         if (status != null) StatusChip(status = status.label, tone = status.tone)
-        SecondaryButton(
-            text = editLabel,
-            size = ButtonSize.COMPACT,
-            enabled = !editing,
-            onClick = onEdit,
-            icon = { AppIconImage(AppIcon.EDIT, size = 14.dp) },
-        )
+        if (onEdit != null) {
+            SecondaryButton(
+                text = editLabel,
+                size = ButtonSize.COMPACT,
+                enabled = !editing,
+                onClick = onEdit,
+                icon = { AppIconImage(editIcon, size = 14.dp) },
+            )
+        }
     }
 }

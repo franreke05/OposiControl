@@ -3,7 +3,10 @@ package com.oposicontrol.admin.features.store.presentation
 import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
+import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
+import com.oposicontrol.admin.domain.model.CommercialProduct
+import com.oposicontrol.admin.domain.repository.CommercialCatalogRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -260,5 +263,50 @@ class CommercialCatalogViewModelTest {
         assertEquals(349, tariff.priceCents)
         assertFalse(tariff.active)
         assertEquals(1, vm.state.value.selected?.tariffs?.size)
+    }
+
+    @Test
+    fun `a refresh without local changes shows what another administrator saved`() = runTest {
+        val repository = FakeCatalogRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+        repository.products = repository.products.map { if (it.id == PRODUCT_PACK) it.copy(priceCents = 599) else it }
+        vm.dispatch(CommercialCatalogIntent.Refresh)
+        advanceUntilIdle()
+
+        assertEquals("5,99", vm.state.value.draft.price)
+        assertFalse(vm.state.value.dirty)
+    }
+
+    @Test
+    fun `a failed refresh keeps the catalogue on screen and says so`() = runTest {
+        val repository = FakeCatalogRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+        repository.productsFailure = AppError.Network("sin red")
+        vm.dispatch(CommercialCatalogIntent.Refresh)
+        advanceUntilIdle()
+
+        assertIs<UiAsync.Success<*>>(vm.state.value.products)
+        assertTrue(vm.state.value.refreshFailed)
+        assertFalse(vm.state.value.refreshing)
+        assertEquals(PRODUCT_PACK, vm.state.value.selectedId)
+    }
+
+    @Test
+    fun `an optional field the server kept is reported instead of calling it saved`() = runTest {
+        val stored = sampleProducts().map { if (it.id == PRODUCT_PACK) it.copy(description = "Texto antiguo") else it }
+        // Como el servidor de hoy: devuelve la ficha con la descripcion que ya tenia aunque se envie vacia.
+        val repository = object : CommercialCatalogRepository by FakeCatalogRepository(products = stored) {
+            override suspend fun saveProduct(product: CommercialProduct) = AppResult.Success(product.copy(description = "Texto antiguo"))
+        }
+        val vm = CommercialCatalogViewModel(TestDispatcherProvider(StandardTestDispatcher(testScheduler)), repository, NoOpAnalyticsTracker)
+        advanceUntilIdle()
+        vm.dispatch(CommercialCatalogIntent.UpdateDescription(""))
+        vm.dispatch(CommercialCatalogIntent.Save)
+        advanceUntilIdle()
+
+        assertEquals("El servidor conservó el valor anterior de la descripción: vaciar ese campo todavía no se guarda.", vm.state.value.notice)
+        assertEquals("Texto antiguo", vm.state.value.draft.description)
     }
 }

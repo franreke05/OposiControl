@@ -8,6 +8,8 @@ import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.data.remote.api.adminAuthHeaders
 import com.oposicontrol.admin.domain.model.MarketPopupRule
 import com.oposicontrol.admin.domain.model.MarketPromotion
+import com.oposicontrol.admin.domain.model.MarketPromotionUse
+import com.oposicontrol.admin.domain.model.MarketPromotionUsesPage
 import com.oposicontrol.admin.domain.model.MarketService
 import com.oposicontrol.admin.domain.model.MarketTicketPack
 import com.oposicontrol.admin.domain.repository.MarketCatalogRepository
@@ -15,6 +17,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.get
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
@@ -47,7 +50,7 @@ class KtorMarketCatalogRepositoryImpl(
     }
 
     override suspend fun getServices(): AppResult<List<MarketService>> = adapter.safeCall {
-        getList<ServiceDto, ServicesResponse>("$MARKET/servicios").map { it.toDomain() }
+        allPages<ServiceDto, ServicesResponse>("$MARKET/servicios").map { it.toDomain() }
     }
 
     override suspend fun saveService(service: MarketService): AppResult<MarketService> = adapter.safeCall {
@@ -55,15 +58,27 @@ class KtorMarketCatalogRepositoryImpl(
     }
 
     override suspend fun getPromotions(): AppResult<List<MarketPromotion>> = adapter.safeCall {
-        getList<PromotionDto, PromotionsResponse>("$MARKET/promociones").map { it.toDomain() }
+        allPages<PromotionDto, PromotionsResponse>("$MARKET/promociones").map { it.toDomain() }
     }
 
     override suspend fun savePromotion(promotion: MarketPromotion): AppResult<MarketPromotion> = adapter.safeCall {
         post<PromotionResponse>("$MARKET/promociones", promotion.toDto()).data.toDomain()
     }
 
+    override suspend fun getPromotionUses(promotionId: String, cursor: String?): AppResult<MarketPromotionUsesPage> = adapter.safeCall {
+        val endpoint = "$MARKET/promociones/$promotionId/usos"
+        val response = client.get(BackendRoutes.url(appConfig.baseUrl, endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            parameter("limit", USES_PAGE_SIZE)
+            if (cursor != null) parameter("cursor", cursor)
+            expectSuccess = false
+        }
+        response.requireSuccess(endpoint)
+        response.body<PromotionUsesResponse>().toDomain()
+    }
+
     override suspend fun getPopupRules(): AppResult<List<MarketPopupRule>> = adapter.safeCall {
-        getList<PopupRuleDto, PopupRulesResponse>("$MARKET/popups").map { it.toDomain() }
+        allPages<PopupRuleDto, PopupRulesResponse>("$MARKET/popups").map { it.toDomain() }
     }
 
     override suspend fun savePopupRule(rule: MarketPopupRule): AppResult<MarketPopupRule> = adapter.safeCall {
@@ -77,6 +92,30 @@ class KtorMarketCatalogRepositoryImpl(
         }
         response.requireSuccess(endpoint)
         return response.body<R>().data
+    }
+
+    /**
+     * Recorre una lectura paginada (`limit`/`offset`) hasta el `total` que declara el servidor. Sin `total` se para cuando
+     * una página viene incompleta. [MAX_ITEMS] es un tope de seguridad: miles de filas aquí serían un error de datos.
+     */
+    private suspend inline fun <reified T, reified R : PageEnvelope<T>> allPages(endpoint: String): List<T> {
+        val out = mutableListOf<T>()
+        while (out.size < MAX_ITEMS) {
+            val response = client.get(BackendRoutes.url(appConfig.baseUrl, endpoint)) {
+                adminAuthHeaders(appConfig, sessionLocalDataSource)
+                parameter("limit", PAGE_SIZE)
+                parameter("offset", out.size)
+                expectSuccess = false
+            }
+            response.requireSuccess(endpoint)
+            val page = response.body<R>()
+            val rows = page.items.ifEmpty { page.data }
+            out += rows
+            val total = page.total
+            val done = rows.isEmpty() || (if (total != null) out.size >= total else rows.size < PAGE_SIZE)
+            if (done) break
+        }
+        return out
     }
 
     private suspend inline fun <reified R> post(endpoint: String, body: Any): R {
@@ -98,12 +137,23 @@ class KtorMarketCatalogRepositoryImpl(
 
     companion object {
         const val MARKET = "/api/v1/admin/market"
+
+        /** Máximo que admite el backend por página (`AdminCatalogQueries.MAX_LIMIT`). */
+        const val PAGE_SIZE = 100
+        const val MAX_ITEMS = 5_000
+        const val USES_PAGE_SIZE = 50
     }
 }
 
 /** Envoltura común `{ "data": [...] }` de las respuestas de listado. */
 interface ListEnvelope<T> {
     val data: List<T>
+}
+
+/** Página OFFSET del backend. `data` es el duplicado antiguo de `items`: se lee el que venga relleno. */
+interface PageEnvelope<T> : ListEnvelope<T> {
+    val items: List<T>
+    val total: Int?
 }
 
 @Serializable
@@ -113,19 +163,31 @@ data class PacksResponse(override val data: List<PackDto> = emptyList()) : ListE
 data class PackResponse(val data: PackDto)
 
 @Serializable
-data class ServicesResponse(override val data: List<ServiceDto> = emptyList()) : ListEnvelope<ServiceDto>
+data class ServicesResponse(
+    override val items: List<ServiceDto> = emptyList(),
+    override val data: List<ServiceDto> = emptyList(),
+    override val total: Int? = null,
+) : PageEnvelope<ServiceDto>
 
 @Serializable
 data class ServiceResponse(val data: ServiceDto)
 
 @Serializable
-data class PromotionsResponse(override val data: List<PromotionDto> = emptyList()) : ListEnvelope<PromotionDto>
+data class PromotionsResponse(
+    override val items: List<PromotionDto> = emptyList(),
+    override val data: List<PromotionDto> = emptyList(),
+    override val total: Int? = null,
+) : PageEnvelope<PromotionDto>
 
 @Serializable
 data class PromotionResponse(val data: PromotionDto)
 
 @Serializable
-data class PopupRulesResponse(override val data: List<PopupRuleDto> = emptyList()) : ListEnvelope<PopupRuleDto>
+data class PopupRulesResponse(
+    override val items: List<PopupRuleDto> = emptyList(),
+    override val data: List<PopupRuleDto> = emptyList(),
+    override val total: Int? = null,
+) : PageEnvelope<PopupRuleDto>
 
 @Serializable
 data class PopupRuleResponse(val data: PopupRuleDto)
@@ -165,6 +227,45 @@ data class PromotionDto(
     val activo: Boolean = true,
     @SerialName("valido_desde") val validoDesde: String? = null,
     @SerialName("valido_hasta") val validoHasta: String? = null,
+    /** Sólo lectura: lo rellena el listado. Nunca se envía. */
+    val usos: Int? = null,
+)
+
+@Serializable
+data class PromotionUseDto(
+    val usuarioId: String = "",
+    val compraId: String? = null,
+    val descuentoCentimos: Int? = null,
+    val usadoEn: String = "",
+    val generoCompra: Boolean = false,
+    val renovoDespues: Boolean? = null,
+)
+
+@Serializable
+data class PromotionUsesStatsDto(val usos: Int = 0, val conversiones: Int = 0, val renovaciones: Int = 0)
+
+@Serializable
+data class PromotionUsesResponse(
+    val items: List<PromotionUseDto> = emptyList(),
+    val nextCursor: String? = null,
+    val stats: PromotionUsesStatsDto = PromotionUsesStatsDto(),
+)
+
+private fun PromotionUsesResponse.toDomain() = MarketPromotionUsesPage(
+    items = items.map {
+        MarketPromotionUse(
+            userId = it.usuarioId,
+            purchaseId = it.compraId,
+            discountCents = it.descuentoCentimos,
+            usedAt = it.usadoEn,
+            generatedPurchase = it.generoCompra,
+            renewedAfter = it.renovoDespues,
+        )
+    },
+    nextCursor = nextCursor,
+    uses = stats.usos,
+    conversions = stats.conversiones,
+    renewals = stats.renovaciones,
 )
 
 @Serializable
@@ -175,6 +276,7 @@ data class PopupRuleDto(
     val titulo: String = "",
     val mensaje: String = "",
     @SerialName("cta_principal") val ctaPrincipal: String? = null,
+    @SerialName("cta_secundario") val ctaSecundario: String? = null,
     val pantalla: String? = null,
     val momento: String? = null,
     @SerialName("requiere_plan_minimo") val requierePlanMinimo: String? = null,
@@ -239,6 +341,7 @@ private fun PromotionDto.toDomain() = MarketPromotion(
     active = activo,
     validFrom = validoDesde,
     validUntil = validoHasta,
+    uses = usos,
 )
 
 private fun MarketPromotion.toDto() = PromotionDto(
@@ -259,6 +362,7 @@ private fun PopupRuleDto.toDomain() = MarketPopupRule(
     title = titulo,
     message = mensaje,
     primaryCta = ctaPrincipal,
+    secondaryCta = ctaSecundario,
     screen = pantalla,
     moment = momento,
     minimumPlan = requierePlanMinimo,
@@ -275,6 +379,7 @@ private fun MarketPopupRule.toDto() = PopupRuleDto(
     titulo = title,
     mensaje = message,
     ctaPrincipal = primaryCta,
+    ctaSecundario = secondaryCta,
     pantalla = screen,
     momento = moment,
     requierePlanMinimo = minimumPlan,

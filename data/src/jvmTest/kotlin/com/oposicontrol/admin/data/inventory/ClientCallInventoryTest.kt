@@ -353,8 +353,8 @@ class ClientCallInventoryTest {
         val text = textOf(marketFile)
         assertEquals(emptyList(), staticTargetViolations(marketFile, text, recorded))
         val branched = text.replace(
-            "getList<ServiceDto, ServicesResponse>(\"\$MARKET/servicios\")",
-            "getList<ServiceDto, ServicesResponse>(if (appConfig.baseUrl.endsWith(\"/ghost\")) \"\$MARKET/__ghost\" else \"\$MARKET/servicios\")",
+            "allPages<ServiceDto, ServicesResponse>(\"\$MARKET/servicios\")",
+            "allPages<ServiceDto, ServicesResponse>(if (appConfig.baseUrl.endsWith(\"/ghost\")) \"\$MARKET/__ghost\" else \"\$MARKET/servicios\")",
         )
         assertTrue(branched != text, "probe did not apply")
         assertEquals(sitesIn(marketFile), sitesIn(marketFile, branched), "a helper branch adds no egress site")

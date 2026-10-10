@@ -49,6 +49,12 @@ data class CommercialPlansState(
     val pendingOpen: PendingPlanOpen? = null,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
     val benefitActionState: UiAsync<Unit> = UiAsync.Idle,
+    /** Aviso que deja el último guardado (ver [planKeptByServer]). */
+    val notice: String? = null,
+    /** Se está releyendo un catálogo que ya estaba en pantalla: se sigue viendo mientras tanto. */
+    val refreshing: Boolean = false,
+    /** La última relectura falló: se conserva lo que ya se había leído, y se dice. */
+    val refreshFailed: Boolean = false,
 ) {
     val allPlans: List<CommercialPlan> get() = (plans as? UiAsync.Success)?.value.orEmpty()
     val selected: CommercialPlan? get() = allPlans.firstOrNull { it.id == selectedId }
@@ -100,10 +106,10 @@ class CommercialPlansViewModel(
             is CommercialPlansIntent.UpdateFilter -> updateState { it.copy(statusFilter = intent.filter, pageIndex = 0) }
             is CommercialPlansIntent.SetPage -> updateState { it.copy(pageIndex = intent.pageIndex) }
             is CommercialPlansIntent.SelectTab -> updateState { it.copy(tab = intent.tab) }
-            is CommercialPlansIntent.UpdateDraft -> updateState { it.copy(draft = intent.draft, actionState = UiAsync.Idle) }
+            is CommercialPlansIntent.UpdateDraft -> updateState { it.copy(draft = intent.draft, actionState = UiAsync.Idle, notice = null) }
             CommercialPlansIntent.Save -> save()
             CommercialPlansIntent.Discard -> updateState { state ->
-                state.copy(draft = state.selected?.toDraft() ?: PlanDraft(), actionState = UiAsync.Idle)
+                state.copy(draft = state.selected?.toDraft() ?: PlanDraft(), actionState = UiAsync.Idle, notice = null)
             }
             is CommercialPlansIntent.EditBenefit -> editBenefit(intent.benefitId)
             is CommercialPlansIntent.UpdateBenefit -> updateState { it.copy(benefitDraft = intent.draft, benefitActionState = UiAsync.Idle) }
@@ -113,11 +119,24 @@ class CommercialPlansViewModel(
     }
 
     private suspend fun refresh() {
-        updateState { it.copy(plans = UiAsync.Loading) }
+        // Lo ya leído se queda en pantalla mientras se relee: un refresco no debe vaciar la ficha que se está mirando.
+        val hadData = currentState().plans.let { it is UiAsync.Success || it is UiAsync.Empty }
+        updateState { if (hadData) it.copy(refreshing = true, refreshFailed = false) else it.copy(plans = UiAsync.Loading, refreshFailed = false) }
         when (val result = repository.getPlans()) {
-            is AppResult.Failure -> updateState { it.copy(plans = UiAsync.Error(result.error)) }
+            is AppResult.Failure -> updateState {
+                if (hadData) it.copy(refreshing = false, refreshFailed = true) else it.copy(plans = UiAsync.Error(result.error), refreshing = false)
+            }
             is AppResult.Success -> {
-                updateState { it.copy(plans = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value)) }
+                // Se mide contra la lista ANTERIOR: contra la nueva, un cambio hecho por otro administrador parecería algo
+                // tecleado aquí, y guardar después lo pisaría sin que nadie lo hubiera pedido.
+                val wasDirty = currentState().dirty
+                updateState {
+                    it.copy(
+                        plans = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value),
+                        refreshing = false,
+                        refreshFailed = false,
+                    )
+                }
                 val state = currentState()
                 when {
                     state.creatingNew -> Unit
@@ -125,7 +144,7 @@ class CommercialPlansViewModel(
                     state.selectedId != null && state.selected == null ->
                         result.value.firstOrNull()?.let { open(it.id) } ?: updateState { it.copy(selectedId = null, draft = PlanDraft()) }
                     // Se relee la ficha abierta sólo si no había cambios: un refresco no puede tirar lo que se está escribiendo.
-                    state.selectedId != null -> if (!state.dirty) open(state.selectedId, keepTab = true)
+                    state.selectedId != null -> if (!wasDirty) open(state.selectedId, keepTab = true)
                     else -> result.value.firstOrNull()?.let { open(it.id) }
                 }
             }
@@ -154,6 +173,7 @@ class CommercialPlansViewModel(
                 pendingOpen = null,
                 actionState = UiAsync.Idle,
                 benefitActionState = UiAsync.Idle,
+                notice = null,
             )
         }
     }
@@ -166,7 +186,7 @@ class CommercialPlansViewModel(
             return
         }
         val plan = state.draft.toPlan(base = state.selected) ?: return
-        updateState { it.copy(actionState = UiAsync.Loading) }
+        updateState { it.copy(actionState = UiAsync.Loading, notice = null) }
         when (val result = repository.savePlan(plan)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
@@ -184,6 +204,7 @@ class CommercialPlansViewModel(
                         creatingNew = false,
                         draft = saved.toDraft(),
                         actionState = UiAsync.Success(Unit),
+                        notice = keptByServerNotice(planKeptByServer(plan, saved)),
                     )
                 }
             }

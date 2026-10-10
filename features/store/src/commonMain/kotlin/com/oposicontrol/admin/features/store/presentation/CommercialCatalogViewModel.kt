@@ -68,6 +68,12 @@ data class CommercialCatalogState(
     val pendingOpen: PendingOpen? = null,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
     val tariffActionState: UiAsync<Unit> = UiAsync.Idle,
+    /** Aviso que deja el último guardado (ver [productKeptByServer]). */
+    val notice: String? = null,
+    /** Se está releyendo un catálogo que ya estaba en pantalla: se sigue viendo mientras tanto. */
+    val refreshing: Boolean = false,
+    /** La última relectura falló: se conserva lo que ya se había leído, y se dice. */
+    val refreshFailed: Boolean = false,
 ) {
     val allProducts: List<CommercialProduct> get() = (products as? UiAsync.Success)?.value.orEmpty()
     val selected: CommercialProduct? get() = allProducts.firstOrNull { it.id == selectedId }
@@ -134,7 +140,7 @@ class CommercialCatalogViewModel(
             is CommercialCatalogIntent.ToggleHighlighted -> edit { it.copy(highlighted = intent.value) }
             CommercialCatalogIntent.Save -> save()
             CommercialCatalogIntent.Discard -> updateState { state ->
-                state.copy(draft = state.selected?.toDraft() ?: ProductDraft(), actionState = UiAsync.Idle)
+                state.copy(draft = state.selected?.toDraft() ?: ProductDraft(), actionState = UiAsync.Idle, notice = null)
             }
             is CommercialCatalogIntent.EditTariff -> editTariff(intent.tariffId)
             is CommercialCatalogIntent.UpdateTariff -> updateState { it.copy(tariffDraft = intent.draft, tariffActionState = UiAsync.Idle) }
@@ -144,15 +150,28 @@ class CommercialCatalogViewModel(
     }
 
     private fun edit(change: (ProductDraft) -> ProductDraft) {
-        updateState { it.copy(draft = change(it.draft), actionState = UiAsync.Idle) }
+        updateState { it.copy(draft = change(it.draft), actionState = UiAsync.Idle, notice = null) }
     }
 
     private suspend fun refresh() {
-        updateState { it.copy(products = UiAsync.Loading) }
+        // Lo ya leído se queda en pantalla mientras se relee: un refresco no debe vaciar la ficha que se está mirando.
+        val hadData = currentState().products.let { it is UiAsync.Success || it is UiAsync.Empty }
+        updateState { if (hadData) it.copy(refreshing = true, refreshFailed = false) else it.copy(products = UiAsync.Loading, refreshFailed = false) }
         when (val result = repository.getProducts()) {
-            is AppResult.Failure -> updateState { it.copy(products = UiAsync.Error(result.error)) }
+            is AppResult.Failure -> updateState {
+                if (hadData) it.copy(refreshing = false, refreshFailed = true) else it.copy(products = UiAsync.Error(result.error), refreshing = false)
+            }
             is AppResult.Success -> {
-                updateState { it.copy(products = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value)) }
+                // Se mide contra la lista ANTERIOR: contra la nueva, un cambio hecho por otro administrador parecería algo
+                // tecleado aquí, y guardar después lo pisaría sin que nadie lo hubiera pedido.
+                val wasDirty = currentState().dirty
+                updateState {
+                    it.copy(
+                        products = if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value),
+                        refreshing = false,
+                        refreshFailed = false,
+                    )
+                }
                 val state = currentState()
                 when {
                     state.creatingNew -> Unit
@@ -160,7 +179,7 @@ class CommercialCatalogViewModel(
                     state.selectedId != null && state.selected == null ->
                         result.value.firstOrNull()?.let { open(it.id) } ?: updateState { it.copy(selectedId = null, draft = ProductDraft()) }
                     // Se relee la ficha abierta sólo si no había cambios: un refresco no puede tirar lo que se está escribiendo.
-                    state.selectedId != null -> if (!state.dirty) open(state.selectedId, keepTab = true)
+                    state.selectedId != null -> if (!wasDirty) open(state.selectedId, keepTab = true)
                     else -> result.value.firstOrNull()?.let { open(it.id) }
                 }
             }
@@ -194,6 +213,7 @@ class CommercialCatalogViewModel(
                 pendingOpen = null,
                 actionState = UiAsync.Idle,
                 tariffActionState = UiAsync.Idle,
+                notice = null,
             )
         }
     }
@@ -206,7 +226,7 @@ class CommercialCatalogViewModel(
             return
         }
         val product = state.draft.toProduct(base = state.selected) ?: return
-        updateState { it.copy(actionState = UiAsync.Loading) }
+        updateState { it.copy(actionState = UiAsync.Loading, notice = null) }
         when (val result = repository.saveProduct(product)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
@@ -225,6 +245,7 @@ class CommercialCatalogViewModel(
                         creatingNew = false,
                         draft = saved.toDraft(),
                         actionState = UiAsync.Success(Unit),
+                        notice = keptByServerNotice(productKeptByServer(product, saved)),
                     )
                 }
             }

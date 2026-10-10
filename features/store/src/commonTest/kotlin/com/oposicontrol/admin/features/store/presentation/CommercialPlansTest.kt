@@ -267,4 +267,23 @@ class CommercialPlansTest {
         assertEquals("A medias", vm.state.value.draft.name)
         assertEquals(3, repository.planReads)
     }
+
+    @Test
+    fun `a refresh without local changes shows what another administrator saved`() = runTest {
+        val repository = FakeCatalogRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+        repository.plans = repository.plans.map { if (it.id == PLAN_FREE) it.copy(name = "Gratis") else it }
+        vm.dispatch(CommercialPlansIntent.Refresh)
+        advanceUntilIdle()
+
+        assertEquals("Gratis", vm.state.value.draft.name)
+        assertFalse(vm.state.value.dirty)
+
+        repository.plansFailure = AppError.Network("sin red")
+        vm.dispatch(CommercialPlansIntent.Refresh)
+        advanceUntilIdle()
+        assertIs<UiAsync.Success<*>>(vm.state.value.plans)
+        assertTrue(vm.state.value.refreshFailed)
+    }
 }

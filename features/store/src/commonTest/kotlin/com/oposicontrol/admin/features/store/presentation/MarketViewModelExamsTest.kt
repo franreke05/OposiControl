@@ -9,6 +9,7 @@ import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamStatus
 import com.oposicontrol.admin.domain.model.MarketPopupRule
 import com.oposicontrol.admin.domain.model.MarketPromotion
+import com.oposicontrol.admin.domain.model.MarketPromotionUsesPage
 import com.oposicontrol.admin.domain.model.MarketService
 import com.oposicontrol.admin.domain.model.MarketTicketPack
 import com.oposicontrol.admin.domain.repository.MarketCatalogRepository
@@ -33,6 +34,8 @@ class MarketViewModelExamsTest {
         override suspend fun saveService(service: MarketService) = AppResult.Success(service)
         override suspend fun getPromotions() = AppResult.Success(emptyList<MarketPromotion>())
         override suspend fun savePromotion(promotion: MarketPromotion) = AppResult.Success(promotion)
+        override suspend fun getPromotionUses(promotionId: String, cursor: String?) =
+            AppResult.Success(MarketPromotionUsesPage(items = emptyList()))
         override suspend fun getPopupRules() = AppResult.Success(emptyList<MarketPopupRule>())
         override suspend fun savePopupRule(rule: MarketPopupRule) = AppResult.Success(rule)
     }

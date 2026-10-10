@@ -50,6 +50,8 @@ data class MarketPromotion(
     val active: Boolean = true,
     val validFrom: String? = null,
     val validUntil: String? = null,
+    /** Usos registrados. Lo rellena el listado; `null` en la respuesta de un guardado. Sólo lectura. */
+    val uses: Int? = null,
 ) {
     /** Ventana imposible: la promoción no se aplicaría nunca. */
     val hasInvertedWindow: Boolean
@@ -68,6 +70,7 @@ data class MarketPopupRule(
     val title: String,
     val message: String,
     val primaryCta: String? = null,
+    val secondaryCta: String? = null,
     val screen: String? = null,
     val moment: String? = null,
     val minimumPlan: String? = null,
@@ -79,3 +82,28 @@ data class MarketPopupRule(
     /** Activa sin frecuencia: puede reaparecer en cada disparo. */
     val canRepeatOnEveryTrigger: Boolean get() = active && minimumFrequencyHours == null
 }
+
+/** Un uso registrado de una promoción. Lo escribe la liquidación de una compra, nunca el panel. */
+data class MarketPromotionUse(
+    val userId: String,
+    val purchaseId: String? = null,
+    val discountCents: Int? = null,
+    /** Instante ISO-8601 (UTC). */
+    val usedAt: String,
+    val generatedPurchase: Boolean = false,
+    /** `null` = todavía no se sabe (no ha llegado la renovación). */
+    val renewedAfter: Boolean? = null,
+)
+
+/**
+ * Una página de usos de una promoción (más recientes primero) y sus contadores, que son conteos exactos del servidor
+ * sobre TODOS los usos, no sobre la página.
+ */
+data class MarketPromotionUsesPage(
+    val items: List<MarketPromotionUse>,
+    /** Cursor de la página siguiente; `null` si no hay más. */
+    val nextCursor: String? = null,
+    val uses: Int = 0,
+    val conversions: Int = 0,
+    val renewals: Int = 0,
+)

@@ -154,6 +154,18 @@ internal fun productProblem(draft: ProductDraft, isNew: Boolean, existingCodes: 
     return null
 }
 
+/**
+ * Campos opcionales que se enviaron VACÍOS y el servidor devolvió con su valor anterior: su guardado sólo escribe las
+ * columnas que recibe, y un campo vacío no viaja. Antes que decir «guardado» sobre algo que no cambió, la ficha lo cuenta.
+ */
+internal fun productKeptByServer(sent: CommercialProduct, saved: CommercialProduct): List<String> = listOfNotNull(
+    "la descripción".takeIf { sent.description == null && saved.description != null },
+    "el precio".takeIf { sent.priceCents == null && saved.priceCents != null },
+    "los OposiTickets".takeIf { sent.ticketAmount == null && saved.ticketAmount != null },
+    "el plan".takeIf { sent.planId == null && saved.planId != null },
+    "la etiqueta promocional".takeIf { sent.promotionalLabel == null && saved.promotionalLabel != null },
+)
+
 /** Lo que hay escrito en el formulario de una tarifa. `id` en blanco = tarifa nueva. */
 data class TariffDraft(
     val id: String = "",

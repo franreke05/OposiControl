@@ -709,10 +709,18 @@ fun AppRoot(
                         initialView = route.toMobileContentView(),
                         showNavigationChrome = false,
                     )
-                    AppContentTarget.MARKET -> MarketScreen(
-                        viewModel = koinInject(),
-                        initialSection = marketSectionFor(route),
-                    )
+                    AppContentTarget.MARKET -> {
+                        val usersViewModel: UsersViewModel = koinInject()
+                        MarketScreen(
+                            viewModel = koinInject(),
+                            initialSection = marketSectionFor(route),
+                            // Quien usó una promoción es una persona: su ficha vive en Usuarios y no se duplica aquí.
+                            onOpenUser = { userId ->
+                                usersViewModel.dispatch(UsersIntent.SelectUser(userId))
+                                navigator.openSection(AdminSection.USERS)
+                            },
+                        )
+                    }
                     AppContentTarget.PRODUCT_ANALYTICS -> ProductAnalyticsScreen(
                         viewModel = koinInject(),
                         initialSection = analyticsSectionFor(route),

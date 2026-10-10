@@ -101,6 +101,10 @@ internal fun PlanDraft.toPlan(base: CommercialPlan?): CommercialPlan? {
     )
 }
 
+/** Campos opcionales que se enviaron vacíos y el servidor devolvió con su valor anterior (ver [productKeptByServer]). */
+internal fun planKeptByServer(sent: CommercialPlan, saved: CommercialPlan): List<String> =
+    listOfNotNull("la descripción".takeIf { sent.description == null && saved.description != null })
+
 /** De qué tipo es el único valor que lleva un beneficio. */
 enum class BenefitKind(val id: String, val label: String) {
     BOOLEAN("boolean", "Sí / no"),

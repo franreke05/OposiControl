@@ -93,6 +93,8 @@ internal fun CommercialCatalogContent(
                 modifier = paneModifier.testTag(CATALOG_PRODUCTS_PANE_TAG),
                 onCreate = { onIntent(CommercialCatalogIntent.Open(null)) },
                 createLabel = "Nuevo producto",
+                refreshing = state.refreshing,
+                refreshFailed = state.refreshFailed,
             )
         },
         editor = { paneModifier, contentWidth, fillsHeight ->
@@ -364,7 +366,7 @@ private fun ProductFormSections(state: CommercialCatalogState, onIntent: (Commer
         }
     }
 
-    FormFeedback(state = state.actionState, loadingText = "Guardando el producto…", successText = "Producto guardado.")
+    StoreSaveFeedback(state.actionState, state.notice, savingText = "Guardando el producto…", savedText = "Producto guardado.")
 }
 
 /**

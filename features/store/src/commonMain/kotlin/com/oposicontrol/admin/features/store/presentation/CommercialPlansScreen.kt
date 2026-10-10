@@ -91,6 +91,8 @@ internal fun CommercialPlansContent(
                 modifier = paneModifier.testTag(CATALOG_PLANS_PANE_TAG),
                 onCreate = { onIntent(CommercialPlansIntent.Open(null)) },
                 createLabel = "Nuevo plan",
+                refreshing = state.refreshing,
+                refreshFailed = state.refreshFailed,
             )
         },
         editor = { paneModifier, contentWidth, fillsHeight ->
@@ -307,7 +309,7 @@ private fun PlanFormSections(state: CommercialPlansState, onIntent: (CommercialP
         }
     }
 
-    FormFeedback(state = state.actionState, loadingText = "Guardando el plan…", successText = "Plan guardado.")
+    StoreSaveFeedback(state.actionState, state.notice, savingText = "Guardando el plan…", savedText = "Plan guardado.")
 }
 
 /**
