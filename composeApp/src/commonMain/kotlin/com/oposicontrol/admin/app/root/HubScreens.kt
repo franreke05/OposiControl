@@ -93,7 +93,11 @@ internal enum class UsersHubTab(val id: String, val label: String, val icon: App
 }
 
 @Composable
-internal fun UsersHubScreen(initialTab: UsersHubTab?) {
+internal fun UsersHubScreen(
+    initialTab: UsersHubTab?,
+    /** Abre la cartera de un usuario en OposiTickets. `null` = la ficha no ofrece el enlace. */
+    onOpenTickets: ((String) -> Unit)? = null,
+) {
     var selectedTab by rememberSaveable { mutableStateOf((initialTab ?: UsersHubTab.USERS).id) }
     LaunchedEffect(initialTab) { if (initialTab != null) selectedTab = initialTab.id }
 
@@ -106,7 +110,7 @@ internal fun UsersHubScreen(initialTab: UsersHubTab?) {
         when (selectedTab) {
             UsersHubTab.COMPETITION.id -> RankingsScreen(viewModel = koinInject())
             UsersHubTab.ACCESS.id -> ExamAccessScreen(viewModel = koinInject())
-            else -> UsersScreen(viewModel = koinInject())
+            else -> UsersScreen(viewModel = koinInject(), onOpenTickets = onOpenTickets)
         }
     }
 }

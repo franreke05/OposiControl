@@ -45,6 +45,13 @@ data class UsersState(
      * nombre a medio corregir se perdía sin ningún aviso.
      */
     val pendingSelectionUserId: String? = null,
+    /**
+     * Usuario que se pidió abrir desde otra pantalla (OposiTickets, un uso de promoción) cuando la lista todavía no
+     * estaba cargada. Se abre en cuanto llega; sin esto la petición se perdía en silencio y se aterrizaba en otra ficha.
+     */
+    val pendingOpenUserId: String? = null,
+    /** Se pidió abrir un usuario que no está en la lista cargada: se dice, en vez de enseñar a otra persona. */
+    val openUserMissing: Boolean = false,
     /** El alta está impedida; se explica en vez de abrir un editor que no guarda. */
     val createNoticeVisible: Boolean = false,
     // Quick-action dialogs

@@ -710,13 +710,15 @@ fun AppRoot(
                         showNavigationChrome = false,
                     )
                     AppContentTarget.MARKET -> {
-                        val usersViewModel: UsersViewModel = koinInject()
+                        val koin = getKoin()
                         MarketScreen(
                             viewModel = koinInject(),
                             initialSection = marketSectionFor(route),
                             // Quien usó una promoción es una persona: su ficha vive en Usuarios y no se duplica aquí.
+                            // El ViewModel de Usuarios se pide al pulsar: pedirlo al abrir Market descargaría la lista
+                            // entera de usuarios cada vez que alguien mira un precio.
                             onOpenUser = { userId ->
-                                usersViewModel.dispatch(UsersIntent.SelectUser(userId))
+                                koin.get<UsersViewModel>().dispatch(UsersIntent.SelectUser(userId))
                                 navigator.openSection(AdminSection.USERS)
                             },
                         )
@@ -725,7 +727,18 @@ fun AppRoot(
                         viewModel = koinInject(),
                         initialSection = analyticsSectionFor(route),
                     )
-                    AppContentTarget.USERS_HUB -> UsersHubScreen(initialTab = usersTabFor(route))
+                    AppContentTarget.USERS_HUB -> {
+                        val koin = getKoin()
+                        UsersHubScreen(
+                            initialTab = usersTabFor(route),
+                            // La cartera de una persona (movimientos y ajustes) vive en OposiTickets. Su ViewModel se pide
+                            // al pulsar, no al abrir Usuarios: pedirlo antes descargaría todas las carteras sin motivo.
+                            onOpenTickets = { userId ->
+                                koin.get<TicketsViewModel>().dispatch(TicketsIntent.OpenWalletOf(userId))
+                                navigator.openSection(AdminSection.TICKETS)
+                            },
+                        )
+                    }
                     AppContentTarget.SYSTEM_HUB -> SystemHubScreen(
                         initialTab = systemTabFor(route),
                         onSystemStatusClick = { navigator.push(AppRoute.System.Status) },
@@ -945,9 +958,18 @@ private fun adminSectionRoute(
 
         AdminSection.USERS -> {
             val viewModel: UsersViewModel = koinInject()
+            val koin = getKoin()
             AdminSectionRoute(
                 onPrimaryAction = { viewModel.dispatch(UsersIntent.CreateNew) },
-                content = { UsersScreen(viewModel) },
+                content = {
+                    UsersScreen(
+                        viewModel = viewModel,
+                        onOpenTickets = { userId ->
+                            koin.get<TicketsViewModel>().dispatch(TicketsIntent.OpenWalletOf(userId))
+                            openSection(AdminSection.TICKETS)
+                        },
+                    )
+                },
             )
         }
 
@@ -1045,15 +1067,16 @@ private fun adminSectionRoute(
 
         AdminSection.TICKETS -> {
             val viewModel: TicketsViewModel = koinInject()
-            val usersViewModel: UsersViewModel = koinInject()
+            val koin = getKoin()
             AdminSectionRoute(
                 onPrimaryAction = { viewModel.dispatch(TicketsIntent.PrepareAdjustment) },
                 content = {
                     TicketsScreen(
                         viewModel = viewModel,
-                        // Una cartera es de una persona: su ficha vive en Usuarios y no se duplica aqui.
+                        // Una cartera es de una persona: su ficha vive en Usuarios y no se duplica aqui. El ViewModel
+                        // de Usuarios se pide al pulsar: pedirlo al abrir OposiTickets descargaria la lista entera.
                         onOpenUser = { userId ->
-                            usersViewModel.dispatch(UsersIntent.SelectUser(userId))
+                            koin.get<UsersViewModel>().dispatch(UsersIntent.SelectUser(userId))
                             openSection(AdminSection.USERS)
                         },
                     )

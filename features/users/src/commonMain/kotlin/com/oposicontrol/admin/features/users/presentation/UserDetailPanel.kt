@@ -64,6 +64,7 @@ internal fun UserDetailWorkspace(
     state: UsersState,
     onIntent: (UsersIntent) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenTickets: ((String) -> Unit)? = null,
 ) {
     val user = state.selectedUser ?: return
     var selectedTab by rememberSaveable(user.id) { mutableStateOf(UserDetailTab.PERFIL.id) }
@@ -92,7 +93,7 @@ internal fun UserDetailWorkspace(
                     when (selectedTab) {
                         UserDetailTab.RENDIMIENTO.id -> UserPerformanceTab(detail, twoColumns)
                         UserDetailTab.COMPETICION.id -> UserCompetitiveCard(detail, rowColumns)
-                        UserDetailTab.ECONOMIA.id -> UserEconomyTab(detail, rowColumns)
+                        UserDetailTab.ECONOMIA.id -> UserEconomyTab(detail, rowColumns, onOpenTickets?.let { open -> { open(user.id) } })
                         UserDetailTab.COMUNIDAD.id -> UserCommunityCard(detail, rowColumns)
                         UserDetailTab.DEBILIDADES.id -> UserWeaknessCard(detail)
                     }
@@ -355,8 +356,8 @@ private fun UserPlanCard(detail: UiAsyncDetail) {
                 else -> UserInfoRows(
                     listOf(
                         "Plan" to (economy.productCode ?: "gratuito"),
-                        "Estado" to economy.subscriptionStatus,
-                        "Proveedor" to economy.provider,
+                        "Estado" to economy.subscriptionStatus?.let(::subscriptionStatusLabel),
+                        "Proveedor" to economy.provider?.let(::subscriptionProviderLabel),
                         "Renovación" to economy.renewsAt,
                         "Fin" to economy.endsAt,
                     ),
@@ -477,7 +478,7 @@ private fun UserCompetitiveCard(detail: UserDetail, rowColumns: Int) {
 }
 
 @Composable
-private fun UserEconomyTab(detail: UserDetail, rowColumns: Int) {
+private fun UserEconomyTab(detail: UserDetail, rowColumns: Int, onOpenTickets: (() -> Unit)? = null) {
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         FormSection(
             title = "Economía",
@@ -485,6 +486,17 @@ private fun UserEconomyTab(detail: UserDetail, rowColumns: Int) {
             help = Help.saldo,
             icon = AppIcon.TICKETS,
             iconRole = SemanticRole.COMMERCE,
+            // Los movimientos y los ajustes de la cartera viven en OposiTickets: aquí sólo se ve el saldo.
+            action = onOpenTickets?.let { open ->
+                {
+                    SecondaryButton(
+                        text = "Ver en OposiTickets",
+                        size = ButtonSize.COMPACT,
+                        onClick = open,
+                        icon = { AppIconImage(AppIcon.TICKETS, size = 14.dp) },
+                    )
+                }
+            },
         ) {
             val economy = detail.economy
             when {
@@ -494,8 +506,8 @@ private fun UserEconomyTab(detail: UserDetail, rowColumns: Int) {
                     listOf(
                         "Saldo OposiTickets" to economy.ticketBalance.toString(),
                         "Plan" to (economy.productCode ?: "gratuito"),
-                        "Estado" to economy.subscriptionStatus,
-                        "Proveedor" to economy.provider,
+                        "Estado" to economy.subscriptionStatus?.let(::subscriptionStatusLabel),
+                        "Proveedor" to economy.provider?.let(::subscriptionProviderLabel),
                         "Renovación" to economy.renewsAt,
                         "Fin" to economy.endsAt,
                     ),
@@ -534,7 +546,7 @@ private fun UserEconomyTab(detail: UserDetail, rowColumns: Int) {
                             cells = listOf(
                                 subscription.productCode,
                                 subscription.status,
-                                subscription.provider,
+                                subscriptionProviderLabel(subscription.provider),
                                 subscription.startedAt.orEmpty(),
                             ),
                         )

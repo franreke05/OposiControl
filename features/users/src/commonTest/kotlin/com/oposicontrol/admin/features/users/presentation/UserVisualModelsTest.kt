@@ -82,7 +82,8 @@ class UserVisualModelsTest {
         assertEquals("Mejor: 23 días", kpis.byId("racha").caption)
         assertEquals("2.450 OT", kpis.byId("oposi-tickets").value)
         assertEquals("premium_anual", kpis.byId("suscripcion").value)
-        assertEquals("activa", kpis.byId("suscripcion").caption)
+        // El estado se dice con mayúscula inicial, como en la pestaña Economía: es el mismo dato.
+        assertEquals("Activa", kpis.byId("suscripcion").caption)
     }
 
     @Test

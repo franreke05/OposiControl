@@ -101,6 +101,9 @@ class UsersVisualHarness {
         render(Capture("users-sin-coincidencias.png", 1920, 1080, dark = false), fx.sinCoincidencias())
         render(Capture("users-pagina-llena.png", 1920, 1400, dark = false), fx.paginaLlena())
         render(Capture("users-aviso-alta.png", 1920, 1080, dark = false), fx.avisoDeAlta())
+        // Ficha pedida desde OposiTickets o desde un uso de promoción: mientras llega la lista, y si la persona no está.
+        render(Capture("users-abriendo-desde-otra-pantalla.png", 1920, 1080, dark = false), fx.cargando().copy(pendingOpenUserId = "u-pedido"))
+        render(Capture("users-usuario-no-encontrado.png", 1920, 1080, dark = false), fx.listado().copy(openUserMissing = true))
     }
 
     /** Las cinco pestañas restantes de la ficha: el mismo lenguaje de tarjetas, no una lista de campos. */
@@ -225,7 +228,7 @@ class UsersVisualHarness {
                         selectedId = "users",
                         onSelect = {},
                     )
-                    UsersContent(state = state, onIntent = {})
+                    UsersContent(state = state, onIntent = {}, onOpenTickets = {})
                 }
             }
         }
@@ -252,6 +255,7 @@ private val HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
         label = "Contenido",
         items = listOf(
             ShellNavigationItem("content.exams", "Exámenes", AppIcon.EXAMS.key),
+            ShellNavigationItem("content.taxonomy", "Especialidades", AppIcon.LAYERS.key),
             ShellNavigationItem("content.questions", "Preguntas", AppIcon.QUESTIONS.key),
             ShellNavigationItem("content.imports", "Importación", AppIcon.IMPORT.key),
         ),
@@ -259,7 +263,10 @@ private val HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
     ShellNavigationGroup(
         id = "users",
         label = "Usuarios",
-        items = listOf(ShellNavigationItem("users", "Usuarios", AppIcon.USERS.key)),
+        items = listOf(
+            ShellNavigationItem("users", "Usuarios", AppIcon.USERS.key),
+            ShellNavigationItem("commercial.tickets", "OposiTickets", AppIcon.TICKETS.key),
+        ),
     ),
     ShellNavigationGroup(
         id = "economy",
@@ -267,7 +274,6 @@ private val HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
         items = listOf(
             ShellNavigationItem("commercial.catalog", "Catálogo", AppIcon.CATALOG.key),
             ShellNavigationItem("commercial.market", "OposiMarket", AppIcon.MARKET.key),
-            ShellNavigationItem("commercial.tickets", "OposiTickets", AppIcon.TICKETS.key),
         ),
     ),
     ShellNavigationGroup(

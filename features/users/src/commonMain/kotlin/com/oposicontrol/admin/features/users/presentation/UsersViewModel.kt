@@ -56,6 +56,7 @@ class UsersViewModel(
                         )
                     }
                 }
+                openPendingUser()
             }
         }
         scope.launch {
@@ -145,7 +146,18 @@ class UsersViewModel(
      */
     private suspend fun requestSelectUser(userId: String) {
         val state = currentState()
-        if (userId == state.selectedUserId) return
+        if (userId == state.selectedUserId) {
+            updateState { it.copy(pendingOpenUserId = null, openUserMissing = false) }
+            return
+        }
+        // Pedido desde otra pantalla antes de que la lista haya llegado: se guarda y se abre al cargar.
+        if (state.loadedUsers.none { it.id == userId }) {
+            val stillLoading = state.users is UiAsync.Loading || state.users is UiAsync.Idle
+            // Con la lista caída no se afirma que el usuario «no está»: lo que falla es la lista, y ya lo dice ella.
+            val listRead = state.users is UiAsync.Success || state.users is UiAsync.Empty
+            updateState { it.copy(pendingOpenUserId = userId.takeIf { stillLoading }, openUserMissing = listRead) }
+            return
+        }
         if (state.isDirty) {
             updateState { it.copy(pendingSelectionUserId = userId) }
             return
@@ -153,11 +165,28 @@ class UsersViewModel(
         selectUser(userId)
     }
 
+    /** Abre al usuario que se pidió desde otra pantalla, ahora que la lista ha llegado (o dice que no está). */
+    private suspend fun openPendingUser() {
+        val state = currentState()
+        val wanted = state.pendingOpenUserId ?: return
+        when {
+            state.users is UiAsync.Loading || state.users is UiAsync.Idle -> Unit
+            state.users is UiAsync.Error -> updateState { it.copy(pendingOpenUserId = null) }
+            state.loadedUsers.any { it.id == wanted } -> {
+                updateState { it.copy(pendingOpenUserId = null) }
+                requestSelectUser(wanted)
+            }
+            else -> updateState { it.copy(pendingOpenUserId = null, openUserMissing = true) }
+        }
+    }
+
     private suspend fun selectUser(userId: String) {
         val user = currentState().loadedUsers.firstOrNull { it.id == userId } ?: return
         updateState {
             it.copy(
                 selectedUserId = user.id,
+                pendingOpenUserId = null,
+                openUserMissing = false,
                 editorName = user.fullName,
                 editorRoleIds = user.roleIds.toSet(),
                 actionState = UiAsync.Idle,

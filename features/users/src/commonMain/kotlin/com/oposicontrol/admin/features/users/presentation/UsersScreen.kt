@@ -41,12 +41,17 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
  * el hub de Usuarios y el adaptador de sección legacy de `AppRoot`.
  */
 @Composable
-fun UsersScreen(viewModel: UsersViewModel) {
+fun UsersScreen(
+    viewModel: UsersViewModel,
+    /** Abre la cartera del usuario en OposiTickets. `null` = no se ofrece el enlace. */
+    onOpenTickets: ((String) -> Unit)? = null,
+) {
     val state by viewModel.state.collectAsState()
     UsersContent(
         state = state,
         onIntent = viewModel::dispatch,
         modifier = Modifier.fillMaxSize(),
+        onOpenTickets = onOpenTickets,
     )
 }
 
@@ -61,6 +66,7 @@ internal fun UsersContent(
     state: UsersState,
     onIntent: (UsersIntent) -> Unit,
     modifier: Modifier = Modifier,
+    onOpenTickets: ((String) -> Unit)? = null,
 ) {
     UsersSplit(
         modifier = modifier,
@@ -72,7 +78,20 @@ internal fun UsersContent(
             )
         },
         detailPane = { embedded ->
-            if (state.selectedUser == null) {
+            if (state.pendingOpenUserId != null) {
+                // Se llegó aquí desde otra pantalla pidiendo una ficha y la lista todavía está en camino.
+                EmptyStateCard(
+                    title = "Abriendo la ficha…",
+                    message = "Se está cargando la lista de usuarios; la ficha se abre en cuanto llegue.",
+                    icon = AppIcon.USERS,
+                )
+            } else if (state.openUserMissing) {
+                EmptyStateCard(
+                    title = "Ese usuario no está en la lista",
+                    message = "No se encontró entre los usuarios cargados. Puede que la cuenta ya no exista o que la lista no esté al día.",
+                    icon = AppIcon.USERS,
+                )
+            } else if (state.selectedUser == null) {
                 EmptyStateCard(
                     title = "Sin usuario seleccionado",
                     message = "Elige a alguien del catálogo para ver su ficha y editar su nombre y sus roles.",
@@ -82,7 +101,7 @@ internal fun UsersContent(
                 // Apilado: la pantalla entera desplaza (ver `UsersSplit`); la ficha sólo
                 // se compone a su altura natural.
                 Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                    UserDetailWorkspace(state = state, onIntent = onIntent)
+                    UserDetailWorkspace(state = state, onIntent = onIntent, onOpenTickets = onOpenTickets)
                     UserCapabilitiesNotice()
                 }
             } else {
@@ -100,7 +119,7 @@ internal fun UsersContent(
                         // Cabecera de la persona, métricas, pestañas y el contenido de la
                         // pestaña abierta. La ficha tiene estado propio: que falle una
                         // sección no impide editar el nombre ni los roles.
-                        UserDetailWorkspace(state = state, onIntent = onIntent)
+                        UserDetailWorkspace(state = state, onIntent = onIntent, onOpenTickets = onOpenTickets)
                         // Al final: lo que la pantalla no puede hacer es referencia,
                         // no debe mandar sobre los datos de la persona.
                         UserCapabilitiesNotice()

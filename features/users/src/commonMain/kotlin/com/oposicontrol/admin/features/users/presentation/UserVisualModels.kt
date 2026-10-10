@@ -13,11 +13,29 @@ import com.oposicontrol.admin.domain.model.UserDetailSection
  * están en [UserDetail]. Por eso puede probarse sin Compose y sin ViewModel.
  */
 
-/** Ausencia de dato: la sección existe pero no hay fila. Nunca un cero. */
-internal const val NO_DATA_TEXT = "NO_DATA"
+/**
+ * Ausencia de dato: la sección existe pero no hay fila. Nunca un cero.
+ *
+ * Se dice con las mismas palabras que el resto de la ficha ([USER_NO_DATA]): antes se enseñaba el nombre interno del
+ * estado («NO_DATA») junto a «Sin dato» en la misma pantalla, dos formas de decir lo mismo y una de ellas en clave.
+ */
+internal const val NO_DATA_TEXT = USER_NO_DATA
 
 /** La sección no se pudo leer. Distinta de [NO_DATA_TEXT]: no es que no haya dato, es que no se sabe. */
-internal const val NOT_AVAILABLE_TEXT = "NO_DISPONIBLE"
+internal const val NOT_AVAILABLE_TEXT = "No disponible"
+
+/** El estado de una suscripción tal y como lo guarda el sistema, con mayúscula inicial; lo desconocido se enseña tal cual. */
+internal fun subscriptionStatusLabel(status: String): String =
+    status.trim().replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+/** La pasarela de la suscripción dicha con su nombre; lo desconocido se enseña tal cual. */
+internal fun subscriptionProviderLabel(provider: String): String = when (provider.trim().lowercase()) {
+    "google_play" -> "Google Play"
+    "app_store", "apple" -> "App Store"
+    "stripe" -> "Stripe"
+    "manual", "admin" -> "Manual"
+    else -> provider
+}
 
 /** Iniciales del avatar: dos letras como mucho; sin nombre, las de la cuenta; sin nada, «?». */
 internal fun userInitials(displayName: String, accountName: String): String {
@@ -150,7 +168,7 @@ internal fun userKpis(detail: UiAsync<UserDetail>): List<UserKpi> {
             role = SemanticRole.INSIGHT,
             state = economyState,
             value = economy?.let { it.productCode ?: "gratuito" }.orEmpty(),
-            caption = economy?.subscriptionStatus?.takeIf { it.isNotBlank() },
+            caption = economy?.subscriptionStatus?.takeIf { it.isNotBlank() }?.let(::subscriptionStatusLabel),
         ),
     ).map { kpi ->
         // Sólo una métrica con dato lleva valor: `NO_DISPONIBLE` no arrastra el de una fila
