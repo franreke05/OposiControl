@@ -201,3 +201,31 @@ in production, have no OpenAPI contract and no migration; the canonical commerci
 different model. Nothing was invented: reads answer an empty list and writes answer 409 `STORE_LEGACY_NOT_PROVISIONED`
 (before: 502). Decision for the owner: retire these routes and the screen that calls them, or define the store model so a
 schema can be created (DEBT-068, DEBT-084).
+
+## 15. OposiControl UI phase, Users + Monetization (2026-10-11): PRODUCT_BLOCKED
+
+Found while building the Catalogue and OposiMarket screens. Nothing below was invented in the UI; each item is a
+decision the owner has to take before the capability can exist.
+
+1. **OposiMarket tables are not consumed by OposiBot.** The app-facing API reads only `productos_comerciales` (with
+   plans, benefits and tariffs). `paquetes_opositickets`, `servicios`, `promociones` and `reglas_popup_comercial` are
+   administrable from OposiControl (create, edit, activate) and are empty in production, but no `/api/v1/app` route,
+   and no database function tracked in this repository, reads them. Ticket packs in particular exist twice: as
+   products of type `pack_tickets` (what the app sells) and as rows of `paquetes_opositickets` (what Market edits).
+   Decision: which of the two is canonical, and what the app should do with services, promotions and pop-up rules.
+   Until then OposiMarket says so in its information rail.
+2. **Unit of a `cantidad` promotion.** `promociones.valor` is a bare `numeric` and the backend only requires it to be
+   non-negative; whether a fixed-amount discount is euros or cents is not defined anywhere. The form shows the number
+   as stored and says the unit is set by whoever applies the promotion.
+3. **Effect of each service type.** The twelve `tipo_servicio` values are fixed by a CHECK, but duration, multiplier
+   and stacking rules of boosters and protectors are not modelled (no columns, no contract). The form edits name,
+   type, prices and availability only.
+4. **Pop-up rule vocabulary.** `evento_disparador`, `pantalla` and `requiere_plan_minimo` are free text with no
+   catalogue of valid values; only `momento` and `tipo_examen_objetivo` are constrained. The form offers lists for the
+   two constrained fields and free text for the rest.
+5. **No delete or archive** for products, tariffs, plans, benefits, packs, services, promotions or pop-up rules: the
+   backend exposes upsert only. The screens offer activate/deactivate (and hide), which is what exists.
+6. **Subscriptions list.** `GET /api/v1/admin/suscripciones` (read-only, cursor) has no screen in this block; the
+   Users record already shows each user's subscription. A cross-user subscriptions view was not in the defined scope.
+7. **Legacy store on narrow windows.** Below 1040 dp the app falls back to the mobile adapter, where "Catálogo" still
+   opens the legacy store screen of section 14. Desktop (1080 dp and wider) uses the canonical Catalogue.
