@@ -78,7 +78,10 @@ fi
 # Toda migracion Slice 2 es POSTERIOR a la ultima de Slice 3: la lectura de "mis examenes" exige el marcador de comando
 # de la 20261008100200 (su PREFLIGHT se detiene sin el).
 first2="$(echo "$expected2" | head -1 | cut -d_ -f1)"
-[ "$first2" -gt "$last3" ] || { echo "FAIL: la migracion Slice 2 $first2 no es posterior a la ultima de Slice 3 ($last3)"; exit 1; }
+# La dependencia real es el marcador de comando de la 20261008100200 (base del runtime); Slice 3 puede recibir migraciones
+# posteriores (p. ej. 20261010100000) sin que eso obligue a renombrar las de Slice 2/7.
+base3=20261008100200
+[ "$first2" -gt "$base3" ] || { echo "FAIL: la migracion Slice 2 $first2 no es posterior a la base de Slice 3 ($base3)"; exit 1; }
 # El runbook de despliegue cita CADA migracion Slice 2 por su version completa.
 for v2 in $(echo "$expected2" | cut -d_ -f1); do
   grep -qF "$v2" "$dep" || { echo "FAIL: $dep no cita la migracion Slice 2 $v2"; exit 1; }
@@ -105,7 +108,7 @@ fi
 first7="$(echo "$expected7" | head -1 | cut -d_ -f1)"
 last2="$(echo "$expected2" | tail -1 | cut -d_ -f1)"
 [ "$first7" -gt "$last2" ] || { echo "FAIL: la migracion Slice 7 $first7 no es posterior a la ultima de Slice 2 ($last2)"; exit 1; }
-[ "$first7" -gt "$last3" ] || { echo "FAIL: la migracion Slice 7 $first7 no es posterior a la ultima de Slice 3 ($last3)"; exit 1; }
+[ "$first7" -gt "$base3" ] || { echo "FAIL: la migracion Slice 7 $first7 no es posterior a la base de Slice 3 ($base3)"; exit 1; }
 # El runbook de despliegue cita CADA migracion Slice 7 por su version completa.
 for v7 in $(echo "$expected7" | cut -d_ -f1); do
   grep -qF "$v7" "$dep" || { echo "FAIL: $dep no cita la migracion Slice 7 $v7"; exit 1; }

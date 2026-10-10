@@ -22,7 +22,8 @@ El despliegue lo ejecuta un humano con el gate de produccion; CI solo VERIFICA (
    debe terminar con codigo 0; despues arrancar el contenedor con el entorno real y esperar `/health/ready` = 200.
    Slice 1 (migraciones `20260930100000..102300`): orden, hashes y clase de rollback en
    `docs/integration/production-rollout/SLICE_1_PRODUCTION_GATE.md` del repo OposiBot.
-   Slice 3 (migraciones `20261008100000..100200`, runtime de examen; manifiesto `supabase/SLICE3_MIGRATIONS.txt`): se
+   Slice 3 (migraciones `20261008100000..100200`, runtime de examen, y la posterior `20261008100000..20261010100000`: el intento
+   congela tambien las preguntas anuladas, marcadas y sin puntuar, decision del propietario del 2026-10-10; manifiesto `supabase/SLICE3_MIGRATIONS.txt`): se
    aplican DESPUES de todas las de Slice 0/1 y ANTES de desplegar el Ktor de Slice 3. Prechequeo obligatorio en MAIN: cero
    pares (usuario, examen) con mas de un intento `en_progreso` (si no, la 100000 se detiene con
    `SLICE3_OPEN_ATTEMPT_DUPLICATES_GATE` sin aplicar nada). La 100200 (endurecimiento del gate: marcador
