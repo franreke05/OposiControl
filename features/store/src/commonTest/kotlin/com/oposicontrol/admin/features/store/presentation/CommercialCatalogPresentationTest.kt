@@ -141,7 +141,7 @@ class CommercialCatalogPresentationTest {
         val clean = editorSaveStatus(isNew = false, dirty = false, problem = null, saving = false, createLabel = "Crear")
         assertFalse(clean.canSave)
         assertFalse(clean.canDiscard)
-        assertEquals("Guardar cambios", clean.primaryLabel)
+        assertEquals("Guardar", clean.primaryLabel)
 
         val dirty = editorSaveStatus(isNew = false, dirty = true, problem = null, saving = false, createLabel = "Crear")
         assertTrue(dirty.canSave && dirty.canDiscard && dirty.prominent)
@@ -157,6 +157,34 @@ class CommercialCatalogPresentationTest {
 
         val saving = editorSaveStatus(isNew = false, dirty = true, problem = null, saving = true, createLabel = "Crear")
         assertFalse(saving.canSave || saving.canDiscard)
+    }
+
+    @Test
+    fun `what happened on the last save is said in the bar, which never scrolls out of view`() {
+        // Un fallo manda sobre «cambios sin guardar»: se ve aunque el formulario sea largo, y deja reintentar.
+        val failed = editorSaveStatus(isNew = false, dirty = true, problem = null, saving = false, createLabel = "Crear", failure = "No se pudo contactar con el servidor.")
+        assertEquals("No se pudo guardar.", failed.message)
+        assertEquals("No se pudo contactar con el servidor.", failed.detail)
+        assertEquals(WorkspaceSaveTone.DANGER, failed.tone)
+        assertTrue(failed.prominent && failed.canSave && failed.canDiscard)
+
+        val saved = editorSaveStatus(isNew = false, dirty = false, problem = null, saving = false, createLabel = "Crear", savedMessage = "Producto guardado.")
+        assertEquals("Producto guardado.", saved.message)
+        assertEquals(WorkspaceSaveTone.SUCCESS, saved.tone)
+        assertFalse(saved.canSave)
+
+        // Si el servidor conservó un campo, eso sustituye al «guardado»: los dos a la vez se contradicen.
+        val kept = editorSaveStatus(
+            isNew = false, dirty = false, problem = null, saving = false, createLabel = "Crear",
+            savedMessage = "Producto guardado.", notice = "El servidor conservó el valor anterior de la descripción.",
+        )
+        assertEquals("Guardado con una salvedad.", kept.message)
+        assertEquals(WorkspaceSaveTone.WARNING, kept.tone)
+        assertTrue(kept.prominent)
+
+        // En cuanto se vuelve a editar, lo del guardado anterior deja de decirse.
+        val editing = editorSaveStatus(isNew = false, dirty = true, problem = null, saving = false, createLabel = "Crear", savedMessage = "Producto guardado.")
+        assertEquals("Cambios sin guardar.", editing.message)
     }
 
     @Test

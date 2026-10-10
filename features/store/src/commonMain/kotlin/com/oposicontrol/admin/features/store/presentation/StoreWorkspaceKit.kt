@@ -33,7 +33,7 @@ import com.oposicontrol.admin.core.ui.components.ButtonSize
 import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.DesktopIconButton
 import com.oposicontrol.admin.core.ui.components.DesktopVerticalScrollbar
-import com.oposicontrol.admin.core.ui.components.FormFeedback
+import com.oposicontrol.admin.core.ui.components.humanMessage
 import com.oposicontrol.admin.core.ui.components.GhostButton
 import com.oposicontrol.admin.core.ui.components.GlassSearchBar
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
@@ -172,6 +172,17 @@ internal fun <T> StoreCatalogPane(
                 detail = "Se enseña lo último que se leyó. Vuelve a intentarlo con el botón de actualizar.",
             )
         }
+        // Crear está SIEMPRE a la vista, no sólo cuando la lista está vacía: con la lista poblada se abre sola la primera
+        // ficha, y un «nuevo» que sólo existe en el estado vacío deja sin forma de crear el segundo.
+        if (onCreate != null && (loaded is UiAsync.Success || loaded is UiAsync.Empty)) {
+            SecondaryButton(
+                text = createLabel,
+                onClick = onCreate,
+                modifier = Modifier.fillMaxWidth(),
+                size = ButtonSize.COMPACT,
+                icon = { AppIconImage(AppIcon.ADD, size = 14.dp) },
+            )
+        }
         GlassSearchBar(
             value = searchQuery,
             onValueChange = onSearchChange,
@@ -273,15 +284,43 @@ internal fun editorSaveStatus(
     problem: String?,
     saving: Boolean,
     createLabel: String,
-    saveLabel: String = "Guardar cambios",
+    saveLabel: String = "Guardar",
+    /** El último guardado falló: su motivo, ya dicho para leerlo. Manda sobre todo lo demás salvo «guardando». */
+    failure: String? = null,
+    /** El último guardado salió bien y la ficha sigue como quedó: «Producto guardado.». */
+    savedMessage: String? = null,
+    /** El servidor conservó algún campo que se envió vacío (ver `keptByServerNotice`). */
+    notice: String? = null,
 ): EditorSaveStatus {
     val label = if (isNew) createLabel else saveLabel
     return when {
         saving -> EditorSaveStatus("Guardando…", WorkspaceSaveTone.INFO, null, prominent = dirty, canSave = false, canDiscard = false, primaryLabel = label)
+        // La barra es lo único que no se desplaza con el formulario: un fallo dicho al final de una ficha larga quedaba
+        // fuera de la vista, y quien pulsaba Guardar no veía cambiar nada.
+        failure != null -> EditorSaveStatus(
+            message = "No se pudo guardar.",
+            tone = WorkspaceSaveTone.DANGER,
+            detail = failure,
+            prominent = true,
+            canSave = problem == null,
+            canDiscard = dirty,
+            primaryLabel = label,
+        )
+        !dirty && !isNew && notice != null -> EditorSaveStatus(
+            message = "Guardado con una salvedad.",
+            tone = WorkspaceSaveTone.WARNING,
+            detail = notice,
+            prominent = true,
+            canSave = false,
+            canDiscard = false,
+            primaryLabel = label,
+        )
+        !dirty && !isNew && savedMessage != null ->
+            EditorSaveStatus(savedMessage, WorkspaceSaveTone.SUCCESS, null, false, canSave = false, canDiscard = false, primaryLabel = label)
         !dirty && !isNew -> EditorSaveStatus("Sin cambios pendientes.", WorkspaceSaveTone.SUCCESS, null, false, canSave = false, canDiscard = false, primaryLabel = label)
         problem != null -> EditorSaveStatus(problem, WorkspaceSaveTone.WARNING, null, prominent = true, canSave = false, canDiscard = dirty, primaryLabel = label)
         isNew -> EditorSaveStatus("Listo para crear.", WorkspaceSaveTone.SUCCESS, "Todavía no existe en el servidor.", true, canSave = true, canDiscard = dirty, primaryLabel = label)
-        else -> EditorSaveStatus("Hay cambios sin guardar.", WorkspaceSaveTone.WARNING, "Lo que se ve en la ficha todavía no está en el servidor.", true, canSave = true, canDiscard = true, primaryLabel = label)
+        else -> EditorSaveStatus("Cambios sin guardar.", WorkspaceSaveTone.WARNING, "Lo que se ve en la ficha todavía no está en el servidor.", true, canSave = true, canDiscard = true, primaryLabel = label)
     }
 }
 
@@ -317,17 +356,12 @@ internal fun UnsavedChangesDialog(visible: Boolean, onConfirm: () -> Unit, onDis
 }
 
 /**
- * Lo que dice la ficha tras guardar. Si el servidor conservó un campo que se envió vacío ([notice]), eso sustituye al
- * «guardado» en verde: los dos a la vez se contradicen, y el que importa es el aviso.
+ * Lo que la barra de guardado tiene que decir del último guardado, sacado de su estado: el motivo de un fallo (ya dicho
+ * para leerlo) o el «guardado» de un éxito. Va en la barra y no al pie del formulario porque la barra no se desplaza.
  */
-@Composable
-internal fun StoreSaveFeedback(state: UiAsync<Unit>, notice: String?, savingText: String, savedText: String) {
-    if (notice != null && state is UiAsync.Success) {
-        WorkspaceNotice(tone = WorkspaceNoticeTone.WARNING, title = "Guardado, salvo un campo que no se pudo vaciar", detail = notice)
-    } else {
-        FormFeedback(state = state, loadingText = savingText, successText = savedText)
-    }
-}
+internal fun saveFailureText(state: UiAsync<Unit>): String? = (state as? UiAsync.Error)?.error?.humanMessage()
+
+internal fun savedText(state: UiAsync<Unit>, text: String): String? = text.takeIf { state is UiAsync.Success }
 
 /** Estado de un elemento comercial dicho con palabra, icono (lo pone `StatusChip`) y tono. */
 internal data class CommerceStatus(val label: String, val tone: StatusTone)

@@ -31,7 +31,7 @@ class MarketVisualHarness {
         market("market-packs-1920-light-invalido.png", fx.packInvalido())
         market("market-servicios-1920-light.png", fx.servicios(), height = 1300)
         market("market-servicios-1920-light-sin-precio.png", fx.servicioSinPrecio(), height = 1300)
-        market("market-servicios-1920-light-campo-conservado.png", fx.servicioCampoConservado(), height = 1500)
+        market("market-servicios-1920-light-campo-conservado.png", fx.servicioCampoConservado())
     }
 
     @Test
@@ -53,7 +53,7 @@ class MarketVisualHarness {
         market("market-packs-1920-light-sin-resultados.png", fx.sinResultados())
         market("market-packs-1920-light-actualizando.png", fx.actualizando())
         market("market-packs-1920-light-refresco-fallido.png", fx.refrescoFallido())
-        market("market-packs-1920-light-error-guardado.png", fx.errorAlGuardar(), height = 1500)
+        market("market-packs-1920-light-error-guardado.png", fx.errorAlGuardar())
     }
 
     @Test

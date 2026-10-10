@@ -31,7 +31,9 @@ class CatalogVisualHarness {
         products("catalogo-productos-1920-light-tarifas.png", fx.tarifas())
         products("catalogo-productos-1920-light-tarifa-edicion.png", fx.tarifaEnEdicion(), height = 1500)
         products("catalogo-productos-1920-light-salir-con-cambios.png", fx.saliendoConCambios())
-        products("catalogo-productos-1920-light-error-guardado.png", fx.errorAlGuardar(), height = 1700)
+        products("catalogo-productos-1920-light-error-guardado.png", fx.errorAlGuardar())
+        products("catalogo-productos-1920-light-guardado.png", fx.guardado())
+        products("catalogo-productos-1920-light-actualizando.png", fx.packAbierto().copy(refreshing = true))
     }
 
     @Test
@@ -145,6 +147,8 @@ internal object CatalogFixtures {
     fun saliendoConCambios() = packConCambios().copy(pendingOpen = PendingOpen(SUB))
 
     fun errorAlGuardar() = packConCambios().copy(actionState = UiAsync.Error(AppError.Network("No se pudo contactar con el servidor.")))
+
+    fun guardado() = base().copy(actionState = UiAsync.Success(Unit))
 
     fun cargando() = CommercialCatalogState()
 

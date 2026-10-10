@@ -259,7 +259,8 @@ class MarketEditorTest {
         assertEquals("15 %", promotionValueLabel("porcentaje", 15.0))
         assertEquals("12,5 %", promotionValueLabel("porcentaje", 12.5))
         assertEquals("+50 OT", promotionValueLabel("tickets_extra", 50.0))
-        assertEquals("5", promotionValueLabel("cantidad", 5.0))
+        // Una cantidad fija no tiene unidad definida: no se enseña como un número suelto.
+        assertEquals("Cantidad 5", promotionValueLabel("cantidad", 5.0))
         val promo = MarketPromotion("id", "A", "", "porcentaje", 15.0, active = false, validUntil = "2026-11-30T23:59:59Z")
         assertEquals("Hasta 2026-11-30", promotionWindowLabel(promo))
         assertEquals("Sin fechas", promotionWindowLabel(promo.copy(validUntil = null)))

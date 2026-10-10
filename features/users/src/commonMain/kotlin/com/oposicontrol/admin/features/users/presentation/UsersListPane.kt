@@ -25,7 +25,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.AppIconImage
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.DesktopIconButton
 import com.oposicontrol.admin.core.ui.components.DesktopVerticalScrollbar
 import com.oposicontrol.admin.core.ui.components.DropdownField
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
@@ -33,7 +35,10 @@ import com.oposicontrol.admin.core.ui.components.GlassSearchBar
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.SemanticIconContainer
 import com.oposicontrol.admin.core.ui.components.SemanticRole
+import com.oposicontrol.admin.core.ui.components.WorkspaceNotice
+import com.oposicontrol.admin.core.ui.components.WorkspaceNoticeTone
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.User
 
@@ -82,6 +87,7 @@ internal fun UsersListPane(
     onSearch: (String) -> Unit,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onRefresh: () -> Unit = {},
 ) {
     val tokens = GlassTheme.tokens
     var populationFilter by rememberSaveable { mutableStateOf(PopulationFilter.TODAS) }
@@ -107,7 +113,7 @@ internal fun UsersListPane(
                 horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
             ) {
                 SemanticIconContainer(icon = AppIcon.USERS, role = SemanticRole.INFO, size = 40.dp, iconSize = 20.dp)
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
                         text = "Usuarios",
                         style = MaterialTheme.typography.titleMedium,
@@ -123,6 +129,21 @@ internal fun UsersListPane(
                         color = tokens.textSecondary,
                     )
                 }
+                // La lista se lee una vez por sesión: sin este botón no había forma de ponerla al día ni de reintentarla.
+                DesktopIconButton(
+                    label = if (state.refreshing) "Actualizando usuarios" else "Actualizar usuarios",
+                    size = Sizing.iconButtonSmall,
+                    enabled = !state.refreshing && state.users !is UiAsync.Loading,
+                    onClick = onRefresh,
+                ) { AppIconImage(AppIcon.REFRESH, size = 14.dp) }
+            }
+
+            if (state.refreshFailed) {
+                WorkspaceNotice(
+                    tone = WorkspaceNoticeTone.WARNING,
+                    title = "No se pudo actualizar",
+                    detail = "Se enseña lo último que se leyó. Vuelve a intentarlo con el botón de actualizar.",
+                )
             }
 
             GlassSearchBar(
@@ -175,6 +196,7 @@ internal fun UsersListPane(
                 // aquí era prometer algo que terminaba en un error del cliente.
                 emptyMessage = "El sistema no ha devuelto ningún usuario.",
                 emptyIcon = AppIcon.USERS,
+                onRetry = onRefresh,
             ) { users ->
                 val filtered = filteredUsers(users, state, populationFilter, accountFilter, roleFilter, adminRoleIds)
                 Column(

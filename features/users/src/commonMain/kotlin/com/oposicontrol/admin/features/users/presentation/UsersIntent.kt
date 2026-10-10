@@ -15,6 +15,12 @@ package com.oposicontrol.admin.features.users.presentation
  * lugar de abrir un formulario que no puede guardar.
  */
 sealed interface UsersIntent {
+    /**
+     * Vuelve a leer la lista. Es también el reintento cuando la primera lectura falla: la lista se lee una vez al crear
+     * el ViewModel, que vive toda la sesión, así que sin esto un fallo pasajero dejaba Usuarios sin datos hasta reiniciar.
+     */
+    data object Refresh : UsersIntent
+
     /** El alta está impedida: muestra la explicación, no abre un editor falso. */
     data object CreateNew : UsersIntent
     data object DismissCreateNotice : UsersIntent

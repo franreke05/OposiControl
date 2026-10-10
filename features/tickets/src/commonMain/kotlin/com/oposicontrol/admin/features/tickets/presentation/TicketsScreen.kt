@@ -499,7 +499,9 @@ private fun AdjustmentSaveBar(state: TicketsState, onIntent: (TicketsIntent) -> 
 @Composable
 private fun TicketsRail(state: TicketsState, modifier: Modifier = Modifier, scrolls: Boolean = true) {
     WorkspaceRail(modifier = modifier, scrolls = scrolls) {
-        WorkspaceSection(icon = AppIcon.ANALYTICS, role = SemanticRole.INSIGHT, title = "Vista rápida") {
+        // «Todas las carteras» y no «Vista rápida»: son totales del sistema, no de la cartera abierta, y con el mismo
+        // rótulo que la pestaña «Movimientos» de la ficha se leían como dos cifras del mismo dato.
+        WorkspaceSection(icon = AppIcon.ANALYTICS, role = SemanticRole.INSIGHT, title = "Todas las carteras") {
             when (val overview = state.overview) {
                 is UiAsync.Success -> WorkspaceFacts(ticketsOverviewFacts(overview.value))
                 is UiAsync.Error -> {
@@ -507,7 +509,12 @@ private fun TicketsRail(state: TicketsState, modifier: Modifier = Modifier, scro
                     WorkspaceNotice(
                         tone = WorkspaceNoticeTone.WARNING,
                         title = "No se pudo leer el resumen",
-                        detail = "Las carteras y sus movimientos siguen disponibles. Usa «Actualizar» para reintentarlo.",
+                        // Si la lista de carteras también falló, no se afirma que «siguen disponibles».
+                        detail = if (state.wallets is UiAsync.Error) {
+                            "Usa «Actualizar» para reintentarlo."
+                        } else {
+                            "Las carteras y sus movimientos siguen disponibles. Usa «Actualizar» para reintentarlo."
+                        },
                     )
                 }
                 else -> WorkspaceFacts(

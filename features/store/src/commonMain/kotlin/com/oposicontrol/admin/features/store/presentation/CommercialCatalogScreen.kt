@@ -102,7 +102,7 @@ internal fun CommercialCatalogContent(
         },
         rail = { paneModifier, scrolls ->
             WorkspaceRail(modifier = paneModifier, scrolls = scrolls) {
-                val facts = productFacts(state.selected, state.plans)
+                val facts = productFacts(state.draft.toProduct(state.selected) ?: state.selected, state.plans)
                 if (facts.isNotEmpty()) {
                     WorkspaceSection(icon = AppIcon.ANALYTICS, role = SemanticRole.INSIGHT, title = "Vista rápida") {
                         WorkspaceFacts(facts)
@@ -139,6 +139,9 @@ private fun ProductEditorPane(
         problem = state.problem,
         saving = saving,
         createLabel = "Crear producto",
+        failure = saveFailureText(state.actionState),
+        savedMessage = savedText(state.actionState, "Producto guardado."),
+        notice = state.notice,
     )
 
     WorkspaceEditor(
@@ -202,6 +205,11 @@ private fun ProductEditorPane(
         },
     ) {
         when {
+            !open && (state.products is UiAsync.Loading || state.products is UiAsync.Idle) -> EmptyStateCard(
+                title = "Cargando el catálogo…",
+                message = "La ficha se abre en cuanto llegue la lista de productos.",
+                icon = AppIcon.CATALOG,
+            )
             !open -> EmptyStateCard(
                 title = "Sin producto abierto",
                 message = "Elige un producto del catálogo para editar su ficha y sus tarifas, o crea uno nuevo.",
@@ -276,7 +284,7 @@ private fun ProductFormSections(state: CommercialCatalogState, onIntent: (Commer
                 label = "Precio (${product?.currency ?: "EUR"})",
                 value = draft.price,
                 onValueChange = { onIntent(CommercialCatalogIntent.UpdatePrice(it)) },
-                placeholder = "12,99",
+                placeholder = "Ej. 12,99",
                 supportingText = if (draft.type == "suscripcion") {
                     "En una suscripción el precio real lo fijan las tarifas. Puede quedar en blanco."
                 } else {
@@ -360,13 +368,12 @@ private fun ProductFormSections(state: CommercialCatalogState, onIntent: (Commer
                 label = "Posición",
                 value = draft.position,
                 onValueChange = { onIntent(CommercialCatalogIntent.UpdatePosition(it)) },
-                placeholder = "1",
+                placeholder = "Ej. 1",
                 supportingText = "Entero no negativo. Ordena el catálogo de menor a mayor.",
             )
         }
     }
 
-    StoreSaveFeedback(state.actionState, state.notice, savingText = "Guardando el producto…", savedText = "Producto guardado.")
 }
 
 /**
@@ -445,14 +452,14 @@ private fun TariffsSection(product: CommercialProduct, state: CommercialCatalogS
                     label = "Precio (${product.currency})",
                     value = draft.price,
                     onValueChange = { onIntent(CommercialCatalogIntent.UpdateTariff(draft.copy(price = it))) },
-                    placeholder = "12,99",
+                    placeholder = "Ej. 12,99",
                     required = true,
                 )
                 LabeledField(
                     label = "Posición",
                     value = draft.position,
                     onValueChange = { onIntent(CommercialCatalogIntent.UpdateTariff(draft.copy(position = it))) },
-                    placeholder = "1",
+                    placeholder = "Ej. 1",
                 )
                 GlassToggleRow(
                     title = "Activa",

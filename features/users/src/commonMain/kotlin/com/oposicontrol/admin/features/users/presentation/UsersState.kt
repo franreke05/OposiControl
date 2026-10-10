@@ -52,6 +52,10 @@ data class UsersState(
     val pendingOpenUserId: String? = null,
     /** Se pidió abrir un usuario que no está en la lista cargada: se dice, en vez de enseñar a otra persona. */
     val openUserMissing: Boolean = false,
+    /** Se está releyendo una lista que ya estaba en pantalla: se sigue viendo mientras tanto. */
+    val refreshing: Boolean = false,
+    /** La última relectura falló: se conserva lo que ya se había leído, y se dice. */
+    val refreshFailed: Boolean = false,
     /** El alta está impedida; se explica en vez de abrir un editor que no guarda. */
     val createNoticeVisible: Boolean = false,
     // Quick-action dialogs

@@ -104,6 +104,8 @@ class UsersVisualHarness {
         // Ficha pedida desde OposiTickets o desde un uso de promoción: mientras llega la lista, y si la persona no está.
         render(Capture("users-abriendo-desde-otra-pantalla.png", 1920, 1080, dark = false), fx.cargando().copy(pendingOpenUserId = "u-pedido"))
         render(Capture("users-usuario-no-encontrado.png", 1920, 1080, dark = false), fx.listado().copy(openUserMissing = true))
+        render(Capture("users-actualizando.png", 1920, 1080, dark = false), fx.opositoraSeleccionada().copy(refreshing = true))
+        render(Capture("users-refresco-fallido.png", 1920, 1080, dark = false), fx.opositoraSeleccionada().copy(refreshFailed = true))
     }
 
     /** Las cinco pestañas restantes de la ficha: el mismo lenguaje de tarjetas, no una lista de campos. */

@@ -16,6 +16,8 @@ import com.oposicontrol.admin.core.ui.components.WorkspaceFact
 import com.oposicontrol.admin.core.ui.components.WorkspaceFacts
 import com.oposicontrol.admin.core.ui.components.WorkspaceInfoLines
 import com.oposicontrol.admin.core.ui.components.WorkspaceLayout
+import com.oposicontrol.admin.core.ui.components.WorkspaceNotice
+import com.oposicontrol.admin.core.ui.components.WorkspaceNoticeTone
 import com.oposicontrol.admin.core.ui.components.WorkspacePill
 import com.oposicontrol.admin.core.ui.components.WorkspaceRail
 import com.oposicontrol.admin.core.ui.components.WorkspaceSection
@@ -45,7 +47,6 @@ internal class MarketEditorUi<T, D>(
     val draftPill: (D) -> String?,
     val facts: (T?) -> List<WorkspaceFact>,
     val information: List<String>,
-    val savingText: String,
     val savedText: String,
     val tag: String,
 )
@@ -145,6 +146,9 @@ internal fun <T, D> MarketEditorWorkspace(
                                 problem = editor.problem(spec),
                                 saving = saving,
                                 createLabel = ui.createLabel,
+                                failure = saveFailureText(editor.actionState),
+                                savedMessage = savedText(editor.actionState, ui.savedText),
+                                notice = editor.notice,
                             ),
                             saving = saving,
                             onSave = { onAction(EditorAction.Save) },
@@ -155,7 +159,17 @@ internal fun <T, D> MarketEditorWorkspace(
                     null
                 },
             ) {
+                // Lo que cambia el sentido de «guardar» en estas cuatro secciones va en la ficha, no sólo en la columna
+                // de información: esa columna no se enseña por debajo de 1500 dp de ancho, y el aviso no puede perderse.
+                if (open && alternateContent == null) {
+                    WorkspaceNotice(tone = WorkspaceNoticeTone.INFO, title = "La app todavía no usa estos datos", detail = MARKET_NOT_CONSUMED_LINE)
+                }
                 when {
+                    !open && (editor.items is UiAsync.Loading || editor.items is UiAsync.Idle) -> EmptyStateCard(
+                        title = "Cargando…",
+                        message = "La ficha se abre en cuanto llegue la lista.",
+                        icon = ui.icon,
+                    )
                     !open -> EmptyStateCard(
                         title = "Nada abierto",
                         message = ui.closedMessage,
@@ -163,16 +177,13 @@ internal fun <T, D> MarketEditorWorkspace(
                         action = { PrimaryButton(text = ui.newLabel, onClick = { onAction(EditorAction.Open(null)) }) },
                     )
                     alternateContent != null -> alternateContent()
-                    else -> {
-                        form(editor.draft, editor.creatingNew, selected) { onAction(EditorAction.UpdateDraft(it)) }
-                        StoreSaveFeedback(editor.actionState, editor.notice, savingText = ui.savingText, savedText = ui.savedText)
-                    }
+                    else -> form(editor.draft, editor.creatingNew, selected) { onAction(EditorAction.UpdateDraft(it)) }
                 }
             }
         },
         rail = { paneModifier, scrolls ->
             WorkspaceRail(modifier = paneModifier, scrolls = scrolls) {
-                val facts = ui.facts(selected)
+                val facts = ui.facts(spec.toEntity(editor.draft, selected) ?: selected)
                 if (facts.isNotEmpty()) {
                     WorkspaceSection(icon = AppIcon.ANALYTICS, role = SemanticRole.INSIGHT, title = "Vista rápida") {
                         WorkspaceFacts(facts)

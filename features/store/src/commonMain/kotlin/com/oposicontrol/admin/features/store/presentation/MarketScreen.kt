@@ -152,7 +152,6 @@ private val packUi = MarketEditorUi<MarketTicketPack, PackDraft>(
     draftPill = { draft -> parseNonNegativeInt(draft.ticketAmount)?.let { "$it OT" } },
     facts = ::packFacts,
     information = packInformationLines,
-    savingText = "Guardando el pack…",
     savedText = "Pack guardado.",
     tag = "market-packs",
 )
@@ -197,7 +196,7 @@ private fun PackForm(draft: PackDraft, isNew: Boolean, base: MarketTicketPack?, 
                 label = "Precio (${base?.currency ?: "EUR"})",
                 value = draft.price,
                 onValueChange = { update(draft.copy(price = it)) },
-                placeholder = "4,99",
+                placeholder = "Ej. 4,99",
                 required = true,
                 supportingText = "Con coma o punto y como mucho dos decimales.",
             )
@@ -205,7 +204,7 @@ private fun PackForm(draft: PackDraft, isNew: Boolean, base: MarketTicketPack?, 
                 label = "Posición",
                 value = draft.position,
                 onValueChange = { update(draft.copy(position = it)) },
-                placeholder = "1",
+                placeholder = "Ej. 1",
                 supportingText = "Entero no negativo. Ordena los packs de menor a mayor.",
             )
         }
@@ -241,7 +240,6 @@ private val serviceUi = MarketEditorUi<MarketService, ServiceDraft>(
     draftPill = { draft -> draft.type.takeIf { it.isNotBlank() }?.let(::serviceTypeLabel) },
     facts = ::serviceFacts,
     information = serviceInformationLines,
-    savingText = "Guardando el servicio…",
     savedText = "Servicio guardado.",
     tag = "market-services",
 )
@@ -293,7 +291,7 @@ private fun ServiceForm(draft: ServiceDraft, isNew: Boolean, update: (ServiceDra
                 label = "Precio (EUR)",
                 value = draft.price,
                 onValueChange = { update(draft.copy(price = it)) },
-                placeholder = "1,99",
+                placeholder = "Ej. 1,99",
                 supportingText = "Con coma o punto y como mucho dos decimales. En blanco si no se vende por dinero.",
             )
             if (draft.active && draft.priceTickets.isBlank() && draft.price.isBlank()) {
@@ -338,7 +336,6 @@ private val promotionUi = MarketEditorUi<MarketPromotion, PromotionDraft>(
     },
     facts = ::promotionFacts,
     information = promotionInformationLines,
-    savingText = "Guardando la promoción…",
     savedText = "Promoción guardada.",
     tag = "market-promotions",
 )
@@ -574,7 +571,6 @@ private val popupUi = MarketEditorUi<MarketPopupRule, PopupDraft>(
     draftPill = { draft -> parseNonNegativeInt(draft.priority)?.let { "Prioridad $it" } },
     facts = ::popupFacts,
     information = popupInformationLines,
-    savingText = "Guardando la regla…",
     savedText = "Regla guardada.",
     tag = "market-popups",
 )
@@ -677,7 +673,7 @@ private fun PopupForm(draft: PopupDraft, isNew: Boolean, update: (PopupDraft) ->
                 label = "Frecuencia mínima (horas)",
                 value = draft.frequencyHours,
                 onValueChange = { update(draft.copy(frequencyHours = it)) },
-                placeholder = POPUP_DEFAULT_FREQUENCY_HOURS,
+                placeholder = "Ej. $POPUP_DEFAULT_FREQUENCY_HOURS",
                 required = draft.active,
                 supportingText = "Horas que deben pasar antes de repetirlo al mismo usuario. Obligatoria si la regla está activa.",
             )
@@ -685,7 +681,7 @@ private fun PopupForm(draft: PopupDraft, isNew: Boolean, update: (PopupDraft) ->
                 label = "Prioridad",
                 value = draft.priority,
                 onValueChange = { update(draft.copy(priority = it)) },
-                placeholder = POPUP_DEFAULT_PRIORITY,
+                placeholder = "Ej. $POPUP_DEFAULT_PRIORITY",
                 supportingText = "Entero no negativo. Con varias reglas para el mismo disparador, gana la mayor.",
             )
             GlassToggleRow(

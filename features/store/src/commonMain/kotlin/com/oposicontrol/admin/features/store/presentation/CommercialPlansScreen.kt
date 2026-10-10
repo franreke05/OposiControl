@@ -100,7 +100,7 @@ internal fun CommercialPlansContent(
         },
         rail = { paneModifier, scrolls ->
             WorkspaceRail(modifier = paneModifier, scrolls = scrolls) {
-                val facts = planFacts(state.selected)
+                val facts = planFacts(state.draft.toPlan(state.selected) ?: state.selected)
                 if (facts.isNotEmpty()) {
                     WorkspaceSection(icon = AppIcon.ANALYTICS, role = SemanticRole.INSIGHT, title = "Vista rápida") {
                         WorkspaceFacts(facts)
@@ -137,6 +137,9 @@ private fun PlanEditorPane(
         problem = state.problem,
         saving = saving,
         createLabel = "Crear plan",
+        failure = saveFailureText(state.actionState),
+        savedMessage = savedText(state.actionState, "Plan guardado."),
+        notice = state.notice,
     )
 
     WorkspaceEditor(
@@ -200,6 +203,11 @@ private fun PlanEditorPane(
         },
     ) {
         when {
+            !open && (state.plans is UiAsync.Loading || state.plans is UiAsync.Idle) -> EmptyStateCard(
+                title = "Cargando los planes…",
+                message = "La ficha se abre en cuanto llegue la lista de planes.",
+                icon = AppIcon.PLANS,
+            )
             !open -> EmptyStateCard(
                 title = "Sin plan abierto",
                 message = "Elige un plan del catálogo para editar su ficha y sus beneficios, o crea uno nuevo.",
@@ -274,7 +282,7 @@ private fun PlanFormSections(state: CommercialPlansState, onIntent: (CommercialP
                 label = "Posición",
                 value = draft.position,
                 onValueChange = { update(draft.copy(position = it)) },
-                placeholder = "1",
+                placeholder = "Ej. 1",
                 supportingText = "Entero no negativo. Ordena los planes de menor a mayor.",
             )
         }
@@ -309,7 +317,6 @@ private fun PlanFormSections(state: CommercialPlansState, onIntent: (CommercialP
         }
     }
 
-    StoreSaveFeedback(state.actionState, state.notice, savingText = "Guardando el plan…", savedText = "Plan guardado.")
 }
 
 /**

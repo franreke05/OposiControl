@@ -30,6 +30,9 @@ class UsersViewModel(
     /** Carga de la ficha en curso: se cancela al cambiar de usuario (MASTER5-OC-002). */
     private var detailJob: Job? = null
 
+    /** Lectura de la lista en curso: un refresco cancela la anterior en vez de dejar dos respuestas compitiendo. */
+    private var usersJob: Job? = null
+
     /** Guardados en vuelo por usuario: un segundo Save del mismo usuario (aunque se cambie de fila y se vuelva) no se lanza. */
     private val savesInFlight = mutableSetOf<String>()
     private var grantInFlight = false
@@ -37,28 +40,7 @@ class UsersViewModel(
     private var keySequence = 0
 
     init {
-        scope.launch {
-            // Un fallo del backend ya NO se confunde con «no hay usuarios»: el
-            // origen devuelve el resultado y aquí se separan los dos casos. Antes
-            // se emitía una lista vacía ante cualquier error, así que una caída
-            // del servidor se pintaba como censo vacío —con su botón de crear— y
-            // nadie se enteraba de que el sistema estaba caído.
-            usersRepository.observeUsers().collectLatest { result ->
-                updateState { state ->
-                    when (result) {
-                        is AppResult.Failure -> state.copy(users = UiAsync.Error(result.error))
-                        is AppResult.Success -> state.copy(
-                            users = if (result.value.isEmpty()) {
-                                UiAsync.Empty
-                            } else {
-                                UiAsync.Success(result.value)
-                            },
-                        )
-                    }
-                }
-                openPendingUser()
-            }
-        }
+        loadUsers()
         scope.launch {
             rolesRepository.observeRoles().collectLatest { roles ->
                 updateState { it.copy(availableRoles = roles) }
@@ -66,8 +48,61 @@ class UsersViewModel(
         }
     }
 
+    /**
+     * Lee la lista de usuarios. La primera vez no hay nada que enseñar y la lista pasa a «cargando»; después, lo ya leído
+     * se queda en pantalla mientras se relee, y si la relectura falla se conserva y se avisa.
+     */
+    private fun loadUsers() {
+        usersJob?.cancel()
+        usersJob = scope.launch {
+            val previous = currentState().loadedUsers.associateBy { it.id }
+            val hadData = currentState().users.let { it is UiAsync.Success || it is UiAsync.Empty }
+            updateState {
+                if (hadData) it.copy(refreshing = true, refreshFailed = false) else it.copy(users = UiAsync.Loading, refreshFailed = false)
+            }
+            // Un fallo del backend ya NO se confunde con «no hay usuarios»: el
+            // origen devuelve el resultado y aquí se separan los dos casos. Antes
+            // se emitía una lista vacía ante cualquier error, así que una caída
+            // del servidor se pintaba como censo vacío —con su botón de crear— y
+            // nadie se enteraba de que el sistema estaba caído.
+            usersRepository.observeUsers().collectLatest { result ->
+                // Se mide ANTES de aplicar la lista nueva: contra ella, un nombre cambiado por otro administrador
+                // parecería algo tecleado aquí, y guardar después lo pisaría sin que nadie lo hubiera pedido.
+                val wasDirty = currentState().isDirty
+                updateState { state ->
+                    when (result) {
+                        is AppResult.Failure ->
+                            if (hadData) {
+                                state.copy(refreshing = false, refreshFailed = true)
+                            } else {
+                                state.copy(users = UiAsync.Error(result.error), refreshing = false)
+                            }
+                        is AppResult.Success -> {
+                            // Una fila releída sin saldo o sin nombre no pisa el dato que ya se conocía (MASTER2-OC-004).
+                            val merged = result.value.map { fresh -> previous[fresh.id]?.let { fresh.keepingKnownFrom(it) } ?: fresh }
+                            state.copy(
+                                users = if (merged.isEmpty()) UiAsync.Empty else UiAsync.Success(merged),
+                                refreshing = false,
+                                refreshFailed = false,
+                            )
+                        }
+                    }
+                }
+                if (result is AppResult.Success && !wasDirty) {
+                    updateState { state ->
+                        val user = state.selectedUser ?: return@updateState state
+                        state.copy(editorName = user.fullName, editorRoleIds = user.roleIds.toSet())
+                    }
+                }
+                openPendingUser()
+            }
+        }
+    }
+
     override suspend fun handleIntent(intent: UsersIntent) {
         when (intent) {
+            UsersIntent.Refresh -> loadUsers()
+
             // El alta no se hace desde el panel. Se explica en vez de abrir un
             // editor vacío que al guardar devolvería un error del cliente.
             UsersIntent.CreateNew -> updateState { it.copy(createNoticeVisible = true) }

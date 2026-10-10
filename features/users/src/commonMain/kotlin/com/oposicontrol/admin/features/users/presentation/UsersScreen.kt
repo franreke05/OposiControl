@@ -75,6 +75,7 @@ internal fun UsersContent(
                 state = state,
                 onSearch = { onIntent(UsersIntent.UpdateSearch(it)) },
                 onSelect = { onIntent(UsersIntent.SelectUser(it)) },
+                onRefresh = { onIntent(UsersIntent.Refresh) },
             )
         },
         detailPane = { embedded ->

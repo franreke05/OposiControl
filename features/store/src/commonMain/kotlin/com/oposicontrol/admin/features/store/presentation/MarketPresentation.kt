@@ -18,8 +18,8 @@ import kotlinx.datetime.LocalDate
  */
 
 /**
- * Lo que hay que saber antes de tocar nada aquí: la app no lee estas cuatro tablas todavía. Va la primera en la columna de
- * información de las cuatro secciones, porque cambia lo que significa «guardar».
+ * Lo que hay que saber antes de tocar nada aquí: la app no lee estas cuatro tablas todavía. Va dentro de la ficha de las
+ * cuatro secciones, a cualquier ancho de ventana, porque cambia lo que significa «guardar».
  */
 internal const val MARKET_NOT_CONSUMED_LINE: String =
     "OposiBot hoy sólo lee el Catálogo (productos, tarifas y planes). Lo que se guarda aquí queda configurado en el " +
@@ -163,7 +163,6 @@ internal fun packFacts(pack: MarketTicketPack?): List<WorkspaceFact> {
 }
 
 internal val packInformationLines: List<String> = listOf(
-    MARKET_NOT_CONSUMED_LINE,
     "El coste por OposiTicket dice si la escala compensa: un pack mayor que no lo baje no le interesa a nadie.",
     "El código identifica el pack y no se puede cambiar una vez creado.",
 )
@@ -286,7 +285,6 @@ internal fun serviceFacts(service: MarketService?): List<WorkspaceFact> {
 }
 
 internal val serviceInformationLines: List<String> = listOf(
-    MARKET_NOT_CONSUMED_LINE,
     "Un servicio puede cobrarse en OposiTickets, en dinero o de las dos formas. Activo sin ningún precio no se puede adquirir.",
     "Lo que hace cada tipo (duración, multiplicador) no se configura aquí: es una decisión de producto pendiente.",
 )
@@ -309,6 +307,7 @@ internal fun discountTypeLabel(type: String): String = when (type) {
 internal fun promotionValueLabel(type: String, value: Double): String = when (type) {
     "porcentaje" -> "${formatBenefitNumber(value)} %"
     "tickets_extra" -> "+${formatBenefitNumber(value)} OT"
+    "cantidad" -> "Cantidad ${formatBenefitNumber(value)}"
     else -> formatBenefitNumber(value)
 }
 
@@ -455,7 +454,6 @@ internal fun promotionFacts(promotion: MarketPromotion?): List<WorkspaceFact> {
 }
 
 internal val promotionInformationLines: List<String> = listOf(
-    MARKET_NOT_CONSUMED_LINE,
     "El código se guarda en mayúsculas y no se puede cambiar una vez creada.",
     "Las fechas son días completos en UTC: «desde» empieza a las 00:00 y «hasta» acaba a las 23:59:59.",
     "Los usos los registra la liquidación de una compra: aquí sólo se consultan.",
@@ -639,7 +637,6 @@ internal fun popupFacts(rule: MarketPopupRule?): List<WorkspaceFact> {
 }
 
 internal val popupInformationLines: List<String> = listOf(
-    MARKET_NOT_CONSUMED_LINE,
     "Una regla dice dónde, cuándo y a quién se enseña un pop-up, para que la app no lo lleve escrito en el código.",
     "La frecuencia mínima evita repetir el mismo pop-up: una regla activa siempre la necesita.",
     "Con varias reglas para el mismo disparador, gana la de mayor prioridad.",
