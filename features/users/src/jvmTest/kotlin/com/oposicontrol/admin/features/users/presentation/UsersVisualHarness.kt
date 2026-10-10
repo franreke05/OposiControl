@@ -206,9 +206,9 @@ class UsersVisualHarness {
                 currentRouteId = "users",
                 groups = HARNESS_SIDEBAR,
                 onRouteSelected = {},
-                environmentLabel = "Entorno dev | vista frontend",
+                environmentLabel = "Entorno production",
                 title = "Usuarios",
-                description = "Identidad, roles, rendimiento y competición por usuario.",
+                description = "Identidad, perfil, rendimiento y competición por usuario.",
                 breadcrumbs = listOf("Usuarios"),
                 // Sin acción primaria, como la pantalla real: `primaryActionLabelFor`
                 // devuelve null para `USERS_HUB` (`AppRoot.kt:358-370`), así que el
@@ -224,6 +224,7 @@ class UsersVisualHarness {
                     DesktopTabs(
                         tabs = listOf(
                             DesktopTab("users", "Usuarios", AppIcon.USERS),
+                            DesktopTab("tickets", "OposiTickets", AppIcon.TICKETS),
                             DesktopTab("competition", "Competición", AppIcon.RANKINGS),
                             DesktopTab("access", "Accesos", AppIcon.ACCESS),
                         ),
@@ -267,7 +268,6 @@ private val HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
         label = "Usuarios",
         items = listOf(
             ShellNavigationItem("users", "Usuarios", AppIcon.USERS.key),
-            ShellNavigationItem("commercial.tickets", "OposiTickets", AppIcon.TICKETS.key),
         ),
     ),
     ShellNavigationGroup(

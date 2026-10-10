@@ -32,7 +32,13 @@ import com.oposicontrol.admin.features.store.presentation.CommercialCatalogScree
 import com.oposicontrol.admin.features.store.presentation.CommercialCatalogViewModel
 import com.oposicontrol.admin.features.store.presentation.CommercialPlansScreen
 import com.oposicontrol.admin.features.store.presentation.CommercialPlansViewModel
+import com.oposicontrol.admin.features.tickets.presentation.TicketsIntent
+import com.oposicontrol.admin.features.tickets.presentation.TicketsScreen
+import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
+import com.oposicontrol.admin.features.users.presentation.UsersIntent
 import com.oposicontrol.admin.features.users.presentation.UsersScreen
+import com.oposicontrol.admin.features.users.presentation.UsersViewModel
+import org.koin.compose.getKoin
 import org.koin.compose.koinInject
 
 /**
@@ -88,18 +94,25 @@ internal fun SystemHubScreen(
 
 internal enum class UsersHubTab(val id: String, val label: String, val icon: AppIcon) {
     USERS("users", "Usuarios", AppIcon.USERS),
+
+    /** Las carteras son de las personas: van justo después de ellas, no en Monetización ni como entrada propia del menú. */
+    TICKETS("tickets", "OposiTickets", AppIcon.TICKETS),
     COMPETITION("competition", "Competición", AppIcon.RANKINGS),
     ACCESS("access", "Accesos", AppIcon.ACCESS),
 }
 
+/**
+ * Usuarios y sus subpantallas. OposiTickets es una de ellas: ir de la ficha de una persona a su cartera, y volver, es
+ * cambiar de pestaña con esa persona ya abierta, no saltar a otra sección.
+ *
+ * Los ViewModel de la otra pestaña se piden al pulsar (`getKoin`) y no al abrir el hub: pedirlos antes descargaría todas
+ * las carteras cada vez que alguien mira un usuario, y toda la lista de usuarios cada vez que alguien mira una cartera.
+ */
 @Composable
-internal fun UsersHubScreen(
-    initialTab: UsersHubTab?,
-    /** Abre la cartera de un usuario en OposiTickets. `null` = la ficha no ofrece el enlace. */
-    onOpenTickets: ((String) -> Unit)? = null,
-) {
+internal fun UsersHubScreen(initialTab: UsersHubTab?) {
     var selectedTab by rememberSaveable { mutableStateOf((initialTab ?: UsersHubTab.USERS).id) }
     LaunchedEffect(initialTab) { if (initialTab != null) selectedTab = initialTab.id }
+    val koin = getKoin()
 
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         DesktopTabs(
@@ -108,9 +121,22 @@ internal fun UsersHubScreen(
             onSelect = { selectedTab = it },
         )
         when (selectedTab) {
+            UsersHubTab.TICKETS.id -> TicketsScreen(
+                viewModel = koinInject(),
+                onOpenUser = { userId ->
+                    koin.get<UsersViewModel>().dispatch(UsersIntent.SelectUser(userId))
+                    selectedTab = UsersHubTab.USERS.id
+                },
+            )
             UsersHubTab.COMPETITION.id -> RankingsScreen(viewModel = koinInject())
             UsersHubTab.ACCESS.id -> ExamAccessScreen(viewModel = koinInject())
-            else -> UsersScreen(viewModel = koinInject(), onOpenTickets = onOpenTickets)
+            else -> UsersScreen(
+                viewModel = koinInject(),
+                onOpenTickets = { userId ->
+                    koin.get<TicketsViewModel>().dispatch(TicketsIntent.OpenWalletOf(userId))
+                    selectedTab = UsersHubTab.TICKETS.id
+                },
+            )
         }
     }
 }
