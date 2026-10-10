@@ -2534,13 +2534,18 @@ internal fun Route.newsContentRoutes(
                     requiredMimePrefix = "image/",
                     defaultFileName = "news-asset",
                 )
-                news.uploadAssetLegacy(
-                    NewsUploadedFile(
-                        fileName = file.fileName,
-                        mimeType = file.mimeType,
-                        bytes = file.bytes,
-                    ),
-                )
+                // DEBT-078: comprimir y subir al bucket es bloqueante (CPU + `client.send`): va al pool de IO con la
+                // correlacion puesta, como la ruta canonica `/api/v1/admin/noticias/assets` y la de recursos de pregunta.
+                // La lectura del multipart se queda fuera, en el hilo de la peticion, que es donde pertenece.
+                withUpstreamIo {
+                    news.uploadAssetLegacy(
+                        NewsUploadedFile(
+                            fileName = file.fileName,
+                            mimeType = file.mimeType,
+                            bytes = file.bytes,
+                        ),
+                    )
+                }
             }
         }.legacyRoute(LegacyEndpoints.EP_200)
         post {

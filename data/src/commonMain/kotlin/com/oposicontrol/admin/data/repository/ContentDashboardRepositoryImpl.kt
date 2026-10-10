@@ -52,8 +52,9 @@ class ContentDashboardRepositoryImpl(
                     val commerce = commerceRepository.refreshCommerce()
                     val commerceSnapshot = loadCommerceSnapshot(commerce)
 
+                    // Primera pagina del listado canonico (100 filas): suficiente para los recuentos del panel.
                     val newsResult = newsRepository.refreshNews()
-                    val news = newsResult.getOrNull().orEmpty()
+                    val news = newsResult.getOrNull()?.items.orEmpty()
 
                     val performanceMetrics = runCatching { dashboardApi.getMetrics() }.getOrNull()
 

@@ -274,7 +274,7 @@ class ClientCallInventoryTest {
     fun negativeControlMultiLineCallIsCountedAndFails() {
         // sonda news_s2 del validador: receptor y verbo en lineas distintas
         val v = completenessWithProbe(newsFile, "    suspend fun ghost() = client\n        .get(\"\${newsUrl()}/__ghost\")")
-        assertTrue(v.any { "KtorNewsRepositoryImpl.kt: 6 HTTP call sites but 5 recorder rows" in it }, v.toString())
+        assertTrue(v.any { "KtorNewsRepositoryImpl.kt: 9 HTTP call sites but 8 recorder rows" in it }, v.toString())
         assertTrue(v.any { "KtorNewsRepositoryImpl.kt#ghost: 1 HTTP call sites in this function but 0" in it }, v.toString())
         assertTrue(touchesHttpClient.containsMatchIn("val x = client\n    .post(u)"), "multi-line receiver not seen by the file-set tripwire")
     }
@@ -283,9 +283,9 @@ class ClientCallInventoryTest {
     fun negativeControlWithClientScopeIsCountedAndFails() {
         // sonda news_s3 del validador: verbo sin receptor dentro de with(client) / apply
         val v = completenessWithProbe(newsFile, "    suspend fun ghost() = with(client) { get(\"\${newsUrl()}/__ghost\") }")
-        assertTrue(v.any { "KtorNewsRepositoryImpl.kt: 6 HTTP call sites but 5 recorder rows" in it }, v.toString())
+        assertTrue(v.any { "KtorNewsRepositoryImpl.kt: 9 HTTP call sites but 8 recorder rows" in it }, v.toString())
         val applied = completenessWithProbe(newsFile, "    suspend fun ghost() = client.apply {\n        post<Unit>(\"x\")\n    }")
-        assertTrue(applied.any { "KtorNewsRepositoryImpl.kt: 6 HTTP call sites" in it }, applied.toString())
+        assertTrue(applied.any { "KtorNewsRepositoryImpl.kt: 9 HTTP call sites" in it }, applied.toString())
         // un fichero nuevo que solo llama dentro de with(client) igual necesita importar el verbo: el tripwire de ficheros lo ve
         assertTrue(touchesHttpClient.containsMatchIn("import io.ktor.client.request.get\nfun f() = with(c) { get(u) }"))
     }
@@ -295,7 +295,7 @@ class ClientCallInventoryTest {
         // sonda news_r5_lambda_overload del validador (ronda 5): `client.delete { url(..) }` sin parentesis tras el verbo
         val probe = "    suspend fun deleteNews(newsId: String, hard: Boolean) = adapter.safeCall { client.delete { url(\"\${newsUrl()}/__ghost/\$newsId\") } }"
         val v = completenessWithProbe(newsFile, probe)
-        assertTrue(v.any { "KtorNewsRepositoryImpl.kt: 6 HTTP call sites but 5 recorder rows" in it }, v.toString())
+        assertTrue(v.any { "KtorNewsRepositoryImpl.kt: 9 HTTP call sites but 8 recorder rows" in it }, v.toString())
         // misma funcion que la fila existente: el sitio nuevo es de deleteNews, que ya tenia su unica fila
         assertTrue(v.any { "KtorNewsRepositoryImpl.kt#deleteNews: 2 HTTP call sites in this function but 1" in it }, v.toString())
         // todas las formas constructoras cuentan, en texto sintetico

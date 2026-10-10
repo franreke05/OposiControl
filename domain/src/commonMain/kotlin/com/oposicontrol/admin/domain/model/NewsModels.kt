@@ -1,5 +1,40 @@
 package com.oposicontrol.admin.domain.model
 
+/**
+ * Fila RESUMEN de la biblioteca de noticias (D4-01): lo que el listado canonico devuelve, sin texto ni capas.
+ * Los instantes son cadenas ISO-8601 en UTC tal como las emite el backend; `null` cuando la columna esta vacia.
+ */
+data class NewsSummary(
+    val id: String,
+    val title: String,
+    val status: String,
+    val specialtyId: String,
+    val typeId: String,
+    val publishFrom: String? = null,
+    val publishedAt: String? = null,
+    val imageUrl: String? = null,
+    val updatedAt: String = "",
+)
+
+/** Una pagina del listado canonico: filas mas el cursor de la siguiente (`null` = no hay mas). */
+data class NewsPage(
+    val items: List<NewsSummary>,
+    val nextCursor: String? = null,
+)
+
+/** Filtros del listado canonico (D4-01). `null` = sin filtrar. */
+data class NewsListFilter(
+    val status: String? = null,
+    val specialtyId: String? = null,
+    val typeId: String? = null,
+    val query: String? = null,
+)
+
+/**
+ * Ficha completa de una noticia (D4-02). [version] es la version de concurrencia optimista (el ETag) que el
+ * cliente devuelve como `If-Match` al editar; vacia en una noticia que todavia no existe en el servidor.
+ * [backgroundType] viaja en el vocabulario del editor (`SKY`, `MINT`, `GOLD`); el cable usa `A`, `B`, `C`.
+ */
 data class NewsArticle(
     val id: String,
     val title: String,
@@ -12,12 +47,18 @@ data class NewsArticle(
     val text: String,
     val imagePath: String?,
     val layers: List<NewsLayer>,
+    val version: String = "",
+    val publishedAt: String? = null,
+    /** URL publica del fondo en `news-assets`, resuelta por el backend. `null` sin fondo. */
+    val backgroundUrl: String? = null,
+    val imageUrl: String? = null,
 )
 
 data class NewsAssetUpload(
     val path: String,
     val publicUrl: String,
     val mimeType: String?,
+    val bytes: Int = 0,
 )
 
 data class NewsDesignDraft(

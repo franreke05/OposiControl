@@ -2,43 +2,163 @@ package com.oposicontrol.admin.features.news.presentation
 
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
-import kotlin.test.*
+import com.oposicontrol.admin.core.ui.components.WorkspaceSaveTone
+import com.oposicontrol.admin.domain.model.NewsValidationIssue
+import com.oposicontrol.admin.domain.model.NewsValidationReport
+import com.oposicontrol.admin.domain.model.NewsValidationSeverity
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class NewsPresentationTest {
-    @Test fun unknownStateNeverClaimsPublished() { assertEquals("Sin identificar", newsStatusLabel("active")) }
-    @Test fun catalogFailureNeverLeaksIdOrSelectsDefault() {
-        assertEquals("No disponible", catalogName("123", UiAsync.Error(AppError.Validation("failure"))))
-        assertEquals("Sin identificar", catalogName("123", UiAsync.Success(listOf(NewsCatalogOption("1", "TCAE")))))
-    }
-    @Test fun catalogDisplaysHumanName() { assertEquals("TCAE", catalogName("1", UiAsync.Success(listOf(NewsCatalogOption("1", "TCAE"))))) }
-    @Test fun scheduleRejectsImpossibleDate() { assertNull(newsScheduleIso("31/02/2026", "09:00")); assertNull(newsScheduleIso("12/09/2026", "25:00")) }
-    @Test fun scheduleConvertsHumanInputToUtc() { assertEquals("2026-09-12T09:30:00Z", newsScheduleIso("12/09/2026", "09:30")) }
-    @Test fun panesFitAndLeaveReadableEditor() {
-        listOf(1920, 1600, 1366, 1080).forEach { window ->
-            val width = window - 292
-            val sizes = newsPaneSizes(width)
-            val columns = listOf(sizes.library, sizes.editor, sizes.inspector, sizes.rail).filter { it > 0 }
-            // Las columnas más los huecos que las separan tienen que sumar el
-            // ancho exacto: si sobra, queda una franja muerta; si falta, la
-            // última columna se sale de la ventana.
-            val gaps = (columns.size - 1).coerceAtLeast(0) * 16
-            assertEquals(width, columns.sum() + gaps, "Las columnas no cuadran a $window")
-            // El editor es el protagonista: por debajo de esto el lienzo deja de
-            // poder mirarse mientras se trabaja.
-            assertTrue(sizes.editor >= 500, "Editor ilegible a $window: ${sizes.editor}")
-        }
+    private val catalogs = NewsState(
+        specialties = UiAsync.Success(listOf(NewsCatalogOption("esp", "TCAE"), NewsCatalogOption("old", "Antigua", active = false))),
+        newsTypes = UiAsync.Success(listOf(NewsCatalogOption("tipo", "Convocatoria"))),
+        recordState = UiAsync.Success(Unit),
+    )
+
+    private fun saved() = catalogs.copy(
+        selectedId = "8f14e45f-ceea-467a-9a3e-1b2c3d4e5f60",
+        editorTitle = "Convocatoria",
+        editorSpecialty = "esp",
+        editorType = "tipo",
+        editorVersion = "2026-10-08T12:00:00Z",
+    )
+
+    @Test
+    fun unknownStateNeverClaimsPublished() {
+        assertEquals("Sin identificar", newsStatusLabel("active"))
     }
 
-    @Test fun theInspectorOnlyAppearsWhenThereIsRoomForIt() {
-        // Estrujar el inspector no lo hace utilizable: desaparece y sus
-        // propiedades caen dentro del editor, que sí puede desplazarse.
-        assertEquals(0, newsPaneSizes(900).inspector)
-        assertEquals(0, newsPaneSizes(1100).inspector)
-        assertTrue(newsPaneSizes(1628).inspector > 0)
-        // La publicación es la primera en plegarse: es contexto, no formulario.
-        assertEquals(0, newsPaneSizes(1628).rail)
-        assertTrue(newsPaneSizes(1900).rail > 0)
+    @Test
+    fun catalogFailureNeverLeaksIdOrSelectsDefault() {
+        assertEquals("No disponible", catalogName("123", UiAsync.Error(AppError.Validation("failure"))))
+        assertEquals("Sin identificar", catalogName("123", UiAsync.Success(listOf(NewsCatalogOption("1", "TCAE")))))
+        assertEquals("TCAE", catalogName("1", UiAsync.Success(listOf(NewsCatalogOption("1", "TCAE")))))
     }
-    @Test fun localFileNameDoesNotExposeDirectories() { assertEquals("portada.png", newsAssetName("file://C:/Users/private/portada.png")) }
-    @Test fun editsDoNotClaimSaved() { assertEquals("Cambios sin guardar", NewsState(isDirty = true, actionState = UiAsync.Success(Unit)).saveLabel()) }
+
+    @Test
+    fun scheduleFieldsRoundTripThroughIso() {
+        assertNull(newsScheduleIso("31/02/2026", "09:00"))
+        assertNull(newsScheduleIso("12/09/2026", "25:00"))
+        assertEquals("2026-09-12T09:30:00Z", newsScheduleIso("12/09/2026", "09:30"))
+        assertEquals("12/09/2026" to "09:30", newsScheduleFields("2026-09-12T09:30:00Z"))
+        assertEquals("12/09/2026 · 09:30 UTC", newsDateLabel("2026-09-12T09:30:00.123456Z"))
+        assertEquals("Sin fecha", newsDateLabel(null))
+    }
+
+    @Test
+    fun localFileNameDoesNotExposeDirectories() {
+        assertEquals("portada.png", newsAssetName("file://C:/Users/private/portada.png"))
+        assertEquals("Imagen seleccionada", newsAssetName("news/8f14e45f-ceea-467a-9a3e-1b2c3d4e5f60/8f14e45fceea467a9a3e1b2c3d4e5f60"))
+    }
+
+    @Test
+    fun saveProblemMirrorsWhatTheServerRequires() {
+        assertEquals("Escribe un título para poder guardar.", catalogs.saveProblem())
+        assertEquals("Elige una especialidad en Contenido.", catalogs.copy(editorTitle = "t").saveProblem())
+        assertEquals("Elige un tipo de noticia en Contenido.", catalogs.copy(editorTitle = "t", editorSpecialty = "esp").saveProblem())
+        assertNull(saved().saveProblem())
+        val uploading = saved().copy(uploads = mapOf("background" to NewsUploadState("background", "file://a.png", "a.png", 0.4f)))
+        assertEquals("Espera a que terminen las subidas de imagen.", uploading.saveProblem())
+    }
+
+    @Test
+    fun publishProblemAddsActiveCatalogsAndTheEditorRules() {
+        assertEquals("La especialidad elegida no está activa.", saved().copy(editorSpecialty = "old").publishProblem())
+        val blocked = saved().copy(
+            validationReport = NewsValidationReport(
+                canSave = true, canSchedule = false, canPublish = false,
+                errors = listOf(NewsValidationIssue("layers_empty", "Debe haber al menos una capa visible.", NewsValidationSeverity.ERROR)),
+                warnings = emptyList(),
+            ),
+        )
+        assertEquals("Debe haber al menos una capa visible.", blocked.publishProblem())
+    }
+
+    @Test
+    fun saveStatusTellsTheTruthInEveryState() {
+        val clean = saved().saveStatus()
+        assertEquals("Sin cambios pendientes.", clean.message)
+        assertFalse(clean.canSave)
+
+        val dirty = saved().copy(isDirty = true).saveStatus()
+        assertEquals("Cambios sin guardar.", dirty.message)
+        assertTrue(dirty.canSave && dirty.canDiscard && dirty.prominent)
+        assertEquals("Guardar", dirty.primaryLabel)
+
+        val fresh = catalogs.copy(selectedId = "local-1", editorTitle = "t", editorSpecialty = "esp", editorType = "tipo", isDirty = true).saveStatus()
+        assertEquals("Crear borrador", fresh.primaryLabel)
+        assertEquals("Lista para crear.", fresh.message)
+
+        val saving = saved().copy(isDirty = true, actionState = UiAsync.Loading, actionKind = NewsAction.PUBLISH).saveStatus()
+        assertEquals("Publicando…", saving.message)
+        assertFalse(saving.canSave || saving.canDiscard)
+
+        val failed = saved().copy(isDirty = true, actionState = UiAsync.Error(AppError.Network("x", 503)), actionKind = NewsAction.SAVE).saveStatus()
+        assertEquals("No se pudo guardar.", failed.message)
+        assertEquals(WorkspaceSaveTone.DANGER, failed.tone)
+        assertEquals("El servidor no está respondiendo bien ahora mismo.", failed.detail)
+        assertTrue(failed.canSave, "un fallo de red se puede reintentar")
+
+        val conflict = saved().copy(isDirty = true, actionState = UiAsync.Error(AppError.Validation("El recurso ha cambiado.", "precondition_failed")), actionKind = NewsAction.SAVE, actionConflict = true).saveStatus()
+        assertTrue(conflict.conflict)
+        assertFalse(conflict.canSave, "con la version caducada no hay «guardar de todas formas»")
+
+        val forbidden = saved().copy(isDirty = true, actionState = UiAsync.Error(AppError.Authorization("x")), actionKind = NewsAction.SAVE).saveStatus()
+        assertEquals("Tu usuario no tiene permiso para ver esto.", forbidden.detail)
+
+        val published = saved().copy(editorStatus = "published").saveStatus()
+        assertEquals("Publicada: el contenido queda fijado.", published.message)
+        assertFalse(published.canSave)
+
+        val okMessage = saved().copy(actionState = UiAsync.Success(Unit), actionKind = NewsAction.SAVE, actionMessage = "Guardado en el servidor.").saveStatus()
+        assertEquals("Guardado en el servidor.", okMessage.message)
+        assertEquals(WorkspaceSaveTone.SUCCESS, okMessage.tone)
+    }
+
+    @Test
+    fun recoveredDraftIsSaidBeforeAnythingElse() {
+        val status = saved().copy(isDirty = true, recoveredDraft = true).saveStatus()
+        assertEquals("Cambios recuperados de este equipo.", status.message)
+        assertTrue(status.canSave && status.canDiscard)
+    }
+
+    @Test
+    fun checklistNeverClaimsPassedWithoutAReport() {
+        val rows = newsPublicationChecklist(null)
+        assertTrue(rows.all { it.tone == NewsCheckTone.UNVERIFIED })
+        assertEquals("Sin validar", newsChecklistSummary(rows))
+        val report = NewsValidationReport(
+            canSave = true, canSchedule = true, canPublish = false,
+            errors = listOf(NewsValidationIssue("mystery_code", "Algo nuevo", NewsValidationSeverity.ERROR)),
+            warnings = listOf(NewsValidationIssue("text_empty", "El cuerpo esta vacio", NewsValidationSeverity.WARNING)),
+        )
+        val checked = newsPublicationChecklist(report)
+        assertEquals("Otras comprobaciones", checked.last().title, "un codigo nuevo no desaparece")
+        assertEquals(NewsCheckTone.NOTICE, checked.first { it.title == "Contenido" }.tone)
+        assertEquals("1 bloquean · 1 con avisos", newsChecklistSummary(checked))
+    }
+
+    @Test
+    fun libraryMetaPrefersThePublicationDate() {
+        val item = NewsItem("1", "t", "esp", "tipo", "", status = "published", publishFrom = "2026-09-15T09:00:00Z", text = "", publishedAt = "2026-09-12T10:00:00Z", updatedAt = "2026-09-20T10:00:00Z")
+        assertEquals(listOf("Publicada 12/09/2026", "Convocatoria"), newsLibraryMeta(item, catalogs))
+        assertEquals(listOf("Programada 15/09/2026", "Convocatoria"), newsLibraryMeta(item.copy(publishedAt = null), catalogs))
+        assertEquals(listOf("Editada 20/09/2026", "Convocatoria"), newsLibraryMeta(item.copy(publishedAt = null, publishFrom = ""), catalogs))
+    }
+
+    @Test
+    fun confirmationsSayWhatWillHappen() {
+        val publish = newsConfirmation(NewsIntent.Publish, saved())
+        assertFalse(publish.destructive)
+        assertTrue(publish.message.contains("no se puede editar"))
+        val delete = newsConfirmation(NewsIntent.DeleteSelected, saved())
+        assertTrue(delete.destructive)
+        assertTrue(delete.message.contains("No se puede deshacer"))
+        val discard = newsConfirmation(NewsIntent.DeleteSelected, saved().copy(selectedId = "local-9"))
+        assertEquals("Descartar borrador", discard.title)
+    }
 }

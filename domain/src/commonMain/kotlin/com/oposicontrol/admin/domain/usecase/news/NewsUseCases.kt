@@ -9,6 +9,7 @@ import com.oposicontrol.admin.domain.model.NewsCanvasLayer
 import com.oposicontrol.admin.domain.model.NewsDesignDraft
 import com.oposicontrol.admin.domain.model.NewsEditorialStatus
 import com.oposicontrol.admin.domain.model.NewsLayerKind
+import com.oposicontrol.admin.domain.model.NewsListFilter
 import com.oposicontrol.admin.domain.model.NewsValidationIssue
 import com.oposicontrol.admin.domain.model.NewsValidationReport
 import com.oposicontrol.admin.domain.model.NewsValidationSeverity
@@ -19,18 +20,34 @@ class ObserveNewsUseCase(private val repository: NewsRepository) {
 }
 
 class RefreshNewsUseCase(private val repository: NewsRepository) {
-    suspend operator fun invoke() = repository.refreshNews()
+    suspend operator fun invoke(filter: NewsListFilter = NewsListFilter()) = repository.refreshNews(filter)
 }
 
-class UpsertNewsUseCase(private val repository: NewsRepository) {
-    suspend operator fun invoke(article: NewsArticle): AppResult<NewsArticle> {
-        if (article.title.isBlank()) return AppResult.Failure(AppError.Validation("La noticia necesita titulo."))
-        return repository.upsertNews(article)
+class LoadMoreNewsUseCase(private val repository: NewsRepository) {
+    suspend operator fun invoke(filter: NewsListFilter, cursor: String) = repository.loadMoreNews(filter, cursor)
+}
+
+class LoadNewsUseCase(private val repository: NewsRepository) {
+    suspend operator fun invoke(newsId: String) = repository.getNews(newsId)
+}
+
+/**
+ * Guarda el CONTENIDO: crea el borrador si la noticia no existe todavia (sin id ni version) o edita la existente
+ * condicionado a su version. Las reglas que el servidor exige para aceptar el cuerpo se comprueban antes de enviar
+ * para que el rechazo llegue con su campo y no como un 400 generico.
+ */
+class SaveNewsUseCase(private val repository: NewsRepository) {
+    suspend operator fun invoke(article: NewsArticle, idempotencyKey: String): AppResult<NewsArticle> {
+        if (article.title.isBlank()) return AppResult.Failure(AppError.Validation("La noticia necesita titulo.", "title_required"))
+        if (article.specialty.isBlank()) return AppResult.Failure(AppError.Validation("La noticia necesita especialidad.", "specialty_required"))
+        if (article.type.isBlank()) return AppResult.Failure(AppError.Validation("La noticia necesita tipo.", "type_required"))
+        return if (article.id.isBlank()) repository.createNews(article, idempotencyKey) else repository.updateNews(article)
     }
 }
 
 class UploadNewsAssetUseCase(private val repository: NewsRepository) {
-    suspend operator fun invoke(localPathOrUri: String) = repository.uploadNewsAsset(localPathOrUri)
+    suspend operator fun invoke(localPathOrUri: String, idempotencyKey: String, onProgress: (Float) -> Unit = {}) =
+        repository.uploadNewsAsset(localPathOrUri, idempotencyKey, onProgress)
 }
 
 class DeleteNewsUseCase(private val repository: NewsRepository) {
@@ -144,16 +161,22 @@ private fun String.toNewsTemplateStyleOrNull(): String? {
     }
 }
 
+/**
+ * Los comandos de estado (D4-05..D4-07) actuan sobre una noticia YA GUARDADA: el contenido viaja con [SaveNewsUseCase]
+ * y aqui solo va el identificador. Publicar exige ademas que el borrador pase las reglas del editor, porque el servidor
+ * solo comprueba que haya contenido y una composicion vacia saldria publicada.
+ */
 class PublishNewsUseCase(
     private val repository: NewsRepository,
     private val validateNewsDraftUseCase: ValidateNewsDraftUseCase,
 ) {
-    suspend operator fun invoke(article: NewsArticle, draft: NewsDesignDraft): AppResult<NewsArticle> {
+    suspend operator fun invoke(newsId: String, draft: NewsDesignDraft): AppResult<NewsArticle> {
+        if (newsId.isBlank()) return AppResult.Failure(AppError.Validation("Guarda la noticia antes de publicarla."))
         val report = validateNewsDraftUseCase(draft)
         if (!report.canPublish) {
             return AppResult.Failure(AppError.Validation(report.errors.firstOrNull()?.message ?: "La noticia no se puede publicar."))
         }
-        return repository.upsertNews(article.copy(status = "published"))
+        return repository.publishNews(newsId)
     }
 }
 
@@ -161,18 +184,20 @@ class ScheduleNewsUseCase(
     private val repository: NewsRepository,
     private val validateNewsDraftUseCase: ValidateNewsDraftUseCase,
 ) {
-    suspend operator fun invoke(article: NewsArticle, draft: NewsDesignDraft): AppResult<NewsArticle> {
+    suspend operator fun invoke(newsId: String, publishFromIsoUtc: String, draft: NewsDesignDraft): AppResult<NewsArticle> {
+        if (newsId.isBlank()) return AppResult.Failure(AppError.Validation("Guarda la noticia antes de programarla."))
+        if (publishFromIsoUtc.isBlank()) return AppResult.Failure(AppError.Validation("La programacion necesita fecha.", "schedule_date_required"))
         val report = validateNewsDraftUseCase(draft)
-        if (!report.canSchedule) {
+        if (!report.canPublish) {
             return AppResult.Failure(AppError.Validation(report.errors.firstOrNull()?.message ?: "La noticia no se puede programar."))
         }
-        return repository.upsertNews(article.copy(status = "scheduled"))
+        return repository.scheduleNews(newsId, publishFromIsoUtc)
     }
 }
 
 class ArchiveNewsUseCase(private val repository: NewsRepository) {
-    suspend operator fun invoke(article: NewsArticle): AppResult<NewsArticle> {
-        if (article.id.isBlank()) return AppResult.Failure(AppError.Validation("Selecciona una noticia para archivar."))
-        return repository.upsertNews(article.copy(status = "archived"))
+    suspend operator fun invoke(newsId: String): AppResult<NewsArticle> {
+        if (newsId.isBlank()) return AppResult.Failure(AppError.Validation("Selecciona una noticia guardada para archivarla."))
+        return repository.archiveNews(newsId)
     }
 }

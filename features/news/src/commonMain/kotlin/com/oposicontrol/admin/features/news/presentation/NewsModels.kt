@@ -1,5 +1,11 @@
 package com.oposicontrol.admin.features.news.presentation
 
+/**
+ * Fila de la biblioteca. Viene del listado RESUMEN del servidor (sin texto ni capas), por eso [text] y [layers]
+ * llegan vacios en una fila remota: la ficha completa se lee al abrirla. Los campos del resumen que el panel
+ * anterior no tenia ([imageUrl], [publishedAt], [updatedAt]) son opcionales para que el editor movil, que
+ * construye filas a mano, siga compilando.
+ */
 data class NewsItem(
     val id: String,
     val title: String,
@@ -13,6 +19,9 @@ data class NewsItem(
     val imagePath: String? = null,
     val layers: List<NewsLayerDraft> = emptyList(),
     val isLocalDraft: Boolean = false,
+    val imageUrl: String? = null,
+    val publishedAt: String? = null,
+    val updatedAt: String = "",
 )
 
 data class NewsLayerDraft(
@@ -61,3 +70,37 @@ enum class NewsEditorSelection {
     BACKGROUND,
     LAYER,
 }
+
+/** Las tres caras de la ficha. */
+enum class NewsEditorTab(val id: String, val label: String) {
+    CONTENT("content", "Contenido"),
+    DESIGN("design", "Diseño"),
+    PUBLICATION("publication", "Publicación"),
+    ;
+
+    companion object {
+        fun fromId(id: String): NewsEditorTab = entries.firstOrNull { it.id == id } ?: CONTENT
+    }
+}
+
+/** Que operacion remota esta en curso o acabo: la barra de guardado dice su nombre, no un «operacion completada». */
+enum class NewsAction { SAVE, PUBLISH, SCHEDULE, ARCHIVE, DELETE }
+
+/**
+ * Una subida de imagen en marcha o fallida. [target] es `background`, `image` o `layer:<id>`; [uri] se conserva
+ * para poder reintentar con el mismo fichero. Sin [error] esta subiendo; con el, fallo y espera reintento o cierre.
+ */
+data class NewsUploadState(
+    val target: String,
+    val uri: String,
+    val fileName: String,
+    val progress: Float = 0f,
+    val error: String? = null,
+) {
+    val failed: Boolean get() = error != null
+}
+
+const val NEWS_UPLOAD_BACKGROUND = "background"
+const val NEWS_UPLOAD_IMAGE = "image"
+
+fun newsLayerUploadTarget(layerId: String): String = "layer:$layerId"
