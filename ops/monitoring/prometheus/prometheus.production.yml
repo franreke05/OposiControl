@@ -10,6 +10,12 @@ global:
 rule_files:
   - /etc/prometheus/alert_rules.yml
 
+# Las alertas se entregan por correo (Alertmanager del mismo stack; su configuracion real vive fuera del repo).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 # Jobs propios del host (node-exporter, cAdvisor): los monta compose.hostcaddy.override.yaml. Sin ficheros no anade nada.
 scrape_config_files:
   - /etc/prometheus/scrape.d/*.yml

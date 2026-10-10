@@ -48,6 +48,21 @@ internal fun Application.installBackendPrometheusMetrics(
             .percentilesHistogram(true)
             .build()
     }
+    registerSupabaseUpGauge(registry)
+}
+
+/** 1 = la ultima sonda a Supabase respondio; 0 = no. Es lo que permite ALERTAR de una caida de Supabase sin trafico. */
+const val UPSTREAM_SUPABASE_UP_METRIC = "upstream_supabase_up"
+
+/**
+ * Incidente 2026-10-10: Supabase estuvo 11 horas sin responder y nadie lo vio, porque ninguna metrica lo decia. El valor se
+ * calcula al raspar `/metrics` con la MISMA sonda cacheada de `/health/ready` (un HEAD sin cuerpo, como mucho uno cada
+ * 30 s por replica). Registrar dos veces devuelve el mismo medidor.
+ */
+internal fun registerSupabaseUpGauge(registry: PrometheusMeterRegistry, readiness: () -> String = ::checkSupabaseReadiness) {
+    io.micrometer.core.instrument.Gauge.builder(UPSTREAM_SUPABASE_UP_METRIC) { if (readiness() == "UP") 1.0 else 0.0 }
+        .description("1 si la ultima sonda a Supabase respondio, 0 si no")
+        .register(registry)
 }
 
 /**

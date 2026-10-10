@@ -2,6 +2,7 @@
 #   - ktor_http_server_requests_seconds_{count,sum,bucket}  (MicrometerMetrics, PrometheusMetrics.kt; etiquetas status, route, method)
 #   - jvm_memory_used_bytes / jvm_memory_max_bytes, jvm_gc_pause_seconds_*, jvm_threads_live_threads (binders JVM de Micrometer)
 #   - up (Prometheus)
+#   - upstream_supabase_up (gauge de la sonda de readiness, PrometheusMetrics.kt) y upstream_response_wire_bytes_total
 # NO existen aun (hueco documentado en docs/engineering/RUNTIME_DECISIONS.md): metrica de latencia/errores hacia Supabase,
 # gauge de readiness, metricas del limitador/Valkey, metricas de worker. No se alerta sobre ellas.
 groups:
@@ -112,3 +113,13 @@ groups:
         annotations:
           summary: "Mas de 150 MB recibidos de Supabase en 24 horas"
           description: "Por encima del presupuesto diario de la cuota de 5 GB al mes: Supabase puede restringir el proyecto."
+
+      # Incidente 2026-10-10: Supabase estuvo 11 horas sin responder sin que nadie lo viera.
+      - alert: SupabaseUnreachable
+        expr: max(upstream_supabase_up) == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ninguna replica consigue hablar con Supabase desde hace 3 minutos"
+          description: "La API responde /health/live pero toda ruta con datos falla. Mirar el panel de Supabase (cuota, estado del proyecto)."

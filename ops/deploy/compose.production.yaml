@@ -239,6 +239,33 @@ services:
     depends_on:
       - prometheus
 
+  # Alertmanager: entrega por correo las alertas de Prometheus. Su configuracion REAL (cuenta SMTP y destinatario) y la
+  # contrasena viven FUERA del repo; plantilla en ops/monitoring/alertmanager/alertmanager.yml.example. Sin puerto publicado.
+  alertmanager:
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.27.0}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --cluster.listen-address=
+    volumes:
+      - ${ALERTMANAGER_CONFIG_FILE:-/etc/oposibots/production/alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro
+      # Contrasena de aplicacion SMTP. Fichero FUERA del repo, modo 0400, legible por el usuario del contenedor.
+      - ${ALERTMANAGER_SMTP_PASSWORD_FILE:-/etc/oposibots/production/alertmanager_smtp_password}:/etc/alertmanager/secrets/smtp_password:ro
+      - alertmanager-data:/alertmanager
+    cpus: 0.25
+    mem_limit: ${ALERTMANAGER_MEM_LIMIT:-64m}
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 10s
+    logging: *logging
+    networks:
+      - edge
+
   # WORKER: NO se despliega (WORKER_REQUIRED=NO, ver docs/engineering/RUNTIME_DECISIONS.md). Marcador comentado; se activa
   # solo si se cumple un disparador documentado alli (p. ej. el ejecutor de borrado de cuenta). El flujo de importacion y
   # subida de preguntas y examenes esta CERRADO y NO se mueve a un worker.
@@ -256,6 +283,7 @@ volumes:
   caddy-config:
   prometheus-data:
   grafana-data:
+  alertmanager-data:
 
 networks:
   edge:
