@@ -622,7 +622,10 @@ internal fun probeSupabaseReachable(
     return try {
         val builder = HttpRequest.newBuilder(URI.create("$url/rest/v1/"))
             .timeout(READINESS_TIMEOUT)
-            .GET()
+            // HEAD y no GET (2026-10-10): el GET de la raiz devuelve la especificacion OpenAPI ENTERA del esquema. Sondeado por el
+            // balanceador desde tres replicas, eso agoto en un dia la cuota de trafico de salida del proyecto Supabase.
+            // HEAD ejerce la misma ruta y la misma credencial y no trae cuerpo.
+            .method("HEAD", HttpRequest.BodyPublishers.noBody())
         // `setHeader` y no `header`: `header` ACUMULA, y dos `Authorization` en
         // una peticion no es "gana el ultimo". Misma regla que el transporte.
         SupabaseRequestAuthPolicy(apiKey).elevatedHeaders().forEach { (name, value) ->
@@ -690,21 +693,37 @@ internal fun checkSupabaseReachable(
  */
 internal class ReadinessGrace(
     private val probe: () -> String,
-    private val graceMillis: Long = 30_000,
+    private val graceMillis: Long = 90_000,
+    /**
+     * Un resultado se reutiliza este tiempo: por muchas veces que se consulte `/health/ready` (balanceador, orquestador,
+     * una persona), cada replica hace como mucho UNA peticion a Supabase por ventana. Menor que [graceMillis].
+     */
+    private val cacheMillis: Long = 30_000,
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
-    @Volatile private var lastUpAtMillis: Long? = null
+    private var lastUpAtMillis: Long? = null
+    private var lastProbeAtMillis: Long? = null
+    private var lastAnswer: String = "UNKNOWN"
 
-    fun check(): String = when (val result = probe()) {
-        "UP" -> {
-            lastUpAtMillis = nowMillis()
-            "UP"
+    @Synchronized
+    fun check(): String {
+        val now = nowMillis()
+        val probedAt = lastProbeAtMillis
+        if (probedAt != null && now - probedAt < cacheMillis) return lastAnswer
+        val answer = when (val result = probe()) {
+            "UP" -> {
+                lastUpAtMillis = nowMillis()
+                "UP"
+            }
+            READINESS_TRANSIENT -> {
+                val lastUp = lastUpAtMillis
+                if (lastUp != null && nowMillis() - lastUp <= graceMillis) "UP" else "DOWN"
+            }
+            else -> result
         }
-        READINESS_TRANSIENT -> {
-            val lastUp = lastUpAtMillis
-            if (lastUp != null && nowMillis() - lastUp <= graceMillis) "UP" else "DOWN"
-        }
-        else -> result
+        lastProbeAtMillis = nowMillis()
+        lastAnswer = answer
+        return answer
     }
 }
 

@@ -88,7 +88,7 @@ class ReadinessProbeContractTest {
             checkSupabaseReachable(url = baseUrl, apiKey = legacyJwtShapedKey)
 
             val call = calls.single()
-            assertEquals("GET", call.method, "una sonda de readiness no escribe")
+            assertEquals("HEAD", call.method, "una sonda de readiness no escribe ni descarga el cuerpo (la raiz es la especificacion entera)")
             assertEquals(
                 "/rest/v1/",
                 call.path,

@@ -7,7 +7,8 @@ import kotlin.test.assertEquals
 class ReadinessGraceTest {
     private var now = 0L
     private var next = "UP"
-    private val grace = ReadinessGrace(probe = { next }, graceMillis = 30_000, nowMillis = { now })
+    private var probes = 0
+    private val grace = ReadinessGrace(probe = { probes++; next }, graceMillis = 30_000, cacheMillis = 0, nowMillis = { now })
 
     @Test
     fun aTimeoutRightAfterAGoodProbeIsTolerated() {
@@ -49,6 +50,19 @@ class ReadinessGraceTest {
         next = READINESS_TRANSIENT
         now = 50_000
         assertEquals("UP", grace.check())
+    }
+
+    @Test
+    fun withinTheCacheWindowTheDependencyIsAskedOnlyOnce() {
+        val cached = ReadinessGrace(probe = { probes++; next }, graceMillis = 90_000, cacheMillis = 30_000, nowMillis = { now })
+        repeat(50) { assertEquals("UP", cached.check()) }
+        now = 29_999
+        next = "DOWN"
+        assertEquals("UP", cached.check(), "dentro de la ventana se reutiliza la ultima respuesta")
+        assertEquals(1, probes)
+        now = 30_000
+        assertEquals("DOWN", cached.check(), "pasada la ventana se vuelve a preguntar")
+        assertEquals(2, probes)
     }
 
     @Test

@@ -127,3 +127,16 @@ Steps 1 to 4 do not touch the running backend or the edge. Step 5 onwards is the
 - Stale local worktrees (do not use as a base; kept for recovery): every `OposiControl-*` worktree other than a fresh
   checkout of `origin/main`, in particular `OposiControl-MainRelease` (old `main`), `OposiControl-Recursos` (`preview/todo`,
   merged) and `OposiControl` (`integration/oposicontrol-pre-infra`, merged).
+
+## 9. Incident 2026-10-09/10: Supabase egress quota exhausted by the readiness probe
+
+- Cause: `/health/ready` did `GET /rest/v1/` (the whole OpenAPI description of the schema, about 0.5 MB) and the host Caddy
+  probed it every 10 s on each bot and every 15 s on control. Measured on the server: each backend container received 1 to
+  1.5 GB in about 7 hours with no user traffic. The free plan includes 5 GB per cycle; 5.82 GB were used, 5.4 GB on 2026-10-09.
+- Effect: Supabase stopped answering the backend from about 21:45 UTC on 2026-10-09 (100 % of readiness probes failing),
+  with one window of about 45 minutes on 2026-10-10 (09:05 to 09:50 UTC). Nobody was alerted: no alert receiver is configured.
+- Emergency action (2026-10-10 10:16 UTC): host Caddy health checks moved to `/health/live` (no Supabase call).
+- Fix: the probe is a body-less `HEAD /rest/v1/` and each replica reuses the answer for 30 s (at most one request per replica
+  per 30 s whatever the number of callers); the grace for an isolated timeout is 90 s.
+- Pending: confirm in production that `HEAD /rest/v1/` answers 2xx (Supabase was unreachable when this was written) before
+  moving Caddy back to `/health/ready`; configure an alert receiver; decide the Supabase plan.
