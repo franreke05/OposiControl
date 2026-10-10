@@ -92,3 +92,23 @@ groups:
         annotations:
           summary: "{{ $labels.replica }} dedica mas del 10 % del tiempo a pausas de GC"
           description: "Heap demasiado justo para la carga: revisar -XX:MaxRAMPercentage y el limite de memoria."
+
+      # Incidente 2026-10-10: el plan gratuito de Supabase incluye 5 GB de trafico de salida por ciclo (unos 166 MB al dia).
+      # La metrica cuenta los bytes de respuesta que el backend recibe de Supabase tal como viajan (comprimidos).
+      - alert: SupabaseEgressHigh
+        expr: sum(increase(upstream_response_wire_bytes_total[1h])) > 50e6
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "El backend ha recibido mas de 50 MB de Supabase en una hora"
+          description: "A ese ritmo la cuota mensual de trafico de salida se agota en pocos dias. Buscar la llamada repetitiva (sum by (replica, target))."
+
+      - alert: SupabaseEgressDailyBudgetExceeded
+        expr: sum(increase(upstream_response_wire_bytes_total[24h])) > 150e6
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Mas de 150 MB recibidos de Supabase en 24 horas"
+          description: "Por encima del presupuesto diario de la cuota de 5 GB al mes: Supabase puede restringir el proyecto."

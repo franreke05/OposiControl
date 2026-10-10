@@ -143,9 +143,12 @@ val UPSTREAM_REQUEST_TIMEOUT: Duration = Duration.ofMillis(ObservabilityConfig.u
  * client-level timeout de Java no cubre eso, solo el connect).
  */
 fun newUpstreamHttpClient(): HttpClient =
-    HttpClient.newBuilder()
-        .connectTimeout(Duration.ofMillis(ObservabilityConfig.upstreamConnectTimeoutMs))
-        .build()
+    // Toda respuesta de Supabase se pide comprimida y se cuenta en bytes (ver [CompressedUpstreamHttpClient]).
+    CompressedUpstreamHttpClient(
+        HttpClient.newBuilder()
+            .connectTimeout(Duration.ofMillis(ObservabilityConfig.upstreamConnectTimeoutMs))
+            .build(),
+    )
 
 /**
  * La UNICA instancia de `HttpClient` hacia Supabase.

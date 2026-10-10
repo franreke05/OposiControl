@@ -220,11 +220,35 @@ internal fun interface SupabaseDiskUsageProvider {
 internal class SupabaseDiskMetricsGateway(
     supabaseUrl: String,
     secretKey: String,
-    private val client: HttpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(2))
-        .build(),
+    private val client: HttpClient = CompressedUpstreamHttpClient(
+        HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(2))
+            .build(),
+    ),
     private val requestTimeout: Duration = Duration.ofSeconds(3),
+    /**
+     * El endpoint devuelve TODAS las metricas del proyecto (cientos de KB) para leer un solo numero que cambia despacio:
+     * el resultado se reutiliza este tiempo, por muchas veces que se abra o refresque el estado del sistema.
+     */
+    private val cacheMillis: Long = 10 * 60_000L,
+    private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) : SupabaseDiskUsageProvider {
+    private var cachedAtMillis: Long? = null
+    private var cached: Double? = null
+
+    @Synchronized
+    override fun diskPercent(): Double? {
+        val at = cachedAtMillis
+        if (at != null && nowMillis() - at < cacheMillis) return cached
+        val fresh = fetchDiskPercent()
+        // Un fallo no se guarda: la siguiente consulta vuelve a intentarlo.
+        if (fresh != null) {
+            cached = fresh
+            cachedAtMillis = nowMillis()
+        }
+        return fresh
+    }
+
     private val endpoint = supabaseUrl.trim().trimEnd('/') + PRIVILEGED_METRICS_PATH
 
     /**
@@ -234,7 +258,7 @@ internal class SupabaseDiskMetricsGateway(
     private val basicAuth = "Basic " + Base64.getEncoder()
         .encodeToString("$METRICS_BASIC_USER:$secretKey".toByteArray(StandardCharsets.UTF_8))
 
-    override fun diskPercent(): Double? = runCatching {
+    private fun fetchDiskPercent(): Double? = runCatching {
         val request = HttpRequest.newBuilder(URI.create(endpoint))
             .timeout(requestTimeout)
             .header("Authorization", basicAuth)

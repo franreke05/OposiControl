@@ -140,3 +140,7 @@ Steps 1 to 4 do not touch the running backend or the edge. Step 5 onwards is the
   per 30 s whatever the number of callers); the grace for an isolated timeout is 90 s.
 - Pending: confirm in production that `HEAD /rest/v1/` answers 2xx (Supabase was unreachable when this was written) before
   moving Caddy back to `/health/ready`; configure an alert receiver; decide the Supabase plan.
+- Follow-up the same day: every Supabase call asks for gzip (`CompressedUpstreamHttpClient`; measured 2.4x to 5.3x fewer bytes),
+  received bytes are exported as `upstream_response_wire_bytes_total` with two alert rules, the Supabase disk metrics read is
+  cached for 10 minutes, and backend images are built only with `scripts/build-backend-image.sh` (three images built with
+  a bare `docker build` on 2026-10-09/10 carried the jar of the first cutover: the Dockerfile copies `installDist` output).
