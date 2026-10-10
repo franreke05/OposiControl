@@ -1,5 +1,7 @@
 package com.oposicontrol.admin.features.store.presentation
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +18,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +39,7 @@ import com.oposicontrol.admin.core.ui.components.GlassSearchBar
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.components.SemanticRole
+import com.oposicontrol.admin.core.ui.components.WORKSPACE_COLOR_MILLIS
 import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.core.ui.components.StatusTone
 import com.oposicontrol.admin.core.ui.components.WorkspaceCatalogRow
@@ -362,12 +366,20 @@ internal fun StoreChildRow(
     editIcon: AppIcon = AppIcon.EDIT,
 ) {
     val tokens = GlassTheme.tokens
+    val background by animateColorAsState(
+        targetValue = if (editing) tokens.surfaceSelected else tokens.surfaceSolid,
+        animationSpec = tween(WORKSPACE_COLOR_MILLIS),
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (editing) tokens.accent.copy(alpha = 0.45f) else tokens.border,
+        animationSpec = tween(WORKSPACE_COLOR_MILLIS),
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(Radius.card)
-            .background(if (editing) tokens.surfaceSelected else tokens.surfaceSolid)
-            .border(1.dp, if (editing) tokens.accent.copy(alpha = 0.45f) else tokens.border, Radius.card)
+            .background(background)
+            .border(1.dp, borderColor, Radius.card)
             .padding(Spacing.sm),
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         verticalAlignment = Alignment.CenterVertically,

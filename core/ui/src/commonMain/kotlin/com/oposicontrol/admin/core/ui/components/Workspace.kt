@@ -278,12 +278,14 @@ internal fun workspaceFilterPillColors(active: Boolean, tokens: GlassTokens): Wo
 @Composable
 fun WorkspaceFilterPill(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val colors = workspaceFilterPillColors(selected, GlassTheme.tokens)
+    val background by animateColorAsState(targetValue = colors.background, animationSpec = tween(WORKSPACE_COLOR_MILLIS))
+    val borderColor by animateColorAsState(targetValue = colors.border, animationSpec = tween(WORKSPACE_COLOR_MILLIS))
     Row(
         modifier = modifier
             .defaultMinSize(minHeight = Sizing.buttonCompact)
             .clip(Radius.pill)
-            .background(colors.background)
-            .border(1.dp, colors.border, Radius.pill)
+            .background(background)
+            .border(1.dp, borderColor, Radius.pill)
             .pointerHoverIcon(PointerIcon.Hand)
             .semantics { role = Role.Tab; this.selected = selected }
             .clickable(onClick = onClick)
@@ -301,6 +303,12 @@ fun WorkspaceFilterPill(label: String, selected: Boolean, onClick: () -> Unit, m
         )
     }
 }
+
+/**
+ * Duración de las transiciones de color del workspace. La misma de las filas de Contenido: lo bastante corta para no
+ * hacer esperar y lo bastante larga para que un cambio de selección se lea como cambio y no como parpadeo.
+ */
+const val WORKSPACE_COLOR_MILLIS: Int = 140
 
 internal data class WorkspaceRowColors(val background: Color, val border: Color, val bar: Color)
 
@@ -339,7 +347,7 @@ fun WorkspaceCatalogRow(
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
     val colors = workspaceCatalogRowColors(selected, hovered, tokens)
-    val background by animateColorAsState(targetValue = colors.background, animationSpec = tween(140))
+    val background by animateColorAsState(targetValue = colors.background, animationSpec = tween(WORKSPACE_COLOR_MILLIS))
 
     Row(
         modifier = modifier
@@ -673,12 +681,21 @@ fun WorkspaceSaveBar(
         WorkspaceSaveTone.DANGER -> tokens.danger
         WorkspaceSaveTone.SUCCESS -> tokens.successInk
     }
+    // La barra se enciende al aparecer cambios y se apaga al guardarlos: un fundido corto, no un salto.
+    val barBackground by animateColorAsState(
+        targetValue = if (prominent) tokens.warning.copy(alpha = 0.10f) else tokens.warning.copy(alpha = 0f),
+        animationSpec = tween(WORKSPACE_COLOR_MILLIS),
+    )
+    val barBorder by animateColorAsState(
+        targetValue = if (prominent) tokens.warning.copy(alpha = 0.45f) else tokens.warning.copy(alpha = 0f),
+        animationSpec = tween(WORKSPACE_COLOR_MILLIS),
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(Radius.card)
-            .background(if (prominent) tokens.warning.copy(alpha = 0.10f) else Color.Transparent)
-            .border(1.dp, if (prominent) tokens.warning.copy(alpha = 0.45f) else Color.Transparent, Radius.card)
+            .background(barBackground)
+            .border(1.dp, barBorder, Radius.card)
             .padding(horizontal = Spacing.sm, vertical = Spacing.xs),
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
         verticalAlignment = Alignment.CenterVertically,
