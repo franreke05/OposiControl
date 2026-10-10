@@ -125,7 +125,7 @@ env_examples_ok() { local p
   # Los secretos de administracion no se ofrecen a bot ni al comun, ni los de auth de consumidor a control ni al comun.
   ! (env_names common; env_names bot) | grep -qx 'OPOSICONTROL_BACKEND_TOKEN' \
     && ! (env_names common; env_names control) | grep -Eqx 'AUTH_RATE_LIMIT_HMAC_SECRET|VALKEY_URL|APPLE_CLIENT_SECRET|APPLE_CLIENT_ID|SUPABASE_PUBLISHABLE_KEY|SUPABASE_ANON_KEY'; }
-# F-07 (gate Slice 3): el pool bot solo expulsa una replica por salud ACTIVA (/health/ready) o por fallos de conexion. Un
+# F-07 (gate Slice 3): el pool bot solo expulsa una replica por salud ACTIVA (/health/live) o por fallos de conexion. Un
 # `unhealthy_status` / `unhealthy_latency` expulsaba las DOS a la vez ante un 5xx de una dependencia compartida.
 caddy_no_status_ejection() { local f=ops/caddy/Caddyfile.production
   ! grep -Ev '^[[:space:]]*#' "$f" | grep -Eq '^[[:space:]]*(unhealthy_status|unhealthy_latency)[[:space:]]' \
@@ -168,8 +168,10 @@ check "Caddyfile.production: host por variable, /metrics bloqueado, tope de cuer
   "grep -Fq '{\$API_HOST}' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*import /etc/caddy/metrics-block.caddy' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*import /etc/caddy/body-limit.caddy' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*handle \\{\$' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*respond 404\$' ops/caddy/Caddyfile.production"
 check "Caddyfile.production: control por rutas explicitas (no /admin* en bloque) y dev-only /admin/backend, /admin/dev con 404" \
   "grep -Eq '^[[:space:]]*@control path .*/api/v1/admin/\\*' ops/caddy/Caddyfile.production && ! grep -Eq '^[[:space:]]*@control path .* /admin/?\\*?( |\$)' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*@devonly path .*/admin/backend.*/admin/dev' ops/caddy/Caddyfile.production && grep -Eq '^[[:space:]]*respond @devonly 404' ops/caddy/Caddyfile.production"
-check "Caddyfile.production: balanceo least_conn con salud activa en /health/ready, IP real de Cloudflare y reescritura de X-Forwarded-For" \
-  "grep -Eq 'lb_policy least_conn' ops/caddy/Caddyfile.production && grep -Eq 'health_uri /health/ready' ops/caddy/Caddyfile.production && grep -Eq 'trusted_proxies static .*173\\.245\\.48\\.0/20' ops/caddy/Caddyfile.production && grep -Eq 'client_ip_headers CF-Connecting-IP' ops/caddy/Caddyfile.production && grep -Eq 'header_up X-Forwarded-For \\{client_ip\\}' ops/caddy/Caddyfile.production"
+# Incidente 2026-10-10: la salud activa del balanceador usa /health/live. /health/ready consulta Supabase; sondeado por el
+# balanceador agoto la cuota de trafico de salida y, al caer la dependencia COMPARTIDA, expulsaba todas las replicas a la vez.
+check "Caddyfile.production: balanceo least_conn con salud activa en /health/live (nunca /health/ready), IP real de Cloudflare y reescritura de X-Forwarded-For" \
+  "grep -Eq 'lb_policy least_conn' ops/caddy/Caddyfile.production && grep -Eq 'health_uri /health/live' ops/caddy/Caddyfile.production && ! grep -Ev '^[[:space:]]*#' ops/caddy/Caddyfile.production | grep -Eq 'health_uri /health/ready' && grep -Eq 'trusted_proxies static .*173\\.245\\.48\\.0/20' ops/caddy/Caddyfile.production && grep -Eq 'client_ip_headers CF-Connecting-IP' ops/caddy/Caddyfile.production && grep -Eq 'header_up X-Forwarded-For \\{client_ip\\}' ops/caddy/Caddyfile.production"
 check "Caddyfile.production: el pool bot no expulsa replicas por codigo de estado ni latencia (solo salud activa y fallos de conexion) (F-07)" \
   "caddy_no_status_ejection"
 check "Caddyfile.production: el log de acceso no registra Authorization ni cookies" \

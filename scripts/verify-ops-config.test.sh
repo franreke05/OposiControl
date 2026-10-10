@@ -121,7 +121,7 @@ mutate "Caddyfile sin bloqueo de /metrics" $CF '/import \/etc\/caddy\/metrics-bl
 mutate "Caddyfile sin 404 por defecto" $CF 's/^\t\thandle {$/\t\thandle @zzz {/' "Caddyfile.production: host por variable"
 mutate "Caddyfile enruta /admin* en bloque" $CF 's# /admin/audit /admin/audit/\* # /admin/* #' "control por rutas explicitas"
 mutate "Caddyfile sin 404 de rutas de desarrollo" $CF '/respond @devonly 404/d' "control por rutas explicitas"
-mutate "Caddyfile sin salud activa en /health/ready" $CF 's#health_uri /health/ready#health_uri /health/live#g' "balanceo least_conn"
+mutate "Caddyfile con la salud activa en /health/ready (consulta Supabase)" $CF 's#health_uri /health/live#health_uri /health/ready#g' "balanceo least_conn"
 mutate "Caddyfile no reescribe X-Forwarded-For" $CF '/header_up X-Forwarded-For {client_ip}/d' "balanceo least_conn"
 mutate "Caddyfile registra Authorization" $CF '/request>headers>Authorization delete/d' "no registra Authorization"
 M=ops/monitoring/prometheus/prometheus.production.yml

@@ -84,7 +84,7 @@
 				header_up X-Forwarded-For {client_ip}
 				header_up X-Request-Id {http.request.uuid}
 				# Salud activa. Una unica instancia: sin alternativa, un 503 de Caddy es el comportamiento correcto.
-				health_uri /health/ready
+				health_uri /health/live
 				health_interval 15s
 				health_timeout 6s
 				health_status 2xx
@@ -109,7 +109,7 @@
 				header_up X-Forwarded-For {client_ip}
 				header_up X-Request-Id {http.request.uuid}
 				# Salud ACTIVA: es la unica que saca una replica de rotacion por su ESTADO (readiness real, con Supabase).
-				health_uri /health/ready
+				health_uri /health/live
 				health_interval 10s
 				health_timeout 6s
 				health_status 2xx

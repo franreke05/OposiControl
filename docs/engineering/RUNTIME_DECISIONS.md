@@ -84,7 +84,7 @@ Mientras tanto queda el marcador comentado `worker:` en `compose.production.yaml
 * **Un solo host, tres Ktor, sin Kubernetes ni broker**: ganancia = aislamiento y despliegue de bot sin corte, no capacidad (aviso en el compose).
 * **Heap**: `MaxRAMPercentage` 60 % en bot (limite 768 MB) y 45 % en control (limite 2 GB, por ffmpeg y decodificacion fuera/dentro de heap) +
   `-XX:+ExitOnOutOfMemoryError` (el Dockerfile lo difirio; con `restart: unless-stopped` es seguro). Valores = marcadores a re-medir con carga real en el host elegido.
-* **Readiness vs liveness**: contenedor usa `/health/live` (no depende de Supabase); Caddy usa `/health/ready` (incluye la sonda a Supabase, `Observability.kt:704-`) para sacar replicas.
+* **Readiness vs liveness**: contenedor usa `/health/live` (no depende de Supabase); Caddy usa `/health/live` desde el incidente del 2026-10-10 (antes `/health/ready`, que consulta Supabase: ver DEPLOYMENT_PLAN seccion 9; `/health/ready` queda para diagnostico y orquestadores, con resultado cacheado 30 s) (antes: incluye la sonda a Supabase, `Observability.kt:704-`) para sacar replicas.
   Una caida de Supabase deja a Caddy sin upstream sano: devuelve 503 en el borde en vez de 502/timeouts largos (efecto equivalente, mas rapido).
 * **IP de cliente**: Caddy confia solo en rangos Cloudflare, usa `CF-Connecting-IP` y reescribe `X-Forwarded-For` con la IP real (`header_up X-Forwarded-For {client_ip}`);
   el backend toma el ULTIMO elemento de `X-Forwarded-For` si el peer esta en `TRUSTED_PROXY_HOSTS` (`OposiBotsAuthRoutes.kt:304-325`). Comprobado en local con Caddy 2.11.7: un `X-Forwarded-For` y un `X-Request-Id` falsos del cliente se sustituyen.
