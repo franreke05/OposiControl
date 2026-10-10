@@ -94,8 +94,28 @@ class NavigationInformationArchitectureTest {
 
         assertTrue(AppRoute.Commercial.Plans in economyRoutes)
         assertTrue(AppRoute.Commercial.Catalog in economyRoutes)
-        assertTrue(AppRoute.Commercial.Tickets in economyRoutes)
         assertTrue(AppRoute.Commercial.Market in economyRoutes)
+    }
+
+    @Test
+    fun ticketWalletsLiveNextToTheUsersTheyBelongTo() {
+        // Decisión del propietario (2026-10-10): OposiTickets sale de Monetización. Sólo cambia el grupo del menú; la
+        // ruta sigue siendo la comercial, porque el dominio y el backend no se mueven.
+        val users = appNavigationGroups.single { it.id == NavigationGroupId.USERS }
+        val economy = appNavigationGroups.single { it.id == NavigationGroupId.ECONOMY }
+
+        assertEquals(
+            listOf(AppRoute.Users.List, AppRoute.Commercial.Tickets),
+            users.sidebarItems.map { it.route },
+            "El grupo Usuarios enseña Usuarios y OposiTickets, en ese orden.",
+        )
+        assertEquals(
+            listOf(AppRoute.Commercial.Catalog, AppRoute.Commercial.Market),
+            economy.sidebarItems.map { it.route },
+            "Monetización enseña Catálogo y OposiMarket.",
+        )
+        assertTrue(AppRoute.Commercial.Tickets !in economy.items.map { it.route })
+        assertEquals(NavigationGroupId.USERS, AppRoute.Commercial.Tickets.metadata().group)
     }
 
     @Test
@@ -161,7 +181,7 @@ class NavigationInformationArchitectureTest {
                 // no puede ofrecer un tipo que la especialidad no tenga abierto.
                 "Exámenes", "Especialidades", "Preguntas", "Importación",
                 "Usuarios",
-                "Catálogo", "OposiMarket", "OposiTickets",
+                "OposiTickets", "Catálogo", "OposiMarket",
                 "OposiRed", "Moderación", "Soporte",
                 "Analytics",
                 "Noticias",

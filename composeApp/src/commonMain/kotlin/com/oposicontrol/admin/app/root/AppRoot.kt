@@ -868,7 +868,12 @@ private fun AppRoute.breadcrumbs(): List<String> = when (this) {
     is AppRoute.Community.Thread -> listOf("Foro", threadId)
     is AppRoute.Community.ModerationDetail -> listOf("Foro", reportId)
     is AppRoute.OposiTester.Detail -> listOf("OposiTester", testerId)
-    else -> listOf(metadata().title)
+    // Grupo y pantalla, como en Contenido («Contenido > Exámenes»). Si el grupo se llama igual que la pantalla
+    // («Usuarios > Usuarios», «Sistema > Sistema») se queda en un solo nivel.
+    else -> metadata().let { meta ->
+        val group = appNavigationGroups.firstOrNull { it.id == meta.group }?.label
+        listOfNotNull(group?.takeIf { it != meta.title }, meta.title)
+    }
 }
 
 private fun AppRoute.headerTitle(): String = when (this) {
@@ -1032,9 +1037,19 @@ private fun adminSectionRoute(
 
         AdminSection.TICKETS -> {
             val viewModel: TicketsViewModel = koinInject()
+            val usersViewModel: UsersViewModel = koinInject()
             AdminSectionRoute(
                 onPrimaryAction = { viewModel.dispatch(TicketsIntent.PrepareAdjustment) },
-                content = { TicketsScreen(viewModel) },
+                content = {
+                    TicketsScreen(
+                        viewModel = viewModel,
+                        // Una cartera es de una persona: su ficha vive en Usuarios y no se duplica aqui.
+                        onOpenUser = { userId ->
+                            usersViewModel.dispatch(UsersIntent.SelectUser(userId))
+                            openSection(AdminSection.USERS)
+                        },
+                    )
+                },
             )
         }
 

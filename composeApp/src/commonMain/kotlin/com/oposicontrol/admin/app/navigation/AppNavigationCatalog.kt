@@ -6,8 +6,9 @@ import com.oposicontrol.admin.core.ui.components.AppIcon
  * Agrupación del menú.
  *
  * La estructura sigue cómo se administra el producto, no cómo está organizado el
- * código: quien ajusta precios entra en Monetización y encuentra planes, tickets,
- * catálogo y Market juntos, en vez de repartidos entre "Comercial" y "Tienda".
+ * código: quien ajusta precios entra en Monetización y encuentra catálogo y Market
+ * juntos, en vez de repartidos entre "Comercial" y "Tienda"; las carteras de
+ * OposiTickets viven en Usuarios, junto a la persona a la que pertenecen.
  *
  * `REPORTS` y `OPOSITESTER` ya no son grupos propios de escritorio: son trabajo
  * de comunidad y viven dentro de `COMMUNITY`. Siguen siendo destinos de primer
@@ -130,6 +131,10 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         "Usuarios",
         listOf(
             item(AppRoute.Users.List, "users", "Usuarios", "Identidad, perfil, rendimiento y competición por usuario.", NavigationGroupId.USERS, AppIcon.USERS.key),
+            // Movida de Monetización a Usuarios (2026-10-10, decisión del propietario): una cartera es de UN usuario, y
+            // quien concede o corrige OT viene de mirar a esa persona, no de ajustar precios. Es sólo arquitectura de
+            // información: la ruta sigue siendo `AppRoute.Commercial.Tickets`, el dominio y el backend no se mueven.
+            item(AppRoute.Commercial.Tickets, "commercial.tickets", "OposiTickets", "Carteras, movimientos y concesiones por usuario.", NavigationGroupId.USERS, AppIcon.TICKETS.key),
             item(AppRoute.Rankings, "rankings", "Rankings y ligas", "Clasificación, ligas y posición por opositor.", NavigationGroupId.USERS, AppIcon.RANKINGS.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
             // Movida de Monetización a Usuarios (§7): es acceso a examen por
             // usuario, no una palanca de precio.
@@ -142,7 +147,6 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         listOf(
             item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catálogo", "Productos, planes y tarifas.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key),
             item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Packs, servicios, promociones y pop-ups.", NavigationGroupId.ECONOMY, AppIcon.MARKET.key, NavigationVisibility.DESKTOP_ONLY),
-            item(AppRoute.Commercial.Tickets, "commercial.tickets", "OposiTickets", "Carteras, movimientos y concesiones.", NavigationGroupId.ECONOMY, AppIcon.TICKETS.key),
             item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes de suscripción y beneficios.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key, showInSidebar = false),
             item(AppRoute.Commercial.Consumables, "commercial.consumables", "Consumibles", "Potenciadores y protectores que se compran con OT.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
             item(AppRoute.Commercial.Promotions, "commercial.promotions", "Promociones", "Cupones y descuentos con ventana de validez.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),

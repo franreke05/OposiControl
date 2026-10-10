@@ -33,6 +33,23 @@ data class TicketTransaction(
     val amount: Double,
     val reason: String,
     val occurredAt: String,
+    /** Parte auditable del asiento. `null` = el backend no lo informa (asientos anteriores al ledger canónico). */
+    val balanceBefore: Int? = null,
+    val balanceAfter: Int? = null,
+    /** Qué originó el movimiento («admin», una compra, una recompensa…), tal como lo guarda el ledger. */
+    val originType: String? = null,
+    val originId: String? = null,
+)
+
+/**
+ * Resumen agregado de la economía de OposiTickets. Cada cifra es `null` cuando el backend no ha podido contarla:
+ * un cero aquí significaría «no hay», que es otra afirmación.
+ */
+data class TicketsOverview(
+    val wallets: Int? = null,
+    val movements: Int? = null,
+    val credits: Int? = null,
+    val debits: Int? = null,
 )
 
 data class SupportConversationSummary(

@@ -115,8 +115,11 @@ class SupportViewModelTest {
         override suspend fun upsertExamAccess(access: ExamAccess): AppResult<ExamAccess> = AppResult.Success(access)
         override suspend fun getTicketWallets(): AppResult<List<TicketWallet>> = AppResult.Success(emptyList())
         override suspend fun getTicketTransactions(userId: String): AppResult<List<TicketTransaction>> = AppResult.Success(emptyList())
-        override suspend fun appendTicketAdjustment(userId: String, amount: Double, reason: String): AppResult<TicketTransaction> =
-            AppResult.Success(TicketTransaction("tx-1", userId, "adjustment", amount, reason, "2026-05-05T09:00:00Z"))
+        override suspend fun appendTicketAdjustment(userId: String, amount: Int, reason: String, idempotencyKey: String): AppResult<TicketTransaction> =
+            AppResult.Success(TicketTransaction("tx-1", userId, "adjustment", amount.toDouble(), reason, "2026-05-05T09:00:00Z"))
+
+        override suspend fun getTicketsOverview(): AppResult<com.oposicontrol.admin.domain.model.TicketsOverview> =
+            AppResult.Success(com.oposicontrol.admin.domain.model.TicketsOverview())
 
         override suspend fun getModerationActions(): AppResult<List<ModerationAction>> = AppResult.Success(emptyList())
         override suspend fun appendModerationAction(action: ModerationAction): AppResult<ModerationAction> = AppResult.Success(action)

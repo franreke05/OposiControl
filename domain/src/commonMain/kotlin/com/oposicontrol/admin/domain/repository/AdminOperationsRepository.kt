@@ -8,6 +8,7 @@ import com.oposicontrol.admin.domain.model.SupportConversationSummary
 import com.oposicontrol.admin.domain.model.SupportMessage
 import com.oposicontrol.admin.domain.model.TicketTransaction
 import com.oposicontrol.admin.domain.model.TicketWallet
+import com.oposicontrol.admin.domain.model.TicketsOverview
 
 interface AdminOperationsRepository {
     suspend fun getNewsTypes(): AppResult<List<NewsType>>
@@ -18,7 +19,12 @@ interface AdminOperationsRepository {
 
     suspend fun getTicketWallets(): AppResult<List<TicketWallet>>
     suspend fun getTicketTransactions(userId: String): AppResult<List<TicketTransaction>>
-    suspend fun appendTicketAdjustment(userId: String, amount: Double, reason: String): AppResult<TicketTransaction>
+    /**
+     * Ajuste de saldo (positivo abona, negativo retira). [idempotencyKey] identifica la OPERACIÓN: repetir la llamada con
+     * la misma clave devuelve el asiento original en vez de aplicar el ajuste dos veces. El backend la exige.
+     */
+    suspend fun appendTicketAdjustment(userId: String, amount: Int, reason: String, idempotencyKey: String): AppResult<TicketTransaction>
+    suspend fun getTicketsOverview(): AppResult<TicketsOverview>
 
     suspend fun getSupportConversations(): AppResult<List<SupportConversationSummary>>
     suspend fun getSupportMessages(conversationId: String): AppResult<List<SupportMessage>>

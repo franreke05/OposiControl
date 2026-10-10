@@ -12,6 +12,7 @@ import com.oposicontrol.admin.domain.model.SupportConversationSummary
 import com.oposicontrol.admin.domain.model.SupportMessage
 import com.oposicontrol.admin.domain.model.TicketTransaction
 import com.oposicontrol.admin.domain.model.TicketWallet
+import com.oposicontrol.admin.domain.model.TicketsOverview
 import com.oposicontrol.admin.domain.repository.AdminOperationsRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -74,14 +75,22 @@ class KtorAdminOperationsRepositoryImpl(
 
     override suspend fun appendTicketAdjustment(
         userId: String,
-        amount: Double,
+        amount: Int,
         reason: String,
+        idempotencyKey: String,
     ): AppResult<TicketTransaction> = adapter.safeCall {
         client.post("${adminV1Url()}/tickets/$userId/transacciones") {
             backendHeaders()
             contentType(ContentType.Application.Json)
-            setBody(TicketAdjustmentDto(amount = amount, reason = reason))
+            // El backend exige la clave (422 WALLET_IDEMPOTENCY_KEY_REQUIRED sin ella): sin clave, un reintento tras un
+            // timeout aplicaría el ajuste dos veces.
+            setBody(TicketAdjustmentDto(amount = amount.toDouble(), reason = reason, idempotencyKey = idempotencyKey))
         }.checkedBody<TicketTransactionDto>("/api/v1/admin/tickets/$userId/transacciones").toDomain()
+    }
+
+    override suspend fun getTicketsOverview(): AppResult<TicketsOverview> = adapter.safeCall {
+        client.get("${adminV1Url()}/tickets/resumen") { backendHeaders() }
+            .checkedBody<TicketsOverviewResponseDto>("/api/v1/admin/tickets/resumen").data.toDomain()
     }
 
     override suspend fun getSupportConversations(): AppResult<List<SupportConversationSummary>> = adapter.safeCall {
@@ -175,12 +184,28 @@ private data class TicketTransactionDto(
     val amount: Double,
     val reason: String,
     val occurredAt: String,
+    val balanceBefore: Int? = null,
+    val balanceAfter: Int? = null,
+    val originType: String? = null,
+    val originId: String? = null,
+)
+
+@Serializable
+private data class TicketsOverviewResponseDto(val data: TicketsOverviewDto = TicketsOverviewDto())
+
+@Serializable
+private data class TicketsOverviewDto(
+    val carteras: Int? = null,
+    val movimientos: Int? = null,
+    val movimientosCredito: Int? = null,
+    val movimientosDebito: Int? = null,
 )
 
 @Serializable
 private data class TicketAdjustmentDto(
     val amount: Double,
     val reason: String,
+    val idempotencyKey: String,
 )
 
 @Serializable
@@ -260,6 +285,17 @@ private fun TicketTransactionDto.toDomain() = TicketTransaction(
     amount = amount,
     reason = reason,
     occurredAt = occurredAt,
+    balanceBefore = balanceBefore,
+    balanceAfter = balanceAfter,
+    originType = originType,
+    originId = originId,
+)
+
+private fun TicketsOverviewDto.toDomain() = TicketsOverview(
+    wallets = carteras,
+    movements = movimientos,
+    credits = movimientosCredito,
+    debits = movimientosDebito,
 )
 
 private fun SupportConversationDto.toDomain() = SupportConversationSummary(

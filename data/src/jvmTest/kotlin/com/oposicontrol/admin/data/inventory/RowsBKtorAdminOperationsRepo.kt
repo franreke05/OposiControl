@@ -9,7 +9,7 @@ private const val FILE = "data/src/commonMain/kotlin/com/oposicontrol/admin/data
 
 private fun Env.repo() = KtorAdminOperationsRepositoryImpl(client, appConfig, session, adapter)
 
-/** Filas del registrador (R4-REC-B): KtorAdminOperationsRepositoryImpl (12 sitios, una fila por metodo). */
+/** Filas del registrador (R4-REC-B): KtorAdminOperationsRepositoryImpl (13 sitios, una fila por metodo). */
 internal val ROWS_B_ADMIN_OPERATIONS_REPO: List<CallRow> = listOf(
     CallRow(FILE, "getNewsTypes", get("/admin/news-types")) { repo().getNewsTypes() },
     CallRow(FILE, "upsertNewsType", post("/admin/news-types")) {
@@ -22,8 +22,9 @@ internal val ROWS_B_ADMIN_OPERATIONS_REPO: List<CallRow> = listOf(
     CallRow(FILE, "getTicketWallets", get("/api/v1/admin/tickets")) { repo().getTicketWallets() },
     CallRow(FILE, "getTicketTransactions", get("/api/v1/admin/tickets/{}/transacciones")) { repo().getTicketTransactions("ID0") },
     CallRow(FILE, "appendTicketAdjustment", post("/api/v1/admin/tickets/{}/transacciones")) {
-        repo().appendTicketAdjustment("ID0", 1.0, "r")
+        repo().appendTicketAdjustment("ID0", 1, "r", "k")
     },
+    CallRow(FILE, "getTicketsOverview", get("/api/v1/admin/tickets/resumen")) { repo().getTicketsOverview() },
     CallRow(FILE, "getSupportConversations", get("/api/v1/admin/soporte/conversaciones")) { repo().getSupportConversations() },
     CallRow(FILE, "getSupportMessages", get("/api/v1/admin/soporte/conversaciones/{}/mensajes")) { repo().getSupportMessages("ID0") },
     CallRow(FILE, "sendSupportMessage", post("/api/v1/admin/soporte/conversaciones/{}/mensajes")) {

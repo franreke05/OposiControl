@@ -1071,14 +1071,14 @@ private fun AdminTicketsSection(
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 Text(
-                                    text = "${formatOneDecimal(wallet.balance)} tks",
+                                    text = "${formatOneDecimal(wallet.balance.toDouble())} tks",
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.SemiBold,
                                     color = GlassTheme.tokens.accent,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                StatusChip(status = wallet.status)
+                                StatusChip(status = "active")
                             }
                         }
                     }
@@ -1168,7 +1168,7 @@ private fun TicketsHistorySection(
                             val amountColor = if (movement.amount >= 0) GlassTheme.tokens.accent
                             else MaterialTheme.colorScheme.error
                             Text(
-                                text = formatOneDecimal(movement.amount, includePlus = true),
+                                text = formatOneDecimal(movement.amount.toDouble(), includePlus = true),
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 color = amountColor,
