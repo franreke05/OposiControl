@@ -445,10 +445,11 @@ class NewsViewModelTest {
         advanceUntilIdle()
         val id = viewModel.state.value.selectedLayerId!!
 
-        viewModel.dispatch(NewsIntent.UpdateLayerFrame(id, -30, -40, 900, 700))
+        viewModel.dispatch(NewsIntent.UpdateLayerFrame(id, -30, -40, 5000, 5000))
         advanceUntilIdle()
         val clamped = viewModel.state.value.editorLayers.first { it.id == id }
-        assertEquals(listOf(0, 0, 800, 500), listOf(clamped.x, clamped.y, clamped.width, clamped.height))
+        // El lienzo es el banner de Inicio de OposiBot a 4 px por dp: 1432 x 592.
+        assertEquals(listOf(0, 0, 1432, 592), listOf(clamped.x, clamped.y, clamped.width, clamped.height))
 
         viewModel.dispatch(NewsIntent.UpdateLayerFrame(id, 160, 180, 310, 84))
         viewModel.dispatch(NewsIntent.NudgeLayer(id, 10, -5))
@@ -458,7 +459,7 @@ class NewsViewModelTest {
 
         viewModel.dispatch(NewsIntent.AlignLayer(id, com.oposicontrol.admin.features.news.editor.NewsAlignment.RIGHT))
         advanceUntilIdle()
-        assertEquals(800 - 310, viewModel.state.value.editorLayers.first { it.id == id }.x)
+        assertEquals(1432 - 310, viewModel.state.value.editorLayers.first { it.id == id }.x)
 
         viewModel.dispatch(NewsIntent.ToggleLayerLocked(id))
         viewModel.dispatch(NewsIntent.UpdateLayerFrame(id, 10, 10, 50, 50))
@@ -466,7 +467,7 @@ class NewsViewModelTest {
         advanceUntilIdle()
         val locked = viewModel.state.value.editorLayers.first { it.id == id }
         assertTrue(locked.locked)
-        assertEquals(800 - 310, locked.x, "una capa bloqueada no se mueve ni se borra")
+        assertEquals(1432 - 310, locked.x, "una capa bloqueada no se mueve ni se borra")
 
         viewModel.dispatch(NewsIntent.ToggleLayerLocked(id))
         viewModel.dispatch(NewsIntent.RemoveLayer(id))

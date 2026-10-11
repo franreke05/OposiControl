@@ -30,6 +30,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
@@ -58,6 +59,11 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.theme.contentOn
+import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_CORNER_DP
+import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_PHONE_HEIGHT_DP
+import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_PHONE_WIDTH_DP
+import com.oposicontrol.admin.features.news.editor.NEWS_TEXT_INSET_X
+import com.oposicontrol.admin.features.news.editor.NEWS_TEXT_INSET_Y
 import com.oposicontrol.admin.features.news.editor.NewsCanvasKeyAction
 import com.oposicontrol.admin.features.news.editor.NewsFrame
 import com.oposicontrol.admin.features.news.editor.NewsGuide
@@ -104,7 +110,8 @@ internal fun NewsCanvasFrame(
         if (showChrome) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "${state.editorCanvasWidth} × ${state.editorCanvasHeight} px · ${state.editorLayers.count { it.visible }} de ${state.editorLayers.size} capas visibles",
+                    text = "Banner de Inicio · $NEWS_BANNER_PHONE_WIDTH_DP × $NEWS_BANNER_PHONE_HEIGHT_DP dp (${state.editorCanvasWidth} × ${state.editorCanvasHeight} px) · " +
+                        "${state.editorLayers.count { it.visible }} de ${state.editorLayers.size} capas visibles",
                     style = MaterialTheme.typography.labelMedium,
                     color = tokens.textSecondary,
                 )
@@ -146,7 +153,7 @@ internal fun NewsCanvasFrame(
         }
         if (showChrome && interactive) {
             Text(
-                text = "Flechas mueven 1 px (Mayús: 10) · Supr quita la capa · Ctrl+D duplica · Ctrl+Z / Ctrl+Y deshacen y rehacen · Ctrl+S guarda · Tab cambia de capa.",
+                text = "Flechas mueven 1 dp (Mayús: 10) · Supr quita la capa · Ctrl+D duplica · Ctrl+Z / Ctrl+Y deshacen y rehacen · Ctrl+S guarda · Tab cambia de capa.",
                 style = MaterialTheme.typography.labelSmall,
                 color = tokens.textSecondary,
             )
@@ -173,11 +180,15 @@ private fun dispatchCanvasKey(action: NewsCanvasKeyAction, state: NewsState, edi
     }
 }
 
-/** Vista previa fija, sin cromo ni gestos: lo que el rail y los diálogos ensenan. */
+/**
+ * Vista previa fija, sin cromo ni gestos: el banner tal como lo enmarca OposiBot (esquinas de 8 dp y borde blanco al
+ * 40 %, escalados al ancho pedido). [availableWidth] en dp: 358 es el movil a tamano real y 704 la tableta.
+ */
 @Composable
 internal fun NewsCanvasPreview(state: NewsState, availableWidth: Int, modifier: Modifier = Modifier) {
     val scale = availableWidth.toFloat() / state.editorCanvasWidth.coerceAtLeast(1)
-    Box(modifier = modifier.border(1.dp, GlassTheme.tokens.borderStrong)) {
+    val shape = RoundedCornerShape((NEWS_BANNER_CORNER_DP * availableWidth.toFloat() / NEWS_BANNER_PHONE_WIDTH_DP).dp)
+    Box(modifier = modifier.clip(shape).border(0.5.dp, NEWS_BANNER_BORDER, shape)) {
         NewsCanvasSurface(state, onIntent = {}, canvasDp = availableWidth, scale = scale, editable = false, onFocus = {})
     }
 }
@@ -196,12 +207,9 @@ private fun NewsCanvasSurface(
     onFocus: () -> Unit,
 ) {
     val tokens = GlassTheme.tokens
-    val accent = when (state.editorBackgroundType.toNewsBackgroundStyle()) {
-        "MINT" -> tokens.success
-        "GOLD" -> tokens.warning
-        else -> tokens.info
-    }
-    val canvasBase = MaterialTheme.colorScheme.scrim
+    // El documento NO usa el tema del panel: su fondo y su tinta son contenido editorial y tienen que verse igual en
+    // claro, en oscuro y en la app. Solo el cromo (seleccion, guias, tiradores) usa tokens.
+    val template = newsTemplate(state.editorBackgroundType)
     var guides by remember(state.selectedId) { mutableStateOf<List<NewsGuide>>(emptyList()) }
     val heightDp = (state.editorCanvasHeight * scale).roundToInt()
     Box(
@@ -209,8 +217,7 @@ private fun NewsCanvasSurface(
             .width(canvasDp.dp)
             .height(heightDp.dp)
             .clipToBounds()
-            .background(canvasBase)
-            .background(Brush.linearGradient(listOf(accent.copy(alpha = 0.35f), canvasBase)))
+            .background(Brush.linearGradient(template.background))
             .then(
                 if (editable) Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                     onFocus()
@@ -218,7 +225,13 @@ private fun NewsCanvasSurface(
                 } else Modifier,
             ),
     ) {
-        if (state.editorBackgroundUrl.isNotBlank()) NewsAssetImage(state.editorBackgroundUrl, Modifier.width(canvasDp.dp).height(heightDp.dp))
+        if (state.editorBackgroundUrl.isNotBlank()) {
+            NewsAssetImage(state.editorBackgroundUrl, Modifier.width(canvasDp.dp).height(heightDp.dp))
+            // Velo sobre la foto para que el texto claro se lea encima de cualquier imagen.
+            Box(Modifier.width(canvasDp.dp).height(heightDp.dp).background(NEWS_IMAGE_SCRIM))
+        } else {
+            NewsTemplateArtwork(template, Modifier.width(canvasDp.dp).height(heightDp.dp))
+        }
         val visible = state.editorLayers.filter { it.visible }.sortedBy { it.sortOrder }
         visible.forEach { layer ->
             NewsCanvasLayerBox(
@@ -235,17 +248,29 @@ private fun NewsCanvasSurface(
             ) {
                 if (layer.isImageLayer()) {
                     if (layer.content.isNotBlank()) NewsAssetImage(layer.content, Modifier.width((layer.width * scale).dp).height((layer.height * scale).dp))
-                    else Text("Imagen pendiente", Modifier.padding(4.dp), color = tokens.contentOn(canvasBase), style = MaterialTheme.typography.labelSmall)
+                    else Text("Imagen pendiente", Modifier.padding(4.dp), color = NEWS_DOCUMENT_INK, style = MaterialTheme.typography.labelSmall)
                 } else {
+                    var clipped by remember(layer.id) { mutableStateOf(false) }
+                    if (clipped && editable) {
+                        Box(
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .background(tokens.warning)
+                                .padding(horizontal = 4.dp, vertical = 1.dp),
+                        ) {
+                            Text("Texto cortado", color = tokens.contentOn(tokens.warning), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                     Text(
                         text = layer.content,
-                        color = newsLayerColor(layer.textColor, tokens.contentOn(canvasBase)),
+                        onTextLayout = { clipped = it.hasVisualOverflow },
+                        color = newsLayerColor(layer.textColor, NEWS_DOCUMENT_INK),
                         fontFamily = when (layer.fontFamily) { "serif" -> FontFamily.Serif; "mono" -> FontFamily.Monospace; "cursive" -> FontFamily.Cursive; else -> FontFamily.SansSerif },
                         fontSize = (layer.effectiveFontSizeSp() * scale).sp,
                         lineHeight = (layer.effectiveFontSizeSp() * scale * 1.2f).sp,
                         fontWeight = layer.effectiveFontWeight(),
                         overflow = TextOverflow.Clip,
-                        modifier = Modifier.padding(horizontal = (6 * scale).dp, vertical = (4 * scale).dp),
+                        modifier = Modifier.padding(horizontal = (NEWS_TEXT_INSET_X * scale).dp, vertical = (NEWS_TEXT_INSET_Y * scale).dp),
                     )
                 }
             }
@@ -258,7 +283,7 @@ private fun NewsCanvasSurface(
             }
         }
         if (visible.isEmpty()) {
-            Text("Añade una capa para empezar", Modifier.padding(20.dp), color = tokens.contentOn(canvasBase), style = MaterialTheme.typography.bodyMedium)
+            Text("Añade una capa para empezar", Modifier.padding(20.dp), color = NEWS_DOCUMENT_INK, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -294,7 +319,7 @@ private fun NewsCanvasLayerBox(
                 alpha = layer.opacity.coerceIn(0, 100) / 100f
                 rotationZ = layer.rotationDegrees.toFloat()
             }
-            .then(if (selected) Modifier.border(1.dp, tokens.accentInk) else Modifier)
+            .then(if (selected && editable) Modifier.border(1.dp, tokens.accentInk) else Modifier)
             .then(
                 if (!editable) Modifier else Modifier
                     .pointerHoverIcon(if (canDrag) PointerIcon.Hand else PointerIcon.Default)

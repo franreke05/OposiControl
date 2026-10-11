@@ -1,5 +1,8 @@
 package com.oposicontrol.admin.features.news.presentation
 
+import com.oposicontrol.admin.features.news.editor.NEWS_CANVAS_SCALE
+import com.oposicontrol.admin.features.news.editor.NEWS_DERIVED_TEXT_SIZE
+import com.oposicontrol.admin.features.news.editor.NEWS_DERIVED_TITLE_SIZE
 import androidx.compose.ui.text.font.FontWeight
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
@@ -99,8 +102,16 @@ internal fun NewsLayerDraft.rowSummary(): String {
     return if (detail.isBlank()) "$kindLabel · sin contenido" else "$kindLabel · $detail"
 }
 
-/** `fontSizeSp = 0` = derivado del tipo de capa: titulo 25 sp, resto 16 sp (lo que OposiBot pinta). */
-internal fun NewsLayerDraft.effectiveFontSizeSp(): Int = fontSizeSp.takeIf { it > 0 } ?: if (isTitleLayer()) 25 else 16
+/** `fontSizeSp = 0` = derivado del tipo de capa, en px del lienzo: titulo 18 dp de movil, resto 12 dp. */
+internal fun NewsLayerDraft.effectiveFontSizeSp(): Int =
+    fontSizeSp.takeIf { it > 0 } ?: if (isTitleLayer()) NEWS_DERIVED_TITLE_SIZE else NEWS_DERIVED_TEXT_SIZE
+
+/** Una medida del lienzo dicha en dp de movil: «18» para 72 px, «4,5» para 18 px. Es lo que se vera en el telefono. */
+internal fun newsCanvasPxAsPhoneDp(px: Int): String {
+    val whole = px / NEWS_CANVAS_SCALE
+    val rest = px % NEWS_CANVAS_SCALE
+    return if (rest == 0) whole.toString() else "$whole,${(rest * 100 / NEWS_CANVAS_SCALE).toString().trimEnd('0')}"
+}
 
 internal fun NewsLayerDraft.effectiveFontWeight(): FontWeight = when (fontWeight) {
     "bold" -> FontWeight.Bold
@@ -308,7 +319,7 @@ internal val newsInformationLines: List<String> = listOf(
     "Publicar fija la noticia: el contrato no admite editar una publicada. Para cambiarla, archívala y crea otra.",
     "Programada guarda la fecha; la activación automática en OposiBot no está definida todavía (decisión pendiente).",
     "Imágenes: PNG, JPG, WebP o GIF de hasta 10 MB; se comprimen al subir.",
-    "El lienzo mide 800 × 500, que es lo que OposiBot pinta. La tarjeta final del feed depende de la decisión D4-18.",
+    "El lienzo tiene la forma del banner de Inicio de OposiBot (358 × 148 dp), editado a 4 px por dp. OposiBot todavía no enseña noticias: su banner usa una imagen fija hasta que se conecte.",
 )
 
 internal fun newsLibraryMeta(item: NewsItem, state: NewsState): List<String> {

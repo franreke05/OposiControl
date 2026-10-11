@@ -2,6 +2,8 @@ package com.oposicontrol.admin.features.news.presentation
 
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.domain.model.NewsValidationReport
+import com.oposicontrol.admin.features.news.editor.NEWS_CANVAS_DEFAULT_HEIGHT
+import com.oposicontrol.admin.features.news.editor.NEWS_CANVAS_DEFAULT_WIDTH
 
 /**
  * Estado de la pantalla de Noticias.
@@ -46,8 +48,8 @@ data class NewsState(
     val editorPublishedAt: String = "",
     /** Version de concurrencia (ETag) de la ficha leida; vacia en una noticia nueva. */
     val editorVersion: String = "",
-    val editorCanvasWidth: Int = 800,
-    val editorCanvasHeight: Int = 500,
+    val editorCanvasWidth: Int = NEWS_CANVAS_DEFAULT_WIDTH,
+    val editorCanvasHeight: Int = NEWS_CANVAS_DEFAULT_HEIGHT,
     val editorBackgroundAssetStatus: String = "linked",
     val editorImageAssetStatus: String = "linked",
     val editorLayers: List<NewsLayerDraft> = emptyList(),

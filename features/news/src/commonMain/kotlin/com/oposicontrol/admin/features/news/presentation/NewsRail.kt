@@ -33,7 +33,7 @@ internal fun NewsRail(state: NewsState, onIntent: (NewsIntent) -> Unit, modifier
                 WorkspacePanel(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                     NewsCanvasPreview(state, RAIL_PREVIEW_WIDTH)
                     Text(
-                        text = "Mismo lienzo, mismas capas y mismo fondo que recibe OposiBot. La tarjeta del feed (recorte y marco) depende de la decisión D4-18.",
+                        text = "El banner de Inicio de OposiBot con sus esquinas y su borde. La app todavía no lo conecta: hoy enseña una imagen fija.",
                         style = MaterialTheme.typography.bodySmall,
                         color = tokens.textSecondary,
                     )

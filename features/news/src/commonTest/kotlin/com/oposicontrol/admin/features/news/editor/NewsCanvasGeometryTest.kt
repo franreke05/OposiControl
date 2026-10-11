@@ -53,8 +53,8 @@ class NewsCanvasGeometryTest {
         assertEquals(listOf(NewsGuide(vertical = true, position = 0)), left.guides)
 
         // Una capa ya alineada tambien ensena su guia: el borde inferior en el centro del lienzo (250).
-        val aligned = snapFrame(NewsFrame(310, 200, 100, 50), w, h)
-        assertEquals(NewsFrame(310, 200, 100, 50), aligned.frame)
+        val aligned = snapFrame(NewsFrame(100, 200, 100, 50), w, h)
+        assertEquals(NewsFrame(100, 200, 100, 50), aligned.frame)
         assertEquals(listOf(NewsGuide(vertical = false, position = 250)), aligned.guides)
 
         // Centro vertical a 3 px del centro del lienzo (250): y pasa a 225.

@@ -103,12 +103,12 @@ internal object NewsFixtures {
     )
 
     private val layers = listOf(
-        NewsLayerDraft("l-bg", "Fondo", "imagen", cover, 0, 0, 800, 500, 86, visible = true, sortOrder = 0),
-        NewsLayerDraft("l-title", "Título", "titulo", "Nueva convocatoria TCAE 2026", 48, 42, 520, 92, 100, textColor = "#FFFFFF", visible = true, sortOrder = 1, fontSizeSp = 34, fontWeight = "bold"),
-        NewsLayerDraft("l-sub", "Subtítulo", "texto", "Plazas, plazos y requisitos", 48, 150, 420, 44, 92, textColor = "#E6EEF2", visible = true, sortOrder = 2),
-        NewsLayerDraft("l-body", "Texto", "texto", "Consulta la convocatoria y prepara la documentación.", 48, 220, 430, 112, 88, textColor = "#FFFFFF", visible = true, sortOrder = 3, fontFamily = "serif"),
-        NewsLayerDraft("l-badge", "Etiqueta", "texto", "NUEVO", 640, 36, 112, 40, 100, textColor = "#FFFFFF", visible = true, locked = true, sortOrder = 4, fontWeight = "semibold"),
-        NewsLayerDraft("l-hidden", "Nota interna", "texto", "Revisar fechas", 48, 400, 300, 40, 100, visible = false, sortOrder = 5),
+        NewsLayerDraft("l-bg", "Fondo", "imagen", cover, 0, 0, 1432, 592, 86, visible = true, sortOrder = 0),
+        NewsLayerDraft("l-title", "Título", "titulo", "Nueva convocatoria TCAE 2026", 64, 48, 900, 232, 100, textColor = "#FFFFFF", visible = true, sortOrder = 1, fontSizeSp = 80, fontWeight = "bold"),
+        NewsLayerDraft("l-sub", "Subtítulo", "texto", "Plazas, plazos y requisitos", 64, 292, 760, 92, 92, textColor = "#E6EEF2", visible = true, sortOrder = 2),
+        NewsLayerDraft("l-body", "Texto", "texto", "Consulta la convocatoria y prepara la documentación.", 64, 396, 900, 160, 88, textColor = "#FFFFFF", visible = true, sortOrder = 3, fontFamily = "serif"),
+        NewsLayerDraft("l-badge", "Etiqueta", "texto", "NUEVO", 1108, 48, 260, 96, 100, textColor = "#FFFFFF", visible = true, locked = true, sortOrder = 4, fontWeight = "semibold"),
+        NewsLayerDraft("l-hidden", "Nota interna", "texto", "Revisar fechas", 64, 480, 520, 96, 100, visible = false, sortOrder = 5),
     )
 
     private fun base() = NewsState(
@@ -157,8 +157,8 @@ internal object NewsFixtures {
         editorBackgroundPath = "",
         editorBackgroundUrl = "",
         editorLayers = listOf(
-            NewsLayerDraft("t", "Título", "titulo", "Título de noticia", 48, 42, 430, 82, 100, visible = true, sortOrder = 0),
-            NewsLayerDraft("s", "Subtítulo", "texto", "Especialidad - Tipo", 48, 142, 360, 44, 92, visible = true, sortOrder = 1),
+            NewsLayerDraft("t", "Título", "titulo", "Título de noticia", 64, 48, 900, 216, 100, visible = true, sortOrder = 0),
+            NewsLayerDraft("s", "Subtítulo", "texto", "Especialidad - Tipo", 64, 276, 800, 92, 92, visible = true, sortOrder = 1),
         ),
         selectedLayerId = null,
         selectedTarget = NewsEditorSelection.ARTICLE,

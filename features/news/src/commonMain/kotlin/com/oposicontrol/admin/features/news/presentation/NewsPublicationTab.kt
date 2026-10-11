@@ -22,6 +22,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_PHONE_HEIGHT_DP
+import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_PHONE_WIDTH_DP
+import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_TABLET_WIDTH_DP
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AppIcon
@@ -51,7 +55,7 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun NewsPublicationTab(state: NewsState, onIntent: (NewsIntent) -> Unit) {
+internal fun NewsPublicationTab(state: NewsState, onIntent: (NewsIntent) -> Unit, contentWidth: Dp) {
     val tokens = GlassTheme.tokens
     val busy = state.actionState is UiAsync.Loading
     val status = state.editorStatus.lowercase()
@@ -74,8 +78,8 @@ internal fun NewsPublicationTab(state: NewsState, onIntent: (NewsIntent) -> Unit
                         state.isNew() -> "Todavía no existe en el servidor."
                         status == "draft" -> "Solo la ven los administradores."
                         status == "scheduled" -> "Guardada con fecha; sigue sin verse en OposiBot."
-                        status == "published" -> "Visible en OposiBot."
-                        status == "archived" -> "Retirada de OposiBot."
+                        status == "published" -> "Publicada en el servidor. La app la enseñará cuando su banner se conecte."
+                        status == "archived" -> "Retirada: ya no cuenta como publicada."
                         else -> "Estado que este panel no reconoce."
                     },
                     style = MaterialTheme.typography.bodyMedium,
@@ -94,6 +98,8 @@ internal fun NewsPublicationTab(state: NewsState, onIntent: (NewsIntent) -> Unit
             )
         }
     }
+
+    NewsAppPreviewSection(state, contentWidth)
 
     FormSection(
         title = "Comprobaciones",
@@ -170,6 +176,42 @@ internal fun NewsPublicationTab(state: NewsState, onIntent: (NewsIntent) -> Unit
 }
 
 /** Fecha y hora UTC a mano: lo que el contrato pide es un instante futuro, y el servidor es quien lo valida. */
+/** Lo que la seccion y el scroll de `WorkspaceEditor` se quedan del ancho de columna, mas el panel interior. */
+private const val PREVIEW_INNER_INSET = 50 + 2 * 16
+
+/**
+ * El banner de Inicio de OposiBot a tamano REAL: 358 dp en el movil y 704 dp en la tableta (misma proporcion). Es la
+ * unica superficie de la app donde cabe una noticia, y por eso el lienzo tiene exactamente su forma. La tableta se
+ * ensena a su tamano si cabe en la columna; si no, encogida, y se dice.
+ */
+@Composable
+private fun NewsAppPreviewSection(state: NewsState, contentWidth: Dp) {
+    val tokens = GlassTheme.tokens
+    val available = (contentWidth.value.toInt() - PREVIEW_INNER_INSET).coerceAtLeast(NEWS_BANNER_PHONE_WIDTH_DP)
+    val tabletWidth = NEWS_BANNER_TABLET_WIDTH_DP.coerceAtMost(available)
+    FormSection(
+        title = "Así se verá en OposiBot",
+        description = "El banner de Inicio a tamaño real. OposiBot todavía no enseña noticias: hoy su banner usa una imagen fija.",
+        icon = AppIcon.VIEW,
+        iconRole = SemanticRole.INFO,
+    ) {
+        WorkspacePanel(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            Text("Móvil · $NEWS_BANNER_PHONE_WIDTH_DP × $NEWS_BANNER_PHONE_HEIGHT_DP dp", style = MaterialTheme.typography.labelMedium, color = tokens.textSecondary)
+            NewsCanvasPreview(state, NEWS_BANNER_PHONE_WIDTH_DP)
+            Text(
+                text = if (tabletWidth == NEWS_BANNER_TABLET_WIDTH_DP) {
+                    "Tableta · $NEWS_BANNER_TABLET_WIDTH_DP × 291 dp"
+                } else {
+                    "Tableta · $NEWS_BANNER_TABLET_WIDTH_DP × 291 dp, encogida a $tabletWidth dp para caber aquí"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = tokens.textSecondary,
+            )
+            NewsCanvasPreview(state, tabletWidth)
+        }
+    }
+}
+
 @Composable
 private fun NewsScheduleBlock(state: NewsState, enabled: Boolean, busy: Boolean, onIntent: (NewsIntent) -> Unit) {
     val tokens = GlassTheme.tokens

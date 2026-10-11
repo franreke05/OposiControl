@@ -50,9 +50,9 @@ internal fun renderNewsCapture(capture: NewsCapture, content: @Composable () -> 
                         currentRouteId = "publication.news",
                         groups = NEWS_HARNESS_SIDEBAR,
                         onRouteSelected = {},
-                        environmentLabel = "Entorno dev | vista frontend",
+                        environmentLabel = "Entorno production",
                         title = "Noticias",
-                        description = "Lo que OposiBot enseña en su tablón: redacción, composición y publicación.",
+                        description = "Gestiona, prepara y publica las noticias que aparecen en OposiBot.",
                         breadcrumbs = listOf("Publicación", "Noticias"),
                         globalSearch = {},
                     ) {
@@ -87,12 +87,12 @@ internal val newsHarnessOutputDir: File by lazy { File("build/visual-harness").a
 internal val newsFixtureCover: String by lazy {
     val file = File(newsHarnessOutputDir, "fixtures/fixture-cover.png")
     file.parentFile.mkdirs()
-    val bitmap = BufferedImage(800, 500, BufferedImage.TYPE_INT_RGB)
+    val bitmap = BufferedImage(1432, 592, BufferedImage.TYPE_INT_RGB)
     bitmap.createGraphics().apply {
-        color = Color(26, 51, 67); fillRect(0, 0, 800, 500)
-        color = Color(57, 115, 140); fillOval(430, -90, 460, 460)
-        color = Color(103, 168, 183); fillRoundRect(580, 160, 130, 340, 24, 24)
-        color = Color(38, 75, 94); fillRoundRect(460, 280, 100, 240, 20, 20)
+        color = Color(26, 51, 67); fillRect(0, 0, 1432, 592)
+        color = Color(57, 115, 140); fillOval(900, -120, 560, 560)
+        color = Color(103, 168, 183); fillRoundRect(1130, 150, 170, 442, 32, 32)
+        color = Color(38, 75, 94); fillRoundRect(980, 300, 130, 292, 28, 28)
         dispose()
     }
     ImageIO.write(bitmap, "png", file)
@@ -119,7 +119,6 @@ internal val NEWS_HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
         "Usuarios",
         listOf(
             ShellNavigationItem("users", "Usuarios", AppIcon.USERS.key),
-            ShellNavigationItem("commercial.tickets", "OposiTickets", AppIcon.TICKETS.key),
         ),
     ),
     ShellNavigationGroup(

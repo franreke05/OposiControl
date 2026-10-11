@@ -26,8 +26,8 @@ enum class NewsResizeCorner(val atEnd: Boolean, val atBottom: Boolean) {
     BOTTOM_END(true, true),
 }
 
-/** Distancia (px del lienzo) a la que una arista se imanta a una guia. */
-const val NEWS_SNAP_THRESHOLD: Int = 6
+/** Distancia (px del lienzo) a la que una arista se imanta a una guia: 3 dp de movil. */
+const val NEWS_SNAP_THRESHOLD: Int = 3 * NEWS_CANVAS_SCALE
 
 /**
  * Recorta un marco al lienzo conservando su origen cuando es posible: primero se acota la posicion, despues el

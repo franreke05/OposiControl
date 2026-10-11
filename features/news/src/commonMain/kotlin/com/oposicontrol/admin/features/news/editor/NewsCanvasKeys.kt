@@ -15,9 +15,9 @@ sealed interface NewsCanvasKeyAction {
     data object PreviousLayer : NewsCanvasKeyAction
 }
 
-/** Flechas, 1 px; con Mayus, 10 px. */
-const val NEWS_NUDGE_STEP: Int = 1
-const val NEWS_NUDGE_STEP_LARGE: Int = 10
+/** Flechas, 1 dp de movil; con Mayus, 10 dp. En px del lienzo: lo que la app puede distinguir de verdad. */
+const val NEWS_NUDGE_STEP: Int = NEWS_CANVAS_SCALE
+const val NEWS_NUDGE_STEP_LARGE: Int = 10 * NEWS_CANVAS_SCALE
 
 /**
  * Mapa de teclado del lienzo. `null` = la tecla no es nuestra y sigue su camino (navegacion por teclado del panel).

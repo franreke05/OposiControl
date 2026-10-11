@@ -81,11 +81,12 @@ internal fun NewsDesignTab(state: NewsState, onIntent: (NewsIntent) -> Unit, con
     val editable = state.isEditable() && state.actionState !is UiAsync.Loading
     val selected = state.editorLayers.firstOrNull { it.id == state.selectedLayerId }
 
-    NewsDesignToolbar(state, selected, editable, onIntent)
+    NewsDesignToolbar(state, editable, onIntent)
     if (sideBySide) {
         Row(horizontalArrangement = Arrangement.spacedBy(INSPECTOR_GAP), verticalAlignment = Alignment.Top) {
             Column(modifier = Modifier.width(canvasAreaWidth.dp), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
                 NewsCanvasFrame(state, onIntent, canvasAreaWidth, zoom, { zoom = it }, interactive = true)
+                NewsLayerActions(state, selected, editable, onIntent)
                 NewsLayersList(state, editable, onIntent)
             }
             Column(modifier = Modifier.width(NEWS_INSPECTOR_WIDTH.dp)) {
@@ -94,19 +95,20 @@ internal fun NewsDesignTab(state: NewsState, onIntent: (NewsIntent) -> Unit, con
         }
     } else {
         NewsCanvasFrame(state, onIntent, canvasAreaWidth, zoom, { zoom = it }, interactive = true)
+        NewsLayerActions(state, selected, editable, onIntent)
         NewsLayersList(state, editable, onIntent)
         NewsLayerInspector(state, selected, editable, onIntent)
     }
 }
 
-/** Deshacer/rehacer, anadir capas, alinear y ordenar la seleccionada. Cada boton esta porque hace algo. */
+/**
+ * Una sola fila sobre el lienzo: historial, anadir capas y ampliar. Es todo lo que no depende de la capa seleccionada;
+ * con mas filas aqui el lienzo quedaba fuera de la vista en una ventana de 768 de alto.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun NewsDesignToolbar(state: NewsState, selected: NewsLayerDraft?, editable: Boolean, onIntent: (NewsIntent) -> Unit) {
-    val tokens = GlassTheme.tokens
+private fun NewsDesignToolbar(state: NewsState, editable: Boolean, onIntent: (NewsIntent) -> Unit) {
     val imagePicker = rememberNewsImagePicker { onIntent(NewsIntent.AddLayerWithImage(it)) }
-    val canMove = editable && selected != null && !selected.locked
-    val lastIndex = state.editorLayers.lastIndex
     WorkspacePanel(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
         FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
             SecondaryButton("Deshacer", { onIntent(NewsIntent.Undo) }, size = ButtonSize.COMPACT, enabled = editable && state.canUndo, icon = { AppIconImage(AppIcon.BACK, size = 14.dp) })
@@ -118,25 +120,48 @@ private fun NewsDesignToolbar(state: NewsState, selected: NewsLayerDraft?, edita
             NewsToolbarDivider()
             GhostButton("Ampliar", { onIntent(NewsIntent.ToggleCanvasFullscreen) }, size = ButtonSize.COMPACT, icon = { AppIconImage(AppIcon.VIEW, size = 14.dp) })
         }
+    }
+}
+
+/** Lo que se hace CON la capa seleccionada —alinear, ordenar, duplicar, quitar—, justo debajo del lienzo donde se ve. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NewsLayerActions(state: NewsState, selected: NewsLayerDraft?, editable: Boolean, onIntent: (NewsIntent) -> Unit) {
+    val tokens = GlassTheme.tokens
+    val canMove = editable && selected != null && !selected.locked
+    val lastIndex = state.editorLayers.lastIndex
+    WorkspacePanel(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Text(
+            text = if (selected == null) "Selecciona una capa del lienzo o de la lista para alinearla u ordenarla." else "Capa seleccionada: ${selected.name.ifBlank { "Capa" }}",
+            style = MaterialTheme.typography.labelMedium,
+            color = tokens.textSecondary,
+        )
         FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
-            Text(
-                text = if (selected == null) "Selecciona una capa para alinearla u ordenarla." else "Capa: ${selected.name.ifBlank { "Capa" }}",
-                style = MaterialTheme.typography.labelMedium,
-                color = tokens.textSecondary,
-                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-            )
+            NewsToolbarGroupLabel("Alinear")
             NewsAlignment.entries.forEach { alignment ->
-                GhostButton(alignmentLabel(alignment), { selected?.let { onIntent(NewsIntent.AlignLayer(it.id, alignment)) } }, size = ButtonSize.COMPACT, enabled = canMove)
+                SecondaryButton(alignmentLabel(alignment), { selected?.let { onIntent(NewsIntent.AlignLayer(it.id, alignment)) } }, size = ButtonSize.COMPACT, enabled = canMove)
             }
-            NewsToolbarDivider()
-            GhostButton("Al frente", { selected?.let { onIntent(NewsIntent.BringLayerToFront(it.id)) } }, size = ButtonSize.COMPACT, enabled = canMove && selected.sortOrder < lastIndex)
-            GhostButton("Adelante", { selected?.let { onIntent(NewsIntent.MoveLayerUp(it.id)) } }, size = ButtonSize.COMPACT, enabled = canMove && selected.sortOrder < lastIndex)
-            GhostButton("Atrás", { selected?.let { onIntent(NewsIntent.MoveLayerDown(it.id)) } }, size = ButtonSize.COMPACT, enabled = canMove && selected.sortOrder > 0)
-            GhostButton("Al fondo", { selected?.let { onIntent(NewsIntent.SendLayerToBack(it.id)) } }, size = ButtonSize.COMPACT, enabled = canMove && selected.sortOrder > 0)
-            NewsToolbarDivider()
-            GhostButton("Duplicar", { selected?.let { onIntent(NewsIntent.DuplicateLayer(it.id)) } }, size = ButtonSize.COMPACT, enabled = editable && selected != null)
+        }
+        FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+            NewsToolbarGroupLabel("Orden")
+            SecondaryButton("Al frente", { selected?.let { onIntent(NewsIntent.BringLayerToFront(it.id)) } }, size = ButtonSize.COMPACT, enabled = canMove && selected.sortOrder < lastIndex)
+            SecondaryButton("Adelante", { selected?.let { onIntent(NewsIntent.MoveLayerUp(it.id)) } }, size = ButtonSize.COMPACT, enabled = canMove && selected.sortOrder < lastIndex)
+            SecondaryButton("Atrás", { selected?.let { onIntent(NewsIntent.MoveLayerDown(it.id)) } }, size = ButtonSize.COMPACT, enabled = canMove && selected.sortOrder > 0)
+            SecondaryButton("Al fondo", { selected?.let { onIntent(NewsIntent.SendLayerToBack(it.id)) } }, size = ButtonSize.COMPACT, enabled = canMove && selected.sortOrder > 0)
+        }
+        FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+            NewsToolbarGroupLabel("Capa")
+            SecondaryButton("Duplicar", { selected?.let { onIntent(NewsIntent.DuplicateLayer(it.id)) } }, size = ButtonSize.COMPACT, enabled = editable && selected != null)
             DangerOutlineButton("Quitar", { selected?.let { onIntent(NewsIntent.RemoveLayer(it.id)) } }, size = ButtonSize.COMPACT, enabled = canMove)
         }
+    }
+}
+
+@Composable
+private fun NewsToolbarGroupLabel(text: String) {
+    // Ancho fijo: «Alinear» y «Orden» empiezan sus botones en la misma vertical.
+    Box(Modifier.width(56.dp).height(Sizing.buttonCompact), contentAlignment = Alignment.CenterStart) {
+        Text(text, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = GlassTheme.tokens.textSecondary)
     }
 }
 
@@ -147,10 +172,10 @@ private fun NewsToolbarDivider() {
 
 private fun alignmentLabel(alignment: NewsAlignment): String = when (alignment) {
     NewsAlignment.LEFT -> "Izquierda"
-    NewsAlignment.CENTER_H -> "Centro H"
+    NewsAlignment.CENTER_H -> "Centro"
     NewsAlignment.RIGHT -> "Derecha"
     NewsAlignment.TOP -> "Arriba"
-    NewsAlignment.CENTER_V -> "Centro V"
+    NewsAlignment.CENTER_V -> "Medio"
     NewsAlignment.BOTTOM -> "Abajo"
 }
 
@@ -312,12 +337,12 @@ private fun NewsLayerInspector(state: NewsState, layer: NewsLayerDraft?, editabl
             )
             WorkspaceEqualRow(columns = 2, gap = Spacing.xs) {
                 LabeledField(
-                    label = "Tamaño (sp)",
+                    label = "Tamaño (px)",
                     value = if (layer.fontSizeSp == 0) "" else layer.fontSizeSp.toString(),
                     onValueChange = { onIntent(NewsIntent.UpdateLayerFontSize(layer.id, it.ifBlank { "0" })) },
                     placeholder = "${layer.effectiveFontSizeSp()} (del tipo)",
                     readOnly = !canEdit,
-                    supportingText = "8 a 200. Vacío = del tipo de capa.",
+                    supportingText = "${newsCanvasPxAsPhoneDp(layer.effectiveFontSizeSp())} dp en el móvil. Vacío = del tipo de capa.",
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
                     LabeledField(

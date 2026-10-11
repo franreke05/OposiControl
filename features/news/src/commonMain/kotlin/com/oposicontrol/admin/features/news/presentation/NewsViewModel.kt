@@ -813,7 +813,12 @@ class NewsViewModel(
 
     private fun addTextLayer() {
         val layers = currentState().editorLayers
-        val layer = NewsLayerDraft(randomUuid(), "Texto ${layers.size + 1}", "texto", "", 48, 180 + (layers.size * 18), 280, 64, 100, visible = true, sortOrder = layers.size)
+        // Cada capa nueva nace un poco mas abajo que la anterior para no taparla, sin salirse del lienzo.
+        val layer = NewsLayerDraft(
+            randomUuid(), "Texto ${layers.size + 1}", "texto", "",
+            x = 64, y = (240 + layers.size * 24).coerceAtMost(NEWS_CANVAS_DEFAULT_HEIGHT - 112), width = 640, height = 112,
+            opacity = 100, visible = true, sortOrder = layers.size,
+        )
         commit(NewsEditGroup("add", layer.id)) {
             it.copy(editorLayers = (layers + layer).normalizedLayerOrder(), selectedTarget = NewsEditorSelection.LAYER, selectedLayerId = layer.id)
         }
@@ -1114,9 +1119,11 @@ internal fun NewsState.withClampedLayers(): NewsState =
     copy(editorLayers = editorLayers.map { it.coerceInsideCanvas(editorCanvasWidth, editorCanvasHeight) }.normalizedLayerOrder())
 
 private fun defaultLayers(title: String, subtitle: String, body: String): List<NewsLayerDraft> = listOf(
-    NewsLayerDraft(randomUuid(), "Título", "titulo", title, 48, 42, 430, 82, 100, visible = true, sortOrder = 0),
-    NewsLayerDraft(randomUuid(), "Subtítulo", "texto", subtitle, 48, 142, 360, 44, 92, visible = true, sortOrder = 1),
-    NewsLayerDraft(randomUuid(), "Texto", "texto", body, 48, 220, 430, 112, 88, visible = body.isNotBlank(), sortOrder = 2),
+    // En px del lienzo (4 por dp de movil): margen de 16 dp y alto para que quepan dos lineas de titulo (2 x 72 x 1,2
+    // + margenes), una de subtitulo y tres de texto, todo dentro de 592.
+    NewsLayerDraft(randomUuid(), "Título", "titulo", title, 64, 48, 900, 216, 100, visible = true, sortOrder = 0),
+    NewsLayerDraft(randomUuid(), "Subtítulo", "texto", subtitle, 64, 276, 800, 92, 92, visible = true, sortOrder = 1),
+    NewsLayerDraft(randomUuid(), "Texto", "texto", body, 64, 380, 900, 180, 88, visible = body.isNotBlank(), sortOrder = 2),
 )
 
 internal fun List<NewsLayerDraft>.normalizedLayerOrder(): List<NewsLayerDraft> =
@@ -1139,7 +1146,7 @@ private fun List<NewsLayerDraft>.withSingleTitleLayer(title: String, canvasWidth
     val normalizedTitle = (
         titleLayer ?: NewsLayerDraft(
             id = randomUuid(), name = "Título", kind = "titulo", content = title.ifBlank { "Título de noticia" },
-            x = 48, y = 42, width = 460, height = 92, opacity = 100, fontFamily = "sans", textColor = "#FFFFFF",
+            x = 64, y = 48, width = 900, height = 216, opacity = 100, fontFamily = "sans", textColor = "#FFFFFF",
             visible = true, sortOrder = nonTitle.size,
         )
         ).copy(

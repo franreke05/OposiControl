@@ -118,7 +118,7 @@ internal fun NewsEditorPane(
                 when (state.editorTab) {
                     NewsEditorTab.CONTENT -> NewsContentTab(state, onIntent)
                     NewsEditorTab.DESIGN -> NewsDesignTab(state, onIntent, contentWidth)
-                    NewsEditorTab.PUBLICATION -> NewsPublicationTab(state, onIntent)
+                    NewsEditorTab.PUBLICATION -> NewsPublicationTab(state, onIntent, contentWidth)
                 }
             }
         }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -32,7 +33,9 @@ import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
 
 /** Alto de la vista previa del fondo y de la imagen de la tarjeta dentro de la ficha. */
-private val ASSET_PREVIEW_HEIGHT = 180.dp
+/** Vista de una imagen subida, con la proporcion del banner de Inicio (358 : 148): asi se ve como la recorta el lienzo. */
+private val ASSET_PREVIEW_HEIGHT = 148.dp
+private val ASSET_PREVIEW_WIDTH = 358.dp
 
 private val BACKGROUND_STYLES = listOf<Pair<String?, String>>("SKY" to "Cielo", "MINT" to "Menta", "GOLD" to "Dorado")
 
@@ -181,7 +184,7 @@ private fun NewsAssetField(
         when {
             upload != null -> NewsUploadRow(upload, onIntent)
             path.isNotBlank() && url.isNotBlank() -> {
-                NewsAssetImage(url, Modifier.fillMaxWidth().height(ASSET_PREVIEW_HEIGHT).clip(Radius.card))
+                NewsAssetImage(url, Modifier.width(ASSET_PREVIEW_WIDTH).height(ASSET_PREVIEW_HEIGHT).clip(Radius.card))
                 Text(text = newsAssetName(path), style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
             }
             path.isNotBlank() -> Text(
