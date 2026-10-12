@@ -33,6 +33,8 @@ internal fun motionFilmstrip(
     height: Int = 768,
     content: @Composable (step: Int) -> Unit,
 ) {
+    // Evidencia y medidas a peticion: dependen de la carga de la maquina y no forman parte de la bateria normal.
+    if (System.getenv("OPOSI_MOTION_EVIDENCE") != "1") return
     runDesktopComposeUiTest(width = width, height = height) {
         var step by mutableStateOf(0)
         setContent {
@@ -96,6 +98,8 @@ internal fun motionPerformance(
     maxHeapGrowthMb: Long = 96,
     content: @Composable (step: Int) -> Unit,
 ) {
+    // Evidencia y medidas a peticion: dependen de la carga de la maquina y no forman parte de la bateria normal.
+    if (System.getenv("OPOSI_MOTION_EVIDENCE") != "1") return
     val lines = mutableListOf<String>()
     var staticCost = 0.0
     for (motion in listOf(false, true)) {

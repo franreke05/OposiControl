@@ -77,6 +77,8 @@ class TicketsMotionEvidence {
     }
 
     private fun filmstrip(name: String, before: TicketsState, after: TicketsState, offsets: List<Long> = listOf(16, 64, 128, 208, 320)) {
+    // Evidencia y medidas a peticion: dependen de la carga de la maquina y no forman parte de la bateria normal.
+    if (System.getenv("OPOSI_MOTION_EVIDENCE") != "1") return
         runDesktopComposeUiTest(width = FRAME_WIDTH, height = FRAME_HEIGHT) {
             var state by mutableStateOf(before)
             setContent {
