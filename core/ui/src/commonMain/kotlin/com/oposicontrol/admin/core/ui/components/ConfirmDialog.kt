@@ -15,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 
 /**
@@ -37,7 +36,7 @@ fun ConfirmDialog(
     // `dismissOnBackPress` cubre Esc en escritorio y el gesto atrás en móvil (§50).
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true),
+        properties = overlayDialogProperties(),
     ) {
         GlassSurface(
             modifier = Modifier.widthIn(min = 280.dp, max = 420.dp).motionOverlayEntrance(),
