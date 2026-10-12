@@ -37,6 +37,25 @@ import com.oposicontrol.admin.domain.model.TagSearchQuery
 import com.oposicontrol.admin.domain.model.TaggedSearchResult
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
 import kotlinx.coroutines.delay
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
+
+/** Espera tras la ultima pulsacion antes de consultar: cada busqueda descarga el indice entero desde la base de datos. */
+private const val TAG_SUGGESTION_DEBOUNCE_MILLIS = 350L
+private const val SEARCH_DEBOUNCE_MILLIS = 450L
+
+/** Las sugerencias de etiquetas que se ensenan sin haber escrito nada, recordadas durante cinco minutos. */
+private object IdleTagSuggestions {
+    private val ttl = 5.minutes
+    private var stored: Pair<TimeMark, List<Tag>>? = null
+
+    fun fresh(): List<Tag>? = stored?.takeIf { it.first.elapsedNow() < ttl }?.second
+
+    fun store(tags: List<Tag>) {
+        stored = TimeSource.Monotonic.markNow() to tags
+    }
+}
 
 @Composable
 fun GlobalTagSearch(
@@ -61,15 +80,23 @@ fun GlobalTagSearch(
     }
 
     LaunchedEffect(query) {
-        delay(180)
+        // Sin texto, las sugerencias son siempre las mismas: se reutilizan unos minutos en vez de volver a descargarlas
+        // cada vez que se cambia de pantalla (el buscador se monta en casi todas).
+        if (query.isBlank()) {
+            IdleTagSuggestions.fresh()?.let { tags = it; return@LaunchedEffect }
+        }
+        delay(TAG_SUGGESTION_DEBOUNCE_MILLIS)
         when (val result = repository.findTags(query)) {
             is AppResult.Failure -> Unit
-            is AppResult.Success -> tags = result.value
+            is AppResult.Success -> {
+                tags = result.value
+                if (query.isBlank()) IdleTagSuggestions.store(result.value)
+            }
         }
     }
 
     LaunchedEffect(query, selectedTags, sectionOnly, currentSection) {
-        delay(260)
+        delay(SEARCH_DEBOUNCE_MILLIS)
         if (query.isBlank() && selectedTags.isEmpty()) {
             results = UiAsync.Idle
             return@LaunchedEffect
