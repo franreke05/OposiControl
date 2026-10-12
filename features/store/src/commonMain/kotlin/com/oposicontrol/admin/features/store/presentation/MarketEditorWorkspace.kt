@@ -158,6 +158,9 @@ internal fun <T, D> MarketEditorWorkspace(
                 } else {
                     null
                 },
+                // Packs, servicios, promociones y avisos comparten esta ficha y, con ella, el mismo movimiento: el cuerpo
+                // entra al abrir otro registro; guardar no lo mueve.
+                contentKey = editor.openSeq to (alternateContent != null),
             ) {
                 // Lo que cambia el sentido de «guardar» en estas cuatro secciones va en la ficha, no sólo en la columna
                 // de información: esa columna no se enseña por debajo de 1500 dp de ancho, y el aviso no puede perderse.

@@ -42,6 +42,11 @@ data class CommercialPlansState(
     val pageIndex: Int = 0,
     val selectedId: String? = null,
     val creatingNew: Boolean = false,
+    /**
+     * Cuenta las veces que se ABRE otro registro (o un borrador nuevo). Es la clave del movimiento de entrada de la ficha:
+     * cambia al abrir, no al guardar, para que crear un registro no haga «entrar» otra vez el formulario que ya se ve.
+     */
+    val openSeq: Int = 0,
     val tab: PlanTab = PlanTab.PLAN,
     val draft: PlanDraft = PlanDraft(),
     val benefitDraft: BenefitDraft? = null,
@@ -167,6 +172,7 @@ class CommercialPlansViewModel(
             it.copy(
                 selectedId = plan?.id,
                 creatingNew = planId == null,
+                openSeq = if (plan?.id == it.selectedId && (planId == null) == it.creatingNew) it.openSeq else it.openSeq + 1,
                 draft = plan?.toDraft() ?: PlanDraft(),
                 tab = if (keepTab && plan != null) it.tab else PlanTab.PLAN,
                 benefitDraft = null,

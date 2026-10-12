@@ -62,6 +62,11 @@ data class MarketEditor<T, D>(
     val pageIndex: Int = 0,
     val selectedId: String? = null,
     val creatingNew: Boolean = false,
+    /**
+     * Cuenta las veces que se ABRE otro registro (o un borrador nuevo). Es la clave del movimiento de entrada de la ficha:
+     * cambia al abrir, no al guardar, para que crear un registro no haga «entrar» otra vez el formulario que ya se ve.
+     */
+    val openSeq: Int = 0,
     val draft: D,
     /** Destino pendiente de confirmar cuando se intenta salir de una ficha con cambios. */
     val pendingOpen: PendingEditorOpen? = null,
@@ -95,9 +100,11 @@ internal fun <T, D> MarketEditor<T, D>.problem(spec: MarketEditorSpec<T, D>): St
 
 private fun <T, D> MarketEditor<T, D>.opened(spec: MarketEditorSpec<T, D>, id: String?): MarketEditor<T, D> {
     val item = id?.let { wanted -> all.firstOrNull { spec.id(it) == wanted } }
+    val openedId = item?.let(spec::id)
     return copy(
-        selectedId = item?.let(spec::id),
+        selectedId = openedId,
         creatingNew = id == null,
+        openSeq = if (openedId == selectedId && (id == null) == creatingNew) openSeq else openSeq + 1,
         draft = item?.let(spec::toDraft) ?: spec.emptyDraft,
         pendingOpen = null,
         actionState = UiAsync.Idle,

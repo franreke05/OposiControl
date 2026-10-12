@@ -61,6 +61,11 @@ data class CommercialCatalogState(
     val pageIndex: Int = 0,
     val selectedId: String? = null,
     val creatingNew: Boolean = false,
+    /**
+     * Cuenta las veces que se ABRE otro registro (o un borrador nuevo). Es la clave del movimiento de entrada de la ficha:
+     * cambia al abrir, no al guardar, para que crear un registro no haga «entrar» otra vez el formulario que ya se ve.
+     */
+    val openSeq: Int = 0,
     val tab: ProductTab = ProductTab.PRODUCT,
     val draft: ProductDraft = ProductDraft(),
     val tariffDraft: TariffDraft? = null,
@@ -207,6 +212,7 @@ class CommercialCatalogViewModel(
             it.copy(
                 selectedId = product?.id,
                 creatingNew = productId == null,
+                openSeq = if (product?.id == it.selectedId && (productId == null) == it.creatingNew) it.openSeq else it.openSeq + 1,
                 draft = product?.toDraft() ?: ProductDraft(),
                 tab = if (keepTab && product != null) it.tab else ProductTab.PRODUCT,
                 tariffDraft = null,

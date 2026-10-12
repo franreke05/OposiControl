@@ -1,7 +1,6 @@
 package com.oposicontrol.admin.features.store.presentation
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -39,7 +38,6 @@ import com.oposicontrol.admin.core.ui.components.GlassSearchBar
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.components.SemanticRole
-import com.oposicontrol.admin.core.ui.components.WORKSPACE_COLOR_MILLIS
 import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.core.ui.components.StatusTone
 import com.oposicontrol.admin.core.ui.components.WorkspaceCatalogRow
@@ -57,6 +55,9 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
+import androidx.compose.runtime.key
 
 /**
  * Lo que comparten TODOS los catálogos comerciales —productos, planes, packs, servicios, promociones y pop-ups—: una
@@ -236,6 +237,8 @@ internal fun <T> StoreCatalogPane(
                     PrimaryButton(text = createLabel, onClick = onCreate, size = ButtonSize.COMPACT)
                 }
             },
+            // La lista sigue en pantalla cuando llegan datos nuevos: guardar no la devuelve arriba ni la funde consigo misma.
+            stableContent = true,
         ) { rows ->
             val scroll = rememberScrollState()
             Box(modifier = Modifier.fillMaxWidth()) {
@@ -245,16 +248,21 @@ internal fun <T> StoreCatalogPane(
                 ) {
                     rows.forEach { item ->
                         val spec = row(item)
-                        WorkspaceCatalogRow(
-                            title = spec.title,
-                            selected = spec.key == selectedKey,
-                            onClick = { onSelect(spec.key) },
-                            icon = rowIcon,
-                            eyebrow = spec.eyebrow,
-                            description = spec.description,
-                            meta = spec.meta,
-                            trailing = { StatusChip(status = spec.status, tone = spec.statusTone) },
-                        )
+                        // La identidad es el registro, no la posicion: filtrar no «cambia» la fila que queda arriba, y la que
+                        // se acaba de guardar (lo que dice la fila es otro) se resalta un instante.
+                        key(spec.key) {
+                            WorkspaceCatalogRow(
+                                title = spec.title,
+                                selected = spec.key == selectedKey,
+                                onClick = { onSelect(spec.key) },
+                                icon = rowIcon,
+                                eyebrow = spec.eyebrow,
+                                description = spec.description,
+                                meta = spec.meta,
+                                trailing = { StatusChip(status = spec.status, tone = spec.statusTone) },
+                                changeKey = spec,
+                            )
+                        }
                     }
                 }
                 DesktopVerticalScrollbar(scrollState = scroll, modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight())
@@ -402,11 +410,11 @@ internal fun StoreChildRow(
     val tokens = GlassTheme.tokens
     val background by animateColorAsState(
         targetValue = if (editing) tokens.surfaceSelected else tokens.surfaceSolid,
-        animationSpec = tween(WORKSPACE_COLOR_MILLIS),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val borderColor by animateColorAsState(
         targetValue = if (editing) tokens.accent.copy(alpha = 0.45f) else tokens.border,
-        animationSpec = tween(WORKSPACE_COLOR_MILLIS),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     Row(
         modifier = modifier
