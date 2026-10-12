@@ -2,7 +2,6 @@ package com.oposicontrol.admin.core.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -36,6 +35,8 @@ import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
 
 @Composable
 fun GlassTextField(
@@ -78,7 +79,7 @@ fun GlassTextField(
     }
     val animatedStroke by animateColorAsState(
         targetValue = fieldBorderColor(tokens, focused = focused, isError = isError),
-        animationSpec = tween(durationMillis = 160),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     // El foco NO cambia el relleno en escritorio, y esto es una regla del sistema,
     // no un ajuste de esta pantalla: **un input es siempre más opaco que el
@@ -99,7 +100,7 @@ fun GlassTextField(
             GlassTheme.isDesktop -> tokens.glassFill
             else -> tokens.glassFillStrong
         },
-        animationSpec = tween(durationMillis = 160),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     BasicTextField(
         modifier = modifier.onFocusChanged { focused = it.isFocused },
@@ -231,7 +232,7 @@ fun GlassSearchBar(
     var focused by remember { mutableStateOf(false) }
     val animatedStroke by animateColorAsState(
         targetValue = fieldBorderColor(tokens, focused = focused),
-        animationSpec = tween(durationMillis = 160),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     GlassSurface(
         modifier = modifier.defaultMinSize(minHeight = if (GlassTheme.isDesktop) Sizing.inputHeight else 52.dp),

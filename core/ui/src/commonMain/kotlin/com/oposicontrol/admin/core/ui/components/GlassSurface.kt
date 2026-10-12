@@ -3,7 +3,6 @@ package com.oposicontrol.admin.core.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,6 +43,8 @@ import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.style.TextOverflow
 import com.oposicontrol.admin.core.ui.theme.Sizing
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
 
 /**
  * Superficie de tarjeta.
@@ -84,15 +85,15 @@ fun GlassSurface(
 
     val animatedTint by animateColorAsState(
         targetValue = resolvedTint,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     val animatedStroke by animateColorAsState(
         targetValue = resolvedStroke,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     val animatedElevation by animateDpAsState(
         targetValue = shadowElevation,
-        animationSpec = tween(durationMillis = 180),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     val highlightColor = GlassTheme.tokens.glassHighlight
     val shadowColor = GlassTheme.tokens.shadowSpot
@@ -201,7 +202,7 @@ fun GlassActionButton(
             hovered -> tint.darken(0.06f)
             else -> tint
         },
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val content = if (enabled) textColor else tokens.textDisabled
     val stroke by animateColorAsState(
@@ -210,11 +211,11 @@ fun GlassActionButton(
             !enabled -> tokens.borderDisabled
             else -> container
         },
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val animatedScale by animateFloatAsState(
         targetValue = if (pressed && interactive) 0.985f else 1f,
-        animationSpec = tween(durationMillis = 120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
 
     Box(

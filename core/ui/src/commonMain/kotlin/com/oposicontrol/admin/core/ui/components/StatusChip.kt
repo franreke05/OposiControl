@@ -1,7 +1,6 @@
 package com.oposicontrol.admin.core.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Radius
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
 
 /**
  * Significado de un estado, independiente de la palabra concreta.
@@ -79,11 +80,11 @@ fun StatusChip(
 
     val animatedBackground by animateColorAsState(
         targetValue = colors.fill,
-        animationSpec = tween(180),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     val animatedForeground by animateColorAsState(
         targetValue = colors.content,
-        animationSpec = tween(180),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
 
     Row(
@@ -129,7 +130,7 @@ fun StatusDotChip(
 ) {
     val tokens = GlassTheme.tokens
     val colors = statusDotChipColors(tokens, tone)
-    val animatedDot by animateColorAsState(targetValue = colors.dot, animationSpec = tween(180))
+    val animatedDot by animateColorAsState(targetValue = colors.dot, animationSpec = motionTween(OposiMotion.Normal))
 
     Row(
         modifier = modifier

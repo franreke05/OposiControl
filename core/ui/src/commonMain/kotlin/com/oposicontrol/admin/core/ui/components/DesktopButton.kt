@@ -1,7 +1,6 @@
 package com.oposicontrol.admin.core.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,6 +44,8 @@ import com.oposicontrol.admin.core.ui.theme.contentOn
 import com.oposicontrol.admin.core.ui.theme.shade
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
 
 enum class ButtonVariant {
     /** Acción principal de la pantalla. Una por vista, dos como mucho. */
@@ -132,7 +133,7 @@ fun DesktopButton(
             hovered -> palette.containerHover
             else -> palette.container
         },
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val contentColor = if (enabled) palette.content else palette.contentDisabled
     val borderColor by animateColorAsState(
@@ -142,7 +143,7 @@ fun DesktopButton(
             hovered -> palette.borderHover
             else -> palette.border
         },
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
 
     Row(
@@ -287,7 +288,7 @@ fun DesktopIconButton(
             hovered -> palette.containerHover
             else -> palette.container
         },
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val borderColor by animateColorAsState(
         targetValue = when {
@@ -296,7 +297,7 @@ fun DesktopIconButton(
             hovered && enabled -> palette.borderHover
             else -> palette.border
         },
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val contentColor = when {
         !enabled -> palette.contentDisabled

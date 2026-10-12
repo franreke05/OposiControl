@@ -1,7 +1,6 @@
 package com.oposicontrol.admin.core.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,6 +43,8 @@ import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
 
 data class AdminTableColumn(
     val label: String,
@@ -267,7 +268,7 @@ private fun TableRow(
             hovered && onRowClick != null -> tokens.surfaceHover
             else -> Color.Transparent
         },
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
 
     Column(

@@ -40,7 +40,7 @@ fun ConfirmDialog(
         properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true),
     ) {
         GlassSurface(
-            modifier = Modifier.widthIn(min = 280.dp, max = 420.dp),
+            modifier = Modifier.widthIn(min = 280.dp, max = 420.dp).motionOverlayEntrance(),
             shape = RoundedCornerShape(24.dp),
             tint = tokens.glassFillStrong,
         ) {
