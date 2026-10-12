@@ -65,6 +65,17 @@ class UsersMotionEvidence {
             }
         }
     }
+
+    @Test
+    fun rendimientoSeleccionarUsuariosYDialogo() {
+        // Seleccionar personas una tras otra, y abrir y cerrar un dialogo, 120 veces.
+        val states = listOf(fx.opositoraSeleccionada(), fx.administradoraSeleccionada(), fx.invitadoSeleccionado(), fx.conCambiosSinGuardar(), fx.confirmandoDescarte(), fx.listado())
+        motionPerformance("usuarios", states = states.size) { step ->
+            DesktopShell(currentRouteId = "users", groups = EVIDENCE_SIDEBAR, onRouteSelected = {}, environmentLabel = "Entorno production", title = "Usuarios", description = "Rendimiento.", globalSearch = {}) {
+                UsersContent(state = states[step], onIntent = {}, onOpenTickets = {})
+            }
+        }
+    }
 }
 
 private val EVIDENCE_SIDEBAR = listOf(

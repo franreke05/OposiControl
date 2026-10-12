@@ -123,6 +123,28 @@ class StoreMotionEvidence {
             }
         }
     }
+
+    @Test
+    fun rendimientoCatalogo() {
+        // Cambiar de registro, de pestana, guardar y abrir uno nuevo.
+        val a = catalog.packAbierto()
+        val states = listOf(a, catalog.suscripcionAbierta().copy(openSeq = 1), catalog.tarifas().copy(openSeq = 1), catalog.packConCambios().copy(openSeq = 2), catalog.guardado().copy(openSeq = 2), catalog.productoNuevo().copy(openSeq = 3))
+        motionPerformance("catalogo", states = states.size, cycles = 40) { step ->
+            DesktopShell(currentRouteId = "commercial.catalog", groups = EVIDENCE_SIDEBAR, onRouteSelected = {}, environmentLabel = "Entorno production", title = "Catálogo", description = "Rendimiento.", globalSearch = {}) {
+                CommercialCatalogContent(state = states[step], onIntent = {})
+            }
+        }
+    }
+
+    @Test
+    fun rendimientoLosCuatroEditoresDeMarket() {
+        val states = listOf(market.packs(), market.servicios(), market.promociones(), market.popups(), market.packNuevo(), market.cargando())
+        motionPerformance("oposimarket", states = states.size, cycles = 40) { step ->
+            DesktopShell(currentRouteId = "commercial.market", groups = EVIDENCE_SIDEBAR, onRouteSelected = {}, environmentLabel = "Entorno production", title = "OposiMarket", description = "Rendimiento.", globalSearch = {}) {
+                MarketContent(state = states[step], onIntent = {}, onOpenUser = {})
+            }
+        }
+    }
 }
 
 private val EVIDENCE_SIDEBAR = listOf(

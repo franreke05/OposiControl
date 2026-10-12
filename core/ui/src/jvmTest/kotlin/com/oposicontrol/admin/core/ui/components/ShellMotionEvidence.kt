@@ -54,6 +54,23 @@ class ShellMotionEvidence {
             }
         }
     }
+
+    @Test
+    fun rendimientoCambioRapidoDeSecciones() {
+        // Cambio rapido de secciones con una lista poblada (60 filas) que pasa por cargando.
+        val pages = listOf("content.exams" to "Exámenes", "content.questions" to "Preguntas", "users" to "Usuarios")
+        motionPerformance("cambio-de-secciones", states = pages.size * 2) { step ->
+            val (route, title) = pages[(step / 2) % pages.size]
+            val state: UiAsync<String> = if (step % 2 == 0) UiAsync.Loading else UiAsync.Success(title)
+            DesktopShell(currentRouteId = route, groups = EVIDENCE_SIDEBAR, onRouteSelected = {}, environmentLabel = "Entorno production", title = title, description = "Rendimiento.", globalSearch = {}) {
+                AsyncStatePane(state = state, loadingRows = 6) { name ->
+                    androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                        items(60) { index -> WorkspaceCatalogRow(title = "$name · registro ${index + 1}", selected = index == 0, onClick = {}, icon = AppIcon.EXAMS, description = "Fila de ejemplo") }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @androidx.compose.runtime.Composable

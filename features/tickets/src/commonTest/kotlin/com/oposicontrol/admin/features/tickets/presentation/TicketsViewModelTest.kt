@@ -25,6 +25,9 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlin.test.assertIs
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TicketsViewModelTest {
@@ -194,6 +197,26 @@ class TicketsViewModelTest {
     }
 
     private data class Adjustment(val userId: String, val amount: Int, val reason: String, val key: String)
+
+    @Test
+    fun `after an adjustment the catalogue and the movements stay on screen while they are reread`() = runTest {
+        val repository = FakeRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+        val seen = mutableListOf<TicketsState>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect { seen += it } }
+
+        vm.dispatch(TicketsIntent.UpdateAdjustmentAmount("+50"))
+        vm.dispatch(TicketsIntent.UpdateAdjustmentReason("Compensación"))
+        vm.dispatch(TicketsIntent.ApplyAdjustment)
+        advanceUntilIdle()
+
+        // Si pasaran por «cargando», la lista volveria arriba y ni la cartera ni el asiento nuevo podrian resaltarse.
+        assertTrue(seen.none { it.wallets is UiAsync.Loading }, "el catalogo no se vacia al releer")
+        assertTrue(seen.none { it.transactions is UiAsync.Loading }, "los movimientos no se vacian al releer")
+        assertEquals(170, vm.state.value.selectedWallet?.balance)
+        assertIs<UiAsync.Success<List<TicketMovement>>>(vm.state.value.transactions)
+    }
 
     private inner class FakeRepository : AdminOperationsRepository {
         var failWallets = false
