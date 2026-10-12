@@ -104,7 +104,7 @@ internal data class NewsConfirmation(val title: String, val message: String, val
 internal fun newsConfirmation(intent: NewsIntent, state: NewsState): NewsConfirmation = when (intent) {
     NewsIntent.Publish -> NewsConfirmation(
         title = "Publicar noticia",
-        message = "Se publica ahora con el reloj del servidor y pasa a verse en OposiBot. Una noticia publicada no se puede editar: solo archivar.",
+        message = "Se publica ahora con el reloj del servidor. OposiBot la enseñará cuando su banner de Inicio se conecte a las noticias. Una noticia publicada no se puede editar: solo archivar.",
         confirmLabel = "Publicar",
         destructive = false,
     )
@@ -116,7 +116,7 @@ internal fun newsConfirmation(intent: NewsIntent, state: NewsState): NewsConfirm
     )
     NewsIntent.Archive -> NewsConfirmation(
         title = "Archivar noticia",
-        message = "Deja de verse en OposiBot y no se podrá volver a editar ni publicar. Se conserva en la biblioteca como archivada.",
+        message = "Deja de contar como publicada y no se podrá volver a editar ni publicar. Se conserva en la biblioteca como archivada.",
         confirmLabel = "Archivar",
         destructive = true,
     )
@@ -125,7 +125,7 @@ internal fun newsConfirmation(intent: NewsIntent, state: NewsState): NewsConfirm
         message = if (state.isNew()) {
             "Se descarta lo escrito en «${state.editorTitle.ifBlank { "Nueva noticia" }}». No existe en el servidor."
         } else {
-            "Se borra «${state.editorTitle.ifBlank { "Sin título" }}» del servidor junto con sus imágenes. No se puede deshacer."
+            "Se borra «${state.editorTitle.ifBlank { "Sin título" }}» del servidor, con su fondo y su imagen de tarjeta. No se puede deshacer."
         },
         confirmLabel = if (state.isNew()) "Descartar" else "Eliminar",
         destructive = true,

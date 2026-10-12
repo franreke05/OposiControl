@@ -336,6 +336,9 @@ internal fun newsLibraryMeta(item: NewsItem, state: NewsState): List<String> {
 internal fun NewsState.hasLibraryFilters(): Boolean =
     searchQuery.isNotBlank() || statusFilter != "all" || specialtyFilter != "all" || typeFilter != "all"
 
+/** `sans` (o un valor desconocido) se pinta con Inter, igual que en la app; las demas familias son las del sistema. */
+internal fun NewsLayerDraft.usesAppTypeface(): Boolean = fontFamily !in setOf("serif", "mono", "cursive")
+
 /**
  * Mensaje humano de un fallo de Noticias: nunca el texto crudo. Los rechazos de dominio del contrato (D4-01..D4-09)
  * se reconocen por su codigo y se dicen con lo que los resuelve; el resto cae en el mensaje comun del panel.

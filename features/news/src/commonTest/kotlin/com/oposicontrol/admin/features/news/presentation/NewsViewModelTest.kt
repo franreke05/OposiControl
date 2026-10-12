@@ -649,6 +649,22 @@ class NewsViewModelTest {
         assertEquals("El servidor no está respondiendo bien ahora mismo.", viewModel.state.value.uploads.getValue(NEWS_UPLOAD_IMAGE).error)
     }
 
+    @Test
+    fun `opening an article another session deleted drops its stale row from the library`() = runTest {
+        val repository = FakeNewsRepository()
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        // Otra sesion la borra: la fila sigue en la biblioteca de este cliente hasta que se relea.
+        repository.articles.remove("news-2")
+
+        viewModel.dispatch(NewsIntent.Select("news-2"))
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertIs<UiAsync.Error>(state.recordState)
+        assertEquals(listOf("news-1"), (state.news as UiAsync.Success).value.map { it.id })
+    }
+
     // ------------------------------------------------------------------------------------------------ capas de partida
 
     @Test

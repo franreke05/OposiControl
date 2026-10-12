@@ -70,9 +70,9 @@ These colours are document content. They do not follow the admin panel theme or 
 | `x`, `y`, `width`, `height` | Frame in canvas px. Always inside the canvas; minimum side 24. |
 | `opacity` | 0..100, applied to the whole layer. |
 | `rotationDegrees` | 0..359, clockwise, around the centre of the frame. |
-| `fontFamily` | `sans` (app default), `serif`, `mono`, `cursive`. |
+| `fontFamily` | `sans` = Inter, the app typeface (default; also any unknown value). `serif`, `mono`, `cursive` = the generic family of each platform. |
 | `fontSizeSp` | Font size in canvas px. `0` = derived from the type: `titulo` 72 (18 dp on a phone), others 48 (12 dp). |
-| `fontWeight` | `normal`, `medium`, `semibold`, `bold`. Empty = derived: `titulo` bold, others normal. |
+| `fontWeight` | `normal`, `medium`, `semibold`, `bold`. Empty = derived: `titulo` bold, others normal. With Inter, `bold` resolves to SemiBold (see Fonts). |
 | `textColor` | `#RRGGBB`. Empty = white. |
 | `locked` | Editor only. Not painted. |
 | `orden` | Paint order, 0 = back. |
@@ -96,5 +96,8 @@ The editor writes every key of every layer (no omitted defaults) and renumbers `
 - **Mobile admin editor** (`MobileLayeredNewsEditor`, compact layout): paints titles at 26 and other text at 16 canvas
   units and ignores `fontSizeSp` and `fontWeight`, so its preview is not faithful to this contract (DEBT-090). The desktop
   editor is.
-- **Fonts**: `sans` is the platform default in the admin preview; the app will use its own typeface, so line breaks can
-  differ slightly for text that is close to the width of its frame.
+- **Fonts**: `sans` is painted with Inter in the editor, from the same three files the app bundles (Regular 400,
+  Medium 500, SemiBold 600; `core/ui/.../composeResources/font/inter_*.ttf`, SIL OFL 1.1). Neither side has Inter Bold,
+  so `bold` resolves to SemiBold on both and nothing synthesises a fake bold. If the app ever adds a Bold file, the admin
+  must add the same one. `serif`, `mono` and `cursive` are whatever each platform provides: they are not identical
+  between Android, iOS and the admin desktop, and the editor says so next to the selector.

@@ -64,7 +64,7 @@ private const val HIDDEN_LAYER_ALPHA = 0.45f
 /** Lo que la seccion y el scroll de `WorkspaceEditor` se quedan del ancho de columna: 2 x 20 de padding + 10 de canal. */
 private const val EDITOR_INNER_INSET = 50
 
-private val FONT_FAMILIES = listOf<Pair<String?, String>>("sans" to "Sans serif", "serif" to "Serif", "mono" to "Monoespaciada", "cursive" to "Cursiva")
+private val FONT_FAMILIES = listOf<Pair<String?, String>>("sans" to "Inter (la de OposiBot)", "serif" to "Serif del sistema", "mono" to "Monoespaciada del sistema", "cursive" to "Cursiva del sistema")
 private val FONT_WEIGHTS = listOf<Pair<String?, String>>("" to "Del tipo de capa", "normal" to "Normal", "medium" to "Media", "semibold" to "Seminegrita", "bold" to "Negrita")
 private val LAYER_KINDS = listOf<Pair<String?, String>>("titulo" to "Título", "texto" to "Texto", "imagen" to "Imagen")
 
@@ -323,10 +323,11 @@ private fun NewsLayerInspector(state: NewsState, layer: NewsLayerDraft?, editabl
         if (!layer.isImageLayer()) {
             DropdownField(
                 label = "Tipografía",
-                selectedLabel = FONT_FAMILIES.firstOrNull { it.first == layer.fontFamily }?.second ?: "Sans serif",
+                selectedLabel = FONT_FAMILIES.firstOrNull { it.first == layer.fontFamily }?.second ?: FONT_FAMILIES.first().second,
                 options = FONT_FAMILIES,
                 onSelect = { it?.let { family -> onIntent(NewsIntent.UpdateLayerFontFamily(layer.id, family)) } },
                 enabled = canEdit,
+                supportingText = if (layer.usesAppTypeface()) null else "Cada dispositivo pinta su propia letra: los saltos de línea pueden cambiar.",
             )
             DropdownField(
                 label = "Peso",
@@ -334,6 +335,7 @@ private fun NewsLayerInspector(state: NewsState, layer: NewsLayerDraft?, editabl
                 options = FONT_WEIGHTS,
                 onSelect = { onIntent(NewsIntent.UpdateLayerFontWeight(layer.id, it.orEmpty())) },
                 enabled = canEdit,
+                supportingText = if (layer.usesAppTypeface() && layer.effectiveFontWeight() == FontWeight.Bold) "Inter no trae negrita en OposiBot: se pinta seminegrita, aquí y en la app." else null,
             )
             WorkspaceEqualRow(columns = 2, gap = Spacing.xs) {
                 LabeledField(

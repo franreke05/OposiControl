@@ -59,6 +59,7 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.theme.contentOn
+import com.oposicontrol.admin.core.ui.theme.oposiBotFontFamily
 import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_CORNER_DP
 import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_PHONE_HEIGHT_DP
 import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_PHONE_WIDTH_DP
@@ -214,6 +215,8 @@ private fun NewsCanvasSurface(
     // El documento NO usa el tema del panel: su fondo y su tinta son contenido editorial y tienen que verse igual en
     // claro, en oscuro y en la app. Solo el cromo (seleccion, guias, tiradores) usa tokens.
     val template = newsTemplate(state.editorBackgroundType)
+    // `sans` es la letra de OposiBot (Inter); las otras tres son las genericas de cada plataforma.
+    val appSans = oposiBotFontFamily()
     var guides by remember(state.selectedId) { mutableStateOf<List<NewsGuide>>(emptyList()) }
     val heightDp = (state.editorCanvasHeight * scale).roundToInt()
     Box(
@@ -264,6 +267,7 @@ private fun NewsCanvasSurface(
                         Text(
                             text = layer.name.ifBlank { "Capa vacía" },
                             color = NEWS_DOCUMENT_INK.copy(alpha = EMPTY_LAYER_HINT_ALPHA),
+                            fontFamily = appSans,
                             fontSize = (layer.effectiveFontSizeSp() * scale).sp,
                             lineHeight = (layer.effectiveFontSizeSp() * scale * 1.2f).sp,
                             fontWeight = layer.effectiveFontWeight(),
@@ -288,7 +292,7 @@ private fun NewsCanvasSurface(
                         text = layer.content,
                         onTextLayout = { clipped = it.hasVisualOverflow },
                         color = newsLayerColor(layer.textColor, NEWS_DOCUMENT_INK),
-                        fontFamily = when (layer.fontFamily) { "serif" -> FontFamily.Serif; "mono" -> FontFamily.Monospace; "cursive" -> FontFamily.Cursive; else -> FontFamily.SansSerif },
+                        fontFamily = when (layer.fontFamily) { "serif" -> FontFamily.Serif; "mono" -> FontFamily.Monospace; "cursive" -> FontFamily.Cursive; else -> appSans },
                         fontSize = (layer.effectiveFontSizeSp() * scale).sp,
                         lineHeight = (layer.effectiveFontSizeSp() * scale * 1.2f).sp,
                         fontWeight = layer.effectiveFontWeight(),

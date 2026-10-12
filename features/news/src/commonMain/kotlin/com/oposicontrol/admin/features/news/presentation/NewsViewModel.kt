@@ -430,7 +430,11 @@ class NewsViewModel(
     private suspend fun open(id: String) {
         updateState { it.copy(selectedId = id, recordState = UiAsync.Loading, pendingIntent = null, confirmIntent = null, actionState = UiAsync.Idle, actionKind = null, actionConflict = false, recoveredDraft = false, uploads = emptyMap()) }
         when (val result = loadNewsUseCase(id)) {
-            is AppResult.Failure -> updateState { it.copy(recordState = UiAsync.Error(result.error)) }
+            is AppResult.Failure -> {
+                updateState { it.copy(recordState = UiAsync.Error(result.error)) }
+                // Otra sesion la borro: la fila de la biblioteca es un resto y se va al releerla.
+                if (result.error is AppError.NotFound) scope.launch { refreshLibrary() }
+            }
             is AppResult.Success -> {
                 applyArticle(result.value, resetSelection = true)
                 val snapshot = pendingSnapshot?.takeIf { it.newsId == id }

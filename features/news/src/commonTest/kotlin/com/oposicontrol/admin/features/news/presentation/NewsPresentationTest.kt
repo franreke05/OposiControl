@@ -68,6 +68,16 @@ class NewsPresentationTest {
     }
 
     @Test
+    fun onlyTheSansFamilyIsTheAppTypeface() {
+        fun layer(family: String) = NewsLayerDraft("l", "Texto", "texto", "hola", 0, 0, 100, 40, 100, fontFamily = family, visible = true, sortOrder = 0)
+        assertTrue(layer("sans").usesAppTypeface())
+        assertTrue(layer("").usesAppTypeface(), "una familia desconocida se pinta con la de la app, igual que en el lienzo")
+        assertFalse(layer("serif").usesAppTypeface())
+        assertFalse(layer("mono").usesAppTypeface())
+        assertFalse(layer("cursive").usesAppTypeface())
+    }
+
+    @Test
     fun contractRejectionsAreSaidWithWhatFixesThem() {
         fun rejected(code: String) = AppError.Validation("texto del servidor sin acentos", code).newsMessage()
         assertEquals("Otra sesión guardó esta noticia después de que la abrieras.", rejected("precondition_failed"))
