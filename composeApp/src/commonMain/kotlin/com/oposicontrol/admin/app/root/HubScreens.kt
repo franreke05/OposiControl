@@ -40,6 +40,10 @@ import com.oposicontrol.admin.features.users.presentation.UsersScreen
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
 import org.koin.compose.getKoin
 import org.koin.compose.koinInject
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxWidth
+import com.oposicontrol.admin.core.ui.components.motionEntrance
 
 /**
  * Hubs delgados de la consolidación de navegación (2026-09-04).
@@ -62,6 +66,16 @@ import org.koin.compose.koinInject
  * tres. Cada pantalla conserva sus propias acciones dentro de su cuerpo.
  */
 
+/**
+ * El cuerpo de una pestaña de hub. Ocupa el mismo hueco que ocupaba la pantalla suelta y entra con el movimiento de
+ * contenido cuando cambia [tabId]: las pestañas y la cabecera de la página se quedan quietas, que es lo que hace que ir
+ * de Usuarios a OposiTickets se lea como «otra cara de lo mismo» y no como otra página.
+ */
+@Composable
+private fun ColumnScope.HubTabBody(tabId: String, content: @Composable () -> Unit) {
+    Box(modifier = Modifier.weight(1f).fillMaxWidth().motionEntrance(key = tabId)) { content() }
+}
+
 internal enum class SystemHubTab(val id: String, val label: String, val icon: AppIcon) {
     PREFERENCES("preferences", "Preferencias", AppIcon.SETTINGS),
     SECURITY("security", "Seguridad", AppIcon.ROLES),
@@ -83,11 +97,13 @@ internal fun SystemHubScreen(
             selectedId = selectedTab,
             onSelect = { selectedTab = it },
         )
-        when (selectedTab) {
-            SystemHubTab.SECURITY.id -> RolesScreen(viewModel = koinInject())
-            SystemHubTab.STATUS.id -> SystemStatusScreen(viewModel = koinInject())
-            SystemHubTab.AUDIT.id -> AuditScreen(viewModel = koinInject())
-            else -> SettingsScreen(viewModel = koinInject(), onSystemStatusClick = onSystemStatusClick)
+        HubTabBody(selectedTab) {
+            when (selectedTab) {
+                SystemHubTab.SECURITY.id -> RolesScreen(viewModel = koinInject())
+                SystemHubTab.STATUS.id -> SystemStatusScreen(viewModel = koinInject())
+                SystemHubTab.AUDIT.id -> AuditScreen(viewModel = koinInject())
+                else -> SettingsScreen(viewModel = koinInject(), onSystemStatusClick = onSystemStatusClick)
+            }
         }
     }
 }
@@ -120,23 +136,25 @@ internal fun UsersHubScreen(initialTab: UsersHubTab?) {
             selectedId = selectedTab,
             onSelect = { selectedTab = it },
         )
-        when (selectedTab) {
-            UsersHubTab.TICKETS.id -> TicketsScreen(
-                viewModel = koinInject(),
-                onOpenUser = { userId ->
-                    koin.get<UsersViewModel>().dispatch(UsersIntent.SelectUser(userId))
-                    selectedTab = UsersHubTab.USERS.id
-                },
-            )
-            UsersHubTab.COMPETITION.id -> RankingsScreen(viewModel = koinInject())
-            UsersHubTab.ACCESS.id -> ExamAccessScreen(viewModel = koinInject())
-            else -> UsersScreen(
-                viewModel = koinInject(),
-                onOpenTickets = { userId ->
-                    koin.get<TicketsViewModel>().dispatch(TicketsIntent.OpenWalletOf(userId))
-                    selectedTab = UsersHubTab.TICKETS.id
-                },
-            )
+        HubTabBody(selectedTab) {
+            when (selectedTab) {
+                UsersHubTab.TICKETS.id -> TicketsScreen(
+                    viewModel = koinInject(),
+                    onOpenUser = { userId ->
+                        koin.get<UsersViewModel>().dispatch(UsersIntent.SelectUser(userId))
+                        selectedTab = UsersHubTab.USERS.id
+                    },
+                )
+                UsersHubTab.COMPETITION.id -> RankingsScreen(viewModel = koinInject())
+                UsersHubTab.ACCESS.id -> ExamAccessScreen(viewModel = koinInject())
+                else -> UsersScreen(
+                    viewModel = koinInject(),
+                    onOpenTickets = { userId ->
+                        koin.get<TicketsViewModel>().dispatch(TicketsIntent.OpenWalletOf(userId))
+                        selectedTab = UsersHubTab.TICKETS.id
+                    },
+                )
+            }
         }
     }
 }
@@ -173,9 +191,11 @@ internal fun CatalogHubScreen(initialTab: CatalogHubTab?) {
             selectedId = selectedTab,
             onSelect = { selectedTab = it },
         )
-        when (selectedTab) {
-            CatalogHubTab.PLANS.id -> CommercialPlansScreen(viewModel = plansViewModel)
-            else -> CommercialCatalogScreen(viewModel = productsViewModel)
+        HubTabBody(selectedTab) {
+            when (selectedTab) {
+                CatalogHubTab.PLANS.id -> CommercialPlansScreen(viewModel = plansViewModel)
+                else -> CommercialCatalogScreen(viewModel = productsViewModel)
+            }
         }
     }
 }
@@ -208,10 +228,12 @@ internal fun ModerationHubScreen(
             selectedId = selectedTab,
             onSelect = { selectedTab = it },
         )
-        when (selectedTab) {
-            ModerationHubTab.REPORTS.id -> ReportsScreen(viewModel = koinInject(), onOpenReport = onOpenReport)
-            ModerationHubTab.OPOSITESTER.id -> TesterListScreen(viewModel = koinInject(), onOpenReport = onOpenTester)
-            else -> ModerationScreen(viewModel = koinInject())
+        HubTabBody(selectedTab) {
+            when (selectedTab) {
+                ModerationHubTab.REPORTS.id -> ReportsScreen(viewModel = koinInject(), onOpenReport = onOpenReport)
+                ModerationHubTab.OPOSITESTER.id -> TesterListScreen(viewModel = koinInject(), onOpenReport = onOpenTester)
+                else -> ModerationScreen(viewModel = koinInject())
+            }
         }
     }
 }
