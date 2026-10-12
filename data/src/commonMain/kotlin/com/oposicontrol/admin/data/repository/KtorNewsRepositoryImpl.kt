@@ -172,7 +172,7 @@ class KtorNewsRepositoryImpl(
             is AppResult.Failure -> throw IllegalStateException(read.error.message)
             is AppResult.Success -> read.value
         }
-        require(asset.bytes.size <= NEWS_ASSET_MAX_BYTES) { "La imagen supera el limite de 10 MB." }
+        require(asset.bytes.size <= NEWS_ASSET_MAX_BYTES) { "La imagen supera el límite de 10 MB." }
         require(asset.mimeType in NEWS_ASSET_MIMES) { "La imagen debe ser PNG, JPG, WebP o GIF." }
         val endpoint = "$NEWS/assets"
         val response = client.post(url(endpoint)) {

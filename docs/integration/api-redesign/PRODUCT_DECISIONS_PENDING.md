@@ -229,3 +229,19 @@ decision the owner has to take before the capability can exist.
    Users record already shows each user's subscription. A cross-user subscriptions view was not in the defined scope.
 7. **Legacy store on narrow windows.** Below 1040 dp the app falls back to the mobile adapter, where "Catálogo" still
    opens the legacy store screen of section 14. Desktop (1080 dp and wider) uses the canonical Catalogue.
+
+## 16. News editor (2026-10-11): what the editor assumes and what stays PRODUCT_BLOCKED
+
+The desktop news editor was rebuilt on the canonical contract (D4-01..D4-09). Found while aligning it with the app:
+
+1. **The consumer does not exist.** D4-18 (`GET /api/v1/app/noticias`) is still blocked by DEC-030 and OposiBot shows a
+   static image in its Home banner. A published news item is not shown anywhere today; the editor says so.
+2. **Canvas format (taken as input for DEC-030).** The editor now composes on the Home banner itself: 358 x 148 dp on
+   phones, 704 x 291 dp on tablets, edited at 4 px per dp (1432 x 592). Before it was 800 x 500, an aspect no screen of
+   the app has. If DEC-030 decides that news live somewhere else, only the constants in `NewsDocument.kt` change.
+   Production has no news rows, so nothing had to be migrated. The painting rules are in
+   `docs/integration/NEWS_RENDERING_CONTRACT.md`.
+3. **Scheduling** has no automatic activation (section 6). The editor keeps the date and offers "Publicar ahora".
+4. **Banner action.** The row has no link or call-to-action columns: what the banner's "Ir" button opens is undefined.
+5. **Editing a published item** is not allowed by the contract (`NEWS_NOT_EDITABLE`): archive and create another.
+6. **Body text and card image** (`texto`, `imagenPath`) are stored but no app surface shows them yet.

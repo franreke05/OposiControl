@@ -81,6 +81,10 @@ private val ZOOM_MIN = 0.5f
 private val ZOOM_MAX = 2f
 private const val ZOOM_STEP = 0.25f
 
+/** Guia de una capa sin contenido: se ve lo justo para encontrarla y nunca se confunde con texto escrito. */
+private const val EMPTY_LAYER_HINT_ALPHA = 0.45f
+private const val EMPTY_LAYER_OUTLINE_ALPHA = 0.30f
+
 /**
  * El lienzo sobre su mesa: el documento (lo que OposiBot pinta) dentro de una superficie hundida con borde, con la
  * barra de zoom y las medidas. [availableWidth] es el ancho en dp que la columna le deja; el lienzo se escala para
@@ -246,9 +250,28 @@ private fun NewsCanvasSurface(
                 onFocus = onFocus,
                 onGuides = { guides = it },
             ) {
+                // Una capa vacia no se pinta en la app. Mientras se edita, su nombre y su contorno dicen donde esta; las
+                // vistas previas (no editables) ensenan exactamente lo que saldra: nada.
+                val empty = layer.content.isBlank()
+                if (empty && editable) {
+                    Box(Modifier.matchParentSize().border(1.dp, NEWS_DOCUMENT_INK.copy(alpha = EMPTY_LAYER_OUTLINE_ALPHA)))
+                }
                 if (layer.isImageLayer()) {
-                    if (layer.content.isNotBlank()) NewsAssetImage(layer.content, Modifier.width((layer.width * scale).dp).height((layer.height * scale).dp))
-                    else Text("Imagen pendiente", Modifier.padding(4.dp), color = NEWS_DOCUMENT_INK, style = MaterialTheme.typography.labelSmall)
+                    if (!empty) NewsAssetImage(layer.content, Modifier.width((layer.width * scale).dp).height((layer.height * scale).dp))
+                    else if (editable) Text("Imagen pendiente", Modifier.padding(4.dp), color = NEWS_DOCUMENT_INK.copy(alpha = EMPTY_LAYER_HINT_ALPHA), style = MaterialTheme.typography.labelSmall)
+                } else if (empty) {
+                    if (editable) {
+                        Text(
+                            text = layer.name.ifBlank { "Capa vacía" },
+                            color = NEWS_DOCUMENT_INK.copy(alpha = EMPTY_LAYER_HINT_ALPHA),
+                            fontSize = (layer.effectiveFontSizeSp() * scale).sp,
+                            lineHeight = (layer.effectiveFontSizeSp() * scale * 1.2f).sp,
+                            fontWeight = layer.effectiveFontWeight(),
+                            maxLines = 1,
+                            overflow = TextOverflow.Clip,
+                            modifier = Modifier.padding(horizontal = (NEWS_TEXT_INSET_X * scale).dp, vertical = (NEWS_TEXT_INSET_Y * scale).dp),
+                        )
+                    }
                 } else {
                     var clipped by remember(layer.id) { mutableStateOf(false) }
                     if (clipped && editable) {
@@ -282,8 +305,8 @@ private fun NewsCanvasSurface(
                 Box(Modifier.offset(y = (guide.position * scale).dp).height(1.dp).width(canvasDp.dp).background(tokens.accentInk))
             }
         }
-        if (visible.isEmpty()) {
-            Text("Añade una capa para empezar", Modifier.padding(20.dp), color = NEWS_DOCUMENT_INK, style = MaterialTheme.typography.bodyMedium)
+        if (visible.isEmpty() && editable) {
+            Text("Añade una capa para empezar", Modifier.padding(20.dp), color = NEWS_DOCUMENT_INK.copy(alpha = EMPTY_LAYER_HINT_ALPHA), style = MaterialTheme.typography.bodyMedium)
         }
     }
 }

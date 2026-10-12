@@ -158,6 +158,14 @@ class NewsViewModel(
     private var pendingSnapshot: NewsEditorDraftSnapshot? = null
     private var autoSelectDone = false
 
+    /**
+     * URL publica de cada ruta de asset que esta sesion conoce (la da el servidor al leer la ficha o al subir). El
+     * documento solo guarda la RUTA: sin este registro, deshacer o descartar hacia una imagen anterior la dejaba
+     * enlazada pero sin poder pintarla.
+     */
+    private val assetUrls = mutableMapOf<String, String>()
+    private var assetBaseUrl: String? = null
+
     init {
         restoreDraftIfPresent()
         scope.launch {
@@ -233,7 +241,7 @@ class NewsViewModel(
 
             // ---- contenido
             is NewsIntent.UpdateTitle -> commit(NewsEditGroup("title")) { state ->
-                state.copy(editorTitle = intent.value, editorLayers = state.editorLayers.withTitleContent(intent.value))
+                state.copy(editorTitle = intent.value, editorLayers = state.editorLayers.withTitleContent(state.editorTitle, intent.value))
             }
             is NewsIntent.UpdateSpecialty -> commit(NewsEditGroup("specialty")) { it.copy(editorSpecialty = intent.value) }
             is NewsIntent.UpdateType -> commit(NewsEditGroup("type")) { it.copy(editorType = intent.value) }
@@ -246,14 +254,14 @@ class NewsViewModel(
             is NewsIntent.UpdateBackgroundPath -> commit(NewsEditGroup("backgroundPath")) {
                 it.copy(
                     editorBackgroundPath = intent.value.trim(),
-                    editorBackgroundUrl = if (intent.value.isBlank()) "" else intent.value.trim().takeIf { v -> v.startsWith("http") }.orEmpty(),
+                    editorBackgroundUrl = assetUrl(intent.value.trim()),
                     editorBackgroundAssetStatus = "linked",
                 )
             }
             is NewsIntent.UpdateImagePath -> commit(NewsEditGroup("imagePath")) {
                 it.copy(
                     editorImagePath = intent.value.trim(),
-                    editorImageUrl = if (intent.value.isBlank()) "" else intent.value.trim().takeIf { v -> v.startsWith("http") }.orEmpty(),
+                    editorImageUrl = assetUrl(intent.value.trim()),
                     editorImageAssetStatus = "linked",
                 )
             }
@@ -297,7 +305,11 @@ class NewsViewModel(
             is NewsIntent.ToggleLayerVisible -> updateLayer(intent.id, NewsEditGroup("visible", intent.id)) { layer, _, _ -> layer.copy(visible = !layer.visible) }
             is NewsIntent.ToggleLayerLocked -> updateLayer(intent.id, NewsEditGroup("locked", intent.id), allowLocked = true) { layer, _, _ -> layer.copy(locked = !layer.locked) }
             is NewsIntent.UpdateLayerName -> updateLayer(intent.id, NewsEditGroup("name", intent.id)) { layer, _, _ -> layer.copy(name = intent.value) }
-            is NewsIntent.UpdateLayerKind -> updateLayer(intent.id, NewsEditGroup("kind", intent.id)) { layer, _, _ -> layer.copy(kind = intent.value) }
+            is NewsIntent.UpdateLayerKind -> updateLayer(intent.id, NewsEditGroup("kind", intent.id)) { layer, _, _ ->
+                // Entre texto e imagen el contenido no se traduce: un parrafo no es una URL, ni al reves.
+                val crossesKind = (layer.kind.toLayerKind() == NewsLayerKind.IMAGE) != (intent.value.toLayerKind() == NewsLayerKind.IMAGE)
+                layer.copy(kind = intent.value, content = if (crossesKind) "" else layer.content)
+            }
             is NewsIntent.UpdateLayerContent -> updateLayer(intent.id, NewsEditGroup("content", intent.id)) { layer, _, _ -> layer.copy(content = intent.value) }
             is NewsIntent.UpdateLayerX -> updateLayer(intent.id, NewsEditGroup("frame", intent.id)) { layer, _, _ -> layer.copy(x = intent.value.toIntOrNull() ?: layer.x) }
             is NewsIntent.UpdateLayerY -> updateLayer(intent.id, NewsEditGroup("frame", intent.id)) { layer, _, _ -> layer.copy(y = intent.value.toIntOrNull() ?: layer.y) }
@@ -416,7 +428,7 @@ class NewsViewModel(
     // =================================================================================================================
 
     private suspend fun open(id: String) {
-        updateState { it.copy(selectedId = id, recordState = UiAsync.Loading, pendingIntent = null, confirmIntent = null, actionState = UiAsync.Idle, actionKind = null, actionConflict = false, recoveredDraft = false) }
+        updateState { it.copy(selectedId = id, recordState = UiAsync.Loading, pendingIntent = null, confirmIntent = null, actionState = UiAsync.Idle, actionKind = null, actionConflict = false, recoveredDraft = false, uploads = emptyMap()) }
         when (val result = loadNewsUseCase(id)) {
             is AppResult.Failure -> updateState { it.copy(recordState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
@@ -442,8 +454,10 @@ class NewsViewModel(
     }
 
     private fun applyArticle(article: NewsArticle, resetSelection: Boolean) {
+        rememberAsset(article.backgroundPath, article.backgroundUrl)
+        rememberAsset(article.imagePath, article.imageUrl)
         val layers = article.layers.map { it.toUi() }
-            .ifEmpty { defaultLayers(article.title, "${article.specialty} - ${article.type}", article.text) }
+            .ifEmpty { defaultLayers(article.title) }
             .map { it.coerceInsideCanvas(NEWS_CANVAS_DEFAULT_WIDTH, NEWS_CANVAS_DEFAULT_HEIGHT) }
             .normalizedLayerOrder()
         updateState { state ->
@@ -505,7 +519,7 @@ class NewsViewModel(
                 editorCanvasHeight = NEWS_CANVAS_DEFAULT_HEIGHT,
                 editorBackgroundAssetStatus = "linked",
                 editorImageAssetStatus = "linked",
-                editorLayers = defaultLayers("Título de noticia", "Especialidad - Tipo", ""),
+                editorLayers = defaultLayers(title = ""),
                 editorTab = NewsEditorTab.CONTENT,
                 selectedTarget = NewsEditorSelection.ARTICLE,
                 selectedLayerId = null,
@@ -585,7 +599,8 @@ class NewsViewModel(
             updateState { next }
             return
         }
-        history = history.record(before.document(), group)
+        // Una accion de un clic es su propio paso de deshacer aunque se repita; escribir o arrastrar se funden en uno.
+        history = history.record(before.document(), group).let { if (group.kind in DISCRETE_EDIT_KINDS) it.closeGroup() else it }
         val report = validateNewsDraftUseCase(next.toDesignDraft())
         // Las subidas se leen del estado MAS RECIENTE: su progreso llega desde el hilo HTTP y no debe perderse.
         updateState { latest ->
@@ -629,7 +644,12 @@ class NewsViewModel(
         begin(NewsAction.SAVE)
         val article = state.toArticle()
         return when (val result = saveNewsUseCase(article, createKey)) {
-            is AppResult.Failure -> { fail(NewsAction.SAVE, result.error); false }
+            is AppResult.Failure -> {
+                fail(NewsAction.SAVE, result.error)
+                // El alta anterior llego al servidor aunque su respuesta se perdiera: releer la biblioteca la ensena.
+                if (result.error.isNewsAlreadyCreated()) refreshLibrary()
+                false
+            }
             is AppResult.Success -> {
                 analyticsTracker.trackAction("news_save", mapOf("news_id" to result.value.id, "layers" to result.value.layers.size.toString()))
                 if (article.id.isBlank()) createKey = randomUuid()
@@ -749,31 +769,35 @@ class NewsViewModel(
 
     private fun startUpload(target: String, uri: String) {
         if (!currentState().isEditable()) return
+        val owner = currentState().selectedId
         val fileName = newsAssetName(uri)
         updateState { it.copy(uploads = it.uploads + (target to NewsUploadState(target, uri, fileName))) }
+        // La ficha puede cambiar mientras sube: progreso, fallo y resultado son solo de la noticia y del fichero que lo pidieron.
+        fun NewsState.ownUpload(): NewsUploadState? = uploads[target]?.takeIf { selectedId == owner && it.uri == uri }
         scope.launch {
             val key = randomUuid()
             val result = uploadNewsAssetUseCase(uri, key) { fraction ->
                 updateState { state ->
-                    val current = state.uploads[target] ?: return@updateState state
+                    val current = state.ownUpload() ?: return@updateState state
                     state.copy(uploads = state.uploads + (target to current.copy(progress = fraction)))
                 }
             }
             when (result) {
                 is AppResult.Failure -> updateState { state ->
-                    val current = state.uploads[target] ?: return@updateState state
-                    state.copy(uploads = state.uploads + (target to current.copy(error = result.error.message.ifBlank { "No se pudo subir la imagen." })))
+                    val current = state.ownUpload() ?: return@updateState state
+                    state.copy(uploads = state.uploads + (target to current.copy(error = result.error.newsUploadMessage())))
                 }
                 is AppResult.Success -> {
-                    updateState { it.copy(uploads = it.uploads - target) }
                     val upload = result.value
+                    rememberAsset(upload.path, upload.publicUrl)
+                    if (currentState().ownUpload() == null) return@launch
+                    updateState { it.copy(uploads = it.uploads - target) }
                     when {
                         target == NEWS_UPLOAD_BACKGROUND -> commit(NewsEditGroup("background")) {
                             it.copy(
                                 editorBackgroundPath = upload.path,
                                 editorBackgroundUrl = upload.publicUrl,
                                 editorBackgroundAssetStatus = "uploaded",
-                                editorLayers = it.editorLayers.withSingleTitleLayer(it.editorTitle.ifBlank { "Título de noticia" }, it.editorCanvasWidth, it.editorCanvasHeight),
                             )
                         }
                         target == NEWS_UPLOAD_IMAGE -> commit(NewsEditGroup("image")) {
@@ -781,12 +805,26 @@ class NewsViewModel(
                         }
                         target.startsWith("layer:") -> {
                             val layerId = target.removePrefix("layer:")
-                            updateLayer(layerId, NewsEditGroup("content", layerId)) { layer, _, _ -> layer.copy(content = upload.publicUrl.ifBlank { upload.path }) }
+                            updateLayer(layerId, NewsEditGroup("layerImage", layerId)) { layer, _, _ -> layer.copy(content = upload.publicUrl.ifBlank { upload.path }) }
                         }
                     }
                 }
             }
         }
+    }
+
+    private fun rememberAsset(path: String?, url: String?) {
+        if (path.isNullOrBlank() || url.isNullOrBlank()) return
+        assetUrls[path] = url
+        // El servidor compone la URL como <base publica del bucket> + ruta: con un par conocido se resuelve cualquier otra.
+        if (url.endsWith(path)) assetBaseUrl = url.removeSuffix(path)
+    }
+
+    /** URL para pintar una ruta de asset, o vacio si esta sesion no puede saberla (la ficha lo dice: «sin vista previa»). */
+    private fun assetUrl(path: String): String = when {
+        path.isBlank() -> ""
+        path.startsWith("http://", ignoreCase = true) || path.startsWith("https://", ignoreCase = true) -> path
+        else -> assetUrls[path] ?: assetBaseUrl?.let { it + path }.orEmpty()
     }
 
     // =================================================================================================================
@@ -826,7 +864,7 @@ class NewsViewModel(
 
     private fun addTitleLayer() {
         commit(NewsEditGroup("addTitle")) { state ->
-            val layers = state.editorLayers.withSingleTitleLayer(state.editorTitle.ifBlank { "Título de noticia" }, state.editorCanvasWidth, state.editorCanvasHeight)
+            val layers = state.editorLayers.withSingleTitleLayer(state.editorTitle, state.editorCanvasWidth, state.editorCanvasHeight)
             state.copy(
                 editorLayers = layers,
                 selectedTarget = NewsEditorSelection.LAYER,
@@ -999,9 +1037,9 @@ class NewsViewModel(
                 editorType = document.type,
                 editorBackgroundType = document.backgroundType,
                 editorBackgroundPath = document.backgroundPath,
-                editorBackgroundUrl = if (document.backgroundPath == state.editorBackgroundPath) state.editorBackgroundUrl else document.backgroundPath.takeIf { it.startsWith("http") }.orEmpty(),
+                editorBackgroundUrl = if (document.backgroundPath == state.editorBackgroundPath) state.editorBackgroundUrl else assetUrl(document.backgroundPath),
                 editorImagePath = document.imagePath,
-                editorImageUrl = if (document.imagePath == state.editorImagePath) state.editorImageUrl else document.imagePath.takeIf { it.startsWith("http") }.orEmpty(),
+                editorImageUrl = if (document.imagePath == state.editorImagePath) state.editorImageUrl else assetUrl(document.imagePath),
                 editorCanvasWidth = document.canvasWidth,
                 editorCanvasHeight = document.canvasHeight,
                 editorLayers = layers,
@@ -1013,6 +1051,12 @@ class NewsViewModel(
 
     private companion object {
         const val SEARCH_DEBOUNCE_MILLIS = 300L
+
+        /** Grupos de edicion que son UNA accion (un clic, una eleccion, una subida) y no una racha de pulsaciones. */
+        val DISCRETE_EDIT_KINDS = setOf(
+            "specialty", "type", "backgroundType", "backgroundPath", "imagePath", "background", "image", "layerImage",
+            "align", "order", "visible", "locked", "kind", "font", "fontWeight", "add", "addTitle", "remove",
+        )
         val ISO_UTC = Regex("""\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z""")
     }
 }
@@ -1118,12 +1162,17 @@ internal fun NewsState.toDesignDraft() = NewsDesignDraft(
 internal fun NewsState.withClampedLayers(): NewsState =
     copy(editorLayers = editorLayers.map { it.coerceInsideCanvas(editorCanvasWidth, editorCanvasHeight) }.normalizedLayerOrder())
 
-private fun defaultLayers(title: String, subtitle: String, body: String): List<NewsLayerDraft> = listOf(
-    // En px del lienzo (4 por dp de movil): margen de 16 dp y alto para que quepan dos lineas de titulo (2 x 72 x 1,2
-    // + margenes), una de subtitulo y tres de texto, todo dentro de 592.
+/**
+ * Composicion de partida, en px del lienzo (4 por dp de movil): margen de 16 dp y alto para dos lineas de titulo
+ * (2 x 72 x 1,2 + margenes), una de subtitulo y tres de texto, todo dentro de 592.
+ *
+ * El contenido nace VACIO. El lienzo pinta el nombre de la capa como guia mientras se edita, pero un texto de relleno
+ * guardado en `capas` («Especialidad - Tipo») acabaria publicado tal cual en el banner de OposiBot.
+ */
+private fun defaultLayers(title: String): List<NewsLayerDraft> = listOf(
     NewsLayerDraft(randomUuid(), "Título", "titulo", title, 64, 48, 900, 216, 100, visible = true, sortOrder = 0),
-    NewsLayerDraft(randomUuid(), "Subtítulo", "texto", subtitle, 64, 276, 800, 92, 92, visible = true, sortOrder = 1),
-    NewsLayerDraft(randomUuid(), "Texto", "texto", body, 64, 380, 900, 180, 88, visible = body.isNotBlank(), sortOrder = 2),
+    NewsLayerDraft(randomUuid(), "Subtítulo", "texto", "", 64, 276, 800, 92, 92, visible = true, sortOrder = 1),
+    NewsLayerDraft(randomUuid(), "Texto", "texto", "", 64, 380, 900, 180, 88, visible = true, sortOrder = 2),
 )
 
 internal fun List<NewsLayerDraft>.normalizedLayerOrder(): List<NewsLayerDraft> =
@@ -1136,23 +1185,27 @@ internal fun List<NewsLayerDraft>.normalizedLayerOrder(): List<NewsLayerDraft> =
 private fun List<NewsLayerDraft>.reindexedByPosition(): List<NewsLayerDraft> =
     mapIndexed { index, layer -> layer.copy(sortOrder = index) }
 
-/** El titulo de la ficha y la capa de titulo dicen lo mismo: escribir uno actualiza la otra. */
-private fun List<NewsLayerDraft>.withTitleContent(title: String): List<NewsLayerDraft> =
-    if (title.isBlank()) this else map { if (it.kind.toLayerKind() == NewsLayerKind.TITLE) it.copy(content = title) else it }
+/**
+ * El titulo de la ficha alimenta la capa de titulo MIENTRAS digan lo mismo. Si la capa se reescribio en Diseño (un
+ * titular mas corto para el banner), escribir en la ficha ya no la pisa.
+ */
+private fun List<NewsLayerDraft>.withTitleContent(previous: String, title: String): List<NewsLayerDraft> =
+    map { if (it.kind.toLayerKind() == NewsLayerKind.TITLE && it.content == previous) it.copy(content = title) else it }
 
 private fun List<NewsLayerDraft>.withSingleTitleLayer(title: String, canvasWidth: Int, canvasHeight: Int): List<NewsLayerDraft> {
     val titleLayer = firstOrNull { it.kind.toLayerKind() == NewsLayerKind.TITLE }
     val nonTitle = filterNot { it.kind.toLayerKind() == NewsLayerKind.TITLE }
     val normalizedTitle = (
         titleLayer ?: NewsLayerDraft(
-            id = randomUuid(), name = "Título", kind = "titulo", content = title.ifBlank { "Título de noticia" },
+            id = randomUuid(), name = "Título", kind = "titulo", content = title,
             x = 64, y = 48, width = 900, height = 216, opacity = 100, fontFamily = "sans", textColor = "#FFFFFF",
             visible = true, sortOrder = nonTitle.size,
         )
         ).copy(
         name = titleLayer?.name?.ifBlank { "Título" } ?: "Título",
         kind = "titulo",
-        content = title.ifBlank { titleLayer?.content.orEmpty().ifBlank { "Título de noticia" } },
+        // Una capa de titulo que ya dice algo conserva su texto: «Titulo» la recoloca, no la reescribe.
+        content = titleLayer?.content?.takeIf { it.isNotBlank() } ?: title,
         visible = true,
         sortOrder = nonTitle.size,
     )
@@ -1244,6 +1297,10 @@ internal fun String.isLocalAssetPath(): Boolean =
  * Un rechazo que exige RELEER la ficha: la version cambio, otro editor la publico o archivo, o el servidor la
  * borro. Se reconoce por el codigo de dominio que viaja en `AppError.Validation.code` o por un 404 al escribir.
  */
+/** El servidor ya tiene una noticia creada con esta clave de alta y el cuerpo ha cambiado desde entonces. */
+internal fun AppError.isNewsAlreadyCreated(): Boolean =
+    this is AppError.Validation && code?.lowercase() == "idempotency_key_reused"
+
 internal fun AppError.isNewsConflict(): Boolean = when (this) {
     is AppError.Validation -> code?.lowercase() in setOf("precondition_failed", "news_not_editable", "invalid_transition", "conflict", "version_conflict")
     is AppError.NotFound -> true

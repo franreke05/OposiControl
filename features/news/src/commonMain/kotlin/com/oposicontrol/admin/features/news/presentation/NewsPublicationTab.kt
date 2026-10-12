@@ -175,7 +175,6 @@ internal fun NewsPublicationTab(state: NewsState, onIntent: (NewsIntent) -> Unit
     }
 }
 
-/** Fecha y hora UTC a mano: lo que el contrato pide es un instante futuro, y el servidor es quien lo valida. */
 /** Lo que la seccion y el scroll de `WorkspaceEditor` se quedan del ancho de columna, mas el panel interior. */
 private const val PREVIEW_INNER_INSET = 50 + 2 * 16
 
@@ -212,6 +211,7 @@ private fun NewsAppPreviewSection(state: NewsState, contentWidth: Dp) {
     }
 }
 
+/** Fecha y hora UTC a mano: lo que el contrato pide es un instante futuro, y el servidor es quien lo valida. */
 @Composable
 private fun NewsScheduleBlock(state: NewsState, enabled: Boolean, busy: Boolean, onIntent: (NewsIntent) -> Unit) {
     val tokens = GlassTheme.tokens

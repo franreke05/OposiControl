@@ -306,7 +306,7 @@ private fun NewsLayerInspector(state: NewsState, layer: NewsLayerDraft?, editabl
             val replace = rememberNewsImagePicker { onIntent(NewsIntent.UploadLayerImage(layer.id, it)) }
             SecondaryButton(if (layer.content.isBlank()) "Elegir imagen" else "Cambiar imagen", replace, size = ButtonSize.COMPACT, enabled = canEdit && (upload == null || upload.failed))
         } else {
-            LabeledField("Texto", layer.content, { onIntent(NewsIntent.UpdateLayerContent(layer.id, it)) }, readOnly = !canEdit, singleLine = false, minLines = 3)
+            LabeledField("Texto", layer.content, { onIntent(NewsIntent.UpdateLayerContent(layer.id, it)) }, placeholder = "Lo que pintará esta capa. Vacía no se pinta.", readOnly = !canEdit, singleLine = false, minLines = 3)
         }
         WorkspaceEqualRow(columns = 2, gap = Spacing.xs) {
             NewsNumberField("X", layer.x, canEdit) { onIntent(NewsIntent.UpdateLayerX(layer.id, it)) }

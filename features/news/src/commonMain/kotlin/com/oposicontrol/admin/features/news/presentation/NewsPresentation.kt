@@ -141,6 +141,7 @@ internal data class NewsSaveStatus(
 internal fun NewsState.saveProblem(): String? = when {
     editorTitle.isBlank() -> "Escribe un título para poder guardar."
     editorTitle.length > NEWS_TITLE_MAX -> "El título no puede pasar de $NEWS_TITLE_MAX caracteres."
+    editorText.length > NEWS_TEXT_MAX -> "El cuerpo no puede pasar de 200.000 caracteres."
     editorSpecialty.isBlank() -> "Elige una especialidad en Contenido."
     editorType.isBlank() -> "Elige un tipo de noticia en Contenido."
     uploads.values.any { !it.failed } -> "Espera a que terminen las subidas de imagen."
@@ -187,7 +188,7 @@ internal fun NewsState.saveStatus(): NewsSaveStatus {
         failure != null && actionConflict -> NewsSaveStatus(
             message = "La noticia cambió en el servidor.",
             tone = WorkspaceSaveTone.DANGER,
-            detail = failure.humanMessage() + " Recarga la ficha para seguir; tus cambios de aquí se perderían.",
+            detail = failure.newsMessage() + " Recarga la ficha para seguir; tus cambios de aquí se perderían.",
             prominent = true,
             canSave = false,
             canDiscard = false,
@@ -197,7 +198,7 @@ internal fun NewsState.saveStatus(): NewsSaveStatus {
         failure != null -> NewsSaveStatus(
             message = "No se pudo ${newsActionVerb(actionKind)}.",
             tone = WorkspaceSaveTone.DANGER,
-            detail = failure.humanMessage(),
+            detail = failure.newsMessage(),
             prominent = true,
             canSave = problem == null && !isReadOnly(),
             canDiscard = isDirty,
@@ -247,9 +248,9 @@ internal data class NewsCheckGroup(val title: String, val codes: Set<String>, va
 /** Los codigos son los que emite `ValidateNewsDraftUseCase`; un codigo nuevo sin mapear cae en «Otras comprobaciones». */
 internal val newsCheckGroups: List<NewsCheckGroup> = listOf(
     NewsCheckGroup("Contenido", setOf("title_required", "text_empty", "title_layer_required"), "Título, cuerpo y capa de título en su sitio."),
-    NewsCheckGroup("Clasificación", setOf("specialty_required", "offer_link_required", "offer_cta_required", "schedule_date_required"), "Especialidad y datos exigidos por el tipo, completos."),
-    NewsCheckGroup("Lienzo", setOf("canvas_invalid", "layers_empty", "layer_too_small", "layer_outside_canvas", "layer_text_required", "layer_opacity_invalid"), "Medidas válidas y capas dentro del lienzo."),
-    NewsCheckGroup("Imagen", setOf("background_missing", "background_not_ready", "resource_image_missing"), "Fondo definido y enlazado."),
+    NewsCheckGroup("Clasificación", setOf("specialty_required"), "Especialidad elegida."),
+    NewsCheckGroup("Lienzo", setOf("canvas_invalid", "layers_empty", "layer_too_small", "layer_outside_canvas", "layer_empty", "layer_opacity_invalid"), "Medidas válidas y capas dentro del lienzo."),
+    NewsCheckGroup("Imagen", setOf("background_missing", "background_not_ready", "layer_image_missing"), "Fondo e imágenes de capa enlazados."),
 )
 
 internal fun newsIssueSummary(issues: List<NewsValidationIssue>): String {
@@ -335,8 +336,30 @@ internal fun newsLibraryMeta(item: NewsItem, state: NewsState): List<String> {
 internal fun NewsState.hasLibraryFilters(): Boolean =
     searchQuery.isNotBlank() || statusFilter != "all" || specialtyFilter != "all" || typeFilter != "all"
 
-/** Mensaje humano de un error de carga: nunca el texto crudo. */
-internal fun AppError.newsMessage(): String = humanMessage()
+/**
+ * Mensaje humano de un fallo de Noticias: nunca el texto crudo. Los rechazos de dominio del contrato (D4-01..D4-09)
+ * se reconocen por su codigo y se dicen con lo que los resuelve; el resto cae en el mensaje comun del panel.
+ */
+internal fun AppError.newsMessage(): String = when (this) {
+    is AppError.Validation -> when (code?.lowercase()) {
+        "precondition_failed", "version_conflict" -> "Otra sesión guardó esta noticia después de que la abrieras."
+        "news_not_editable" -> "La noticia ya está publicada o archivada y no admite cambios."
+        "invalid_transition" -> "La noticia no puede pasar a ese estado desde el actual."
+        "conflict" -> "La noticia estaba cambiando en el servidor."
+        "news_incomplete" -> "La noticia no tiene texto ni capas con contenido: no hay nada que publicar."
+        "not_future_instant" -> "La fecha de publicación tiene que ser posterior a ahora."
+        "inactive_tipo_or_especialidad" -> "La especialidad o el tipo de noticia ya no están activos. Elige otros en Contenido."
+        "asset_path_unknown" -> "Una de las imágenes no corresponde a un archivo subido. Vuelve a subirla."
+        "payload_too_large" -> "La imagen supera el límite de 10 MB."
+        "unsupported_media_type" -> "El formato no está admitido. Usa PNG, JPG, WebP o GIF."
+        "idempotency_key_reused" -> "Esta noticia ya se creó en un intento anterior. Ábrela desde la biblioteca y sigue ahí."
+        "idempotency_key_in_progress" -> "El servidor todavía está procesando el intento anterior. Espera unos segundos."
+        "rate_limited" -> "Demasiadas peticiones seguidas. Espera unos segundos y vuelve a intentarlo."
+        "validation", "malformed_body" -> "El servidor no aceptó algún dato de la noticia. Revisa el título, la clasificación y las imágenes."
+        else -> humanMessage()
+    }
+    else -> humanMessage()
+}
 
 /** Ancho a partir del cual el inspector de capa cabe al lado del lienzo dentro de la ficha. */
 internal const val NEWS_DESIGN_SIDE_BY_SIDE_MIN_WIDTH: Int = 880
@@ -345,3 +368,17 @@ internal const val NEWS_DESIGN_SIDE_BY_SIDE_MIN_WIDTH: Int = 880
 internal const val NEWS_INSPECTOR_WIDTH: Int = 296
 
 internal const val NEWS_TITLE_MAX: Int = 300
+
+/**
+ * Fallo de una SUBIDA (D4-09). Un 400 de validacion aqui solo puede ser el archivo: el servidor comprueba que sus
+ * primeros bytes son del formato que declara su extension.
+ */
+internal fun AppError.newsUploadMessage(): String =
+    if (this is AppError.Validation && code?.lowercase() in setOf("validation", "malformed_body")) {
+        "El archivo no es una imagen válida del formato que indica su extensión."
+    } else {
+        newsMessage()
+    }
+
+/** Tope del cuerpo en el contrato (D4-03/D4-04). */
+internal const val NEWS_TEXT_MAX: Int = 200_000

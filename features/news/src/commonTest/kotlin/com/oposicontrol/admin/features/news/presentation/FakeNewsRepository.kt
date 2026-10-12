@@ -11,6 +11,7 @@ import com.oposicontrol.admin.domain.model.NewsListFilter
 import com.oposicontrol.admin.domain.model.NewsPage
 import com.oposicontrol.admin.domain.model.NewsSummary
 import com.oposicontrol.admin.domain.repository.NewsRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -45,6 +46,9 @@ internal class FakeNewsRepository(initial: List<NewsArticle> = listOf(article("n
     var failGet: AppError? = null
     var failSave: AppError? = null
     var failUpload: AppError? = null
+
+    /** Si no es nulo, la subida espera a que se complete: permite cambiar de ficha con la subida en vuelo. */
+    var uploadGate: CompletableDeferred<Unit>? = null
     val refreshFilters = mutableListOf<NewsListFilter>()
     val calls = mutableListOf<String>()
     var lastIdempotencyKey = ""
@@ -145,6 +149,7 @@ internal class FakeNewsRepository(initial: List<NewsArticle> = listOf(article("n
         calls += "upload:${localPathOrUri.substringAfterLast('/')}"
         lastIdempotencyKey = idempotencyKey
         onProgress(0.5f)
+        uploadGate?.await()
         failUpload?.let { return AppResult.Failure(it) }
         onProgress(1f)
         val name = localPathOrUri.substringAfterLast('/')

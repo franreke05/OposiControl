@@ -16,6 +16,7 @@ import com.oposicontrol.admin.domain.usecase.news.SaveNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.ScheduleNewsUseCase
 import com.oposicontrol.admin.domain.usecase.news.UploadNewsAssetUseCase
 import com.oposicontrol.admin.domain.usecase.news.ValidateNewsDraftUseCase
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -567,6 +568,172 @@ class NewsViewModelTest {
         assertEquals("https://cdn.oposicontrol.local/news/8f14e45f-ceea-467a-9a3e-1b2c3d4e5f60/capa.png", layer.content)
         assertEquals(0, layer.sortOrder, "la imagen nace al fondo")
         assertEquals(layer.id, viewModel.state.value.selectedLayerId)
+    }
+
+    @Test
+    fun `discarding after replacing the background brings the saved image back`() = runTest {
+        val savedPath = "news/11111111-2222-4333-8444-555555555555/viejo.png"
+        val savedUrl = "https://cdn.oposicontrol.local/$savedPath"
+        val repository = FakeNewsRepository(listOf(article("news-1", "Convocatoria TCAE").copy(backgroundPath = savedPath, backgroundUrl = savedUrl)))
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        assertEquals(savedUrl, viewModel.state.value.editorBackgroundUrl)
+
+        viewModel.dispatch(NewsIntent.UploadBackground("file:///tmp/nuevo.png"))
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.editorBackgroundUrl.endsWith("nuevo.png"))
+
+        viewModel.dispatch(NewsIntent.Discard)
+        advanceUntilIdle()
+        val state = viewModel.state.value
+        assertEquals(savedPath, state.editorBackgroundPath)
+        assertEquals(savedUrl, state.editorBackgroundUrl, "la ruta sola no pinta nada: sin su URL el lienzo volvia a la plantilla")
+        assertFalse(state.isDirty)
+    }
+
+    @Test
+    fun `undo walks back through uploaded images keeping each one paintable`() = runTest {
+        val repository = FakeNewsRepository()
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        viewModel.dispatch(NewsIntent.UploadBackground("file:///tmp/a.png"))
+        advanceUntilIdle()
+        viewModel.dispatch(NewsIntent.UploadBackground("file:///tmp/b.png"))
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.editorBackgroundUrl.endsWith("b.png"))
+
+        viewModel.dispatch(NewsIntent.Undo)
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.editorBackgroundPath.endsWith("a.png"))
+        assertEquals("https://cdn.oposicontrol.local/" + viewModel.state.value.editorBackgroundPath, viewModel.state.value.editorBackgroundUrl)
+
+        viewModel.dispatch(NewsIntent.Undo)
+        advanceUntilIdle()
+        assertEquals("", viewModel.state.value.editorBackgroundPath)
+        assertEquals("", viewModel.state.value.editorBackgroundUrl)
+
+        viewModel.dispatch(NewsIntent.Redo)
+        advanceUntilIdle()
+        assertEquals("https://cdn.oposicontrol.local/" + viewModel.state.value.editorBackgroundPath, viewModel.state.value.editorBackgroundUrl)
+    }
+
+    @Test
+    fun `an upload that finishes after switching article does not land in the other one`() = runTest {
+        val repository = FakeNewsRepository().apply { uploadGate = CompletableDeferred() }
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        viewModel.dispatch(NewsIntent.UploadBackground("file:///tmp/fondo.png"))
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.uploads.containsKey(NEWS_UPLOAD_BACKGROUND))
+
+        viewModel.dispatch(NewsIntent.Select("news-2"))
+        advanceUntilIdle()
+        assertEquals("news-2", viewModel.state.value.selectedId)
+        assertTrue(viewModel.state.value.uploads.isEmpty(), "la subida era de la otra ficha")
+
+        repository.uploadGate?.complete(Unit)
+        advanceUntilIdle()
+        val state = viewModel.state.value
+        assertEquals("", state.editorBackgroundPath)
+        assertFalse(state.isDirty)
+        assertTrue(state.uploads.isEmpty())
+    }
+
+    @Test
+    fun `an upload error is said in plain words, never as the transport message`() = runTest {
+        val repository = FakeNewsRepository().apply { failUpload = AppError.Network("Client request failed", 502) }
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        viewModel.dispatch(NewsIntent.UploadImage("file:///tmp/tarjeta.png"))
+        advanceUntilIdle()
+        assertEquals("El servidor no está respondiendo bien ahora mismo.", viewModel.state.value.uploads.getValue(NEWS_UPLOAD_IMAGE).error)
+    }
+
+    // ------------------------------------------------------------------------------------------------ capas de partida
+
+    @Test
+    fun `a new article starts with empty layers and never stores filler text`() = runTest {
+        val repository = FakeNewsRepository()
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        viewModel.dispatch(NewsIntent.CreateNew)
+        advanceUntilIdle()
+        assertEquals(listOf("", "", ""), viewModel.state.value.editorLayers.map { it.content })
+        assertEquals(listOf("Título", "Subtítulo", "Texto"), viewModel.state.value.editorLayers.map { it.name })
+
+        viewModel.dispatch(NewsIntent.UpdateTitle("Convocatoria SAS"))
+        viewModel.dispatch(NewsIntent.UpdateSpecialty(NEWS_ESP))
+        viewModel.dispatch(NewsIntent.UpdateType(NEWS_TIPO))
+        advanceUntilIdle()
+        val report = assertNotNull(viewModel.state.value.validationReport)
+        assertTrue(report.canPublish, "dos capas de texto vacias avisan, no bloquean: el banner no las pinta")
+        assertEquals(listOf("layer_empty", "layer_empty"), report.warnings.filter { it.code == "layer_empty" }.map { it.code })
+
+        viewModel.dispatch(NewsIntent.SaveDraft)
+        advanceUntilIdle()
+        assertEquals(listOf("", "", "Convocatoria SAS"), repository.lastSaved?.layers?.map { it.content }?.sorted())
+    }
+
+    @Test
+    fun `the title field feeds the title layer only while both say the same`() = runTest {
+        val repository = FakeNewsRepository()
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        fun titleLayerText() = viewModel.state.value.editorLayers.first { it.kind == "titulo" }.content
+
+        viewModel.dispatch(NewsIntent.UpdateTitle("Convocatoria TCAE 2026"))
+        advanceUntilIdle()
+        assertEquals("Convocatoria TCAE 2026", titleLayerText())
+
+        viewModel.dispatch(NewsIntent.UpdateLayerContent("l-title", "TCAE 2026"))
+        advanceUntilIdle()
+        viewModel.dispatch(NewsIntent.UpdateTitle("Convocatoria TCAE 2026: plazas y fechas"))
+        advanceUntilIdle()
+        assertEquals("TCAE 2026", titleLayerText(), "un titular reescrito para el banner no se pisa desde la ficha")
+        assertEquals("Convocatoria TCAE 2026: plazas y fechas", viewModel.state.value.editorTitle)
+    }
+
+    @Test
+    fun `switching a layer between text and image drops a content that cannot be translated`() = runTest {
+        val repository = FakeNewsRepository()
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        viewModel.dispatch(NewsIntent.AddLayer)
+        advanceUntilIdle()
+        val id = assertNotNull(viewModel.state.value.selectedLayerId)
+        viewModel.dispatch(NewsIntent.UpdateLayerContent(id, "Plazo hasta el 30"))
+        advanceUntilIdle()
+
+        viewModel.dispatch(NewsIntent.UpdateLayerKind(id, "titulo"))
+        advanceUntilIdle()
+        assertEquals("Plazo hasta el 30", viewModel.state.value.editorLayers.first { it.id == id }.content, "de texto a titulo el texto vale")
+
+        viewModel.dispatch(NewsIntent.UpdateLayerKind(id, "imagen"))
+        advanceUntilIdle()
+        assertEquals("", viewModel.state.value.editorLayers.first { it.id == id }.content, "un parrafo no es la URL de una imagen")
+    }
+
+    @Test
+    fun `a create the server already has reloads the library and says where the article is`() = runTest {
+        val repository = FakeNewsRepository()
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        viewModel.dispatch(NewsIntent.CreateNew)
+        viewModel.dispatch(NewsIntent.UpdateTitle("Nueva"))
+        viewModel.dispatch(NewsIntent.UpdateSpecialty(NEWS_ESP))
+        viewModel.dispatch(NewsIntent.UpdateType(NEWS_TIPO))
+        advanceUntilIdle()
+        val refreshes = repository.calls.count { it == "refresh" }
+
+        repository.failSave = AppError.Validation("Esta clave de idempotencia ya se uso con una peticion distinta.", "idempotency_key_reused")
+        viewModel.dispatch(NewsIntent.SaveDraft)
+        advanceUntilIdle()
+
+        assertEquals(refreshes + 1, repository.calls.count { it == "refresh" })
+        val status = viewModel.state.value.saveStatus()
+        assertEquals("No se pudo guardar.", status.message)
+        assertEquals("Esta noticia ya se creó en un intento anterior. Ábrela desde la biblioteca y sigue ahí.", status.detail)
+        assertTrue(viewModel.state.value.isDirty, "lo escrito sigue en la ficha")
     }
 
     // ------------------------------------------------------------------------------------------------ borrador local

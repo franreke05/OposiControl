@@ -26,6 +26,8 @@ class NewsVisualHarness {
         news("news-1920-light-publicacion.png", fx.publicacion(), height = 1300)
         news("news-1920-light-nueva.png", fx.nueva())
         news("news-1920-light-nueva-lista.png", fx.nuevaLista())
+        // Lienzo de una noticia recien creada: capas vacias con su guia, y la vista previa sin nada escrito.
+        news("news-1920-light-nueva-diseno.png", fx.nueva().copy(editorTab = NewsEditorTab.DESIGN, selectedLayerId = "s", selectedTarget = NewsEditorSelection.LAYER))
     }
 
     @Test
@@ -157,15 +159,16 @@ internal object NewsFixtures {
         editorBackgroundPath = "",
         editorBackgroundUrl = "",
         editorLayers = listOf(
-            NewsLayerDraft("t", "Título", "titulo", "Título de noticia", 64, 48, 900, 216, 100, visible = true, sortOrder = 0),
-            NewsLayerDraft("s", "Subtítulo", "texto", "Especialidad - Tipo", 64, 276, 800, 92, 92, visible = true, sortOrder = 1),
+            NewsLayerDraft("t", "Título", "titulo", "", 64, 48, 900, 216, 100, visible = true, sortOrder = 0),
+            NewsLayerDraft("s", "Subtítulo", "texto", "", 64, 276, 800, 92, 92, visible = true, sortOrder = 1),
+            NewsLayerDraft("x", "Texto", "texto", "", 64, 380, 900, 180, 88, visible = true, sortOrder = 2),
         ),
         selectedLayerId = null,
         selectedTarget = NewsEditorSelection.ARTICLE,
         news = UiAsync.Success(listOf(NewsItem("local-1", "", "", "", "SKY", status = "draft", publishFrom = "", text = "", isLocalDraft = true)) + rows),
         validationReport = NewsValidationReport(
             canSave = false, canSchedule = false, canPublish = false,
-            errors = listOf(NewsValidationIssue("title_required", "La noticia necesita titulo.", NewsValidationSeverity.ERROR), NewsValidationIssue("specialty_required", "La noticia necesita especialidad.", NewsValidationSeverity.ERROR)),
+            errors = listOf(NewsValidationIssue("title_required", "La noticia necesita título.", NewsValidationSeverity.ERROR), NewsValidationIssue("specialty_required", "La noticia necesita especialidad.", NewsValidationSeverity.ERROR)),
             warnings = emptyList(),
         ),
     )
@@ -232,7 +235,7 @@ internal object NewsFixtures {
         validationReport = NewsValidationReport(
             canSave = true, canSchedule = false, canPublish = false,
             errors = listOf(
-                NewsValidationIssue("title_layer_required", "Debe existir una capa de titulo visible.", NewsValidationSeverity.ERROR),
+                NewsValidationIssue("title_layer_required", "Hace falta una capa de título visible y con texto.", NewsValidationSeverity.ERROR),
                 NewsValidationIssue("layer_outside_canvas", "La capa Etiqueta esta fuera del lienzo.", NewsValidationSeverity.ERROR),
             ),
             warnings = listOf(NewsValidationIssue("text_empty", "El cuerpo esta vacio.", NewsValidationSeverity.WARNING)),

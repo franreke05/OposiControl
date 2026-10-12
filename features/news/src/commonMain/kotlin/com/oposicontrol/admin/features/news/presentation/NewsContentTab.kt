@@ -32,7 +32,6 @@ import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
 
-/** Alto de la vista previa del fondo y de la imagen de la tarjeta dentro de la ficha. */
 /** Vista de una imagen subida, con la proporcion del banner de Inicio (358 : 148): asi se ve como la recorta el lienzo. */
 private val ASSET_PREVIEW_HEIGHT = 148.dp
 private val ASSET_PREVIEW_WIDTH = 358.dp
@@ -65,7 +64,7 @@ internal fun NewsContentTab(state: NewsState, onIntent: (NewsIntent) -> Unit) {
                 required = true,
                 readOnly = readOnly,
                 isError = titleTooLong,
-                supportingText = "${state.editorTitle.length} de $NEWS_TITLE_MAX caracteres. También es el texto de la capa de título.",
+                supportingText = "${state.editorTitle.length} de $NEWS_TITLE_MAX caracteres. Alimenta la capa de título mientras no la reescribas en Diseño.",
             )
             WorkspaceEqualRow(columns = 2, gap = Spacing.sm) {
                 NewsCatalogField("Especialidad", state.editorSpecialty, state.specialties, enabled = !readOnly) { onIntent(NewsIntent.UpdateSpecialty(it)) }
@@ -83,12 +82,13 @@ internal fun NewsContentTab(state: NewsState, onIntent: (NewsIntent) -> Unit) {
                 label = "Cuerpo",
                 value = state.editorText,
                 onValueChange = { onIntent(NewsIntent.UpdateText(it)) },
-                placeholder = "Texto de la noticia tal como se leerá en OposiBot.",
+                placeholder = "Texto completo de la noticia.",
                 readOnly = readOnly,
                 singleLine = false,
                 minLines = 8,
                 maxWidth = Sizing.inputDescriptionMaxWidth,
-                supportingText = "${state.editorText.length} caracteres · texto plano. El cuerpo y las capas del lienzo se editan por separado.",
+                isError = state.editorText.length > NEWS_TEXT_MAX,
+                supportingText = "${state.editorText.length} caracteres · texto plano. Se guarda con la noticia; el banner solo pinta las capas de Diseño.",
             )
         }
     }

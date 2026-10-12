@@ -63,6 +63,26 @@ class NewsPresentationTest {
         assertNull(saved().saveProblem())
         val uploading = saved().copy(uploads = mapOf("background" to NewsUploadState("background", "file://a.png", "a.png", 0.4f)))
         assertEquals("Espera a que terminen las subidas de imagen.", uploading.saveProblem())
+        assertEquals("El cuerpo no puede pasar de 200.000 caracteres.", saved().copy(editorText = "a".repeat(NEWS_TEXT_MAX + 1)).saveProblem())
+        assertNull(saved().copy(editorText = "a".repeat(NEWS_TEXT_MAX)).saveProblem())
+    }
+
+    @Test
+    fun contractRejectionsAreSaidWithWhatFixesThem() {
+        fun rejected(code: String) = AppError.Validation("texto del servidor sin acentos", code).newsMessage()
+        assertEquals("Otra sesión guardó esta noticia después de que la abrieras.", rejected("precondition_failed"))
+        assertEquals("La noticia ya está publicada o archivada y no admite cambios.", rejected("NEWS_NOT_EDITABLE"))
+        assertEquals("La noticia no tiene texto ni capas con contenido: no hay nada que publicar.", rejected("news_incomplete"))
+        assertEquals("La fecha de publicación tiene que ser posterior a ahora.", rejected("not_future_instant"))
+        assertEquals("La especialidad o el tipo de noticia ya no están activos. Elige otros en Contenido.", rejected("inactive_tipo_or_especialidad"))
+        assertEquals("Una de las imágenes no corresponde a un archivo subido. Vuelve a subirla.", rejected("asset_path_unknown"))
+        assertEquals("La imagen supera el límite de 10 MB.", rejected("payload_too_large"))
+        // Un rechazo que este panel no conoce conserva el texto del servidor; un fallo de red nunca ensena el suyo.
+        assertEquals("texto del servidor sin acentos", rejected("otro_codigo"))
+        assertEquals("El servidor ha tardado demasiado en responder.", AppError.Network("Client request failed", 504).newsMessage())
+        // En una subida, un 400 de validacion es el archivo, no la ficha.
+        assertEquals("El archivo no es una imagen válida del formato que indica su extensión.", AppError.Validation("Algun dato de la peticion no es valido.", "validation").newsUploadMessage())
+        assertEquals("La imagen supera el límite de 10 MB.", AppError.Validation("La peticion es demasiado grande.", "payload_too_large").newsUploadMessage())
     }
 
     @Test

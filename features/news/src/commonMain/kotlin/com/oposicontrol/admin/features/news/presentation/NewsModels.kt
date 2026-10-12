@@ -41,9 +41,9 @@ data class NewsLayerDraft(
     val sortOrder: Int,
     val rotationDegrees: Int = 0,
     /**
-     * Tamano de fuente en sp. `0` NO es un tamano: significa «derivado del tipo
-     * de capa», que es exactamente lo que el lienzo hace hoy sin poder
-     * configurarse (titulo -> 25sp, resto -> 16sp).
+     * Tamano de fuente en PX DEL LIENZO (4 por dp de movil; el nombre `Sp` es el de la clave del contrato).
+     * `0` NO es un tamano: significa «derivado del tipo de capa» (titulo -> 72, resto -> 48; ver
+     * `NEWS_DERIVED_TITLE_SIZE` / `NEWS_DERIVED_TEXT_SIZE`).
      *
      * Por que `0` y no `-1` ni `null`:
      * - Es el default de `Int` en JSON y en Postgres, asi que las capas ya
