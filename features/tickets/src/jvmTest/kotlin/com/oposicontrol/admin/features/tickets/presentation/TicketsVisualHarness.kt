@@ -199,7 +199,7 @@ internal object TicketsFixtures {
 }
 
 /** Pestañas del hub de Usuarios, transcritas de `composeApp` (`UsersHubTab`). */
-private val USERS_HUB_TABS: List<DesktopTab> = listOf(
+internal val USERS_HUB_TABS: List<DesktopTab> = listOf(
     DesktopTab("users", "Usuarios", AppIcon.USERS),
     DesktopTab("tickets", "OposiTickets", AppIcon.TICKETS),
     DesktopTab("competition", "Competición", AppIcon.RANKINGS),
@@ -207,7 +207,7 @@ private val USERS_HUB_TABS: List<DesktopTab> = listOf(
 )
 
 /** Menú lateral real: OposiTickets no es una entrada, vive dentro de Usuarios. Transcrito: el catálogo vive en `composeApp`. */
-private val HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
+internal val HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
     ShellNavigationGroup("home", "Inicio", listOf(ShellNavigationItem("home", "Dashboard", AppIcon.HOME.key))),
     ShellNavigationGroup(
         "content",
