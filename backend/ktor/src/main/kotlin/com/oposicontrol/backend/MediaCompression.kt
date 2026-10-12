@@ -92,7 +92,7 @@ object MediaCompression {
      * cabecera ANTES de decodificar, y por encima del techo el archivo se sube
      * sin tocar en vez de convertirse en una denegacion de servicio.
      */
-    const val IMAGE_MAX_PIXELS: Long = 50_000_000L
+    const val IMAGE_MAX_PIXELS: Long = 25_000_000L
 
     /**
      * Por debajo de esto, un PNG que no hizo falta redimensionar NO pasa a JPEG.
@@ -512,10 +512,16 @@ object MediaCompression {
         // y la entrada no era ya MP4, no hay forma honesta de etiquetar el
         // resultado: se sube el original.
         if (!allowFormatChange && mime != "video/mp4") return original
+        // El MIME lo declara quien sube; ffmpeg sondea el CONTENIDO. Sin esta comprobacion, un fichero de texto etiquetado
+        // como video (una lista HLS o concat) haria que ffmpeg abriese las rutas que nombra. Solo se transcodifica lo que
+        // empieza como un contenedor de video; lo demas se sube sin tocar.
+        if (!bytes.looksLikeVideoContainer()) return original
         if (!ffmpeg.isAvailable()) return original.copy(outcome = MediaCompressionOutcome.SKIPPED_NO_FFMPEG)
         val produced = runFfmpeg(bytes, ".bin", ".mp4", VIDEO_TIMEOUT_MS, ffmpeg) { input, output ->
             listOf(
                 "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                // Solo ficheros locales: ningun protocolo de red ni de concatenacion, diga lo que diga la entrada.
+                "-protocol_whitelist", "file",
                 "-i", input.toString(),
                 "-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", VIDEO_CRF,
                 // yuv420p: sin esto un origen 4:2:2 o 4:4:4 produce un MP4 que
@@ -544,10 +550,12 @@ object MediaCompression {
         val original = CompressedMedia(bytes, mime, MediaCompressionOutcome.SKIPPED_UNSUPPORTED)
         // WAV -> M4A cambia de contenedor por definicion: sin permiso, no se toca.
         if (!allowFormatChange) return original
+        if (!bytes.looksLikeWav()) return original
         if (!ffmpeg.isAvailable()) return original.copy(outcome = MediaCompressionOutcome.SKIPPED_NO_FFMPEG)
         val produced = runFfmpeg(bytes, ".wav", ".m4a", AUDIO_TIMEOUT_MS, ffmpeg) { input, output ->
             listOf(
                 "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                "-protocol_whitelist", "file",
                 "-i", input.toString(),
                 "-vn", "-c:a", "aac", "-b:a", AUDIO_BITRATE,
                 "-movflags", "+faststart",
@@ -714,3 +722,15 @@ object SystemFfmpegRunner : FfmpegRunner {
         return File(if (windows) "NUL" else "/dev/null")
     }
 }
+
+/** `true` si [offset] y los bytes siguientes son exactamente [ascii]. */
+private fun ByteArray.hasAsciiAt(offset: Int, ascii: String): Boolean =
+    size >= offset + ascii.length && ascii.indices.all { this[offset + it] == ascii[it].code.toByte() }
+
+/** MP4/MOV (`ftyp` en el byte 4), Matroska/WebM (cabecera EBML) o AVI (`RIFF....AVI `): lo unico que se entrega a ffmpeg como video. */
+internal fun ByteArray.looksLikeVideoContainer(): Boolean =
+    hasAsciiAt(4, "ftyp") ||
+        (size >= 4 && this[0] == 0x1A.toByte() && this[1] == 0x45.toByte() && this[2] == 0xDF.toByte() && this[3] == 0xA3.toByte()) ||
+        (hasAsciiAt(0, "RIFF") && hasAsciiAt(8, "AVI "))
+
+internal fun ByteArray.looksLikeWav(): Boolean = hasAsciiAt(0, "RIFF") && hasAsciiAt(8, "WAVE")

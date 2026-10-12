@@ -1616,7 +1616,7 @@ internal class SupabaseContentGateway private constructor(
     }
 
     fun deleteEtiqueta(etiquetaId: String) {
-        request("DELETE", "/rest/v1/etiquetas?id=eq.$etiquetaId", null)
+        request("DELETE", "/rest/v1/etiquetas?id=eq.${etiquetaId.requireSafeRowId()}", null)
     }
 
     fun listComunidades(): List<ComunidadDto> {
@@ -1637,7 +1637,7 @@ internal class SupabaseContentGateway private constructor(
     }
 
     fun deleteComunidad(comunidadId: String) {
-        request("DELETE", "/rest/v1/comunidades_autonomas?id=eq.$comunidadId", null)
+        request("DELETE", "/rest/v1/comunidades_autonomas?id=eq.${comunidadId.requireSafeRowId()}", null)
     }
 
     fun listSolucionarios(): List<SolucionarioDto> {
@@ -2595,4 +2595,10 @@ private fun Route.installDevRestartRoutes() {
             restart.schedule()
         }
     }
+}
+
+/** Un identificador de fila que va a un filtro de PostgREST: solo letras, cifras y guiones. Cualquier otra cosa (`&`, `=`, `,`) es 400. */
+private fun String.requireSafeRowId(): String {
+    require(matches(Regex("^[A-Za-z0-9-]{1,64}$"))) { "Identificador no valido." }
+    return this
 }

@@ -39,6 +39,9 @@ data class ReindexResultDto(
     val tags: Int,
 )
 
+/** Cuanto se reutilizan las lecturas de una busqueda antes de volver a pedirlas a la base de datos. */
+private const val SEARCH_SNAPSHOT_TTL_MILLIS = 60_000L
+
 class SupabaseTagSearchGateway private constructor(
     private val supabaseUrl: String,
     private val serviceRoleKey: String,
@@ -66,19 +69,8 @@ class SupabaseTagSearchGateway private constructor(
         val normalizedQuery = query.trim().lowercase()
         val selectedTags = tagSlugs.map { it.toSlug() }.filter { it.isNotBlank() }.toSet()
         val normalizedSection = section?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-        val indexRows = request(
-            "GET",
-            "/rest/v1/search_index?select=id,entity_type,entity_id,section,title,summary,searchable_text&order=id.desc&limit=500",
-            null,
-        )
-            .decodeList<SearchIndexRow>()
+        val (indexRows, tagsById, entityTags) = searchSnapshot()
         if (indexRows.isEmpty()) return emptyList()
-        val tagsById = request("GET", "/rest/v1/tag?select=id,nombre,slug,origen&limit=1000", null)
-            .decodeList<TagRow>()
-            .associateBy { it.id }
-        val entityTags = request("GET", "/rest/v1/entity_tag?select=id,tag_id,entity_type,entity_id,score&limit=3000", null)
-            .decodeList<EntityTagRow>()
-            .groupBy { "${it.entityType}:${it.entityId}" }
         return indexRows.asSequence()
             .map { row ->
                 val tags = entityTags["${row.entityType}:${row.entityId}"]
@@ -119,7 +111,46 @@ class SupabaseTagSearchGateway private constructor(
             .toList()
     }
 
+    private class SearchSnapshot(
+        val indexRows: List<SearchIndexRow>,
+        val tagsById: Map<Int?, TagRow>,
+        val entityTags: Map<String, List<EntityTagRow>>,
+        val loadedAt: Long,
+    ) {
+        operator fun component1() = indexRows
+        operator fun component2() = tagsById
+        operator fun component3() = entityTags
+    }
+
+    @Volatile
+    private var snapshot: SearchSnapshot? = null
+
+    /**
+     * Las tres lecturas de una busqueda (hasta 500 filas de indice, 1.000 etiquetas y 3.000 relaciones) se reutilizan
+     * durante [SEARCH_SNAPSHOT_TTL_MILLIS]: escribir una consulta letra a letra ya no las descarga en cada pulsacion.
+     * Cualquier escritura de ESTE proceso en el indice ([index], [remove], [reindexAll]) las invalida, asi que lo que se
+     * acaba de guardar aparece en la siguiente busqueda; lo que escriba otra replica tarda como mucho ese tiempo.
+     */
+    private fun searchSnapshot(): SearchSnapshot {
+        val now = System.currentTimeMillis()
+        snapshot?.takeIf { now - it.loadedAt < SEARCH_SNAPSHOT_TTL_MILLIS }?.let { return it }
+        val indexRows = request(
+            "GET",
+            "/rest/v1/search_index?select=id,entity_type,entity_id,section,title,summary,searchable_text&order=id.desc&limit=500",
+            null,
+        ).decodeList<SearchIndexRow>()
+        if (indexRows.isEmpty()) return SearchSnapshot(emptyList(), emptyMap(), emptyMap(), now).also { snapshot = it }
+        val tagsById = request("GET", "/rest/v1/tag?select=id,nombre,slug,origen&limit=1000", null)
+            .decodeList<TagRow>()
+            .associateBy { it.id }
+        val entityTags = request("GET", "/rest/v1/entity_tag?select=id,tag_id,entity_type,entity_id,score&limit=3000", null)
+            .decodeList<EntityTagRow>()
+            .groupBy { "${it.entityType}:${it.entityId}" }
+        return SearchSnapshot(indexRows, tagsById, entityTags, now).also { snapshot = it }
+    }
+
     fun reindexAll(): ReindexResultDto {
+        snapshot = null
         val inputs = buildList {
             addAll(listEspecialidades().map { it.toIndexInput() })
             addAll(listTiposNoticia().map { it.toIndexInput() })
@@ -169,6 +200,7 @@ class SupabaseTagSearchGateway private constructor(
 
     fun remove(entityType: String, entityId: String) {
         if (entityId.isBlank()) return
+        snapshot = null
         request(
             "DELETE",
             "/rest/v1/entity_tag?entity_type=eq.${entityType}&entity_id=eq.${entityId}",
@@ -183,6 +215,7 @@ class SupabaseTagSearchGateway private constructor(
 
     private fun index(input: SearchIndexInput) {
         if (input.entityId.isBlank() || input.title.isBlank()) return
+        snapshot = null
         request(
             method = "POST",
             path = "/rest/v1/rpc/admin_upsert_search_entry",

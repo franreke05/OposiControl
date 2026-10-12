@@ -6940,6 +6940,18 @@ class AdminV1Gateway private constructor(
             sbJson.encodeToString(listOf(row)),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<ContenidoDesbloqueadoRow>().first().let {
+            // Conceder acceso a un examen de pago es una accion economica: queda en auditoria con quien la hizo.
+            registrarAuditoriaResultado(
+                "acceso_examen_concedido",
+                "contenido_desbloqueado_usuario",
+                it.id,
+                antes = null,
+                despues = buildJsonObject {
+                    put("usuario_id", JsonPrimitive(user.usuarioId))
+                    put("examen_id", JsonPrimitive(exam.id))
+                    put("motivo", JsonPrimitive(motivo))
+                },
+            )
             AdminExamAccessDto(
                 id = it.id,
                 userName = user.displayName(user.usuarioId),

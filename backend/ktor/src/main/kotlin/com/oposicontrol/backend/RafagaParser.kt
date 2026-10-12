@@ -189,8 +189,24 @@ private val TYPES_REQUIRING_REASONING = setOf("razonada", "inmersiva")
 internal const val RAFAGA_DISCARDS_EXTRAS_WARNING =
     "Ráfaga no publica explicación ni fuente: se descartarán al publicar."
 
+/** Topes de la importacion de PDF: un fichero pequeno puede declarar miles de paginas o expandirse a gigas de texto. */
+internal const val PDF_IMPORT_MAX_PAGES = 400
+internal const val PDF_IMPORT_MAX_CHARS = 4_000_000
+
 internal fun extractTextFromPdf(bytes: ByteArray): String =
-    Loader.loadPDF(bytes).use { doc -> PDFTextStripper().getText(doc) }
+    Loader.loadPDF(bytes).use { doc ->
+        require(doc.numberOfPages <= PDF_IMPORT_MAX_PAGES) { "El PDF tiene mas de $PDF_IMPORT_MAX_PAGES paginas." }
+        // Pagina a pagina y con tope: el texto nunca crece en memoria mas alla del limite, lo que haya despues se rechaza.
+        val text = StringBuilder()
+        val stripper = PDFTextStripper()
+        for (page in 1..doc.numberOfPages) {
+            stripper.startPage = page
+            stripper.endPage = page
+            text.append(stripper.getText(doc))
+            require(text.length <= PDF_IMPORT_MAX_CHARS) { "El PDF contiene demasiado texto para importarlo de una vez." }
+        }
+        text.toString()
+    }
 
 /** Compatibilidad: el flujo de Ráfaga, que es el que existía antes de que hubiera tipos. */
 internal fun parseRafagaText(text: String): RafagaParseResult = parseQuestionBlocks(text, "rafaga")
