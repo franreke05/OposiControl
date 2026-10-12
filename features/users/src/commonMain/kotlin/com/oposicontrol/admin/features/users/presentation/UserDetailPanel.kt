@@ -235,12 +235,7 @@ private fun UserHero(state: UsersState, user: User, onIntent: (UsersIntent) -> U
         }
         val actions: @Composable () -> Unit = {
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs), verticalAlignment = Alignment.CenterVertically) {
-                SecondaryButton(
-                    text = "Conceder OposiTickets",
-                    onClick = { onIntent(UsersIntent.OpenTicketsDialog) },
-                    size = ButtonSize.COMPACT,
-                    icon = { AppIconImage(AppIcon.TICKETS, size = 14.dp) },
-                )
+                // Los OposiTickets se conceden en su pestaña (Usuarios › OposiTickets), no aquí: un solo sitio para mover saldo.
                 SecondaryButton(
                     text = "Registrar advertencia",
                     onClick = { onIntent(UsersIntent.OpenWarningDialog) },

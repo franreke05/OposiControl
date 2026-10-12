@@ -282,18 +282,12 @@ internal fun UserActionsCard(
         title = "Acciones",
         description = "Operaciones habituales sobre la cuenta seleccionada.",
         modifier = modifier,
-        icon = AppIcon.TICKETS,
-        iconRole = SemanticRole.COMMERCE,
+        icon = AppIcon.WARNING,
+        iconRole = SemanticRole.INFO,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                SecondaryButton(
-                    text = "Conceder OposiTickets",
-                    onClick = { onIntent(UsersIntent.OpenTicketsDialog) },
-                    size = ButtonSize.COMPACT,
-                    enabled = user != null,
-                    icon = { AppIconImage(AppIcon.TICKETS, size = 14.dp) },
-                )
+                // Los OposiTickets se conceden en su pestaña (Usuarios › OposiTickets), no aquí: un solo sitio para mover saldo.
                 SecondaryButton(
                     text = "Registrar advertencia",
                     onClick = { onIntent(UsersIntent.OpenWarningDialog) },
