@@ -46,7 +46,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.GlassSurface
@@ -54,17 +53,30 @@ import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.core.ui.layout.UiSpacing
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.oposiBotFontFamily
+import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_CORNER_DP
+import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_PHONE_HEIGHT_DP
+import com.oposicontrol.admin.features.news.editor.NEWS_BANNER_PHONE_WIDTH_DP
+import com.oposicontrol.admin.features.news.editor.NEWS_CANVAS_DEFAULT_HEIGHT
+import com.oposicontrol.admin.features.news.editor.NEWS_CANVAS_DEFAULT_WIDTH
+import com.oposicontrol.admin.features.news.editor.NEWS_DERIVED_TEXT_SIZE
+import com.oposicontrol.admin.features.news.editor.NEWS_DERIVED_TITLE_SIZE
+import com.oposicontrol.admin.features.news.editor.NEWS_TEXT_INSET_X
+import com.oposicontrol.admin.features.news.editor.NEWS_TEXT_INSET_Y
 import com.oposicontrol.admin.features.news.presentation.NewsIntent
 import com.oposicontrol.admin.features.news.presentation.NewsLayerDraft
 import com.oposicontrol.admin.features.news.presentation.NewsState
 import kotlin.math.roundToInt
 
-private const val LogicalCanvasWidth = 800
-private const val LogicalCanvasHeight = 500
+// El lienzo de una noticia es el banner de Inicio de OposiBot (docs/integration/NEWS_RENDERING_CONTRACT.md): las vistas
+// de este editor tienen su misma proporcion, 358 : 148, y todo lo que se pinta dentro se mide en px de lienzo.
 private const val PreviewCanvasWidth = 320
-private const val PreviewCanvasHeight = 200
+private const val PreviewCanvasHeight = PreviewCanvasWidth * NEWS_BANNER_PHONE_HEIGHT_DP / NEWS_BANNER_PHONE_WIDTH_DP
 private const val FullscreenCanvasWidth = 480
-private const val FullscreenCanvasHeight = 300
+private const val FullscreenCanvasHeight = FullscreenCanvasWidth * NEWS_BANNER_PHONE_HEIGHT_DP / NEWS_BANNER_PHONE_WIDTH_DP
+
+/** Guia de una capa de texto vacia: se ve donde esta sin confundirse con texto escrito (no se guarda ni se publica). */
+private const val EmptyLayerHintAlpha = 0.45f
 private const val FullscreenPanelWidth = 260
 private const val MinLayerWidth = 24
 private const val MinLayerHeight = 24
@@ -433,11 +445,12 @@ private fun NewsLayerCanvasViewport(
     onIntent: (NewsIntent) -> Unit,
 ) {
     val palette = templatePalette(state.editorBackgroundType)
-    val canvasWidth = state.editorCanvasWidth.coerceAtLeast(LogicalCanvasWidth)
-    val canvasHeight = state.editorCanvasHeight.coerceAtLeast(LogicalCanvasHeight)
+    val canvasWidth = state.editorCanvasWidth.takeIf { it > 0 } ?: NEWS_CANVAS_DEFAULT_WIDTH
+    val canvasHeight = state.editorCanvasHeight.takeIf { it > 0 } ?: NEWS_CANVAS_DEFAULT_HEIGHT
     val scaleX = viewportWidth.toFloat() / canvasWidth
     val scaleY = viewportHeight.toFloat() / canvasHeight
-    val shape = RoundedCornerShape(24.dp)
+    // Esquinas del banner: 8 dp a 358 dp de ancho, escaladas a esta vista.
+    val shape = RoundedCornerShape((NEWS_BANNER_CORNER_DP * viewportWidth.toFloat() / NEWS_BANNER_PHONE_WIDTH_DP).dp)
 
     Box(
         modifier = Modifier
@@ -563,6 +576,8 @@ private fun NewsEditableLayer(
             .height((layer.height * scaleY).roundToInt().coerceAtLeast(1).dp)
             .graphicsLayer {
                 rotationZ = layer.rotationDegrees.toFloat()
+                // La opacidad es de la capa entera, texto o imagen, de 0 a 100: lo que dice el contrato.
+                alpha = layer.opacity.coerceIn(0, 100) / 100f
             }
             .background(layerFill, layerShape)
             .border(if (selected) 1.dp else 0.dp, if (selected) Color.White.copy(alpha = 0.72f) else Color.Transparent, layerShape)
@@ -595,8 +610,7 @@ private fun NewsEditableLayer(
                     )
                 }
             }
-            .clickable { onIntent(NewsIntent.SelectLayer(layer.id)) }
-            .padding(horizontal = (10 * scaleX).dp, vertical = (7 * scaleY).dp),
+            .clickable { onIntent(NewsIntent.SelectLayer(layer.id)) },
     ) {
         if (layer.kind.isImageKind()) {
             NewsBackgroundImage(
@@ -604,16 +618,25 @@ private fun NewsEditableLayer(
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
+            // Mismas reglas que el lienzo de escritorio y que el contrato de pintado: tamano en px de lienzo (0 = derivado
+            // del tipo), interlinea 1,2, peso de la capa, margen de 24 x 16 px, arriba a la izquierda y recortado al marco.
+            // El tamano se da en dp y no en sp: el banner no crece con el ajuste de letra del telefono.
+            val empty = layer.content.isBlank()
+            val fontPx = layer.fontSizeSp.takeIf { it > 0 }
+                ?: if (layer.kind.isTitleKind()) NEWS_DERIVED_TITLE_SIZE else NEWS_DERIVED_TEXT_SIZE
+            val fontSize = with(density) { (fontPx * scaleY).dp.toSp() }
             Text(
-                text = layer.content.ifBlank { layer.name.ifBlank { "Texto" } },
-                modifier = Modifier.align(Alignment.CenterStart),
-                color = layer.textColor.toNewsColor(Color.White).copy(alpha = layer.opacity.coerceIn(20, 100) / 100f),
+                text = if (empty) layer.name.ifBlank { "Capa vacía" } else layer.content,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(horizontal = (NEWS_TEXT_INSET_X * scaleX).dp, vertical = (NEWS_TEXT_INSET_Y * scaleY).dp),
+                color = layer.textColor.toNewsColor(Color.White).let { if (empty) it.copy(alpha = EmptyLayerHintAlpha) else it },
                 fontFamily = layer.fontFamily.toNewsFontFamily(),
-                fontSize = if (layer.kind.isTitleKind()) 26.sp * scaleY else 16.sp * scaleY,
-                lineHeight = if (layer.kind.isTitleKind()) 30.sp * scaleY else 20.sp * scaleY,
-                fontWeight = if (layer.kind.isTitleKind()) FontWeight.Bold else FontWeight.Medium,
-                maxLines = if (layer.kind.isTitleKind()) 3 else 5,
-                overflow = TextOverflow.Ellipsis,
+                fontSize = fontSize,
+                lineHeight = fontSize * 1.2f,
+                fontWeight = layer.toNewsFontWeight(),
+                maxLines = if (empty) 1 else Int.MAX_VALUE,
+                overflow = TextOverflow.Clip,
             )
         }
         if (selected) {
@@ -1264,13 +1287,24 @@ private fun String.toLayerLabel(): String {
     }
 }
 
+/** `sans` es Inter, la letra de OposiBot; las otras tres son las genericas de cada plataforma. */
+@Composable
 private fun String.toNewsFontFamily(): FontFamily {
     return when (trim().lowercase()) {
         "serif" -> FontFamily.Serif
         "mono" -> FontFamily.Monospace
         "cursive" -> FontFamily.Cursive
-        else -> FontFamily.SansSerif
+        else -> oposiBotFontFamily()
     }
+}
+
+/** El peso guardado en la capa; vacio = derivado del tipo (titulo en negrita, resto normal). */
+private fun NewsLayerDraft.toNewsFontWeight(): FontWeight = when (fontWeight) {
+    "bold" -> FontWeight.Bold
+    "semibold" -> FontWeight.SemiBold
+    "medium" -> FontWeight.Medium
+    "normal" -> FontWeight.Normal
+    else -> if (kind.isTitleKind()) FontWeight.Bold else FontWeight.Normal
 }
 
 private fun String.toNewsStatusLabel(): String = when (trim().lowercase()) {

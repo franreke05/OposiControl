@@ -26,7 +26,6 @@ Frame: corner radius 8 dp at 358 dp wide (scale it with the width) and a 0.5 px 
   news item; it is not stored in the row (the table has no column for it).
 - Every layer coordinate, size, font size and inset below is in canvas px. The app multiplies by
   `bannerWidthDp / 1432`. A layer at `x = 64` is 16 dp from the left edge on a phone.
-- 1432 x 592 is above the 800 x 500 floor that the mobile admin editor still assumes.
 
 ## 3. What a row carries
 
@@ -93,11 +92,11 @@ The editor writes every key of every layer (no omitted defaults) and renumbers `
 - **Consumer**: D4-18 / DEC-030. Until the feed and the banner exist, a published news item is not shown anywhere.
 - **Scheduling**: no automatic activation (above).
 - **Banner action**: no link model.
-- **Mobile admin editor** (`MobileLayeredNewsEditor`, compact layout): paints titles at 26 and other text at 16 canvas
-  units and ignores `fontSizeSp` and `fontWeight`, so its preview is not faithful to this contract (DEBT-090). The desktop
-  editor is.
+- **Mobile admin editor** (`MobileLayeredNewsEditor`, compact layout): follows this contract since 2026-10-12 (DEBT-090
+  closed). It repeats the rules instead of sharing the desktop painter, so a change here must be made in both.
 - **Fonts**: `sans` is painted with Inter in the editor, from the same three files the app bundles (Regular 400,
-  Medium 500, SemiBold 600; `core/ui/.../composeResources/font/inter_*.ttf`, SIL OFL 1.1). Neither side has Inter Bold,
+  Medium 500, SemiBold 600; `core/ui/.../composeResources/font/inter_*.ttf`, SIL OFL 1.1; the licence text ships in
+  `composeResources/files/licenses/FONT_LICENSES.txt`). Neither side has Inter Bold,
   so `bold` resolves to SemiBold on both and nothing synthesises a fake bold. If the app ever adds a Bold file, the admin
   must add the same one. `serif`, `mono` and `cursive` are whatever each platform provides: they are not identical
   between Android, iOS and the admin desktop, and the editor says so next to the selector.
