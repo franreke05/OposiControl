@@ -41,7 +41,8 @@ man3=supabase/SLICE3_MIGRATIONS.txt
 expected3="$(tr -d '\r' < "$man3" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
 [ -n "$expected3" ] || { echo "FAIL: manifiesto Slice 3 sin entradas"; exit 1; }
 # Las 202610*_slice2_*.sql (SLICE 2) y 202610*_slice7_*.sql (SLICE 7), mas abajo, tienen su propio manifiesto: toda otra 202610* es de Slice 3.
-actual3="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610.*\.sql$' | grep -Ev '^[0-9]+_slice[27]_' | sed 's/\.sql$//' | sort) )"
+# Las 202610*_security_*.sql son endurecimiento transversal (pasada de seguridad), no pertenecen a ningun slice ni a su manifiesto.
+actual3="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610.*\.sql$' | grep -Ev '^[0-9]+_(slice[27]|security)_' | sed 's/\.sql$//' | sort) )"
 if [ "$actual3" != "$expected3" ]; then
   echo "FAIL: el manifiesto Slice 3 y supabase/migrations/202610*.sql difieren (< manifiesto, > real):"
   diff <(echo "$expected3") <(echo "$actual3")
