@@ -46,7 +46,12 @@ internal actual fun NewsAssetImage(path: String, modifier: Modifier) {
                 }
                 connection.getInputStream().use { it.readNBytes(10 * 1024 * 1024 + 1) }
             } else {
-                val file = File(path.removePrefix("file://"))
+                // Solo un fichero LOCAL elegido con el selector (`file://C:/...`). Nunca una ruta de red: abrir
+                // `\\host\recurso` hace que Windows se autentique contra ese host.
+                require(path.startsWith("file://"))
+                val local = path.removePrefix("file://")
+                require(!local.startsWith("//") && !local.startsWith("\\\\"))
+                val file = File(local)
                 require(file.length() <= 10 * 1024 * 1024)
                 file.readBytes()
             }

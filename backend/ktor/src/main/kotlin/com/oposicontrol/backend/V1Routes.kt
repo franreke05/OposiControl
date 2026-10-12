@@ -9,17 +9,20 @@ import io.ktor.server.routing.route
 import kotlinx.serialization.Serializable
 import java.util.UUID
 
-fun Route.v1Routes(gateway: SupabaseV1Gateway) {
+fun Route.v1Routes(gateway: SupabaseV1Gateway) = v1Routes(gateway, PublicReadCache())
+
+/** [cache]: estas rutas no piden sesion; sin ella, repetirlas en bucle gastaba lecturas (y trafico facturable) sin limite. */
+internal fun Route.v1Routes(gateway: SupabaseV1Gateway, cache: PublicReadCache) {
     route("/v1") {
         get("/especialidades") {
-            call.respond(V1EspecialidadesResponse(data = gateway.listEspecialidades()))
+            call.respond(V1EspecialidadesResponse(data = cache.get("especialidades") { gateway.listEspecialidades() }))
         }
         get("/examenes") {
-            call.respond(V1ExamenesResponse(data = gateway.listExamenes(call.toV1ExamenesFilter())))
+            call.respond(V1ExamenesResponse(data = call.toV1ExamenesFilter().let { filter -> cache.get(filter) { gateway.listExamenes(filter) } }))
         }
         get("/examenes/{examenId}") {
             val examenId = call.requiredPath("examenId").validatedUuid("examenId")
-            val examen = gateway.getExamen(examenId)
+            val examen = cache.get("examen:" + examenId) { gateway.getExamen(examenId) }
             if (examen == null) {
                 call.respond(
                     HttpStatusCode.NotFound,
@@ -31,7 +34,7 @@ fun Route.v1Routes(gateway: SupabaseV1Gateway) {
         }
         get("/examenes/{examenId}/preguntas") {
             val examenId = call.requiredPath("examenId").validatedUuid("examenId")
-            when (val result = gateway.getPreguntasExamenRafaga(examenId)) {
+            when (val result = cache.get("preguntas:" + examenId) { gateway.getPreguntasExamenRafaga(examenId) }) {
                 V1PreguntasExamenResult.Forbidden -> call.respond(
                     HttpStatusCode.Forbidden,
                     ErrorDto(error = "forbidden", message = "Examen no disponible."),

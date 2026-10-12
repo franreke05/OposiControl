@@ -446,7 +446,7 @@ private fun NoticiaLayerDto.toDomain() = NewsLayer(
     id = id,
     name = nombre,
     kind = tipo,
-    content = contenido,
+    content = contenido.safeLayerContent(tipo),
     x = x,
     y = y,
     width = width,
@@ -461,6 +461,19 @@ private fun NoticiaLayerDto.toDomain() = NewsLayer(
     fontSizeSp = fontSizeSp,
     fontWeight = fontWeight,
 )
+
+/**
+ * Lo que llega del servidor en una capa de IMAGEN solo puede ser una URL web: el editor guarda la URL publica que le
+ * devuelve la subida. Cualquier otra cosa —una ruta local, `file://`, una ruta de red `\\host\recurso`— no la escribio
+ * este panel, y pintarla haria que el equipo de quien abre la noticia leyera ese fichero o se autenticara contra ese
+ * host. Se descarta aqui, antes de que llegue a nadie que la pinte.
+ */
+private fun String.safeLayerContent(kind: String): String {
+    val isImage = kind.trim().lowercase() in setOf("imagen", "image")
+    if (!isImage) return this
+    val value = trim()
+    return if (value.startsWith("https://", ignoreCase = true) || value.startsWith("http://", ignoreCase = true)) value else ""
+}
 
 private fun NewsLayer.toDto(order: Int) = NoticiaLayerDto(
     id = id.ifBlank { randomUuid() },
