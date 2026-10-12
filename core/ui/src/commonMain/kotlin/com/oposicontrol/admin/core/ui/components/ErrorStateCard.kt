@@ -2,7 +2,6 @@ package com.oposicontrol.admin.core.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -29,6 +28,8 @@ import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
 
 /**
  * Estado de error.
@@ -59,7 +60,7 @@ fun ErrorStateCard(
             .clip(RoundedCornerShape(12.dp))
             .background(tokens.surfaceSolid)
             .border(1.dp, tokens.danger.copy(alpha = 0.28f), RoundedCornerShape(12.dp))
-            .animateContentSize(animationSpec = tween(180))
+            .animateContentSize(animationSpec = motionTween(OposiMotion.Normal))
             .padding(Spacing.lg),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(Spacing.xs),

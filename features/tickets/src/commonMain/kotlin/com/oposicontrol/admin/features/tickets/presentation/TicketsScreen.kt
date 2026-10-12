@@ -67,6 +67,10 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
+import com.oposicontrol.admin.core.ui.components.animatedCount
+import com.oposicontrol.admin.core.ui.components.motionHighlight
 
 internal const val TICKETS_CATALOG_TAG: String = "tickets-catalog"
 internal const val TICKETS_EDITOR_TAG: String = "tickets-editor"
@@ -193,6 +197,8 @@ private fun WalletCatalogPane(state: TicketsState, onIntent: (TicketsIntent) -> 
             emptyIcon = if (hasFilters) AppIcon.SEARCH else AppIcon.TICKETS,
             loadingRows = 6,
             onRetry = { onIntent(TicketsIntent.Refresh) },
+            // La lista sigue en pantalla cuando cambia un saldo: no vuelve arriba ni se funde consigo misma.
+            stableContent = true,
         ) { wallets ->
             val scroll = rememberScrollState()
             Box(modifier = Modifier.fillMaxWidth()) {
@@ -201,14 +207,18 @@ private fun WalletCatalogPane(state: TicketsState, onIntent: (TicketsIntent) -> 
                     verticalArrangement = Arrangement.spacedBy(Spacing.xs),
                 ) {
                     wallets.forEach { wallet ->
-                        WorkspaceCatalogRow(
-                            title = wallet.userName.ifBlank { "Usuario sin nombre" },
-                            selected = wallet.userId == state.selectedUserId,
-                            onClick = { onIntent(TicketsIntent.SelectWallet(wallet.userId)) },
-                            icon = AppIcon.TICKETS,
-                            description = wallet.specialty.ifBlank { "Sin especialidad principal" },
-                            trailing = { WorkspacePill(text = formatOt(wallet.balance)) },
-                        )
+                        key(wallet.userId) {
+                            WorkspaceCatalogRow(
+                                title = wallet.userName.ifBlank { "Usuario sin nombre" },
+                                selected = wallet.userId == state.selectedUserId,
+                                onClick = { onIntent(TicketsIntent.SelectWallet(wallet.userId)) },
+                                icon = AppIcon.TICKETS,
+                                description = wallet.specialty.ifBlank { "Sin especialidad principal" },
+                                trailing = { WorkspacePill(text = formatOt(wallet.balance)) },
+                                // La cartera cuyo saldo acaba de cambiar se resalta un instante en el catalogo.
+                                changeKey = wallet.balance,
+                            )
+                        }
                     }
                 }
                 DesktopVerticalScrollbar(scrollState = scroll, modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight())
@@ -251,7 +261,11 @@ private fun WalletEditorPane(
                     else -> wallet.specialty.ifBlank { "Sin especialidad principal" }
                 },
             ) {
-                if (wallet != null) WorkspacePill(text = "Saldo ${formatOt(wallet.balance)}", icon = AppIcon.TICKETS)
+                // El saldo cuenta del valor anterior al nuevo solo cuando cambia el de ESTA cartera (un ajuste aplicado).
+                // Abrir otra cartera ensena su saldo tal cual: no ha subido ni bajado, es otro dato.
+                if (wallet != null) {
+                    WorkspacePill(text = "Saldo ${formatOt(animatedCount(target = wallet.balance, owner = wallet.userId))}", icon = AppIcon.TICKETS)
+                }
                 if (selectedUserId != null && onOpenUser != null) {
                     SecondaryButton(
                         text = "Ver ficha",
@@ -288,6 +302,8 @@ private fun WalletEditorPane(
         } else {
             null
         },
+        // Otra cartera u otra pestana: el cuerpo entra. Un movimiento nuevo o un saldo distinto en la misma, no.
+        contentKey = selectedUserId to state.tab,
     ) {
         when {
             selectedUserId == null -> EmptyStateCard(
@@ -317,9 +333,18 @@ private fun MovementsSection(state: TicketsState, onIntent: (TicketsIntent) -> U
             emptyIcon = AppIcon.TICKETS,
             loadingRows = 4,
             onRetry = { onIntent(TicketsIntent.RetryTransactions) },
+            stableContent = true,
         ) { movements ->
+            // Los asientos que ya estaban al abrir la cartera no se anuncian. El que llega despues —el ajuste que se acaba
+            // de aplicar— nace resaltado: es la confirmacion de que el servidor lo registro.
+            val known = remember(state.selectedUserId) { movements.mapTo(mutableSetOf()) { it.id } }
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-                movements.forEach { MovementRow(it) }
+                movements.forEach { movement ->
+                    key(movement.id) {
+                        val arrivedLater = remember { known.add(movement.id) }
+                        MovementRow(movement, arrivedLater)
+                    }
+                }
                 if (movements.size >= MOVEMENTS_SERVER_LIMIT) {
                     WorkspaceNotice(
                         tone = WorkspaceNoticeTone.INFO,
@@ -338,7 +363,7 @@ private fun MovementsSection(state: TicketsState, onIntent: (TicketsIntent) -> U
  * El importe lleva su signo escrito y el tipo lleva su chip con icono: nada se dice sólo con el color.
  */
 @Composable
-private fun MovementRow(movement: TicketMovement) {
+private fun MovementRow(movement: TicketMovement, arrivedLater: Boolean = false) {
     val tokens = GlassTheme.tokens
     val typeLabel = ticketMovementTypeLabel(movement.type)
     val amountLabel = formatSignedOt(movement.amount)
@@ -348,6 +373,7 @@ private fun MovementRow(movement: TicketMovement) {
             .fillMaxWidth()
             .clip(Radius.card)
             .background(tokens.surfaceSolid)
+            .motionHighlight(trigger = movement.id, color = tokens.accent, onAppear = arrivedLater)
             .border(1.dp, tokens.border, Radius.card)
             .padding(Spacing.sm)
             .semantics(mergeDescendants = true) {

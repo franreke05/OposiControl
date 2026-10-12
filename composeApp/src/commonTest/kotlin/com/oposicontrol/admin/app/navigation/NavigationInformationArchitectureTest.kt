@@ -98,17 +98,18 @@ class NavigationInformationArchitectureTest {
     }
 
     @Test
-    fun ticketWalletsLiveNextToTheUsersTheyBelongTo() {
-        // Decisión del propietario (2026-10-10): OposiTickets sale de Monetización. Sólo cambia el grupo del menú; la
-        // ruta sigue siendo la comercial, porque el dominio y el backend no se mueven.
+    fun ticketWalletsAreASubscreenOfUsers() {
+        // Decisión del propietario (2026-10-11): OposiTickets es una SUBPANTALLA de Usuarios, no una entrada del menú.
+        // La ruta sigue siendo la comercial —el dominio y el backend no se mueven— y abre el hub de Usuarios en su pestaña.
         val users = appNavigationGroups.single { it.id == NavigationGroupId.USERS }
         val economy = appNavigationGroups.single { it.id == NavigationGroupId.ECONOMY }
 
         assertEquals(
-            listOf(AppRoute.Users.List, AppRoute.Commercial.Tickets),
+            listOf(AppRoute.Users.List),
             users.sidebarItems.map { it.route },
-            "El grupo Usuarios enseña Usuarios y OposiTickets, en ese orden.",
+            "El grupo Usuarios enseña una sola entrada: OposiTickets vive dentro de ella.",
         )
+        assertTrue(AppRoute.Commercial.Tickets in users.items.map { it.route }, "La ruta sigue registrada, sin entrada de menú.")
         assertEquals(
             listOf(AppRoute.Commercial.Catalog, AppRoute.Commercial.Market),
             economy.sidebarItems.map { it.route },
@@ -162,17 +163,18 @@ class NavigationInformationArchitectureTest {
 
     // --- Consolidación de navegación (2026-09-04): de 31 a 14 -----------------
     // El sidebar pasó de 31 entradas a 14, y volvió a 15 cuando Especialidades
-    // recuperó su fila (ver theSidebarHasExactlyTheFifteenTargetEntries). Estas
+    // recuperó su fila. Vuelve a 14 al pasar OposiTickets a subpantalla de Usuarios
+    // (ver theSidebarHasExactlyTheFourteenTargetEntries). Estas
     // pruebas fijan el número exacto y que cada ruta que salió del menú (a) sigue
     // registrada, (b) sigue resolviendo metadata sin reventar, y (c) sigue
     // accesible por ruta directa — que es justo lo que "reorganizar sin borrar
     // funcionalidad" significa.
 
     @Test
-    fun theSidebarHasExactlyTheFifteenTargetEntries() {
+    fun theSidebarHasExactlyTheFourteenTargetEntries() {
         val sidebarTitles = appNavigationGroups.flatMap { it.sidebarItems }.map { it.metadata.title }
 
-        assertEquals(15, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 15: $sidebarTitles")
+        assertEquals(14, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 14: $sidebarTitles")
         assertEquals(
             listOf(
                 "Dashboard",
@@ -181,7 +183,7 @@ class NavigationInformationArchitectureTest {
                 // no puede ofrecer un tipo que la especialidad no tenga abierto.
                 "Exámenes", "Especialidades", "Preguntas", "Importación",
                 "Usuarios",
-                "OposiTickets", "Catálogo", "OposiMarket",
+                "Catálogo", "OposiMarket",
                 "OposiRed", "Moderación", "Soporte",
                 "Analytics",
                 "Noticias",

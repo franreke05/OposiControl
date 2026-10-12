@@ -30,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.semantics.Role as SemanticsRole
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -52,6 +51,18 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.AccountStatus
 import com.oposicontrol.admin.domain.model.Role
 import com.oposicontrol.admin.domain.model.User
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.ui.graphics.compositeOver
 
 /**
  * Piezas VISUALES de la pantalla de Usuarios.
@@ -242,6 +253,22 @@ internal fun UserRowCard(
         roleNames.size == 1 -> roleNames.first()
         else -> "${roleNames.first()} +${roleNames.size - 1}"
     }
+    // Mismos colores de reposo que antes; lo que cambia es que se llega a ellos con un fundido corto, y que la fila
+    // responde al puntero como las de los demas catalogos.
+    val interactionSource = remember { MutableInteractionSource() }
+    val hovered by interactionSource.collectIsHoveredAsState()
+    val background by animateColorAsState(
+        targetValue = when {
+            selected -> tokens.info.copy(alpha = 0.09f)
+            hovered -> tokens.surfaceHover
+            else -> tokens.surfaceSolid
+        },
+        animationSpec = motionTween(OposiMotion.Fast),
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) tokens.info else tokens.border,
+        animationSpec = motionTween(OposiMotion.Fast),
+    )
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
     // Con la lista estrecha (STANDARD bajo) la pastilla del tipo de cuenta se va a la línea de
     // la cuenta: si no, el nombre se queda con lo que sobra y sale «Luc…».
@@ -250,12 +277,11 @@ internal fun UserRowCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(if (selected) tokens.info.copy(alpha = 0.09f) else tokens.surfaceSolid)
-            .border(
-                BorderStroke(if (selected) 1.5.dp else 1.dp, if (selected) tokens.info else tokens.border),
-                shape,
-            )
-            .clickable(role = SemanticsRole.Button, onClickLabel = "Ver ficha de $name", onClick = onClick)
+            .background(background)
+            .border(BorderStroke(if (selected) 1.5.dp else 1.dp, borderColor), shape)
+            .hoverable(interactionSource)
+            .pointerHoverIcon(PointerIcon.Hand)
+            .clickable(interactionSource = interactionSource, indication = LocalIndication.current, role = SemanticsRole.Button, onClickLabel = "Ver ficha de $name", onClick = onClick)
             .semantics { this.selected = selected }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

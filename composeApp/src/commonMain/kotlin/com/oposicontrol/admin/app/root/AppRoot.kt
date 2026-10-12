@@ -241,8 +241,12 @@ internal fun resolveContentTarget(
     // Usuarios: hub con Competición (antes Rankings, pantalla propia) y Accesos
     // (antes Commercial.Subscriptions) añadidos como pestañas — con cuál lo
     // decide `usersTabFor`.
+    //
+    // OposiTickets es una subpantalla de Usuarios (decisión del propietario, 2026-10-11): una cartera es de una persona,
+    // así que vive como pestaña del hub y no como entrada propia del menú.
     (
         route == AppRoute.Users.List ||
+            route == AppRoute.Commercial.Tickets ||
             route == AppRoute.Rankings ||
             route == AppRoute.Commercial.Subscriptions
         ) && !compactLayout -> AppContentTarget.USERS_HUB
@@ -422,7 +426,6 @@ fun AppRoot(
     val environmentLabel = buildString {
         append("Entorno ")
         append(appConfig.environment.name.lowercase())
-        append(" | vista frontend")
         if (appConfig.supabaseUrl.isBlank()) append(" | Supabase sin configurar")
     }
 
@@ -510,7 +513,7 @@ fun AppRoot(
             val examsViewModel: ExamsViewModel? =
                 if (contentTarget == AppContentTarget.EXAM_WORKSPACE) koinInject() else null
             AppShell(
-                currentRouteId = route.navigationId(),
+                currentRouteId = sidebarRouteIdFor(route, compactLayout),
                 groups = appNavigationGroups.toShellGroups(includeMobileOnly = compactLayout),
                 mobileDestinations = mobilePrimaryNavigation.map { it.toShellItem() },
                 onRouteSelected = { id ->
@@ -727,18 +730,9 @@ fun AppRoot(
                         viewModel = koinInject(),
                         initialSection = analyticsSectionFor(route),
                     )
-                    AppContentTarget.USERS_HUB -> {
-                        val koin = getKoin()
-                        UsersHubScreen(
-                            initialTab = usersTabFor(route),
-                            // La cartera de una persona (movimientos y ajustes) vive en OposiTickets. Su ViewModel se pide
-                            // al pulsar, no al abrir Usuarios: pedirlo antes descargaría todas las carteras sin motivo.
-                            onOpenTickets = { userId ->
-                                koin.get<TicketsViewModel>().dispatch(TicketsIntent.OpenWalletOf(userId))
-                                navigator.openSection(AdminSection.TICKETS)
-                            },
-                        )
-                    }
+                    // El paso entre la ficha de una persona y su cartera lo resuelve el propio hub: son dos pestañas de
+                    // la misma pantalla, no dos secciones.
+                    AppContentTarget.USERS_HUB -> UsersHubScreen(initialTab = usersTabFor(route))
                     AppContentTarget.SYSTEM_HUB -> SystemHubScreen(
                         initialTab = systemTabFor(route),
                         onSystemStatusClick = { navigator.push(AppRoute.System.Status) },
@@ -1164,8 +1158,29 @@ internal fun analyticsSectionFor(route: AppRoute): AnalyticsSection? = when (rou
     else -> null
 }
 
+/**
+ * Entrada del menú lateral que se marca para una ruta.
+ *
+ * Una ruta que no tiene entrada propia —una pestaña de un hub: OposiTickets, Competición, Planes…— marca la del hub que
+ * la contiene. Antes no se marcaba ninguna y el menú se quedaba sin selección al entrar por un atajo.
+ */
+internal fun sidebarRouteIdFor(route: AppRoute, compactLayout: Boolean): String {
+    val own = route.metadata()
+    if (own.showInSidebar) return own.id
+    fun targetOf(candidate: AppRoute) =
+        resolveContentTarget(candidate, compactLayout, showTabPager = false, hasLegacyRoute = candidate.toLegacySection() != null)
+    val target = targetOf(route)
+    return appNavigationGroups.asSequence()
+        .filter { it.id == own.group }
+        .flatMap { it.sidebarItems.asSequence() }
+        .firstOrNull { targetOf(it.route) == target }
+        ?.metadata?.id
+        ?: own.id
+}
+
 /** Pestaña del hub de Usuarios con la que abrir según la entrada de menú usada. */
 internal fun usersTabFor(route: AppRoute): UsersHubTab? = when (route) {
+    AppRoute.Commercial.Tickets -> UsersHubTab.TICKETS
     AppRoute.Rankings -> UsersHubTab.COMPETITION
     AppRoute.Commercial.Subscriptions -> UsersHubTab.ACCESS
     else -> null

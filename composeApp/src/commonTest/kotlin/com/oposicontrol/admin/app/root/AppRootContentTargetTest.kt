@@ -249,6 +249,36 @@ class AppRootContentTargetTest {
     }
 
     @Test
+    fun ticketsOpenTheUsersHubOnTheirOwnTab() {
+        // OposiTickets es una subpantalla de Usuarios: su ruta abre el hub, en la pestaña de carteras.
+        assertEquals(
+            AppContentTarget.USERS_HUB,
+            resolveContentTarget(AppRoute.Commercial.Tickets, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
+        )
+        assertEquals(UsersHubTab.TICKETS, usersTabFor(AppRoute.Commercial.Tickets))
+        assertEquals(null, usersTabFor(AppRoute.Users.List))
+        // Las pestañas van en el orden en que se piensan: la persona y, justo después, su cartera.
+        assertEquals(listOf(UsersHubTab.USERS, UsersHubTab.TICKETS), UsersHubTab.entries.take(2))
+        // En compacto no hay hub: sigue su adaptador de siempre.
+        assertEquals(
+            AppContentTarget.LEGACY_SECTION,
+            resolveContentTarget(AppRoute.Commercial.Tickets, compactLayout = true, showTabPager = false, hasLegacyRoute = true),
+        )
+    }
+
+    @Test
+    fun aHubTabMarksItsHubInTheSidebar() {
+        // Una ruta sin entrada propia marca la del hub que la contiene; antes el menú se quedaba sin selección.
+        assertEquals("users", sidebarRouteIdFor(AppRoute.Users.List, compactLayout = false))
+        assertEquals("users", sidebarRouteIdFor(AppRoute.Commercial.Tickets, compactLayout = false))
+        assertEquals("users", sidebarRouteIdFor(AppRoute.Rankings, compactLayout = false))
+        assertEquals("commercial.catalog", sidebarRouteIdFor(AppRoute.Commercial.Plans, compactLayout = false))
+        assertEquals("commercial.market", sidebarRouteIdFor(AppRoute.Commercial.Promotions, compactLayout = false))
+        // Una ruta con entrada propia se marca a sí misma.
+        assertEquals("commercial.catalog", sidebarRouteIdFor(AppRoute.Commercial.Catalog, compactLayout = false))
+    }
+
+    @Test
     fun compactLayoutKeepsTheLegacyUsersSectionInsteadOfTheHub() {
         assertEquals(
             AppContentTarget.LEGACY_SECTION,

@@ -201,6 +201,8 @@ private fun PlanEditorPane(
         } else {
             null
         },
+        // El cuerpo entra al abrir otro plan o cambiar de pestaña; guardar no lo mueve.
+        contentKey = state.openSeq to state.tab,
     ) {
         when {
             !open && (state.plans is UiAsync.Loading || state.plans is UiAsync.Idle) -> EmptyStateCard(

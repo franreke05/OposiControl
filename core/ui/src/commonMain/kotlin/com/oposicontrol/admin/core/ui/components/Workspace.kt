@@ -1,7 +1,6 @@
 package com.oposicontrol.admin.core.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -58,6 +57,8 @@ import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
 
 /**
  * El workspace de tres columnas —catálogo, ficha, resumen— como piezas COMPARTIDAS.
@@ -278,8 +279,8 @@ internal fun workspaceFilterPillColors(active: Boolean, tokens: GlassTokens): Wo
 @Composable
 fun WorkspaceFilterPill(label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val colors = workspaceFilterPillColors(selected, GlassTheme.tokens)
-    val background by animateColorAsState(targetValue = colors.background, animationSpec = tween(WORKSPACE_COLOR_MILLIS))
-    val borderColor by animateColorAsState(targetValue = colors.border, animationSpec = tween(WORKSPACE_COLOR_MILLIS))
+    val background by animateColorAsState(targetValue = colors.background, animationSpec = motionTween(OposiMotion.Fast))
+    val borderColor by animateColorAsState(targetValue = colors.border, animationSpec = motionTween(OposiMotion.Fast))
     Row(
         modifier = modifier
             .defaultMinSize(minHeight = Sizing.buttonCompact)
@@ -308,7 +309,7 @@ fun WorkspaceFilterPill(label: String, selected: Boolean, onClick: () -> Unit, m
  * Duración de las transiciones de color del workspace. La misma de las filas de Contenido: lo bastante corta para no
  * hacer esperar y lo bastante larga para que un cambio de selección se lea como cambio y no como parpadeo.
  */
-const val WORKSPACE_COLOR_MILLIS: Int = 140
+const val WORKSPACE_COLOR_MILLIS: Int = OposiMotion.Fast
 
 internal data class WorkspaceRowColors(val background: Color, val border: Color, val bar: Color)
 
@@ -329,6 +330,9 @@ internal fun workspaceCatalogRowColors(selected: Boolean, hovered: Boolean, toke
  * Seleccionada se marca con una barra a la izquierda y un fondo muy tenue —no con un borde de color alrededor, que en una
  * lista de doce compite con el contenido— y su icono pasa al rol de marca. [eyebrow] es el código o identificador visible
  * (línea pequeña sobre el título); [trailing] suele ser el chip de estado; [meta] se une con « · ».
+ *
+ * [changeKey] es lo que identifica la VERSIÓN de la fila (su fecha de edición, su saldo): cuando cambia con la fila ya en
+ * pantalla, la fila se resalta un instante. `null` = sin resalte.
  */
 @Composable
 fun WorkspaceCatalogRow(
@@ -342,12 +346,13 @@ fun WorkspaceCatalogRow(
     meta: List<String> = emptyList(),
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
+    changeKey: Any? = null,
 ) {
     val tokens = GlassTheme.tokens
     val interactionSource = remember { MutableInteractionSource() }
     val hovered by interactionSource.collectIsHoveredAsState()
     val colors = workspaceCatalogRowColors(selected, hovered, tokens)
-    val background by animateColorAsState(targetValue = colors.background, animationSpec = tween(WORKSPACE_COLOR_MILLIS))
+    val background by animateColorAsState(targetValue = colors.background, animationSpec = motionTween(OposiMotion.Fast))
 
     Row(
         modifier = modifier
@@ -355,6 +360,8 @@ fun WorkspaceCatalogRow(
             .height(IntrinsicSize.Min)
             .clip(Radius.card)
             .background(background)
+            // Cuando [changeKey] cambia (la fila se acaba de guardar o de actualizar) un velo de acento se enciende y se apaga.
+            .motionHighlight(trigger = changeKey, color = tokens.accent)
             .border(1.dp, colors.border, Radius.card)
             .hoverable(interactionSource)
             .pointerHoverIcon(PointerIcon.Hand)
@@ -618,6 +625,9 @@ fun WorkspaceEditorHeader(
  *
  * [fillsHeight] viene de [WorkspaceLayout]: en columna el cuerpo lleva su propio scroll y el pie queda siempre a la vista;
  * en apilado crece con su contenido porque ya desplaza la página.
+ *
+ * [contentKey] identifica lo que el cuerpo está enseñando (registro y pestaña). Cuando cambia, el cuerpo entra con un
+ * fundido corto; mientras no cambie, editar o recargar no anima nada. `null` = cuerpo sin movimiento.
  */
 @Composable
 fun WorkspaceEditor(
@@ -626,8 +636,11 @@ fun WorkspaceEditor(
     modifier: Modifier = Modifier,
     tabs: (@Composable () -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
+    contentKey: Any? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // El cuerpo entra cuando cambia [contentKey] (otro registro, otra pestaña). La cabecera y el pie no: son el marco.
+    val bodyMotion = if (contentKey == null) Modifier else Modifier.motionEntrance(key = contentKey)
     GlassSectionSurface(
         modifier = modifier,
         shape = Radius.xl,
@@ -640,14 +653,14 @@ fun WorkspaceEditor(
             val scroll = rememberScrollState()
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().verticalScroll(scroll).padding(end = WorkspaceSizing.scrollbarGutter),
+                    modifier = Modifier.fillMaxWidth().then(bodyMotion).verticalScroll(scroll).padding(end = WorkspaceSizing.scrollbarGutter),
                     verticalArrangement = Arrangement.spacedBy(Spacing.md),
                     content = content,
                 )
                 DesktopVerticalScrollbar(scrollState = scroll, modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight())
             }
         } else {
-            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.md), content = content)
+            Column(modifier = Modifier.fillMaxWidth().then(bodyMotion), verticalArrangement = Arrangement.spacedBy(Spacing.md), content = content)
         }
         footer?.invoke()
     }
@@ -684,11 +697,11 @@ fun WorkspaceSaveBar(
     // La barra se enciende al aparecer cambios y se apaga al guardarlos: un fundido corto, no un salto.
     val barBackground by animateColorAsState(
         targetValue = if (prominent) tokens.warning.copy(alpha = 0.10f) else tokens.warning.copy(alpha = 0f),
-        animationSpec = tween(WORKSPACE_COLOR_MILLIS),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val barBorder by animateColorAsState(
         targetValue = if (prominent) tokens.warning.copy(alpha = 0.45f) else tokens.warning.copy(alpha = 0f),
-        animationSpec = tween(WORKSPACE_COLOR_MILLIS),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     Row(
         modifier = modifier
@@ -717,7 +730,7 @@ fun WorkspaceSaveBar(
             } else {
                 Box(modifier = Modifier.padding(top = 6.dp).size(7.dp).clip(Radius.pill).background(toneColor))
             }
-            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Column(modifier = Modifier.motionEntrance(key = message, rise = false), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Text(
                     text = message,
                     style = if (prominent) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodySmall,

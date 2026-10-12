@@ -203,6 +203,8 @@ private fun ProductEditorPane(
         } else {
             null
         },
+        // El cuerpo entra al abrir otro producto o cambiar de pestaña; guardar no lo mueve.
+        contentKey = state.openSeq to state.tab,
     ) {
         when {
             !open && (state.products is UiAsync.Loading || state.products is UiAsync.Idle) -> EmptyStateCard(

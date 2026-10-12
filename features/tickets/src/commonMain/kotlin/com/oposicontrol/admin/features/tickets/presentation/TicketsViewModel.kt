@@ -90,7 +90,16 @@ class TicketsViewModel(
     }
 
     private suspend fun refresh() {
-        updateState { it.copy(wallets = UiAsync.Loading, overview = UiAsync.Loading) }
+        // Releer con datos ya en pantalla no los quita: el catalogo y los movimientos siguen ahi hasta que llega la
+        // respuesta. Solo la primera lectura ensena el esqueleto. (Si se vaciaran, la lista volveria arriba y la
+        // cartera y el asiento que acaban de cambiar no podrian resaltarse: naceria todo de nuevo.)
+        val hadWallets = currentState().allWallets.isNotEmpty()
+        updateState {
+            it.copy(
+                wallets = if (hadWallets) it.wallets else UiAsync.Loading,
+                overview = if (hadWallets && it.overview is UiAsync.Success) it.overview else UiAsync.Loading,
+            )
+        }
         when (val result = repository.getTicketWallets()) {
             is AppResult.Failure -> updateState { it.copy(wallets = UiAsync.Error(result.error), allWallets = emptyList()) }
             is AppResult.Success -> {
@@ -101,7 +110,7 @@ class TicketsViewModel(
                 }
                 val selected = currentState().selectedUserId
                 when {
-                    selected != null -> loadTransactions(selected)
+                    selected != null -> loadTransactions(selected, keepShown = hadWallets)
                     rows.isNotEmpty() -> selectWallet(rows.first().userId)
                 }
             }
@@ -136,8 +145,9 @@ class TicketsViewModel(
         selectWallet(userId)
     }
 
-    private suspend fun loadTransactions(userId: String) {
-        updateState { it.copy(transactions = UiAsync.Loading) }
+    /** [keepShown]: se relee la MISMA cartera que ya se ve; sus movimientos siguen en pantalla hasta que llegan los nuevos. */
+    private suspend fun loadTransactions(userId: String, keepShown: Boolean = false) {
+        updateState { if (keepShown && it.selectedUserId == userId && it.transactions is UiAsync.Success) it else it.copy(transactions = UiAsync.Loading) }
         val loaded = when (val result = repository.getTicketTransactions(userId)) {
             is AppResult.Failure -> UiAsync.Error(result.error)
             is AppResult.Success -> if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value.map { it.toMovement() })

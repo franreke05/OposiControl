@@ -1,7 +1,6 @@
 package com.oposicontrol.admin.core.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -40,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
 
 /**
  * Una pestaña.
@@ -144,11 +145,11 @@ private fun TabItem(
     // `ContrastTest` mida exactamente lo que se pinta.
     val labelColor by animateColorAsState(
         targetValue = tabLabelColor(tokens, selected, hovered, variant),
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val iconTint by animateColorAsState(
         targetValue = tabIconTint(tokens, selected, hovered, variant),
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val indicator by animateColorAsState(
         targetValue = when {
@@ -156,11 +157,11 @@ private fun TabItem(
             hovered -> tokens.borderStrong
             else -> Color.Transparent
         },
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
     val background by animateColorAsState(
         targetValue = tabBackground(tokens, selected, variant),
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
 
     Column(

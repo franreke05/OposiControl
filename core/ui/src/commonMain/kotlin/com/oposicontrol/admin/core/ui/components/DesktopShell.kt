@@ -2,7 +2,6 @@ package com.oposicontrol.admin.core.ui.components
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
@@ -55,6 +54,10 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.GlassTokens
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.graphicsLayer
 
 /**
  * Shell de escritorio.
@@ -123,6 +126,7 @@ fun DesktopShell(
                         DesktopPageHeader(
                             title = title,
                             description = description,
+                            modifier = Modifier.motionEntrance(key = currentRouteId, order = 0),
                             breadcrumbs = if (showBreadcrumbs) breadcrumbs else emptyList(),
                             primaryActionLabel = primaryActionLabel,
                             onPrimaryAction = onPrimaryAction,
@@ -135,6 +139,7 @@ fun DesktopShell(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
+                            .motionEntrance(key = currentRouteId, order = 1)
                             .padding(
                                 start = breakpoint.screenPadding,
                                 end = breakpoint.screenPadding,
@@ -182,7 +187,7 @@ private fun DesktopSidebar(
     val tokens = GlassTheme.tokens
     val width by animateDpAsState(
         targetValue = if (collapsed) Sizing.sidebarCollapsed else Sizing.sidebarExpanded,
-        animationSpec = tween(180),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     val scrollState = rememberScrollState()
 
@@ -294,13 +299,24 @@ private fun SidebarRow(
             hovered -> tokens.surfaceHover
             else -> Color.Transparent
         },
-        animationSpec = tween(120),
+        animationSpec = motionTween(OposiMotion.Fast),
     )
-    val contentColor = when {
-        selected -> tokens.accent
-        hovered -> tokens.textPrimary
-        else -> tokens.textSecondary
-    }
+    val contentColor by animateColorAsState(
+        targetValue = when {
+            selected -> tokens.accent
+            hovered -> tokens.textPrimary
+            else -> tokens.textSecondary
+        },
+        animationSpec = motionTween(OposiMotion.Fast),
+    )
+    val labelColor by animateColorAsState(
+        targetValue = if (selected || hovered) tokens.textPrimary else tokens.textSecondary,
+        animationSpec = motionTween(OposiMotion.Fast),
+    )
+    val marker by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = motionTween(OposiMotion.Normal),
+    )
 
     val row = @Composable {
         Row(
@@ -332,8 +348,13 @@ private fun SidebarRow(
                     modifier = Modifier
                         .width(3.dp)
                         .height(16.dp)
+                        // La caja no cambia de tamano: solo se escala y aparece dentro de su capa, asi nada se mueve al lado.
+                        .graphicsLayer {
+                            scaleY = marker
+                            alpha = marker
+                        }
                         .clip(RoundedCornerShape(2.dp))
-                        .background(if (selected) tokens.accent else Color.Transparent),
+                        .background(tokens.accent),
                 )
             }
             AppIconImage(
@@ -347,7 +368,7 @@ private fun SidebarRow(
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (selected) tokens.textPrimary else contentColor,
+                    color = labelColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

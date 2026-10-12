@@ -134,7 +134,7 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
             // Movida de Monetización a Usuarios (2026-10-10, decisión del propietario): una cartera es de UN usuario, y
             // quien concede o corrige OT viene de mirar a esa persona, no de ajustar precios. Es sólo arquitectura de
             // información: la ruta sigue siendo `AppRoute.Commercial.Tickets`, el dominio y el backend no se mueven.
-            item(AppRoute.Commercial.Tickets, "commercial.tickets", "OposiTickets", "Carteras, movimientos y concesiones por usuario.", NavigationGroupId.USERS, AppIcon.TICKETS.key),
+            item(AppRoute.Commercial.Tickets, "commercial.tickets", "OposiTickets", "Carteras, movimientos y concesiones por usuario.", NavigationGroupId.USERS, AppIcon.TICKETS.key, showInSidebar = false),
             item(AppRoute.Rankings, "rankings", "Rankings y ligas", "Clasificación, ligas y posición por opositor.", NavigationGroupId.USERS, AppIcon.RANKINGS.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
             // Movida de Monetización a Usuarios (§7): es acceso a examen por
             // usuario, no una palanca de precio.

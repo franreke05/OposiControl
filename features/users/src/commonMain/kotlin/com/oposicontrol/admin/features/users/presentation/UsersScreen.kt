@@ -33,6 +33,8 @@ import com.oposicontrol.admin.core.ui.components.PrimaryButton
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.core.ui.components.motionOverlayEntrance
+import com.oposicontrol.admin.core.ui.components.overlayDialogProperties
 
 /**
  * Pantalla de Usuarios.
@@ -189,9 +191,9 @@ private fun TicketsDialog(
 ) {
     val tokens = GlassTheme.tokens
     val amount = input.toIntOrNull()
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = overlayDialogProperties()) {
         GlassSurface(
-            modifier = Modifier.widthIn(min = 280.dp, max = 400.dp),
+            modifier = Modifier.widthIn(min = 280.dp, max = 400.dp).motionOverlayEntrance(),
             shape = RoundedCornerShape(24.dp),
             tint = tokens.glassFillStrong,
         ) {
@@ -249,9 +251,9 @@ private fun WarningDialog(
     onDismiss: () -> Unit,
 ) {
     val tokens = GlassTheme.tokens
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = onDismiss, properties = overlayDialogProperties()) {
         GlassSurface(
-            modifier = Modifier.widthIn(min = 280.dp, max = 420.dp),
+            modifier = Modifier.widthIn(min = 280.dp, max = 420.dp).motionOverlayEntrance(),
             shape = RoundedCornerShape(24.dp),
             tint = tokens.glassFillStrong,
         ) {

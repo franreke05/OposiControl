@@ -65,7 +65,7 @@ internal fun renderStoreCapture(capture: StoreCapture, hub: HarnessHub, content:
                         currentRouteId = hub.routeId,
                         groups = STORE_HARNESS_SIDEBAR,
                         onRouteSelected = {},
-                        environmentLabel = "Entorno dev | vista frontend",
+                        environmentLabel = "Entorno production",
                         title = hub.title,
                         description = hub.description,
                         breadcrumbs = listOf("Monetización", hub.title),
@@ -120,7 +120,6 @@ internal val STORE_HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
         "Usuarios",
         listOf(
             ShellNavigationItem("users", "Usuarios", AppIcon.USERS.key),
-            ShellNavigationItem("commercial.tickets", "OposiTickets", AppIcon.TICKETS.key),
         ),
     ),
     ShellNavigationGroup(

@@ -1,7 +1,6 @@
 package com.oposicontrol.admin.core.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
+import com.oposicontrol.admin.core.ui.theme.OposiMotion
+import com.oposicontrol.admin.core.ui.theme.motionTween
 
 /** A single selectable glass chip. */
 @Composable
@@ -37,15 +38,15 @@ fun GlassChip(
     val tokens = GlassTheme.tokens
     val background by animateColorAsState(
         targetValue = if (selected) tokens.accent.copy(alpha = 0.18f) else tokens.glassFill,
-        animationSpec = tween(160),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     val stroke by animateColorAsState(
         targetValue = if (selected) tokens.accent.copy(alpha = 0.55f) else tokens.glassStroke,
-        animationSpec = tween(160),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     val foreground by animateColorAsState(
         targetValue = if (selected) tokens.accent else tokens.textSecondary,
-        animationSpec = tween(160),
+        animationSpec = motionTween(OposiMotion.Normal),
     )
     Box(
         modifier = modifier

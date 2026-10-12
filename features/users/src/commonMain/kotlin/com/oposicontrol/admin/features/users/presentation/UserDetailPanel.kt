@@ -43,6 +43,7 @@ import com.oposicontrol.admin.domain.model.UserDetail
 import com.oposicontrol.admin.domain.model.UserDetailSection
 import com.oposicontrol.admin.domain.model.UserExtendedProfile
 import kotlin.math.roundToInt
+import com.oposicontrol.admin.core.ui.components.motionEntrance
 
 /**
  * La ficha del usuario seleccionado: cabecera (identidad, acciones, métricas y
@@ -69,7 +70,8 @@ internal fun UserDetailWorkspace(
     val user = state.selectedUser ?: return
     var selectedTab by rememberSaveable(user.id) { mutableStateOf(UserDetailTab.PERFIL.id) }
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+    // La ficha entra al abrir a otra persona. Recargar sus datos o guardarla no la mueve: la clave es quien es.
+    Column(modifier = modifier.motionEntrance(key = user.id), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         UserSummaryCard(
             state = state,
             user = user,
@@ -77,7 +79,8 @@ internal fun UserDetailWorkspace(
             onSelectTab = { selectedTab = it },
             onIntent = onIntent,
         )
-        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // Las pestanas son de la misma persona: la cabecera se queda quieta y solo entra el cuerpo.
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth().motionEntrance(key = selectedTab)) {
             val twoColumns = maxWidth >= TWO_COLUMN_MIN_WIDTH
             // Las tarjetas de una sola pieza (Competición, Economía, Comunidad) reparten sus
             // filas en dos columnas cuando hay ancho de sobra.

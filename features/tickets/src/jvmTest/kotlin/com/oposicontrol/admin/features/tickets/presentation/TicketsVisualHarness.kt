@@ -1,7 +1,11 @@
 package com.oposicontrol.admin.features.tickets.presentation
 
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -13,9 +17,12 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.DesktopShell
+import com.oposicontrol.admin.core.ui.components.DesktopTab
+import com.oposicontrol.admin.core.ui.components.DesktopTabs
 import com.oposicontrol.admin.core.ui.components.ShellNavigationGroup
 import com.oposicontrol.admin.core.ui.components.ShellNavigationItem
 import com.oposicontrol.admin.core.ui.theme.AdminTheme
+import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.TicketsOverview
 import java.io.File
 import javax.imageio.ImageIO
@@ -96,19 +103,21 @@ class TicketsVisualHarness {
     @Composable
     private fun HarnessShell(state: TicketsState, dark: Boolean) {
         AdminTheme(darkTheme = dark) {
+            // OposiTickets es una subpantalla de Usuarios: la misma cabecera y la misma fila de pestañas del hub.
             DesktopShell(
-                currentRouteId = "commercial.tickets",
+                currentRouteId = "users",
                 groups = HARNESS_SIDEBAR,
                 onRouteSelected = {},
-                environmentLabel = "Entorno dev | vista frontend",
-                title = "OposiTickets",
-                description = "Carteras, movimientos y concesiones por usuario.",
-                breadcrumbs = listOf("Usuarios", "OposiTickets"),
-                primaryActionLabel = "Nuevo ajuste",
-                onPrimaryAction = {},
+                environmentLabel = "Entorno production",
+                title = "Usuarios",
+                description = "Identidad, perfil, rendimiento y competición por usuario.",
+                breadcrumbs = listOf("Usuarios"),
                 globalSearch = {},
             ) {
-                TicketsContent(state = state, onIntent = {}, onOpenUser = {})
+                Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                    DesktopTabs(tabs = USERS_HUB_TABS, selectedId = "tickets", onSelect = {})
+                    TicketsContent(state = state, onIntent = {}, onOpenUser = {})
+                }
             }
         }
     }
@@ -189,8 +198,16 @@ internal object TicketsFixtures {
     )
 }
 
-/** Sidebar visible tras el cambio de arquitectura de información (OposiTickets en Usuarios). Transcrita: el catálogo vive en `composeApp`. */
-private val HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
+/** Pestañas del hub de Usuarios, transcritas de `composeApp` (`UsersHubTab`). */
+internal val USERS_HUB_TABS: List<DesktopTab> = listOf(
+    DesktopTab("users", "Usuarios", AppIcon.USERS),
+    DesktopTab("tickets", "OposiTickets", AppIcon.TICKETS),
+    DesktopTab("competition", "Competición", AppIcon.RANKINGS),
+    DesktopTab("access", "Accesos", AppIcon.ACCESS),
+)
+
+/** Menú lateral real: OposiTickets no es una entrada, vive dentro de Usuarios. Transcrito: el catálogo vive en `composeApp`. */
+internal val HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
     ShellNavigationGroup("home", "Inicio", listOf(ShellNavigationItem("home", "Dashboard", AppIcon.HOME.key))),
     ShellNavigationGroup(
         "content",
@@ -207,7 +224,6 @@ private val HARNESS_SIDEBAR: List<ShellNavigationGroup> = listOf(
         "Usuarios",
         listOf(
             ShellNavigationItem("users", "Usuarios", AppIcon.USERS.key),
-            ShellNavigationItem("commercial.tickets", "OposiTickets", AppIcon.TICKETS.key),
         ),
     ),
     ShellNavigationGroup(

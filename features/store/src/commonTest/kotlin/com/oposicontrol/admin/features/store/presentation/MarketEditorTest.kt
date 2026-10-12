@@ -313,4 +313,27 @@ class MarketEditorTest {
         // Los valores por defecto de una regla nueva son los de la tabla.
         assertEquals("24" to "50", PopupDraft().frequencyHours to PopupDraft().priority)
     }
+
+    // ---------------------------------------------------------------------------------------------- movimiento
+
+    @Test
+    fun `the form enters when another record is opened, never when it is saved or refreshed`() {
+        val first = loaded(small, big)
+        val other = first.reduce(PackSpec, EditorAction.Open("p2"))
+        assertEquals(first.openSeq + 1, other.openSeq, "abrir otro registro es una entrada")
+        assertEquals(other.openSeq, other.reduce(PackSpec, EditorAction.Open("p2")).openSeq, "volver a pulsar el mismo no")
+
+        val creating = other.reduce(PackSpec, EditorAction.Open(null))
+        assertEquals(other.openSeq + 1, creating.openSeq, "empezar uno nuevo es una entrada")
+
+        // Guardar el nuevo lo convierte en registro: el formulario que ya se ve no vuelve a entrar.
+        val created = creating.saved(PackSpec, sent = big.copy(id = ""), saved = big.copy(id = "p3"))
+        assertEquals("p3", created.selectedId)
+        assertEquals(creating.openSeq, created.openSeq)
+
+        // Releer la lista con el mismo registro abierto tampoco.
+        val refreshed = created.loading().loaded(PackSpec, AppResult.Success(listOf(small, big, big.copy(id = "p3"))))
+        assertEquals(created.openSeq, refreshed.openSeq)
+    }
+
 }
