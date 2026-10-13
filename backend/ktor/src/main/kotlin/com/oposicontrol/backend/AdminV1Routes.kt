@@ -3759,6 +3759,10 @@ private data class RolUsuarioRow(
     @SerialName("rol_id") val rolId: String,
 )
 
+/** Una fila de `roles_usuario` leida con `select=rol_id`. */
+@Serializable
+private data class RolSoloIdRow(@SerialName("rol_id") val rolId: String)
+
 /** MASTER4-OBS-001: respuesta de `admin_sync_roles_audited`: roles del usuario leidos BAJO el cerrojo, antes y despues. */
 @Serializable
 private data class RoleSyncLockedSets(val antes: List<String>, val despues: List<String>)
@@ -5778,8 +5782,11 @@ class AdminV1Gateway private constructor(
     /** Los roles actuales de un usuario (D1-26: respuesta re-leida tras `syncRoles`). */
     fun roleIdsOf(usuarioId: String): List<String> {
         usuarioId.validatedUuid("usuarioId")
+        // Solo se pide `rol_id`, asi que se lee con una fila que solo tiene `rol_id`. Con [RolUsuarioRow] (que exige
+        // `usuario_id`) esta relectura fallaba en cuanto el usuario tenia algun rol: el cambio de roles se aplicaba y la
+        // respuesta era un 502.
         return request("GET", "/rest/v1/roles_usuario?select=rol_id&usuario_id=eq.$usuarioId", null)
-            .decodeList<RolUsuarioRow>().map { it.rolId }
+            .decodeList<RolSoloIdRow>().map { it.rolId }
     }
 
     /**

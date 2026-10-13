@@ -35,7 +35,7 @@ class AdminRoleSyncActorRpcTest {
                         200,
                         """[{"id":"$roleUser","codigo":"usuario","nombre":"Usuario"},{"id":"$roleMod","codigo":"moderador","nombre":"Moderador"}]""",
                     )
-                    "/rest/v1/roles_usuario?select=rol_id" in uri -> V1StubResponse(200, """[{"usuario_id":"$target","rol_id":"$roleUser"}]""")
+                    "/rest/v1/roles_usuario?select=rol_id" in uri -> V1StubResponse(200, """[{"rol_id":"$roleUser"}]""") // la forma REAL: PostgREST solo devuelve lo pedido
                     "/rest/v1/rpc/admin_sync_roles" in uri -> V1StubResponse(204, "")
                     "/rest/v1/auditoria_log" in uri -> V1StubResponse(201, "")
                     else -> V1StubResponse(200, "[]")
