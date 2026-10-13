@@ -56,4 +56,9 @@ data class PendingAdjustment(
     val idempotencyKey: String,
     /** `true` mientras el diálogo de confirmación está abierto. */
     val awaitingConfirmation: Boolean = true,
+    /**
+     * Sólo para superficies sin diálogo (el panel móvil): un ajuste grande ya se avisó una vez y la siguiente pulsación,
+     * sin cambiar nada, lo aplica.
+     */
+    val largeAcknowledged: Boolean = false,
 )

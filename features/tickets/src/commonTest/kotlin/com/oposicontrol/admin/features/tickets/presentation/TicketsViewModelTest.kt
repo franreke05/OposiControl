@@ -199,6 +199,42 @@ class TicketsViewModelTest {
     private data class Adjustment(val userId: String, val amount: Int, val reason: String, val key: String)
 
     @Test
+    fun `where there is no dialog a large adjustment warns first and only the second tap applies it`() = runTest {
+        val repository = FakeRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+
+        vm.dispatch(TicketsIntent.UpdateAdjustmentAmount("250000"))
+        vm.dispatch(TicketsIntent.UpdateAdjustmentReason("Premio"))
+        vm.dispatch(TicketsIntent.ApplyAdjustment)
+        advanceUntilIdle()
+        assertTrue(repository.adjustments.isEmpty(), "la primera pulsación sólo avisa")
+        val warning = assertIs<UiAsync.Error>(vm.state.value.actionState)
+        assertTrue(warning.error.message.contains("250.000"))
+
+        vm.dispatch(TicketsIntent.ApplyAdjustment)
+        advanceUntilIdle()
+        assertEquals(listOf(250_000), repository.adjustments.map { it.amount })
+    }
+
+    @Test
+    fun `changing a large amount after the warning asks again`() = runTest {
+        val repository = FakeRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+
+        vm.dispatch(TicketsIntent.UpdateAdjustmentAmount("250000"))
+        vm.dispatch(TicketsIntent.UpdateAdjustmentReason("Premio"))
+        vm.dispatch(TicketsIntent.ApplyAdjustment)
+        advanceUntilIdle()
+        vm.dispatch(TicketsIntent.UpdateAdjustmentAmount("2500000"))
+        vm.dispatch(TicketsIntent.ApplyAdjustment)
+        advanceUntilIdle()
+
+        assertTrue(repository.adjustments.isEmpty(), "otra cifra es otra operación: se vuelve a avisar")
+    }
+
+    @Test
     fun `after an adjustment the catalogue and the movements stay on screen while they are reread`() = runTest {
         val repository = FakeRepository()
         val vm = viewModel(repository)
@@ -264,6 +300,7 @@ class TicketsViewModelTest {
         override suspend fun upsertNewsType(newsType: NewsType): AppResult<NewsType> = AppResult.Success(newsType)
         override suspend fun getExamAccesses(): AppResult<List<ExamAccess>> = AppResult.Success(emptyList())
         override suspend fun upsertExamAccess(access: ExamAccess): AppResult<ExamAccess> = AppResult.Success(access)
+        override suspend fun revokeExamAccess(accessId: String): AppResult<ExamAccess> = AppResult.Failure(AppError.Validation("no usado"))
         override suspend fun getSupportConversations(): AppResult<List<SupportConversationSummary>> = AppResult.Success(emptyList())
         override suspend fun getSupportMessages(conversationId: String): AppResult<List<SupportMessage>> = AppResult.Success(emptyList())
         override suspend fun sendSupportMessage(conversationId: String, assignee: String, text: String, internal: Boolean): AppResult<SupportMessage> =

@@ -1375,6 +1375,11 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val body = call.receive<AdminExamAccessDto>()
                 call.respond(HttpStatusCode.Created, withUpstreamIo { gateway.upsertExamAccess(body) })
             }
+            // D2-63: retirar un acceso. Idempotente: retirar uno ya retirado responde 200 con el mismo acceso.
+            post("/{id}/revocar") {
+                val id = call.parameters["id"].orEmpty()
+                call.respond(withUpstreamIo { gateway.revokeExamAccess(id) })
+            }
         }
         route("/moderacion") {
             get { call.respond(AdminReportesResponse(withUpstreamIo { gateway.listReportes() })) }
@@ -3829,6 +3834,13 @@ private data class ContenidoDesbloqueadoRow(
     @SerialName("valido_hasta") val validoHasta: String? = null,
     @SerialName("creado_en") val creadoEn: String? = null,
 )
+
+/** Cuerpo del PATCH que retira una concesion: solo el fin de vigencia. */
+@Serializable
+private data class ContenidoDesbloqueadoCierre(@SerialName("valido_hasta") val validoHasta: String)
+
+/** Motivo que solo puede escribir una compra. */
+private const val PURCHASE_UNLOCK_REASON = "compra"
 
 @Serializable
 private data class ContenidoDesbloqueadoInsertRow(
@@ -6500,11 +6512,11 @@ class AdminV1Gateway private constructor(
         // MASTER5-API-001 / MASTER6-API-001: la recompensa se valida ANTES de cualquier escritura y en AMBOS extremos.
         // 0 es valido (es el defecto de `ResolverReporteBody` y lo que envia «descartar»: sin recompensa); un negativo
         // no lo es (antes pasaba y se guardaba como `tickets_otorgados` negativo).
-        if (req.ticketsReporter !in 0..AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION) {
+        if (req.ticketsReporter !in 0..AdminGrantTicketsRequestDto.MAX_RECOMPENSA_POR_REPORTE) {
             throw BackendDomainException(
                 "WALLET_AMOUNT_INVALID",
                 HttpStatusCode.UnprocessableEntity,
-                "La recompensa tiene que estar entre 0 y ${AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION} OposiTickets.",
+                "La recompensa tiene que estar entre 0 y ${AdminGrantTicketsRequestDto.MAX_RECOMPENSA_POR_REPORTE} OposiTickets.",
             )
         }
         // MASTER6-SEC-001: el id se valida antes de interpolarse en PostgREST y en la auditoria.
@@ -6909,13 +6921,32 @@ class AdminV1Gateway private constructor(
                 userName = usersById[row.usuarioId].displayName(row.usuarioId),
                 examTitle = row.examenId?.let { examsById[it]?.titulo }.orEmpty().ifBlank { "Examen ${row.examenId}" },
                 accessType = row.motivo.orEmpty().ifBlank { "manual" },
-                isActive = row.validoHasta?.let { expiresAt -> runCatching { Instant.parse(expiresAt).isAfter(Instant.now()) }.getOrDefault(true) } ?: true,
+                isActive = row.vigente(Instant.now()),
                 // RC-06: ids de la fila para que el editor reenvie el usuario/examen EXACTO, no su nombre visible.
                 userId = row.usuarioId,
                 examId = row.examenId,
+                grantedAt = row.creadoEn,
+                validUntil = row.validoHasta,
             )
         }
     }
+
+    /**
+     * Vigencia de una concesion con el mismo criterio que la politica de acceso de la app: sin `valido_hasta` no caduca;
+     * con el, vale mientras sea posterior a [now]. Una fecha ilegible se da por NO vigente (deny-by-default), igual que
+     * hace `CatalogGateway.grantsFor`: antes el panel la ensenaba como activa mientras la app la ignoraba.
+     */
+    private fun ContenidoDesbloqueadoRow.vigente(now: Instant): Boolean {
+        val until = validoHasta ?: return true
+        return runCatching { java.time.OffsetDateTime.parse(until).toInstant().isAfter(now) }.getOrDefault(false)
+    }
+
+    /** Todas las concesiones de un usuario sobre un examen, vigentes o no. */
+    private fun grantsOf(usuarioId: String, examenId: String): List<ContenidoDesbloqueadoRow> = request(
+        "GET",
+        "/rest/v1/contenido_desbloqueado_usuario?select=*&usuario_id=eq.$usuarioId&examen_id=eq.$examenId&order=creado_en.desc",
+        null,
+    ).decodeList<ContenidoDesbloqueadoRow>()
 
     /**
      * Concede (o actualiza) un acceso manual a un examen.
@@ -6932,10 +6963,44 @@ class AdminV1Gateway private constructor(
      */
     fun upsertExamAccess(input: AdminExamAccessDto): AdminExamAccessDto {
         val motivo = canonicalUnlockReasonOrReject(input.accessType)
+        // D2-62: una compra solo nace de una compra. Etiquetar a mano una concesion como «compra» falsearia su origen.
+        if (motivo == PURCHASE_UNLOCK_REASON) {
+            throw BackendDomainException(
+                "GRANT_REASON_NOT_ALLOWED",
+                HttpStatusCode.UnprocessableEntity,
+                "Un acceso por compra no se concede a mano: solo lo crea una compra.",
+            )
+        }
+        // Esta ruta concede. Antes aceptaba `isActive = false` y concedia igualmente (el interruptor del panel no hacia
+        // nada); ahora lo dice, y retirar tiene su propia ruta.
+        if (!input.isActive) {
+            throw BackendDomainException(
+                "GRANT_REVOKE_USE_ROUTE",
+                HttpStatusCode.UnprocessableEntity,
+                "Para retirar un acceso usa «Retirar acceso»: esta operación solo concede.",
+            )
+        }
         val user = findPerfil(input.userId, input.userName)
         val exam = findExamen(input.examId, input.examTitle)
+        // Un acceso vigente del mismo usuario sobre el mismo examen ya es el resultado pedido: se devuelve tal cual, sin
+        // escribir una segunda fila (la tabla no tiene unicidad y dos filas vigentes hacian imposible retirar el acceso).
+        grantsOf(user.usuarioId, exam.id).firstOrNull { it.vigente(Instant.now()) }?.let { existing ->
+            return AdminExamAccessDto(
+                id = existing.id,
+                userName = user.displayName(user.usuarioId),
+                examTitle = exam.titulo,
+                accessType = existing.motivo.orEmpty().ifBlank { "manual" },
+                isActive = true,
+                userId = user.usuarioId,
+                examId = exam.id,
+                grantedAt = existing.creadoEn,
+                validUntil = existing.validoHasta,
+            )
+        }
+        // Siempre una fila NUEVA: el `id` que mande el cliente se ignora. Antes se reutilizaba con `on_conflict=id`, y
+        // guardar la fila de una persona con el nombre de otra le traspasaba el acceso sin dejar rastro.
         val row = ContenidoDesbloqueadoInsertRow(
-            id = input.id.ifBlank { UUID.randomUUID().toString() },
+            id = UUID.randomUUID().toString(),
             usuarioId = user.usuarioId,
             examenId = exam.id,
             motivo = motivo,
@@ -6943,9 +7008,9 @@ class AdminV1Gateway private constructor(
         )
         return request(
             "POST",
-            "/rest/v1/contenido_desbloqueado_usuario?on_conflict=id",
+            "/rest/v1/contenido_desbloqueado_usuario",
             sbJson.encodeToString(listOf(row)),
-            prefer = "resolution=merge-duplicates,return=representation",
+            prefer = "return=representation",
         ).decodeList<ContenidoDesbloqueadoRow>().first().let {
             // Conceder acceso a un examen de pago es una accion economica: queda en auditoria con quien la hizo.
             registrarAuditoriaResultado(
@@ -6967,8 +7032,76 @@ class AdminV1Gateway private constructor(
                 isActive = true,
                 userId = user.usuarioId,
                 examId = exam.id,
+                grantedAt = it.creadoEn,
+                validUntil = it.validoHasta,
             )
         }
+    }
+
+    /**
+     * Retira un acceso (D2-63): le pone fin de vigencia ahora, que es justo lo que mira la politica de acceso de la app.
+     * No se borra la fila: queda como historial de que existio.
+     *
+     * Se retiran TODAS las concesiones manuales vigentes del mismo usuario sobre el mismo examen, no solo la fila pedida:
+     * la app concede si cualquiera esta vigente, asi que cerrar una y dejar otra no retiraria nada. Las compras no se
+     * tocan (su devolucion es otra operacion): pedir retirar una compra es un 422.
+     *
+     * Idempotente: retirar un acceso que ya no esta vigente responde con el mismo acceso y no escribe ni audita.
+     */
+    fun revokeExamAccess(grantId: String): AdminExamAccessDto {
+        val id = grantId.validatedUuid("id")
+        val target = request("GET", "/rest/v1/contenido_desbloqueado_usuario?select=*&id=eq.$id&limit=1", null)
+            .decodeList<ContenidoDesbloqueadoRow>()
+            .firstOrNull()
+            ?: throw BackendDomainException("GRANT_NOT_FOUND", HttpStatusCode.NotFound, "No existe el acceso indicado.")
+        val examenId = target.examenId
+            ?: throw BackendDomainException("GRANT_NOT_FOUND", HttpStatusCode.NotFound, "No existe el acceso indicado.")
+        if (target.motivo == PURCHASE_UNLOCK_REASON) {
+            throw BackendDomainException(
+                "GRANT_IS_PURCHASE",
+                HttpStatusCode.UnprocessableEntity,
+                "Un acceso comprado no se retira desde aquí.",
+            )
+        }
+        val now = Instant.now()
+        val vigentes = grantsOf(target.usuarioId, examenId).filter { it.vigente(now) && it.motivo != PURCHASE_UNLOCK_REASON }
+        val closedAt = now.toString()
+        if (vigentes.isNotEmpty()) {
+            request(
+                "PATCH",
+                "/rest/v1/contenido_desbloqueado_usuario?id=in.(${vigentes.joinToString(",") { it.id }})",
+                sbJson.encodeToString(ContenidoDesbloqueadoCierre(closedAt)),
+                prefer = "return=minimal",
+            )
+            registrarAuditoriaResultado(
+                "acceso_examen_retirado",
+                "contenido_desbloqueado_usuario",
+                target.id,
+                antes = buildJsonObject {
+                    put("usuario_id", JsonPrimitive(target.usuarioId))
+                    put("examen_id", JsonPrimitive(examenId))
+                    put("motivos", JsonPrimitive(vigentes.mapNotNull { it.motivo }.distinct().joinToString(",")))
+                    put("concesiones", JsonPrimitive(vigentes.size))
+                },
+                despues = buildJsonObject { put("valido_hasta", JsonPrimitive(closedAt)) },
+            )
+        }
+        val user = perfilesByIds(listOf(target.usuarioId))[target.usuarioId]
+        val examTitle = request("GET", "/rest/v1/examenes?select=id,titulo&id=eq.$examenId&limit=1", null)
+            .decodeList<ExamenTituloRow>()
+            .firstOrNull()
+            ?.titulo
+        return AdminExamAccessDto(
+            id = target.id,
+            userName = user.displayName(target.usuarioId),
+            examTitle = examTitle.orEmpty().ifBlank { "Examen $examenId" },
+            accessType = target.motivo.orEmpty().ifBlank { "manual" },
+            isActive = false,
+            userId = target.usuarioId,
+            examId = examenId,
+            grantedAt = target.creadoEn,
+            validUntil = if (target.vigente(now)) closedAt else target.validoHasta,
+        )
     }
 
     fun listModerationActions(): List<AdminModerationActionDto> {

@@ -115,17 +115,31 @@ internal fun TicketsContent(
         // Antes de mover saldo, el diálogo repite los tres datos de la operación —a quién, cuánto y por qué—: es la última
         // oportunidad de ver un importe mal tecleado antes de que quede registrado.
         val removes = pending.amount < 0
+        // Sin tope de cantidad, lo que protege del cero de más es esta pregunta: por encima del umbral el diálogo cambia de
+        // título, de color y de botón para que no se confirme con el mismo gesto que un ajuste corriente.
+        val large = isLargeAdjustment(pending.amount)
         ConfirmDialog(
-            title = if (removes) "Retirar OposiTickets" else "Conceder OposiTickets",
+            title = when {
+                large -> "¿Seguro? Son más de ${formatCount(ADJUSTMENT_LARGE_AMOUNT)} OposiTickets"
+                removes -> "Retirar OposiTickets"
+                else -> "Conceder OposiTickets"
+            },
             message = buildString {
+                if (large) append("Vas a mover ${formatSignedOt(pending.amount)} de una sola vez. Comprueba la cifra.\n\n")
                 append("Usuario: ${pending.userName}\n")
                 append("Cantidad: ${formatSignedOt(pending.amount)}\n")
                 append("Motivo: ${pending.reason}\n\n")
                 append("Quedará registrado como un movimiento y no se puede deshacer.")
             },
-            confirmLabel = if (removes) "Retirar" else "Conceder",
-            // Rojo sólo cuando se quita saldo: conceder no es destructivo, y pintarlo de rojo enseñaría a ignorar el color.
-            destructive = removes,
+            confirmLabel = when {
+                large && removes -> "Sí, retirar"
+                large -> "Sí, conceder"
+                removes -> "Retirar"
+                else -> "Conceder"
+            },
+            // Rojo cuando se quita saldo o cuando la cantidad es grande: un ajuste corriente al alza no es destructivo, y
+            // pintarlo de rojo enseñaría a ignorar el color.
+            destructive = removes || large,
             onConfirm = { onIntent(TicketsIntent.ConfirmAdjustment) },
             onDismiss = { onIntent(TicketsIntent.DismissAdjustment) },
         )
@@ -440,8 +454,8 @@ private fun AdjustmentSection(state: TicketsState, onIntent: (TicketsIntent) -> 
                 onValueChange = { onIntent(TicketsIntent.UpdateAdjustmentAmount(it)) },
                 placeholder = "Ej. 50 o -10",
                 required = true,
-                supportingText = "Entero distinto de cero. En positivo abona; en negativo retira. Máximo " +
-                    "${formatCount(ADJUSTMENT_MAX_AMOUNT)} por operación.",
+                supportingText = "Entero distinto de cero. En positivo abona; en negativo retira. Sin tope: por encima de " +
+                    "${formatCount(ADJUSTMENT_LARGE_AMOUNT)} se pide confirmación expresa.",
             )
             LabeledField(
                 label = "Motivo",
@@ -454,7 +468,10 @@ private fun AdjustmentSection(state: TicketsState, onIntent: (TicketsIntent) -> 
                 maxWidth = Sizing.inputDescriptionMaxWidth,
                 supportingText = "Queda registrado en el movimiento y en auditoría.",
             )
-            if (wallet != null && amount != null && amount != 0) {
+            // La suma se hace en 64 bits: con un saldo alto y un abono grande, la de 32 daría la vuelta y enseñaría un saldo
+            // negativo que no existe.
+            val balanceAfter = if (wallet != null && amount != null) wallet.balance.toLong() + amount else null
+            if (wallet != null && amount != null && amount != 0 && balanceAfter != null && balanceAfter <= WALLET_MAX_BALANCE && balanceAfter >= Int.MIN_VALUE) {
                 WorkspacePanel(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
                     Text(
                         text = "Saldo tras el ajuste",
@@ -462,7 +479,7 @@ private fun AdjustmentSection(state: TicketsState, onIntent: (TicketsIntent) -> 
                         color = GlassTheme.tokens.textSecondary,
                     )
                     Text(
-                        text = "${formatOt(wallet.balance)} → ${formatOt(wallet.balance + amount)}",
+                        text = "${formatOt(wallet.balance)} → ${formatOt(balanceAfter.toInt())}",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = GlassTheme.tokens.textPrimary,
@@ -494,7 +511,12 @@ private fun AdjustmentSection(state: TicketsState, onIntent: (TicketsIntent) -> 
 @Composable
 private fun AdjustmentSaveBar(state: TicketsState, onIntent: (TicketsIntent) -> Unit) {
     val saving = state.actionState is UiAsync.Loading
-    val problem = adjustmentProblem(state.adjustmentAmount, state.adjustmentReason, hasWallet = state.selectedUserId != null)
+    val problem = adjustmentProblem(
+        state.adjustmentAmount,
+        state.adjustmentReason,
+        hasWallet = state.selectedUserId != null,
+        balance = state.selectedWallet?.balance,
+    )
     val draft = state.hasAdjustmentDraft
     WorkspaceSaveBar(
         message = when {

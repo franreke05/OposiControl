@@ -2,6 +2,7 @@ package com.oposicontrol.backend
 
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
@@ -40,7 +41,8 @@ class AdminV1ExamAccessGrantTest {
     private val examenId = "22222222-2222-4222-8222-222222222222"
     private val accesoId = "33333333-3333-4333-8333-333333333333"
 
-    private fun gatewayWith(record: (HttpRequest) -> Unit): AdminV1Gateway = AdminV1Gateway.forTesting(
+    /** [existing] = filas de la tabla tal como las devolveria PostgREST al LEER (por usuario+examen o por id). */
+    private fun gatewayWith(existing: String = "[]", record: (HttpRequest) -> Unit): AdminV1Gateway = AdminV1Gateway.forTesting(
         supabaseUrl = "https://stub.supabase.test",
         serviceRoleKey = "stub-key",
         json = Json { ignoreUnknownKeys = true },
@@ -51,6 +53,8 @@ class AdminV1ExamAccessGrantTest {
                     """[{"usuario_id":"$userId","username":"ana","nombre_mostrar":"Ana"}]""",
                 )
                 uri.contains("/rest/v1/examenes") -> V1StubResponse(200, """[{"id":"$examenId","titulo":"Examen A"}]""")
+                // Lecturas (llevan filtro): lo que haya en la tabla. La escritura no lleva filtro y devuelve la fila creada.
+                uri.contains("/rest/v1/contenido_desbloqueado_usuario") && uri.contains("=eq.") -> V1StubResponse(200, existing)
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario") -> V1StubResponse(
                     200,
                     """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin"}]""",
@@ -75,42 +79,129 @@ class AdminV1ExamAccessGrantTest {
 
     @Test fun theLegacyManualAliasIsWrittenAsAdmin() {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
-        gatewayWith(upstream::add).upsertExamAccess(input("manual"))
+        gatewayWith(record = upstream::add).upsertExamAccess(input("manual"))
         assertEquals("admin", motivoWritten(upstream))
     }
 
     @Test fun manualIsCaseAndWhitespaceInsensitive() {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
-        gatewayWith(upstream::add).upsertExamAccess(input("  Manual "))
+        gatewayWith(record = upstream::add).upsertExamAccess(input("  Manual "))
         assertEquals("admin", motivoWritten(upstream))
     }
 
     @Test fun aBlankTypeIsWrittenAsAdmin() {
         listOf("", "   ").forEach { blank ->
             val upstream = CopyOnWriteArrayList<HttpRequest>()
-            gatewayWith(upstream::add).upsertExamAccess(input(blank))
+            gatewayWith(record = upstream::add).upsertExamAccess(input(blank))
             assertEquals("admin", motivoWritten(upstream), "blank='$blank'")
         }
     }
 
     @Test fun everyCanonicalValueIsWrittenAsIs() {
-        listOf("premium", "compra", "regalo", "admin", "promocion").forEach { value ->
+        listOf("premium", "regalo", "admin", "promocion").forEach { value ->
             val upstream = CopyOnWriteArrayList<HttpRequest>()
-            gatewayWith(upstream::add).upsertExamAccess(input(value))
+            gatewayWith(record = upstream::add).upsertExamAccess(input(value))
             assertEquals(value, motivoWritten(upstream))
         }
     }
 
+    @Test fun aPurchaseCannotBeGrantedByHand() {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        val error = assertFailsWith<BackendDomainException> { gatewayWith(record = upstream::add).upsertExamAccess(input("compra")) }
+        assertEquals("GRANT_REASON_NOT_ALLOWED", error.errorCode)
+        assertTrue(upstream.isEmpty(), "no debe salir ninguna petición")
+    }
+
+    @Test fun theSwitchNoLongerPretendsToRevoke() {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        val error = assertFailsWith<BackendDomainException> {
+            gatewayWith(record = upstream::add).upsertExamAccess(input("admin").copy(isActive = false))
+        }
+        assertEquals("GRANT_REVOKE_USE_ROUTE", error.errorCode)
+        assertTrue(upstream.isEmpty(), "antes concedía en silencio")
+    }
+
+    @Test fun aGrantIsAlwaysANewRowAndNeverReusesTheIdTheClientSent() {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        gatewayWith(record = upstream::add).upsertExamAccess(input("admin"))
+        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("contenido_desbloqueado_usuario") }
+        assertFalse(post.uri().toString().contains("on_conflict"), "un upsert por id podía traspasar el acceso a otra persona")
+        val written = Json.parseToJsonElement(readRequestBody(post)).jsonArray.single().jsonObject
+        assertTrue(written.getValue("id").jsonPrimitive.content != accesoId, "el id del cliente se ignora")
+    }
+
+    @Test fun grantingWhatIsAlreadyGrantedWritesNothing() {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        val active = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"regalo"}]"""
+        val result = gatewayWith(active, upstream::add).upsertExamAccess(input("admin"))
+        assertEquals(accesoId, result.id)
+        assertEquals("regalo", result.accessType)
+        assertTrue(upstream.none { it.method() == "POST" }, "ya tenía acceso: no se duplica la fila")
+    }
+
+    @Test fun anExpiredGrantDoesNotCountAndANewOneIsWritten() {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        val expired = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin","valido_hasta":"2020-01-01T00:00:00+00:00"}]"""
+        gatewayWith(expired, upstream::add).upsertExamAccess(input("admin"))
+        assertEquals("admin", motivoWritten(upstream))
+    }
+
+    @Test fun revokingClosesEveryActiveManualGrantOfThatUserAndExamAndAuditsIt() {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        val twin = "44444444-4444-4444-8444-444444444444"
+        val bought = "55555555-5555-4555-8555-555555555555"
+        val rows = """[
+            {"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin"},
+            {"id":"$twin","usuario_id":"$userId","examen_id":"$examenId","motivo":"regalo"},
+            {"id":"$bought","usuario_id":"$userId","examen_id":"$examenId","motivo":"compra"}
+        ]"""
+        val result = gatewayWith(rows, upstream::add).revokeExamAccess(accesoId)
+        assertFalse(result.isActive)
+        val patch = upstream.single { it.method() == "PATCH" }
+        val target = patch.uri().toString()
+        assertTrue(target.contains(accesoId) && target.contains(twin), "dos filas vigentes: cerrar una sola no retiraba nada")
+        assertFalse(target.contains(bought), "una compra no se retira desde aquí")
+        assertTrue(readRequestBody(patch).contains("valido_hasta"))
+        assertTrue(
+            upstream.any { it.method() == "POST" && readRequestBody(it).contains("acceso_examen_retirado") },
+            "la retirada queda en auditoría: ${upstream.map { it.method() + " " + it.uri().rawPath }}",
+        )
+    }
+
+    @Test fun revokingWhatIsAlreadyRevokedWritesNothing() {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        val expired = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin","valido_hasta":"2020-01-01T00:00:00+00:00"}]"""
+        val result = gatewayWith(expired, upstream::add).revokeExamAccess(accesoId)
+        assertFalse(result.isActive)
+        assertTrue(upstream.none { it.method() == "PATCH" || it.method() == "POST" })
+    }
+
+    @Test fun aPurchaseIsNotRevokedHereAndAnUnknownGrantIsNotFound() {
+        val bought = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"compra"}]"""
+        assertEquals("GRANT_IS_PURCHASE", assertFailsWith<BackendDomainException> { gatewayWith(bought) {}.revokeExamAccess(accesoId) }.errorCode)
+        assertEquals("GRANT_NOT_FOUND", assertFailsWith<BackendDomainException> { gatewayWith {}.revokeExamAccess(accesoId) }.errorCode)
+        assertFailsWith<IllegalArgumentException> { gatewayWith {}.revokeExamAccess("no-es-un-uuid") }
+    }
+
+    @Test fun theRevokeRouteAnswers200WithTheGrantNoLongerActive() = testApplication {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        val rows = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin"}]"""
+        application { accessModule(upstream, rows) }
+        val response = client.post("/api/v1/admin/accesos/$accesoId/revocar")
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("\"isActive\":false"), response.bodyAsText())
+    }
+
     @Test fun canonicalValuesAreTrimmedAndLowercased() {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
-        gatewayWith(upstream::add).upsertExamAccess(input(" PREMIUM "))
+        gatewayWith(record = upstream::add).upsertExamAccess(input(" PREMIUM "))
         assertEquals("premium", motivoWritten(upstream))
     }
 
     @Test fun anUnknownTypeIsRejectedWithoutAnyUpstreamCall() {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
         val error = assertFailsWith<BackendDomainException> {
-            gatewayWith(upstream::add).upsertExamAccess(input("inventado"))
+            gatewayWith(record = upstream::add).upsertExamAccess(input("inventado"))
         }
         assertEquals(HttpStatusCode.UnprocessableEntity, error.status)
         assertEquals("EXAM_ACCESS_GRANT_TYPE_UNKNOWN", error.errorCode)
@@ -148,7 +239,7 @@ class AdminV1ExamAccessGrantTest {
         assertEquals("admin", motivoWritten(upstream))
     }
 
-    private fun Application.accessModule(upstream: MutableList<HttpRequest>) {
+    private fun Application.accessModule(upstream: MutableList<HttpRequest>, existing: String = "[]") {
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true; explicitNulls = false })
         }
@@ -163,6 +254,6 @@ class AdminV1ExamAccessGrantTest {
                 )
             }
         }
-        routing { adminV1Routes(gatewayWith(upstream::add)) }
+        routing { adminV1Routes(gatewayWith(existing, upstream::add)) }
     }
 }

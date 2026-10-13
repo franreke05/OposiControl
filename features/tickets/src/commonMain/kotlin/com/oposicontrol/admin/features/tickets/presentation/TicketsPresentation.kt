@@ -8,8 +8,17 @@ import com.oposicontrol.admin.domain.model.TicketsOverview
  * Lo que la pantalla de OposiTickets DICE, separado de cómo lo pinta: funciones puras que se prueban sin Compose.
  */
 
-/** Tope por operación que aplica el backend (`AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION`). */
-internal const val ADJUSTMENT_MAX_AMOUNT: Int = 10_000
+/**
+ * Un ajuste manual no tiene tope de producto (decisión del propietario, 2026-10-13). A partir de esta cantidad, en
+ * cualquier sentido, la confirmación pregunta expresamente si es intencionado: es lo que queda de la red contra el cero
+ * de más.
+ */
+internal const val ADJUSTMENT_LARGE_AMOUNT: Int = 100_000
+
+/** Lo más que cabe en una cartera: el saldo es un entero de 32 bits en el servidor y en la base de datos. */
+internal const val WALLET_MAX_BALANCE: Int = Int.MAX_VALUE
+
+internal fun isLargeAdjustment(amount: Int): Boolean = amount > ADJUSTMENT_LARGE_AMOUNT || amount < -ADJUSTMENT_LARGE_AMOUNT
 
 /** Longitud máxima del motivo en el backend (`MAX_MOTIVO_LENGTH`). */
 internal const val ADJUSTMENT_MAX_REASON: Int = 1_000
@@ -103,24 +112,43 @@ internal fun parseAdjustmentAmount(text: String): Int? {
     val t = text.trim().replace('−', '-')
     if (t.isEmpty()) return null
     val digits = t.removePrefix("+").removePrefix("-")
-    if (digits.isEmpty() || digits.length > 6 || !digits.all { it.isDigit() }) return null
-    val value = digits.toInt()
-    return if (t.startsWith("-")) -value else value
+    if (digits.isEmpty() || !digits.all { it.isDigit() }) return null
+    // Más cifras de las que caben en una cartera: no es un entero que el servidor pueda recibir.
+    val value = digits.trimStart('0').ifEmpty { "0" }.takeIf { it.length <= 10 }?.toLong()?.takeIf { it <= WALLET_MAX_BALANCE }
+        ?: return null
+    return if (t.startsWith("-")) -value.toInt() else value.toInt()
 }
 
-/** Primer motivo por el que el ajuste no se puede enviar, o `null` si es válido. Mismos límites que el backend. */
-internal fun adjustmentProblem(amountText: String, reason: String, hasWallet: Boolean): String? {
+/** Lo tecleado es un entero bien escrito, pero mayor de lo que cabe en una cartera. */
+internal fun adjustmentExceedsStorage(text: String): Boolean {
+    val digits = text.trim().replace('−', '-').removePrefix("+").removePrefix("-")
+    return digits.isNotEmpty() && digits.all { it.isDigit() } && parseAdjustmentAmount(text) == null
+}
+
+/**
+ * Primer motivo por el que el ajuste no se puede enviar, o `null` si es válido. No hay tope de cantidad: sólo el límite
+ * físico de la cartera. [balance] es el saldo que se ve ahora; con él se avisa antes de que el servidor rechace un abono
+ * que no cabe.
+ */
+internal fun adjustmentProblem(amountText: String, reason: String, hasWallet: Boolean, balance: Int? = null): String? {
     if (!hasWallet) return "Elige una cartera antes de ajustar el saldo."
     if (amountText.isBlank()) return "Escribe la cantidad de OposiTickets."
+    if (adjustmentExceedsStorage(amountText)) {
+        return "Una cartera no admite más de ${formatCount(WALLET_MAX_BALANCE)} OposiTickets."
+    }
     val amount = parseAdjustmentAmount(amountText) ?: return "La cantidad debe ser un número entero, por ejemplo 50 o -10."
     if (amount == 0) return "La cantidad no puede ser cero."
-    if (amount > ADJUSTMENT_MAX_AMOUNT || amount < -ADJUSTMENT_MAX_AMOUNT) {
-        return "Como mucho ${formatCount(ADJUSTMENT_MAX_AMOUNT)} OposiTickets por operación."
+    if (balance != null && balance.toLong() + amount > WALLET_MAX_BALANCE) {
+        return "El saldo pasaría de ${formatCount(WALLET_MAX_BALANCE)} OposiTickets, que es lo más que admite una cartera."
     }
     if (reason.isBlank()) return "Escribe el motivo: queda registrado en el movimiento."
     if (reason.trim().length > ADJUSTMENT_MAX_REASON) return "El motivo no puede superar ${formatCount(ADJUSTMENT_MAX_REASON)} caracteres."
     return null
 }
+
+/** Aviso de un ajuste grande donde no hay diálogo: dice la cifra entera y cómo seguir. */
+internal fun largeAdjustmentWarning(amount: Int): String =
+    "Son ${formatSignedOt(amount)}, más de ${formatCount(ADJUSTMENT_LARGE_AMOUNT)}. Si es correcto, pulsa «Aplicar» otra vez."
 
 /** Los cuatro recuentos del resumen. Un recuento que el backend no pudo calcular se dice «No disponible», no «0». */
 internal fun ticketsOverviewFacts(overview: TicketsOverview?): List<WorkspaceFact> {
@@ -135,7 +163,7 @@ internal fun ticketsOverviewFacts(overview: TicketsOverview?): List<WorkspaceFac
 
 internal val ticketsInformationLines: List<String> = listOf(
     "Un ajuste queda registrado como un movimiento y en auditoría, y no se puede deshacer: para corregirlo se hace otro en sentido contrario.",
-    "La cantidad es un entero distinto de cero, con un máximo de ${formatCount(ADJUSTMENT_MAX_AMOUNT)} OposiTickets por operación.",
+    "La cantidad es un entero distinto de cero, sin tope. Por encima de ${formatCount(ADJUSTMENT_LARGE_AMOUNT)} OposiTickets se pide una confirmación expresa.",
     "El saldo lo mueve siempre el servidor. Confirmar dos veces el mismo ajuste no lo aplica dos veces.",
     "El total de OposiTickets en circulación no se puede calcular todavía desde el panel.",
 )

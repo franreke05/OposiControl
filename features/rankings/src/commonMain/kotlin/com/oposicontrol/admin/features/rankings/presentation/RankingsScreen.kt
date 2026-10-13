@@ -29,6 +29,9 @@ import com.oposicontrol.admin.domain.model.LeagueLevel
 import com.oposicontrol.admin.domain.model.RankingEntry
 import com.oposicontrol.admin.domain.model.RankingPage
 import com.oposicontrol.admin.domain.model.RankingSection
+import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 
 /**
  * Rankings y ligas.
@@ -173,9 +176,19 @@ private fun UserSearchSection(state: RankingsState, viewModel: RankingsViewModel
                     )
                 },
             )
-            AsyncStatePane(
+            // En reposo todavía no se ha buscado a nadie: no hay nada cargando, así que no se enseña un esqueleto (que se
+            // quedaba para siempre) sino lo que hay que hacer.
+            if (state.searchResults is UiAsync.Idle) {
+                EmptyStateCard(
+                    title = "Busca a un opositor",
+                    message = "Escribe su nombre o su username y pulsa «Buscar» para abrir su ficha competitiva.",
+                    icon = AppIcon.SEARCH,
+                )
+            } else AsyncStatePane(
                 state.searchResults,
+                emptyTitle = "Sin coincidencias",
                 emptyMessage = "Ningún opositor coincide con la búsqueda.",
+                onRetry = { viewModel.dispatch(RankingsIntent.Search) },
             ) { page ->
                 AdminTable(
                     columns = listOf(
@@ -222,8 +235,11 @@ private fun RankingTableSection(state: RankingsState, viewModel: RankingsViewMod
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             AsyncStatePane(
                 state.page,
+                emptyTitle = "Nadie clasificado todavía",
                 emptyMessage = "Todavía no hay nadie clasificado: el estado competitivo se crea " +
                     "al alcanzar el mínimo de preguntas de la primera liga.",
+                emptyIcon = AppIcon.RANKINGS,
+                onRetry = { viewModel.dispatch(RankingsIntent.Refresh) },
             ) { page ->
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     RankingTable(page, state.selectedUserId, viewModel)

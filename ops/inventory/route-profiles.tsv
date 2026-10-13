@@ -183,6 +183,7 @@ POST	/admin/ticket-wallets/{}/transactions	CONTROL	admin	Admin legacy: ticket-wa
 POST	/admin/users	CONTROL	admin	Admin legacy: users	OposiControl
 POST	/admin/users/{}	CONTROL	admin	Admin legacy: users/{}	OposiControl
 POST	/api/v1/admin/accesos	CONTROL	admin	Admin v1: accesos	OposiControl
+POST	/api/v1/admin/accesos/{}/revocar	CONTROL	admin	Admin v1: retirar un acceso (idempotente)	OposiControl
 POST	/api/v1/admin/comercial/productos	CONTROL	admin	Admin v1: comercial/productos	OposiControl
 POST	/api/v1/admin/comercial/productos/{}/tarifas	CONTROL	admin	Admin v1: comercial/productos/{}/tarifas	OposiControl
 POST	/api/v1/admin/comunidades-autonomas	CONTROL	admin	Admin v1: comunidades-autonomas	OposiControl

@@ -151,6 +151,7 @@ POST /admin/ticket-wallets/{}/transactions
 POST /admin/users
 POST /admin/users/{}
 POST /api/v1/admin/accesos
+POST /api/v1/admin/accesos/{}/revocar
 POST /api/v1/admin/comercial/productos
 POST /api/v1/admin/comercial/productos/{}/tarifas
 POST /api/v1/admin/comunidades-autonomas

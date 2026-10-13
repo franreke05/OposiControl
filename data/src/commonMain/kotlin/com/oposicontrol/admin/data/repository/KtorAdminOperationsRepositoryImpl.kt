@@ -61,6 +61,12 @@ class KtorAdminOperationsRepositoryImpl(
         }.checkedBody<ExamAccessDto>("/api/v1/admin/accesos").toDomain()
     }
 
+    override suspend fun revokeExamAccess(accessId: String): AppResult<ExamAccess> = adapter.safeCall {
+        client.post("${adminV1Url()}/accesos/$accessId/revocar") { backendHeaders() }
+            .checkedBody<ExamAccessDto>("/api/v1/admin/accesos/$accessId/revocar")
+            .toDomain()
+    }
+
     override suspend fun getTicketWallets(): AppResult<List<TicketWallet>> = adapter.safeCall {
         client.get("${adminV1Url()}/tickets") { backendHeaders() }
             .checkedBody<List<TicketWalletDto>>("/api/v1/admin/tickets")
@@ -165,6 +171,8 @@ private data class ExamAccessDto(
     val isActive: Boolean,
     val userId: String? = null,
     val examId: String? = null,
+    val grantedAt: String? = null,
+    val validUntil: String? = null,
 )
 
 @Serializable
@@ -258,6 +266,8 @@ private fun ExamAccessDto.toDomain() = ExamAccess(
     isActive = isActive,
     userId = userId,
     examId = examId,
+    grantedAt = grantedAt,
+    validUntil = validUntil,
 )
 
 private fun ExamAccess.toDto() = ExamAccessDto(

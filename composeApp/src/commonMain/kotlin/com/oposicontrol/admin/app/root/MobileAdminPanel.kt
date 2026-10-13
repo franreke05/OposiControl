@@ -875,17 +875,14 @@ private fun AdminAccessSection(
                 onValueChange = { onIntent(ExamAccessIntent.UpdateSearch(it)) },
                 modifier = Modifier.width(204.dp),
             )
-            MobileActionPill(
-                icon = MobileIcon.Plus,
-                label = "Nuevo",
-                modifier = Modifier.width(104.dp),
-                onClick = { onIntent(ExamAccessIntent.CreateNew) },
-            )
         }
-
-        if (accessState.selectedId != null || accessState.editorUserName.isNotBlank()) {
-            AccessEditorCard(state = accessState, onIntent = onIntent)
-        }
+        // Conceder y retirar piden elegir persona y examen de una lista y confirmar: eso vive en la vista ancha. Aquí la
+        // lista es de consulta, y se dice.
+        Text(
+            text = "Para conceder o retirar un acceso, ensancha la ventana.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         when (val accesses = accessState.accesses) {
             is UiAsync.Loading -> LoadingStateCard()
@@ -924,7 +921,11 @@ private fun AdminAccessSection(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
-                                StatusChip(status = item.status)
+                                Text(
+                                    text = if (item.isActive) "Vigente" else "Retirado",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                             Text(
                                 text = item.examTitle,
@@ -934,7 +935,7 @@ private fun AdminAccessSection(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                text = item.accessType,
+                                text = com.oposicontrol.admin.features.examaccess.presentation.ExamAccessTypes.label(item.accessType),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -945,62 +946,6 @@ private fun AdminAccessSection(
                 }
             }
             is UiAsync.Idle -> Unit
-        }
-    }
-}
-
-@Composable
-private fun AccessEditorCard(
-    state: com.oposicontrol.admin.features.examaccess.presentation.ExamAccessState,
-    onIntent: (ExamAccessIntent) -> Unit,
-) {
-    GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(UiSpacing.panel),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(
-                text = if (state.selectedId != null) "Editar acceso" else "Nuevo acceso",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            GlassTextField(
-                value = state.editorUserName,
-                onValueChange = { onIntent(ExamAccessIntent.UpdateUserName(it)) },
-                placeholder = "Usuario",
-                modifier = Modifier.fillMaxWidth(),
-            )
-            GlassTextField(
-                value = state.editorExamTitle,
-                onValueChange = { onIntent(ExamAccessIntent.UpdateExamTitle(it)) },
-                placeholder = "Examen",
-                modifier = Modifier.fillMaxWidth(),
-            )
-            GlassTextField(
-                value = state.editorAccessType,
-                onValueChange = { onIntent(ExamAccessIntent.UpdateAccessType(it)) },
-                placeholder = "Tipo (manual, promo...)",
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Activo", style = MaterialTheme.typography.bodyMedium)
-                Switch(
-                    checked = state.editorIsActive,
-                    onCheckedChange = { onIntent(ExamAccessIntent.ToggleActive(it)) },
-                    colors = SwitchDefaults.colors(checkedThumbColor = GlassTheme.tokens.accent),
-                )
-            }
-            AdminActionRow(
-                actionState = state.actionState,
-                onSave = { onIntent(ExamAccessIntent.Save) },
-                onDelete = null,
-            )
         }
     }
 }

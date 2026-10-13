@@ -76,24 +76,11 @@ class AdminOposiTicketsTest {
     }
 
     @Test
-    fun anAbsurdlyLargeGrantIsRejectedInBothDirections() {
-        // Red contra el dedo gordo: un cero de más es irreversible sin otra
-        // operación manual.
-        val tooBig = AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION + 1
-        assertEquals(
-            "GRANT_AMOUNT_TOO_LARGE",
-            assertFailsWith<BackendDomainException> { request(cantidad = tooBig).validated() }.errorCode,
-        )
-        assertEquals(
-            "GRANT_AMOUNT_TOO_LARGE",
-            assertFailsWith<BackendDomainException> { request(cantidad = -tooBig).validated() }.errorCode,
-        )
-    }
-
-    @Test
-    fun exactlyTheLimitIsAllowed() {
-        val atLimit = AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION
-        assertEquals(atLimit, request(cantidad = atLimit).validated().cantidad)
+    fun aManualAdjustmentHasNoAmountCapInEitherDirection() {
+        // Decisión del propietario (2026-10-13): la red contra el cero de más es la confirmación del panel, no un tope.
+        listOf(10_001, 5_000_000, Int.MAX_VALUE, -10_001, -5_000_000, Int.MIN_VALUE).forEach { amount ->
+            assertEquals(amount, request(cantidad = amount).validated().cantidad)
+        }
     }
 
     @Test

@@ -19,6 +19,7 @@ internal val ROWS_B_ADMIN_OPERATIONS_REPO: List<CallRow> = listOf(
     CallRow(FILE, "upsertExamAccess", post("/api/v1/admin/accesos")) {
         repo().upsertExamAccess(ExamAccess(id = "ID0", userName = "u", examTitle = "e", accessType = "t", isActive = true))
     },
+    CallRow(FILE, "revokeExamAccess", post("/api/v1/admin/accesos/{}/revocar")) { repo().revokeExamAccess("ID0") },
     CallRow(FILE, "getTicketWallets", get("/api/v1/admin/tickets")) { repo().getTicketWallets() },
     CallRow(FILE, "getTicketTransactions", get("/api/v1/admin/tickets/{}/transacciones")) { repo().getTicketTransactions("ID0") },
     CallRow(FILE, "appendTicketAdjustment", post("/api/v1/admin/tickets/{}/transacciones")) {
