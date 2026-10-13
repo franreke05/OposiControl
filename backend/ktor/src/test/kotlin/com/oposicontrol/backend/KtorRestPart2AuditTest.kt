@@ -94,7 +94,7 @@ class KtorRestPart2AuditTest {
         val gateway = object : OposiBotsAuthGateway by NoAuthGateway, AutoCloseable {
             override fun close() { gatewayClosed[0] = true }
         }
-        val runtime = OposiBotsAuthRuntime(testCanonicalConfiguration(), gateway, limiter, testJson, base.runtime().canonical)
+        val runtime = OposiBotsAuthRuntime(testCanonicalConfiguration(), gateway, limiter, testJson, base.runtime().canonical, NoAccessRequestsMailGuard)
         runtime.close()
         assertEquals(1, limiter.closed)
         assertTrue(gatewayClosed[0])
@@ -105,7 +105,7 @@ class KtorRestPart2AuditTest {
             override fun close() = error("boom")
         }
         gatewayClosed[0] = false
-        OposiBotsAuthRuntime(testCanonicalConfiguration(), gateway, failing, testJson, base.runtime().canonical).close()
+        OposiBotsAuthRuntime(testCanonicalConfiguration(), gateway, failing, testJson, base.runtime().canonical, NoAccessRequestsMailGuard).close()
         assertTrue(gatewayClosed[0], "un fallo al cerrar el limitador no debe dejar el gateway abierto")
     }
 

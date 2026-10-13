@@ -73,7 +73,7 @@ class AuditRestPart1ResilienceTest {
                 respond(ByteReadChannel("{}"), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
             }
         })
-        return SupabaseOposiBotsAuthGateway(auditGatewayConfiguration(), auditJson, client)
+        return authGatewayWithoutAccessRequests(auditGatewayConfiguration(), auditJson, client)
     }
 
     @Test
@@ -100,7 +100,7 @@ class AuditRestPart1ResilienceTest {
     @Test
     fun aRealUpstreamOutageOnResendAndRecoverStillSurfacesAs503() = runBlocking {
         val client = HttpClient(MockEngine { respond(ByteReadChannel("{}"), HttpStatusCode.BadGateway, headersOf(HttpHeaders.ContentType, "application/json")) })
-        val gateway = SupabaseOposiBotsAuthGateway(auditGatewayConfiguration(), auditJson, client)
+        val gateway = authGatewayWithoutAccessRequests(auditGatewayConfiguration(), auditJson, client)
         val context = OposiBotsAuthContext("request-123", "127.0.0.1")
         val resend = assertFailsWith<OposiBotsAuthProblem> { gateway.resend(OposiBotsEmailResendRequest("a@example.com"), context) }
         val recover = assertFailsWith<OposiBotsAuthProblem> { gateway.recover(OposiBotsRecoverRequest(email = "a@example.com"), context) }
@@ -135,7 +135,7 @@ class AuditRestPart1ResilienceTest {
                 else -> error("Unexpected request: ${request.method} ${request.url}")
             }
         })
-        val gateway = SupabaseOposiBotsAuthGateway(
+        val gateway = authGatewayWithoutAccessRequests(
             auditGatewayConfiguration().copy(appleClientId = "apple-client", appleClientSecret = "apple-secret"),
             auditJson,
             client,

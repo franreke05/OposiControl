@@ -513,7 +513,7 @@ class Loop2KtorRestTest {
                 override suspend fun checkSubject(operation: OposiBotsAuthOperation, subject: String) = OposiBotsRateLimitDecision(true)
                 override fun close() = error("valkey down for ada@example.com")
             }
-            OposiBotsAuthRuntime(testCanonicalConfiguration(), NoAuthGateway, failing, testJson, base.runtime().canonical).close()
+            OposiBotsAuthRuntime(testCanonicalConfiguration(), NoAuthGateway, failing, testJson, base.runtime().canonical, NoAccessRequestsMailGuard).close()
             val messages = appender.list.map { it.formattedMessage }
             assertTrue(messages.any { "close failed resource=rateLimiter" in it }, messages.toString())
             assertTrue(messages.none { "ada@example.com" in it }, "el fallo se registra redactado")

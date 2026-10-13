@@ -107,6 +107,22 @@ internal fun profileRowJson(estado: String = "activa", onboarding: Boolean = tru
 
 private fun q(value: String?) = value?.let { "\"$it\"" } ?: "null"
 
+/**
+ * Dobles EXPLICITOS de las dos guardas de solicitudes de acceso (AccessRequestMailGuard.kt) para las pruebas que no las
+ * ejercitan. Produccion ya no tiene ningun valor por defecto que no bloquee: quien monta un runtime o un gateway a mano
+ * tiene que nombrar uno de estos (o la guarda real sobre un upstream falso).
+ */
+internal val NoAccessRequestsMailGuard = AccessRequestMailGuard { false }
+internal val NoAccessRequestsSessionGate = AccessRequestSessionGate { false }
+
+/** El gateway real con la puerta de sesion de solicitudes de acceso apagada A PROPOSITO (pruebas que no tratan de ella). */
+internal fun authGatewayWithoutAccessRequests(
+    configuration: OposiBotsAuthConfiguration,
+    json: kotlinx.serialization.json.Json,
+    client: io.ktor.client.HttpClient,
+    profileDirectory: CanonicalProfileDirectory? = null,
+) = SupabaseOposiBotsAuthGateway(configuration, json, NoAccessRequestsSessionGate, client, profileDirectory)
+
 internal object TestAllowAllLimiter : OposiBotsAuthRateLimiter {
     override suspend fun checkIp(operation: OposiBotsAuthOperation, clientIp: String) = OposiBotsRateLimitDecision(true)
     override suspend fun checkSubject(operation: OposiBotsAuthOperation, subject: String) = OposiBotsRateLimitDecision(true)
@@ -179,6 +195,7 @@ internal class CanonicalTestEnv(
         rateLimiter = limiter,
         json = testJson,
         canonical = CanonicalProfileRuntime(resolver, profiles, deletion, LegacyProfileAdapter(profiles, specialties)),
+        accessRequestMailGuard = NoAccessRequestsMailGuard,
     )
 
     fun mount(application: Application) = with(application) {

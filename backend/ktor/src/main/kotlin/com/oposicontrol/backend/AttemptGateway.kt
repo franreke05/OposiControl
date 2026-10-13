@@ -282,16 +282,25 @@ internal class AttemptGateway(
      * Respuestas del intento; con [questionIds] solo las de esa pagina (como mucho 50 ids ya validados).
      * [graded] = false (intento ABIERTO, D2-08 o la revelacion de D2-09): la respuesta propia con SU correccion (`es_correcta`,
      * `opcion_correcta_id` de la misma fila, DEC-015), sin la primera respuesta ni los tiempos. Nunca `soluciones_pregunta` (SEC-004).
+     * [ownerId] (la revelacion de D2-09, que no lee antes el intento): ademas `usuario_id=eq.`, defensa en profundidad para que
+     * esa lectura no dependa solo de que la RPC haya validado al dueno del intento.
      */
-    fun answers(attemptId: String, graded: Boolean, questionIds: Collection<String>? = null): Map<String, AttemptAnswerRow> {
+    fun answers(
+        attemptId: String,
+        graded: Boolean,
+        questionIds: Collection<String>? = null,
+        ownerId: String? = null,
+    ): Map<String, AttemptAnswerRow> {
         require(attemptId.isUuid()) { "attemptId" }
+        require(ownerId == null || ownerId.isUuid()) { "ownerId" }
         if (questionIds != null && questionIds.isEmpty()) return emptyMap()
+        val owner = ownerId?.let { "&usuario_id=eq.$it" }.orEmpty()
         val filter = questionIds?.let { ids ->
             require(ids.size <= MAX_PAGE_IDS && ids.all(String::isUuid)) { "questionIds" }
             "&pregunta_id=in.(${ids.joinToString(",")})"
         }.orEmpty()
         val columns = if (graded) GRADED_ANSWER_COLUMNS else OPEN_ANSWER_COLUMNS
-        val query = "/rest/v1/respuestas_intento?select=$columns&intento_id=eq.$attemptId$filter" +
+        val query = "/rest/v1/respuestas_intento?select=$columns&intento_id=eq.$attemptId$owner$filter" +
             "&order=pregunta_id.asc&limit=${MAX_ATTEMPT_QUESTIONS + 1}"
         return decodeList<AttemptAnswerRow>(upstream.get(query)).associateBy { it.preguntaId }
     }

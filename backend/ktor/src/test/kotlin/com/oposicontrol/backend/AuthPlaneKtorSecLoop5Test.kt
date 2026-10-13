@@ -219,7 +219,7 @@ class AuthPlaneKtorSecLoop5Test {
                 else -> error("Unexpected request: ${request.method} ${request.url}")
             }
         })
-        return SupabaseOposiBotsAuthGateway(testCanonicalConfiguration(), Json { ignoreUnknownKeys = true }, client)
+        return authGatewayWithoutAccessRequests(testCanonicalConfiguration(), Json { ignoreUnknownKeys = true }, client)
     }
 
     private fun idToken(): String {

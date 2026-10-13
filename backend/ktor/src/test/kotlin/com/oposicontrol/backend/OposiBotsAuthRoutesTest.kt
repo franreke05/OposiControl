@@ -251,6 +251,7 @@ class OposiBotsAuthRoutesTest {
                     rateLimiter = AllowingRateLimiter,
                     json = testJson,
                     canonical = CanonicalTestEnv().runtime().canonical,
+                    accessRequestMailGuard = NoAccessRequestsMailGuard,
                 ),
             )
         }
@@ -591,7 +592,7 @@ class OposiBotsAuthRoutesTest {
         // MASTER-ARCH-005: `canonical` es obligatorio; ya no existe el modo "sin perfil canonico" (antes 404 silencioso).
         application {
             configureConsumerAuthOnly(
-                OposiBotsAuthRuntime(testConfiguration(), FakeGateway(), AllowingRateLimiter, testJson, CanonicalTestEnv().runtime().canonical),
+                OposiBotsAuthRuntime(testConfiguration(), FakeGateway(), AllowingRateLimiter, testJson, CanonicalTestEnv().runtime().canonical, NoAccessRequestsMailGuard),
             )
         }
         assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/app/me").status)
@@ -617,6 +618,7 @@ class OposiBotsAuthRoutesTest {
                 // El limitador de la prueba manda tambien sobre el perfil canonico.
                 it.canonical
             },
+            accessRequestMailGuard = NoAccessRequestsMailGuard,
         )
         routing {
             oposiBotsAuthRoutes(runtime)

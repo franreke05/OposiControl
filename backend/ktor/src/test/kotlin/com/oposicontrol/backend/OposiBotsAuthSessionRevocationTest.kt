@@ -256,7 +256,7 @@ class OposiBotsAuthSessionRevocationTest {
             rateLimitHmacSecret = "test-only-rate-limit-secret-32chars",
             valkeyUrl = null,
         )
-        h.gateway = SupabaseOposiBotsAuthGateway(configuration, Json { ignoreUnknownKeys = true }, client)
+        h.gateway = authGatewayWithoutAccessRequests(configuration, Json { ignoreUnknownKeys = true }, client)
         return h
     }
 

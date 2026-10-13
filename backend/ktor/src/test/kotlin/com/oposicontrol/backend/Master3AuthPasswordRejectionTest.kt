@@ -24,7 +24,7 @@ class Master3AuthPasswordRejectionTest {
         """{"access_token":"recovery-access","refresh_token":"recovery-refresh","expires_in":3600,"user":{"id":"11111111-1111-4111-8111-111111111111"}}"""
 
     private fun gateway(requests: MutableList<HttpRequestData>, putStatus: HttpStatusCode, putBody: String) =
-        SupabaseOposiBotsAuthGateway(
+        authGatewayWithoutAccessRequests(
             m3Config(),
             Json { ignoreUnknownKeys = true },
             HttpClient(MockEngine { request ->
@@ -60,7 +60,7 @@ class Master3AuthPasswordRejectionTest {
 
     @Test
     fun registerWithAWeakPasswordOrInvalidEmailIsValidation() = runTest {
-        val weak = SupabaseOposiBotsAuthGateway(
+        val weak = authGatewayWithoutAccessRequests(
             m3Config(), Json { ignoreUnknownKeys = true },
             HttpClient(MockEngine { respond(ByteReadChannel("""{"code":422,"error_code":"weak_password","msg":"x"}"""), HttpStatusCode.UnprocessableEntity, jsonHeaders) }),
         )
@@ -68,7 +68,7 @@ class Master3AuthPasswordRejectionTest {
             setOf(OposiBotsValidationIssue.INVALID_PASSWORD),
             assertFailsWith<OposiBotsAuthProblem> { weak.register(OposiBotsRegisterRequest(email = "a@example.com", password = "safe-password-12"), context) }.issues,
         )
-        val badEmail = SupabaseOposiBotsAuthGateway(
+        val badEmail = authGatewayWithoutAccessRequests(
             m3Config(), Json { ignoreUnknownKeys = true },
             HttpClient(MockEngine { respond(ByteReadChannel("""{"code":422,"error_code":"email_address_invalid","msg":"x"}"""), HttpStatusCode.UnprocessableEntity, jsonHeaders) }),
         )
@@ -92,7 +92,7 @@ class Master3AuthPasswordRejectionTest {
             HttpStatusCode.Unauthorized,
             assertFailsWith<OposiBotsAuthProblem> { unauthorized.reset(OposiBotsResetPasswordRequest("t", "safe-password-12"), context) }.status,
         )
-        val login = SupabaseOposiBotsAuthGateway(
+        val login = authGatewayWithoutAccessRequests(
             m3Config(), Json { ignoreUnknownKeys = true },
             HttpClient(MockEngine { respond(ByteReadChannel("""{"code":422,"error_code":"weak_password","msg":"x"}"""), HttpStatusCode.UnprocessableEntity, jsonHeaders) }),
         )

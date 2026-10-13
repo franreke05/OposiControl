@@ -94,11 +94,11 @@ class AccessRequestMailGuardTest {
         val configuration = testCanonicalConfiguration()
         val runtime = OposiBotsAuthRuntime(
             configuration = configuration,
-            gateway = SupabaseOposiBotsAuthGateway(configuration, testJson, goTrue.client),
+            gateway = authGatewayWithoutAccessRequests(configuration, testJson, goTrue.client),
             rateLimiter = limiter,
             json = testJson,
             canonical = CanonicalTestEnv().runtime().canonical,
-            accessRequestMailGuard = PostgrestAccessRequestMailGuard(upstream = requests::get),
+            accessRequestMailGuard = PostgrestAccessRequestMailGuard(upstream = requests::get, emailRef = testCanonicalConfiguration()::authLogEmailRef),
         )
         routing { oposiBotsAuthRoutes(runtime) }
     }
@@ -299,7 +299,22 @@ class AccessRequestMailGuardTest {
         assertFalse(pendingEmail in logs, logs)
         assertTrue("held by a non-approved admin access request" in logs, logs)
         assertTrue("access request mail guard lookup failed" in logs, logs)
-        assertTrue("emailRef=${adminAccessEmailRef(pendingEmail)}" in logs, logs)
+        // Seudonimo CON CLAVE (HMAC con el secreto del limitador), no el prefijo SHA-256 sin clave de antes.
+        assertTrue("emailRef=${testCanonicalConfiguration().authLogEmailRef(pendingEmail)}" in logs, logs)
+        assertFalse(adminAccessEmailRef(pendingEmail) in logs, logs)
+    }
+
+    @Test
+    fun theLogPseudonymDependsOnTheSecretAndOnTheNormalisedEmail() {
+        val configuration = testCanonicalConfiguration()
+        val ref = configuration.authLogEmailRef(pendingEmail)
+
+        assertEquals(12, ref.length)
+        assertEquals(ref, configuration.authLogEmailRef("  ADA@example.com "))
+        assertFalse(ref == configuration.copy(rateLimitHmacSecret = "another-rate-limit-secret-32-chars!!").authLogEmailRef(pendingEmail))
+        assertFalse(ref == adminAccessEmailRef(pendingEmail))
+        // Separado de las claves del limitador: no es el HMAC del correo a secas.
+        assertFalse(ref == RateLimitKeyHasher(configuration.rateLimitHmacSecret).hash(pendingEmail).take(12))
     }
 
     // ------------------------------------------------------------------------------------------------ la guarda sola
@@ -314,26 +329,79 @@ class AccessRequestMailGuardTest {
         )
     }
 
+    /** Un correo con espacios (ASCII o Unicode) es un 400 de identificador invalido, nunca un 503 + WARN, y no se consulta nada. */
     @Test
-    fun aMalformedEmailNeverReachesTheUpstreamAndFailsClosed() = runTest {
-        val requests = FakeAccessRequests()
-        val guard = PostgrestAccessRequestMailGuard(upstream = requests::get)
+    fun aMalformedEmailNeverReachesTheUpstreamAndIsAValidationError() = runTest {
+        for (email in listOf("a b@example.com", "a b@example.com", "a b@example.com", "ab", "a".repeat(321))) {
+            val requests = FakeAccessRequests(pendingEmail to "pendiente")
+            val guard = PostgrestAccessRequestMailGuard(upstream = requests::get, emailRef = testCanonicalConfiguration()::authLogEmailRef)
 
-        val problem = assertFailsWith<OposiBotsAuthProblem> { guard.holdsMail("a b@example.com") }
+            val problem = assertFailsWith<OposiBotsAuthProblem> { guard.holdsMail(email) }
 
-        assertEquals(HttpStatusCode.ServiceUnavailable, problem.status)
-        assertEquals(CanonicalErrorCode.UPSTREAM_UNAVAILABLE, problem.canonicalCode())
-        assertEquals(emptyList(), requests.paths.toList())
+            assertEquals(HttpStatusCode.BadRequest, problem.status, email)
+            assertEquals(CanonicalErrorCode.VALIDATION, problem.canonicalCode(), email)
+            assertEquals(setOf(OposiBotsValidationIssue.INVALID_IDENTIFIER), problem.issues, email)
+            assertEquals(emptyList(), requests.paths.toList(), email)
+        }
     }
 
+    /**
+     * Un espacio Unicode pasaba la expresion de la ruta (`\s` solo cubre ASCII) y acababa en la guarda como 503 + WARN.
+     * Ahora las tres rutas contestan el 400 de siempre ANTES de la guarda, tenga o no solicitud el correo: ni lectura, ni
+     * GoTrue, ni linea de fallo.
+     */
     @Test
-    fun theDefaultGuardOfHandBuiltRuntimesNeverHolds() = runTest {
-        assertFalse(AccessRequestMailGuard.NoAccessRequests.holdsMail(pendingEmail))
+    fun anEmailWithUnicodeWhitespaceIsTheUsualValidationErrorOnTheThreeRoutes() {
+        val logs = capturingAllLogs { appender ->
+            for (route in mailRoutes) testApplication {
+                val requests = FakeAccessRequests("a da@example.com" to "pendiente")
+                val goTrue = RecordingGoTrue()
+                application { module(requests, goTrue) }
+
+                val response = call(route, "a da@example.com")
+                val asciiSpace = call(route, "a da@example.com")
+
+                assertEquals(HttpStatusCode.BadRequest, response.status, route.path)
+                val body = Json.parseToJsonElement(response.bodyAsText()).jsonObject
+                assertEquals("VALIDATION", body["code"]?.jsonPrimitive?.content, route.path)
+                assertTrue("INVALID_IDENTIFIER" in body.toString(), route.path)
+                // Lo mismo que el espacio ASCII, que la ruta ya rechazaba.
+                assertEquals(asciiSpace.status, response.status, route.path)
+                assertEquals(emptyList(), requests.paths.toList(), route.path)
+                assertEquals(emptyList(), goTrue.paths.toList(), route.path)
+            }
+            appender.everything()
+        }
+
+        assertFalse("lookup failed" in logs, logs)
     }
 
-    /** La fabrica que usa `fromEnvironment` devuelve la guarda REAL, no la de pruebas (no llama a la red al construirse). */
+    // ------------------------------------------------------------------------------------------------ cableado
+
+    /**
+     * El runtime que monta `fromEnvironment` (todo menos leer el entorno) usa la guarda REAL en los dos sitios: la de
+     * correo del runtime y la puerta de sesion del gateway son la MISMA instancia de [PostgrestAccessRequestMailGuard].
+     * No abre ninguna conexion al construirse.
+     */
+    @Test
+    fun theProductionWiringRoutesBothTheMailGuardAndTheSessionGateThroughTheRealGuard() {
+        val runtime = OposiBotsAuthRuntime.fromConfiguration(testCanonicalConfiguration(), testJson)
+        try {
+            val mailGuard = runtime.accessRequestMailGuard
+            val sessionGate = (runtime.gateway as SupabaseOposiBotsAuthGateway).accessRequestSessionGate
+
+            assertTrue(mailGuard is PostgrestAccessRequestMailGuard, mailGuard::class.toString())
+            assertTrue(sessionGate is PostgrestAccessRequestMailGuard, sessionGate::class.toString())
+            assertTrue(mailGuard === sessionGate, "una sola guarda real para el correo y para la sesion")
+        } finally {
+            runtime.close()
+        }
+    }
+
     @Test
     fun theProductionFactoryBuildsThePostgrestGuard() {
-        assertTrue(OposiBotsAuthRuntime.accessRequestMailGuard(testCanonicalConfiguration()) is PostgrestAccessRequestMailGuard)
+        val guard: Any = OposiBotsAuthRuntime.accessRequestMailGuard(testCanonicalConfiguration())
+
+        assertTrue(guard is AccessRequestMailGuard && guard is AccessRequestSessionGate)
     }
 }

@@ -388,7 +388,7 @@ internal class AttemptService(
                 // DEC-015: solo una respuesta (primera vez o la misma opcion reenviada, que la RPC devuelve como no-op) revela;
                 // un salto y una anulada, nada. Si esta lectura falla, falla la llamada: el plugin de idempotencia no guarda
                 // errores, asi que el reintento con la misma clave cae en el no-op de la RPC y revela.
-                val revealed = if (estado == ANSWER_ANSWERED && attemptRevealsOnAnswer(userId, attemptId)) revealedAnswer(attemptId, questionId) else null
+                val revealed = if (estado == ANSWER_ANSWERED && attemptRevealsOnAnswer(userId, attemptId)) revealedAnswer(userId, attemptId, questionId) else null
                 AnswerResult(
                     revision = revision,
                     estado = estado,
@@ -485,10 +485,11 @@ internal class AttemptService(
 
     /**
      * La fila que la RPC acaba de escribir (o ya tenia, en el no-op), leida SOLO de `respuestas_intento` del intento que la
-     * RPC ya valido como del usuario. Que no este, o que no lleve opcion o correccion, contradice el ANSWERED de la RPC.
+     * RPC ya valido como del usuario, y ADEMAS filtrada por `usuario_id` (defensa en profundidad: esta lectura no depende
+     * solo de esa validacion). Que no este, o que no lleve opcion o correccion, contradice el ANSWERED de la RPC.
      */
-    private fun revealedAnswer(attemptId: String, questionId: String): AttemptAnswerRow =
-        gateway.answers(attemptId, graded = false, questionIds = listOf(questionId))[questionId]
+    private fun revealedAnswer(userId: CanonicalUserId, attemptId: String, questionId: String): AttemptAnswerRow =
+        gateway.answers(attemptId, graded = false, questionIds = listOf(questionId), ownerId = userId.value)[questionId]
             ?.takeIf { it.opcionSeleccionadaId != null && it.esCorrecta != null }
             ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
 

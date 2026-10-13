@@ -260,10 +260,13 @@ class AttemptRoutesTest {
         assertTrue(leaked.isEmpty(), "SEC-004: lectura de soluciones, razonamiento o recursos con el intento sin finalizar: $leaked")
     }
 
-    /** La UNICA lectura que revela: la fila propia de esa pregunta, con las columnas abiertas. */
+    /**
+     * La UNICA lectura que revela: la fila propia de esa pregunta, con las columnas abiertas y filtrada tambien por el
+     * dueno (`usuario_id`, defensa en profundidad: no depende solo de que la RPC haya validado el intento).
+     */
     private fun ownAnswerRead(n: Int) =
         "/rest/v1/respuestas_intento?select=pregunta_id,opcion_seleccionada_id,es_correcta,opcion_correcta_id,revision,respondida_en,creada_en" +
-            "&intento_id=eq.$attempt&pregunta_id=in.(${q(n)})&"
+            "&intento_id=eq.$attempt&usuario_id=eq.$TEST_UID&pregunta_id=in.(${q(n)})&"
 
     private fun answerBody(n: Int, letter: Int?, baseRevision: Int = 0) =
         """{"opcionSeleccionadaId":${letter?.let { "\"${opt(n, it)}\"" } ?: "null"},"tiempoRespuestaMs":4200,"baseRevision":$baseRevision}"""

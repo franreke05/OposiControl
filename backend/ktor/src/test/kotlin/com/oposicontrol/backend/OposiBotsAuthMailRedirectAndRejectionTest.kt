@@ -33,7 +33,7 @@ class OposiBotsAuthMailRedirectAndRejectionTest {
 
     private class Harness(configuration: OposiBotsAuthConfiguration, status: HttpStatusCode = HttpStatusCode.OK, body: String = "{}") {
         val requests = mutableListOf<HttpRequestData>()
-        val gateway = SupabaseOposiBotsAuthGateway(
+        val gateway = authGatewayWithoutAccessRequests(
             configuration,
             testJson,
             HttpClient(MockEngine { request ->
@@ -129,7 +129,8 @@ class OposiBotsAuthMailRedirectAndRejectionTest {
             val rejected = capture.events().filter { "rejected by upstream" in it.formattedMessage }
             assertEquals(2, rejected.size, capture.lines().toString())
             assertTrue(rejected.all { it.level == Level.WARN })
-            val ref = adminAccessEmailRef(email)
+            val ref = configuration().authLogEmailRef(email)
+            assertTrue(ref != adminAccessEmailRef(email) && ref.length == 12, "seudonimo con clave, no el SHA-256 sin clave")
             assertEquals(
                 "auth email resend rejected by upstream status=400 error_code=captcha_failed emailRef=$ref " +
                     "requestId=request-mail-1 (indistinguishable 204 returned)",
@@ -151,7 +152,9 @@ class OposiBotsAuthMailRedirectAndRejectionTest {
             Harness(
                 configuration(),
                 HttpStatusCode.Forbidden,
-                """{"code":403,"error_code":"x\n2026 WARN forged person@example.com","msg":"m"}""",
+                // Con letras y digitos NO ASCII (escapes JSON de U+00D1, U+03A9 y el digito arabigo U+0661): solo pasa
+                // `[A-Za-z0-9_]`, `isLetterOrDigit` los dejaba entrar en el log.
+                """{"code":403,"error_code":"x\n2026 WARN forgedÑΩ١ person@example.com","msg":"m"}""",
             ).recover()
 
             val rejected = capture.lines().filter { "rejected by upstream" in it }

@@ -44,7 +44,7 @@ class AccountDeletionSessionGoneEvidenceTest {
                 else -> error("Unexpected request: ${request.method} ${request.url}")
             }
         })
-        return SupabaseOposiBotsAuthGateway(configuration(), Json { ignoreUnknownKeys = true }, client)
+        return authGatewayWithoutAccessRequests(configuration(), Json { ignoreUnknownKeys = true }, client)
     }
 
     /** Respuestas reales de GoTrue para un logout que falla por motivos AJENOS a "la sesion ya no existe". */

@@ -17,6 +17,8 @@ import io.ktor.http.contentType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -89,10 +91,15 @@ internal interface OposiBotsAuthGateway {
  * con la clave de servicio ([CanonicalProfileDirectory]) y aplica `requireActive()` (deny-by-default): si la
  * cuenta no es `activa` explicita, o no hay fila, se REVOCA la sesion recien acuñada y se responde 403.
  * [profileDirectory] existe para inyectarlo en pruebas; sin el se lee `perfiles_usuario` con el cliente de este gateway.
+ *
+ * La misma puerta consulta [accessRequestSessionGate] (AccessRequestMailGuard.kt): un usuario con una solicitud de acceso
+ * de administrador NO aprobada no recibe sesion (revocada en global, 403 FORBIDDEN). Es OBLIGATORIO y no tiene valor por
+ * defecto: ninguna construccion puede quedarse sin puerta por omision.
  */
 internal class SupabaseOposiBotsAuthGateway(
     private val configuration: OposiBotsAuthConfiguration,
     private val json: Json,
+    internal val accessRequestSessionGate: AccessRequestSessionGate,
     private val client: HttpClient = defaultAuthHttpClient(),
     private val profileDirectory: CanonicalProfileDirectory? = null,
 ) : OposiBotsAuthGateway, AuthProviderClient, AutoCloseable {
@@ -152,8 +159,9 @@ internal class SupabaseOposiBotsAuthGateway(
      * B4 (2026-10-13): en resend y recover todo lo que no es 5xx sale como 204 (a proposito: no revela que correos
      * existen). Un 4xx de GoTrue distinto de 429 (captcha rechazado, `redirect_to` no permitido, correo invalido, proveedor
      * de correo mal configurado...) significaba «no ha salido ningun correo» sin dejar rastro. La respuesta al cliente NO
-     * cambia; queda un WARN con el estado y el `error_code`. Del correo solo su referencia ([adminAccessEmailRef], prefijo
-     * de su SHA-256), nunca el valor, y nunca el `msg` de GoTrue (puede reflejarlo).
+     * cambia; queda un WARN con el estado y el `error_code`. Del correo solo su referencia con clave ([authLogEmailRef],
+     * prefijo de un HMAC-SHA-256), nunca el valor, y nunca el `msg` de GoTrue (puede reflejarlo). El `error_code` se
+     * reduce a ASCII `[A-Za-z0-9_]`: lo escribe el upstream y `isLetterOrDigit` dejaba pasar cualquier letra Unicode.
      */
     private fun logMailRejectedByUpstream(operation: String, response: AuthResponse, email: String, context: OposiBotsAuthContext) {
         val status = response.status.value
@@ -162,8 +170,11 @@ internal class SupabaseOposiBotsAuthGateway(
             "auth email {} rejected by upstream status={} error_code={} emailRef={} requestId={} (indistinguishable 204 returned)",
             operation,
             status,
-            response.error().normalizedCode.filter { it.isLetterOrDigit() || it == '_' }.take(64).ifEmpty { "-" },
-            adminAccessEmailRef(email),
+            response.error().normalizedCode
+                .filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '_' }
+                .take(64)
+                .ifEmpty { "-" },
+            configuration.authLogEmailRef(email),
             context.requestId,
         )
     }
@@ -586,6 +597,10 @@ internal class SupabaseOposiBotsAuthGateway(
      * - Fallo TRANSITORIO de lectura (503, cancelacion): MASTER-AUTH-010, se revoca solo la sesion acuñada
      *   ([transientRevocation] = `local`) o nada (`null`, refresh: el cliente reintenta con su token anterior). Una
      *   caida de PostgREST ya no cierra la sesion en todos los dispositivos.
+     * - Solicitud de acceso de administrador NO aprobada ([AccessRequestSessionGate], por id de usuario): denegacion
+     *   definitiva, 403 FORBIDDEN y revocacion `global`, igual que una cuenta bloqueada. Se decide ANTES que el estado del
+     *   perfil (es la causa mas especifica y no depende de que la cuenta tenga fila de perfil). Si esa lectura falla es
+     *   un fallo transitorio como el del perfil: 503, nunca se entrega la sesion.
      */
     private suspend fun enforceAccountGate(
         session: SupabaseSession,
@@ -598,8 +613,16 @@ internal class SupabaseOposiBotsAuthGateway(
         }
         try {
             val userId = CanonicalUserId.fromJwtSubject(session.user.id)
-            val identity = findProfileRetryingTransient(userId, context, transientReadRetryDelaysMillis)
-                ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
+            val gate = readGateRetryingTransient(userId, context, transientReadRetryDelaysMillis)
+            if (gate.heldByAccessRequest) {
+                GatewayLogger.warn(
+                    "account gate denied the session: non-approved admin access request userId={} requestId={}",
+                    userId.value,
+                    context.requestId,
+                )
+                throw CanonicalErrorCode.FORBIDDEN.exception()
+            }
+            val identity = gate.identity ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
             return identity.requireActive()
         } catch (cancelled: CancellationException) {
             revokeTransient()
@@ -621,42 +644,55 @@ internal class SupabaseOposiBotsAuthGateway(
      * MASTER2-AUTH-003: reintenta SOLO fallos transitorios de lectura (503/red/decodificacion); una denegacion de
      * dominio o una cancelacion se propagan al primer intento. Agotados los reintentos, se relanza el ultimo fallo.
      */
-    private suspend fun findProfileRetryingTransient(
+    private suspend fun readGateRetryingTransient(
         userId: CanonicalUserId,
         context: OposiBotsAuthContext,
         retryDelaysMillis: List<Long>,
-    ): CanonicalUserIdentity? {
-        if (retryDelaysMillis.isEmpty()) return findProfile(userId, context)
+    ): GateRead {
+        if (retryDelaysMillis.isEmpty()) return readGate(userId, context)
         // MASTER3-AUTH-005: plazo global. `withTimeoutOrNull` solo absorbe SU propio timeout: una cancelacion externa
         // (cliente desconectado) se sigue propagando como cancelacion. Corre en Dispatchers.IO para que plazos y esperas
         // sean SIEMPRE de reloj real, sea cual sea el dispatcher de quien llama.
         val read = withContext(Dispatchers.IO) {
             withTimeoutOrNull(REFRESH_GATE_DEADLINE_MS) {
-                GateRead(retryingGateRead(userId, context, retryDelaysMillis))
+                retryingGateRead(userId, context, retryDelaysMillis)
             }
         }
         if (read == null) {
             GatewayLogger.warn("account gate read exceeded its {} ms deadline requestId={}", REFRESH_GATE_DEADLINE_MS, context.requestId)
             throw OposiBotsAuthProblem.unavailable()
         }
-        return read.identity
+        return read
     }
 
-    /** Envoltorio: distingue "sin fila" (`identity == null`) de "se agoto el plazo" (`withTimeoutOrNull` -> null). */
-    private class GateRead(val identity: CanonicalUserIdentity?)
+    /**
+     * Lo que la puerta lee de una vez. Envoltorio no nulo: distingue "sin fila de perfil" (`identity == null`) de "se
+     * agoto el plazo" (`withTimeoutOrNull` -> null).
+     */
+    private class GateRead(val identity: CanonicalUserIdentity?, val heldByAccessRequest: Boolean)
+
+    /**
+     * Las DOS lecturas de la puerta (perfil y solicitud de acceso) A LA VEZ: la segunda no suma su latencia a la primera,
+     * la puerta tarda lo que la mas lenta. Si una falla, la otra se cancela y sale el fallo original; los limites por
+     * intento, el plazo global y los reintentos de refresh cubren a las dos porque envuelven esta funcion.
+     */
+    private suspend fun readGate(userId: CanonicalUserId, context: OposiBotsAuthContext): GateRead = coroutineScope {
+        val heldByAccessRequest = async { accessRequestSessionGate.deniesSession(userId.value) }
+        val identity = findProfile(userId, context)
+        GateRead(identity, heldByAccessRequest.await())
+    }
 
     private suspend fun retryingGateRead(
         userId: CanonicalUserId,
         context: OposiBotsAuthContext,
         retryDelaysMillis: List<Long>,
-    ): CanonicalUserIdentity? {
+    ): GateRead {
         var attempt = 0
         while (true) {
             try {
                 // Limite POR INTENTO: un intento lento cuenta como fallo transitorio y deja sitio al reintento.
-                val read = withTimeoutOrNull(REFRESH_GATE_ATTEMPT_TIMEOUT_MS) { GateRead(findProfile(userId, context)) }
+                return withTimeoutOrNull(REFRESH_GATE_ATTEMPT_TIMEOUT_MS) { readGate(userId, context) }
                     ?: throw OposiBotsAuthProblem.unavailable()
-                return read.identity
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (denied: BackendDomainException) {
