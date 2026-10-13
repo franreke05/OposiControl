@@ -41,13 +41,13 @@ data class AdminGrantTicketsRequestDto(
         val TIPOS_PERMITIDOS = setOf(TIPO_AJUSTE, TIPO_REPORTE_VALIDADO)
 
         /**
-         * Tope de seguridad para una sola operación manual.
+         * Tope de la recompensa que se configura para un reporte validado.
          *
-         * No es una regla de producto: es una red contra el dedo gordo. Conceder
-         * cien mil tickets por un cero de más es irreversible sin otra operación
-         * manual, así que por encima de esto se exige partir la concesión.
+         * Un AJUSTE MANUAL ya no tiene tope de cantidad (decisión del propietario, 2026-10-13): el único límite es el
+         * entero de 32 bits de la cartera, y la red contra el cero de más es la confirmación del panel. La recompensa de
+         * un reporte sí lo conserva, porque no la teclea nadie cada vez: es un valor que se aplica solo.
          */
-        const val MAX_CANTIDAD_POR_OPERACION = 10_000
+        const val MAX_RECOMPENSA_POR_REPORTE = 10_000
 
         /** MASTER5-API-001: tope de longitud del motivo (descripcion del ledger) y de la clave de idempotencia. */
         const val MAX_MOTIVO_LENGTH = 1_000
@@ -78,14 +78,8 @@ internal fun AdminGrantTicketsRequestDto.validated(): AdminGrantTicketsRequestDt
     if (cantidad == 0) {
         reject("GRANT_AMOUNT_ZERO", "Una concesión de cero OposiTickets no registra nada útil.")
     }
-    if (kotlin.math.abs(cantidad) > AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION) {
-        reject(
-            "GRANT_AMOUNT_TOO_LARGE",
-            "Una sola operación no puede mover más de " +
-                "${AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION} OposiTickets. " +
-                "Si es intencionado, divídela en varias operaciones auditables.",
-        )
-    }
+    // Sin tope de cantidad: `cantidad` es un Int y eso ya es el límite físico de la cartera. Si el saldo resultante no
+    // cabe, lo rechaza el RPC, que es quien lo conoce.
     // Sin motivo, el ledger queda con un movimiento que nadie puede justificar
     // después. La trazabilidad es la mitad del valor de tener ledger.
     if (motivo.isBlank()) reject("GRANT_REASON_REQUIRED", "La concesión necesita un motivo.")
@@ -173,17 +167,13 @@ data class AdminTicketsOverviewResponse(val data: AdminTicketsOverviewDto)
 /**
  * MASTER5-API-001: validacion de magnitud/longitud para TODO llamador del RPC `admin_grant_tickets` (rutas legacy
  * `/usuarios/{id}/tickets` y `/tickets/{id}/transacciones`, recompensa de reporte y la ruta canonica), que antes
- * solo cubria `validated()`. El RPC no impone tope de magnitud ni de longitud.
+ * solo cubria `validated()`. El RPC no impone tope de longitud. La magnitud ya no se acota aqui (solo se rechaza el
+ * cero): ver [AdminGrantTicketsRequestDto.MAX_RECOMPENSA_POR_REPORTE].
  */
 internal fun requireWalletGrantWithinBounds(cantidad: Int, motivo: String, idempotencyKey: String) {
     fun reject(code: String, message: String): Nothing =
         throw BackendDomainException(code, HttpStatusCode.UnprocessableEntity, message)
-    if (cantidad == 0 || kotlin.math.abs(cantidad.toLong()) > AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION) {
-        reject(
-            "WALLET_AMOUNT_INVALID",
-            "La cantidad debe ser distinta de cero y no superar ${AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION} por operación.",
-        )
-    }
+    if (cantidad == 0) reject("WALLET_AMOUNT_INVALID", "La cantidad debe ser distinta de cero.")
     if (motivo.isBlank() || motivo.trim().length > AdminGrantTicketsRequestDto.MAX_MOTIVO_LENGTH) {
         reject("WALLET_DESCRIPTION_REQUIRED", "El motivo es obligatorio y no puede superar ${AdminGrantTicketsRequestDto.MAX_MOTIVO_LENGTH} caracteres.")
     }

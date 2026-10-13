@@ -16,6 +16,9 @@ import com.oposicontrol.admin.core.ui.components.FormSection
 import com.oposicontrol.admin.core.ui.components.StatusChip
 import com.oposicontrol.admin.domain.model.RankingSection
 import com.oposicontrol.admin.domain.model.UserStanding
+import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 
 /**
  * Ficha competitiva de un opositor: solo lectura.
@@ -32,7 +35,14 @@ fun UserStandingPanel(state: RankingsState) {
         title = "Ficha competitiva",
         description = "Liga, ventana de cálculo, nota media, evolución y posiciones. Solo lectura.",
     ) {
-        AsyncStatePane(
+        // Sin nadie elegido no hay nada cargando: antes se pintaba el esqueleto de carga y no se iba nunca.
+        if (state.standing is UiAsync.Idle) {
+            EmptyStateCard(
+                title = "Ningún opositor abierto",
+                message = "Elige a alguien de la clasificación o búscalo por su nombre para ver su liga, su nota media y sus posiciones.",
+                icon = AppIcon.USERS,
+            )
+        } else AsyncStatePane(
             state.standing,
             emptyMessage = "Selecciona un opositor para ver su posición.",
         ) { standing ->

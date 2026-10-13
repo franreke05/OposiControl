@@ -15,7 +15,11 @@ interface AdminOperationsRepository {
     suspend fun upsertNewsType(newsType: NewsType): AppResult<NewsType>
 
     suspend fun getExamAccesses(): AppResult<List<ExamAccess>>
+    /** Concede un acceso. Siempre es una concesión nueva (o la vigente, si ya la tenía): nunca reescribe otra fila. */
     suspend fun upsertExamAccess(access: ExamAccess): AppResult<ExamAccess>
+
+    /** Retira un acceso: le pone fin de vigencia. Idempotente. */
+    suspend fun revokeExamAccess(accessId: String): AppResult<ExamAccess>
 
     suspend fun getTicketWallets(): AppResult<List<TicketWallet>>
     suspend fun getTicketTransactions(userId: String): AppResult<List<TicketTransaction>>

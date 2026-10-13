@@ -2,6 +2,7 @@ package com.oposicontrol.admin.features.support.presentation
 
 import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.ExamAccess
@@ -113,6 +114,7 @@ class SupportViewModelTest {
         override suspend fun upsertNewsType(newsType: NewsType): AppResult<NewsType> = AppResult.Success(newsType)
         override suspend fun getExamAccesses(): AppResult<List<ExamAccess>> = AppResult.Success(emptyList())
         override suspend fun upsertExamAccess(access: ExamAccess): AppResult<ExamAccess> = AppResult.Success(access)
+        override suspend fun revokeExamAccess(accessId: String): AppResult<ExamAccess> = AppResult.Failure(AppError.Validation("no usado"))
         override suspend fun getTicketWallets(): AppResult<List<TicketWallet>> = AppResult.Success(emptyList())
         override suspend fun getTicketTransactions(userId: String): AppResult<List<TicketTransaction>> = AppResult.Success(emptyList())
         override suspend fun appendTicketAdjustment(userId: String, amount: Int, reason: String, idempotencyKey: String): AppResult<TicketTransaction> =

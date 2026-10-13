@@ -101,6 +101,8 @@ class AdminProfileLookupByIdTest {
         )
         "/rest/v1/auditoria_log" in uri -> V1StubResponse(201, "")
         "/rest/v1/examenes" in uri -> V1StubResponse(200, examsFor(uri))
+        // La comprobacion previa de «ya tiene acceso» (por usuario y examen): no lo tiene.
+        "/rest/v1/contenido_desbloqueado_usuario" in uri && "usuario_id=eq." in uri -> V1StubResponse(200, "[]")
         "/rest/v1/contenido_desbloqueado_usuario" in uri ->
             V1StubResponse(200, """[{"id":"g1","usuario_id":"$oldUser","examen_id":"$examB","motivo":"admin"}]""")
         "/rest/v1/reportes_contenido" in uri -> V1StubResponse(200, """[{"id":"$report","reportado_por":"$oldUser"}]""")

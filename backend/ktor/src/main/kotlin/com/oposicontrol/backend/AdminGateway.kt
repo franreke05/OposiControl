@@ -557,6 +557,9 @@ data class AdminExamAccessDto(
     /** RC-06: ids exactos (uuid). En `POST /api/v1/admin/accesos` se prefieren a `userName`/`examTitle`; opcionales. */
     val userId: String? = null,
     val examId: String? = null,
+    /** Solo salida: cuando se concedio y, si ya no esta vigente, hasta cuando lo estuvo. */
+    val grantedAt: String? = null,
+    val validUntil: String? = null,
 )
 
 @Serializable

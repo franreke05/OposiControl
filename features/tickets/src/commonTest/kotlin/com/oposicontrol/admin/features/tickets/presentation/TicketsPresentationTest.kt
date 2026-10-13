@@ -61,7 +61,33 @@ class TicketsPresentationTest {
         assertEquals(-10, parseAdjustmentAmount(" -10 "))
         assertEquals(-10, parseAdjustmentAmount("−10"))
         assertEquals(7, parseAdjustmentAmount("7"))
-        listOf("", "12,5", "12.5", "1e3", "diez", "+", "-", "1234567").forEach { assertNull(parseAdjustmentAmount(it), it) }
+        assertEquals(1234567, parseAdjustmentAmount("1234567"))
+        assertEquals(2147483647, parseAdjustmentAmount("2147483647"))
+        assertEquals(-2147483647, parseAdjustmentAmount("-2147483647"))
+        assertEquals(5, parseAdjustmentAmount("0000000000005"))
+        listOf("", "12,5", "12.5", "1e3", "diez", "+", "-", "2147483648", "99999999999999999999").forEach {
+            assertNull(parseAdjustmentAmount(it), it)
+        }
+    }
+
+    @Test
+    fun `an adjustment has no cap, only what a wallet can hold`() {
+        assertNull(adjustmentProblem("10001", "m", true))
+        assertNull(adjustmentProblem("-5000000", "m", true))
+        assertNull(adjustmentProblem("2147483647", "m", true, balance = 0))
+        // Un entero bien escrito pero imposible de guardar se dice como tal, no como «no es un entero».
+        assertTrue(adjustmentProblem("99999999999", "m", true)!!.contains("2.147.483.647"))
+        assertTrue(adjustmentProblem("1000000000", "m", true, balance = 1_500_000_000)!!.contains("2.147.483.647"))
+        assertNull(adjustmentProblem("-1000000000", "m", true, balance = 1_500_000_000))
+    }
+
+    @Test
+    fun `only above one hundred thousand in either direction is an adjustment called large`() {
+        assertEquals(false, isLargeAdjustment(100_000))
+        assertEquals(false, isLargeAdjustment(-100_000))
+        assertTrue(isLargeAdjustment(100_001))
+        assertTrue(isLargeAdjustment(-100_001))
+        assertTrue(largeAdjustmentWarning(250_000).contains("250.000"))
     }
 
     @Test
@@ -70,8 +96,6 @@ class TicketsPresentationTest {
         assertEquals("Escribe la cantidad de OposiTickets.", adjustmentProblem("", "m", hasWallet = true))
         assertTrue(adjustmentProblem("1,5", "m", true)!!.contains("entero"))
         assertEquals("La cantidad no puede ser cero.", adjustmentProblem("0", "m", true))
-        assertTrue(adjustmentProblem("10001", "m", true)!!.contains("10.000"))
-        assertTrue(adjustmentProblem("-10001", "m", true)!!.contains("10.000"))
         assertTrue(adjustmentProblem("5", "  ", true)!!.contains("motivo"))
         assertTrue(adjustmentProblem("5", "x".repeat(1001), true)!!.contains("1.000"))
         assertNull(adjustmentProblem("10000", "x".repeat(1000), true))

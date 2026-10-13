@@ -69,7 +69,18 @@ class TicketsViewModel(
             TicketsIntent.ConfirmAdjustment -> confirmAdjustment()
             TicketsIntent.ApplyAdjustment -> {
                 requestAdjustment()
-                if (currentState().pendingAdjustment?.awaitingConfirmation == true) confirmAdjustment()
+                val pending = currentState().pendingAdjustment
+                when {
+                    pending?.awaitingConfirmation != true -> Unit
+                    // Sin diálogo, un ajuste grande no se aplica a la primera: se avisa y se espera una segunda pulsación.
+                    isLargeAdjustment(pending.amount) && !pending.largeAcknowledged -> updateState {
+                        it.copy(
+                            pendingAdjustment = pending.copy(awaitingConfirmation = false, largeAcknowledged = true),
+                            actionState = UiAsync.Error(AppError.Validation(largeAdjustmentWarning(pending.amount))),
+                        )
+                    }
+                    else -> confirmAdjustment()
+                }
             }
             TicketsIntent.DismissAdjustment -> updateState { state ->
                 state.copy(pendingAdjustment = state.pendingAdjustment?.copy(awaitingConfirmation = false))
@@ -158,7 +169,12 @@ class TicketsViewModel(
 
     private fun requestAdjustment() {
         val state = currentState()
-        val problem = adjustmentProblem(state.adjustmentAmount, state.adjustmentReason, hasWallet = state.selectedUserId != null)
+        val problem = adjustmentProblem(
+            state.adjustmentAmount,
+            state.adjustmentReason,
+            hasWallet = state.selectedUserId != null,
+            balance = state.selectedWallet?.balance,
+        )
         if (problem != null) {
             updateState { it.copy(actionState = UiAsync.Error(AppError.Validation(problem))) }
             return

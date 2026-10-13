@@ -16,6 +16,9 @@ data class ExamAccess(
     /** RC-06: ids canonicos (uuid) que devuelve el backend; null = fila sin ids (se cae al nombre, que el servidor rechaza si es ambiguo). */
     val userId: String? = null,
     val examId: String? = null,
+    /** Cuándo se concedió y, si ya no está vigente, hasta cuándo lo estuvo (ISO). Nulo si el servidor no lo informa. */
+    val grantedAt: String? = null,
+    val validUntil: String? = null,
 )
 
 data class TicketWallet(

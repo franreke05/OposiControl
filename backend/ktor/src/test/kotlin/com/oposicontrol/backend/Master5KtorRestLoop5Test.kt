@@ -126,11 +126,9 @@ class Master5KtorRestLoop5Test {
         val stub = Stub()
         application { adminModule(gateway(stub)) }
         val path = "/api/v1/admin/usuarios/$user/tickets"
-        val hugeAmount = postJson(path, """{"cantidad":2000000000,"motivo":"m","idempotencyKey":"k"}""")
-        assertEquals(HttpStatusCode.UnprocessableEntity, hugeAmount.status)
-        assertEquals("WALLET_AMOUNT_INVALID", hugeAmount.code())
-        assertEquals(HttpStatusCode.UnprocessableEntity, postJson(path, """{"cantidad":-10001,"motivo":"m","idempotencyKey":"k"}""").status)
-        assertEquals(HttpStatusCode.UnprocessableEntity, postJson(path, """{"cantidad":0,"motivo":"m","idempotencyKey":"k"}""").status)
+        val zero = postJson(path, """{"cantidad":0,"motivo":"m","idempotencyKey":"k"}""")
+        assertEquals(HttpStatusCode.UnprocessableEntity, zero.status)
+        assertEquals("WALLET_AMOUNT_INVALID", zero.code())
         val longMotivo = "x".repeat(AdminGrantTicketsRequestDto.MAX_MOTIVO_LENGTH + 1)
         assertEquals(HttpStatusCode.UnprocessableEntity, postJson(path, """{"cantidad":5,"motivo":"$longMotivo","idempotencyKey":"k"}""").status)
         assertEquals(HttpStatusCode.UnprocessableEntity, postJson(path, """{"cantidad":5,"motivo":"   ","idempotencyKey":"k"}""").status)
@@ -144,7 +142,8 @@ class Master5KtorRestLoop5Test {
         val stub = Stub()
         application { adminModule(gateway(stub)) }
         val path = "/api/v1/admin/usuarios/$user/tickets"
-        val atCap = AdminGrantTicketsRequestDto.MAX_CANTIDAD_POR_OPERACION
+        // Sin tope de cantidad en un ajuste manual: una cifra grande llega al RPC igual que una pequeña.
+        val atCap = 2_000_000_000
         val okKey = "k".repeat(AdminGrantTicketsRequestDto.MAX_IDEMPOTENCY_KEY_LENGTH)
         val okMotivo = "m".repeat(AdminGrantTicketsRequestDto.MAX_MOTIVO_LENGTH)
         assertEquals(HttpStatusCode.OK, postJson(path, """{"cantidad":$atCap,"motivo":"$okMotivo","idempotencyKey":"$okKey"}""").status)
@@ -157,15 +156,14 @@ class Master5KtorRestLoop5Test {
         val stub = Stub()
         application { adminModule(gateway(stub)) }
         val path = "/api/v1/admin/tickets/$user/transacciones"
-        val huge = postJson(path, """{"amount":2000000000,"reason":"m","idempotencyKey":"k"}""")
-        assertEquals(HttpStatusCode.UnprocessableEntity, huge.status, huge.bodyAsText())
-        assertEquals("WALLET_AMOUNT_INVALID", huge.code())
+        val zero = postJson(path, """{"amount":0,"reason":"m","idempotencyKey":"k"}""")
+        assertEquals(HttpStatusCode.UnprocessableEntity, zero.status, zero.bodyAsText())
         val longReason = "x".repeat(AdminGrantTicketsRequestDto.MAX_MOTIVO_LENGTH + 1)
         assertEquals(HttpStatusCode.UnprocessableEntity, postJson(path, """{"amount":5,"reason":"$longReason","idempotencyKey":"k"}""").status)
         val longKey = "k".repeat(AdminGrantTicketsRequestDto.MAX_IDEMPOTENCY_KEY_LENGTH + 1)
         assertEquals(HttpStatusCode.UnprocessableEntity, postJson(path, """{"amount":5,"reason":"m","idempotencyKey":"$longKey"}""").status)
         assertEquals(0, stub.rpcCalls("admin_grant_tickets"))
-        assertEquals(HttpStatusCode.Created, postJson(path, """{"amount":10000,"reason":"m","idempotencyKey":"k"}""").status)
+        assertEquals(HttpStatusCode.Created, postJson(path, """{"amount":2000000000,"reason":"m","idempotencyKey":"k"}""").status)
         assertEquals(1, stub.rpcCalls("admin_grant_tickets"))
     }
 
