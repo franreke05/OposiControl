@@ -1,3 +1,5 @@
+import java.io.ByteArrayOutputStream
+
 plugins {
     alias(libs.plugins.kotlinJvm)
     alias(libs.plugins.kotlinSerialization)
@@ -50,6 +52,47 @@ dependencies {
     // tambien para poder adjuntar un appender en memoria y verificar el
     // contenido real de los logs estrategicos (ObservabilityTest).
     testImplementation(libs.logback.classic)
+}
+
+/**
+ * SHA de git del arbol que se esta construyendo, o `desconocido`.
+ *
+ * Es un `ValueSource` (y no un `exec` suelto en la configuracion) para que sea compatible con la cache de configuracion:
+ * Gradle lo evalua al EJECUTAR `generateBuildInfo`, asi que un commit nuevo vuelve a generar el recurso sin invalidar la
+ * cache. Si git no esta instalado, no hay repositorio o el comando falla, el build NO falla: se hornea `desconocido`,
+ * que es lo que luego publica el backend en `build_info`.
+ */
+abstract class GitShaValueSource : ValueSource<String, ValueSourceParameters.None> {
+    @get:Inject
+    abstract val execOperations: ExecOperations
+
+    override fun obtain(): String = try {
+        val output = ByteArrayOutputStream()
+        val result = execOperations.exec {
+            commandLine("git", "rev-parse", "--short=12", "HEAD")
+            standardOutput = output
+            errorOutput = ByteArrayOutputStream()
+            isIgnoreExitValue = true
+        }
+        output.toString(Charsets.UTF_8).trim().takeIf { result.exitValue == 0 && it.isNotEmpty() } ?: UNKNOWN_SHA
+    } catch (_: Exception) {
+        UNKNOWN_SHA
+    }
+
+    companion object {
+        const val UNKNOWN_SHA = "desconocido"
+    }
+}
+
+// `build-info.properties` en el classpath del jar: el backend lo lee al arrancar y registra `build_info{sha="..."}`
+// (PrometheusMetrics.kt). Va a build/, no al arbol de fuentes, asi que `scripts/assert-clean-tree.sh` no lo ve.
+val generateBuildInfo = tasks.register<WriteProperties>("generateBuildInfo") {
+    destinationFile = layout.buildDirectory.file("generated/build-info/build-info.properties")
+    property("sha", providers.of(GitShaValueSource::class) {})
+}
+
+tasks.processResources {
+    from(generateBuildInfo)
 }
 
 tasks.named<JavaExec>("run") {

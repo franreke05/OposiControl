@@ -122,7 +122,7 @@ private fun SettingsMobileContent(
             SettingsInfoRow(
                 icon = Res.drawable.ic_filter,
                 title = "Estado del sistema",
-                subtitle = "Próximamente",
+                subtitle = "Réplicas, alertas y consumo de Supabase",
                 onClick = onSystemStatusClick,
                 contentDescription = "Estado del sistema. Abrir estado del sistema.",
             )

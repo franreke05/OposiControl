@@ -49,7 +49,52 @@ internal fun Application.installBackendPrometheusMetrics(
             .build()
     }
     registerSupabaseUpGauge(registry)
+    registerBuildInfoGauge(registry)
 }
+
+/** Serie `build_info{sha="..."} 1`: siempre 1; lo que informa es su etiqueta. Convencion habitual de Prometheus para publicar una version. */
+const val BUILD_INFO_METRIC = "build_info"
+
+/** Lo que se publica cuando el build no pudo preguntar a git (o el recurso no esta): nunca un SHA inventado. */
+internal const val UNKNOWN_BUILD_SHA = "desconocido"
+
+private const val BUILD_INFO_RESOURCE = "build-info.properties"
+
+/**
+ * SHA de git con el que se construyo ESTE jar. Lo escribe la tarea `generateBuildInfo` de `backend/ktor/build.gradle.kts`
+ * en un recurso del classpath: horneado en el artefacto, no leido de una variable de entorno que el despliegue podria
+ * dejar apuntando a otra version que la que de verdad corre.
+ */
+internal fun backendBuildSha(
+    resource: () -> java.io.InputStream? = { BackendPrometheusMetrics::class.java.classLoader.getResourceAsStream(BUILD_INFO_RESOURCE) },
+): String = runCatching {
+    resource()?.use { stream -> java.util.Properties().apply { load(stream) }.getProperty("sha") }
+}.getOrNull()?.trim().orEmpty().ifBlank { UNKNOWN_BUILD_SHA }
+
+/**
+ * `build_info{sha="..."} 1`: cada replica dice que version corre, y el estado del sistema puede ver un despliegue a
+ * medias (replicas con SHA distinto). Va solo en `/metrics`, que no sale a Internet; NO se publica en `/health`.
+ */
+internal fun registerBuildInfoGauge(registry: PrometheusMeterRegistry, sha: String = backendBuildSha()) {
+    // NO es un `Gauge` de Micrometer: el cliente de Prometheus reserva el sufijo `_info` para las metricas de tipo Info y
+    // se lo quita a cualquier otra, asi que un gauge llamado `build_info` se exportaba como `build{sha=...}` (comprobado
+    // en PrometheusMetricsTest). Registrada como Info en el registro de Prometheus que Micrometer lleva dentro, sale con
+    // el nombre que consulta BUILD_INFO_QUERY.
+    // Una sola vez por registro: el registro de Prometheus rechaza un nombre repetido, y el modulo se instala mas de una
+    // vez sobre el registro del proceso en las pruebas. La version de un proceso no cambia mientras corre.
+    if (!registriesWithBuildInfo.add(registry)) return
+    val info = io.prometheus.metrics.core.metrics.Info.builder()
+        .name(BUILD_INFO_METRIC)
+        .help("Version desplegada: la etiqueta sha es el commit de git con el que se construyo el jar")
+        .labelNames("sha")
+        .build()
+    info.setLabelValues(sha)
+    registry.prometheusRegistry.register(info)
+}
+
+/** Por identidad y con referencias debiles: un registro de prueba descartado no se queda retenido aqui. */
+private val registriesWithBuildInfo: MutableSet<PrometheusMeterRegistry> =
+    java.util.Collections.synchronizedSet(java.util.Collections.newSetFromMap(java.util.WeakHashMap()))
 
 /** 1 = la ultima sonda a Supabase respondio; 0 = no. Es lo que permite ALERTAR de una caida de Supabase sin trafico. */
 const val UPSTREAM_SUPABASE_UP_METRIC = "upstream_supabase_up"
@@ -127,6 +172,53 @@ internal fun interface SystemMetricsProvider {
     fun snapshot(): SystemMetricsSnapshot
 }
 
+/** Una replica de Ktor segun `up{job="ktor"}`, con lo que ella misma publica (si esta en pie). */
+internal data class ReplicaReading(
+    val name: String,
+    val profile: String? = null,
+    val up: Boolean,
+    /** `null` = la replica no publica `upstream_supabase_up` (o esta caida y su serie ha caducado). */
+    val supabaseUp: Boolean? = null,
+    val sha: String? = null,
+    val startedAtEpochSeconds: Double? = null,
+)
+
+internal data class AlertReading(
+    val name: String,
+    val severity: String? = null,
+    val summary: String? = null,
+    val replica: String? = null,
+)
+
+/** Bytes recibidos de Supabase. Cada campo falla por separado: `null` = sin lectura, 0 = medido y a cero. */
+internal data class SupabaseEgressReading(
+    val bytes24h: Long? = null,
+    val bytes7d: Long? = null,
+    val byTarget24h: Map<String, Long>? = null,
+    val byTarget7d: Map<String, Long>? = null,
+    /** La serie ya existia hace siete dias: sin esto, `bytes7d` cubre menos de una semana y no vale para proyectar. */
+    val hasSevenDaysOfHistory: Boolean = false,
+)
+
+/**
+ * Lo que Prometheus sabe del despliegue: replicas, alertas y trafico de Supabase.
+ *
+ * `null` en [replicas] o [alerts] significa «no se ha podido leer» (Prometheus no responde, o no tiene la serie de
+ * replicas); una lista vacia de alertas significa «ninguna activa». [prometheusResponded] separa las dos causas de un
+ * `null`: si es `false`, Prometheus no contesto a nada.
+ */
+internal data class SystemTopologySnapshot(
+    val prometheusResponded: Boolean,
+    val replicas: List<ReplicaReading>? = null,
+    val alerts: List<AlertReading>? = null,
+    val egress: SupabaseEgressReading = SupabaseEgressReading(),
+)
+
+/** Separado de [SystemMetricsProvider] para que los dobles de prueba de uno no tengan que inventar el otro. */
+internal fun interface SystemTopologyProvider {
+    fun topology(): SystemTopologySnapshot
+}
+
 /**
  * Cliente de la API HTTP de Prometheus. Cada serie falla de forma independiente:
  * una respuesta vacía, no finita o malformada nunca se convierte en cero.
@@ -138,8 +230,79 @@ internal class PrometheusSystemMetricsGateway(
         .build(),
     private val requestTimeout: Duration = Duration.ofSeconds(3),
     private val json: Json = Json { ignoreUnknownKeys = true },
-) : SystemMetricsProvider {
+) : SystemMetricsProvider, SystemTopologyProvider {
     private val queryEndpoint = baseUrl.trim().trimEnd('/').ifBlank { DEFAULT_PROMETHEUS_URL }
+
+    /**
+     * Replicas, alertas y trafico de Supabase. Las consultas son constantes de este fichero: el panel no envia PromQL,
+     * solo pide el resumen. Salen todas a la vez, igual que en [snapshot], para esperar un unico timeout.
+     */
+    override fun topology(): SystemTopologySnapshot {
+        val up = queryVectorAsync(REPLICAS_UP_QUERY)
+        val supabaseUp = queryVectorAsync(REPLICAS_SUPABASE_UP_QUERY)
+        val buildInfo = queryVectorAsync(BUILD_INFO_QUERY)
+        val startTime = queryVectorAsync(PROCESS_START_TIME_QUERY)
+        val alerts = queryVectorAsync(FIRING_ALERTS_QUERY)
+        val egress24h = queryVectorAsync(SUPABASE_EGRESS_24H_QUERY)
+        val egress7d = queryVectorAsync(SUPABASE_EGRESS_7D_QUERY)
+        val egressByTarget24h = queryVectorAsync(SUPABASE_EGRESS_BY_TARGET_24H_QUERY)
+        val egressByTarget7d = queryVectorAsync(SUPABASE_EGRESS_BY_TARGET_7D_QUERY)
+        val egressHistory = queryVectorAsync(SUPABASE_EGRESS_HISTORY_7D_QUERY)
+        val all = listOf(
+            up, supabaseUp, buildInfo, startTime, alerts,
+            egress24h, egress7d, egressByTarget24h, egressByTarget7d, egressHistory,
+        ).map { it.join() }
+
+        val supabaseByReplica = supabaseUp.join().byReplica { it.value }
+        // Si una replica publicara dos SHA a la vez no hay forma de saber cual corre: se queda sin version, no con una al azar.
+        val shaByReplica = buildInfo.join().orEmpty()
+            .groupBy({ it.labels[REPLICA_LABEL] }, { it.labels["sha"] })
+            .mapValues { (_, shas) -> shas.filterNotNull().distinct().singleOrNull() }
+        val startByReplica = startTime.join().byReplica { it.value }
+        return SystemTopologySnapshot(
+            // Un vector vacio TAMBIEN es una respuesta: Prometheus contesto y no tiene esa serie.
+            prometheusResponded = all.any { it != null },
+            replicas = up.join()
+                ?.mapNotNull { sample ->
+                    // Sin etiqueta `replica` (scrape antiguo, un solo Ktor) queda el `instance` que pone Prometheus.
+                    val name = sample.labels[REPLICA_LABEL] ?: sample.labels["instance"] ?: return@mapNotNull null
+                    val key = sample.labels[REPLICA_LABEL]
+                    ReplicaReading(
+                        name = name,
+                        profile = sample.labels["profile"],
+                        up = sample.value == 1.0,
+                        supabaseUp = supabaseByReplica[key]?.let { it == 1.0 },
+                        sha = shaByReplica[key],
+                        startedAtEpochSeconds = startByReplica[key]?.takeIf { it > 0.0 },
+                    )
+                }
+                ?.sortedBy { it.name }
+                // Prometheus contesto pero no raspa ningun Ktor: sigue siendo «no lo se», no «cero replicas».
+                ?.takeIf { it.isNotEmpty() },
+            alerts = alerts.join()
+                ?.mapNotNull { sample ->
+                    val name = sample.labels["alertname"]?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    AlertReading(
+                        name = name,
+                        severity = sample.labels["severity"]?.takeIf { it.isNotBlank() },
+                        summary = sample.labels["summary"]?.takeIf { it.isNotBlank() },
+                        replica = sample.labels[REPLICA_LABEL]?.takeIf { it.isNotBlank() },
+                    )
+                }
+                ?.distinct()
+                ?.sortedWith(compareBy<AlertReading> { if (it.severity == "critical") 0 else 1 }.thenBy { it.name }.thenBy { it.replica.orEmpty() }),
+            egress = SupabaseEgressReading(
+                bytes24h = egress24h.join().singleByteCount(),
+                bytes7d = egress7d.join().singleByteCount(),
+                byTarget24h = egressByTarget24h.join().byteCountByTarget(),
+                byTarget7d = egressByTarget7d.join().byteCountByTarget(),
+                hasSevenDaysOfHistory = (egressHistory.join()?.singleOrNull()?.value ?: 0.0) > 0.0,
+            ),
+        )
+    }
+
+    private fun queryVectorAsync(promql: String): CompletableFuture<List<PrometheusSample>?> =
+        fetchAsync(promql).thenApply { body -> body?.let { parsePrometheusVector(it, json) } }
 
     override fun snapshot(): SystemMetricsSnapshot {
         // Las cuatro consultas salen a la vez: si Prometheus no responde, el
@@ -160,7 +323,11 @@ internal class PrometheusSystemMetricsGateway(
         )
     }
 
-    private fun queryAsync(promql: String): CompletableFuture<Double?> {
+    private fun queryAsync(promql: String): CompletableFuture<Double?> =
+        fetchAsync(promql).thenApply { body -> body?.let { parsePrometheusInstantValue(it, json) } }
+
+    /** El cuerpo de una consulta instantanea, o `null` si Prometheus no contesto con un 2xx. */
+    private fun fetchAsync(promql: String): CompletableFuture<String?> {
         return runCatching {
             val encoded = URLEncoder.encode(promql, StandardCharsets.UTF_8).replace("+", "%20")
             val request = HttpRequest.newBuilder(URI.create("$queryEndpoint/api/v1/query?query=$encoded"))
@@ -170,8 +337,7 @@ internal class PrometheusSystemMetricsGateway(
             client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                 .orTimeout(requestTimeout.toMillis(), TimeUnit.MILLISECONDS)
                 .handle { response, error ->
-                    if (error != null || response.statusCode() !in 200..299) null
-                    else parsePrometheusInstantValue(response.body(), json)
+                    if (error != null || response.statusCode() !in 200..299) null else response.body()
                 }
         }.getOrElse { CompletableFuture.completedFuture(null) }
     }
@@ -195,6 +361,52 @@ internal fun parsePrometheusInstantValue(body: String, json: Json = Json): Doubl
     val number = value.getOrNull(1)?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()
     number.finiteOrNull()
 }.getOrNull()
+
+/** Una muestra de un vector instantaneo: sus etiquetas y su valor (siempre finito). */
+internal data class PrometheusSample(val labels: Map<String, String>, val value: Double)
+
+/**
+ * Todas las muestras de un vector instantaneo, con sus etiquetas.
+ *
+ * `null` = la respuesta no es un vector valido (Prometheus fallo o el cuerpo esta malformado). Una lista VACIA es otra
+ * cosa: Prometheus contesto bien y no hay ninguna serie; para `ALERTS` eso es «ninguna alerta», no un fallo. Las muestras
+ * sin valor finito se descartan una a una, igual que hace [parsePrometheusInstantValue] con la unica que lee.
+ */
+internal fun parsePrometheusVector(body: String, json: Json = Json): List<PrometheusSample>? = runCatching {
+    val root = json.parseToJsonElement(body).jsonObject
+    if (root["status"]?.jsonPrimitive?.contentOrNull != "success") return@runCatching null
+    val data = root["data"]?.jsonObject ?: return@runCatching null
+    if (data["resultType"]?.jsonPrimitive?.contentOrNull != "vector") return@runCatching null
+    val results = data["result"]?.jsonArray ?: return@runCatching null
+    results.mapNotNull { element ->
+        val entry = element.jsonObject
+        val value = (entry["value"] as? JsonArray)?.getOrNull(1)?.jsonPrimitive?.contentOrNull?.toDoubleOrNull().finiteOrNull()
+            ?: return@mapNotNull null
+        val labels = entry["metric"]?.jsonObject.orEmpty()
+            .mapNotNull { (name, label) -> (label as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.let { name to it } }
+            .toMap()
+        PrometheusSample(labels, value)
+    }
+}.getOrNull()
+
+private const val REPLICA_LABEL = "replica"
+
+/** Valor por replica; las muestras sin etiqueta `replica` no se pueden atribuir a ninguna y se descartan. */
+private fun List<PrometheusSample>?.byReplica(value: (PrometheusSample) -> Double): Map<String?, Double> =
+    orEmpty().filter { it.labels[REPLICA_LABEL] != null }.associate { it.labels[REPLICA_LABEL] to value(it) }
+
+/** `sum(increase(...))` devuelve una unica muestra sin etiquetas; cualquier otra forma es «sin lectura». */
+private fun List<PrometheusSample>?.singleByteCount(): Long? =
+    this?.singleOrNull()?.value?.takeIf { it >= 0.0 }?.roundToLong()
+
+private fun List<PrometheusSample>?.byteCountByTarget(): Map<String, Long>? = this
+    ?.mapNotNull { sample ->
+        val target = sample.labels["target"] ?: return@mapNotNull null
+        sample.value.takeIf { it >= 0.0 }?.let { target to it.roundToLong() }
+    }
+    ?.toMap()
+    // Sin ninguna serie por destino no hay desglose que ensenar; no es un desglose «a cero».
+    ?.takeIf { it.isNotEmpty() }
 
 // ---------- Disco de datos de Supabase (endpoint privilegiado) ----------
 
@@ -454,6 +666,29 @@ internal const val RAM_QUERY =
     "100 * (1 - (sum(node_memory_MemAvailable_bytes) / sum(node_memory_MemTotal_bytes)))"
 internal const val API_LATENCY_QUERY =
     "histogram_quantile(0.95, sum by (le) (rate(ktor_http_server_requests_seconds_bucket{route!=\"/metrics\"}[5m])))"
+// ---------- Replicas, alertas y trafico de Supabase ----------
+// Los nombres de serie son los que de verdad se exportan, no una suposicion:
+//  - `up{job="ktor"}` con `replica` y `profile`: ops/monitoring/prometheus/prometheus.production.yml (job `ktor`).
+//  - `upstream_supabase_up`: UPSTREAM_SUPABASE_UP_METRIC, un gauge (sin sufijo).
+//  - `upstream_response_wire_bytes_total`: UPSTREAM_WIRE_BYTES_METRIC es un contador con unidad `bytes`, y Micrometer le
+//    anade `_total` al exportarlo (lo comprueba CompressedUpstreamHttpClientTest y lo usa alert_rules.yml).
+//  - `build_info`: BUILD_INFO_METRIC. `process_start_time_seconds`: UptimeMetrics, que Ktor instala por defecto.
+//  - `ALERTS{alertstate="firing"}`: la serie sintetica que Prometheus genera por cada regla de alert_rules.yml.
+// `job="ktor"` en las dos ultimas del proceso es necesario: Prometheus se raspa a si mismo y tambien publica
+// `process_start_time_seconds`.
+internal const val REPLICAS_UP_QUERY = "up{job=\"ktor\"}"
+internal const val REPLICAS_SUPABASE_UP_QUERY = "upstream_supabase_up"
+internal const val BUILD_INFO_QUERY = "build_info{job=\"ktor\"}"
+internal const val PROCESS_START_TIME_QUERY = "process_start_time_seconds{job=\"ktor\"}"
+internal const val FIRING_ALERTS_QUERY = "ALERTS{alertstate=\"firing\"}"
+internal const val SUPABASE_EGRESS_24H_QUERY = "sum(increase(upstream_response_wire_bytes_total[24h]))"
+internal const val SUPABASE_EGRESS_7D_QUERY = "sum(increase(upstream_response_wire_bytes_total[7d]))"
+internal const val SUPABASE_EGRESS_BY_TARGET_24H_QUERY = "sum by (target) (increase(upstream_response_wire_bytes_total[24h]))"
+internal const val SUPABASE_EGRESS_BY_TARGET_7D_QUERY = "sum by (target) (increase(upstream_response_wire_bytes_total[7d]))"
+
+/** Cuantas series del contador existian hace siete dias. Vacio = la serie es mas joven (o la retencion no llega). */
+internal const val SUPABASE_EGRESS_HISTORY_7D_QUERY = "count(upstream_response_wire_bytes_total offset 7d)"
+
 internal const val ERRORS_24H_QUERY =
     "(round(sum(increase(ktor_http_server_requests_seconds_count{status=~\"5..\"}[24h]))) " +
         "or on() vector(0)) and on() " +

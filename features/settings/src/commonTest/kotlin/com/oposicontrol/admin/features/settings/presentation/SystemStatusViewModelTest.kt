@@ -1,186 +1,179 @@
 package com.oposicontrol.admin.features.settings.presentation
 
 import com.oposicontrol.admin.core.common.analytics.NoOpAnalyticsTracker
+import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppError
+import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
+import com.oposicontrol.admin.domain.model.AdminSessionInfo
 import com.oposicontrol.admin.domain.model.SystemStatus
 import com.oposicontrol.admin.domain.model.SystemStatusAvailability
 import com.oposicontrol.admin.domain.model.SystemStatusLevel
 import com.oposicontrol.admin.domain.repository.SystemStatusRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
-import kotlin.time.Clock
-import kotlin.time.Duration.Companion.seconds
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 
 class SystemStatusViewModelTest {
+    private val now = Instant.parse("2030-01-01T00:01:00Z")
+    private val healthy = SystemStatus(
+        overallStatus = SystemStatusLevel.OPERATIVE,
+        ktorStatus = SystemStatusLevel.OPERATIVE,
+        supabaseStatus = SystemStatusLevel.OPERATIVE,
+        cpuPercent = 24.5,
+        prometheusResponding = true,
+    )
+    private val superadmin = AdminSessionInfo("u-1", "Fran", listOf("admin", "superadmin"), isSuperAdmin = true, isAdmin = true)
+
     @Test
-    fun notConnectedDoesNotExposeInventedMetrics() = runTest {
-        val viewModel = viewModelWith(SystemStatusAvailability.NotConnected)
+    fun itStartsLoadingAndNeverGreenBeforeTheFirstReading() = runTest {
+        val viewModel = viewModelWith(FakeRepository(SystemStatusAvailability.Available(healthy)))
+
+        // Antes de que conteste el servidor no hay nada que afirmar: ni «operativo» ni «sin conectar».
+        assertIs<SystemStatusUiState.Loading>(viewModel.state.value.uiState)
+        assertIs<UiAsync.Loading>(viewModel.state.value.session)
+    }
+
+    @Test
+    fun aReadingBecomesContentStampedWithTheMomentThePanelReceivedIt() = runTest {
+        val viewModel = viewModelWith(FakeRepository(SystemStatusAvailability.Available(healthy), AppResult.Success(superadmin)))
+
+        advanceUntilIdle()
+
+        val content = assertIs<SystemStatusUiState.Content>(viewModel.state.value.uiState)
+        assertEquals(healthy, content.status, "el estado llega tal cual: aquí no se recalcula ningún nivel")
+        assertEquals(now, content.readAt)
+        assertEquals(UiAsync.Success(superadmin), viewModel.state.value.session)
+        assertFalse(viewModel.state.value.refreshing)
+        assertEquals("Producción", viewModel.state.value.environmentLabel)
+        assertEquals("1.2.3", viewModel.state.value.panelVersion)
+    }
+
+    @Test
+    fun notConnectedDoesNotExposeInventedMetricsNorAskForASession() = runTest {
+        val repository = FakeRepository(SystemStatusAvailability.NotConnected)
+        val viewModel = viewModelWith(repository)
 
         advanceUntilIdle()
 
         assertIs<SystemStatusUiState.NotConnected>(viewModel.state.value.uiState)
+        assertEquals(UiAsync.Empty, viewModel.state.value.session)
+        assertEquals(0, repository.sessionCalls, "sin servidor no hay a quién preguntar por la sesión")
     }
 
     @Test
-    fun healthyPayloadBecomesContentAndFormatsRelativeUpdate() = runTest {
-        val now = Instant.parse("2030-01-01T00:01:00Z")
-        val viewModel = viewModelWith(
-            SystemStatusAvailability.Available(
-                SystemStatus(
-                    overallStatus = SystemStatusLevel.OPERATIVE,
-                    ktorStatus = SystemStatusLevel.OPERATIVE,
-                    supabaseStatus = SystemStatusLevel.OPERATIVE,
-                    workerStatus = SystemStatusLevel.UNKNOWN,
-                    cpuPercent = 24.5,
-                    ramPercent = 41.25,
-                    supabaseDiskPercent = 3.5632,
-                    apiLatencyMs = 86,
-                    errors24h = 3,
-                    mobileCrashes24h = 0,
-                    queueDepth = 2,
-                    updatedAt = now.minus(20.seconds),
-                ),
-            ),
-            currentTime = now,
-        )
+    fun aFailedReadingIsAnErrorWithItsCause() = runTest {
+        val error = AppError.Network("No se pudo conectar al monitor.")
+        val viewModel = viewModelWith(FakeRepository(SystemStatusAvailability.Failure(error)))
 
         advanceUntilIdle()
 
-        val state = assertIs<SystemStatusUiState.Content>(viewModel.state.value.uiState)
-        assertEquals("Hace 20s", state.value.updatedAtLabel)
-        assertEquals(SystemStatusLevel.UNKNOWN, state.value.workerStatus)
-        assertEquals(24.5, state.value.cpuPercent)
-        assertEquals(41.25, state.value.ramPercent)
-        assertEquals(3.5632, state.value.supabaseDiskPercent)
-        assertEquals(3L, state.value.errors24h)
+        assertEquals(SystemStatusUiState.Error(error), viewModel.state.value.uiState)
+        assertFalse(viewModel.state.value.refreshing, "tras fallar se puede volver a pulsar «Actualizar»")
     }
 
     @Test
-    fun anUnavailableSupabaseDiskIsPartialDataAndNeverAZero() = runTest {
-        val now = Instant.parse("2030-01-01T00:01:00Z")
-        val viewModel = viewModelWith(
-            SystemStatusAvailability.Available(
-                SystemStatus(
-                    overallStatus = SystemStatusLevel.OPERATIVE,
-                    ktorStatus = SystemStatusLevel.OPERATIVE,
-                    supabaseStatus = SystemStatusLevel.OPERATIVE,
-                    workerStatus = SystemStatusLevel.UNKNOWN,
-                    cpuPercent = 24.5,
-                    ramPercent = 41.25,
-                    supabaseDiskPercent = null,
-                    apiLatencyMs = 86,
-                    errors24h = 3,
-                    mobileCrashes24h = 0,
-                    queueDepth = 2,
-                    updatedAt = now,
-                ),
-            ),
-            currentTime = now,
-        )
+    fun aFailedSessionDoesNotHideTheStatus() = runTest {
+        val forbidden = AppError.Authorization("No tienes permisos para realizar esta acción.")
+        val viewModel = viewModelWith(FakeRepository(SystemStatusAvailability.Available(healthy), AppResult.Failure(forbidden)))
 
         advanceUntilIdle()
 
-        val state = assertIs<SystemStatusUiState.PartialData>(
-            viewModel.state.value.uiState,
-            "Un disco que no se ha podido medir es una métrica ausente, y la pantalla lo avisa.",
-        )
-        assertEquals(null, state.value.supabaseDiskPercent)
-        assertEquals(null, state.value.supabaseDiskPercent.toPercentLabel())
+        assertIs<SystemStatusUiState.Content>(viewModel.state.value.uiState)
+        assertEquals(UiAsync.Error(forbidden), viewModel.state.value.session)
     }
 
     @Test
-    fun aMeasuredEmptyDiskIsShownAsZeroAndNotAsUnavailable() = runTest {
-        val now = Instant.parse("2030-01-01T00:01:00Z")
-        val viewModel = viewModelWith(
-            SystemStatusAvailability.Available(
-                SystemStatus(
-                    overallStatus = SystemStatusLevel.OPERATIVE,
-                    ktorStatus = SystemStatusLevel.OPERATIVE,
-                    supabaseStatus = SystemStatusLevel.OPERATIVE,
-                    workerStatus = SystemStatusLevel.UNKNOWN,
-                    cpuPercent = 24.5,
-                    ramPercent = 41.25,
-                    supabaseDiskPercent = 0.0,
-                    apiLatencyMs = 86,
-                    errors24h = 3,
-                    mobileCrashes24h = 0,
-                    queueDepth = 2,
-                    updatedAt = now,
-                ),
-            ),
-            currentTime = now,
-        )
-
+    fun refreshingKeepsTheCurrentReadingOnScreenUntilTheNewOneArrives() = runTest {
+        val repository = FakeRepository(SystemStatusAvailability.Available(healthy), AppResult.Success(superadmin))
+        val viewModel = viewModelWith(repository)
         advanceUntilIdle()
 
-        val state = assertIs<SystemStatusUiState.Content>(viewModel.state.value.uiState)
-        assertEquals(0.0, state.value.supabaseDiskPercent)
-        assertEquals("0 %", state.value.supabaseDiskPercent.toPercentLabel())
-    }
+        val gate = CompletableDeferred<Unit>()
+        repository.gate = gate
+        val degraded = healthy.copy(overallStatus = SystemStatusLevel.DEGRADED)
+        repository.status = SystemStatusAvailability.Available(degraded)
+        viewModel.dispatch(SystemStatusIntent.Refresh)
+        testScheduler.runCurrent()
 
-    @Test
-    fun theRealSupabaseReadingIsFormattedWithTheSharedPercentLabel() {
-        // 100 * (1 - 8.05275648e9 / 8.350298112e9) = 3,5632…%
-        assertEquals("3.6 %", 3.5632.toPercentLabel())
-    }
+        // Con la nueva lectura en curso: la anterior sigue a la vista (sin volver al esqueleto) y el botón gira.
+        assertEquals(healthy, assertIs<SystemStatusUiState.Content>(viewModel.state.value.uiState).status)
+        assertEquals(UiAsync.Success(superadmin), viewModel.state.value.session)
+        assertTrue(viewModel.state.value.refreshing)
 
-    @Test
-    fun degradedAndPartialPayloadsKeepExplicitUiStates() = runTest {
-        val degraded = viewModelWith(
-            SystemStatusAvailability.Available(
-                SystemStatus(overallStatus = SystemStatusLevel.DEGRADED),
-            ),
-        )
-        val partial = viewModelWith(
-            SystemStatusAvailability.Available(
-                SystemStatus(
-                    overallStatus = SystemStatusLevel.OPERATIVE,
-                    cpuPercent = 24.0,
-                ),
-            ),
-        )
-
+        gate.complete(Unit)
         advanceUntilIdle()
 
-        assertIs<SystemStatusUiState.Degraded>(degraded.state.value.uiState)
-        assertIs<SystemStatusUiState.PartialData>(partial.state.value.uiState)
+        assertEquals(degraded, assertIs<SystemStatusUiState.Content>(viewModel.state.value.uiState).status)
+        assertFalse(viewModel.state.value.refreshing)
     }
 
     @Test
-    fun repositoryFailureDoesNotExposeInternalDetails() = runTest {
-        val viewModel = viewModelWith(
-            SystemStatusAvailability.Failure(AppError.Network("No se pudo conectar al monitor.")),
-        )
+    fun aSecondClickWhileReadingDoesNotStartAnotherReading() = runTest {
+        val repository = FakeRepository(SystemStatusAvailability.Available(healthy))
+        val gate = CompletableDeferred<Unit>()
+        repository.gate = gate
+        val viewModel = viewModelWith(repository)
+        testScheduler.runCurrent()
 
+        viewModel.dispatch(SystemStatusIntent.Refresh)
+        viewModel.dispatch(SystemStatusIntent.Refresh)
+        testScheduler.runCurrent()
+        gate.complete(Unit)
         advanceUntilIdle()
 
-        val state = assertIs<SystemStatusUiState.Error>(viewModel.state.value.uiState)
-        assertEquals("No se pudo conectar al monitor.", state.message)
+        assertEquals(1, repository.statusCalls)
     }
 
     @Test
-    fun zeroIsPresentedAsMeasuredAndNullAsUnavailable() {
-        assertEquals("0 %", 0.0.toPercentLabel())
-        assertEquals("12.5 %", 12.54.toPercentLabel())
-        assertEquals(null, null.toPercentLabel())
+    fun aRefreshThatFailsReplacesTheOldReadingInsteadOfLeavingItGreen() = runTest {
+        val repository = FakeRepository(SystemStatusAvailability.Available(healthy))
+        val viewModel = viewModelWith(repository)
+        advanceUntilIdle()
+
+        val error = AppError.Network("timeout")
+        repository.status = SystemStatusAvailability.Failure(error)
+        viewModel.dispatch(SystemStatusIntent.Refresh)
+        advanceUntilIdle()
+
+        // Un «todo funciona» de hace diez minutos junto a un «no he podido preguntar» sería verde por desconocimiento.
+        assertEquals(SystemStatusUiState.Error(error), viewModel.state.value.uiState)
     }
 
-    private fun TestScope.viewModelWith(
-        result: SystemStatusAvailability,
-        currentTime: Instant? = null,
-    ) = SystemStatusViewModel(
+    private class FakeRepository(
+        var status: SystemStatusAvailability,
+        var session: AppResult<AdminSessionInfo> = AppResult.Success(AdminSessionInfo("u-0")),
+    ) : SystemStatusRepository {
+        var gate: CompletableDeferred<Unit>? = null
+        var statusCalls = 0
+        var sessionCalls = 0
+
+        override suspend fun loadStatus(): SystemStatusAvailability {
+            statusCalls++
+            gate?.await()
+            return status
+        }
+
+        override suspend fun loadSession(): AppResult<AdminSessionInfo> {
+            sessionCalls++
+            return session
+        }
+    }
+
+    private fun TestScope.viewModelWith(repository: SystemStatusRepository) = SystemStatusViewModel(
         dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
-        repository = object : SystemStatusRepository {
-            override suspend fun loadStatus(): SystemStatusAvailability = result
-        },
+        repository = repository,
         analyticsTracker = NoOpAnalyticsTracker,
-        clock = { currentTime ?: Clock.System.now() },
+        environmentLabel = "Producción",
+        panelVersion = "1.2.3",
+        clock = { now },
     )
 }

@@ -100,6 +100,7 @@ GET	/api/v1/admin/rankings/usuarios	CONTROL	admin	Admin v1: rankings/usuarios	Op
 GET	/api/v1/admin/reportes	CONTROL	admin	Admin v1: reportes	OposiControl
 GET	/api/v1/admin/reportes/{}	CONTROL	admin	Admin v1: reportes/{}	OposiControl
 GET	/api/v1/admin/roles	CONTROL	admin	Admin v1: roles	OposiControl
+GET	/api/v1/admin/sesion	CONTROL	admin	Admin v1: quien usa el panel y sus roles reales (calculado en el servidor)	OposiControl
 GET	/api/v1/admin/settings	CONTROL	admin	Admin v1: settings	OposiControl
 GET	/api/v1/admin/solicitudes-acceso	CONTROL	admin	Admin access requests: list (superadmin)	OposiControl
 GET	/api/v1/admin/soporte	CONTROL	admin	Admin v1: soporte	OposiControl

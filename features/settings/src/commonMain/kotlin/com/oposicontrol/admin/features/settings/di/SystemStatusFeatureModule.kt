@@ -1,8 +1,10 @@
 package com.oposicontrol.admin.features.settings.di
 
+import com.oposicontrol.admin.core.common.config.AppConfig
 import com.oposicontrol.admin.data.repository.ktorSystemStatusRepository
 import com.oposicontrol.admin.domain.repository.SystemStatusRepository
 import com.oposicontrol.admin.features.settings.presentation.SystemStatusViewModel
+import com.oposicontrol.admin.features.settings.presentation.environmentDisplayName
 import org.koin.dsl.module
 
 /**
@@ -17,5 +19,15 @@ import org.koin.dsl.module
  */
 val systemStatusFeatureModule = module {
     single<SystemStatusRepository> { ktorSystemStatusRepository() }
-    factory { SystemStatusViewModel(get(), get(), get()) }
+    factory {
+        // Entorno y versión del panel salen del mismo `AppConfig` que usa Preferencias (`SettingsViewModel`).
+        val appConfig = get<AppConfig>()
+        SystemStatusViewModel(
+            dispatcherProvider = get(),
+            repository = get(),
+            analyticsTracker = get(),
+            environmentLabel = environmentDisplayName(appConfig.environment),
+            panelVersion = appConfig.appVersion,
+        )
+    }
 }

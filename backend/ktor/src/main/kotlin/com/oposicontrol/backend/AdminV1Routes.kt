@@ -1495,6 +1495,12 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
         get("/estado-sistema") {
             call.respond(AdminSystemStatusResponse(withUpstreamIo { gateway.getSystemStatus() }))
         }
+        // Quién está usando el panel y con qué roles, según el SERVIDOR (no según la sesión guardada en el cliente).
+        get("/sesion") {
+            val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+            call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+            call.respond(withUpstreamIo { gateway.getAdminSession(actorId) })
+        }
         get("/dashboard") {
             call.respond(withUpstreamIo { gateway.getDashboardMetrics() })
         }.legacyRoute(LegacyEndpoints.EP_046)
@@ -3888,6 +3894,21 @@ internal const val ACCOUNT_STATUS_REASON_MAX = 500
 @Serializable
 data class AdminAccountStatusRequest(val estado: String = "", val motivo: String = "")
 
+/**
+ * `GET /api/v1/admin/sesion`: la persona del JWT y sus roles reales. [roles] son los CODIGOS canonicos (`superadmin`,
+ * `admin`, `moderador`...), en minusculas y ordenados; [esSuperadmin] y [esAdmin] los deduce el servidor con
+ * [CanonicalAuthorization], para que el panel no tenga que reinterpretar la lista.
+ */
+@Serializable
+data class AdminSessionDto(
+    val usuarioId: String,
+    /** Nombre visible del perfil. `null` si no tiene o no se pudo leer. */
+    val nombre: String? = null,
+    val roles: List<String> = emptyList(),
+    val esSuperadmin: Boolean = false,
+    val esAdmin: Boolean = false,
+)
+
 /** [cambiado] = `false` cuando la cuenta ya estaba en ese estado y no se escribio nada. */
 @Serializable
 data class AdminAccountStatusResponse(val usuarioId: String, val estado: String, val cambiado: Boolean)
@@ -3956,6 +3977,11 @@ class AdminV1Gateway private constructor(
     client: HttpClient = sharedUpstreamHttpClient,
     private val systemMetrics: SystemMetricsProvider = PrometheusSystemMetricsGateway.fromEnvironment(),
     private val supabaseDisk: SupabaseDiskUsageProvider = SupabaseDiskMetricsGateway.fromEnvironment(),
+    // En producción es el MISMO cliente de Prometheus que [systemMetrics]: un solo HttpClient hacia el mismo servidor.
+    private val systemTopology: SystemTopologyProvider =
+        systemMetrics as? SystemTopologyProvider ?: PrometheusSystemMetricsGateway.fromEnvironment(),
+    /** La sonda cacheada de `/health/ready` (30 s por réplica), no una consulta nueva por cada apertura del estado. */
+    private val supabaseReadiness: () -> String = ::checkSupabaseReadiness,
 ) {
     /**
      * Migrado a [SupabaseRequestTransport] (FASE 1).
@@ -7822,28 +7848,21 @@ class AdminV1Gateway private constructor(
     /**
      * Resumen del estado de los servicios.
      *
-     * Ktor y Supabase se comprueban directamente. CPU/RAM del host, p95 HTTP y
-     * errores 5xx proceden de Prometheus; el disco de datos, del endpoint
-     * privilegiado de Supabase. Cada serie ausente conserva `null` y se declara
-     * en `notInstrumented` en vez de inventar un cero.
+     * Ktor se deduce de sus réplicas (`up{job="ktor"}`) y Supabase de la sonda cacheada de `/health/ready`. Réplicas,
+     * alertas, tráfico de Supabase, CPU/RAM del host, p95 HTTP y errores 5xx proceden de Prometheus; el disco de datos,
+     * del endpoint privilegiado de Supabase. Lo que no se puede leer conserva `null` en vez de inventar un cero, y
+     * `fuente` dice si la causa es que Prometheus no contesta.
      */
     fun getSystemStatus(): AdminSystemStatusDto {
-        val startedAt = System.nanoTime()
-        val supabaseReachable = runCatching {
-            // Lectura deliberadamente mínima: comprobar que responde, no medir la
-            // base de datos ni cargarla con una consulta cara.
-            exactCount("/rest/v1/especialidades?select=id")
-            true
-        }.getOrDefault(false)
-        val latencyMs = (System.nanoTime() - startedAt) / 1_000_000
-
-        val supabaseLevel = supabaseLevelFrom(
-            reachable = supabaseReachable,
-            latencyMs = latencyMs,
-            slowThresholdMs = SUPABASE_SLOW_THRESHOLD_MS,
-        )
-        // Si esta línea se ejecuta, Ktor está sirviendo la petición.
-        val ktorLevel = SystemStatusLevelWire.OPERATIVE
+        // La MISMA sonda de `/health/ready` y de `upstream_supabase_up`: como mucho una petición a Supabase cada 30 s por
+        // réplica. Antes cada apertura de la pantalla lanzaba su propio recuento exacto sobre `especialidades`, que gasta
+        // tráfico de salida para averiguar algo que la réplica ya sabía.
+        val supabaseLevel = supabaseLevelFromReadiness(runCatching { supabaseReadiness() }.getOrDefault("UNKNOWN"))
+        // Un proveedor que lance (doble de prueba, implementación futura) equivale a un Prometheus que no contesta.
+        val topology = runCatching { systemTopology.topology() }
+            .getOrElse { SystemTopologySnapshot(prometheusResponded = false) }
+        // Ya no es una constante: que ESTA réplica atienda al panel no dice nada de las que sirven a la app.
+        val ktorLevel = ktorLevelFromReplicas(topology.replicas)
         val metrics = systemMetrics.snapshot()
         // finiteOrNull() en la frontera real de serialización: un SystemMetricsProvider
         // distinto del gateway de Prometheus (test doble, implementación futura) no
@@ -7860,10 +7879,11 @@ class AdminV1Gateway private constructor(
         val supabaseDiskPercent = runCatching { supabaseDisk.diskPercent() }.getOrNull().finiteOrNull()
 
         return AdminSystemStatusDto(
+            // Los DOS niveles, también cuando uno es UNKNOWN: con Prometheus mudo el conjunto no puede salir en verde solo
+            // porque Supabase responde.
             overallStatus = aggregateSystemStatus(listOf(ktorLevel, supabaseLevel)),
             ktorStatus = ktorLevel,
             supabaseStatus = supabaseLevel,
-            workerStatus = SystemStatusLevelWire.UNKNOWN,
             cpuPercent = cpuPercent,
             ramPercent = ramPercent,
             supabaseDiskPercent = supabaseDiskPercent,
@@ -7871,15 +7891,70 @@ class AdminV1Gateway private constructor(
             errors24h = metrics.errors24h,
             updatedAt = Instant.now().toString(),
             notInstrumented = listOfNotNull(
-                SystemStatusNotInstrumented.WORKER,
                 SystemStatusNotInstrumented.CPU.takeIf { cpuPercent == null },
                 SystemStatusNotInstrumented.MEMORY.takeIf { ramPercent == null },
                 SystemStatusNotInstrumented.SUPABASE_DISK.takeIf { supabaseDiskPercent == null },
                 SystemStatusNotInstrumented.API_LATENCY.takeIf { metrics.apiLatencyMs == null },
                 SystemStatusNotInstrumented.API_ERRORS.takeIf { metrics.errors24h == null },
-                SystemStatusNotInstrumented.MOBILE_CRASHES,
-                SystemStatusNotInstrumented.QUEUE_DEPTH,
             ),
+            replicas = topology.replicas?.map { replica ->
+                AdminSystemReplicaDto(
+                    nombre = replica.name,
+                    perfil = replica.profile,
+                    arriba = replica.up,
+                    veSupabase = replica.supabaseUp,
+                    version = replica.sha,
+                    arrancadaEn = replica.startedAtEpochSeconds.finiteOrNull()
+                        ?.let { runCatching { Instant.ofEpochMilli((it * 1_000).toLong()).toString() }.getOrNull() },
+                )
+            },
+            alertas = topology.alerts?.map { AdminSystemAlertDto(it.name, it.severity, it.summary, it.replica) },
+            cuotaSupabase = topology.egress.toQuotaDto(),
+            version = deployedVersionOf(topology.replicas),
+            fuente = AdminSystemSourceDto(
+                // Cualquier dato de Prometheus prueba que contestó, aunque venga de la otra tanda de consultas.
+                prometheusResponde = topology.prometheusResponded ||
+                    listOf(cpuPercent, ramPercent, metrics.apiLatencyMs, metrics.errors24h).any { it != null },
+            ),
+        )
+    }
+
+    /** Sin ninguna ventana medida no hay bloque de cuota: `null`, no un bloque a cero. */
+    private fun SupabaseEgressReading.toQuotaDto(): AdminSupabaseQuotaDto? {
+        if (bytes24h == null && bytes7d == null && byTarget24h == null && byTarget7d == null) return null
+        val projection = projectMonthlySupabaseEgressBytes(bytes24h, bytes7d, hasSevenDaysOfHistory)
+        return AdminSupabaseQuotaDto(
+            bytes24h = bytes24h,
+            bytes7d = bytes7d,
+            proyeccionMensualBytes = projection?.bytes,
+            proyeccionBase = projection?.base,
+            limiteMensualBytes = SUPABASE_MONTHLY_EGRESS_LIMIT_BYTES,
+            porDestino = (byTarget24h.orEmpty().keys + byTarget7d.orEmpty().keys).sorted().map { target ->
+                AdminSupabaseQuotaTargetDto(target, bytes24h = byTarget24h?.get(target), bytes7d = byTarget7d?.get(target))
+            },
+        )
+    }
+
+    // ---------- SESIÓN DEL PANEL ----------
+
+    /**
+     * Quién es y qué puede hacer la persona que está usando el panel, calculado AQUÍ a partir del `sub` de su JWT.
+     *
+     * El panel guarda roles en su sesión local, pero son los que había al iniciar sesión y los escribe el propio cliente:
+     * no valen para enseñar «qué puedo hacer». Sin actor (el token estático no es una persona) no hay sesión que
+     * describir: 403.
+     */
+    fun getAdminSession(actorId: String?): AdminSessionDto {
+        val actor = actorId ?: throw CanonicalErrorCode.FORBIDDEN.exception()
+        val codeById = listRoles().associate { it.id to it.code.trim().lowercase() }
+        val codes = roleIdsOf(actor).mapNotNull(codeById::get).filter { it.isNotBlank() }.distinct().sorted()
+        return AdminSessionDto(
+            usuarioId = actor,
+            // El nombre es de cortesía: si el perfil no se puede leer, la sesión se sirve igual y sin nombre.
+            nombre = runCatching { resolveUserDisplayName(actor) }.getOrNull()?.trim()?.takeIf { it.isNotEmpty() },
+            roles = codes,
+            esSuperadmin = CanonicalAuthorization.hasSuperAdmin(codes),
+            esAdmin = CanonicalAuthorization.hasAdmin(codes),
         )
     }
 
@@ -8899,6 +8974,11 @@ class AdminV1Gateway private constructor(
                 SystemMetricsSnapshot(null, null, null, null)
             },
             supabaseDisk: SupabaseDiskUsageProvider = SupabaseDiskUsageProvider { null },
-        ): AdminV1Gateway = AdminV1Gateway(supabaseUrl, serviceRoleKey, json, client, systemMetrics, supabaseDisk)
+            // Por defecto, un Prometheus que no contesta y una sonda que aún no sabe nada: una prueba que no los
+            // inyecta no toca la red ni recibe un «todo bien» que nadie ha medido.
+            systemTopology: SystemTopologyProvider = SystemTopologyProvider { SystemTopologySnapshot(prometheusResponded = false) },
+            supabaseReadiness: () -> String = { "UNKNOWN" },
+        ): AdminV1Gateway =
+            AdminV1Gateway(supabaseUrl, serviceRoleKey, json, client, systemMetrics, supabaseDisk, systemTopology, supabaseReadiness)
     }
 }

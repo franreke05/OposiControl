@@ -94,6 +94,7 @@ GET /api/v1/admin/rankings/usuarios
 GET /api/v1/admin/reportes
 GET /api/v1/admin/reportes/{}
 GET /api/v1/admin/roles
+GET /api/v1/admin/sesion
 GET /api/v1/admin/settings
 GET /api/v1/admin/solicitudes-acceso
 GET /api/v1/admin/soporte

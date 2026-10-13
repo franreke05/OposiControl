@@ -23,6 +23,7 @@ object BackendRoutes {
      */
     const val ADMIN_V1_DASHBOARD_OVERVIEW = "$ADMIN_V1_DASHBOARD/overview"
     const val ADMIN_V1_ESTADO_SISTEMA = "/api/v1/admin/estado-sistema"
+    const val ADMIN_V1_SESION = "/api/v1/admin/sesion"
     const val ADMIN_V1_REPORTES = "/api/v1/admin/reportes"
     const val ADMIN_V1_TIENDA_ARTICULOS = "/api/v1/admin/tienda/articulos"
     const val ADMIN_V1_TIENDA_OFERTAS = "/api/v1/admin/tienda/ofertas"
