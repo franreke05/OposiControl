@@ -19,6 +19,7 @@ import com.oposicontrol.admin.features.store.presentation.PublishedCatalog
 import com.oposicontrol.admin.features.store.presentation.PublishedExamsSource
 import com.oposicontrol.admin.features.store.presentation.StoreViewModel
 import org.koin.dsl.module
+import com.oposicontrol.admin.domain.repository.CommercialCatalogRepository
 
 val storeFeatureModule = module {
     factory { CommercialCatalogViewModel(dispatcherProvider = get(), repository = get(), analyticsTracker = get()) }
@@ -27,6 +28,7 @@ val storeFeatureModule = module {
         MarketViewModel(
             dispatcherProvider = get(),
             repository = get(),
+            productsSource = { get<CommercialCatalogRepository>().getProducts() },
             examsSource = PublishedExamsSource {
                 when (val exams = get<ContentRepository>().refreshAllExams()) {
                     is AppResult.Failure -> exams

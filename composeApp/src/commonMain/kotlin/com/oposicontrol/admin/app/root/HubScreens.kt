@@ -48,6 +48,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import com.oposicontrol.admin.core.ui.components.motionEntrance
+import com.oposicontrol.admin.features.store.presentation.MarketCatalogEditor
+import com.oposicontrol.admin.features.store.presentation.MarketSection
+import com.oposicontrol.admin.features.store.presentation.MarketViewModel
 
 /**
  * Hubs delgados de la consolidación de navegación (2026-09-04).
@@ -195,9 +198,36 @@ internal fun UsersHubScreen(initialTab: UsersHubTab?) {
     }
 }
 
+/**
+ * Catálogo es el ÚNICO sitio donde se crea, se edita y se desactiva lo que vende la tienda (decisión del propietario,
+ * 2026-10-14). Servicios, promociones y avisos vivían en OposiMarket, que ahora es sólo el escaparate. Los packs de tickets
+ * no tienen pestaña: son productos de tipo «Pack de tickets», en Productos.
+ */
 internal enum class CatalogHubTab(val id: String, val label: String, val icon: AppIcon) {
     PRODUCTS("products", "Productos", AppIcon.CATALOG),
     PLANS("plans", "Planes", AppIcon.PLANS),
+    SERVICES("services", "Servicios", AppIcon.MARKET),
+    PROMOTIONS("promotions", "Promociones", AppIcon.PLANS),
+    POPUPS("popups", "Avisos", AppIcon.EVENTS),
+    ;
+
+    /** El editor de OposiMarket que monta esta pestaña; `null` en las dos que tienen pantalla propia. */
+    val marketSection: MarketSection?
+        get() = when (this) {
+            SERVICES -> MarketSection.SERVICES
+            PROMOTIONS -> MarketSection.PROMOTIONS
+            POPUPS -> MarketSection.POPUPS
+            PRODUCTS, PLANS -> null
+        }
+}
+
+/** La pestaña de Catálogo donde se edita lo que enseña una sección del escaparate; `null` si no se edita en Catálogo. */
+internal fun catalogTabForMarketSection(section: MarketSection): CatalogHubTab? = when (section) {
+    MarketSection.PRODUCTS, MarketSection.PACKS -> CatalogHubTab.PRODUCTS
+    MarketSection.SERVICES -> CatalogHubTab.SERVICES
+    MarketSection.PROMOTIONS -> CatalogHubTab.PROMOTIONS
+    MarketSection.POPUPS -> CatalogHubTab.POPUPS
+    MarketSection.EXAMS -> null
 }
 
 /**
@@ -209,12 +239,18 @@ internal enum class CatalogHubTab(val id: String, val label: String, val icon: A
  * catálogo canónico de planes y beneficios.
  */
 @Composable
-internal fun CatalogHubScreen(initialTab: CatalogHubTab?) {
+internal fun CatalogHubScreen(
+    initialTab: CatalogHubTab?,
+    /** Abre la ficha de un usuario desde un uso de promoción. `null` = no se ofrece el enlace. */
+    onOpenUser: ((String) -> Unit)? = null,
+) {
     var selectedTab by rememberSaveable { mutableStateOf((initialTab ?: CatalogHubTab.PRODUCTS).id) }
     LaunchedEffect(initialTab) { if (initialTab != null) selectedTab = initialTab.id }
 
     val productsViewModel: CommercialCatalogViewModel = koinInject()
     val plansViewModel: CommercialPlansViewModel = koinInject()
+    // Un solo ViewModel para las tres pestañas que vienen de OposiMarket: cambiar entre ellas no tira un borrador a medias.
+    val marketViewModel: MarketViewModel = koinInject()
     val plansState by plansViewModel.state.collectAsState()
     val plans = plansState.plans
     LaunchedEffect(plans) {
@@ -230,6 +266,10 @@ internal fun CatalogHubScreen(initialTab: CatalogHubTab?) {
         HubTabBody(selectedTab) {
             when (selectedTab) {
                 CatalogHubTab.PLANS.id -> CommercialPlansScreen(viewModel = plansViewModel)
+                CatalogHubTab.SERVICES.id, CatalogHubTab.PROMOTIONS.id, CatalogHubTab.POPUPS.id -> {
+                    val section = CatalogHubTab.entries.first { it.id == selectedTab }.marketSection
+                    if (section != null) MarketCatalogEditor(viewModel = marketViewModel, section = section, onOpenUser = onOpenUser)
+                }
                 else -> CommercialCatalogScreen(viewModel = productsViewModel)
             }
         }

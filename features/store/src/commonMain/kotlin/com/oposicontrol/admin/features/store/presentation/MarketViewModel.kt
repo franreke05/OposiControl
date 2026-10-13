@@ -15,6 +15,7 @@ import com.oposicontrol.admin.domain.model.MarketPromotionUsesPage
 import com.oposicontrol.admin.domain.model.MarketService
 import com.oposicontrol.admin.domain.model.MarketTicketPack
 import com.oposicontrol.admin.domain.repository.MarketCatalogRepository
+import com.oposicontrol.admin.domain.model.CommercialProduct
 
 /**
  * Secciones del Market. Cada una es una tabla distinta y se carga por separado.
@@ -22,7 +23,12 @@ import com.oposicontrol.admin.domain.repository.MarketCatalogRepository
  * `EXAMS` va primera: es el escaparate, lo que el usuario final ve al entrar en
  * la tienda, y las otras cuatro son los precios y reglas que lo rodean.
  */
-enum class MarketSection { EXAMS, PACKS, SERVICES, PROMOTIONS, POPUPS }
+/**
+ * Secciones de la tienda. [PRODUCTS] es de solo consulta (los productos se editan en Catálogo). [PACKS] ya no se ofrece en
+ * el panel: un pack de tickets es un producto de tipo «Pack de tickets» en Catálogo, que es lo que lee la app; el motor de
+ * la tabla aparte se conserva sin pantalla.
+ */
+enum class MarketSection { EXAMS, PRODUCTS, PACKS, SERVICES, PROMOTIONS, POPUPS }
 
 sealed interface MarketIntent {
     data class SelectSection(val section: MarketSection) : MarketIntent
@@ -54,6 +60,8 @@ data class MarketState(
     val examCommunities: List<Community> = emptyList(),
     val examType: ExamTypeFilter = ExamTypeFilter.ALL,
     val examQuery: String = "",
+    /** Productos del Catálogo, para el escaparate. Solo lectura aquí. */
+    val products: UiAsync<List<CommercialProduct>> = UiAsync.Idle,
     val packs: MarketEditor<MarketTicketPack, PackDraft> = MarketEditor(draft = PackDraft()),
     val services: MarketEditor<MarketService, ServiceDraft> = MarketEditor(draft = ServiceDraft()),
     val promotions: MarketEditor<MarketPromotion, PromotionDraft> = MarketEditor(draft = PromotionDraft()),
@@ -79,6 +87,8 @@ class MarketViewModel(
     private val repository: MarketCatalogRepository,
     private val examsSource: PublishedExamsSource,
     private val analyticsTracker: AnalyticsTracker,
+    /** Productos del Catálogo para el escaparate. Por defecto, ninguno: quien no lo cablea no enseña productos inventados. */
+    private val productsSource: suspend () -> AppResult<List<CommercialProduct>> = { AppResult.Success(emptyList()) },
 ) : MviViewModel<MarketState, MarketIntent>(
     initialState = MarketState(),
     dispatcherProvider = dispatcherProvider,
@@ -165,6 +175,14 @@ class MarketViewModel(
                 val communities = (loaded as? AppResult.Success)?.value?.communities.orEmpty()
                 updateState { it.copy(exams = result, examCommunities = communities) }
             }
+            MarketSection.PRODUCTS -> {
+                updateState { it.copy(products = UiAsync.Loading) }
+                val loaded = when (val result = productsSource()) {
+                    is AppResult.Failure -> UiAsync.Error(result.error)
+                    is AppResult.Success -> if (result.value.isEmpty()) UiAsync.Empty else UiAsync.Success(result.value)
+                }
+                updateState { it.copy(products = loaded) }
+            }
             MarketSection.PACKS -> {
                 updateState { it.copy(packs = it.packs.loading()) }
                 val result = repository.getTicketPacks()
@@ -236,6 +254,7 @@ class MarketViewModel(
 
 private fun MarketState.isLoaded(section: MarketSection): Boolean = when (section) {
     MarketSection.EXAMS -> exams is UiAsync.Success || exams is UiAsync.Empty
+    MarketSection.PRODUCTS -> products is UiAsync.Success || products is UiAsync.Empty
     MarketSection.PACKS -> packs.isLoaded
     MarketSection.SERVICES -> services.isLoaded
     MarketSection.PROMOTIONS -> promotions.isLoaded

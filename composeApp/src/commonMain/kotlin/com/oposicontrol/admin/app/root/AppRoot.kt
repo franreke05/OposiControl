@@ -220,19 +220,23 @@ internal fun resolveContentTarget(
     // Catalog y Plans abren el mismo hub (Productos/Planes); con qué pestaña lo
     // decide `catalogTabFor`. Antes sólo Catalog llegaba aquí (COMMERCIAL_CATALOG)
     // y Plans caía al adaptador legacy — dos pantallas para lo mismo.
-    (route == AppRoute.Commercial.Catalog || route == AppRoute.Commercial.Plans) && !compactLayout -> AppContentTarget.CATALOG_HUB
+    //
+    // Consumibles, Promociones y Pop-ups también abren Catálogo desde 2026-10-14: ahí es donde se editan. OposiMarket
+    // se queda sólo como escaparate.
+    (
+        route == AppRoute.Commercial.Catalog ||
+            route == AppRoute.Commercial.Plans ||
+            route == AppRoute.Commercial.Consumables ||
+            route == AppRoute.Commercial.Promotions ||
+            route == AppRoute.Commercial.PopupRules
+        ) && !compactLayout -> AppContentTarget.CATALOG_HUB
     // OposiMarket es administración densa de escritorio (cuatro tablas), no una
     // pantalla de móvil.
     //
     // Las cuatro rutas abren la misma pantalla; con qué pestaña lo decide
     // `marketSectionFor`. Son entradas de menú distintas sobre una sola
     // pantalla, no cuatro pantallas.
-    (
-        route == AppRoute.Commercial.Market ||
-            route == AppRoute.Commercial.Consumables ||
-            route == AppRoute.Commercial.Promotions ||
-            route == AppRoute.Commercial.PopupRules
-        ) && !compactLayout -> AppContentTarget.MARKET
+    route == AppRoute.Commercial.Market && !compactLayout -> AppContentTarget.MARKET
     // Analitica de producto: secciones con tablas densas, escritorio. Estudio y
     // Eventos (antes caían al adaptador legacy de Dashboard, que no tenía nada
     // que ver) ahora abren esta misma pantalla en su sección real — con cuál lo
@@ -725,17 +729,10 @@ fun AppRoot(
                         showNavigationChrome = false,
                     )
                     AppContentTarget.MARKET -> {
-                        val koin = getKoin()
                         MarketScreen(
                             viewModel = koinInject(),
-                            initialSection = marketSectionFor(route),
-                            // Quien usó una promoción es una persona: su ficha vive en Usuarios y no se duplica aquí.
-                            // El ViewModel de Usuarios se pide al pulsar: pedirlo al abrir Market descargaría la lista
-                            // entera de usuarios cada vez que alguien mira un precio.
-                            onOpenUser = { userId ->
-                                koin.get<UsersViewModel>().dispatch(UsersIntent.SelectUser(userId))
-                                navigator.openSection(AdminSection.USERS)
-                            },
+                            // El escaparate no edita: «Editar en Catálogo» lleva a la pestaña donde sí se puede.
+                            onEditInCatalog = { section -> navigator.push(catalogRouteForMarketSection(section)) },
                         )
                     }
                     AppContentTarget.PRODUCT_ANALYTICS -> ProductAnalyticsScreen(
@@ -749,7 +746,19 @@ fun AppRoot(
                         initialTab = systemTabFor(route),
                         onSystemStatusClick = { navigator.push(AppRoute.System.Status) },
                     )
-                    AppContentTarget.CATALOG_HUB -> CatalogHubScreen(initialTab = catalogTabFor(route))
+                    AppContentTarget.CATALOG_HUB -> {
+                        val koin = getKoin()
+                        CatalogHubScreen(
+                            initialTab = catalogTabFor(route),
+                            // Quien usó una promoción es una persona: su ficha vive en Usuarios y no se duplica aquí.
+                            // El ViewModel de Usuarios se pide al pulsar: pedirlo al abrir Catálogo descargaría la lista
+                            // entera de usuarios cada vez que alguien mira un precio.
+                            onOpenUser = { userId ->
+                                koin.get<UsersViewModel>().dispatch(UsersIntent.SelectUser(userId))
+                                navigator.openSection(AdminSection.USERS)
+                            },
+                        )
+                    }
                     AppContentTarget.NEWS_HUB -> NewsHubScreen(initialTab = newsTabFor(route))
                     AppContentTarget.MODERATION_HUB -> ModerationHubScreen(
                         initialTab = moderationTabFor(route),
@@ -1156,11 +1165,14 @@ private fun handleDashboardAction(
  * estuviera el usuario, que es lo natural al volver a una pantalla que ya
  * estabas usando.
  */
-internal fun marketSectionFor(route: AppRoute): MarketSection? = when (route) {
-    AppRoute.Commercial.Consumables -> MarketSection.SERVICES
-    AppRoute.Commercial.Promotions -> MarketSection.PROMOTIONS
-    AppRoute.Commercial.PopupRules -> MarketSection.POPUPS
-    else -> null
+internal fun marketSectionFor(route: AppRoute): MarketSection? = null
+
+/** La ruta de Catálogo donde se edita lo que enseña una sección del escaparate. */
+internal fun catalogRouteForMarketSection(section: MarketSection): AppRoute = when (section) {
+    MarketSection.SERVICES -> AppRoute.Commercial.Consumables
+    MarketSection.PROMOTIONS -> AppRoute.Commercial.Promotions
+    MarketSection.POPUPS -> AppRoute.Commercial.PopupRules
+    MarketSection.EXAMS, MarketSection.PRODUCTS, MarketSection.PACKS -> AppRoute.Commercial.Catalog
 }
 
 /** Sección de Analytics con la que abrir según la entrada de menú usada. */
@@ -1209,6 +1221,9 @@ internal fun systemTabFor(route: AppRoute): SystemHubTab? = when (route) {
 /** Pestaña del hub de Catálogo con la que abrir según la entrada de menú usada. */
 internal fun catalogTabFor(route: AppRoute): CatalogHubTab? = when (route) {
     AppRoute.Commercial.Plans -> CatalogHubTab.PLANS
+    AppRoute.Commercial.Consumables -> CatalogHubTab.SERVICES
+    AppRoute.Commercial.Promotions -> CatalogHubTab.PROMOTIONS
+    AppRoute.Commercial.PopupRules -> CatalogHubTab.POPUPS
     else -> null
 }
 

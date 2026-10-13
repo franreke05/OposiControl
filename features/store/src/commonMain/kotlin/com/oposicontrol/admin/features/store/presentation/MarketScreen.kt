@@ -50,13 +50,13 @@ import com.oposicontrol.admin.domain.model.MarketTicketPack
 @Composable
 fun MarketScreen(
     viewModel: MarketViewModel,
-    /**
-     * Pestaña con la que abrir. La fijan las entradas de menú de Consumibles, Promociones y Pop-ups, que apuntan a esta
-     * misma pantalla: sin esto, pulsar «Promociones» abriría Market en el escaparate y habría que buscarla.
-     */
+    /** Pestaña con la que abrir; `null` respeta la que hubiera. */
     initialSection: MarketSection? = null,
-    /** Abre la ficha de un usuario desde un uso de promoción. `null` = no se ofrece el enlace. */
-    onOpenUser: ((String) -> Unit)? = null,
+    /**
+     * Lleva a Catálogo, a la pestaña donde se edita lo que enseña [MarketSection]. `null` = no se ofrece el enlace. La
+     * tienda no edita: quien quiera cambiar algo lo hace allí.
+     */
+    onEditInCatalog: ((MarketSection) -> Unit)? = null,
 ) {
     val state by viewModel.state.collectAsState()
 
@@ -66,155 +66,109 @@ fun MarketScreen(
         }
     }
 
-    MarketContent(state = state, onIntent = viewModel::dispatch, onOpenUser = onOpenUser)
+    MarketContent(state = state, onIntent = viewModel::dispatch, onEditInCatalog = onEditInCatalog)
 }
 
+/** Las pestañas de la tienda, en el orden en que se enseñan. Packs no está: un pack es un producto (ver [MarketSection]). */
+internal val SHOWCASE_SECTIONS: List<MarketSection> =
+    listOf(MarketSection.EXAMS, MarketSection.PRODUCTS, MarketSection.SERVICES, MarketSection.PROMOTIONS, MarketSection.POPUPS)
+
+/**
+ * OposiMarket: la tienda tal como queda publicada. SOLO CONSULTA (decisión del propietario, 2026-10-14): aquí se mira qué
+ * hay en vigor; crear, editar y desactivar es cosa de Catálogo. Por eso esta pantalla no despacha ninguna intención de
+ * edición: sólo cambia de pestaña, filtra los exámenes y refresca.
+ */
 @Composable
 internal fun MarketContent(
     state: MarketState,
     onIntent: (MarketIntent) -> Unit,
     modifier: Modifier = Modifier,
-    onOpenUser: ((String) -> Unit)? = null,
+    onEditInCatalog: ((MarketSection) -> Unit)? = null,
+    today: String = todayIsoDate(),
 ) {
+    // Una pestaña que ya no se ofrece (Packs) se enseña como la primera, en vez de dejar la pantalla sin contenido.
+    val section = state.section.takeIf { it in SHOWCASE_SECTIONS } ?: MarketSection.EXAMS
     Column(modifier = modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
             DesktopTabs(
                 modifier = Modifier.weight(1f),
-                tabs = MarketSection.entries.map { DesktopTab(it.name, it.label(), it.icon()) },
-                selectedId = state.section.name,
+                tabs = SHOWCASE_SECTIONS.map { DesktopTab(it.name, it.label(), it.icon()) },
+                selectedId = section.name,
                 onSelect = { id ->
-                    MarketSection.entries.firstOrNull { it.name == id }?.let { onIntent(MarketIntent.SelectSection(it)) }
+                    SHOWCASE_SECTIONS.firstOrNull { it.name == id }?.let { onIntent(MarketIntent.SelectSection(it)) }
                 },
             )
-            // Los cuatro catálogos llevan su propio «actualizar» en la cabecera de la lista; el escaparate no tiene lista.
-            if (state.section == MarketSection.EXAMS) {
+            if (section != MarketSection.EXAMS && onEditInCatalog != null) {
                 SecondaryButton(
-                    text = "Actualizar",
-                    onClick = { onIntent(MarketIntent.Refresh) },
+                    text = "Editar en Catálogo",
+                    onClick = { onEditInCatalog(section) },
                     size = ButtonSize.COMPACT,
-                    icon = { AppIconImage(AppIcon.REFRESH, size = 14.dp) },
+                    icon = { AppIconImage(AppIcon.EDIT, size = 14.dp) },
                 )
             }
+            SecondaryButton(
+                text = "Actualizar",
+                onClick = { onIntent(MarketIntent.Refresh) },
+                size = ButtonSize.COMPACT,
+                icon = { AppIconImage(AppIcon.REFRESH, size = 14.dp) },
+            )
         }
 
         val sectionModifier = Modifier.weight(1f)
-        when (state.section) {
+        when (section) {
             MarketSection.EXAMS -> PublishedExamsSection(state = state, onIntent = onIntent, modifier = sectionModifier)
-            MarketSection.PACKS -> MarketEditorWorkspace(
-                editor = state.packs,
-                spec = PackSpec,
-                ui = packUi,
-                onAction = { onIntent(MarketIntent.Packs(it)) },
-                onRefresh = { onIntent(MarketIntent.Refresh) },
-                modifier = sectionModifier,
-            ) { draft, isNew, base, update -> PackForm(draft, isNew, base, update) }
-            MarketSection.SERVICES -> MarketEditorWorkspace(
-                editor = state.services,
-                spec = ServiceSpec,
-                ui = serviceUi,
-                onAction = { onIntent(MarketIntent.Services(it)) },
-                onRefresh = { onIntent(MarketIntent.Refresh) },
-                modifier = sectionModifier,
-            ) { draft, isNew, _, update -> ServiceForm(draft, isNew, update) }
-            MarketSection.PROMOTIONS -> PromotionsWorkspace(state, onIntent, onOpenUser, sectionModifier)
-            MarketSection.POPUPS -> MarketEditorWorkspace(
-                editor = state.popups,
-                spec = PopupSpec,
-                ui = popupUi,
-                onAction = { onIntent(MarketIntent.Popups(it)) },
-                onRefresh = { onIntent(MarketIntent.Refresh) },
-                modifier = sectionModifier,
-            ) { draft, isNew, _, update -> PopupForm(draft, isNew, update) }
+            else -> MarketShowcaseSection(showcaseOf(section, state, today), onRetry = { onIntent(MarketIntent.Refresh) }, modifier = sectionModifier)
         }
     }
 }
 
-// =====================================================================================================================
-// Packs
-// =====================================================================================================================
-
-private val packUi = MarketEditorUi<MarketTicketPack, PackDraft>(
-    icon = AppIcon.TICKETS,
-    title = "Packs de OposiTickets",
-    noun = "packs",
-    searchPlaceholder = "Buscar por nombre o código…",
-    filters = ACTIVE_FILTERS_MASCULINE,
-    row = ::packRowSpec,
-    emptyTitle = "Sin packs",
-    emptyMessage = "No se ha configurado ningún pack de OposiTickets todavía.",
-    newLabel = "Nuevo pack",
-    createLabel = "Crear pack",
-    namelessTitle = "Pack sin nombre",
-    closedMessage = "Elige un pack de la lista para editarlo, o crea uno nuevo.",
-    draftTitle = { it.name },
-    subtitle = { it.code },
-    draftStatus = { commerceStatus(it.active) },
-    draftPill = { draft -> parseNonNegativeInt(draft.ticketAmount)?.let { "$it OT" } },
-    facts = ::packFacts,
-    information = packInformationLines,
-    savedText = "Pack guardado.",
-    tag = "market-packs",
-)
-
+/**
+ * UN editor de los que antes vivían en OposiMarket (servicios, promociones o avisos), para montarlo como pestaña de
+ * Catálogo. Sin fila de pestañas propia: la pone el hub. Al entrar selecciona su sección, que es lo que dispara la lectura.
+ */
 @Composable
-private fun PackForm(draft: PackDraft, isNew: Boolean, base: MarketTicketPack?, update: (PackDraft) -> Unit) {
-    FormSection(
-        title = "Identificación",
-        description = "Cómo se llama el pack y con qué código se reconoce.",
-        icon = AppIcon.TICKETS,
-        iconRole = SemanticRole.INFO,
-        help = Help.packs,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.field)) {
-            LabeledField(
-                label = "Nombre",
-                value = draft.name,
-                onValueChange = { update(draft.copy(name = it)) },
-                placeholder = "Ej. 500 OposiTickets",
-                required = true,
-            )
-            CodeField(draft.code, isNew, placeholder = "Ej. pack_500", entity = "el pack") { update(draft.copy(code = it)) }
-            DescriptionField(draft.description, "Qué incluye este pack") { update(draft.copy(description = it)) }
-        }
+fun MarketCatalogEditor(
+    viewModel: MarketViewModel,
+    section: MarketSection,
+    modifier: Modifier = Modifier,
+    /** Abre la ficha de un usuario desde un uso de promoción. `null` = no se ofrece el enlace. */
+    onOpenUser: ((String) -> Unit)? = null,
+) {
+    val state by viewModel.state.collectAsState()
+    LaunchedEffect(section) { viewModel.dispatch(MarketIntent.SelectSection(section)) }
+    MarketCatalogEditorContent(state = state, section = section, onIntent = viewModel::dispatch, modifier = modifier, onOpenUser = onOpenUser)
+}
+
+/** El editor, por ESTADO: el banco de pruebas visual lo renderiza contra estados fabricados, sin Ktor ni Koin. */
+@Composable
+internal fun MarketCatalogEditorContent(
+    state: MarketState,
+    section: MarketSection,
+    onIntent: (MarketIntent) -> Unit,
+    modifier: Modifier = Modifier,
+    onOpenUser: ((String) -> Unit)? = null,
+) {
+    when (section) {
+        MarketSection.SERVICES -> MarketEditorWorkspace(
+            editor = state.services,
+            spec = ServiceSpec,
+            ui = serviceUi,
+            onAction = { onIntent(MarketIntent.Services(it)) },
+            onRefresh = { onIntent(MarketIntent.Refresh) },
+            modifier = modifier,
+        ) { draft, isNew, _, update -> ServiceForm(draft, isNew, update) }
+        MarketSection.PROMOTIONS -> PromotionsWorkspace(state, onIntent, onOpenUser, modifier)
+        MarketSection.POPUPS -> MarketEditorWorkspace(
+            editor = state.popups,
+            spec = PopupSpec,
+            ui = popupUi,
+            onAction = { onIntent(MarketIntent.Popups(it)) },
+            onRefresh = { onIntent(MarketIntent.Refresh) },
+            modifier = modifier,
+        ) { draft, isNew, _, update -> PopupForm(draft, isNew, update) }
+        // Exámenes y productos tienen su propia pantalla; packs ya no se edita desde el panel.
+        MarketSection.EXAMS, MarketSection.PRODUCTS, MarketSection.PACKS -> Unit
     }
-    FormSection(
-        title = "Precio y contenido",
-        description = "Lo que cuesta y los OposiTickets que entrega.",
-        icon = AppIcon.CATALOG,
-        iconRole = SemanticRole.COMMERCE,
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.field)) {
-            LabeledField(
-                label = "OposiTickets que entrega",
-                value = draft.ticketAmount,
-                onValueChange = { update(draft.copy(ticketAmount = it)) },
-                placeholder = "Ej. 500",
-                required = true,
-                supportingText = "Entero mayor que cero: un pack de cero tickets cobraría sin entregar nada.",
-            )
-            LabeledField(
-                label = "Precio (${base?.currency ?: "EUR"})",
-                value = draft.price,
-                onValueChange = { update(draft.copy(price = it)) },
-                placeholder = "Ej. 4,99",
-                required = true,
-                supportingText = "Con coma o punto y como mucho dos decimales.",
-            )
-            LabeledField(
-                label = "Posición",
-                value = draft.position,
-                onValueChange = { update(draft.copy(position = it)) },
-                placeholder = "Ej. 1",
-                supportingText = "Entero no negativo. Ordena los packs de menor a mayor.",
-            )
-        }
-    }
-    ActiveSection(
-        description = "Si el pack está en vigor.",
-        toggleDescription = "Un pack inactivo queda guardado pero fuera de uso.",
-        active = draft.active,
-        onChange = { update(draft.copy(active = it)) },
-    )
 }
 
 // =====================================================================================================================
@@ -736,16 +690,18 @@ private fun ActiveSection(description: String, toggleDescription: String, active
     }
 }
 
-private fun MarketSection.label(): String = when (this) {
-    MarketSection.EXAMS -> "Exámenes publicados"
+internal fun MarketSection.label(): String = when (this) {
+    MarketSection.EXAMS -> "Exámenes"
+    MarketSection.PRODUCTS -> "Productos y packs"
     MarketSection.PACKS -> "Packs OT"
     MarketSection.SERVICES -> "Servicios"
     MarketSection.PROMOTIONS -> "Promociones"
-    MarketSection.POPUPS -> "Pop-ups"
+    MarketSection.POPUPS -> "Avisos"
 }
 
 private fun MarketSection.icon(): AppIcon = when (this) {
     MarketSection.EXAMS -> AppIcon.EXAMS
+    MarketSection.PRODUCTS -> AppIcon.CATALOG
     MarketSection.PACKS -> AppIcon.TICKETS
     MarketSection.SERVICES -> AppIcon.MARKET
     MarketSection.PROMOTIONS -> AppIcon.PLANS

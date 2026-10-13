@@ -83,7 +83,7 @@ class StoreMotionEvidence {
                 description = "Evidencia de movimiento.",
                 globalSearch = {},
             ) {
-                MarketContent(state = states[step], onIntent = {}, onOpenUser = {})
+                MarketCatalogEditorContent(state = states[step], section = states[step].section, onIntent = {}, onOpenUser = {})
             }
         }
     }
@@ -101,7 +101,7 @@ class StoreMotionEvidence {
                 description = "Evidencia de movimiento.",
                 globalSearch = {},
             ) {
-                MarketContent(state = states[step], onIntent = {}, onOpenUser = {})
+                MarketCatalogEditorContent(state = states[step], section = states[step].section, onIntent = {}, onOpenUser = {})
             }
         }
     }
@@ -119,7 +119,7 @@ class StoreMotionEvidence {
                 description = "Evidencia de movimiento.",
                 globalSearch = {},
             ) {
-                MarketContent(state = states[step], onIntent = {}, onOpenUser = {})
+                MarketCatalogEditorContent(state = states[step], section = states[step].section, onIntent = {}, onOpenUser = {})
             }
         }
     }
@@ -141,7 +141,7 @@ class StoreMotionEvidence {
         val states = listOf(market.packs(), market.servicios(), market.promociones(), market.popups(), market.packNuevo(), market.cargando())
         motionPerformance("oposimarket", states = states.size, cycles = 40) { step ->
             DesktopShell(currentRouteId = "commercial.market", groups = EVIDENCE_SIDEBAR, onRouteSelected = {}, environmentLabel = "Entorno production", title = "OposiMarket", description = "Rendimiento.", globalSearch = {}) {
-                MarketContent(state = states[step], onIntent = {}, onOpenUser = {})
+                MarketCatalogEditorContent(state = states[step], section = states[step].section, onIntent = {}, onOpenUser = {})
             }
         }
     }

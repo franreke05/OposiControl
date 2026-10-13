@@ -8,6 +8,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import com.oposicontrol.admin.features.store.presentation.MarketSection
 
 class AppRootContentTargetTest {
 
@@ -273,7 +274,9 @@ class AppRootContentTargetTest {
         assertEquals("users", sidebarRouteIdFor(AppRoute.Commercial.Tickets, compactLayout = false))
         assertEquals("users", sidebarRouteIdFor(AppRoute.Rankings, compactLayout = false))
         assertEquals("commercial.catalog", sidebarRouteIdFor(AppRoute.Commercial.Plans, compactLayout = false))
-        assertEquals("commercial.market", sidebarRouteIdFor(AppRoute.Commercial.Promotions, compactLayout = false))
+        // Promociones se EDITA en Catálogo desde 2026-10-14: OposiMarket es sólo el escaparate.
+        assertEquals("commercial.catalog", sidebarRouteIdFor(AppRoute.Commercial.Promotions, compactLayout = false))
+        assertEquals("commercial.market", sidebarRouteIdFor(AppRoute.Commercial.Market, compactLayout = false))
         // Una ruta con entrada propia se marca a sí misma.
         assertEquals("commercial.catalog", sidebarRouteIdFor(AppRoute.Commercial.Catalog, compactLayout = false))
     }
@@ -472,6 +475,25 @@ class AppRootContentTargetTest {
     @Test
     fun plansOpensThePlansTabOfTheCatalogHub() {
         assertEquals(CatalogHubTab.PLANS, catalogTabFor(AppRoute.Commercial.Plans))
+    }
+
+    @Test
+    fun whatTheStoreSellsIsEditedInTheCatalogHubAndTheStoreOnlyShowsIt() {
+        // Las tres entradas que antes abrían OposiMarket abren ahora Catálogo, cada una en su pestaña.
+        assertEquals(CatalogHubTab.SERVICES, catalogTabFor(AppRoute.Commercial.Consumables))
+        assertEquals(CatalogHubTab.PROMOTIONS, catalogTabFor(AppRoute.Commercial.Promotions))
+        assertEquals(CatalogHubTab.POPUPS, catalogTabFor(AppRoute.Commercial.PopupRules))
+        listOf(AppRoute.Commercial.Consumables, AppRoute.Commercial.Promotions, AppRoute.Commercial.PopupRules).forEach { route ->
+            assertEquals(null, marketSectionFor(route), "$route ya no abre una pestaña del escaparate")
+        }
+        // Y cada pestaña del escaparate sabe a dónde ir para editar; «Editar en Catálogo» vuelve a la misma pestaña.
+        listOf(MarketSection.SERVICES, MarketSection.PROMOTIONS, MarketSection.POPUPS).forEach { section ->
+            assertEquals(catalogTabForMarketSection(section), catalogTabFor(catalogRouteForMarketSection(section)), section.name)
+        }
+        assertEquals(CatalogHubTab.PRODUCTS, catalogTabForMarketSection(MarketSection.PRODUCTS))
+        // Un pack es un producto: no tiene pestaña propia, ni en Catálogo ni en el escaparate.
+        assertEquals(CatalogHubTab.PRODUCTS, catalogTabForMarketSection(MarketSection.PACKS))
+        assertEquals(listOf("Productos", "Planes", "Servicios", "Promociones", "Avisos"), CatalogHubTab.entries.map { it.label })
     }
 
     @Test

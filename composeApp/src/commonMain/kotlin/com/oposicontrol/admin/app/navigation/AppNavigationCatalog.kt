@@ -145,8 +145,8 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         NavigationGroupId.ECONOMY,
         "Monetización",
         listOf(
-            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catálogo", "Productos, planes y tarifas.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key),
-            item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Packs, servicios, promociones y pop-ups.", NavigationGroupId.ECONOMY, AppIcon.MARKET.key, NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catálogo", "Productos, planes, servicios, promociones y avisos.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key),
+            item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Lo que está publicado en la tienda. Solo consulta.", NavigationGroupId.ECONOMY, AppIcon.MARKET.key, NavigationVisibility.DESKTOP_ONLY),
             item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes de suscripción y beneficios.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key, showInSidebar = false),
             item(AppRoute.Commercial.Consumables, "commercial.consumables", "Consumibles", "Potenciadores y protectores que se compran con OT.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
             item(AppRoute.Commercial.Promotions, "commercial.promotions", "Promociones", "Cupones y descuentos con ventana de validez.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
