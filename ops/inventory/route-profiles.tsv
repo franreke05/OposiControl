@@ -229,6 +229,7 @@ POST	/api/v1/admin/tienda/rafagas	CONTROL	admin	Admin v1: tienda/rafagas	OposiCo
 POST	/api/v1/admin/tienda/recursos-temporales	CONTROL	admin	Admin v1: tienda/recursos-temporales	OposiControl
 POST	/api/v1/admin/solicitudes-acceso/{}/aprobar	CONTROL	admin	Admin access requests: approve, grants admin (superadmin)	OposiControl
 POST	/api/v1/admin/solicitudes-acceso/{}/rechazar	CONTROL	admin	Admin access requests: reject (superadmin)	OposiControl
+POST	/api/v1/admin/usuarios/{}/estado-cuenta	CONTROL	admin	Admin v1: dar de baja o reactivar una cuenta (superadmin)	OposiControl
 POST	/api/v1/admin/usuarios/{}/roles	CONTROL	admin	Admin v1: usuarios/{}/roles	OposiControl
 POST	/api/v1/admin/usuarios/{}/tickets	CONTROL	admin	Admin v1: usuarios/{}/tickets	OposiControl
 POST	/api/v1/app/eventos	BOT	user-jwt	Consumer app API: eventos	OposiBot

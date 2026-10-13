@@ -216,14 +216,24 @@ fun userAccountKindLabel(kind: UserAccountKind): String = when (kind) {
 }
 
 /**
- * Por qué no hay ninguna acción de bloqueo en esta pantalla.
+ * Dar de baja y reactivar una cuenta.
  *
- * El estado de cuenta (activa / bloqueada / eliminación pendiente) SÍ existe y se enseña, pero es de sólo lectura:
- * el `PATCH` de usuario sólo escribe `nombre_mostrar` y ninguna operación del panel lo cambia. El botón «Bloquear»
- * anterior llamaba a ese `PATCH` con un booleano, el backend lo descartaba y la UI pintaba «Operación completada».
+ * El estado de cuenta (activa / bloqueada / eliminación pendiente) lo cambia `POST /usuarios/{id}/estado-cuenta`, sólo
+ * para superadministradores y con motivo. No borra nada: una cuenta dada de baja no puede entrar en ninguna de las dos
+ * apps y se puede reactivar. Una eliminación pedida por su dueño no se toca desde aquí.
  */
-const val USER_ACCOUNT_STATUS_READ_ONLY_NOTE: String =
-    "El estado de la cuenta se muestra tal como lo informa el sistema, pero no se puede cambiar desde el panel."
+const val USER_ACCOUNT_STATUS_NOTE: String =
+    "Dar de baja impide entrar en OposiBot y en OposiControl; no borra la cuenta y se puede reactivar. Sólo superadministradores."
+
+/** Tope del motivo, el mismo que aplica el servidor. */
+const val ACCOUNT_STATUS_REASON_MAX: Int = 500
+
+/** Etiqueta del botón según el estado de la cuenta; `null` = no se ofrece la acción (eliminación pendiente o sin dato). */
+fun accountStatusActionLabel(status: AccountStatus?): String? = when (status) {
+    AccountStatus.ACTIVE -> "Dar de baja"
+    AccountStatus.BLOCKED -> "Reactivar cuenta"
+    else -> null
+}
 
 // ---------------------------------------------------------------------------
 // Matriz de honestidad: qué se puede hacer de verdad
@@ -304,12 +314,12 @@ private val USER_CAPABILITIES: List<UserCapability> = listOf(
     UserCapability(
         name = "Eliminar usuario",
         level = UserCapabilityLevel.BLOCKED,
-        note = "Las bajas se hacen desde el sistema de autenticación, no desde el panel.",
+        note = "Una cuenta no se borra desde el panel: se da de baja, que impide entrar y se puede deshacer.",
     ),
     UserCapability(
-        name = "Bloquear o desbloquear",
-        level = UserCapabilityLevel.NOT_FOUND,
-        note = USER_ACCOUNT_STATUS_READ_ONLY_NOTE,
+        name = "Dar de baja o reactivar",
+        level = UserCapabilityLevel.PARTIAL,
+        note = USER_ACCOUNT_STATUS_NOTE,
     ),
     UserCapability(
         name = "Invitar por correo",

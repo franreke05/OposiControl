@@ -197,6 +197,7 @@ POST /api/v1/admin/tienda/articulos
 POST /api/v1/admin/tienda/ofertas
 POST /api/v1/admin/tienda/rafagas
 POST /api/v1/admin/tienda/recursos-temporales
+POST /api/v1/admin/usuarios/{}/estado-cuenta
 POST /api/v1/admin/usuarios/{}/roles
 POST /api/v1/admin/usuarios/{}/tickets
 POST /content/comunidades

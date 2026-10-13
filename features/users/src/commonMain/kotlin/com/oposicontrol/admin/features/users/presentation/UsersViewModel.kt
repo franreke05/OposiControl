@@ -15,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
+import com.oposicontrol.admin.domain.model.AccountStatus
 
 class UsersViewModel(
     dispatcherProvider: DispatcherProvider,
@@ -37,6 +38,7 @@ class UsersViewModel(
     private val savesInFlight = mutableSetOf<String>()
     private var grantInFlight = false
     private var warningInFlight = false
+    private var accountStatusInFlight = false
     private var keySequence = 0
 
     init {
@@ -167,6 +169,20 @@ class UsersViewModel(
             }
             is UsersIntent.UpdateWarningInput -> updateState { it.copy(warningInput = intent.value) }
             UsersIntent.ConfirmWarning -> if (!warningInFlight) sendWarning()
+
+            UsersIntent.OpenAccountStatusDialog -> updateState { state ->
+                when (state.selectedAccountStatus) {
+                    AccountStatus.ACTIVE -> state.copy(accountStatusDialogOpen = true, accountStatusBlocks = true, accountStatusReason = "", actionState = UiAsync.Idle)
+                    AccountStatus.BLOCKED -> state.copy(accountStatusDialogOpen = true, accountStatusBlocks = false, accountStatusReason = "", actionState = UiAsync.Idle)
+                    // Eliminación pedida por su dueño, o estado desconocido: no hay nada que ofrecer.
+                    else -> state
+                }
+            }
+            UsersIntent.DismissAccountStatusDialog -> updateState { it.copy(accountStatusDialogOpen = false, accountStatusReason = "") }
+            is UsersIntent.UpdateAccountStatusReason -> updateState {
+                it.copy(accountStatusReason = intent.value.take(ACCOUNT_STATUS_REASON_MAX))
+            }
+            UsersIntent.ConfirmAccountStatus -> if (!accountStatusInFlight) changeAccountStatus()
 
             is UsersIntent.UpdateSearch -> updateState { it.copy(searchQuery = intent.value) }
         }
@@ -427,6 +443,33 @@ class UsersViewModel(
             }
         } finally {
             grantInFlight = false
+        }
+    }
+
+    private suspend fun changeAccountStatus() {
+        val state = currentState()
+        if (!state.accountStatusDialogOpen) return
+        val userId = state.selectedUserId ?: return
+        val reason = state.accountStatusReason.trim().ifBlank { return }
+        val blocks = state.accountStatusBlocks
+        accountStatusInFlight = true
+        try {
+            updateState { it.copy(accountStatusDialogOpen = false, accountStatusReason = "", actionState = UiAsync.Loading) }
+            when (val result = moderationRepository.setAccountBlocked(userId, blocks, reason)) {
+                // El motivo del servidor (no es superadministrador, es su propia cuenta…) se enseña tal cual.
+                is AppResult.Failure -> updateState {
+                    if (it.selectedUserId == userId) it.copy(actionState = UiAsync.Error(result.error)) else it
+                }
+                is AppResult.Success -> {
+                    analyticsTracker.trackAction(if (blocks) "user_blocked" else "user_unblocked", mapOf("user_id" to userId))
+                    updateState { if (it.selectedUserId == userId) it.copy(actionState = UiAsync.Success(Unit)) else it }
+                    // El estado nuevo lo dice el servidor: se relee la fila y la ficha, no se pinta lo que se pidió.
+                    refreshUserRow(userId)
+                    if (currentState().selectedUserId == userId) reloadUserDetail(userId, silent = true)
+                }
+            }
+        } finally {
+            accountStatusInFlight = false
         }
     }
 

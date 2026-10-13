@@ -3,6 +3,7 @@ package com.oposicontrol.admin.domain.repository
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.ForumReport
 import com.oposicontrol.admin.domain.model.ForumReportDetail
+import com.oposicontrol.admin.core.common.result.AppError
 
 interface ModerationRepository {
     suspend fun listPendingReports(): AppResult<List<ForumReport>>
@@ -27,4 +28,14 @@ interface ModerationRepository {
     ): AppResult<Int>
     /** Registra una advertencia de moderación sobre un usuario. */
     suspend fun warnUser(userId: String, message: String): AppResult<Unit>
+
+    /**
+     * Da de baja ([blocked] = true) o reactiva una cuenta, con un motivo obligatorio. Solo lo puede hacer un
+     * superadministrador: lo decide el servidor (403 si no lo es). No borra nada; la cuenta deja de poder entrar.
+     *
+     * Con implementación por defecto porque es una operación nueva: un repositorio que no la conozca dice que no puede,
+     * nunca que la hizo.
+     */
+    suspend fun setAccountBlocked(userId: String, blocked: Boolean, reason: String): AppResult<Unit> =
+        AppResult.Failure(AppError.Validation("Este entorno no puede cambiar el estado de una cuenta."))
 }

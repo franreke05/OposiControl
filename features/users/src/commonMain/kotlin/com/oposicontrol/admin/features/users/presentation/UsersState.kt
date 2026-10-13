@@ -4,6 +4,7 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.domain.model.Role
 import com.oposicontrol.admin.domain.model.User
 import com.oposicontrol.admin.domain.model.UserDetail
+import com.oposicontrol.admin.domain.model.AccountStatus
 
 /**
  * Estado de la pantalla de Usuarios.
@@ -76,7 +77,16 @@ data class UsersState(
     val pendingGrants: List<PendingGrant> = emptyList(),
     val warningDialogOpen: Boolean = false,
     val warningInput: String = "",
+    /** Diálogo de dar de baja / reactivar. El sentido lo fija el estado de la cuenta al abrirlo ([accountStatusBlocks]). */
+    val accountStatusDialogOpen: Boolean = false,
+    /** `true` = el diálogo abierto va a DAR DE BAJA; `false` = va a reactivar. */
+    val accountStatusBlocks: Boolean = true,
+    val accountStatusReason: String = "",
 ) {
+    /** Estado de cuenta del usuario abierto: la ficha recién leída manda sobre la fila de la lista. */
+    val selectedAccountStatus: AccountStatus?
+        get() = selectedUser?.let { userEffectiveAccountStatus(it, (detail as? UiAsync.Success)?.value) }
+
     /**
      * La concesion pendiente MAS RECIENTE del usuario seleccionado (la que reabre el dialogo). MASTER6-IDEM-002: las
      * pendientes son una por (usuario, importe), no una por usuario; ver [pendingGrants].

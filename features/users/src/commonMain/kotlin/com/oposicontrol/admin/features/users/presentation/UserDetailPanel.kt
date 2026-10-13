@@ -242,6 +242,14 @@ private fun UserHero(state: UsersState, user: User, onIntent: (UsersIntent) -> U
                     size = ButtonSize.COMPACT,
                     icon = { AppIconImage(AppIcon.WARNING, size = 14.dp) },
                 )
+                accountStatusActionLabel(state.selectedAccountStatus)?.let { label ->
+                    SecondaryButton(
+                        text = label,
+                        onClick = { onIntent(UsersIntent.OpenAccountStatusDialog) },
+                        size = ButtonSize.COMPACT,
+                        icon = { AppIconImage(AppIcon.BLOCKED, size = 14.dp) },
+                    )
+                }
             }
         }
         if (actionsBelow) {

@@ -35,6 +35,7 @@ import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.components.motionOverlayEntrance
 import com.oposicontrol.admin.core.ui.components.overlayDialogProperties
+import com.oposicontrol.admin.core.ui.components.DangerButton
 
 /**
  * Pantalla de Usuarios.
@@ -180,6 +181,17 @@ internal fun UsersContent(
             onDismiss = { onIntent(UsersIntent.DismissWarningDialog) },
         )
     }
+
+    if (state.accountStatusDialogOpen) {
+        AccountStatusDialog(
+            userName = state.selectedUser?.let(::userAccountName).orEmpty(),
+            blocks = state.accountStatusBlocks,
+            reason = state.accountStatusReason,
+            onReasonChange = { onIntent(UsersIntent.UpdateAccountStatusReason(it)) },
+            onConfirm = { onIntent(UsersIntent.ConfirmAccountStatus) },
+            onDismiss = { onIntent(UsersIntent.DismissAccountStatusDialog) },
+        )
+    }
 }
 
 @Composable
@@ -237,6 +249,72 @@ private fun TicketsDialog(
                         enabled = amount != null && amount != 0,
                         size = ButtonSize.COMPACT,
                     )
+                }
+            }
+        }
+    }
+}
+
+/** Dar de baja o reactivar: dice a quién, qué va a pasar, y no deja confirmar sin motivo. */
+@Composable
+private fun AccountStatusDialog(
+    userName: String,
+    blocks: Boolean,
+    reason: String,
+    onReasonChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val tokens = GlassTheme.tokens
+    Dialog(onDismissRequest = onDismiss, properties = overlayDialogProperties()) {
+        GlassSurface(
+            modifier = Modifier.widthIn(min = 280.dp, max = 460.dp).motionOverlayEntrance(),
+            shape = RoundedCornerShape(24.dp),
+            tint = tokens.glassFillStrong,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(Spacing.xl),
+                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
+            ) {
+                Text(
+                    text = if (blocks) "Dar de baja la cuenta" else "Reactivar la cuenta",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.textPrimary,
+                )
+                Text(
+                    text = if (blocks) {
+                        "$userName dejará de poder entrar en OposiBot y en OposiControl. No se borra nada: sus datos se " +
+                            "conservan y la cuenta se puede reactivar. Queda registrado en auditoría con tu motivo."
+                    } else {
+                        "$userName podrá volver a entrar. Queda registrado en auditoría con tu motivo."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = tokens.textSecondary,
+                )
+                GlassTextField(
+                    value = reason,
+                    onValueChange = onReasonChange,
+                    placeholder = if (blocks) "Motivo de la baja" else "Motivo de la reactivación",
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = false,
+                    minLines = 3,
+                )
+                Text(
+                    text = "${reason.length} / $ACCOUNT_STATUS_REASON_MAX",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.textSecondary,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.xxs),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm, Alignment.End),
+                ) {
+                    SecondaryButton(text = "Cancelar", onClick = onDismiss, size = ButtonSize.COMPACT)
+                    if (blocks) {
+                        DangerButton(text = "Dar de baja", onClick = onConfirm, enabled = reason.isNotBlank(), size = ButtonSize.COMPACT)
+                    } else {
+                        PrimaryButton(text = "Reactivar", onClick = onConfirm, enabled = reason.isNotBlank(), size = ButtonSize.COMPACT)
+                    }
                 }
             }
         }

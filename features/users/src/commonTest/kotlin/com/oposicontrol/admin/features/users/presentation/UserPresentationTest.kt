@@ -116,11 +116,11 @@ class UserPresentationTest {
     // --- Matriz de honestidad ----------------------------------------------
 
     @Test
-    fun bloquearNoSeOfreceComoFuncionDisponible() {
-        val bloquear = userCapability("Bloquear o desbloquear")
+    fun darDeBajaSeOfreceComoParcialPorqueEsSoloParaSuperadministradores() {
+        val baja = userCapability("Dar de baja o reactivar")
 
-        assertNotNull(bloquear)
-        assertEquals(UserCapabilityLevel.NOT_FOUND, bloquear.level)
+        assertNotNull(baja)
+        assertEquals(UserCapabilityLevel.PARTIAL, baja.level)
     }
 
     @Test

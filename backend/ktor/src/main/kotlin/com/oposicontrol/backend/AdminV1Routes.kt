@@ -1278,6 +1278,15 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val resultingRoleIds = withUpstreamIo { gateway.syncRoles(userId, requestedRoleIds, actorId = actorId, expectedRoleIds = expectedRoleIds) }
                 call.respond(AdminUserRolesResponse(roleIds = resultingRoleIds))
             }
+            // Dar de baja o reactivar una cuenta (solo SUPERADMIN). No borra nada: cambia `estado_cuenta`, que es lo que
+            // ya miran la app y el acceso para negar la entrada.
+            post("/{id}/estado-cuenta") {
+                val userId = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<AdminAccountStatusRequest>()
+                val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(withUpstreamIo { gateway.setAccountStatus(userId, body.estado, body.motivo, actorId) })
+            }
             post("/{id}/tickets") {
                 // MASTER6-SEC-001: el id de ruta se valida antes de tocar nada (el gateway lo repite).
                 val userId = call.requiredPath("id").validatedUuid("id")
@@ -3859,6 +3868,28 @@ private data class ContenidoDesbloqueadoRow(
     @SerialName("creado_en") val creadoEn: String? = null,
 )
 
+internal const val ACCOUNT_STATUS_ACTIVE = "activa"
+internal const val ACCOUNT_STATUS_BLOCKED = "bloqueada"
+internal const val ACCOUNT_STATUS_DELETION_PENDING = "eliminacion_pendiente"
+internal const val ACCOUNT_STATUS_REASON_MAX = 500
+
+/** `POST /api/v1/admin/usuarios/{id}/estado-cuenta`: [estado] = `bloqueada` (dar de baja) o `activa` (reactivar). */
+@Serializable
+data class AdminAccountStatusRequest(val estado: String = "", val motivo: String = "")
+
+/** [cambiado] = `false` cuando la cuenta ya estaba en ese estado y no se escribio nada. */
+@Serializable
+data class AdminAccountStatusResponse(val usuarioId: String, val estado: String, val cambiado: Boolean)
+
+@Serializable
+private data class EstadoCuentaRow(
+    @SerialName("usuario_id") val usuarioId: String = "",
+    @SerialName("estado_cuenta") val estadoCuenta: String? = null,
+)
+
+@Serializable
+private data class EstadoCuentaPatch(@SerialName("estado_cuenta") val estadoCuenta: String)
+
 /** Cuerpo del PATCH que retira una concesion: solo el fin de vigencia. */
 @Serializable
 private data class ContenidoDesbloqueadoCierre(@SerialName("valido_hasta") val validoHasta: String)
@@ -5907,6 +5938,84 @@ class AdminV1Gateway private constructor(
                 "updateUsuario: la fila cambio en cada uno de los $ADMIN_USER_UPDATE_ATTEMPTS intentos (contencion, no fallo del upstream).",
             ),
         )
+    }
+
+    /**
+     * Da de baja (`bloqueada`) o reactiva (`activa`) una cuenta. Decision del propietario (2026-10-13): «borrar» una
+     * cuenta desde el panel es darla de baja, porque el borrado fisico lo impide a proposito el registro de aceptaciones
+     * legales, y porque esto se puede deshacer.
+     *
+     * Solo SUPERADMIN, comprobado aqui con los roles vivos del actor (sin actor, 403). Nunca sobre uno mismo ni sobre otro
+     * superadministrador (antes hay que retirarle el rol), y nunca sobre una cuenta con una eliminacion pedida por su
+     * dueno. El motivo es obligatorio y queda en auditoria, que aqui es REQUERIDA: sin fila de auditoria no hay cambio.
+     * La escritura va condicionada al estado leido, asi que dos superadministradores a la vez no se pisan. Idempotente:
+     * pedir el estado que ya tiene no escribe nada.
+     */
+    fun setAccountStatus(usuarioId: String, estado: String, motivo: String, actorId: String?): AdminAccountStatusResponse {
+        val id = usuarioId.validatedUuid("usuarioId")
+        val target = estado.trim().lowercase()
+        if (target != ACCOUNT_STATUS_ACTIVE && target != ACCOUNT_STATUS_BLOCKED) {
+            throw BackendDomainException("ACCOUNT_STATUS_INVALID", HttpStatusCode.UnprocessableEntity, "El estado debe ser activa o bloqueada.")
+        }
+        val reason = motivo.trim()
+        if (reason.isEmpty() || reason.length > ACCOUNT_STATUS_REASON_MAX) {
+            throw BackendDomainException(
+                "ACCOUNT_STATUS_REASON_REQUIRED",
+                HttpStatusCode.UnprocessableEntity,
+                "El motivo es obligatorio y no puede superar $ACCOUNT_STATUS_REASON_MAX caracteres.",
+            )
+        }
+        val actor = actorId ?: throw CanonicalErrorCode.SUPERADMIN_REQUIRED.exception()
+        val codeById = listRoles().associate { it.id to it.code.trim().lowercase() }
+        if (!CanonicalAuthorization.hasSuperAdmin(roleIdsOf(actor).mapNotNull(codeById::get))) {
+            throw CanonicalErrorCode.SUPERADMIN_REQUIRED.exception()
+        }
+        if (actor.equals(id, ignoreCase = true)) {
+            throw BackendDomainException("ACCOUNT_STATUS_SELF", HttpStatusCode.Conflict, "No puedes cambiar el estado de tu propia cuenta.")
+        }
+        if (CanonicalAuthorization.hasSuperAdmin(roleIdsOf(id).mapNotNull(codeById::get))) {
+            throw BackendDomainException(
+                "ACCOUNT_STATUS_TARGET_SUPERADMIN",
+                HttpStatusCode.Conflict,
+                "Es una cuenta de superadministrador. Retírale ese rol antes de cambiar su estado.",
+            )
+        }
+        val current = request("GET", "/rest/v1/perfiles_usuario?select=usuario_id,estado_cuenta&usuario_id=eq.$id&limit=1", null)
+            .decodeList<EstadoCuentaRow>()
+            .firstOrNull()
+            ?: throw BackendDomainException("USER_NOT_FOUND", HttpStatusCode.NotFound, "El usuario no existe.")
+        val before = current.estadoCuenta.orEmpty()
+        if (before == ACCOUNT_STATUS_DELETION_PENDING) {
+            throw BackendDomainException(
+                "ACCOUNT_DELETION_PENDING",
+                HttpStatusCode.Conflict,
+                "Esta cuenta tiene una eliminación solicitada por su dueño y no se puede cambiar desde aquí.",
+            )
+        }
+        if (before == target) return AdminAccountStatusResponse(usuarioId = id, estado = target, cambiado = false)
+        val action = if (target == ACCOUNT_STATUS_BLOCKED) "cuenta_dada_de_baja" else "cuenta_reactivada"
+        // La intencion se audita ANTES y es requerida: si no se puede dejar constancia, no se toca la cuenta.
+        registrarAuditoria(
+            action,
+            "perfiles_usuario",
+            id,
+            antes = buildJsonObject { put("estado_cuenta", JsonPrimitive(before)) },
+            despues = buildJsonObject {
+                put("estado_cuenta", JsonPrimitive(target))
+                put("motivo", JsonPrimitive(reason))
+            },
+            required = true,
+        )
+        val changed = request(
+            "PATCH",
+            "/rest/v1/perfiles_usuario?usuario_id=eq.$id&estado_cuenta=eq.${before.urlEncode()}",
+            sbJson.encodeToString(EstadoCuentaPatch(target)),
+            prefer = "return=representation",
+        ).decodeList<EstadoCuentaRow>()
+        if (changed.isEmpty()) {
+            throw BackendDomainException("VERSION_CONFLICT", HttpStatusCode.Conflict, "El estado de la cuenta cambió mientras tanto. Vuelve a abrir la ficha.")
+        }
+        return AdminAccountStatusResponse(usuarioId = id, estado = target, cambiado = true)
     }
 
     /**

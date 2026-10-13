@@ -72,7 +72,7 @@ private enum class AccountFilter(val label: String) {
  *   con las cuentas que tienen acceso a este mismo panel, porque ambas son filas de
  *   `perfiles_usuario` y sólo las separa el rol.
  * - El tipo de cuenta dice **Registrado/Invitado** y no Activo/Bloqueado. No existe
- *   bloqueo editable desde el panel: el estado de cuenta se muestra en su pastilla. Ver [USER_ACCOUNT_STATUS_READ_ONLY_NOTE].
+ *   bloqueo editable desde el panel: el estado de cuenta se muestra en su pastilla. Ver [USER_ACCOUNT_STATUS_NOTE].
  *
  * El cliente lee todas las páginas del backend (`UsersApi.getUsers`), así que la lista
  * es el censo completo y no lleva aviso de truncamiento.

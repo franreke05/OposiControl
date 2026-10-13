@@ -90,6 +90,15 @@ class KtorModerationRepositoryImpl(
         Unit
     }
 
+    override suspend fun setAccountBlocked(userId: String, blocked: Boolean, reason: String) = adapter.safeCall {
+        val path = BackendRoutes.adminV1UsuarioEstadoCuenta(userId)
+        client.post(url(path)) {
+            backendHeaders(); contentType(ContentType.Application.Json)
+            setBody(AccountStatusBody(estado = if (blocked) "bloqueada" else "activa", motivo = reason))
+        }.requireSuccess(path)
+        Unit
+    }
+
     private fun url(path: String) = BackendRoutes.url(appConfig.baseUrl, path)
 
     private suspend fun HttpResponse.requireSuccess(endpoint: String) {
@@ -157,3 +166,6 @@ private fun ContentPreviewV1Dto.toDomain() = ForumReportContentPreview(
     threadTitle = threadTitle,
     currentState = currentState,
 )
+
+@kotlinx.serialization.Serializable
+private data class AccountStatusBody(val estado: String, val motivo: String)

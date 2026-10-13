@@ -150,7 +150,7 @@ internal fun UserBasicInfoCard(
                     color = tokens.textSecondary,
                 )
                 Text(
-                    text = USER_ACCOUNT_STATUS_READ_ONLY_NOTE,
+                    text = USER_ACCOUNT_STATUS_NOTE,
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.textSecondary,
                 )
@@ -295,7 +295,16 @@ internal fun UserActionsCard(
                     enabled = user != null,
                     icon = { AppIconImage(AppIcon.WARNING, size = 14.dp) },
                 )
+                accountStatusActionLabel(state.selectedAccountStatus)?.let { label ->
+                    SecondaryButton(
+                        text = label,
+                        onClick = { onIntent(UsersIntent.OpenAccountStatusDialog) },
+                        size = ButtonSize.COMPACT,
+                        icon = { AppIconImage(AppIcon.BLOCKED, size = 14.dp) },
+                    )
+                }
             }
+            Text(text = USER_ACCOUNT_STATUS_NOTE, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
             // La advertencia no llega al usuario: sólo deja rastro en auditoría. Se dice
             // junto al botón, no en una nota al pie.
             userCapability("Advertir")?.let { capability ->

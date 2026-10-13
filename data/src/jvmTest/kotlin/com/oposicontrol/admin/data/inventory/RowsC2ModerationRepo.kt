@@ -20,4 +20,5 @@ internal val ROWS_C2_MODERATION_REPO: List<CallRow> = listOf(
     CallRow(FILE, "resolveReport", post("$R/{}/resolver")) { repo().resolveReport("ID0", "descartar", null, 0) },
     CallRow(FILE, "grantTickets", post("/api/v1/admin/usuarios/{}/tickets")) { repo().grantTickets("ID0", 1, "m", "k") },
     CallRow(FILE, "warnUser", post("/api/v1/admin/moderacion/actions")) { repo().warnUser("ID0", "m") },
+    CallRow(FILE, "setAccountBlocked", post("/api/v1/admin/usuarios/{}/estado-cuenta")) { repo().setAccountBlocked("ID0", true, "m") },
 )

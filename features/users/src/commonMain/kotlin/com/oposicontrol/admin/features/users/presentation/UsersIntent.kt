@@ -51,5 +51,11 @@ sealed interface UsersIntent {
     data class UpdateWarningInput(val value: String) : UsersIntent
     data object ConfirmWarning : UsersIntent
 
+    /** Dar de baja o reactivar la cuenta abierta: pide el motivo en un diálogo y sólo escribe al confirmar. */
+    data object OpenAccountStatusDialog : UsersIntent
+    data object DismissAccountStatusDialog : UsersIntent
+    data class UpdateAccountStatusReason(val value: String) : UsersIntent
+    data object ConfirmAccountStatus : UsersIntent
+
     data class UpdateSearch(val value: String) : UsersIntent
 }

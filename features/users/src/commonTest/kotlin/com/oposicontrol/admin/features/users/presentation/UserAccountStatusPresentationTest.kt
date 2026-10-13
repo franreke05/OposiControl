@@ -39,11 +39,13 @@ class UserAccountStatusPresentationTest {
     }
 
     @Test
-    fun theCapabilityMatrixNoLongerClaimsThatBlockingDoesNotExist() {
-        val capability = userCapability("Bloquear o desbloquear")!!
-        assertFalse(capability.note.contains("No existe bloqueo", ignoreCase = true))
-        assertTrue(capability.note.contains("estado de la cuenta", ignoreCase = true))
-        assertEquals(UserCapabilityLevel.NOT_FOUND, capability.level, "cambiar el estado sigue sin estar disponible en el panel")
-        assertFalse(USER_ACCOUNT_STATUS_READ_ONLY_NOTE.contains("No existe bloqueo", ignoreCase = true))
+    fun theCapabilityMatrixSaysWhatSuspendingDoesAndWhoCanDoIt() {
+        val capability = userCapability("Dar de baja o reactivar")!!
+        // Parcial y no «disponible»: sólo la puede usar un superadministrador.
+        assertEquals(UserCapabilityLevel.PARTIAL, capability.level)
+        assertTrue(capability.note.contains("no borra la cuenta", ignoreCase = true))
+        assertTrue(capability.note.contains("superadministradores", ignoreCase = true))
+        // Borrar sigue sin ofrecerse: se dice que la salida es dar de baja.
+        assertEquals(UserCapabilityLevel.BLOCKED, userCapability("Eliminar usuario")!!.level)
     }
 }

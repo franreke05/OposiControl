@@ -34,6 +34,7 @@ object BackendRoutes {
 
     fun adminV1Usuario(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId"
     fun adminV1UsuarioTickets(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId/tickets"
+    fun adminV1UsuarioEstadoCuenta(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId/estado-cuenta"
     fun adminV1Reporte(reporteId: String) = "$ADMIN_V1_REPORTES/$reporteId"
     fun adminV1ReporteResolver(reporteId: String) = "$ADMIN_V1_REPORTES/$reporteId/resolver"
     fun adminV1FeedbackPregunta(feedbackId: String) = "$ADMIN_V1_FEEDBACK_PREGUNTAS/$feedbackId"
