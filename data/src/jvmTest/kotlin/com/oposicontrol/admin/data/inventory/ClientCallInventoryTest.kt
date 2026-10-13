@@ -196,7 +196,7 @@ class ClientCallInventoryTest {
 
     // ------------------------------------------------------------------------- controles negativos (cada regla DISPARA)
 
-    private val auditRow = CLIENT_CALL_ROWS.first { it.name == "getEvents" }
+    private val auditRow = CLIENT_CALL_ROWS.first { it.name == "getMovementDetail" }
 
     @Test
     fun negativeControlUnlistedCallFails() = runTest {
@@ -208,7 +208,7 @@ class ClientCallInventoryTest {
 
     @Test
     fun negativeControlWrongPathFails() = runTest {
-        val wrong = CallRow(auditRow.file, "getEvents", get("/api/v1/admin/roles"), body = auditRow.body)
+        val wrong = CallRow(auditRow.file, "getMovementDetail", get("/api/v1/admin/roles"), body = auditRow.body)
         val v = rowViolations(wrong, wrong.record(), served)
         assertTrue(v.any { "the row declares" in it }, v.toString())
     }
@@ -216,7 +216,7 @@ class ClientCallInventoryTest {
     @Test
     fun negativeControlMethodMismatchFails() = runTest {
         // la fila declara POST pero el cliente envia GET
-        val wrong = CallRow(auditRow.file, "getEvents", post("/api/v1/admin/auditoria"), body = auditRow.body)
+        val wrong = CallRow(auditRow.file, "getMovementDetail", post("/api/v1/admin/auditoria"), body = auditRow.body)
         assertTrue(rowViolations(wrong, wrong.record(), served).any { "the row declares" in it })
         // el cliente envia POST a una ruta que solo sirve GET: el metodo no esta en routes.combined aunque la fila lo declare
         val posting = CallRow(auditRow.file, "postAudit", post("/api/v1/admin/auditoria")) { client.post("http://backend.test/api/v1/admin/auditoria") }
@@ -239,7 +239,7 @@ class ClientCallInventoryTest {
         // un metodo nuevo en un fichero ya completo (AuditApi): su funcion tiene un sitio y ninguna fila
         val grown = sites + (auditRow.file to sites.getValue(auditRow.file) + ("getGhosts" to 1))
         val v = completenessViolations(grown, CLIENT_CALL_ROWS)
-        assertTrue(v.any { "AuditApi.kt: 2 HTTP call sites but 1 recorder rows" in it }, v.toString())
+        assertTrue(v.any { "AuditApi.kt: 3 HTTP call sites but 2 recorder rows" in it }, v.toString())
         assertTrue(v.any { "AuditApi.kt#getGhosts: 1 HTTP call sites in this function but 0" in it }, v.toString())
         // un fichero HTTP nuevo, sin filas
         val extra = sites + ("data/src/commonMain/NewApi.kt" to mapOf("f" to 1))

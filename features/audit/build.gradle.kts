@@ -18,5 +18,16 @@ kotlin {
             implementation(libs.koin.core)
             implementation(libs.kotlinx.datetime)
         }
+        commonTest.dependencies {
+            implementation(projects.core.testing)
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
+        }
+        // Test de UI SOLO en jvmTest (banco de pruebas visual), igual que features/exam-access.
+        jvmTest.dependencies {
+            @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
+            implementation(compose.uiTest)
+            implementation(compose.desktop.currentOs)
+        }
     }
 }

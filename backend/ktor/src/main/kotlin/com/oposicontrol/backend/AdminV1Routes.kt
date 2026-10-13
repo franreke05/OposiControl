@@ -1182,9 +1182,30 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 call.respond(AdminFeedbackResponse(withUpstreamIo { gateway.resolverFeedback(id, req) }))
             }
         }
-        get("/auditoria") {
-            val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 100
-            call.respond(AdminAuditoriasResponse(withUpstreamIo { gateway.listAuditoria(limit) }))
+        route("/auditoria") {
+            // OBSOLETA desde 2026-10-15: la sustituye `/auditoria/movimientos`. Se conserva TAL CUAL (misma forma
+            // `{data: [...]}`, sin filtros ni cursor) porque el panel ya instalado la lee asi y el diagnostico de conexion
+            // la sigue sondeando. No se le anaden parametros: dos contratos en una misma URL es peor que dos URLs.
+            get {
+                val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 100
+                call.respond(AdminAuditoriasResponse(withUpstreamIo { gateway.listAuditoria(limit) }))
+            }
+            // Pestana «Auditoria»: filtros y paginacion en servidor (ver `AdminAuditLog.kt`). Los parametros se validan
+            // aqui, antes de `withUpstreamIo`: una peticion mal formada no llega a Supabase.
+            get("/movimientos") {
+                val query = AdminAuditQueries.parse(call.request.queryParameters)
+                val page = withUpstreamIo { gateway.listAuditMovimientos(query) }
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(page)
+            }
+            // La ficha: una fila con su antes y su despues. Se pide aparte para que la lista no cargue con los jsonb.
+            get("/{id}") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                val detail = withUpstreamIo { gateway.getAuditMovimiento(id) }
+                    ?: throw CanonicalErrorCode.NOT_FOUND.exception("El movimiento de auditoria no existe.")
+                call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
+                call.respond(detail)
+            }
         }
         route("/usuarios") {
             get {
@@ -8511,10 +8532,47 @@ class AdminV1Gateway private constructor(
             .decodeList<RolAppRow>()
             .map { AdminV1RoleDto(id = it.id, name = it.nombre, code = it.codigo, description = it.descripcion.orEmpty()) }
 
+    /** OBSOLETA (ver la ruta): la lee el panel ya instalado. La pestana nueva usa [listAuditMovimientos]. */
     fun listAuditoria(limit: Int): List<AdminAuditoriaDto> =
         request("GET", "/rest/v1/auditoria_log?select=*&order=creado_en.desc&limit=$limit", null)
             .decodeList<AuditoriaRow>()
             .map { it.toDto() }
+
+    /**
+     * Una pagina de `auditoria_log`, `creado_en DESC, id DESC`, con los filtros de [query] aplicados por la base.
+     *
+     * Dos consultas por pagina, nunca una por fila: la de los movimientos (columnas explicitas, sin `antes`/`despues`) y
+     * UNA de perfiles para poner nombre a quienes aparecen en ella. Sin perfil no se inventa un nombre: `actorNombre` null.
+     */
+    internal fun listAuditMovimientos(query: AuditLogQuery): CursorPage<AdminAuditMovimientoDto> {
+        val after = KeysetPosition.fromCursorKeys(query.page.after)?.let {
+            val ts = it.timestamp.urlEncode()
+            "&or=(creado_en.lt.$ts,and(creado_en.eq.$ts,id.lt.${it.id}))"
+        }.orEmpty()
+        val rows = request(
+            "GET",
+            "/rest/v1/auditoria_log?select=${AdminAuditQueries.COLUMNS}${query.filter.toPostgrest()}$after" +
+                "&order=creado_en.desc,id.desc&limit=${query.page.fetchLimit}",
+            null,
+        ).decodeList<AuditoriaMovimientoRow>()
+        val cut = query.page.page(rows) { KeysetPosition(it.creadoEn, it.id.lowercase()).toKeys() }
+        val perfiles = perfilesByIds(cut.items.map { it.usuarioId })
+        return CursorPage(
+            items = cut.items.map { row ->
+                row.toMovimientoDto(actorNombre = row.usuarioId?.let { perfiles[it.lowercase()] }?.displayName("")?.takeIf { it.isNotBlank() })
+            },
+            nextCursor = cut.nextCursor,
+        )
+    }
+
+    /** La fila [id] (uuid ya validado en la ruta, y otra vez aqui) con `antes` y `despues`, o null si no existe (404). */
+    internal fun getAuditMovimiento(id: String): AdminAuditMovimientoDetalleDto? {
+        val uuid = id.validatedUuid("id")
+        return request("GET", "/rest/v1/auditoria_log?select=${AdminAuditQueries.DETAIL_COLUMNS}&id=eq.$uuid&limit=1", null)
+            .decodeList<AuditoriaMovimientoRow>()
+            .firstOrNull()
+            ?.toDetalleDto()
+    }
 
     /**
      * RC-01: EL servicio canonico de moderacion, comun a `POST /api/v1/admin/moderacion/actions` y al adaptador legacy
@@ -8634,6 +8692,9 @@ class AdminV1Gateway private constructor(
             entityId = registroId,
             errorType = error::class.simpleName,
         )
+        // El log dice QUE fallo; el contador dice CUANTAS veces, que es lo que se puede vigilar y alertar. Cuenta tambien
+        // las obligatorias (etiqueta `required`), pero la que importa es `required=false`: ahi la accion se hizo sin rastro.
+        recordAuditWriteFailure(required)
         // MASTER5-API-004: una auditoria OBLIGATORIA que no se puede escribir es un fallo del servidor (no se deja operar
         // sin rastro), no un "upstream roto": antes era `IllegalStateException`, que StatusPages publica como 502
         // UPSTREAM_ERROR / 504 UPSTREAM_TIMEOUT, fuera del catalogo congelado de D1-26 (y de D1-25/D1-23). INTERNAL (500)

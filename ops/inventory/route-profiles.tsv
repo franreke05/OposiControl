@@ -54,6 +54,8 @@ GET	/api/v1/admin/analytics/marketing	CONTROL	admin	Admin v1: analytics/marketin
 GET	/api/v1/admin/analytics/producto	CONTROL	admin	Admin v1: analytics/producto	OposiControl
 GET	/api/v1/admin/analytics/retencion	CONTROL	admin	Admin v1: analytics/retencion	OposiControl
 GET	/api/v1/admin/auditoria	CONTROL	admin	Admin v1: auditoria	OposiControl
+GET	/api/v1/admin/auditoria/movimientos	CONTROL	admin	Admin v1: auditoria con filtros y paginacion en servidor (pestana Auditoria)	OposiControl
+GET	/api/v1/admin/auditoria/{}	CONTROL	admin	Admin v1: ficha de un movimiento de auditoria (antes y despues)	OposiControl
 GET	/api/v1/admin/comercial/productos	CONTROL	admin	Admin v1: comercial/productos	OposiControl
 GET	/api/v1/admin/comercial/productos/{}/tarifas	CONTROL	admin	Admin v1: comercial/productos/{}/tarifas	OposiControl
 GET	/api/v1/admin/comunidades-autonomas	CONTROL	admin	Admin v1: comunidades-autonomas	OposiControl

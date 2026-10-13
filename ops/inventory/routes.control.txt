@@ -47,6 +47,8 @@ GET /api/v1/admin/analytics/marketing
 GET /api/v1/admin/analytics/producto
 GET /api/v1/admin/analytics/retencion
 GET /api/v1/admin/auditoria
+GET /api/v1/admin/auditoria/movimientos
+GET /api/v1/admin/auditoria/{}
 GET /api/v1/admin/comercial/productos
 GET /api/v1/admin/comercial/productos/{}/tarifas
 GET /api/v1/admin/comunidades-autonomas

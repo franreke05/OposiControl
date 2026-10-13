@@ -3,6 +3,7 @@ package com.oposicontrol.admin.data.inventory
 import com.oposicontrol.admin.data.remote.api.AuditApi
 import com.oposicontrol.admin.data.remote.api.RolesApi
 import com.oposicontrol.admin.data.repository.KtorTagsRepositoryImpl
+import com.oposicontrol.admin.domain.model.AuditFilter
 import com.oposicontrol.admin.domain.model.Tag
 
 /**
@@ -23,9 +24,16 @@ import com.oposicontrol.admin.domain.model.Tag
  */
 internal val CLIENT_CALL_ROWS: List<CallRow> = listOf(
 
-    // ---- Estilo Api (clase `*Api(client, appConfig, sessionLocalDataSource)`): 2 filas trabajadas ---------------------------
-    CallRow(AUDIT_API, "getEvents", get("/api/v1/admin/auditoria")) {
-        AuditApi(client, appConfig, session).getEvents()
+    // ---- Estilo Api (clase `*Api(client, appConfig, sessionLocalDataSource)`): 3 filas trabajadas ---------------------------
+    // Todos los filtros y el cursor a la vez: la fila tiene que grabar cada `parameter("x"` que la funcion puede enviar.
+    CallRow(AUDIT_API, "getMovements", get("/api/v1/admin/auditoria/movimientos?accion&actor&cursor&desde&hasta&limit")) {
+        AuditApi(client, appConfig, session).getMovements(
+            AuditFilter(action = "cuenta_dada_de_baja", actorId = "actor", from = "2026-10-01T00:00:00Z", until = "2026-10-14T00:00:00Z"),
+            cursor = "c1",
+        )
+    },
+    CallRow(AUDIT_API, "getMovementDetail", get("/api/v1/admin/auditoria/{}")) {
+        AuditApi(client, appConfig, session).getMovementDetail("ID0")
     },
     CallRow(ROLES_API, "getRoles", get("/api/v1/admin/roles")) {
         RolesApi(client, appConfig, session).getRoles()

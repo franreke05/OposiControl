@@ -11,6 +11,7 @@ object BackendRoutes {
     const val ADMIN_V1_IMPORTACIONES_PREGUNTAS_PDF = "/api/v1/admin/importaciones/preguntas/pdf"
     const val ADMIN_V1_FEEDBACK_PREGUNTAS = "/api/v1/admin/feedback/preguntas"
     const val ADMIN_V1_AUDITORIA = "/api/v1/admin/auditoria"
+    const val ADMIN_V1_AUDITORIA_MOVIMIENTOS = "$ADMIN_V1_AUDITORIA/movimientos"
     const val ADMIN_V1_USUARIOS = "/api/v1/admin/usuarios"
     const val ADMIN_V1_ROLES = "/api/v1/admin/roles"
     const val ADMIN_V1_ETIQUETAS = "/api/v1/admin/etiquetas"
@@ -33,6 +34,7 @@ object BackendRoutes {
     fun adminV1ForoHilo(hiloId: String) = "$ADMIN_V1_FORO_HILOS/$hiloId"
     fun adminV1ForoHiloRespuestas(hiloId: String) = "$ADMIN_V1_FORO_HILOS/$hiloId/respuestas"
 
+    fun adminV1AuditoriaMovimiento(movimientoId: String) = "$ADMIN_V1_AUDITORIA/$movimientoId"
     fun adminV1Usuario(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId"
     fun adminV1UsuarioTickets(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId/tickets"
     fun adminV1UsuarioEstadoCuenta(usuarioId: String) = "$ADMIN_V1_USUARIOS/$usuarioId/estado-cuenta"

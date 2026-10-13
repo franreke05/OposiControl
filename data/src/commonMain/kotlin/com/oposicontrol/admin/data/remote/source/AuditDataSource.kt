@@ -1,10 +1,11 @@
 package com.oposicontrol.admin.data.remote.source
 
 import com.oposicontrol.admin.core.common.result.AppResult
-import com.oposicontrol.admin.domain.model.AuditEvent
-import kotlinx.coroutines.flow.Flow
+import com.oposicontrol.admin.domain.model.AuditDetail
+import com.oposicontrol.admin.domain.model.AuditFilter
+import com.oposicontrol.admin.domain.model.AuditPage
 
 interface AuditDataSource {
-    fun observeEvents(): Flow<List<AuditEvent>>
-    suspend fun fetchEvents(): AppResult<List<AuditEvent>>
+    suspend fun fetchMovements(filter: AuditFilter, cursor: String?): AppResult<AuditPage>
+    suspend fun fetchDetail(id: String): AppResult<AuditDetail>
 }

@@ -1,4 +1,4 @@
-# max: 166
+# max: 168
 # REVIEWED EXCEPTIONS REGISTER: routes served by Ktor that the frozen openapi/ does not declare. NOT a spec: no semantics are invented here.
 # The list can only shrink: a row that is no longer routed or is now documented fails RouteInventoryTest; a new undocumented route fails until it is
 # reviewed and added here (and then `# max:` goes up on purpose). Legacy routes are enrolled, never deleted (no published-client telemetry yet).
@@ -45,6 +45,8 @@ GET	/api/v1/admin/analytics/estudio	ADMIN_CONTRACT_GAP	EP-038 -> D3-14	OC	caller
 GET	/api/v1/admin/analytics/marketing	ADMIN_CONTRACT_GAP	EP-039 -> D3-14	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorProductAnalyticsRepositoryImpl.kt:80 [method unverified]
 GET	/api/v1/admin/analytics/producto	ADMIN_CONTRACT_GAP	EP-040 -> D3-14	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorProductAnalyticsRepositoryImpl.kt:75 [method unverified]
 GET	/api/v1/admin/analytics/retencion	ADMIN_CONTRACT_GAP	EP-041 -> D3-14	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorProductAnalyticsRepositoryImpl.kt:77 [method unverified]
+GET	/api/v1/admin/auditoria/movimientos	ADMIN_CONTRACT_GAP	SYS-AUDIT-01	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/AuditApi.kt (getMovements); owner request 2026-10-15 (audit tab: server-side filters and keyset pagination over auditoria_log, explicit columns); no openapi contract yet
+GET	/api/v1/admin/auditoria/{}	ADMIN_CONTRACT_GAP	SYS-AUDIT-02	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/AuditApi.kt (getMovementDetail); owner request 2026-10-15 (audit tab: one row with its before and after, never ip or user_agent); no openapi contract yet
 POST	/api/v1/admin/comercial/productos	ADMIN_CONTRACT_GAP	EP-155 -> D7-18	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt:83 [method unverified]
 GET	/api/v1/admin/comercial/productos/{}/tarifas	ADMIN_CONTRACT_GAP	EP-044 -> D7-17	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending; FA13: successor GET /api/v1/admin/comercial/productos (D7-17, products with their tariffs) is in the spec and routed
 POST	/api/v1/admin/comercial/productos/{}/tarifas	ADMIN_CONTRACT_GAP	EP-156 -> D7-19	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt:63; FA13: successor PUT /api/v1/admin/comercial/productos/{codigo}/tarifas/{periodo}/{fase} (D7-19) is in the spec and routed; this route is unchanged
