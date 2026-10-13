@@ -456,7 +456,7 @@ internal fun promotionFacts(promotion: MarketPromotion?): List<WorkspaceFact> {
 internal val promotionInformationLines: List<String> = listOf(
     "El código se guarda en mayúsculas y no se puede cambiar una vez creada.",
     "Las fechas son días completos en UTC: «desde» empieza a las 00:00 y «hasta» acaba a las 23:59:59.",
-    "Los usos los registra la liquidación de una compra: aquí sólo se consultan.",
+    "Los usos sólo se consultan aquí. Nada los registra todavía: aparecerán cuando la app aplique promociones al comprar.",
 )
 
 /** Separador de miles con punto, sin depender de la plataforma. */

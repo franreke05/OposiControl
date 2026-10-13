@@ -8287,12 +8287,26 @@ class AdminV1Gateway private constructor(
         request("GET", "/rest/v1/paquetes_opositickets?select=*&order=posicion.asc,cantidad_tickets.asc", null)
             .decodeList()
 
+    /**
+     * Cuerpo de un upsert de OposiMarket con los nulos EXPLICITOS de las columnas [nullable].
+     *
+     * `sbJson` omite los nulos y el upsert es `merge-duplicates`: un campo opcional que el administrador vaciaba no
+     * viajaba y la columna conservaba su valor anterior, con un «guardado» que no era verdad (no se podia quitar la
+     * caducidad de una promocion ni el precio de un servicio). Solo se anaden las columnas que la tabla admite a nulo: una
+     * NOT NULL con valor por defecto seguiria omitida, y para esas se usa [defaults].
+     */
+    private inline fun <reified T> marketUpsertBody(row: T, vararg nullable: String, defaults: Map<String, JsonElement> = emptyMap()): String {
+        val encoded = sbJson.encodeToJsonElement(kotlinx.serialization.serializer<T>(), row).jsonObject
+        val cleared = nullable.filterNot { it in encoded }.associateWith { JsonNull }
+        return JsonArray(listOf(JsonObject(encoded + cleared + defaults.filterKeys { it !in encoded }))).toString()
+    }
+
     fun upsertTicketPack(input: AdminTicketPackDto): AdminTicketPackDto {
         val row = input.validated().let { it.copy(id = it.id.ifBlank { UUID.randomUUID().toString() }) }
         val saved = request(
             "POST",
             "/rest/v1/paquetes_opositickets",
-            sbJson.encodeToString(listOf(row)),
+            marketUpsertBody(row, "descripcion"),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<AdminTicketPackDto>().firstOrNull() ?: error("El pack no se pudo guardar.")
         registrarAuditoria("pack_opositickets_guardado", "paquetes_opositickets", row.id)
@@ -8313,7 +8327,7 @@ class AdminV1Gateway private constructor(
         val saved = request(
             "POST",
             "/rest/v1/servicios",
-            sbJson.encodeToString(listOf(row)),
+            marketUpsertBody(row, "descripcion", "precio_tickets", "precio_centimos"),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<AdminServiceDto>().firstOrNull() ?: error("El servicio no se pudo guardar.")
         registrarAuditoria("servicio_market_guardado", "servicios", row.id)
@@ -8372,11 +8386,14 @@ class AdminV1Gateway private constructor(
         val saved = request(
             "POST",
             "/rest/v1/promociones",
-            sbJson.encodeToString(listOf(row)),
+            marketUpsertBody(row, "valido_desde", "valido_hasta"),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<AdminPromotionDto>().firstOrNull() ?: error("La promoción no se pudo guardar.")
         registrarAuditoria("promocion_guardada", "promociones", row.id)
-        return saved
+        // Se devuelve con su recuento de usos, como en el listado: antes volvia sin el y el panel, que sustituye la fila
+        // por la respuesta, dejaba de ensenar los usos hasta refrescar. Si el recuento no se puede leer, sin dato (null).
+        val usos = runCatching { exactCount("/rest/v1/usos_promocion_usuario?select=id&promocion_id=eq.${row.id}") }.getOrNull()
+        return saved.copy(usos = usos)
     }
 
     fun listPopupRules(): List<AdminPopupRuleDto> =
@@ -8400,7 +8417,13 @@ class AdminV1Gateway private constructor(
         val saved = request(
             "POST",
             "/rest/v1/reglas_popup_comercial",
-            sbJson.encodeToString(listOf(row)),
+            marketUpsertBody(
+                row,
+                "cta_principal", "cta_secundario", "momento", "pantalla", "requiere_plan_minimo", "tipo_examen_objetivo",
+                // NOT NULL con valor por defecto 24: vaciarla en una regla inactiva la devuelve a ese valor, en vez de
+                // conservar en silencio la que tenia.
+                defaults = mapOf("frecuencia_minima_horas" to JsonPrimitive(POPUP_DEFAULT_FREQUENCY_HOURS)),
+            ),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<AdminPopupRuleDto>().firstOrNull() ?: error("La regla no se pudo guardar.")
         registrarAuditoria("regla_popup_guardada", "reglas_popup_comercial", row.id)

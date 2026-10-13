@@ -210,8 +210,8 @@ private fun PackForm(draft: PackDraft, isNew: Boolean, base: MarketTicketPack?, 
         }
     }
     ActiveSection(
-        description = "Si el pack se puede comprar.",
-        toggleDescription = "Un pack inactivo no se puede comprar.",
+        description = "Si el pack está en vigor.",
+        toggleDescription = "Un pack inactivo queda guardado pero fuera de uso.",
         active = draft.active,
         onChange = { update(draft.copy(active = it)) },
     )
@@ -632,7 +632,7 @@ private fun PopupForm(draft: PopupDraft, isNew: Boolean, update: (PopupDraft) ->
                 onValueChange = { update(draft.copy(trigger = it)) },
                 placeholder = "Ej. sin_tickets",
                 required = true,
-                supportingText = "El nombre del evento con el que la app pregunta por esta regla.",
+                supportingText = "El nombre del evento por el que la app preguntará por esta regla cuando la consuma.",
             )
             LabeledField(
                 label = "Pantalla",

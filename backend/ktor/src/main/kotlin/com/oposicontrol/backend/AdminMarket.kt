@@ -147,6 +147,15 @@ internal fun AdminPromotionDto.validated(): AdminPromotionDto {
     if (nombre.isBlank()) reject("PROMO_NAME_REQUIRED", "La promoción necesita un nombre.")
     if (tipoDescuento.isBlank()) reject("PROMO_TYPE_REQUIRED", "La promoción necesita un tipo de descuento.")
     if (valor < 0) reject("PROMO_VALUE_NEGATIVE", "El descuento no puede ser negativo.")
+    // El mismo vocabulario que el CHECK de `promociones.tipo_descuento`: sin esto un valor desconocido llegaba a la base
+    // y volvia como un error de upstream en vez de un mensaje que se pueda ensenar en el formulario.
+    if (tipoDescuento.trim() !in PROMOTION_DISCOUNT_TYPES) {
+        reject("PROMO_TYPE_INVALID", "El tipo de descuento debe ser uno de: ${PROMOTION_DISCOUNT_TYPES.joinToString(", ")}.")
+    }
+    // Mas del 100 % no es un descuento: es pagar por llevarselo.
+    if (tipoDescuento.trim() == "porcentaje" && valor > 100) {
+        reject("PROMO_PERCENT_OVER_100", "Un descuento en porcentaje no puede superar el 100 %.")
+    }
     // Una ventana invertida nunca es válida, así que la promoción no se aplicaría
     // jamás: es siempre un error de captura, no una configuración intencionada.
     if (validoDesde != null && validoHasta != null && validoHasta < validoDesde) {
@@ -174,6 +183,10 @@ internal fun AdminPopupRuleDto.validated(): AdminPopupRuleDto {
                 "puede reaparecer en cada disparo.",
         )
     }
+    // El mismo vocabulario que el CHECK de `reglas_popup_comercial.momento`.
+    if (momento != null && momento !in POPUP_MOMENTS) {
+        reject("POPUP_MOMENT_INVALID", "El momento debe ser uno de: ${POPUP_MOMENTS.joinToString(", ")}.")
+    }
     // Vocabulario canónico: el objetivo sólo puede ser un tipo de examen real.
     if (tipoExamenObjetivo != null && tipoExamenObjetivo !in CANONICAL_EXAM_TYPES) {
         reject(
@@ -183,6 +196,15 @@ internal fun AdminPopupRuleDto.validated(): AdminPopupRuleDto {
     }
     return copy(codigo = codigo.trim(), titulo = titulo.trim(), mensaje = mensaje.trim())
 }
+
+/** Los tres valores que admite `promociones_tipo_descuento_check`. */
+internal val PROMOTION_DISCOUNT_TYPES = setOf("porcentaje", "cantidad", "tickets_extra")
+
+/** Los cinco valores que admite `reglas_popup_comercial_momento_check` (o nulo: en cualquier momento). */
+internal val POPUP_MOMENTS = setOf("antes", "durante", "despues", "home", "bloqueo")
+
+/** Valor por defecto de `reglas_popup_comercial.frecuencia_minima_horas` en la base de datos. */
+internal const val POPUP_DEFAULT_FREQUENCY_HOURS = 24
 
 /** Vocabulario canónico de examen. `guiado` es sólo alias legacy y no se acepta. */
 internal val CANONICAL_EXAM_TYPES = setOf("rafaga", "razonado", "inmersivo")
