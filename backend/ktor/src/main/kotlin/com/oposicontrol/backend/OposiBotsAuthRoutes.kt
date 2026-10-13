@@ -33,7 +33,13 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 request.validate(runtime.configuration)
                 // MASTER-SEC-003: el tope por email es SILENCIOSO (misma 202, sin llamar a GoTrue): un tercero que nombra
                 // el email de la victima no puede bloquearla con 429, solo deja de disparar correos.
-                if (!withinSilentSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())) {
+                // B1 (2026-10-13): y si el email tiene una solicitud de acceso de administrador no aprobada, la MISMA 202 sin
+                // llamar a GoTrue (AccessRequestMailGuard.kt): esa cuenta no puede confirmarse sola por esta via.
+                val email = request.resolvedIdentifier().normalizedIdentifier()
+                if (
+                    !withinSilentSubjectLimit(runtime, email) ||
+                    runtime.accessRequestHoldsMail(OposiBotsAuthOperation.REGISTER, email)
+                ) {
                     respond(HttpStatusCode.Accepted, OposiBotsRegisterResponse())
                     return@authEndpoint
                 }
@@ -45,7 +51,12 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 val request = receiveAuthJson<OposiBotsEmailResendRequest>(runtime.json)
                 request.validate(runtime.configuration)
                 // MASTER-SEC-003: tope por email silencioso (misma 204, sin reenviar).
-                if (withinSilentSubjectLimit(runtime, request.email.normalizedIdentifier())) {
+                // B1 (2026-10-13): solicitud de acceso no aprobada -> misma 204, sin reenviar (AccessRequestMailGuard.kt).
+                val email = request.email.normalizedIdentifier()
+                if (
+                    withinSilentSubjectLimit(runtime, email) &&
+                    !runtime.accessRequestHoldsMail(OposiBotsAuthOperation.RESEND, email)
+                ) {
                     runtime.gateway.resend(request, authContext(runtime.configuration))
                 }
                 respond(HttpStatusCode.NoContent)
@@ -116,7 +127,13 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 val request = receiveAuthJson<OposiBotsRecoverRequest>(runtime.json)
                 request.validate(runtime.configuration)
                 // MASTER-SEC-003: tope por email silencioso (misma 204, sin enviar otro correo de recuperacion).
-                if (withinSilentSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())) {
+                // B1 (2026-10-13): solicitud de acceso no aprobada -> misma 204, sin correo de recuperacion (el enlace de
+                // recuperacion tambien confirmaria la cuenta; AccessRequestMailGuard.kt).
+                val email = request.resolvedIdentifier().normalizedIdentifier()
+                if (
+                    withinSilentSubjectLimit(runtime, email) &&
+                    !runtime.accessRequestHoldsMail(OposiBotsAuthOperation.RECOVER, email)
+                ) {
                     runtime.gateway.recover(request, authContext(runtime.configuration))
                 }
                 respond(HttpStatusCode.NoContent)

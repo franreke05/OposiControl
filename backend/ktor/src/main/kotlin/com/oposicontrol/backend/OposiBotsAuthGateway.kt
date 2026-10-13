@@ -106,7 +106,7 @@ internal class SupabaseOposiBotsAuthGateway(
         context: OposiBotsAuthContext,
     ): OposiBotsRegisterResponse {
         val body = credentialBody(request.resolvedIdentifier(), request.password, request.captchaToken)
-        val response = authRequest(HttpMethod.Post, "/auth/v1/signup", body, context = context)
+        val response = authRequest(HttpMethod.Post, "/auth/v1/signup${emailConfirmRedirectQuery()}", body, context = context)
         // Enumeration-safe (D1-01): con autoconfirm GoTrue contesta 422 user_already_exists en vez del 200 ofuscado;
         // un duplicado se contesta igual que un alta nueva (202) y nunca revela que el email existe.
         // MASTER4-API-003: tambien con 400 (antes solo 422): tras quitar el 401 generico, un duplicado con 400 ya no puede
@@ -121,7 +121,7 @@ internal class SupabaseOposiBotsAuthGateway(
     override suspend fun resend(request: OposiBotsEmailResendRequest, context: OposiBotsAuthContext) {
         val response = authRequest(
             HttpMethod.Post,
-            "/auth/v1/resend",
+            "/auth/v1/resend${emailConfirmRedirectQuery()}",
             buildJsonObject {
                 put("type", "signup")
                 put("email", request.email.trim())
@@ -134,8 +134,38 @@ internal class SupabaseOposiBotsAuthGateway(
         if (response.status == HttpStatusCode.TooManyRequests) {
             GatewayLogger.warn("auth email throttled by upstream (indistinguishable 204 returned)")
         }
+        logMailRejectedByUpstream("resend", response, request.email, context)
         if (response.status.value >= 500) throw OposiBotsAuthProblem.unavailable()
         // All other outcomes are intentionally indistinguishable.
+    }
+
+    /**
+     * B2 (2026-10-13): `?redirect_to=` del correo de confirmacion (signup y resend), igual que [recover] con el suyo. Sin
+     * `OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL` devuelve vacio y la peticion es identica a la de siempre.
+     */
+    private fun emailConfirmRedirectQuery(): String =
+        configuration.emailConfirmRedirectUrl
+            ?.let { "?redirect_to=${it.urlEncode()}" }
+            .orEmpty()
+
+    /**
+     * B4 (2026-10-13): en resend y recover todo lo que no es 5xx sale como 204 (a proposito: no revela que correos
+     * existen). Un 4xx de GoTrue distinto de 429 (captcha rechazado, `redirect_to` no permitido, correo invalido, proveedor
+     * de correo mal configurado...) significaba «no ha salido ningun correo» sin dejar rastro. La respuesta al cliente NO
+     * cambia; queda un WARN con el estado y el `error_code`. Del correo solo su referencia ([adminAccessEmailRef], prefijo
+     * de su SHA-256), nunca el valor, y nunca el `msg` de GoTrue (puede reflejarlo).
+     */
+    private fun logMailRejectedByUpstream(operation: String, response: AuthResponse, email: String, context: OposiBotsAuthContext) {
+        val status = response.status.value
+        if (status !in 400..499 || response.status == HttpStatusCode.TooManyRequests) return
+        GatewayLogger.warn(
+            "auth email {} rejected by upstream status={} error_code={} emailRef={} requestId={} (indistinguishable 204 returned)",
+            operation,
+            status,
+            response.error().normalizedCode.filter { it.isLetterOrDigit() || it == '_' }.take(64).ifEmpty { "-" },
+            adminAccessEmailRef(email),
+            context.requestId,
+        )
     }
 
     override suspend fun exchangeEmail(
@@ -229,6 +259,7 @@ internal class SupabaseOposiBotsAuthGateway(
         if (response.status == HttpStatusCode.TooManyRequests) {
             GatewayLogger.warn("auth email throttled by upstream (indistinguishable 204 returned)")
         }
+        logMailRejectedByUpstream("recover", response, request.resolvedIdentifier(), context)
         if (response.status.value >= 500) throw OposiBotsAuthProblem.unavailable()
     }
 

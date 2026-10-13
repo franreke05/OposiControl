@@ -17,6 +17,11 @@ internal data class OposiBotsAuthConfiguration(
     val rateLimitMode: String,
     val rateLimitHmacSecret: String,
     val valkeyUrl: String?,
+    /**
+     * B2 (2026-10-13): `redirect_to` del correo de CONFIRMACION (signup y resend), como [passwordRecoveryRedirectUrl] lo es
+     * del de recuperacion. `null` (variable ausente o vacia) = no se envia `redirect_to`, el comportamiento de siempre.
+     */
+    val emailConfirmRedirectUrl: String? = null,
 ) {
     val development: Boolean
         get() = AppEnvironment.isDevelopment(appEnvironment)
@@ -81,6 +86,7 @@ internal data class OposiBotsAuthConfiguration(
                 rateLimitMode = rateLimitMode,
                 rateLimitHmacSecret = hmacSecret,
                 valkeyUrl = optionalEnvironment("VALKEY_URL"),
+                emailConfirmRedirectUrl = optionalEnvironment("OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL"),
             )
             configuration.requireDeployable()
             return configuration
@@ -128,6 +134,12 @@ internal class OposiBotsAuthRuntime(
     val json: Json,
     /** SLICE 1: perfil canonico, borrado de cuenta y adaptadores legacy. Obligatorio (MASTER-ARCH-005): sin costura nula. */
     val canonical: CanonicalProfileRuntime,
+    /**
+     * B1 (2026-10-13): retiene el correo de register/resend/recover si el email tiene una solicitud de acceso de
+     * administrador no aprobada (AccessRequestMailGuard.kt). El valor por defecto NO bloquea y existe solo para las pruebas
+     * que montan el runtime a mano; [fromEnvironment] cablea siempre la guarda real.
+     */
+    val accessRequestMailGuard: AccessRequestMailGuard = AccessRequestMailGuard.NoAccessRequests,
 ) : AutoCloseable {
     /**
      * MASTER-ARCH-008: cierre ordenado (cliente Valkey del limitador y `HttpClient` del gateway) al parar la
@@ -159,7 +171,14 @@ internal class OposiBotsAuthRuntime(
                     verifier = jwtVerifier ?: SupabaseJwtVerifier(configuration.supabaseUrl, json),
                     json = json,
                 ),
+                accessRequestMailGuard = accessRequestMailGuard(configuration),
             )
+        }
+
+        /** La guarda real: misma URL y misma clave de servicio que el resto del runtime de auth. */
+        internal fun accessRequestMailGuard(configuration: OposiBotsAuthConfiguration): AccessRequestMailGuard {
+            val transport = SupabaseRequestTransport(configuration.supabaseUrl, SupabaseRequestAuthPolicy(configuration.secretKey))
+            return PostgrestAccessRequestMailGuard(upstream = { path -> transport.get(path) })
         }
 
         /**
