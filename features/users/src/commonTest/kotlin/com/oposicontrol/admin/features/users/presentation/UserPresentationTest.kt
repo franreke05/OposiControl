@@ -130,13 +130,13 @@ class UserPresentationTest {
     }
 
     @Test
-    fun advertirEsParcialPorqueNoLlegaAlUsuario() {
-        // El backend sólo escribe una fila de auditoría.
+    fun advertirEsParcialPorqueOposiBotAunNoLoEnsena() {
+        // El backend escribe la auditoría y guarda el aviso; lo que falta es que la app se lo enseñe al usuario.
         val advertir = userCapability("Advertir")
 
         assertNotNull(advertir)
         assertEquals(UserCapabilityLevel.PARTIAL, advertir.level)
-        assertTrue(advertir.note.contains("no envía", ignoreCase = true))
+        assertTrue(advertir.note.contains("todavía no se lo enseña", ignoreCase = true))
     }
 
     @Test

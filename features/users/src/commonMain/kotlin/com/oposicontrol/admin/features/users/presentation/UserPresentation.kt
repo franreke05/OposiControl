@@ -299,7 +299,7 @@ private val USER_CAPABILITIES: List<UserCapability> = listOf(
     UserCapability(
         name = "Advertir",
         level = UserCapabilityLevel.PARTIAL,
-        note = "Deja constancia en el registro de auditoría, pero no envía ningún aviso al usuario.",
+        note = "Queda en auditoría y guardada como aviso para el usuario. OposiBot todavía no se lo enseña: lo hará cuando lea sus avisos.",
     ),
     UserCapability(
         name = "Cambiar el nombre de usuario",

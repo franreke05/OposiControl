@@ -54,6 +54,7 @@ class ModerationCanonicalWriteTest {
     private class Stub {
         val sent = CopyOnWriteArrayList<HttpRequest>()
         val legacySent = CopyOnWriteArrayList<String>()
+        var noticeStatus = 201
     }
 
     private fun Application.module(stub: Stub) {
@@ -66,7 +67,11 @@ class ModerationCanonicalWriteTest {
             serviceRoleKey = "stub-key",
             json = Json { ignoreUnknownKeys = true },
             client = V1StubHttpClient({ stub.sent += it }) { uri ->
-                if ("/rest/v1/auditoria_log" in uri) V1StubResponse(201, "") else V1StubResponse(200, "[]")
+                when {
+                    "/rest/v1/auditoria_log" in uri -> V1StubResponse(201, "")
+                    "/rest/v1/avisos_usuario" in uri -> V1StubResponse(stub.noticeStatus, "")
+                    else -> V1StubResponse(200, "[]")
+                }
             },
         )
         // El gateway legacy contestaria con una fila de `public.usuario` cuyo nombre es el executor falsificado: si el
@@ -118,6 +123,35 @@ class ModerationCanonicalWriteTest {
         assertEquals(actor, row.str("usuario_id"), "actor = sub del JWT")
         assertEquals(target, row.str("registro_id"), "objetivo = uuid validado")
         assertEquals("advertencia_usuario", row.str("accion"))
+    }
+
+    @Test
+    fun aWarningIsAlsoStoredAsANoticeForTheUserAfterTheAuditRow() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+
+        val response = post("/api/v1/admin/moderacion/actions", actor, ocClientBody(target, reason = "  Respeta las normas del foro.  "))
+
+        assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
+        val uris = stub.sent.map { it.uri().toString() }
+        val notice = stub.sent.single { "/rest/v1/avisos_usuario" in it.uri().toString() }
+        val row = Json.parseToJsonElement(readRequestBody(notice)).jsonArray.single().jsonObject
+        assertEquals(target, row.str("usuario_id"))
+        assertEquals("advertencia", row.str("tipo"))
+        assertEquals("Respeta las normas del foro.", row.str("mensaje"), "es lo que leera el usuario: sin espacios sobrantes")
+        assertEquals(actor, row.str("creado_por"))
+        assertTrue(uris.indexOfFirst { "auditoria_log" in it } < uris.indexOfFirst { "avisos_usuario" in it }, "primero la auditoria")
+    }
+
+    @Test
+    fun ifTheNoticeCannotBeStoredTheAdminIsToldInsteadOfSeeingItAsDone() = testApplication {
+        val stub = Stub()
+        stub.noticeStatus = 500
+        application { module(stub) }
+
+        val response = post("/api/v1/admin/moderacion/actions", actor, ocClientBody(target))
+
+        assertTrue(response.status.value >= 500, "sin aviso guardado no hay 201: al usuario no le llegaria")
     }
 
     @Test
@@ -203,6 +237,7 @@ class ModerationCanonicalWriteTest {
         }
         assertTrue(stub.sent.isEmpty(), "un actor cambiado no escribe nada")
         runBlocking { withContext(AdminAuditActor.contextElement(actor)) { gateway.applyModerationAction(actor, command) } }
-        assertEquals(1, stub.sent.size)
+        // La fila de auditoria y, desde 2026-10-14, el aviso que se le deja al usuario.
+        assertEquals(2, stub.sent.size)
     }
 }

@@ -356,7 +356,7 @@ private fun WarningDialog(
                 GlassTextField(
                     value = input,
                     onValueChange = onInputChange,
-                    placeholder = "Motivo de la advertencia",
+                    placeholder = "Texto de la advertencia (es lo que leerá el usuario)",
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = false,
                     minLines = 3,

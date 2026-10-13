@@ -3868,6 +3868,17 @@ private data class ContenidoDesbloqueadoRow(
     @SerialName("creado_en") val creadoEn: String? = null,
 )
 
+/** Tope del texto de un aviso: el mismo que el CHECK de `avisos_usuario.mensaje`. */
+internal const val USER_NOTICE_MESSAGE_MAX = 2000
+
+@Serializable
+private data class AvisoUsuarioInsertRow(
+    @SerialName("usuario_id") val usuarioId: String,
+    val tipo: String,
+    val mensaje: String,
+    @SerialName("creado_por") val creadoPor: String,
+)
+
 internal const val ACCOUNT_STATUS_ACTIVE = "activa"
 internal const val ACCOUNT_STATUS_BLOCKED = "bloqueada"
 internal const val ACCOUNT_STATUS_DELETION_PENDING = "eliminacion_pendiente"
@@ -8424,6 +8435,19 @@ class AdminV1Gateway private constructor(
             // MASTER7-API-007: la advertencia ES la fila de auditoria; si no se escribe no hay 201.
             required = true,
         )
+        // Desde 2026-10-14 la advertencia tambien se le deja al usuario: una fila en `avisos_usuario` que OposiBot le
+        // ensenara (la lectura desde la app es de la fase de backend de OposiBot). Sin texto no hay nada que ensenarle.
+        // Va DESPUES de la auditoria y sin tragarse el fallo: si el aviso no se pudo guardar, quien advierte tiene que
+        // saber que al usuario NO le va a llegar, en vez de ver un «hecho» que no es verdad.
+        val message = command.reason.trim()
+        if (command.actionType == "advertencia" && message.isNotEmpty()) {
+            request(
+                "POST",
+                "/rest/v1/avisos_usuario",
+                sbJson.encodeToString(listOf(AvisoUsuarioInsertRow(command.targetUserId, "advertencia", message.take(USER_NOTICE_MESSAGE_MAX), actor))),
+                prefer = "return=minimal",
+            )
+        }
     }
 
     /**

@@ -305,7 +305,7 @@ internal fun UserActionsCard(
                 }
             }
             Text(text = USER_ACCOUNT_STATUS_NOTE, style = MaterialTheme.typography.bodySmall, color = tokens.textSecondary)
-            // La advertencia no llega al usuario: sólo deja rastro en auditoría. Se dice
+            // La advertencia queda en auditoría y como aviso para el usuario; OposiBot aún no se lo enseña. Se dice
             // junto al botón, no en una nota al pie.
             userCapability("Advertir")?.let { capability ->
                 Text(
