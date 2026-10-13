@@ -200,7 +200,7 @@ components:
         x-pagination: CURSOR
         x-idempotency: NONE
         x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND]
-        description: 'Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. No solutions.'
+        description: 'Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. No solutions, explanations or resources: the only correction carried is the one of the user own answer (respuesta.esCorrecta, respuesta.opcionCorrectaId; DEC-015), for an open and for a finished attempt alike.'
         security:
           - bearerAuth: []
         parameters:
@@ -242,7 +242,7 @@ components:
         x-pagination: NONE
         x-idempotency: REQUIRED
         x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_IN_PROGRESS, ATTEMPT_EXPIRED, ANSWER_LOCKED, REVISION_CONFLICT, IDEMPOTENCY_KEY_IN_PROGRESS, QUESTION_NOT_IN_ATTEMPT, OPTION_NOT_IN_QUESTION, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
-        description: 'A replay returns the stored body with Idempotent-Replayed true. The same option with a new key is a no-op; a different option takes the revision path or 409 REVISION_CONFLICT (details.currentRevision). primera_* are immutable, final_* mutable. Via record_answer plus trigger.'
+        description: 'A replay returns the stored body with Idempotent-Replayed true. The same option with a new key is a no-op; a different option takes the revision path or 409 REVISION_CONFLICT (details.currentRevision). primera_* are immutable, final_* mutable. Via record_answer plus trigger. DEC-015 (decided 2026-10-13): answering reveals esCorrecta and opcionCorrectaId in the response, for the three exam types; a given answer stays locked (409 ANSWER_LOCKED); a skip reveals nothing and can still be answered once later.'
         security:
           - bearerAuth: []
         parameters:
@@ -527,7 +527,7 @@ components:
           minimum: 0
         estado:
           type: string
-          description: 'correcta or incorrecta before finish only if DEC-015 allows it; otherwise respondida.'
+          description: 'DEC-015 (decided 2026-10-13): an answered question is correcta or incorrecta as soon as it is answered, also before finish, for the three exam types. A skipped or untouched question is sin_responder; anulada wins over any answer. respondida only when the correction of an answered question is not available.'
           enum: [sin_responder, respondida, correcta, incorrecta, anulada]
     AttemptView:
       type: object
@@ -635,6 +635,13 @@ components:
               minimum: 0
             respondidaEn:
               $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+            esCorrecta:
+              type: [boolean, 'null']
+              description: 'DEC-015: whether the selected option is correct. Present only when opcionId is not null and the question is not annulled; null or absent for a skip.'
+            opcionCorrectaId:
+              type: [string, 'null']
+              format: uuid
+              description: 'DEC-015: the correct option, under the same condition as esCorrecta. May be null while esCorrecta is present.'
     AnswerRequest:
       type: object
       x-entity: pregunta
@@ -667,11 +674,11 @@ components:
           enum: [ANSWERED, SKIPPED, ANNULLED]
         esCorrecta:
           type: [boolean, 'null']
-          description: 'null unless DEC-015 reveals before finish.'
+          description: 'DEC-015 (decided 2026-10-13): revealed when the question is answered (estado ANSWERED), for the three exam types, also when the same option is sent again with a new key. null or absent for SKIPPED and ANNULLED.'
         opcionCorrectaId:
           type: [string, 'null']
           format: uuid
-          description: 'null unless DEC-015 reveals before finish.'
+          description: 'DEC-015: the correct option, revealed together with esCorrecta. null or absent for SKIPPED and ANNULLED; may be null while esCorrecta is present.'
         esPrimeraRespuesta:
           type: boolean
         respondidas:

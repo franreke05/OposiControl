@@ -18,9 +18,13 @@ import java.time.OffsetDateTime
 // Cable: `openapi/attempts/attempts.yaml` (CONGELADO). Decisiones de producto ABIERTAS -> default tecnico documentado
 // y campos de solo-valor a `null` (nunca una regla inventada):
 //   DEC-013  nota = correctas / evaluables * 10, redondeo half-up a 2 decimales; las anuladas no son evaluables.
-//   DEC-015  nada se revela antes de finalizar: `esCorrecta` / `opcionCorrectaId` de D2-09 son `null`, el grid de D2-07
-//            dice `respondida` (nunca correcta/incorrecta) y `correctas` / `falladas` son `null` con el intento abierto.
-//            Una respuesta ya dada NO se cambia (409 ANSWER_LOCKED); una pregunta saltada si se puede responder.
+//   DEC-015  DECIDIDA (dueno, 2026-10-13): la correccion se revela AL RESPONDER, en los tres tipos de examen
+//            ([revealsOnAnswer]). D2-09 devuelve `esCorrecta` / `opcionCorrectaId`; al releer el intento (reanudar) el grid
+//            de D2-07 dice `correcta` / `incorrecta` y la `respuesta` de D2-08 lleva los dos campos. Sale SOLO de la fila
+//            propia del usuario en `respuestas_intento`; `soluciones_pregunta` sigue sin leerse con el intento abierto
+//            (SEC-004). Un salto no revela nada y se puede responder una vez despues; una anulada no revela nada.
+//            `correctas` / `falladas` del intento siguen `null` hasta finalizar. Una respuesta ya dada NO se cambia
+//            (409 ANSWER_LOCKED).
 //   DEC-014  sin pausa. Sin limite de tiempo: `deadline` = null y `motivoFin` siempre USER (TIMEOUT / ATTEMPT_EXPIRED no
 //            se emiten: si la duracion del examen corta el intento es una pregunta abierta del motor).
 //   DEC-004/016/019  `comparativa`, `probabilidadPlaza`, `pctAciertoGlobal` = null.
@@ -91,7 +95,14 @@ internal data class AttemptStartResponse(val intento: AttemptDto, val reanudado:
 internal data class QuestionOptionDto(val id: String, val letra: String, val texto: String)
 
 @Serializable
-internal data class AttemptQuestionAnswer(val opcionId: String? = null, val revision: Int, val respondidaEn: String)
+internal data class AttemptQuestionAnswer(
+    val opcionId: String? = null,
+    val revision: Int,
+    val respondidaEn: String,
+    /** DEC-015: solo con opcion marcada y pregunta no anulada; ausentes en un salto. */
+    val esCorrecta: Boolean? = null,
+    val opcionCorrectaId: String? = null,
+)
 
 @Serializable
 internal data class AttemptQuestionDto(
@@ -112,8 +123,9 @@ internal data class AttemptQuestionPage(val items: List<AttemptQuestionDto>, val
 internal data class AnswerResult(
     val revision: Int,
     val estado: String,
-    /** DEC-015 abierta: siempre `null` (no se revela antes de finalizar). */
+    /** DEC-015: la correccion de la respuesta recien dada (`estado` ANSWERED). `null` en un salto y en una anulada. */
     val esCorrecta: Boolean? = null,
+    /** Puede faltar con `esCorrecta` presente (la opcion correcta copiada en la fila es `ON DELETE SET NULL`). */
     val opcionCorrectaId: String? = null,
     val esPrimeraRespuesta: Boolean,
     val respondidas: Int,
@@ -297,13 +309,14 @@ internal class AttemptService(
         val finished = row.estado == FINISHED
         val answers = gateway.answers(row.id, graded = finished)
         val annulled = if (finished) emptySet() else row.examenId?.let(gateway::annulledNow).orEmpty()
+        val reveals = !finished && revealsOnAnswer(row.kind())
         val grid = frozen.map { question ->
             val answer = answers[question.preguntaId]
             AttemptGridItem(
                 posicion = question.posicion,
                 preguntaId = question.preguntaId,
                 revision = answer?.revision ?: 0,
-                estado = if (finished) gridStateFinished(question.estadoFinal, answer) else gridStateOpen(question.preguntaId in annulled, answer),
+                estado = if (finished) gridStateFinished(question.estadoFinal, answer) else gridStateOpen(question.preguntaId in annulled, answer, reveals),
             )
         }
         val unanswered = if (finished) null else grid.count { it.estado == GRID_UNANSWERED }
@@ -315,7 +328,9 @@ internal class AttemptService(
         val row = ownedAttempt(userId, attemptId)
         val rows = gateway.questionPage(row.id, positionAfter(page.after), page.fetchLimit)
         val cut = page.page(rows) { listOf(JsonPrimitive(it.posicion)) }
-        // D2-08 nunca lleva correccion, tampoco con el intento finalizado (eso es D2-12 / D2-65).
+        // DEC-015: la correccion de lo YA respondido, igual con el intento abierto que finalizado, y solo de la fila propia.
+        // Sin soluciones, explicaciones ni recursos (eso es D2-12 / D2-65).
+        val reveals = row.estado == FINISHED || revealsOnAnswer(row.kind())
         val answers = gateway.answers(row.id, graded = false, questionIds = cut.items.map { it.preguntaId })
         // Con el intento finalizado manda el estado congelado; abierto, la anulacion vigente del examen.
         val annulled = if (row.estado == FINISHED || cut.items.isEmpty()) emptySet() else row.examenId?.let(gateway::annulledNow).orEmpty()
@@ -323,19 +338,23 @@ internal class AttemptService(
             items = cut.items.map { question ->
                 val content = question.preguntas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
                 val answer = answers[question.preguntaId]
+                val isAnnulled = question.estadoFinal == STATUS_ANNULLED || question.preguntaId in annulled
                 AttemptQuestionDto(
                     posicion = question.posicion,
                     preguntaId = question.preguntaId,
                     codigoPregunta = content.codigoPregunta.orContractError(),
                     tipoPregunta = questionType(content.tipoPregunta),
                     titulo = content.titulo.orContractError(),
-                    anulada = question.estadoFinal == STATUS_ANNULLED || question.preguntaId in annulled,
+                    anulada = isAnnulled,
                     opciones = options(content),
                     respuesta = answer?.let {
+                        val revealed = it.takeIf { _ -> reveals && !isAnnulled && it.opcionSeleccionadaId != null }
                         AttemptQuestionAnswer(
                             opcionId = it.opcionSeleccionadaId,
                             revision = it.revision,
                             respondidaEn = instant(it.respondidaEn ?: it.creadaEn),
+                            esCorrecta = revealed?.esCorrecta,
+                            opcionCorrectaId = revealed?.opcionCorrectaId,
                         )
                     },
                 )
@@ -362,14 +381,23 @@ internal class AttemptService(
             confidence = request.nivelConfianza,
         )
         when (outcome.outcome) {
-            "OK" -> AnswerResult(
-                revision = outcome.revision ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
-                estado = outcome.estado?.takeIf { it in ANSWER_STATES } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
-                esCorrecta = null,
-                opcionCorrectaId = null,
-                esPrimeraRespuesta = outcome.esPrimeraRespuesta ?: false,
-                respondidas = outcome.respondidas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
-            )
+            "OK" -> {
+                val revision = outcome.revision ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+                val estado = outcome.estado?.takeIf { it in ANSWER_STATES } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+                val respondidas = outcome.respondidas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+                // DEC-015: solo una respuesta (primera vez o la misma opcion reenviada, que la RPC devuelve como no-op) revela;
+                // un salto y una anulada, nada. Si esta lectura falla, falla la llamada: el plugin de idempotencia no guarda
+                // errores, asi que el reintento con la misma clave cae en el no-op de la RPC y revela.
+                val revealed = if (estado == ANSWER_ANSWERED && attemptRevealsOnAnswer(userId, attemptId)) revealedAnswer(attemptId, questionId) else null
+                AnswerResult(
+                    revision = revision,
+                    estado = estado,
+                    esCorrecta = revealed?.esCorrecta,
+                    opcionCorrectaId = revealed?.opcionCorrectaId,
+                    esPrimeraRespuesta = outcome.esPrimeraRespuesta ?: false,
+                    respondidas = respondidas,
+                )
+            }
             "ATTEMPT_NOT_FOUND" -> throw attemptNotOwned()
             "ATTEMPT_NOT_IN_PROGRESS" -> throw CanonicalErrorCode.ATTEMPT_NOT_IN_PROGRESS.exception()
             "QUESTION_NOT_IN_ATTEMPT" -> throw CanonicalErrorCode.QUESTION_NOT_IN_ATTEMPT.exception()
@@ -446,6 +474,23 @@ internal class AttemptService(
     /** Intento ajeno, inexistente o de otro origen: el mismo 404 (nunca revela que existe). */
     private fun ownedAttempt(userId: CanonicalUserId, attemptId: String): AttemptRow =
         gateway.attempt(userId.value, attemptId) ?: throw attemptNotOwned()
+
+    /**
+     * D2-09 no lee el intento (dueno, estado y pertenencia los valida la RPC). Mientras [revealsOnAnswer] diga lo mismo
+     * para todos los tipos no hace falta su tipo (dos llamadas: RPC + la fila); el dia que un tipo deje de revelar, se lee
+     * aqui el intento del usuario (una tercera).
+     */
+    private fun attemptRevealsOnAnswer(userId: CanonicalUserId, attemptId: String): Boolean =
+        ExamKind.entries.all { revealsOnAnswer(it) } || revealsOnAnswer(ownedAttempt(userId, attemptId).kind())
+
+    /**
+     * La fila que la RPC acaba de escribir (o ya tenia, en el no-op), leida SOLO de `respuestas_intento` del intento que la
+     * RPC ya valido como del usuario. Que no este, o que no lleve opcion o correccion, contradice el ANSWERED de la RPC.
+     */
+    private fun revealedAnswer(attemptId: String, questionId: String): AttemptAnswerRow =
+        gateway.answers(attemptId, graded = false, questionIds = listOf(questionId))[questionId]
+            ?.takeIf { it.opcionSeleccionadaId != null && it.esCorrecta != null }
+            ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
 
     private fun resultOf(row: AttemptRow): AttemptResult {
         if (row.estado != FINISHED) throw CanonicalErrorCode.ATTEMPT_NOT_FINISHED.exception()
@@ -558,7 +603,7 @@ internal class AttemptService(
             serverNow = now.toString(),
             totalPreguntas = totalPreguntas.coerceAtLeast(0),
             respondidas = totalRespondidas.coerceAtLeast(0),
-            // DEC-015: la correccion solo se conoce con el intento finalizado.
+            // DEC-015: se revela pregunta a pregunta; los TOTALES de correccion siguen siendo del intento finalizado.
             correctas = totalCorrectas.takeIf { finished },
             falladas = totalFalladas.takeIf { finished },
             sinResponder = when {
@@ -583,15 +628,18 @@ internal class AttemptService(
             Duration.between(start, end).seconds.coerceIn(0, Int.MAX_VALUE.toLong()).toInt()
         }).coerceAtLeast(0)
 
-    private fun gridStateOpen(annulled: Boolean, answer: AttemptAnswerRow?): String = when {
+    /** DEC-015: lo respondido se ve corregido desde SU fila; `respondida` queda para un tipo que no revele o una fila sin correccion. */
+    private fun gridStateOpen(annulled: Boolean, answer: AttemptAnswerRow?, reveals: Boolean): String = when {
         annulled -> GRID_ANNULLED
-        answer?.opcionSeleccionadaId != null -> GRID_ANSWERED
-        else -> GRID_UNANSWERED
+        answer?.opcionSeleccionadaId == null -> GRID_UNANSWERED
+        !reveals || answer.esCorrecta == null -> GRID_ANSWERED
+        answer.esCorrecta == true -> GRID_CORRECT
+        else -> GRID_WRONG
     }
 
     private fun gridStateFinished(status: String?, answer: AttemptAnswerRow?): String = when (status ?: legacyStatus(answer)) {
-        "CORRECT" -> "correcta"
-        "WRONG" -> "incorrecta"
+        "CORRECT" -> GRID_CORRECT
+        "WRONG" -> GRID_WRONG
         STATUS_ANNULLED -> GRID_ANNULLED
         else -> GRID_UNANSWERED
     }
@@ -647,6 +695,8 @@ internal class AttemptService(
         private const val STATUS_ANNULLED = "ANNULLED"
         private const val GRID_UNANSWERED = "sin_responder"
         private const val GRID_ANSWERED = "respondida"
+        private const val GRID_CORRECT = "correcta"
+        private const val GRID_WRONG = "incorrecta"
         private const val GRID_ANNULLED = "anulada"
         private val ATTEMPT_STATES = setOf("en_progreso", "finalizado", "abandonado")
         private val END_REASONS = setOf("USER", "TIMEOUT")
@@ -654,7 +704,18 @@ internal class AttemptService(
 
         /** `EXAM_TOO_LARGE` de `app_start_exam_attempt`: sale como 409 EXAM_EMPTY (el contrato no tiene codigo propio). */
         internal const val EXAM_TOO_LARGE_MESSAGE = "El examen no se puede empezar: supera el maximo de preguntas de un intento."
-        private val ANSWER_STATES = setOf("ANSWERED", "SKIPPED", "ANNULLED")
+        private const val ANSWER_ANSWERED = "ANSWERED"
+        private val ANSWER_STATES = setOf(ANSWER_ANSWERED, "SKIPPED", "ANNULLED")
+
+        /**
+         * DEC-015 (dueno, 2026-10-13): el tipo de examen del intento revela la correccion AL RESPONDER? Hoy los tres.
+         * Es el UNICO sitio que lo decide (D2-07, D2-08 y D2-09): una regla por tipo es cambiar una linea de este `when`.
+         */
+        internal fun revealsOnAnswer(kind: ExamKind): Boolean = when (kind) {
+            ExamKind.RAFAGA -> true
+            ExamKind.RAZONADO -> true
+            ExamKind.INMERSIVO -> true
+        }
         private val ABANDON_REASONS = setOf("salida_usuario", "otro")
         private val REVIEW_STATUSES = setOf("CORRECT", "WRONG", "SKIPPED", "UNANSWERED", "ANNULLED")
         private val OPTION_LETTERS = setOf("A", "B", "C", "D")

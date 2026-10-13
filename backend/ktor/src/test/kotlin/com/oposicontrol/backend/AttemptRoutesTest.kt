@@ -93,6 +93,9 @@ class AttemptRoutesTest {
         var reviewPage: (String) -> String = { "[]" }
         var resultQuestions = "[]"
         var answers = "[]"
+
+        /** Estado HTTP de la lectura de `respuestas_intento` (por defecto 200): otro valor simula el upstream caido. */
+        var answersStatus = 200
         var annulled = "[]"
         var tags = "[]"
 
@@ -124,7 +127,7 @@ class AttemptRoutesTest {
                 uri.contains("/rest/v1/resumen_intento_etiqueta") -> tags
                 else -> error("peticion inesperada al upstream: $uri")
             }
-            return V1StubResponse(200, body)
+            return V1StubResponse(if (uri.contains("/rest/v1/respuestas_intento")) answersStatus else 200, body)
         }
     }
 
@@ -195,13 +198,24 @@ class AttemptRoutesTest {
             """"preguntas":{"codigo_pregunta":"P-$n","tipo_pregunta":"rafaga","titulo":"Enunciado $n","opciones_pregunta":${options(n)}$extra}}"""
     }
 
-    /** Respuesta abierta (columnas sin correccion) o corregida (intento finalizado). */
-    private fun answerRow(n: Int, letter: Int?, graded: Boolean = false, first: Int? = letter, revision: Int = 1): String {
-        val open = """"pregunta_id":"${q(n)}","opcion_seleccionada_id":${letter?.let { "\"${opt(n, it)}\"" } ?: "null"},"revision":$revision,""" +
-            """"respondida_en":"2026-10-08T11:05:00+00:00","creada_en":"2026-10-08T11:05:00+00:00""""
-        if (!graded) return "{$open}"
+    /**
+     * Respuesta abierta (la fila propia con SU correccion, DEC-015) o corregida (intento finalizado). La opcion 1 es siempre la
+     * correcta; un salto (`letter` = null) no lleva ni `es_correcta` ni `opcion_correcta_id`, como lo escribe la RPC.
+     */
+    private fun answerRow(
+        n: Int,
+        letter: Int?,
+        graded: Boolean = false,
+        first: Int? = letter,
+        revision: Int = 1,
+        correct: Boolean? = letter?.let { it == 1 },
+        correctId: String? = letter?.let { opt(n, 1) },
+    ): String {
+        val open = """"pregunta_id":"${q(n)}","opcion_seleccionada_id":${letter?.let { "\"${opt(n, it)}\"" } ?: "null"},"es_correcta":${correct ?: "null"},""" +
+            """"revision":$revision,"respondida_en":"2026-10-08T11:05:00+00:00","creada_en":"2026-10-08T11:05:00+00:00""""
+        if (!graded) return """{$open,"opcion_correcta_id":${correctId?.let { "\"$it\"" } ?: "null"}}"""
         return "{$open," +
-            """"es_correcta":${letter?.let { it == 1 } ?: "null"},"actualizada_en":"2026-10-08T11:06:00+00:00","tiempo_respuesta_ms":4200,""" +
+            """"actualizada_en":"2026-10-08T11:06:00+00:00","tiempo_respuesta_ms":4200,""" +
             """"tiempo_respuesta_segundos":4,"primera_opcion_id":${first?.let { "\"${opt(n, it)}\"" } ?: "null"},""" +
             """"primera_es_correcta":${first?.let { it == 1 } ?: "null"},"cambio_respuesta":${first != letter},"es_primer_intento_pregunta":true}"""
     }
@@ -237,10 +251,25 @@ class AttemptRoutesTest {
         assertTrue(problems.isEmpty(), "$contractId $status does not conform to the frozen OpenAPI:\n${problems.joinToString("\n")}\n$body")
     }
 
+    /**
+     * SEC-004: ni la tabla de soluciones, ni el razonamiento, ni los recursos. La correccion que DEC-015 revela (`es_correcta`,
+     * `opcion_correcta_id`) sale de la fila propia del usuario en `respuestas_intento`, que no es ninguna de las tres.
+     */
     private fun assertNoSolutionWasRead() {
-        val leaked = upstream.urls.filter { url -> listOf("soluciones_pregunta", "razonamiento", "es_correcta", "opcion_correcta", "recursos_pregunta").any { it in url } }
-        assertTrue(leaked.isEmpty(), "SEC-004 / DEC-015: lectura de soluciones o correccion con el intento sin finalizar: $leaked")
+        val leaked = upstream.urls.filter { url -> listOf("soluciones_pregunta", "razonamiento", "recursos_pregunta").any { it in url } }
+        assertTrue(leaked.isEmpty(), "SEC-004: lectura de soluciones, razonamiento o recursos con el intento sin finalizar: $leaked")
     }
+
+    /** La UNICA lectura que revela: la fila propia de esa pregunta, con las columnas abiertas. */
+    private fun ownAnswerRead(n: Int) =
+        "/rest/v1/respuestas_intento?select=pregunta_id,opcion_seleccionada_id,es_correcta,opcion_correcta_id,revision,respondida_en,creada_en" +
+            "&intento_id=eq.$attempt&pregunta_id=in.(${q(n)})&"
+
+    private fun answerBody(n: Int, letter: Int?, baseRevision: Int = 0) =
+        """{"opcionSeleccionadaId":${letter?.let { "\"${opt(n, it)}\"" } ?: "null"},"tiempoRespuestaMs":4200,"baseRevision":$baseRevision}"""
+
+    private fun answeredOutcome(revision: Int = 1, first: Boolean = true, noop: Boolean = false) =
+        """{"outcome":"OK","estado":"ANSWERED","revision":$revision,"es_primera_respuesta":$first,"respondidas":1,"noop":$noop}"""
 
     private val start = "/api/v1/app/examenes/aaaaaaaa-aaaa-4aaa-8aaa-000000000001/intentos"
     private val base = "/api/v1/app/intentos/bbbbbbbb-bbbb-4bbb-8bbb-000000000001"
@@ -388,11 +417,12 @@ class AttemptRoutesTest {
     // =================================================================== D2-07
 
     @Test
-    fun getReturnsTheOpenAttemptWithItsGridAndNeverRevealsCorrectness() = testApplication {
+    fun getReturnsTheOpenAttemptWithTheGridCorrectedFromTheOwnAnswersAndNoTotals() = testApplication {
         application { attemptModule() }
-        upstream.attemptRow = attemptRow(respondidas = 1)
-        upstream.frozen = "[${(1..4).joinToString(",") { frozenRow(it) }}]"
-        upstream.answers = "[${answerRow(1, 2)},${answerRow(2, null)}]" // 1 respondida, 2 saltada
+        upstream.attemptRow = attemptRow(respondidas = 3)
+        upstream.frozen = "[${(1..6).joinToString(",") { frozenRow(it) }}]"
+        // 1 fallada, 2 saltada, 3 acertada y despues anulada, 4 sin tocar, 5 acertada, 6 respondida con la correccion ausente
+        upstream.answers = "[${answerRow(1, 2)},${answerRow(2, null)},${answerRow(3, 1)},${answerRow(5, 1)},${answerRow(6, 2, correct = null, correctId = null)}]"
         upstream.annulled = """[{"pregunta_id":"${q(3)}"}]"""
         val response = client.call(HttpMethod.Get, base)
         val body = response.bodyAsText()
@@ -400,14 +430,40 @@ class AttemptRoutesTest {
         assertEquals("no-store", response.headers[HttpHeaders.CacheControl])
         assertConforms("D2-07", "200", body)
         val grid = obj(body)["grid"]!!.jsonArray.map { it.jsonObject }
-        assertEquals(listOf("respondida", "sin_responder", "anulada", "sin_responder"), grid.map { it["estado"]!!.jsonPrimitive.content })
-        assertEquals(listOf(1, 1, 0, 0), grid.map { it["revision"]!!.jsonPrimitive.int })
+        // DEC-015: lo respondido se ve corregido al releer el intento; la anulada gana; saltada y sin tocar, sin_responder.
+        assertEquals(
+            listOf("incorrecta", "sin_responder", "anulada", "sin_responder", "correcta", "respondida"),
+            grid.map { it["estado"]!!.jsonPrimitive.content },
+        )
+        assertEquals(listOf(1, 1, 1, 0, 1, 1), grid.map { it["revision"]!!.jsonPrimitive.int })
+        grid.forEach { assertEquals(setOf("posicion", "preguntaId", "revision", "estado"), it.keys, "el grid no lleva la opcion correcta") }
         val intento = obj(body)["intento"]!!.jsonObject
         assertEquals(2, intento["sinResponder"]!!.jsonPrimitive.int, "saltada + sin tocar (la anulada no cuenta)")
+        // Los totales de correccion siguen siendo del intento finalizado.
         listOf("correctas", "falladas", "motivoFin", "deadline").forEach { assertNull(intento[it], it) }
         assertNoSolutionWasRead()
+        assertTrue(
+            upstream.urls.single { "respuestas_intento" in it }.contains("select=pregunta_id,opcion_seleccionada_id,es_correcta,opcion_correcta_id,revision,respondida_en,creada_en&"),
+            "la correccion sale de la fila propia, sin la primera respuesta ni los tiempos: ${upstream.urls}",
+        )
         assertTrue(upstream.urls.all { "usuario_id=eq.$TEST_UID" in it || "intentos_examen" !in it }, "el intento se lee SIEMPRE filtrado por su dueno")
         assertTrue(limited.isEmpty(), "D2-07 no declara 429")
+    }
+
+    @Test
+    fun theOpenGridRevealsForTheThreeExamTypesAndTheRuleIsASingleFunction() = testApplication {
+        application { attemptModule() }
+        upstream.frozen = "[${frozenRow(1)},${frozenRow(2)}]"
+        upstream.answers = "[${answerRow(1, 1)},${answerRow(2, 2)}]"
+        listOf("rafaga", "razonado", "inmersivo").forEach { tipo ->
+            upstream.attemptRow = attemptRow(tipo = tipo)
+            val body = client.call(HttpMethod.Get, base).bodyAsText()
+            assertConforms("D2-07", "200", body)
+            assertEquals(listOf("correcta", "incorrecta"), obj(body)["grid"]!!.jsonArray.map { it.jsonObject["estado"]!!.jsonPrimitive.content }, tipo)
+        }
+        // DEC-015: hoy los tres tipos revelan; una regla por tipo se cambia SOLO en esta funcion.
+        ExamKind.entries.forEach { assertTrue(AttemptService.revealsOnAnswer(it), it.wire) }
+        assertNoSolutionWasRead()
     }
 
     @Test
@@ -427,7 +483,7 @@ class AttemptRoutesTest {
     // =================================================================== D2-08
 
     @Test
-    fun questionsArePagedByPositionWithoutSolutionsAndConformToTheFrozenWire() = testApplication {
+    fun questionsArePagedByPositionWithTheCorrectionOfTheOwnAnswerAndNoSolutions() = testApplication {
         application { attemptModule() }
         upstream.attemptRow = attemptRow()
         upstream.questionPage = { uri ->
@@ -435,8 +491,9 @@ class AttemptRoutesTest {
             val limit = Regex("limit=(\\d+)").find(uri)!!.groupValues[1].toInt()
             "[" + (1..4).filter { it > after }.take(limit).joinToString(",") { questionRow(it) } + "]"
         }
-        upstream.answers = "[${answerRow(1, 2)},${answerRow(2, null)}]"
-        upstream.annulled = """[{"pregunta_id":"${q(2)}"}]"""
+        // 1 fallada, 2 saltada y anulada, 3 acertada y despues anulada, 4 acertada con la opcion correcta ya borrada (SET NULL)
+        upstream.answers = "[${answerRow(1, 2)},${answerRow(2, null)},${answerRow(3, 1)},${answerRow(4, 1, correctId = null)}]"
+        upstream.annulled = """[{"pregunta_id":"${q(2)}"},{"pregunta_id":"${q(3)}"}]"""
         val first = client.call(HttpMethod.Get, "$base/preguntas?limit=2")
         val body = first.bodyAsText()
         assertEquals(HttpStatusCode.OK, first.status, body)
@@ -446,18 +503,35 @@ class AttemptRoutesTest {
         assertEquals(listOf(1, 2), items.map { it["posicion"]!!.jsonPrimitive.int })
         assertEquals(listOf("A", "B"), items[0]["opciones"]!!.jsonArray.map { it.jsonObject["letra"]!!.jsonPrimitive.content }, "opciones por posicion")
         assertEquals(setOf("id", "letra", "texto"), items[0]["opciones"]!!.jsonArray[0].jsonObject.keys, "una opcion no lleva marca de correccion")
-        assertEquals(opt(1, 2), items[0]["respuesta"]!!.jsonObject["opcionId"]!!.jsonPrimitive.content)
-        assertEquals(setOf("revision", "respondidaEn"), items[1]["respuesta"]!!.jsonObject.keys, "saltada: respuesta sin opcion")
+        // DEC-015: la respuesta propia lleva SU correccion (aqui fallada, con la opcion correcta) al releer el intento.
+        assertEquals(
+            obj("""{"opcionId":"${opt(1, 2)}","revision":1,"respondidaEn":"2026-10-08T11:05:00Z","esCorrecta":false,"opcionCorrectaId":"${opt(1, 1)}"}"""),
+            items[0]["respuesta"]!!.jsonObject,
+        )
+        assertEquals(setOf("revision", "respondidaEn"), items[1]["respuesta"]!!.jsonObject.keys, "saltada: respuesta sin opcion y sin correccion")
         assertEquals(listOf("false", "true"), items.map { it["anulada"]!!.jsonPrimitive.content })
-        assertFalse(body.contains("orrect"), "ni `esCorrecta` ni `opcionCorrecta` en D2-08: $body")
+        val questionKeys = setOf("posicion", "preguntaId", "codigoPregunta", "tipoPregunta", "titulo", "anulada", "opciones", "respuesta")
+        items.forEach { item ->
+            assertTrue(questionKeys.containsAll(item.keys), "D2-08 no lleva solucion, explicacion ni recursos: ${item.keys}")
+            item["opciones"]!!.jsonArray.forEach { assertEquals(setOf("id", "letra", "texto"), it.jsonObject.keys, "una opcion no lleva marca de correccion") }
+        }
         assertNoSolutionWasRead()
         assertTrue(upstream.urls.any { "pregunta_id=in.(${q(1)},${q(2)})" in it }, "solo las respuestas de la pagina")
 
         val cursor = obj(body)["nextCursor"]!!.jsonPrimitive.content
         val second = client.call(HttpMethod.Get, "$base/preguntas?limit=2&cursor=$cursor").bodyAsText()
         assertConforms("D2-08", "200", second)
-        assertEquals(listOf(3, 4), obj(second)["items"]!!.jsonArray.map { it.jsonObject["posicion"]!!.jsonPrimitive.int })
+        val rest = obj(second)["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf(3, 4), rest.map { it["posicion"]!!.jsonPrimitive.int })
+        assertEquals(listOf("true", "false"), rest.map { it["anulada"]!!.jsonPrimitive.content })
+        assertEquals(setOf("opcionId", "revision", "respondidaEn"), rest[0]["respuesta"]!!.jsonObject.keys, "anulada: la respuesta no ensena correccion")
+        assertEquals(
+            obj("""{"opcionId":"${opt(4, 1)}","revision":1,"respondidaEn":"2026-10-08T11:05:00Z","esCorrecta":true}"""),
+            rest[1]["respuesta"]!!.jsonObject,
+            "`opcion_correcta_id` nulo (FK ON DELETE SET NULL) se tolera: `esCorrecta` sin `opcionCorrectaId`",
+        )
         assertNull(obj(second)["nextCursor"], "ultima pagina")
+        assertNoSolutionWasRead()
 
         // limite: por defecto 10, tope 20 (se recorta), invalido 400; cursor de otra lista o corrupto 400 INVALID_CURSOR
         client.call(HttpMethod.Get, "$base/preguntas")
@@ -471,30 +545,45 @@ class AttemptRoutesTest {
     }
 
     @Test
-    fun questionsOfAFinishedAttemptStillCarryNoCorrection() = testApplication {
+    fun questionsOfAFinishedAttemptCarryTheSameCorrectionOfTheOwnAnswerAndNoSolution() = testApplication {
         application { attemptModule() }
         upstream.attemptRow = finishedRow()
-        upstream.questionPage = { "[${questionRow(1, "CORRECT")},${questionRow(2, "ANNULLED")}]" }
-        upstream.answers = "[${answerRow(1, 1)}]"
+        upstream.questionPage = { "[${questionRow(1, "CORRECT")},${questionRow(2, "ANNULLED")},${questionRow(3, "SKIPPED")}]" }
+        upstream.answers = "[${answerRow(1, 1)},${answerRow(2, 2)},${answerRow(3, null)}]"
         val body = client.call(HttpMethod.Get, "$base/preguntas").bodyAsText()
         assertConforms("D2-08", "200", body)
-        assertEquals(listOf("false", "true"), obj(body)["items"]!!.jsonArray.map { it.jsonObject["anulada"]!!.jsonPrimitive.content })
+        val items = obj(body)["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("false", "true", "false"), items.map { it["anulada"]!!.jsonPrimitive.content })
+        // DEC-015: uniforme con el intento abierto. La anulada (estado congelado) y la saltada no ensenan correccion.
+        assertEquals(
+            obj("""{"opcionId":"${opt(1, 1)}","revision":1,"respondidaEn":"2026-10-08T11:05:00Z","esCorrecta":true,"opcionCorrectaId":"${opt(1, 1)}"}"""),
+            items[0]["respuesta"]!!.jsonObject,
+        )
+        assertEquals(setOf("opcionId", "revision", "respondidaEn"), items[1]["respuesta"]!!.jsonObject.keys)
+        assertEquals(setOf("revision", "respondidaEn"), items[2]["respuesta"]!!.jsonObject.keys)
+        // Sigue siendo la lectura abierta de la fila propia: ni soluciones, ni primera respuesta, ni tiempos.
         assertNoSolutionWasRead()
+        assertFalse(upstream.urls.any { "primera_opcion_id" in it || "tiempo_respuesta" in it }, upstream.urls.toString())
     }
 
     // =================================================================== D2-09
 
     @Test
-    fun answerIsRecordedThroughTheRpcWithoutRevealingAndReplaysByKey() = testApplication {
+    fun aWrongAnswerIsRecordedThroughTheRpcRevealsTheCorrectOptionAndReplaysByKey() = testApplication {
         application { attemptModule() }
         val path = "$base/respuestas/${q(1)}"
         val request = """{"opcionSeleccionadaId":"${opt(1, 2)}","tiempoRespuestaMs":4200,"nivelConfianza":2,"baseRevision":0}"""
+        // La fila que la RPC deja escrita: la opcion 2 es incorrecta y la correcta (la 1) queda copiada en la propia fila.
+        upstream.answers = "[${answerRow(1, 2)}]"
         val response = client.call(HttpMethod.Put, path, request, key1)
         val body = response.bodyAsText()
         assertEquals(HttpStatusCode.OK, response.status, body)
         assertConforms("D2-09", "200", body)
-        assertEquals(mapOf("revision" to "1", "estado" to "ANSWERED", "esPrimeraRespuesta" to "true", "respondidas" to "1"), obj(body).mapValues { it.value.jsonPrimitive.content })
-        assertFalse(body.contains("esCorrecta") || body.contains("opcionCorrectaId"), "DEC-015 abierta: nada se revela al responder")
+        // DEC-015 (decidida 2026-10-13): al responder se revela si acerto y cual era la correcta.
+        assertEquals(
+            obj("""{"revision":1,"estado":"ANSWERED","esCorrecta":false,"opcionCorrectaId":"${opt(1, 1)}","esPrimeraRespuesta":true,"respondidas":1}"""),
+            obj(body),
+        )
         val rpc = upstream.rpcBodies("app_record_attempt_answer").single()
         assertEquals(
             mapOf(
@@ -503,26 +592,173 @@ class AttemptRoutesTest {
             ),
             rpc.mapValues { it.value.jsonPrimitive.content },
         )
-        assertEquals(1, upstream.sent.size, "UNA llamada: la validacion de dueno, estado y pertenencia vive en la RPC")
+        // DOS llamadas, en este orden: la RPC (dueno, estado y pertenencia viven en ella) y la fila propia de ESA pregunta.
+        assertEquals(2, upstream.sent.size, "la RPC y la lectura de la fila propia: ${upstream.urls}")
+        assertTrue(upstream.urls[0].endsWith("/rest/v1/rpc/app_record_attempt_answer"), upstream.urls[0])
+        assertTrue(ownAnswerRead(1) in upstream.urls[1], upstream.urls[1])
+        assertNoSolutionWasRead()
         assertEquals(listOf(AttemptOperation.ANSWER), limited)
 
         val replay = client.call(HttpMethod.Put, path, request, key1)
         assertEquals("true", replay.headers[IdempotencyHeaders.REPLAYED])
-        assertEquals(obj(body), obj(replay.bodyAsText()))
-        assertEquals(1, upstream.sent.size, "la repeticion no vuelve a ejecutar el comando")
+        assertEquals(obj(body), obj(replay.bodyAsText()), "la repeticion devuelve la misma correccion")
+        assertEquals(2, upstream.sent.size, "la repeticion no vuelve a ejecutar el comando ni a leer")
         assertEquals("IDEMPOTENCY_KEY_REUSED", code(client.call(HttpMethod.Put, path, request.replace("4200", "1"), key1).bodyAsText()))
+    }
 
-        // saltar: opcion ausente o `null` explicito (el contrato la declara nullable)
-        upstream.answerOutcome = """{"outcome":"OK","estado":"SKIPPED","revision":1,"es_primera_respuesta":false,"respondidas":1,"noop":false}"""
-        val skip = client.call(HttpMethod.Put, "$base/respuestas/${q(2)}", """{"opcionSeleccionadaId":null,"tiempoRespuestaMs":0,"baseRevision":0}""", key2)
-        assertEquals(HttpStatusCode.OK, skip.status, skip.bodyAsText())
-        assertConforms("D2-09", "200", skip.bodyAsText())
-        assertEquals("SKIPPED", obj(skip.bodyAsText())["estado"]!!.jsonPrimitive.content)
+    @Test
+    fun aCorrectAnswerRevealsItselfAsTheCorrectOption() = testApplication {
+        application { attemptModule() }
+        upstream.answers = "[${answerRow(1, 1)}]"
+        val response = client.call(HttpMethod.Put, "$base/respuestas/${q(1)}", answerBody(1, 1), key1)
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertConforms("D2-09", "200", body)
+        assertEquals(
+            obj("""{"revision":1,"estado":"ANSWERED","esCorrecta":true,"opcionCorrectaId":"${opt(1, 1)}","esPrimeraRespuesta":true,"respondidas":1}"""),
+            obj(body),
+        )
+        assertTrue(ownAnswerRead(1) in upstream.urls.single { "respuestas_intento" in it })
+        assertNoSolutionWasRead()
+    }
+
+    @Test
+    fun aSkipRevealsNothingAndTheLaterAnswerRevealsOnce() = testApplication {
+        application { attemptModule() }
+        val path = "$base/respuestas/${q(2)}"
+        // saltar: opcion ausente o `null` explicito (el contrato la declara nullable). Aunque el upstream TUVIERA una fila
+        // corregida, un salto no la lee: nada se revela.
+        upstream.answers = "[${answerRow(2, 1)}]"
+        upstream.answerOutcome = """{"outcome":"OK","estado":"SKIPPED","revision":1,"es_primera_respuesta":false,"respondidas":0,"noop":false}"""
+        val skip = client.call(HttpMethod.Put, path, """{"opcionSeleccionadaId":null,"tiempoRespuestaMs":0,"baseRevision":0}""", key1)
+        val skipBody = skip.bodyAsText()
+        assertEquals(HttpStatusCode.OK, skip.status, skipBody)
+        assertConforms("D2-09", "200", skipBody)
+        assertEquals(obj("""{"revision":1,"estado":"SKIPPED","esPrimeraRespuesta":false,"respondidas":0}"""), obj(skipBody), "un salto no revela nada")
         assertEquals(JsonNull, upstream.rpcBodies("app_record_attempt_answer").last()["p_opcion_id"])
+        assertEquals(1, upstream.sent.size, "un salto es SOLO la RPC: ${upstream.urls}")
+
+        // la pregunta saltada se responde despues (una vez, sobre la revision del salto) y entonces si revela
+        upstream.answers = "[${answerRow(2, 2, revision = 2)}]"
+        upstream.answerOutcome = answeredOutcome(revision = 2)
+        val answered = client.call(HttpMethod.Put, path, answerBody(2, 2, baseRevision = 1), key2)
+        val answeredBody = answered.bodyAsText()
+        assertEquals(HttpStatusCode.OK, answered.status, answeredBody)
+        assertConforms("D2-09", "200", answeredBody)
+        assertEquals(
+            obj("""{"revision":2,"estado":"ANSWERED","esCorrecta":false,"opcionCorrectaId":"${opt(2, 1)}","esPrimeraRespuesta":true,"respondidas":1}"""),
+            obj(answeredBody),
+        )
+        assertEquals("1", upstream.rpcBodies("app_record_attempt_answer").last()["p_base_revision"]!!.jsonPrimitive.content)
+        assertNoSolutionWasRead()
+    }
+
+    @Test
+    fun anAnnulledQuestionRevealsNothingAndReadsNothing() = testApplication {
+        application { attemptModule() }
+        // La RPC responde ANNULLED (no-op) aunque se envie una opcion; y aunque hubiera una fila corregida, no se lee.
+        upstream.answers = "[${answerRow(3, 1)}]"
         upstream.answerOutcome = """{"outcome":"OK","estado":"ANNULLED","revision":0,"es_primera_respuesta":false,"respondidas":1,"noop":true}"""
-        val annulled = client.call(HttpMethod.Put, "$base/respuestas/${q(3)}", """{"tiempoRespuestaMs":0,"baseRevision":0}""", "0a0a0a0a-0000-4000-8000-000000000003")
-        assertConforms("D2-09", "200", annulled.bodyAsText())
-        assertEquals("ANNULLED", obj(annulled.bodyAsText())["estado"]!!.jsonPrimitive.content)
+        listOf(answerBody(3, 1) to key1, """{"tiempoRespuestaMs":0,"baseRevision":0}""" to key2).forEach { (request, key) ->
+            val annulled = client.call(HttpMethod.Put, "$base/respuestas/${q(3)}", request, key)
+            val body = annulled.bodyAsText()
+            assertEquals(HttpStatusCode.OK, annulled.status, body)
+            assertConforms("D2-09", "200", body)
+            assertEquals(obj("""{"revision":0,"estado":"ANNULLED","esPrimeraRespuesta":false,"respondidas":1}"""), obj(body), "una anulada no revela nada")
+        }
+        assertEquals(2, upstream.sent.size, "solo las dos RPC: ${upstream.urls}")
+    }
+
+    @Test
+    fun theSameOptionSentAgainWithANewKeyIsANoOpThatStillReveals() = testApplication {
+        application { attemptModule() }
+        val path = "$base/respuestas/${q(1)}"
+        upstream.answers = "[${answerRow(1, 2)}]"
+        val first = client.call(HttpMethod.Put, path, answerBody(1, 2), key1).bodyAsText()
+        // Otra clave (la app perdio la respuesta y no reutilizo la clave): la RPC responde el mismo estado con `noop`.
+        upstream.answerOutcome = answeredOutcome(noop = true)
+        val again = client.call(HttpMethod.Put, path, answerBody(1, 2), key2)
+        val body = again.bodyAsText()
+        assertEquals(HttpStatusCode.OK, again.status, body)
+        assertNull(again.headers[IdempotencyHeaders.REPLAYED], "no es una repeticion guardada: el comando corre y es un no-op")
+        assertConforms("D2-09", "200", body)
+        assertEquals(obj(first), obj(body), "el no-op revela lo mismo que la primera vez")
+        assertEquals(listOf("false", opt(1, 1)), listOf("esCorrecta", "opcionCorrectaId").map { obj(body)[it]!!.jsonPrimitive.content })
+        assertEquals(2, upstream.rpcBodies("app_record_attempt_answer").size)
+        assertEquals(4, upstream.sent.size, "cada ejecucion: RPC + fila propia")
+    }
+
+    @Test
+    fun aRevealedAnswerStaysLockedAndTheRejectionRevealsNothing() = testApplication {
+        application { attemptModule() }
+        val path = "$base/respuestas/${q(1)}"
+        upstream.answers = "[${answerRow(1, 2)}]"
+        val first = client.call(HttpMethod.Put, path, answerBody(1, 2), key1)
+        assertEquals("false", obj(first.bodyAsText())["esCorrecta"]!!.jsonPrimitive.content)
+        val before = upstream.sent.size
+        // Ya sabe cual era la correcta e intenta cambiar a ella: la respuesta dada no se cambia.
+        upstream.answerOutcome = """{"outcome":"ANSWER_LOCKED","current_revision":1}"""
+        val change = client.call(HttpMethod.Put, path, answerBody(1, 1, baseRevision = 1), key2)
+        val body = change.bodyAsText()
+        assertEquals(HttpStatusCode.Conflict, change.status, body)
+        assertEquals("ANSWER_LOCKED", code(body))
+        assertFalse(body.contains("orrect"), "el rechazo no lleva correccion: $body")
+        assertEquals(before + 1, upstream.sent.size, "solo la RPC: un rechazo no lee la fila")
+        assertEquals(opt(1, 1), upstream.rpcBodies("app_record_attempt_answer").last()["p_opcion_id"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun aFailedRevealReadFailsTheCallIsNotStoredAsAReplayAndTheRetryReveals() = testApplication {
+        application { attemptModule() }
+        val path = "$base/respuestas/${q(1)}"
+        // La RPC ya grabo la respuesta, pero la lectura de la fila falla: la llamada falla con el error canonico de upstream.
+        upstream.answers = "[${answerRow(1, 2)}]"
+        upstream.answersStatus = 503
+        val failed = client.call(HttpMethod.Put, path, answerBody(1, 2), key1)
+        val failedBody = failed.bodyAsText()
+        assertEquals(HttpStatusCode.BadGateway, failed.status, failedBody)
+        assertEquals("UPSTREAM_ERROR", code(failedBody))
+        assertNull(failed.headers[IdempotencyHeaders.REPLAYED])
+        assertFalse(failedBody.contains("orrect"), failedBody)
+        // La fila que no esta (o sin correccion) tras un ANSWERED contradice a la RPC: 502, tampoco se guarda.
+        upstream.answersStatus = 200
+        upstream.answers = "[]"
+        upstream.answerOutcome = answeredOutcome(noop = true)
+        val missing = client.call(HttpMethod.Put, path, answerBody(1, 2), key1)
+        assertEquals(HttpStatusCode.BadGateway, missing.status)
+        assertEquals("UPSTREAM_CONTRACT_ERROR", code(missing.bodyAsText()))
+        upstream.answers = "[${answerRow(1, 2, correct = null, correctId = null)}]"
+        assertEquals("UPSTREAM_CONTRACT_ERROR", code(client.call(HttpMethod.Put, path, answerBody(1, 2), key1).bodyAsText()))
+
+        // Reintento con la MISMA clave: ningun error quedo guardado, el comando corre (no-op en la RPC) y ahora si revela.
+        upstream.answers = "[${answerRow(1, 2)}]"
+        val retry = client.call(HttpMethod.Put, path, answerBody(1, 2), key1)
+        val body = retry.bodyAsText()
+        assertEquals(HttpStatusCode.OK, retry.status, body)
+        assertNull(retry.headers[IdempotencyHeaders.REPLAYED], "el reintento re-ejecuta: no habia nada guardado")
+        assertConforms("D2-09", "200", body)
+        assertEquals(
+            obj("""{"revision":1,"estado":"ANSWERED","esCorrecta":false,"opcionCorrectaId":"${opt(1, 1)}","esPrimeraRespuesta":true,"respondidas":1}"""),
+            obj(body),
+        )
+        assertEquals(4, upstream.rpcBodies("app_record_attempt_answer").size)
+        // Y a partir de aqui la respuesta buena SI queda guardada para esa clave.
+        val replay = client.call(HttpMethod.Put, path, answerBody(1, 2), key1)
+        assertEquals("true", replay.headers[IdempotencyHeaders.REPLAYED])
+        assertEquals(obj(body), obj(replay.bodyAsText()))
+        assertEquals(4, upstream.rpcBodies("app_record_attempt_answer").size)
+    }
+
+    @Test
+    fun aMissingCorrectOptionOnTheOwnRowIsToleratedWhenAnswering() = testApplication {
+        application { attemptModule() }
+        // `respuestas_intento.opcion_correcta_id` es ON DELETE SET NULL: `es_correcta` puede seguir ahi sin la opcion.
+        upstream.answers = "[${answerRow(1, 2, correctId = null)}]"
+        val response = client.call(HttpMethod.Put, "$base/respuestas/${q(1)}", answerBody(1, 2), key1)
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertConforms("D2-09", "200", body)
+        assertEquals(obj("""{"revision":1,"estado":"ANSWERED","esCorrecta":false,"esPrimeraRespuesta":true,"respondidas":1}"""), obj(body))
     }
 
     @Test
