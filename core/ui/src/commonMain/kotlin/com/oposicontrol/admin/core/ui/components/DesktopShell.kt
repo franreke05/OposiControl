@@ -97,6 +97,7 @@ fun DesktopShell(
     canGoBack: Boolean = false,
     onBack: (() -> Unit)? = null,
     globalSearch: @Composable () -> Unit = {},
+    onLogout: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val breakpoint = DesktopWindow.breakpoint
@@ -112,6 +113,7 @@ fun DesktopShell(
             onRouteSelected = onRouteSelected,
             collapsed = collapsed,
             onToggleCollapsed = { collapsed = !collapsed },
+            onLogout = onLogout,
         )
         Column(modifier = Modifier.fillMaxSize()) {
             DesktopTopBar(
@@ -183,8 +185,10 @@ private fun DesktopSidebar(
     onRouteSelected: (String) -> Unit,
     collapsed: Boolean,
     onToggleCollapsed: () -> Unit,
+    onLogout: (() -> Unit)? = null,
 ) {
     val tokens = GlassTheme.tokens
+    var confirmLogout by remember { mutableStateOf(false) }
     val width by animateDpAsState(
         targetValue = if (collapsed) Sizing.sidebarCollapsed else Sizing.sidebarExpanded,
         animationSpec = motionTween(OposiMotion.Normal),
@@ -279,6 +283,33 @@ private fun DesktopSidebar(
                 modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
             )
         }
+        // Cerrar sesion: al pie del menu, separado de la navegacion y siempre a la vista. No es un destino, es una accion,
+        // y pide confirmacion porque un clic de mas tira la sesion.
+        if (onLogout != null) {
+            HairlineDivider()
+            Column(modifier = Modifier.padding(vertical = Spacing.xs)) {
+                SidebarRow(
+                    item = ShellNavigationItem(id = "__logout", label = "Cerrar sesión", icon = AppIcon.BACK.key),
+                    selected = false,
+                    collapsed = collapsed,
+                    onClick = { confirmLogout = true },
+                )
+            }
+        }
+    }
+    if (confirmLogout && onLogout != null) {
+        ConfirmDialog(
+            title = "Cerrar sesión",
+            message = "Saldrás de OposiControl en este equipo. Los cambios que no hayas guardado se pierden.",
+            confirmLabel = "Cerrar sesión",
+            dismissLabel = "Cancelar",
+            destructive = false,
+            onConfirm = {
+                confirmLogout = false
+                onLogout()
+            },
+            onDismiss = { confirmLogout = false },
+        )
     }
 }
 

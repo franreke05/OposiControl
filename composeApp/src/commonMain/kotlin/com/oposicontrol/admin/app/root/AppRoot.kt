@@ -117,6 +117,9 @@ import com.oposicontrol.admin.domain.repository.TagSearchRepository
 import org.koin.compose.getKoin
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
+import androidx.compose.runtime.rememberCoroutineScope
+import com.oposicontrol.admin.domain.repository.AuthRepository
+import kotlinx.coroutines.launch
 
 private const val TEMPORARILY_DISABLE_LOGIN = false
 
@@ -512,7 +515,11 @@ fun AppRoot(
             // ruta paga por él.
             val examsViewModel: ExamsViewModel? =
                 if (contentTarget == AppContentTarget.EXAM_WORKSPACE) koinInject() else null
+            val authRepository: AuthRepository = koinInject()
+            val logoutScope = rememberCoroutineScope()
             AppShell(
+                // El mismo cierre de sesion que Sistema > Preferencias; la app vuelve al acceso al quedarse sin sesion.
+                onLogout = { logoutScope.launch { authRepository.logout() } },
                 currentRouteId = sidebarRouteIdFor(route, compactLayout),
                 groups = appNavigationGroups.toShellGroups(includeMobileOnly = compactLayout),
                 mobileDestinations = mobilePrimaryNavigation.map { it.toShellItem() },

@@ -88,6 +88,7 @@ fun AppShell(
     // accidentales sin bottom nav visible.
     showBottomBar: Boolean = true,
     globalSearch: @Composable () -> Unit = {},
+    onLogout: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     BoxWithConstraints(
@@ -117,6 +118,7 @@ fun AppShell(
                 canGoBack = canGoBack,
                 onBack = onBack,
                 globalSearch = globalSearch,
+                onLogout = onLogout,
                 content = content,
             )
         } else {
