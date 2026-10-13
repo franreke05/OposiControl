@@ -58,6 +58,9 @@ internal class FakeCatalogRepository(
     val savedTariffs = mutableListOf<Pair<String, CommercialTariff>>()
     val savedPlans = mutableListOf<CommercialPlan>()
     val savedBenefits = mutableListOf<Pair<String, PlanBenefit>>()
+    val deletedProducts = mutableListOf<String>()
+    val deletedTariffs = mutableListOf<Pair<String, String>>()
+    var deleteFailure: AppError? = null
     private var nextId = 0
 
     private fun newId(prefix: String) = "$prefix-new-${++nextId}"
@@ -79,6 +82,19 @@ internal class FakeCatalogRepository(
         saveFailure?.let { return AppResult.Failure(it) }
         savedTariffs += productId to tariff
         return AppResult.Success(tariff.copy(id = tariff.id.ifBlank { newId("tariff") }))
+    }
+
+    override suspend fun deleteProduct(productId: String): AppResult<Unit> {
+        deleteFailure?.let { return AppResult.Failure(it) }
+        deletedProducts += productId
+        products = products.filterNot { it.id == productId }
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun deleteTariff(productId: String, tariffId: String): AppResult<Unit> {
+        deleteFailure?.let { return AppResult.Failure(it) }
+        deletedTariffs += productId to tariffId
+        return AppResult.Success(Unit)
     }
 
     override suspend fun getPlans(): AppResult<List<CommercialPlan>> {

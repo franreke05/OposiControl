@@ -58,6 +58,7 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.theme.OposiMotion
 import com.oposicontrol.admin.core.ui.theme.motionTween
 import androidx.compose.runtime.key
+import com.oposicontrol.admin.core.ui.components.DangerOutlineButton
 
 /**
  * Lo que comparten TODOS los catálogos comerciales —productos, planes, packs, servicios, promociones y pop-ups—: una
@@ -406,6 +407,9 @@ internal fun StoreChildRow(
     status: CommerceStatus? = null,
     editLabel: String = "Editar",
     editIcon: AppIcon = AppIcon.EDIT,
+    /** `null` = la fila no se puede borrar desde aquí. Quien lo pase pide confirmación antes de escribir. */
+    onDelete: (() -> Unit)? = null,
+    deleteEnabled: Boolean = true,
 ) {
     val tokens = GlassTheme.tokens
     val background by animateColorAsState(
@@ -462,6 +466,9 @@ internal fun StoreChildRow(
                 onClick = onEdit,
                 icon = { AppIconImage(editIcon, size = 14.dp) },
             )
+        }
+        if (onDelete != null) {
+            DangerOutlineButton(text = "Eliminar", size = ButtonSize.COMPACT, enabled = deleteEnabled, onClick = onDelete)
         }
     }
 }

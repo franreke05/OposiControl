@@ -243,6 +243,83 @@ class CommercialCatalogViewModelTest {
     }
 
     @Test
+    fun `deleting a product asks first, removes it from the list and opens the next one`() = runTest {
+        val repository = FakeCatalogRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+
+        vm.dispatch(CommercialCatalogIntent.AskDeleteProduct)
+        advanceUntilIdle()
+        assertEquals(PendingCatalogDelete(PRODUCT_PACK), vm.state.value.pendingDelete)
+        assertTrue(repository.deletedProducts.isEmpty(), "pedir confirmación no borra nada")
+
+        vm.dispatch(CommercialCatalogIntent.ConfirmDelete)
+        vm.dispatch(CommercialCatalogIntent.ConfirmDelete)
+        advanceUntilIdle()
+
+        assertEquals(listOf(PRODUCT_PACK), repository.deletedProducts)
+        val state = vm.state.value
+        assertEquals(listOf(PRODUCT_SUB), state.allProducts.map { it.id })
+        assertEquals(PRODUCT_SUB, state.selectedId)
+        assertFalse(state.deleting)
+        assertTrue(state.notice.orEmpty().contains("500 OposiTickets"))
+    }
+
+    @Test
+    fun `a product the server refuses to delete stays on screen with the server reason`() = runTest {
+        val repository = FakeCatalogRepository().apply { deleteFailure = AppError.Validation("No se puede borrar: lo usan 3 suscripciones y 0 compras.") }
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+
+        vm.dispatch(CommercialCatalogIntent.AskDeleteProduct)
+        vm.dispatch(CommercialCatalogIntent.ConfirmDelete)
+        advanceUntilIdle()
+
+        val state = vm.state.value
+        assertEquals(2, state.allProducts.size)
+        assertEquals(PRODUCT_PACK, state.selectedId)
+        assertTrue(assertIs<UiAsync.Error>(state.actionState).error.message.contains("3 suscripciones"))
+        assertFalse(state.deleting)
+    }
+
+    @Test
+    fun `deleting a tariff removes only that tariff and closes its form`() = runTest {
+        val repository = FakeCatalogRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+        vm.dispatch(CommercialCatalogIntent.Open(PRODUCT_SUB))
+        vm.dispatch(CommercialCatalogIntent.EditTariff("t1"))
+        vm.dispatch(CommercialCatalogIntent.AskDeleteTariff("no-existe"))
+        advanceUntilIdle()
+        assertEquals(null, vm.state.value.pendingDelete)
+
+        vm.dispatch(CommercialCatalogIntent.AskDeleteTariff("t1"))
+        vm.dispatch(CommercialCatalogIntent.ConfirmDelete)
+        advanceUntilIdle()
+
+        assertEquals(listOf(PRODUCT_SUB to "t1"), repository.deletedTariffs)
+        val state = vm.state.value
+        assertTrue(state.selected!!.tariffs.isEmpty())
+        assertEquals(null, state.tariffDraft)
+        assertEquals(2, state.allProducts.size, "el producto sigue ahí")
+    }
+
+    @Test
+    fun `dismissing the confirmation deletes nothing`() = runTest {
+        val repository = FakeCatalogRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+
+        vm.dispatch(CommercialCatalogIntent.AskDeleteProduct)
+        vm.dispatch(CommercialCatalogIntent.DismissDelete)
+        vm.dispatch(CommercialCatalogIntent.ConfirmDelete)
+        advanceUntilIdle()
+
+        assertTrue(repository.deletedProducts.isEmpty())
+        assertEquals(2, vm.state.value.allProducts.size)
+    }
+
+    @Test
     fun `editing a tariff keeps its id and its natural key`() = runTest {
         val repository = FakeCatalogRepository()
         val vm = viewModel(repository)

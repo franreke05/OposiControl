@@ -43,6 +43,9 @@ import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.CommercialProduct
 import com.oposicontrol.admin.domain.model.formatPriceCents
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
+import com.oposicontrol.admin.core.ui.components.DangerOutlineButton
+import com.oposicontrol.admin.domain.model.CommercialTariff
 
 internal const val CATALOG_PRODUCTS_PANE_TAG: String = "catalog-products-pane"
 internal const val CATALOG_PRODUCT_EDITOR_TAG: String = "catalog-product-editor"
@@ -120,6 +123,34 @@ internal fun CommercialCatalogContent(
         onConfirm = { onIntent(CommercialCatalogIntent.ConfirmOpen) },
         onDismiss = { onIntent(CommercialCatalogIntent.DismissOpen) },
     )
+
+    state.pendingDelete?.let { pending ->
+        val product = state.allProducts.firstOrNull { it.id == pending.productId } ?: return@let
+        val tariff = pending.tariffId?.let { id -> product.tariffs.firstOrNull { it.id == id } }
+        ConfirmDialog(
+            title = if (tariff != null) "Eliminar tarifa" else "Eliminar producto",
+            message = catalogDeleteMessage(product, tariff),
+            confirmLabel = "Eliminar",
+            destructive = true,
+            onConfirm = { onIntent(CommercialCatalogIntent.ConfirmDelete) },
+            onDismiss = { onIntent(CommercialCatalogIntent.DismissDelete) },
+        )
+    }
+}
+
+/** Texto de la confirmación de borrado: qué se borra, qué arrastra y qué alternativa hay. Función pura. */
+internal fun catalogDeleteMessage(product: CommercialProduct, tariff: CommercialTariff?): String = buildString {
+    if (tariff != null) {
+        append("Producto: ${product.name}\n")
+        append("Tarifa: ${tariffPeriodLabel(tariff.billingPeriod)} · ${tariffPhaseLabel(tariff.pricePhase)}, ")
+        append("${formatPriceCents(tariff.priceCents, tariff.currency)}\n\n")
+        append("La app dejará de ofrecer este precio. No se puede deshacer; para retirarla sin borrarla, desactívala.")
+    } else {
+        append("Producto: ${product.name} (${product.code})\n")
+        if (product.tariffs.isNotEmpty()) append("Se borran también sus ${product.tariffs.size} tarifas.\n")
+        append("\nDesaparece del catálogo que ve la app y no se puede deshacer. ")
+        append("Si alguna suscripción o compra lo usa, el servidor no lo borrará: en ese caso, desactívalo.")
+    }
 }
 
 @Composable
@@ -166,6 +197,15 @@ private fun ProductEditorPane(
                     val live = commerceStatus(state.draft.active, state.draft.visible, state.draft.highlighted)
                     StatusDotChip(label = live.label, tone = live.tone)
                     if (state.draft.type.isNotBlank()) WorkspacePill(text = productTypeLabel(state.draft.type))
+                }
+                // Sólo un producto que ya existe en el servidor se puede borrar; uno nuevo se descarta.
+                if (product != null && !state.creatingNew) {
+                    DangerOutlineButton(
+                        text = "Eliminar",
+                        size = ButtonSize.COMPACT,
+                        enabled = !state.deleting && !saving,
+                        onClick = { onIntent(CommercialCatalogIntent.AskDeleteProduct) },
+                    )
                 }
             }
         },
@@ -417,6 +457,8 @@ private fun TariffsSection(product: CommercialProduct, state: CommercialCatalogS
                     status = commerceStatus(tariff.active, tariff.visible),
                     editing = draft?.id == tariff.id,
                     onEdit = { onIntent(CommercialCatalogIntent.EditTariff(tariff.id)) },
+                    onDelete = { onIntent(CommercialCatalogIntent.AskDeleteTariff(tariff.id)) },
+                    deleteEnabled = !state.deleting,
                 )
             }
         }

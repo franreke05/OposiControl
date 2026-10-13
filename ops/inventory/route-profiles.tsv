@@ -7,6 +7,8 @@
 # Classification is explicit per row, never inferred from the URL prefix: e.g. /tags, /search, /search/reindex, /dashboard/metrics are CONTROL
 # although they live outside /admin; /api/v1/app/legal/documents is BOT (shares canonicalProfileRoutes with AUTH, needs the auth runtime).
 DELETE	/admin/users/{}	CONTROL	admin	Admin legacy: users/{}	OposiControl
+DELETE	/api/v1/admin/comercial/productos/{}	CONTROL	admin	Admin v1: borrar un producto del catalogo (409 si esta en uso)	OposiControl
+DELETE	/api/v1/admin/comercial/productos/{}/tarifas/{}	CONTROL	admin	Admin v1: borrar una tarifa	OposiControl
 DELETE	/api/v1/admin/comunidades-autonomas/{}	CONTROL	admin	Admin v1: comunidades-autonomas/{}	OposiControl
 DELETE	/api/v1/admin/especialidades/{}	CONTROL	admin	Admin v1: especialidades/{}	OposiControl
 DELETE	/api/v1/admin/etiquetas/{}	CONTROL	admin	Admin v1: etiquetas/{}	OposiControl

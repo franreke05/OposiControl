@@ -26,6 +26,12 @@ interface CommercialCatalogRepository {
     /** Alta (id en blanco) o cambio de una tarifa del producto. */
     suspend fun saveTariff(productId: String, tariff: CommercialTariff): AppResult<CommercialTariff>
 
+    /** Borra un producto con sus tarifas. El servidor lo rechaza (409) si alguna suscripción o compra lo usa. */
+    suspend fun deleteProduct(productId: String): AppResult<Unit>
+
+    /** Borra una tarifa del producto. */
+    suspend fun deleteTariff(productId: String, tariffId: String): AppResult<Unit>
+
     /** TODOS los planes, con sus beneficios. Misma paginación que [getProducts]. */
     suspend fun getPlans(): AppResult<List<CommercialPlan>>
 

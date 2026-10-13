@@ -25,6 +25,7 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import io.ktor.client.request.delete
 
 /**
  * Catálogo comercial a través del límite canónico de Ktor.
@@ -123,6 +124,22 @@ class KtorCommercialCatalogRepositoryImpl(
             response.requireSuccess(endpoint)
             response.body<TarifaResponse>().data.toDomain()
         }
+
+    override suspend fun deleteProduct(productId: String): AppResult<Unit> = adapter.safeCall {
+        val endpoint = "$ADMIN_V1_COMERCIAL_PRODUCTOS/$productId"
+        client.delete(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            expectSuccess = false
+        }.requireSuccess(endpoint)
+    }
+
+    override suspend fun deleteTariff(productId: String, tariffId: String): AppResult<Unit> = adapter.safeCall {
+        val endpoint = "$ADMIN_V1_COMERCIAL_PRODUCTOS/$productId/tarifas/$tariffId"
+        client.delete(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            expectSuccess = false
+        }.requireSuccess(endpoint)
+    }
 
     private fun url(endpoint: String) = BackendRoutes.url(appConfig.baseUrl, endpoint)
 

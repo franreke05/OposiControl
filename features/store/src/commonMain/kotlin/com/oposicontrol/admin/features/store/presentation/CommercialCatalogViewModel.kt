@@ -48,7 +48,16 @@ sealed interface CommercialCatalogIntent {
     data class UpdateTariff(val draft: TariffDraft) : CommercialCatalogIntent
     data object SaveTariff : CommercialCatalogIntent
     data object CancelTariff : CommercialCatalogIntent
+
+    /** Borrar pide confirmación: `Ask…` abre el diálogo y [ConfirmDelete] escribe. */
+    data object AskDeleteProduct : CommercialCatalogIntent
+    data class AskDeleteTariff(val tariffId: String) : CommercialCatalogIntent
+    data object ConfirmDelete : CommercialCatalogIntent
+    data object DismissDelete : CommercialCatalogIntent
 }
+
+/** Lo que se va a borrar si se confirma. [tariffId] `null` = el producto entero. */
+data class PendingCatalogDelete(val productId: String, val tariffId: String? = null)
 
 data class CommercialCatalogState(
     /** Todos los productos descargados (el repositorio recorre las páginas del servidor). */
@@ -71,6 +80,9 @@ data class CommercialCatalogState(
     val tariffDraft: TariffDraft? = null,
     /** Destino pendiente de confirmar cuando se intenta salir de una ficha con cambios. */
     val pendingOpen: PendingOpen? = null,
+    val pendingDelete: PendingCatalogDelete? = null,
+    /** Hay un borrado en curso: los botones de borrar se apagan. */
+    val deleting: Boolean = false,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
     val tariffActionState: UiAsync<Unit> = UiAsync.Idle,
     /** Aviso que deja el último guardado (ver [productKeptByServer]). */
@@ -151,6 +163,20 @@ class CommercialCatalogViewModel(
             is CommercialCatalogIntent.UpdateTariff -> updateState { it.copy(tariffDraft = intent.draft, tariffActionState = UiAsync.Idle) }
             CommercialCatalogIntent.SaveTariff -> saveTariff()
             CommercialCatalogIntent.CancelTariff -> updateState { it.copy(tariffDraft = null, tariffActionState = UiAsync.Idle) }
+            CommercialCatalogIntent.AskDeleteProduct -> updateState { state ->
+                val product = state.selected
+                if (product == null || state.deleting) state else state.copy(pendingDelete = PendingCatalogDelete(product.id))
+            }
+            is CommercialCatalogIntent.AskDeleteTariff -> updateState { state ->
+                val product = state.selected
+                if (product == null || state.deleting || product.tariffs.none { it.id == intent.tariffId }) {
+                    state
+                } else {
+                    state.copy(pendingDelete = PendingCatalogDelete(product.id, intent.tariffId))
+                }
+            }
+            CommercialCatalogIntent.DismissDelete -> updateState { it.copy(pendingDelete = null) }
+            CommercialCatalogIntent.ConfirmDelete -> confirmDelete()
         }
     }
 
@@ -253,6 +279,54 @@ class CommercialCatalogViewModel(
                         actionState = UiAsync.Success(Unit),
                         notice = keptByServerNotice(productKeptByServer(product, saved)),
                     )
+                }
+            }
+        }
+    }
+
+    private suspend fun confirmDelete() {
+        val state = currentState()
+        val pending = state.pendingDelete ?: return
+        if (state.deleting) return
+        val product = state.allProducts.firstOrNull { it.id == pending.productId } ?: return
+        updateState { it.copy(pendingDelete = null, deleting = true, notice = null) }
+        if (pending.tariffId == null) {
+            when (val result = repository.deleteProduct(product.id)) {
+                // El motivo del servidor («lo usan 3 suscripciones…») se enseña tal cual: es lo que dice qué hacer.
+                is AppResult.Failure -> updateState { it.copy(deleting = false, actionState = UiAsync.Error(result.error)) }
+                is AppResult.Success -> {
+                    analyticsTracker.trackAction("commercial_product_delete", mapOf("product_code" to product.code))
+                    val remaining = currentState().allProducts.filterNot { it.id == product.id }
+                    updateState {
+                        it.copy(
+                            products = if (remaining.isEmpty()) UiAsync.Empty else UiAsync.Success(remaining),
+                            deleting = false,
+                            selectedId = null,
+                            creatingNew = false,
+                            draft = ProductDraft(),
+                        )
+                    }
+                    remaining.firstOrNull()?.let { open(it.id) }
+                    updateState { it.copy(notice = "Producto «${product.name}» eliminado.") }
+                }
+            }
+        } else {
+            when (val result = repository.deleteTariff(product.id, pending.tariffId)) {
+                is AppResult.Failure -> updateState { it.copy(deleting = false, tariffActionState = UiAsync.Error(result.error)) }
+                is AppResult.Success -> {
+                    analyticsTracker.trackAction("commercial_tariff_delete", mapOf("product_code" to product.code))
+                    updateState { current ->
+                        val updated = current.allProducts.map { existing ->
+                            if (existing.id == product.id) existing.copy(tariffs = existing.tariffs.filterNot { it.id == pending.tariffId }) else existing
+                        }
+                        current.copy(
+                            products = UiAsync.Success(updated),
+                            deleting = false,
+                            // Si se estaba editando justo esa tarifa, su formulario ya no tiene a quién guardar.
+                            tariffDraft = current.tariffDraft?.takeUnless { it.id == pending.tariffId },
+                            tariffActionState = UiAsync.Success(Unit),
+                        )
+                    }
                 }
             }
         }

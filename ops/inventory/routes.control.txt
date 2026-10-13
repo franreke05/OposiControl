@@ -1,6 +1,8 @@
 # GENERATED from the real Ktor route tree by RouteInventoryTest. Do not edit by hand.
 # Regenerate locally: INVENTORY_UPDATE=true ./gradlew :backend:ktor:test --tests "*RouteInventoryTest*"
 DELETE /admin/users/{}
+DELETE /api/v1/admin/comercial/productos/{}
+DELETE /api/v1/admin/comercial/productos/{}/tarifas/{}
 DELETE /api/v1/admin/comunidades-autonomas/{}
 DELETE /api/v1/admin/especialidades/{}
 DELETE /api/v1/admin/etiquetas/{}

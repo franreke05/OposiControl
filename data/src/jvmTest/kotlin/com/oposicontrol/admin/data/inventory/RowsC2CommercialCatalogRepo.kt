@@ -14,7 +14,7 @@ private fun Env.repo() = KtorCommercialCatalogRepositoryImpl(client, appConfig, 
 private const val PL = "/api/v1/admin/planes"
 
 /**
- * Filas del registrador (R5-REC-C2): KtorCommercialCatalogRepositoryImpl (5 sitios). `getProducts` y `getPlans` comparten
+ * Filas del registrador (R5-REC-C2): KtorCommercialCatalogRepositoryImpl (7 sitios). `getProducts` y `getPlans` comparten
  * el ayudante paginado `allPages` (un sitio, dos puntos de entrada): la fila ejecuta los dos y los nombra en `covers`.
  */
 internal val ROWS_C2_COMMERCIAL_CATALOG_REPO: List<CallRow> = listOf(
@@ -32,4 +32,6 @@ internal val ROWS_C2_COMMERCIAL_CATALOG_REPO: List<CallRow> = listOf(
     CallRow(FILE, "saveTariff", post("$P/{}/tarifas")) {
         repo().saveTariff("ID0", CommercialTariff(id = "ID1", productId = "ID0", billingPeriod = "mensual", pricePhase = "p", priceCents = 1))
     },
+    CallRow(FILE, "deleteProduct", delete("$P/{}")) { repo().deleteProduct("ID0") },
+    CallRow(FILE, "deleteTariff", delete("$P/{}/tarifas/{}")) { repo().deleteTariff("ID0", "ID1") },
 )

@@ -1523,10 +1523,22 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
                     call.respond(if (saved.created) HttpStatusCode.Created else HttpStatusCode.OK, AdminTarifaProductoResponse(saved.value))
                 }
+                // Baja de un producto. 409 PRODUCT_IN_USE si alguna suscripcion o compra lo referencia por su codigo.
+                delete("/{productoId}") {
+                    val productoId = call.requiredPath("productoId").validatedUuid("productoId")
+                    withUpstreamIo { gateway.deleteProductoComercial(productoId) }
+                    call.respond(HttpStatusCode.NoContent)
+                }
                 route("/{productoId}/tarifas") {
                     get {
                         val productoId = call.requiredPath("productoId").validatedUuid("productoId")
                         call.respond(AdminTarifasProductoResponse(withUpstreamIo { gateway.listTarifas(productoId) }))
+                    }
+                    delete("/{tarifaId}") {
+                        val productoId = call.requiredPath("productoId").validatedUuid("productoId")
+                        val tarifaId = call.requiredPath("tarifaId").validatedUuid("tarifaId")
+                        withUpstreamIo { gateway.deleteTarifa(productoId, tarifaId) }
+                        call.respond(HttpStatusCode.NoContent)
                     }
                     post {
                         val productoId = call.requiredPath("productoId").validatedUuid("productoId")
@@ -7596,6 +7608,81 @@ class AdminV1Gateway private constructor(
 
         registrarAuditoria("tarifa_producto_guardada", "tarifas_producto_comercial", id)
         return saved.toDto()
+    }
+
+    /**
+     * Borra UNA tarifa de un producto. Nada mas la referencia (las compras y las suscripciones guardan el codigo del
+     * producto, no la tarifa), asi que siempre se puede; lo que cambia es el precio que vera la app, y eso lo confirma
+     * quien la borra. 404 si la tarifa no existe o no es de ese producto.
+     */
+    fun deleteTarifa(productoId: String, tarifaId: String) {
+        val producto = productoId.validatedUuid("productoId")
+        val tarifa = tarifaId.validatedUuid("tarifaId")
+        val row = request(
+            "GET",
+            "/rest/v1/tarifas_producto_comercial?select=*&id=eq.$tarifa&producto_id=eq.$producto&limit=1",
+            null,
+        ).decodeList<TarifaProductoRow>().firstOrNull()
+            ?: throw BackendDomainException("TARIFF_NOT_FOUND", HttpStatusCode.NotFound, "La tarifa no existe.")
+        request("DELETE", "/rest/v1/tarifas_producto_comercial?id=eq.$tarifa&producto_id=eq.$producto", null, prefer = "return=minimal")
+        registrarAuditoria(
+            "tarifa_producto_eliminada",
+            "tarifas_producto_comercial",
+            tarifa,
+            antes = buildJsonObject {
+                put("producto_id", JsonPrimitive(producto))
+                put("periodo_facturacion", JsonPrimitive(row.periodoFacturacion))
+                put("fase_precio", JsonPrimitive(row.fasePrecio))
+                put("precio_centimos", JsonPrimitive(row.precioCentimos))
+                put("moneda", JsonPrimitive(row.moneda))
+            },
+        )
+    }
+
+    /**
+     * Borra un producto del catalogo, con sus tarifas.
+     *
+     * Las suscripciones, las compras y el estado premium guardan el CODIGO del producto como texto (no hay clave ajena que
+     * lo impida), y de ese codigo sale el plan de cada suscriptor: borrar un producto que alguien tiene contratado le
+     * dejaria sin plan. Por eso, con una sola referencia, 409 PRODUCT_IN_USE y no se toca nada: lo correcto ahi es
+     * desactivarlo. Un recuento que no se puede leer se trata como «en uso» (se propaga el fallo): nunca se borra a ciegas.
+     *
+     * No es atomico (PostgREST no ofrece transaccion entre dos tablas): primero las tarifas, despues el producto. Si el
+     * segundo borrado fallara, el producto seguiria existiendo sin tarifas y se puede repetir.
+     */
+    fun deleteProductoComercial(productoId: String) {
+        val id = productoId.validatedUuid("productoId")
+        val row = request("GET", "/rest/v1/productos_comerciales?select=*&id=eq.$id&limit=1", null)
+            .decodeList<ProductoComercialRow>()
+            .firstOrNull()
+            ?: throw BackendDomainException("CATALOG_PRODUCT_NOT_FOUND", HttpStatusCode.NotFound, "El producto no existe.")
+        val codigo = row.codigo.urlEncode()
+        val suscripciones = exactCount("/rest/v1/suscripciones?select=id&producto_codigo=eq.$codigo")
+        val compras = exactCount("/rest/v1/compras_usuario?select=id&producto_codigo=eq.$codigo")
+        val premium = exactCount("/rest/v1/estado_premium_usuario?select=usuario_id&producto_codigo=eq.$codigo")
+        if (suscripciones + compras + premium > 0) {
+            throw BackendDomainException(
+                "PRODUCT_IN_USE",
+                HttpStatusCode.Conflict,
+                "No se puede borrar: lo usan $suscripciones suscripciones y $compras compras. Desactívalo para retirarlo de la venta.",
+            )
+        }
+        val tarifas = listTarifas(id)
+        if (tarifas.isNotEmpty()) {
+            request("DELETE", "/rest/v1/tarifas_producto_comercial?producto_id=eq.$id", null, prefer = "return=minimal")
+        }
+        request("DELETE", "/rest/v1/productos_comerciales?id=eq.$id", null, prefer = "return=minimal")
+        registrarAuditoria(
+            "producto_comercial_eliminado",
+            "productos_comerciales",
+            id,
+            antes = buildJsonObject {
+                put("codigo", JsonPrimitive(row.codigo))
+                put("nombre", JsonPrimitive(row.nombre))
+                put("tipo_producto", JsonPrimitive(row.tipoProducto))
+                put("tarifas", JsonPrimitive(tarifas.size))
+            },
+        )
     }
 
     // ---------- ESTADO DEL SISTEMA (agregación en Ktor) ----------
