@@ -11,6 +11,8 @@ DELETE /api/v1/admin/examenes/{}/portada
 DELETE /api/v1/admin/examenes/{}/preguntas/{}
 DELETE /api/v1/admin/noticias/{}
 DELETE /api/v1/admin/oposibots/usuarios/{}
+DELETE /api/v1/admin/planes/{}
+DELETE /api/v1/admin/planes/{}/beneficios/{}
 DELETE /api/v1/admin/preguntas/{}
 DELETE /api/v1/admin/preguntas/{}/examenes/{}
 DELETE /api/v1/admin/preguntas/{}/recursos/{}

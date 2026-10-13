@@ -32,7 +32,16 @@ sealed interface CommercialPlansIntent {
     data class UpdateBenefit(val draft: BenefitDraft) : CommercialPlansIntent
     data object SaveBenefit : CommercialPlansIntent
     data object CancelBenefit : CommercialPlansIntent
+
+    /** Borrar pide confirmación: `Ask…` abre el diálogo y [ConfirmDelete] escribe. */
+    data object AskDeletePlan : CommercialPlansIntent
+    data class AskDeleteBenefit(val benefitId: String) : CommercialPlansIntent
+    data object ConfirmDelete : CommercialPlansIntent
+    data object DismissDelete : CommercialPlansIntent
 }
+
+/** Lo que se va a borrar si se confirma. [benefitId] `null` = el plan entero. */
+data class PendingPlanDelete(val planId: String, val benefitId: String? = null)
 
 data class CommercialPlansState(
     /** Todos los planes descargados (el repositorio recorre las páginas del servidor). */
@@ -52,6 +61,9 @@ data class CommercialPlansState(
     val benefitDraft: BenefitDraft? = null,
     /** Destino pendiente de confirmar cuando se intenta salir de una ficha con cambios. */
     val pendingOpen: PendingPlanOpen? = null,
+    val pendingDelete: PendingPlanDelete? = null,
+    /** Hay un borrado en curso: los botones de borrar se apagan. */
+    val deleting: Boolean = false,
     val actionState: UiAsync<Unit> = UiAsync.Idle,
     val benefitActionState: UiAsync<Unit> = UiAsync.Idle,
     /** Aviso que deja el último guardado (ver [planKeptByServer]). */
@@ -120,6 +132,67 @@ class CommercialPlansViewModel(
             is CommercialPlansIntent.UpdateBenefit -> updateState { it.copy(benefitDraft = intent.draft, benefitActionState = UiAsync.Idle) }
             CommercialPlansIntent.SaveBenefit -> saveBenefit()
             CommercialPlansIntent.CancelBenefit -> updateState { it.copy(benefitDraft = null, benefitActionState = UiAsync.Idle) }
+            CommercialPlansIntent.AskDeletePlan -> updateState { state ->
+                val plan = state.selected
+                if (plan == null || state.deleting) state else state.copy(pendingDelete = PendingPlanDelete(plan.id))
+            }
+            is CommercialPlansIntent.AskDeleteBenefit -> updateState { state ->
+                val plan = state.selected
+                if (plan == null || state.deleting || plan.benefits.none { it.id == intent.benefitId }) {
+                    state
+                } else {
+                    state.copy(pendingDelete = PendingPlanDelete(plan.id, intent.benefitId))
+                }
+            }
+            CommercialPlansIntent.DismissDelete -> updateState { it.copy(pendingDelete = null) }
+            CommercialPlansIntent.ConfirmDelete -> confirmDelete()
+        }
+    }
+
+    private suspend fun confirmDelete() {
+        val state = currentState()
+        val pending = state.pendingDelete ?: return
+        if (state.deleting) return
+        val plan = state.allPlans.firstOrNull { it.id == pending.planId } ?: return
+        updateState { it.copy(pendingDelete = null, deleting = true, notice = null) }
+        if (pending.benefitId == null) {
+            when (val result = repository.deletePlan(plan.id)) {
+                // El motivo del servidor («apuntan a este plan 1 productos…») se enseña tal cual: dice qué quitar antes.
+                is AppResult.Failure -> updateState { it.copy(deleting = false, actionState = UiAsync.Error(result.error)) }
+                is AppResult.Success -> {
+                    analyticsTracker.trackAction("commercial_plan_delete", mapOf("plan_code" to plan.code))
+                    val remaining = currentState().allPlans.filterNot { it.id == plan.id }
+                    updateState {
+                        it.copy(
+                            plans = if (remaining.isEmpty()) UiAsync.Empty else UiAsync.Success(remaining),
+                            deleting = false,
+                            selectedId = null,
+                            creatingNew = false,
+                            draft = PlanDraft(),
+                        )
+                    }
+                    remaining.firstOrNull()?.let { open(it.id) }
+                    updateState { it.copy(notice = "Plan «${plan.name}» eliminado.") }
+                }
+            }
+        } else {
+            when (val result = repository.deletePlanBenefit(plan.id, pending.benefitId)) {
+                is AppResult.Failure -> updateState { it.copy(deleting = false, benefitActionState = UiAsync.Error(result.error)) }
+                is AppResult.Success -> {
+                    analyticsTracker.trackAction("commercial_plan_benefit_delete", mapOf("plan_code" to plan.code))
+                    updateState { current ->
+                        val updated = current.allPlans.map { existing ->
+                            if (existing.id == plan.id) existing.copy(benefits = existing.benefits.filterNot { it.id == pending.benefitId }) else existing
+                        }
+                        current.copy(
+                            plans = UiAsync.Success(updated),
+                            deleting = false,
+                            benefitDraft = current.benefitDraft?.takeUnless { it.id == pending.benefitId },
+                            benefitActionState = UiAsync.Success(Unit),
+                        )
+                    }
+                }
+            }
         }
     }
 

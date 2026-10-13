@@ -1570,10 +1570,22 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 call.response.header(HttpHeaders.CacheControl, ModerationQueries.NO_STORE)
                 call.respond(if (saved.created) HttpStatusCode.Created else HttpStatusCode.OK, AdminPlanResponse(saved.value))
             }
+            // Baja de un plan. 409 PLAN_IN_USE si un producto, un examen o una regla de aviso apuntan a el.
+            delete("/{planId}") {
+                val planId = call.requiredPath("planId").validatedUuid("planId")
+                withUpstreamIo { gateway.deletePlan(planId) }
+                call.respond(HttpStatusCode.NoContent)
+            }
             route("/{planId}/beneficios") {
                 get {
                     val planId = call.requiredPath("planId").validatedUuid("planId")
                     call.respond(AdminPlanBenefitsResponse(withUpstreamIo { gateway.listPlanBenefits(planId) }))
+                }
+                delete("/{beneficioId}") {
+                    val planId = call.requiredPath("planId").validatedUuid("planId")
+                    val beneficioId = call.requiredPath("beneficioId").validatedUuid("beneficioId")
+                    withUpstreamIo { gateway.deletePlanBenefit(planId, beneficioId) }
+                    call.respond(HttpStatusCode.NoContent)
                 }
                 post {
                     val planId = call.requiredPath("planId").validatedUuid("planId")
@@ -8020,6 +8032,61 @@ class AdminV1Gateway private constructor(
         ).decodeList<AdminPlanBenefitDto>().firstOrNull() ?: error("El beneficio no se pudo guardar.")
         registrarAuditoria("beneficio_plan_guardado", "beneficios_plan", row.id)
         return saved
+    }
+
+    /** Borra UN beneficio de un plan. Nada lo referencia; 404 si no existe o no es de ese plan. */
+    fun deletePlanBenefit(planId: String, beneficioId: String) {
+        val plan = planId.validatedUuid("planId")
+        val beneficio = beneficioId.validatedUuid("beneficioId")
+        val exists = request("GET", "/rest/v1/beneficios_plan?select=id&id=eq.$beneficio&plan_id=eq.$plan&limit=1", null)
+            .decodeList<PlanRow>()
+            .isNotEmpty()
+        if (!exists) throw BackendDomainException("PLAN_BENEFIT_NOT_FOUND", HttpStatusCode.NotFound, "El beneficio no existe.")
+        request("DELETE", "/rest/v1/beneficios_plan?id=eq.$beneficio&plan_id=eq.$plan", null, prefer = "return=minimal")
+        registrarAuditoria(
+            "beneficio_plan_eliminado",
+            "beneficios_plan",
+            beneficio,
+            antes = buildJsonObject { put("plan_id", JsonPrimitive(plan)) },
+        )
+    }
+
+    /**
+     * Borra un plan; sus beneficios se van con el (clave ajena en cascada).
+     *
+     * No se borra un plan del que cuelga algo: un producto que apunta a el (clave ajena), un examen que lo exige o una
+     * regla de aviso comercial que lo pone de minimo (estos dos guardan el CODIGO como texto, sin clave ajena: borrar el
+     * plan los dejaria apuntando a nada, y el examen quedaria imposible de abrir). 409 PLAN_IN_USE con los recuentos.
+     */
+    fun deletePlan(planId: String) {
+        val id = planId.validatedUuid("planId")
+        val row = request("GET", "/rest/v1/planes_suscripcion?select=*&id=eq.$id&limit=1", null)
+            .decodeList<PlanRow>()
+            .firstOrNull()
+            ?: throw BackendDomainException("PLAN_NOT_FOUND", HttpStatusCode.NotFound, "El plan no existe.")
+        val codigo = row.codigo.urlEncode()
+        val productos = exactCount("/rest/v1/productos_comerciales?select=id&plan_id=eq.$id")
+        val examenes = exactCount("/rest/v1/examenes?select=id&requiere_plan_codigo=eq.$codigo")
+        val reglas = exactCount("/rest/v1/reglas_popup_comercial?select=id&requiere_plan_minimo=eq.$codigo")
+        if (productos + examenes + reglas > 0) {
+            throw BackendDomainException(
+                "PLAN_IN_USE",
+                HttpStatusCode.Conflict,
+                "No se puede borrar: apuntan a este plan $productos productos, $examenes exámenes y $reglas reglas de aviso. " +
+                    "Quítalos antes o desactiva el plan.",
+            )
+        }
+        request("DELETE", "/rest/v1/planes_suscripcion?id=eq.$id", null, prefer = "return=minimal")
+        registrarAuditoria(
+            "plan_eliminado",
+            "planes_suscripcion",
+            id,
+            antes = buildJsonObject {
+                put("codigo", JsonPrimitive(row.codigo))
+                put("nombre", JsonPrimitive(row.nombre))
+                put("nivel", JsonPrimitive(row.nivel))
+            },
+        )
     }
 
     // ---------- OPOSITICKETS (concesión administrativa + resumen) ----------

@@ -17,6 +17,8 @@ DELETE	/api/v1/admin/examenes/{}/portada	CONTROL	admin	Admin v1: examenes/{}/por
 DELETE	/api/v1/admin/examenes/{}/preguntas/{}	CONTROL	admin	Admin v1: examenes/{}/preguntas/{}	OposiControl
 DELETE	/api/v1/admin/noticias/{}	CONTROL	admin	Admin news: delete	OposiControl
 DELETE	/api/v1/admin/oposibots/usuarios/{}	CONTROL	admin	Admin v1: oposibots/usuarios/{}	OposiControl
+DELETE	/api/v1/admin/planes/{}	CONTROL	admin	Admin v1: borrar un plan (409 si esta en uso)	OposiControl
+DELETE	/api/v1/admin/planes/{}/beneficios/{}	CONTROL	admin	Admin v1: borrar un beneficio de un plan	OposiControl
 DELETE	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiControl
 DELETE	/api/v1/admin/preguntas/{}/examenes/{}	CONTROL	admin	Admin v1: preguntas/{}/examenes/{}	OposiControl
 DELETE	/api/v1/admin/preguntas/{}/recursos/{}	CONTROL	admin	Admin v1: preguntas/{}/recursos/{}	OposiControl

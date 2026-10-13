@@ -141,6 +141,22 @@ class KtorCommercialCatalogRepositoryImpl(
         }.requireSuccess(endpoint)
     }
 
+    override suspend fun deletePlan(planId: String): AppResult<Unit> = adapter.safeCall {
+        val endpoint = "$ADMIN_V1_PLANES/$planId"
+        client.delete(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            expectSuccess = false
+        }.requireSuccess(endpoint)
+    }
+
+    override suspend fun deletePlanBenefit(planId: String, benefitId: String): AppResult<Unit> = adapter.safeCall {
+        val endpoint = "$ADMIN_V1_PLANES/$planId/beneficios/$benefitId"
+        client.delete(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            expectSuccess = false
+        }.requireSuccess(endpoint)
+    }
+
     private fun url(endpoint: String) = BackendRoutes.url(appConfig.baseUrl, endpoint)
 
     private suspend fun HttpResponse.requireSuccess(endpoint: String) {

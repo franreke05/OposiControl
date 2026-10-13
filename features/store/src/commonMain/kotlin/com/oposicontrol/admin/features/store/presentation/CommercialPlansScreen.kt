@@ -42,6 +42,9 @@ import com.oposicontrol.admin.core.ui.components.WorkspaceSizing
 import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.CommercialPlan
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
+import com.oposicontrol.admin.core.ui.components.DangerOutlineButton
+import com.oposicontrol.admin.domain.model.PlanBenefit
 
 internal const val CATALOG_PLANS_PANE_TAG: String = "catalog-plans-pane"
 internal const val CATALOG_PLAN_EDITOR_TAG: String = "catalog-plan-editor"
@@ -118,6 +121,33 @@ internal fun CommercialPlansContent(
         onConfirm = { onIntent(CommercialPlansIntent.ConfirmOpen) },
         onDismiss = { onIntent(CommercialPlansIntent.DismissOpen) },
     )
+
+    state.pendingDelete?.let { pending ->
+        val plan = state.allPlans.firstOrNull { it.id == pending.planId } ?: return@let
+        val benefit = pending.benefitId?.let { id -> plan.benefits.firstOrNull { it.id == id } }
+        ConfirmDialog(
+            title = if (benefit != null) "Eliminar beneficio" else "Eliminar plan",
+            message = planDeleteMessage(plan, benefit),
+            confirmLabel = "Eliminar",
+            destructive = true,
+            onConfirm = { onIntent(CommercialPlansIntent.ConfirmDelete) },
+            onDismiss = { onIntent(CommercialPlansIntent.DismissDelete) },
+        )
+    }
+}
+
+/** Texto de la confirmación de borrado: qué se borra, qué arrastra y cuándo se negará el servidor. Función pura. */
+internal fun planDeleteMessage(plan: CommercialPlan, benefit: PlanBenefit?): String = buildString {
+    if (benefit != null) {
+        append("Plan: ${plan.name}\n")
+        append("Beneficio: ${benefit.code} (${benefitValueLabel(benefit)})\n\n")
+        append("Quien tenga este plan dejará de tener este beneficio. No se puede deshacer.")
+    } else {
+        append("Plan: ${plan.name} (${plan.code})\n")
+        if (plan.benefits.isNotEmpty()) append("Se borran también sus ${plan.benefits.size} beneficios.\n")
+        append("\nNo se puede deshacer. Si algún producto, examen o regla de aviso apunta a este plan, el servidor no lo ")
+        append("borrará y te dirá cuáles: quítalos antes, o desactiva el plan.")
+    }
 }
 
 @Composable
@@ -164,6 +194,15 @@ private fun PlanEditorPane(
                     val live = commerceStatus(state.draft.active, state.draft.visible)
                     StatusDotChip(label = live.label, tone = live.tone)
                     WorkspacePill(text = planLevelLabel(state.draft.level))
+                }
+                // Sólo un plan que ya existe en el servidor se puede borrar; uno nuevo se descarta.
+                if (plan != null && !state.creatingNew) {
+                    DangerOutlineButton(
+                        text = "Eliminar",
+                        size = ButtonSize.COMPACT,
+                        enabled = !state.deleting && !saving,
+                        onClick = { onIntent(CommercialPlansIntent.AskDeletePlan) },
+                    )
                 }
             }
         },
@@ -359,6 +398,8 @@ private fun BenefitsSection(plan: CommercialPlan, state: CommercialPlansState, o
                     value = benefitValueLabel(benefit),
                     editing = draft?.id == benefit.id,
                     onEdit = { onIntent(CommercialPlansIntent.EditBenefit(benefit.id)) },
+                    onDelete = { onIntent(CommercialPlansIntent.AskDeleteBenefit(benefit.id)) },
+                    deleteEnabled = !state.deleting,
                 )
             }
         }

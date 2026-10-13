@@ -286,4 +286,57 @@ class CommercialPlansTest {
         assertIs<UiAsync.Success<*>>(vm.state.value.plans)
         assertTrue(vm.state.value.refreshFailed)
     }
+
+    @Test
+    fun `deleting a plan asks first, removes it and opens the next one`() = runTest {
+        val repository = FakeCatalogRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+        vm.dispatch(CommercialPlansIntent.Open(PLAN_PRO))
+        vm.dispatch(CommercialPlansIntent.AskDeletePlan)
+        advanceUntilIdle()
+        assertEquals(PendingPlanDelete(PLAN_PRO), vm.state.value.pendingDelete)
+        assertTrue(repository.deletedPlans.isEmpty(), "pedir confirmación no borra nada")
+
+        vm.dispatch(CommercialPlansIntent.ConfirmDelete)
+        vm.dispatch(CommercialPlansIntent.ConfirmDelete)
+        advanceUntilIdle()
+
+        assertEquals(listOf(PLAN_PRO), repository.deletedPlans)
+        assertEquals(listOf(PLAN_FREE), vm.state.value.allPlans.map { it.id })
+        assertEquals(PLAN_FREE, vm.state.value.selectedId)
+        assertFalse(vm.state.value.deleting)
+    }
+
+    @Test
+    fun `a plan the server refuses to delete stays with the server reason`() = runTest {
+        val repository = FakeCatalogRepository().apply { deleteFailure = AppError.Validation("No se puede borrar: apuntan a este plan 1 productos.") }
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+        vm.dispatch(CommercialPlansIntent.Open(PLAN_PRO))
+        vm.dispatch(CommercialPlansIntent.AskDeletePlan)
+        vm.dispatch(CommercialPlansIntent.ConfirmDelete)
+        advanceUntilIdle()
+
+        assertEquals(2, vm.state.value.allPlans.size)
+        assertTrue(assertIs<UiAsync.Error>(vm.state.value.actionState).error.message.contains("1 productos"))
+    }
+
+    @Test
+    fun `deleting a benefit removes only that benefit`() = runTest {
+        val repository = FakeCatalogRepository()
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+        vm.dispatch(CommercialPlansIntent.Open(PLAN_PRO))
+        vm.dispatch(CommercialPlansIntent.AskDeleteBenefit("no-existe"))
+        advanceUntilIdle()
+        assertNull(vm.state.value.pendingDelete)
+
+        vm.dispatch(CommercialPlansIntent.AskDeleteBenefit("b1"))
+        vm.dispatch(CommercialPlansIntent.ConfirmDelete)
+        advanceUntilIdle()
+
+        assertEquals(listOf(PLAN_PRO to "b1"), repository.deletedBenefits)
+        assertEquals(listOf("b2"), vm.state.value.selected!!.benefits.map { it.id })
+    }
 }

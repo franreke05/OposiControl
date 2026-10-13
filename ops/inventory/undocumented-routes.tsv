@@ -1,4 +1,4 @@
-# max: 162
+# max: 164
 # REVIEWED EXCEPTIONS REGISTER: routes served by Ktor that the frozen openapi/ does not declare. NOT a spec: no semantics are invented here.
 # The list can only shrink: a row that is no longer routed or is now documented fails RouteInventoryTest; a new undocumented route fails until it is
 # reviewed and added here (and then `# max:` goes up on purpose). Legacy routes are enrolled, never deleted (no published-client telemetry yet).
@@ -50,6 +50,8 @@ GET	/api/v1/admin/comercial/productos/{}/tarifas	ADMIN_CONTRACT_GAP	EP-044 -> D7
 POST	/api/v1/admin/comercial/productos/{}/tarifas	ADMIN_CONTRACT_GAP	EP-156 -> D7-19	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt:63; FA13: successor PUT /api/v1/admin/comercial/productos/{codigo}/tarifas/{periodo}/{fase} (D7-19) is in the spec and routed; this route is unchanged
 DELETE	/api/v1/admin/comercial/productos/{}	ADMIN_CONTRACT_GAP	EP-155	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt; owner request 2026-10-13 (catalogue CRUD); no openapi contract yet
 DELETE	/api/v1/admin/comercial/productos/{}/tarifas/{}	ADMIN_CONTRACT_GAP	EP-156	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt; owner request 2026-10-13 (catalogue CRUD); no openapi contract yet
+DELETE	/api/v1/admin/planes/{}	ADMIN_CONTRACT_GAP	D7-22	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt; owner request 2026-10-13 (catalogue CRUD); no openapi contract yet
+DELETE	/api/v1/admin/planes/{}/beneficios/{}	ADMIN_CONTRACT_GAP	D7-22	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommercialCatalogRepositoryImpl.kt; owner request 2026-10-13 (catalogue CRUD); no openapi contract yet
 GET	/api/v1/admin/dashboard	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-046 -> D3-15	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/DashboardApi.kt:21 via ADMIN_V1_DASHBOARD
 DELETE	/api/v1/admin/examenes/{}/preguntas/{}	ADMIN_CONTRACT_GAP	EP-007 -> D2-32	NONE	no live caller in OC/OB (only a dead BackendRoutes constant; route matrix audit 2026-10-01); retire only after zero telemetry
 POST	/api/v1/admin/feedback/preguntas/{}/resolver	ADMIN_CONTRACT_GAP	EP-165	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorTesterRepositoryImpl.kt:54 via adminV1FeedbackPreguntaResolver

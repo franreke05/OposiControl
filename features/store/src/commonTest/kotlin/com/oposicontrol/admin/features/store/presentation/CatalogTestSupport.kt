@@ -97,6 +97,22 @@ internal class FakeCatalogRepository(
         return AppResult.Success(Unit)
     }
 
+    val deletedPlans = mutableListOf<String>()
+    val deletedBenefits = mutableListOf<Pair<String, String>>()
+
+    override suspend fun deletePlan(planId: String): AppResult<Unit> {
+        deleteFailure?.let { return AppResult.Failure(it) }
+        deletedPlans += planId
+        plans = plans.filterNot { it.id == planId }
+        return AppResult.Success(Unit)
+    }
+
+    override suspend fun deletePlanBenefit(planId: String, benefitId: String): AppResult<Unit> {
+        deleteFailure?.let { return AppResult.Failure(it) }
+        deletedBenefits += planId to benefitId
+        return AppResult.Success(Unit)
+    }
+
     override suspend fun getPlans(): AppResult<List<CommercialPlan>> {
         planReads++
         return plansFailure?.let { AppResult.Failure(it) } ?: AppResult.Success(plans)

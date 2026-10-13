@@ -116,4 +116,81 @@ class AdminCatalogDeleteTest {
         assertEquals("TARIFF_NOT_FOUND", error.errorCode)
         assertTrue(sent.deletes().isEmpty())
     }
+
+    // ------------------------------------------------------------------------------------------------ planes
+
+    private val planId = "33333333-3333-4333-8333-333333333333"
+    private val beneficioId = "44444444-4444-4444-8444-444444444444"
+    private val plan = """[{"id":"$planId","codigo":"razonados","nombre":"RAZONADOS","nivel":2}]"""
+
+    private fun planGateway(
+        sent: MutableList<HttpRequest>,
+        planes: String = plan,
+        beneficios: String = """[{"id":"$beneficioId"}]""",
+        productos: Int = 0,
+        examenes: Int = 0,
+        reglas: Int = 0,
+    ): AdminV1Gateway = AdminV1Gateway.forTesting(
+        supabaseUrl = "https://stub.supabase.test",
+        serviceRoleKey = "stub-key",
+        json = Json { ignoreUnknownKeys = true },
+        client = V1StubHttpClient(sent::add) { uri ->
+            fun count(n: Int) = V1StubResponse(200, "[]", contentRange = if (n == 0) "*/0" else "0-${n - 1}/$n")
+            when {
+                "/rest/v1/productos_comerciales" in uri -> count(productos)
+                "/rest/v1/examenes" in uri -> count(examenes)
+                "/rest/v1/reglas_popup_comercial" in uri -> count(reglas)
+                "/rest/v1/beneficios_plan" in uri -> V1StubResponse(200, beneficios)
+                "/rest/v1/planes_suscripcion" in uri -> V1StubResponse(200, planes)
+                else -> V1StubResponse(201, "")
+            }
+        },
+    )
+
+    @Test
+    fun aPlanNothingPointsAtIsDeletedAndAudited() {
+        val sent = CopyOnWriteArrayList<HttpRequest>()
+        planGateway(sent).deletePlan(planId)
+
+        assertEquals(listOf("planes_suscripcion?id=eq.$planId"), sent.deletes())
+        val audit = sent.audits().single()
+        assertTrue("plan_eliminado" in audit && "razonados" in audit, audit)
+    }
+
+    @Test
+    fun aPlanWithAProductAnExamOrAPopupRuleIsNeverDeleted() {
+        listOf(Triple(1, 0, 0), Triple(0, 3, 0), Triple(0, 0, 1)).forEach { (productos, examenes, reglas) ->
+            val sent = CopyOnWriteArrayList<HttpRequest>()
+            val error = assertFailsWith<BackendDomainException> {
+                planGateway(sent, productos = productos, examenes = examenes, reglas = reglas).deletePlan(planId)
+            }
+            assertEquals("PLAN_IN_USE", error.errorCode)
+            assertEquals(HttpStatusCode.Conflict, error.status)
+            assertTrue(sent.deletes().isEmpty())
+        }
+    }
+
+    @Test
+    fun examsAndRulesAreLookedUpByThePlanCodeAndProductsByItsId() {
+        val sent = CopyOnWriteArrayList<HttpRequest>()
+        planGateway(sent).deletePlan(planId)
+        val uris = sent.map { it.uri().toString() }
+        assertTrue(uris.any { "productos_comerciales" in it && "plan_id=eq.$planId" in it })
+        assertTrue(uris.any { "examenes" in it && "requiere_plan_codigo=eq.razonados" in it })
+        assertTrue(uris.any { "reglas_popup_comercial" in it && "requiere_plan_minimo=eq.razonados" in it })
+    }
+
+    @Test
+    fun aBenefitIsDeletedOnlyWithinItsPlanAndAnUnknownOneIsNotFound() {
+        val sent = CopyOnWriteArrayList<HttpRequest>()
+        planGateway(sent).deletePlanBenefit(planId, beneficioId)
+        assertEquals(listOf("beneficios_plan?id=eq.$beneficioId&plan_id=eq.$planId"), sent.deletes())
+        assertTrue("beneficio_plan_eliminado" in sent.audits().single())
+
+        val none = CopyOnWriteArrayList<HttpRequest>()
+        val error = assertFailsWith<BackendDomainException> { planGateway(none, beneficios = "[]").deletePlanBenefit(planId, beneficioId) }
+        assertEquals("PLAN_BENEFIT_NOT_FOUND", error.errorCode)
+        assertTrue(none.deletes().isEmpty())
+        assertEquals("PLAN_NOT_FOUND", assertFailsWith<BackendDomainException> { planGateway(none, planes = "[]").deletePlan(planId) }.errorCode)
+    }
 }

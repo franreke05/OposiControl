@@ -40,4 +40,10 @@ interface CommercialCatalogRepository {
 
     /** Alta (id en blanco) o cambio de un beneficio del plan. */
     suspend fun savePlanBenefit(planId: String, benefit: PlanBenefit): AppResult<PlanBenefit>
+
+    /** Borra un plan con sus beneficios. El servidor lo rechaza (409) si un producto, un examen o una regla lo usan. */
+    suspend fun deletePlan(planId: String): AppResult<Unit>
+
+    /** Borra un beneficio del plan. */
+    suspend fun deletePlanBenefit(planId: String, benefitId: String): AppResult<Unit>
 }
