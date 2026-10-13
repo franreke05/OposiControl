@@ -15,6 +15,13 @@ interface UsersRepository {
      * usuario registrado». Es la invariante `0 != error`.
      */
     fun observeUsers(): Flow<AppResult<List<User>>>
+
+    /**
+     * Solo quien tiene el rol [roleCode], filtrado en el servidor: no descarga el censo para enseñar tres filas. Por
+     * defecto devuelve el censo entero (un doble de prueba no tiene por qué filtrar); quien llama no debe dar por hecho
+     * que todas las filas tienen el rol.
+     */
+    fun observeUsersWithRole(roleCode: String): Flow<AppResult<List<User>>> = observeUsers()
     suspend fun getUser(userId: String): AppResult<User>
     /**
      * [previous] es la fila tal y como la vio el editor antes de tocarla. Con ella el guardado solo escribe lo que cambio

@@ -159,6 +159,25 @@ class AdminSystemStatusTest {
     )
 
     @Test
+    fun aReplicaThatCannotReachSupabaseTakesTheGreenAwayEvenIfThePanelReplicaCan() {
+        val oneBlind = allUp.map { if (it.name == "bot-1") it.copy(supabaseUp = false) else it }
+        val allBlind = allUp.map { it.copy(supabaseUp = false) }
+        val nobodySays = allUp.map { it.copy(supabaseUp = null) }
+
+        assertEquals(SystemStatusLevelWire.OPERATIVE, supabaseLevelFromReplicas(allUp))
+        assertEquals(SystemStatusLevelWire.DEGRADED, supabaseLevelFromReplicas(oneBlind))
+        assertEquals(SystemStatusLevelWire.DOWN, supabaseLevelFromReplicas(allBlind))
+        // Sin dato no se inventa ni un verde ni un rojo; una réplica caída no opina.
+        assertNull(supabaseLevelFromReplicas(nobodySays))
+        assertNull(supabaseLevelFromReplicas(null))
+        assertNull(supabaseLevelFromReplicas(allBlind.map { it.copy(up = false) }))
+
+        // La sonda de la réplica del panel dice UP; el conjunto no sale operativo.
+        val status = statusWith(topology = SystemTopologySnapshot(prometheusResponded = true, replicas = oneBlind), readiness = "UP")
+        assertEquals(SystemStatusLevelWire.DEGRADED, status.overallStatus)
+    }
+
+    @Test
     fun allReplicasUpIsOperative() {
         assertEquals(SystemStatusLevelWire.OPERATIVE, ktorLevelFromReplicas(allUp))
     }

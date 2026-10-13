@@ -7902,7 +7902,7 @@ class AdminV1Gateway private constructor(
         return AdminSystemStatusDto(
             // Los DOS niveles, también cuando uno es UNKNOWN: con Prometheus mudo el conjunto no puede salir en verde solo
             // porque Supabase responde.
-            overallStatus = aggregateSystemStatus(listOf(ktorLevel, supabaseLevel)),
+            overallStatus = aggregateSystemStatus(listOfNotNull(ktorLevel, supabaseLevel, supabaseLevelFromReplicas(topology.replicas))),
             ktorStatus = ktorLevel,
             supabaseStatus = supabaseLevel,
             cpuPercent = cpuPercent,

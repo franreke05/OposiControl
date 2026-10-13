@@ -26,6 +26,10 @@ class RealUsersDataSource(
         emit(adapter.safeCall { api.getUsers().map { it.toDomain() } })
     }
 
+    override fun observeUsersWithRole(roleCode: String): Flow<AppResult<List<User>>> = flow {
+        emit(adapter.safeCall { api.getUsers(roleCode).map { it.toDomain() } })
+    }
+
     override suspend fun getUser(userId: String): AppResult<User> {
         return adapter.safeCall {
             api.getUser(userId).toDomain()

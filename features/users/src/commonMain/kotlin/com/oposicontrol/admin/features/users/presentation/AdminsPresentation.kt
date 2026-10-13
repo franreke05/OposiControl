@@ -51,6 +51,15 @@ fun panelAdminAccounts(users: List<User>, roles: List<Role>): List<AdminAccount>
     }.sortedWith(compareBy<AdminAccount> { it.level }.thenBy { it.name.lowercase() })
 }
 
+/**
+ * Une las lecturas por rol en una sola lista. Si falla UNA, el resultado es ese fallo: media lista pasaría por la lista
+ * completa. Quien tiene los dos roles llega dos veces y se queda una.
+ */
+fun mergeRoleHolders(readings: List<AppResult<List<User>>>): AppResult<List<User>> {
+    readings.firstNotNullOfOrNull { it as? AppResult.Failure }?.let { return it }
+    return AppResult.Success(readings.flatMap { (it as AppResult.Success).value }.distinctBy { it.id })
+}
+
 internal const val ADMIN_ROLES_MISSING_MESSAGE: String =
     "El catálogo de roles no incluye los roles de administración, así que no se puede saber quién entra en el panel."
 

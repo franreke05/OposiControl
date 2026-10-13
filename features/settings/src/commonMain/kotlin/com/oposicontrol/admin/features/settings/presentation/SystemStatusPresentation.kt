@@ -84,6 +84,13 @@ internal fun systemOverview(status: SystemStatus): SystemOverview {
             headline = if (alerts.size == 1) "Todo responde, pero hay una alerta activa." else "Todo responde, pero hay ${alerts.size} alertas activas.",
             detail = "Las réplicas están en pie y Supabase responde. Mira el bloque de alertas.",
         )
+        // Las alertas no se han podido leer: «todo funciona con normalidad» sería afirmar algo que no se ha comprobado.
+        status.overallStatus == SystemStatusLevel.OPERATIVE && status.alerts == null -> SystemOverview(
+            level = SystemStatusLevel.UNKNOWN,
+            label = "Sin alertas leídas",
+            headline = "Todo responde, pero no se han podido leer las alertas.",
+            detail = "Las réplicas están en pie y Supabase responde. Vuelve a actualizar para comprobar las alertas.",
+        )
         status.overallStatus == SystemStatusLevel.OPERATIVE -> SystemOverview(
             level = SystemStatusLevel.OPERATIVE,
             label = "Operativo",

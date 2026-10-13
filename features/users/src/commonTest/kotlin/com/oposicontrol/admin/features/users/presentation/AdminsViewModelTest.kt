@@ -55,10 +55,26 @@ class AdminsViewModelTest {
         user("none", "Sin Roles", emptyList()),
     )
 
-    /** Cada lectura devuelve la siguiente respuesta preparada (la última se repite). */
+    /**
+     * Cada CARGA devuelve la siguiente respuesta preparada (la última se repite). Una carga son dos lecturas, una por rol,
+     * y cada una trae solo a quien tiene ese rol, como hace el servidor con `roleCode`: [reads] cuenta cargas y
+     * [roleCodes] lo que se pidió. El censo entero no se pide nunca.
+     */
     private class Users(private vararg val answers: AppResult<List<User>>) : UsersRepository {
         var reads = 0
-        override fun observeUsers(): Flow<AppResult<List<User>>> = flow { emit(answers[minOf(reads++, answers.lastIndex)]) }
+        val roleCodes = mutableListOf<String>()
+        private val roleIdByCode = mapOf("admin" to "r-admin", "superadmin" to "r-super")
+        override fun observeUsers(): Flow<AppResult<List<User>>> = error("Administradores no descarga el censo entero")
+        override fun observeUsersWithRole(roleCode: String): Flow<AppResult<List<User>>> = flow {
+            roleCodes += roleCode
+            if (roleCode == AdminLevel.entries.first().code) reads++
+            emit(
+                when (val answer = answers[minOf(reads - 1, answers.lastIndex)]) {
+                    is AppResult.Failure -> answer
+                    is AppResult.Success -> AppResult.Success(answer.value.filter { roleIdByCode.getValue(roleCode) in it.roleIds })
+                },
+            )
+        }
         override suspend fun getUser(userId: String): AppResult<User> = error("unused")
         override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = error("unused")
         override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
@@ -158,6 +174,7 @@ class AdminsViewModelTest {
         advanceUntilIdle()
 
         assertEquals(2, users.reads)
+        assertEquals(listOf("admin", "superadmin"), users.roleCodes.distinct().sorted(), "se pide por rol, no el censo")
         assertEquals(3, vm.state.value.loadedAccounts.size, "lo ya leído no se cambia por un error a pantalla completa")
         assertTrue(vm.state.value.refreshFailed)
         assertFalse(vm.state.value.refreshing)

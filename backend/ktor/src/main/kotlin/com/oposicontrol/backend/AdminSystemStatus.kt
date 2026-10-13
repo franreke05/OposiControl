@@ -229,6 +229,21 @@ internal fun ktorLevelFromReplicas(replicas: List<ReplicaReading>?): String {
     return if (appReplicas.none { it.up }) SystemStatusLevelWire.DOWN else SystemStatusLevelWire.DEGRADED
 }
 
+/**
+ * Lo que las réplicas dicen de Supabase. La sonda de ESTA réplica (control) no habla por las que sirven a la app: si una
+ * réplica en pie publica que no alcanza Supabase, el conjunto no está operativo aunque control sí llegue. `null` = nadie
+ * publica el dato: no añade nada al cálculo (ni verde ni rojo).
+ */
+internal fun supabaseLevelFromReplicas(replicas: List<ReplicaReading>?): String? {
+    val readings = replicas.orEmpty().filter { it.up }.mapNotNull { it.supabaseUp }
+    return when {
+        readings.isEmpty() -> null
+        readings.none { it } -> SystemStatusLevelWire.DOWN
+        readings.any { !it } -> SystemStatusLevelWire.DEGRADED
+        else -> SystemStatusLevelWire.OPERATIVE
+    }
+}
+
 /** Perfil de las réplicas que sirven a la app (`ops/monitoring/prometheus/prometheus.production.yml`). */
 internal const val APP_REPLICA_PROFILE = "bot"
 

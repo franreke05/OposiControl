@@ -41,6 +41,9 @@ class UsersViewModel(
     private var accountStatusInFlight = false
     private var keySequence = 0
 
+    /** Último usuario por el que ya se releyó la lista al no encontrarlo: la relectura es una, no un bucle. */
+    private var missingReloadFor: String? = null
+
     init {
         loadUsers()
         scope.launch {
@@ -208,6 +211,14 @@ class UsersViewModel(
             val stillLoading = state.users is UiAsync.Loading || state.users is UiAsync.Idle
             // Con la lista caída no se afirma que el usuario «no está»: lo que falla es la lista, y ya lo dice ella.
             val listRead = state.users is UiAsync.Success || state.users is UiAsync.Empty
+            // La lista se leyó antes en la sesión y puede ser anterior a esa cuenta (un administrador recién aprobado):
+            // se relee UNA vez antes de afirmar que no está. [openPendingUser] decide al llegar la relectura.
+            if (listRead && missingReloadFor != userId) {
+                missingReloadFor = userId
+                updateState { it.copy(pendingOpenUserId = userId, openUserMissing = false) }
+                loadUsers()
+                return
+            }
             updateState { it.copy(pendingOpenUserId = userId.takeIf { stillLoading }, openUserMissing = listRead) }
             return
         }
@@ -225,6 +236,10 @@ class UsersViewModel(
         when {
             state.users is UiAsync.Loading || state.users is UiAsync.Idle -> Unit
             state.users is UiAsync.Error -> updateState { it.copy(pendingOpenUserId = null) }
+            // La relectura está en curso: se espera a su respuesta.
+            state.refreshing -> Unit
+            // La relectura falló: lo que no se sabe es la lista, no que la persona falte.
+            state.refreshFailed -> updateState { it.copy(pendingOpenUserId = null) }
             state.loadedUsers.any { it.id == wanted } -> {
                 updateState { it.copy(pendingOpenUserId = null) }
                 requestSelectUser(wanted)

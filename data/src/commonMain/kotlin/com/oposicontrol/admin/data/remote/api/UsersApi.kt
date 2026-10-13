@@ -128,11 +128,13 @@ class UsersApi(
     private val appConfig: AppConfig,
     private val sessionLocalDataSource: SessionLocalDataSource,
 ) {
-    suspend fun getUsers(): List<UserDto> = collectAllUsers { limit, offset ->
+    /** [roleCode]: solo quien tiene ese rol (lo filtra el servidor). `null` = el censo entero. */
+    suspend fun getUsers(roleCode: String? = null): List<UserDto> = collectAllUsers { limit, offset ->
         client.get(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.ADMIN_V1_USUARIOS)) {
             adminAuthHeaders(appConfig, sessionLocalDataSource)
             parameter("limit", limit)
             parameter("offset", offset)
+            roleCode?.let { parameter("roleCode", it) }
         }.checkedBody<AdminUsersV1Response>(BackendRoutes.ADMIN_V1_USUARIOS)
     }
 

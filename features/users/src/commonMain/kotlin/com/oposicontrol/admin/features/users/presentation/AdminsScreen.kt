@@ -103,7 +103,11 @@ fun AdminsScreen(
         state = state,
         accessState = accessState,
         section = section,
-        onSectionChange = { section = it },
+        onSectionChange = {
+            // Al volver de Solicitudes puede haber un administrador nuevo (o uno menos): la lista se relee.
+            if (it == AdminsSection.WHO && section != AdminsSection.WHO) viewModel.dispatch(AdminsIntent.Refresh)
+            section = it
+        },
         onIntent = viewModel::dispatch,
         onAccessIntent = accessRequestsViewModel::dispatch,
         onOpenUser = onOpenUser,

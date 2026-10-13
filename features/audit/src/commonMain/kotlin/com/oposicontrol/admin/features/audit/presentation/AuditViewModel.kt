@@ -120,7 +120,9 @@ class AuditViewModel(
         val keeps = keepShown && state.allMovements.isNotEmpty()
         updateState {
             if (keeps) {
-                it.copy(loadingMore = false, loadMoreError = null)
+                // Sin cursor mientras se relee: un «Cargar más» en ese hueco pegaría la continuación de la lista VIEJA a
+                // la primera página nueva y se saltaría las filas de en medio.
+                it.copy(nextCursor = null, loadingMore = false, loadMoreError = null)
             } else {
                 it.copy(
                     movements = UiAsync.Loading,

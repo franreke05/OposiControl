@@ -129,6 +129,14 @@ class SystemStatusPresentationTest {
     }
 
     @Test
+    fun alertsThatCouldNotBeReadAreNotTheSameAsNoAlerts() {
+        val overview = systemOverview(healthy.copy(alerts = null))
+
+        assertEquals(SystemStatusLevel.UNKNOWN, overview.level)
+        assertEquals("Todo responde, pero no se han podido leer las alertas.", overview.headline)
+    }
+
+    @Test
     fun anActiveAlertTakesTheGreenAwayEvenWithEverythingUp() {
         val one = systemOverview(healthy.copy(alerts = listOf(SystemAlert("SupabaseEgressHigh", "warning"))))
         val two = systemOverview(healthy.copy(alerts = listOf(SystemAlert("A"), SystemAlert("B"))))

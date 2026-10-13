@@ -30,10 +30,10 @@ data class AdminsState(
 /**
  * «Quién puede entrar» de Sistema > Administradores.
  *
- * Lee la lista de usuarios y el catálogo de roles y se queda con quien tiene `admin` o `superadmin`. El filtro es de
- * CLIENTE porque la capa de datos no expone el `roleCode` que el servidor sí admite en `GET /api/v1/admin/usuarios`: hasta
- * que lo haga, es la misma descarga que hace Usuarios, pero sin su ViewModel (ficha, editor, concesiones…), que aquí no
- * pinta nada. Solo lee: los roles y el estado de una cuenta se cambian desde su ficha en Usuarios.
+ * Pide al servidor solo quien tiene `admin` y quien tiene `superadmin` (`roleCode` de `GET /api/v1/admin/usuarios`) y
+ * el catálogo de roles: dos lecturas cortas, no el censo entero, que con miles de usuarios gastaría tráfico de Supabase
+ * en cada apertura de la pestaña para enseñar tres filas. El nivel de cada cuenta se sigue deduciendo aquí con el
+ * catálogo. Solo lee: los roles y el estado de una cuenta se cambian desde su ficha en Usuarios.
  */
 class AdminsViewModel(
     dispatcherProvider: DispatcherProvider,
@@ -63,7 +63,8 @@ class AdminsViewModel(
             updateState {
                 if (hadData) it.copy(refreshing = true, refreshFailed = false) else it.copy(accounts = UiAsync.Loading, refreshFailed = false)
             }
-            combine(usersRepository.observeUsers(), rolesRepository.observeRoles(), ::resolveAdminAccounts).collectLatest { result ->
+            val holders = combine(AdminLevel.entries.map { usersRepository.observeUsersWithRole(it.code) }) { mergeRoleHolders(it.toList()) }
+            combine(holders, rolesRepository.observeRoles(), ::resolveAdminAccounts).collectLatest { result ->
                 updateState { state ->
                     when (result) {
                         // Un fallo NUNCA se pinta como «No hay administradores»: o se conserva lo leído, o es un error.

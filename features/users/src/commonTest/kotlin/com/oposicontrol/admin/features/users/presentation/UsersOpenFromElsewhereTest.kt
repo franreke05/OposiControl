@@ -15,6 +15,7 @@ import com.oposicontrol.admin.domain.repository.UsersRepository
 import com.oposicontrol.admin.domain.usecase.users.UpsertUserUseCase
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -106,6 +107,36 @@ class UsersOpenFromElsewhereTest {
         assertTrue(vm.state.value.openUserMissing)
         // La ficha que estaba abierta no se cambia por la de nadie.
         assertEquals(ana.id, vm.state.value.selectedUserId)
+    }
+
+    @Test
+    fun `someone newer than the list is looked for again before being called missing`() = runTest {
+        // Un administrador recién aprobado: la lista de Usuarios se leyó antes de que existiera.
+        // Cada lectura es una foto: lo que cambia en el servidor no llega hasta que se vuelve a leer.
+        var server = listOf(ana)
+        var reads = 0
+        val repo = object : UsersRepository {
+            override fun observeUsers(): Flow<AppResult<List<User>>> = flow { reads++; emit(AppResult.Success(server)) }
+            override suspend fun getUser(userId: String): AppResult<User> = AppResult.Failure(AppError.Network("unused"))
+            override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = error("unused")
+            override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
+            override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = AppResult.Failure(AppError.Network("unused"))
+        }
+        val vm = UsersViewModel(
+            TestDispatcherProvider(StandardTestDispatcher(testScheduler)), repo, NoRoles,
+            UpsertUserUseCase(repo), NoModeration, NoOpAnalyticsTracker,
+        )
+        testScheduler.advanceUntilIdle()
+        assertEquals(1, reads)
+
+        server = listOf(ana, luis)
+        vm.dispatch(UsersIntent.SelectUser(luis.id))
+        testScheduler.advanceUntilIdle()
+
+        assertEquals(2, reads, "una relectura, no un bucle")
+        assertEquals(luis.id, vm.state.value.selectedUserId)
+        assertFalse(vm.state.value.openUserMissing)
+        assertNull(vm.state.value.pendingOpenUserId)
     }
 
     @Test

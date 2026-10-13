@@ -12,6 +12,8 @@ class UsersRepositoryImpl(
 ) : UsersRepository {
     override fun observeUsers(): Flow<AppResult<List<User>>> = remote.observeUsers()
 
+    override fun observeUsersWithRole(roleCode: String): Flow<AppResult<List<User>>> = remote.observeUsersWithRole(roleCode)
+
     override suspend fun getUser(userId: String) = remote.getUser(userId)
 
     override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = remote.upsertUser(user, previous)
