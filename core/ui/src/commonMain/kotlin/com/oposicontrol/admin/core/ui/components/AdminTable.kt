@@ -45,6 +45,7 @@ import com.oposicontrol.admin.core.ui.theme.Sizing
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.core.ui.theme.OposiMotion
 import com.oposicontrol.admin.core.ui.theme.motionTween
+import androidx.compose.runtime.key
 
 data class AdminTableColumn(
     val label: String,
@@ -158,24 +159,45 @@ fun AdminTable(
                         )
                     }
                 } else {
-                    Box {
-                        LazyColumn(state = listState) {
-                            items(rows, key = { it.key }) { row ->
-                                TableRow(
-                                    row = row,
-                                    columns = columns,
-                                    onRowClick = onRowClick,
-                                    needsScroll = needsScroll,
-                                    actionsWidth = actionsWidth,
-                                    rowActions = rowActions,
-                                    modifier = rowWidthModifier,
-                                )
+                    // Una lista perezosa necesita un alto acotado. Dentro de una pagina que ya desplaza (alto infinito) Compose
+                    // la rechaza con una excepcion que cerraba la pantalla en cuanto la tabla tenia filas; ahi las filas se
+                    // pintan seguidas y desplaza la pagina. BoxWithConstraints es necesario: solo las restricciones lo dicen.
+                    BoxWithConstraints {
+                        if (constraints.hasBoundedHeight) {
+                            LazyColumn(state = listState) {
+                                items(rows, key = { it.key }) { row ->
+                                    TableRow(
+                                        row = row,
+                                        columns = columns,
+                                        onRowClick = onRowClick,
+                                        needsScroll = needsScroll,
+                                        actionsWidth = actionsWidth,
+                                        rowActions = rowActions,
+                                        modifier = rowWidthModifier,
+                                    )
+                                }
+                            }
+                            DesktopVerticalScrollbar(
+                                listState = listState,
+                                modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                            )
+                        } else {
+                            Column {
+                                rows.forEach { row ->
+                                    key(row.key) {
+                                        TableRow(
+                                            row = row,
+                                            columns = columns,
+                                            onRowClick = onRowClick,
+                                            needsScroll = needsScroll,
+                                            actionsWidth = actionsWidth,
+                                            rowActions = rowActions,
+                                            modifier = rowWidthModifier,
+                                        )
+                                    }
+                                }
                             }
                         }
-                        DesktopVerticalScrollbar(
-                            listState = listState,
-                            modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
-                        )
                     }
                 }
             }
