@@ -60,6 +60,12 @@ internal enum class OposiBotsAuthOperation(
 
     /** D2-65: paginas de la revision. */
     ATTEMPT_REVIEW(240, 120, 60),
+
+    /**
+     * Solicitud PUBLICA de acceso de administrador (`POST /v1/auth/admin-access-requests`, AdminAccessRequests.kt). Crea una
+     * cuenta de Auth, asi que es tan estricta como [REGISTER]: pocas por IP y hora, y un tope SILENCIOSO por email.
+     */
+    ADMIN_ACCESS_REQUEST(5, 3, 3_600),
 }
 
 internal data class OposiBotsRateLimitDecision(

@@ -97,6 +97,7 @@ GET	/api/v1/admin/reportes	CONTROL	admin	Admin v1: reportes	OposiControl
 GET	/api/v1/admin/reportes/{}	CONTROL	admin	Admin v1: reportes/{}	OposiControl
 GET	/api/v1/admin/roles	CONTROL	admin	Admin v1: roles	OposiControl
 GET	/api/v1/admin/settings	CONTROL	admin	Admin v1: settings	OposiControl
+GET	/api/v1/admin/solicitudes-acceso	CONTROL	admin	Admin access requests: list (superadmin)	OposiControl
 GET	/api/v1/admin/soporte	CONTROL	admin	Admin v1: soporte	OposiControl
 GET	/api/v1/admin/soporte/conversaciones	CONTROL	admin	Admin v1: soporte/conversaciones	OposiControl
 GET	/api/v1/admin/soporte/conversaciones/{}/mensajes	CONTROL	admin	Admin v1: soporte/conversaciones/{}/mensajes	OposiControl
@@ -221,6 +222,8 @@ POST	/api/v1/admin/tienda/articulos	CONTROL	admin	Admin v1: tienda/articulos	Opo
 POST	/api/v1/admin/tienda/ofertas	CONTROL	admin	Admin v1: tienda/ofertas	OposiControl
 POST	/api/v1/admin/tienda/rafagas	CONTROL	admin	Admin v1: tienda/rafagas	OposiControl
 POST	/api/v1/admin/tienda/recursos-temporales	CONTROL	admin	Admin v1: tienda/recursos-temporales	OposiControl
+POST	/api/v1/admin/solicitudes-acceso/{}/aprobar	CONTROL	admin	Admin access requests: approve, grants admin (superadmin)	OposiControl
+POST	/api/v1/admin/solicitudes-acceso/{}/rechazar	CONTROL	admin	Admin access requests: reject (superadmin)	OposiControl
 POST	/api/v1/admin/usuarios/{}/roles	CONTROL	admin	Admin v1: usuarios/{}/roles	OposiControl
 POST	/api/v1/admin/usuarios/{}/tickets	CONTROL	admin	Admin v1: usuarios/{}/tickets	OposiControl
 POST	/api/v1/app/eventos	BOT	user-jwt	Consumer app API: eventos	OposiBot
@@ -245,6 +248,7 @@ POST	/content/solucionarios	CONTROL	admin	Legacy content: solucionarios	OposiCon
 POST	/content/solucionarios/{}/portada	CONTROL	admin	Legacy content: solucionarios/{}/portada	OposiControl
 POST	/content/solucionarios/{}/preguntas	CONTROL	admin	Legacy content: solucionarios/{}/preguntas	OposiControl
 POST	/search/reindex	CONTROL	admin	Admin legacy (outside /admin prefix): /search/reindex	OposiControl
+POST	/v1/auth/admin-access-requests	AUTH	none	Admin access request: public submit (creates account without role)	OposiControl
 POST	/v1/auth/email/exchange	AUTH	none	Consumer auth: email/exchange	OposiBot
 POST	/v1/auth/email/resend	AUTH	none	Consumer auth: email/resend	OposiBot
 POST	/v1/auth/login	AUTH	none	Consumer auth: login	OposiBot

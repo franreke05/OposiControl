@@ -90,6 +90,7 @@ GET /api/v1/admin/reportes
 GET /api/v1/admin/reportes/{}
 GET /api/v1/admin/roles
 GET /api/v1/admin/settings
+GET /api/v1/admin/solicitudes-acceso
 GET /api/v1/admin/soporte
 GET /api/v1/admin/soporte/conversaciones
 GET /api/v1/admin/soporte/conversaciones/{}/mensajes
@@ -182,6 +183,8 @@ POST /api/v1/admin/preguntas/{}/examenes
 POST /api/v1/admin/preguntas/{}/recursos
 POST /api/v1/admin/preguntas/{}/recursos/archivo
 POST /api/v1/admin/reportes/{}/resolver
+POST /api/v1/admin/solicitudes-acceso/{}/aprobar
+POST /api/v1/admin/solicitudes-acceso/{}/rechazar
 POST /api/v1/admin/soporte/conversaciones/{}/mensajes
 POST /api/v1/admin/tickets/conceder
 POST /api/v1/admin/tickets/{}/transacciones

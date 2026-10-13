@@ -151,7 +151,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
     }
 }
 
-private suspend fun ApplicationCall.authEndpoint(
+internal suspend fun ApplicationCall.authEndpoint(
     runtime: OposiBotsAuthRuntime,
     operation: OposiBotsAuthOperation,
     block: suspend ApplicationCall.() -> Unit,
@@ -287,6 +287,14 @@ private suspend inline fun <reified T : Any> ApplicationCall.receiveAuthJson(jso
         throw OposiBotsAuthProblem.validation()
     }
 }
+
+/**
+ * Costuras para `AdminAccessRequests.kt` (solicitud publica de acceso de administrador, mismo plano `/v1/auth`): la MISMA
+ * lectura acotada del cuerpo ([receiveAuthJson], 16 KB) y la MISMA validacion de email y contrasena que el registro.
+ */
+internal suspend fun ApplicationCall.receiveAdminAccessRequestBody(json: Json): AdminAccessRequestBody = receiveAuthJson(json)
+
+internal fun validateAuthEmailAndPassword(email: String, password: String) = validateIdentifierAndPassword(email, password)
 
 private fun ApplicationCall.requiredBearerToken(): String {
     val header = request.headers[HttpHeaders.Authorization].orEmpty()

@@ -35,6 +35,10 @@ import com.oposicontrol.admin.features.store.presentation.CommercialPlansViewMod
 import com.oposicontrol.admin.features.tickets.presentation.TicketsIntent
 import com.oposicontrol.admin.features.tickets.presentation.TicketsScreen
 import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
+import com.oposicontrol.admin.features.users.presentation.AccessRequestsIntent
+import com.oposicontrol.admin.features.users.presentation.AccessRequestsScreen
+import com.oposicontrol.admin.features.users.presentation.AccessRequestsState
+import com.oposicontrol.admin.features.users.presentation.AccessRequestsViewModel
 import com.oposicontrol.admin.features.users.presentation.UsersIntent
 import com.oposicontrol.admin.features.users.presentation.UsersScreen
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
@@ -115,7 +119,22 @@ internal enum class UsersHubTab(val id: String, val label: String, val icon: App
     TICKETS("tickets", "OposiTickets", AppIcon.TICKETS),
     COMPETITION("competition", "Competición", AppIcon.RANKINGS),
     ACCESS("access", "Accesos", AppIcon.ACCESS),
+
+    /** Personas que piden entrar en el panel. SOLO para superadministradores: ver [visibleUsersHubTabs]. */
+    ACCESS_REQUESTS("access-requests", "Solicitudes de acceso", AppIcon.ROLES),
 }
+
+/**
+ * Las pestañas del hub de Usuarios para esta sesión. «Solicitudes de acceso» solo existe si el SERVIDOR ha respondido al
+ * listado de solicitudes ([AccessRequestsState.canReview]); mientras no responda, o si responde 403, no se pinta. Nunca
+ * se decide con un dato del cliente (los roles de la sesión local no son fiables).
+ */
+internal fun visibleUsersHubTabs(canReviewAccessRequests: Boolean): List<UsersHubTab> =
+    UsersHubTab.entries.filter { it != UsersHubTab.ACCESS_REQUESTS || canReviewAccessRequests }
+
+/** La pestaña que se pinta de verdad: una que ya no es visible (p. ej. el servidor retiró el permiso) cae en Usuarios. */
+internal fun effectiveUsersHubTab(selectedId: String, visible: List<UsersHubTab>): String =
+    visible.firstOrNull { it.id == selectedId }?.id ?: UsersHubTab.USERS.id
 
 /**
  * Usuarios y sus subpantallas. OposiTickets es una de ellas: ir de la ficha de una persona a su cartera, y volver, es
@@ -123,6 +142,8 @@ internal enum class UsersHubTab(val id: String, val label: String, val icon: App
  *
  * Los ViewModel de la otra pestaña se piden al pulsar (`getKoin`) y no al abrir el hub: pedirlos antes descargaría todas
  * las carteras cada vez que alguien mira un usuario, y toda la lista de usuarios cada vez que alguien mira una cartera.
+ * La excepción es el de solicitudes de acceso, que se pide al abrir el hub: su respuesta (una petición ligera) es lo que
+ * dice si la pestaña existe para esta persona.
  */
 @Composable
 internal fun UsersHubScreen(initialTab: UsersHubTab?) {
@@ -130,14 +151,29 @@ internal fun UsersHubScreen(initialTab: UsersHubTab?) {
     LaunchedEffect(initialTab) { if (initialTab != null) selectedTab = initialTab.id }
     val koin = getKoin()
 
+    val accessRequestsViewModel: AccessRequestsViewModel = koinInject()
+    val accessRequestsState by accessRequestsViewModel.state.collectAsState()
+    // Cada vez que se abre el hub se vuelve a preguntar: un permiso retirado deja de verse sin reiniciar la aplicación.
+    LaunchedEffect(Unit) { accessRequestsViewModel.dispatch(AccessRequestsIntent.Refresh) }
+    val visibleTabs = visibleUsersHubTabs(accessRequestsState.canReview)
+    val shownTab = effectiveUsersHubTab(selectedTab, visibleTabs)
+
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         DesktopTabs(
-            tabs = UsersHubTab.entries.map { DesktopTab(it.id, it.label, it.icon) },
-            selectedId = selectedTab,
+            tabs = visibleTabs.map { tab ->
+                DesktopTab(
+                    id = tab.id,
+                    label = tab.label,
+                    icon = tab.icon,
+                    badge = accessRequestsState.pendingCount.takeIf { tab == UsersHubTab.ACCESS_REQUESTS && it > 0 }?.toString(),
+                )
+            },
+            selectedId = shownTab,
             onSelect = { selectedTab = it },
         )
-        HubTabBody(selectedTab) {
-            when (selectedTab) {
+        HubTabBody(shownTab) {
+            when (shownTab) {
+                UsersHubTab.ACCESS_REQUESTS.id -> AccessRequestsScreen(viewModel = accessRequestsViewModel)
                 UsersHubTab.TICKETS.id -> TicketsScreen(
                     viewModel = koinInject(),
                     onOpenUser = { userId ->

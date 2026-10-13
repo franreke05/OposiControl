@@ -26,6 +26,7 @@ HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/Dashb
 HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/RolesApi.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
 HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/UserDetailApi.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
 HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/remote/api/UsersApi.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
+HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAccessRequestsRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
 HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAdminOperationsRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
 HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAdminV1ContentRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)
 HTTPCALL	data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorCommerceRepositoryImpl.kt	*	llamadas al backend Ktor propio (rutas validadas por RouteInventoryTest/ClientRouteConstantsTest)

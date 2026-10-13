@@ -24,6 +24,8 @@ import com.oposicontrol.admin.data.remote.source.RealUsersDataSource
 import com.oposicontrol.admin.data.remote.source.RolesDataSource
 import com.oposicontrol.admin.data.remote.source.UsersDataSource
 import com.oposicontrol.admin.data.repository.AuditRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorAccessRequestsRepositoryImpl
+import com.oposicontrol.admin.domain.repository.AccessRequestsRepository
 import com.oposicontrol.admin.data.repository.AuthRepositoryImpl
 import com.oposicontrol.admin.data.repository.ContentDashboardRepositoryImpl
 
@@ -199,6 +201,16 @@ val dataModule = module {
             appConfig = appConfig,
             sessionLocalDataSource = get(),
             fileReader = get(),
+            adapter = get(),
+        )
+    }
+
+    // Solicitudes de acceso al panel: el envio es publico (pantalla de acceso) y la revision es del superadministrador.
+    single<AccessRequestsRepository> {
+        KtorAccessRequestsRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
             adapter = get(),
         )
     }

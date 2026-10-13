@@ -1,4 +1,4 @@
-# max: 156
+# max: 160
 # REVIEWED EXCEPTIONS REGISTER: routes served by Ktor that the frozen openapi/ does not declare. NOT a spec: no semantics are invented here.
 # The list can only shrink: a row that is no longer routed or is now documented fails RouteInventoryTest; a new undocumented route fails until it is
 # reviewed and added here (and then `# max:` goes up on purpose). Legacy routes are enrolled, never deleted (no published-client telemetry yet).
@@ -80,6 +80,9 @@ GET	/api/v1/admin/rankings/ligas	ADMIN_CONTRACT_GAP	EP-080	OC	caller OC data/src
 GET	/api/v1/admin/rankings/usuario/{}	ADMIN_CONTRACT_GAP	EP-081	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorRankingsRepositoryImpl.kt:59 [method unverified]
 GET	/api/v1/admin/rankings/usuarios	ADMIN_CONTRACT_GAP	EP-082 -> D3-10	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorRankingsRepositoryImpl.kt:102 [method unverified]
 POST	/api/v1/admin/reportes/{}/resolver	ADMIN_CONTRACT_GAP	EP-181	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorModerationRepositoryImpl.kt:61 via adminV1ReporteResolver
+GET	/api/v1/admin/solicitudes-acceso	ADMIN_CONTRACT_GAP	ACCESS-REQ-02	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAccessRequestsRepositoryImpl.kt (listRequests); admin access requests 2026-10-13, superadmin only, no frozen contract yet
+POST	/api/v1/admin/solicitudes-acceso/{}/aprobar	ADMIN_CONTRACT_GAP	ACCESS-REQ-03	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAccessRequestsRepositoryImpl.kt (approve); grants role admin through syncRoles / admin_sync_roles_audited, superadmin only
+POST	/api/v1/admin/solicitudes-acceso/{}/rechazar	ADMIN_CONTRACT_GAP	ACCESS-REQ-04	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAccessRequestsRepositoryImpl.kt (reject); superadmin only
 GET	/api/v1/admin/settings	ADMIN_CONTRACT_GAP	EP-086	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 GET	/api/v1/admin/soporte	ADMIN_CONTRACT_GAP	EP-087 -> D8-02	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
 GET	/api/v1/admin/soporte/conversaciones	ADMIN_CONTRACT_GAP	EP-088	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAdminOperationsRepositoryImpl.kt:88
@@ -161,3 +164,4 @@ GET	/v1/especialidades	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-125 -> D2-17
 GET	/v1/examenes	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-126 -> D2-15	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorConnectionDiagnosticsRepositoryImpl.kt:48 via V1_EXAMENES
 GET	/v1/examenes/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-127 -> D2-16	NONE	counter legacy_route_requests_total{endpoint="EP-127"}; no live caller in OC/OB (route matrix audit 2026-10-01); retire only after zero telemetry
 GET	/v1/examenes/{}/preguntas	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-128 -> D2-08	NONE	counter legacy_route_requests_total{endpoint="EP-128"}; no live caller in OC/OB (only a dead BackendRoutes constant; route matrix audit 2026-10-01); retire only after zero telemetry
+POST	/v1/auth/admin-access-requests	ADMIN_CONTRACT_GAP	ACCESS-REQ-01	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAccessRequestsRepositoryImpl.kt (submitRequest); public, rate limited, served by the bot pool under the already forwarded /v1/auth/* prefix; not part of the frozen consumer auth contract

@@ -66,6 +66,14 @@ data class SupabaseAuthErrorDto(
 )
 
 /**
+ * Lo que ve quien inicia sesion con una cuenta todavia sin confirmar. En este panel eso es, casi siempre, una solicitud de
+ * acceso que un superadministrador aun no ha aprobado (la aprobacion es la que confirma la cuenta). Supabase solo da esta
+ * respuesta a quien acierta la contrasena, asi que el mensaje no revela nada que el inicio de sesion no revelara ya.
+ */
+const val ACCOUNT_NOT_ACTIVATED_MESSAGE: String =
+    "Esta cuenta todavía no está activada. Si has solicitado acceso, un superadministrador tiene que aprobarlo antes de que puedas entrar."
+
+/**
  * Traduce el error real de Supabase a un mensaje humano en español. Nunca
  * reenvía el texto/código crudo del proveedor: solo distingue un puñado de
  * categorías conocidas y, si no reconoce ninguna, cae en un mensaje genérico
@@ -74,10 +82,14 @@ data class SupabaseAuthErrorDto(
 fun SupabaseAuthErrorDto.toFriendlyMessage(isRefresh: Boolean): String {
     val code = (errorCode ?: error).orEmpty().lowercase()
     val sessionExpired = "Tu sesión ha caducado. Vuelve a iniciar sesión."
+    // Cuenta sin confirmar. Va ANTES que la rama de credenciales: las versiones de GoTrue que no envian `error_code`
+    // lo dicen como `invalid_grant` + «Email not confirmed», y caeria en «contraseña incorrecta», que es falso.
+    val notConfirmed = code.contains("email_not_confirmed") ||
+        listOfNotNull(errorDescription, msg).any { it.contains("not confirmed", ignoreCase = true) }
     return when {
+        notConfirmed && !isRefresh -> ACCOUNT_NOT_ACTIVATED_MESSAGE
         code.contains("invalid") || code.contains("grant") || code.contains("credentials") ->
             if (isRefresh) sessionExpired else "Usuario o contraseña incorrectos."
-        code.contains("email_not_confirmed") -> "Debes confirmar tu correo antes de iniciar sesión."
         code.contains("too_many") || code.contains("rate") -> "Demasiados intentos. Espera un momento y vuelve a intentarlo."
         isRefresh -> sessionExpired
         else -> "No se pudo iniciar sesión. Inténtalo de nuevo."

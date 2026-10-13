@@ -43,11 +43,14 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.AppIconImage
 import com.oposicontrol.admin.core.ui.components.DesktopIconButton
 import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
+import com.oposicontrol.admin.core.ui.components.SectionLink
+import androidx.compose.ui.platform.testTag
 import com.oposicontrol.admin.core.ui.components.humanMessage
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Sizing
@@ -72,9 +75,12 @@ import org.jetbrains.compose.resources.painterResource
 fun AuthScreen(
     viewModel: AuthViewModel,
     onAuthenticated: () -> Unit,
+    /** Formulario «Solicitar acceso». `null` = esta composicion no lo ofrece (no se pinta el enlace). */
+    accessRequestViewModel: AccessRequestViewModel? = null,
 ) {
     val state by viewModel.state.collectAsState()
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    var requestingAccess by rememberSaveable { mutableStateOf(false) }
     val tokens = GlassTheme.tokens
     val passwordFocus = remember { FocusRequester() }
 
@@ -137,6 +143,10 @@ fun AuthScreen(
                     .padding(Spacing.lg),
                 verticalArrangement = Arrangement.spacedBy(Spacing.field),
             ) {
+                if (requestingAccess && accessRequestViewModel != null && !state.isRestoring) {
+                    AccessRequestForm(viewModel = accessRequestViewModel, onBackToLogin = { requestingAccess = false })
+                    return@Column
+                }
                 if (state.isRestoring) {
                     Text(
                         text = "Recuperando tu sesión anterior…",
@@ -209,11 +219,35 @@ fun AuthScreen(
                 )
 
                 (state.submitState as? UiAsync.Error)?.let { failure ->
-                    LoginError(message = failure.error.humanMessage())
+                    LoginError(message = loginErrorMessage(failure.error))
+                }
+
+                // Quien todavia no es administrador lo pide desde aqui; un superadministrador lo aprueba en Usuarios.
+                if (accessRequestViewModel != null) {
+                    SectionLink(
+                        text = "¿No tienes acceso? Solicitar acceso",
+                        onClick = { requestingAccess = true },
+                        modifier = Modifier.testTag(AUTH_REQUEST_ACCESS_LINK_TAG),
+                    )
                 }
             }
         }
     }
+}
+
+internal const val AUTH_REQUEST_ACCESS_LINK_TAG: String = "auth-request-access-link"
+
+/**
+ * El texto del error de acceso.
+ *
+ * Un `AppError.Authentication` del inicio de sesion ya trae un mensaje redactado para la persona («Usuario o contraseña
+ * incorrectos», «Esta cuenta todavía no está activada…», «Demasiados intentos…»): se ensena ESE. `humanMessage()` lo
+ * sustituia siempre por «Tu sesión ha caducado», que en esta pantalla es falso para una contrasena mal escrita y para una
+ * solicitud de acceso que sigue pendiente de aprobacion. El resto de errores sigue pasando por `humanMessage()`.
+ */
+internal fun loginErrorMessage(error: AppError): String = when (error) {
+    is AppError.Authentication -> error.message.ifBlank { error.humanMessage() }
+    else -> error.humanMessage()
 }
 
 @Composable

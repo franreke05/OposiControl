@@ -604,6 +604,8 @@ fun Application.module() {
         walletRuntime = walletRuntime,
         appReadsRuntime = appReadsRuntime,
         newsRuntime = newsRuntime,
+        // Solicitudes de acceso de administrador: la solicitud publica vive en `bot` y la revision en `control`.
+        accessRequestGateway = SupabaseAdminAccessRequestGateway.fromEnvironment(json),
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
             catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter) }
@@ -673,6 +675,8 @@ internal class CombinedRoutingDeps(
     internal val newsRuntime: NewsRuntime? = null,
     /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val appReadsRuntime: AppReadsRuntime? = null,
+    /** Solicitudes de acceso de administrador (AdminAccessRequests.kt). `null` = sin configuracion: las rutas existen y fallan cerradas. */
+    internal val accessRequestGateway: AdminAccessRequestGateway? = null,
 )
 
 /** Perfil historico: todo. Conjunto de rutas identico al de siempre. */
@@ -730,6 +734,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).
         canonicalProfileRoutes(it)
+        // Solicitud PUBLICA de acceso de administrador (`/v1/auth/admin-access-requests`): mismo plano, limitador y sobre.
+        adminAccessRequestPublicRoute(it, accessRequestGateway)
     }
 }
 
@@ -790,6 +796,8 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
                     },
                 ),
             )
+            // Revision de solicitudes de acceso de administrador: solo superadmin; aprobar pasa por `syncRoles` (auditado).
+            adminAccessRequestRoutes(deps.accessRequestGateway, adminV1Gateway)
             // INTERNAL (dev-only): reinicio del proceso. Solo en `combined`; `bot`/`control` no lo montan.
             if (includeInternal) installDevRestartRoutes()
             route("/content") {

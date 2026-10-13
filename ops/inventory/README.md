@@ -15,9 +15,9 @@ Regenerar los manifiestos de rutas SOLO en local, tras revisar el cambio de ruta
 
 La prueba `networkRecorderCountersAreBalanced` imprime y exige una linea legible por maquina:
 
-`NETWORK_RECORDER_COUNTERS TOTAL_NETWORK_CALL_SITES=122 TOTAL_RECORDED_ROWS=122 UNMAPPED_CALLS=0 UNKNOWN_CALLS=0`
+`NETWORK_RECORDER_COUNTERS TOTAL_NETWORK_CALL_SITES=133 TOTAL_RECORDED_ROWS=133 UNMAPPED_CALLS=0 UNKNOWN_CALLS=0`
 
-- `TOTAL_NETWORK_CALL_SITES`: sitios de egreso contados en TEXTO CRUDO en los 23 ficheros `HTTPCALL`: toda invocacion de un
+- `TOTAL_NETWORK_CALL_SITES`: sitios de egreso contados en TEXTO CRUDO en los 24 ficheros `HTTPCALL`: toda invocacion de un
   verbo Ktor (`get/post/put/delete/patch/head/options/request/submitForm*/prepare*`) seguida de `(` o de la lambda
   constructora `{`, con o sin receptor, en una o varias lineas, dentro de `with(client)`/`apply`, sin quitar comentarios;
   menos las exclusiones de `ClientCallSiteRules.kt` (fichero + patron + cuenta EXACTA + justificacion; cada una tapa exactamente
@@ -58,5 +58,5 @@ Lo que NO puede probar (limites exactos):
   `verify-no-direct-supabase.sh` (EGRESS_CTOR, `EGRESS_NONKTOR`) son las otras capas.
 - Tres formas de egreso NO contadas: un verbo importado con alias (`import io.ktor.client.request.post as send`), un verbo entre comillas invertidas (client.`post`(..)) y una referencia invocable (`client::post`); en los tres la cuenta no sube y, sin literal de ruta en linea, la comprobacion estatica calla.
 - Una rama cuyo literal conserva un sufijo ya grabado pero cambia el prefijo interpolado (`"${BackendRoutes.ADMIN_V1}/servicios"` en vez de `"$MARKET/servicios"`): la comprobacion estatica borra las interpolaciones y compara con `containsMatchIn`.
-- La linea `NETWORK_RECORDER_COUNTERS` puede leer 122/122/0/0 con una exclusion que deriva (otra invocacion del ayudante excluido); falla `siteExclusionsArePinnedExactlyAndJustified`, asi que el veredicto es el resultado de la suite, no la linea.
+- La linea `NETWORK_RECORDER_COUNTERS` puede leer 133/133/0/0 con una exclusion que deriva (otra invocacion del ayudante excluido); falla `siteExclusionsArePinnedExactlyAndJustified`, asi que el veredicto es el resultado de la suite, no la linea.
 - Una declaracion `fun` falsa en un comentario cambia la clave del sitio: el conteo por funcion FALLA (no pasa en silencio).

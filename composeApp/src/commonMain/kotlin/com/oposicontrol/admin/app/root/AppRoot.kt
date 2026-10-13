@@ -36,6 +36,7 @@ import com.oposicontrol.admin.core.ui.layout.appBreakpointFor
 import com.oposicontrol.admin.features.audit.presentation.AuditIntent
 import com.oposicontrol.admin.features.audit.presentation.AuditScreen
 import com.oposicontrol.admin.features.audit.presentation.AuditViewModel
+import com.oposicontrol.admin.features.auth.presentation.AccessRequestViewModel
 import com.oposicontrol.admin.features.auth.presentation.AuthScreen
 import com.oposicontrol.admin.features.auth.presentation.AuthViewModel
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardIntent
@@ -421,6 +422,8 @@ fun AppRoot(
 ) {
     val navigator = remember { AppNavigator() }
     val authViewModel: AuthViewModel = koinInject()
+    // Formulario «Solicitar acceso» de la pantalla de acceso (publico: no necesita sesion).
+    val accessRequestViewModel: AccessRequestViewModel = koinInject()
     val tagSearchRepository: TagSearchRepository = koinInject()
 
     val authState by authViewModel.state.collectAsState()
@@ -449,11 +452,13 @@ fun AppRoot(
         !TEMPORARILY_DISABLE_LOGIN && authState.isRestoring -> AuthScreen(
             viewModel = authViewModel,
             onAuthenticated = { navigator.replace(AppRoute.Home) },
+            accessRequestViewModel = accessRequestViewModel,
         )
 
         !TEMPORARILY_DISABLE_LOGIN && !authState.isAuthenticated -> AuthScreen(
             viewModel = authViewModel,
             onAuthenticated = { navigator.replace(AppRoute.Home) },
+            accessRequestViewModel = accessRequestViewModel,
         )
 
         else -> {

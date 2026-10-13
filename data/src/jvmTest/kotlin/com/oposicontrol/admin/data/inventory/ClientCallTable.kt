@@ -50,7 +50,8 @@ internal val CLIENT_CALL_ROWS: List<CallRow> = listOf(
     ROWS_B_QUESTIONS_REPO + ROWS_B_SYSTEM_STATUS_REPO + ROWS_B_TESTER_REPO + // R4-REC-B: ficheros RowsB*.kt
     ROWS_C_ADMIN_V1_CONTENT_REPO + // R5-REC-C1: RowsCKtorAdminV1ContentRepo.kt
     ROWS_C2_AUTH_API + ROWS_C2_USERS_API + ROWS_C2_COMMERCIAL_CATALOG_REPO + ROWS_C2_CONNECTION_DIAGNOSTICS_REPO +
-    ROWS_C2_FORUM_REPO + ROWS_C2_MODERATION_REPO + ROWS_C2_PRODUCT_ANALYTICS_REPO + ROWS_C2_RANKINGS_REPO // R5-REC-C2: RowsC2*.kt
+    ROWS_C2_FORUM_REPO + ROWS_C2_MODERATION_REPO + ROWS_C2_PRODUCT_ANALYTICS_REPO + ROWS_C2_RANKINGS_REPO + // R5-REC-C2: RowsC2*.kt
+    ROWS_D_ACCESS_REQUESTS_REPO // solicitudes de acceso al panel: RowsDKtorAccessRequestsRepo.kt
 
 private const val DATA_MAIN = "data/src/commonMain/kotlin/com/oposicontrol/admin/data"
 private const val API_DIR = "$DATA_MAIN/remote/api"
