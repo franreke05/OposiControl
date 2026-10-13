@@ -112,8 +112,8 @@ class AccessRequestsScreenTest {
     @Test
     fun aResolvedRequestOffersNoDecisionAndShowsTheReason() {
         render(state(selected = rejected), capture = "access-requests-rejected.png") {
-            onNodeWithText("Solicitud rechazada").assertExists()
-            onNodeWithText("Motivo: No pertenece al equipo.").assertExists()
+            onNodeWithText("Solicitud rechazada, pero su cuenta sigue creada").assertExists()
+            onNodeWithText("Motivo: No pertenece al equipo.", substring = true).assertExists()
             onNodeWithText("Aprobar").assertDoesNotExist()
             onNodeWithText("Rechazar").assertDoesNotExist()
         }

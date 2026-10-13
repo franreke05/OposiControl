@@ -132,10 +132,17 @@ class AccessRequestsViewModel(
         }
     }
 
-    /** Solo una solicitud PENDIENTE admite decision, y solo si el servidor dijo que esta sesion puede revisar. */
+    /**
+     * Solo una solicitud PENDIENTE admite decision, y solo si el servidor dijo que esta sesion puede revisar. La excepcion
+     * es volver a RECHAZAR una ya rechazada cuya cuenta sigue existiendo (rechazos antiguos, o un borrado que fallo): eso
+     * termina de borrar la cuenta.
+     */
     private fun ask(requestId: String, kind: AccessDecisionKind) {
         updateState { state ->
-            val request = state.allRequests.firstOrNull { it.id == requestId && it.status == AccessRequestStatus.PENDING }
+            val request = state.allRequests.firstOrNull {
+                it.id == requestId &&
+                    (it.status == AccessRequestStatus.PENDING || (kind == AccessDecisionKind.REJECT && it.status == AccessRequestStatus.REJECTED))
+            }
             if (!state.canReview || state.isDeciding || request == null) return@updateState state
             val reason = if (kind == AccessDecisionKind.REJECT && state.selectedId == requestId) state.rejectionReason.trim() else ""
             state.copy(pendingDecision = PendingAccessDecision(request, kind, reason), decisionState = UiAsync.Idle)
@@ -187,16 +194,23 @@ class AccessRequestsViewModel(
         when (result) {
             is AppResult.Success -> updateState { current ->
                 val resolved = result.value
-                val merged = orderAccessRequests(current.allRequests.map { if (it.id == resolved.id) resolved else it })
+                val approved = resolved.status == AccessRequestStatus.APPROVED
+                // Rechazar borra la cuenta y, con ella, la solicitud: la fila sale de la lista en vez de quedarse como
+                // «rechazada» apuntando a una cuenta que ya no existe.
+                val merged = if (approved) {
+                    orderAccessRequests(current.allRequests.map { if (it.id == resolved.id) resolved else it })
+                } else {
+                    current.allRequests.filterNot { it.id == resolved.id }
+                }
                 current.copy(
                     allRequests = merged,
-                    selectedId = resolved.id,
+                    selectedId = if (approved) resolved.id else merged.firstOrNull()?.id,
                     rejectionReason = "",
                     decisionState = UiAsync.Success(
-                        if (resolved.status == AccessRequestStatus.APPROVED) {
+                        if (approved) {
                             "Solicitud aprobada: ${resolved.name.ifBlank { resolved.email }} ya es administrador."
                         } else {
-                            "Solicitud rechazada."
+                            "Solicitud rechazada y cuenta eliminada."
                         },
                     ),
                 ).withVisibleRequests()

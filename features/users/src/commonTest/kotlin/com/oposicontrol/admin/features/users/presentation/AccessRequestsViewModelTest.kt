@@ -309,9 +309,10 @@ class AccessRequestsViewModelTest {
         advanceUntilIdle()
 
         assertEquals<List<Pair<String, String?>>>(listOf("pending-new" to "No pertenece al equipo."), repository.rejected)
-        assertEquals(AccessRequestStatus.REJECTED, vm.state.value.selected!!.status)
+        // Rechazar borra la cuenta y su solicitud: la fila sale de la lista y se abre la siguiente.
+        assertTrue(vm.state.value.allRequests.none { it.id == "pending-new" })
         assertEquals("", vm.state.value.rejectionReason)
-        assertEquals("Solicitud rechazada.", (vm.state.value.decisionState as UiAsync.Success).value)
+        assertEquals("Solicitud rechazada y cuenta eliminada.", (vm.state.value.decisionState as UiAsync.Success).value)
 
         // Sin motivo viaja `null`, no una cadena vacia.
         vm.dispatch(AccessRequestsIntent.Select("pending-old"))

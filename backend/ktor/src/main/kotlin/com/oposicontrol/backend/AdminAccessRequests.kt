@@ -85,6 +85,7 @@ internal val ADMIN_ACCESS_ESTADOS: Set<String> =
 internal const val ADMIN_ACCESS_TABLE = "solicitudes_acceso_admin"
 internal const val ACTION_ACCESS_REQUEST_APPROVED = "solicitud_acceso_aprobada"
 internal const val ACTION_ACCESS_REQUEST_REJECTED = "solicitud_acceso_rechazada"
+internal const val ACTION_ACCESS_REQUEST_ACCOUNT_DELETED = "solicitud_acceso_cuenta_eliminada"
 internal const val ACTION_ACCESS_REQUEST_EMAIL_CONFIRMED = "solicitud_acceso_email_confirmado"
 
 /** Cuerpo de la solicitud publica. `toString` NO imprime nada: lleva una contrasena. */
@@ -161,6 +162,12 @@ internal interface AdminAccessRequestGateway {
      * lo llama la APROBACION. Idempotente: confirmar una cuenta ya confirmada la deja igual.
      */
     suspend fun confirmEmail(usuarioId: String)
+
+    /**
+     * Borra la cuenta de Auth [usuarioId] (`DELETE /auth/v1/admin/users/{id}`); su solicitud se va con ella (FK en
+     * cascada). Solo lo llama el RECHAZO. Idempotente: una cuenta que ya no existe no es un error.
+     */
+    suspend fun deleteAccount(usuarioId: String)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -295,7 +302,12 @@ internal fun Route.adminAccessRequestRoutes(gateway: AdminAccessRequestGateway?,
             val current = requests.find(id) ?: throw accessRequestNotFound()
             call.response.header(HttpHeaders.CacheControl, "no-store")
             when (current.estado) {
-                ADMIN_ACCESS_ESTADO_RECHAZADA -> return@post call.respond(current)
+                // Ya rechazada pero la cuenta sigue ahi (rechazo anterior a este cambio, o su borrado fallo): repetir el
+                // rechazo termina el trabajo.
+                ADMIN_ACCESS_ESTADO_RECHAZADA -> {
+                    removeRejectedAccount(requests, roles, current)
+                    return@post call.respond(current)
+                }
                 // Una aprobada ya concedio el rol: retirarlo es una decision aparte, en la ficha del usuario.
                 ADMIN_ACCESS_ESTADO_APROBADA -> throw CanonicalErrorCode.CONFLICT.exception(
                     "La solicitud ya fue aprobada. Para retirar el acceso, cambia los roles del usuario.",
@@ -305,6 +317,10 @@ internal fun Route.adminAccessRequestRoutes(gateway: AdminAccessRequestGateway?,
                 ?: requests.find(id)?.takeIf { it.estado == ADMIN_ACCESS_ESTADO_RECHAZADA }
                 ?: throw CanonicalErrorCode.CONFLICT.exception("Otro superadministrador resolvio la solicitud mientras tanto.")
             withUpstreamIo { auditResolution(roles, ACTION_ACCESS_REQUEST_REJECTED, resolved) }
+            // Rechazar es «esta persona no entra»: la cuenta que se creo al pedir acceso no puede quedarse (decision del
+            // propietario, 2026-10-13). Va DESPUES de marcar y auditar: si el borrado falla, la solicitud ya consta como
+            // rechazada y repetir el rechazo lo reintenta.
+            removeRejectedAccount(requests, roles, resolved)
             call.respond(resolved)
         }
     }
@@ -353,6 +369,37 @@ private fun grantAdminRole(roles: AdminV1Gateway, usuarioId: String, actorId: St
     val current = roles.roleIdsOf(usuarioId)
     if (CanonicalAuthorization.hasAdmin(current.mapNotNull(codeById::get))) return
     roles.syncRoles(usuarioId, current + adminRoleId, actorId = actorId, expectedRoleIds = current)
+}
+
+/**
+ * Borra la cuenta de una solicitud RECHAZADA. La cuenta nacio sin confirmar y sin rol y nunca pudo iniciar sesion, asi que
+ * no tiene nada colgando; aun asi se comprueba antes que no tenga un rol de administracion (alguien pudo darselo a mano
+ * entre la solicitud y el rechazo): en ese caso NO se borra y se dice.
+ */
+private suspend fun removeRejectedAccount(requests: AdminAccessRequestGateway, roles: AdminV1Gateway, request: AdminAccessRequestDto) {
+    val hasAdminRole = withUpstreamIo {
+        val codeById = roles.listRoles().associate { it.id to it.code }
+        CanonicalAuthorization.hasAdmin(roles.roleIdsOf(request.usuarioId).mapNotNull(codeById::get))
+    }
+    if (hasAdminRole) {
+        throw CanonicalErrorCode.CONFLICT.exception(
+            "La solicitud queda rechazada, pero su cuenta tiene un rol de administración y no se ha borrado. Retírale el rol antes.",
+        )
+    }
+    requests.deleteAccount(request.usuarioId)
+    val requestId: String? = org.slf4j.MDC.get(MDC_REQUEST_ID)
+    withUpstreamIo {
+        roles.registrarAuditoria(
+            ACTION_ACCESS_REQUEST_ACCOUNT_DELETED,
+            ADMIN_ACCESS_TABLE,
+            request.id,
+            antes = buildJsonObject { put("usuarioId", request.usuarioId) },
+            despues = buildJsonObject {
+                put("cuentaEliminada", true)
+                requestId?.let { put("requestId", it) }
+            },
+        )
+    }
 }
 
 /** Fila de auditoria de la resolucion (el actor lo pone [AdminAuditActor]). Sin nombre, correo ni motivo de la persona. */
@@ -611,6 +658,16 @@ internal class SupabaseAdminAccessRequestGateway(
     override suspend fun confirmEmail(usuarioId: String) {
         val safeId = usuarioId.validatedUuid("usuarioId").lowercase()
         request(HttpMethod.Put, "/auth/v1/admin/users/$safeId", json.encodeToString(buildJsonObject { put("email_confirm", true) }))
+    }
+
+    override suspend fun deleteAccount(usuarioId: String) {
+        val safeId = usuarioId.validatedUuid("usuarioId")
+        try {
+            request(HttpMethod.Delete, "/auth/v1/admin/users/$safeId", null)
+        } catch (missing: SupabaseHttpStatusException) {
+            // Ya no existe: es justo el resultado pedido.
+            if (missing.status != 404) throw missing
+        }
     }
 
     override suspend fun list(estado: String?, limit: Int, offset: Int): List<AdminAccessRequestDto> {

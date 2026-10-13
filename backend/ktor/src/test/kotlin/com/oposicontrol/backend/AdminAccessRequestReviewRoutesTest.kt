@@ -116,6 +116,16 @@ class AdminAccessRequestReviewRoutesTest {
             confirmed += usuarioId
         }
 
+        /** Cuentas de Auth borradas (lo que haria `DELETE /auth/v1/admin/users/{id}`). */
+        val deleted = CopyOnWriteArrayList<String>()
+        var deleteFailure: Exception? = null
+
+        override suspend fun deleteAccount(usuarioId: String) {
+            deleteFailure?.let { throw it }
+            onEvent("borrar")
+            deleted += usuarioId
+        }
+
         override suspend fun submit(submission: AdminAccessSubmission) = error("no interviene")
 
         override suspend fun list(estado: String?, limit: Int, offset: Int): List<AdminAccessRequestDto> {
@@ -473,14 +483,50 @@ class AdminAccessRequestReviewRoutesTest {
         assertNull(withoutBody.json()["motivoResolucion"])
         assertTrue(stub.rpcBodies().isEmpty(), "rechazar no concede ni retira roles")
         assertTrue(requests.confirmed.isEmpty(), "rechazar no confirma la cuenta: sigue sin poder iniciar sesion")
-        assertEquals(listOf("marcar:rechazada", "marcar:rechazada"), timeline.toList())
+        // Primero se marca y se audita; la cuenta se borra despues (si el borrado falla, ya consta como rechazada).
+        assertEquals(listOf("marcar:rechazada", "borrar", "marcar:rechazada", "borrar"), timeline.toList())
+        assertEquals(listOf(applicant, applicantWithRole), requests.deleted.toList(), "rechazar no deja la cuenta creada")
         assertEquals(emptyList(), stub.rolesOf[applicant])
         assertEquals(
-            listOf(ACTION_ACCESS_REQUEST_REJECTED, ACTION_ACCESS_REQUEST_REJECTED),
+            listOf(
+                ACTION_ACCESS_REQUEST_REJECTED, ACTION_ACCESS_REQUEST_ACCOUNT_DELETED,
+                ACTION_ACCESS_REQUEST_REJECTED, ACTION_ACCESS_REQUEST_ACCOUNT_DELETED,
+            ),
             stub.audits().map { it["accion"]!!.jsonPrimitive.content },
         )
         // El motivo del rechazo es texto libre sobre una persona: no se copia a la auditoria.
         assertFalse("No pertenece" in stub.audits().toString())
+    }
+
+    @Test
+    fun aFailedAccountDeletionLeavesTheRequestRejectedAndRejectingAgainFinishesIt() = testApplication {
+        val stub = Stub()
+        val requests = requests()
+        application { module(stub, requests) }
+
+        requests.deleteFailure = IllegalStateException("auth caido")
+        val failed = reject(superActor, pendingId)
+        assertTrue(failed.status.value >= 500, failed.bodyAsText())
+        assertEquals("rechazada", requests.rows[pendingId]!!.estado, "la decision ya consta aunque el borrado fallara")
+        assertTrue(requests.deleted.isEmpty())
+
+        requests.deleteFailure = null
+        assertEquals(HttpStatusCode.OK, reject(superActor, pendingId).status)
+        assertEquals(listOf(applicant), requests.deleted.toList())
+        assertEquals(1, requests.resolveCalls, "repetir el rechazo no vuelve a marcar la solicitud")
+    }
+
+    @Test
+    fun anAccountThatWasGivenAnAdminRoleInTheMeantimeIsNotDeleted() = testApplication {
+        val stub = Stub()
+        val requests = requests()
+        application { module(stub, requests) }
+        stub.rolesOf[applicant] = listOf(roleAdmin)
+
+        val response = reject(superActor, pendingId)
+
+        assertEquals(HttpStatusCode.Conflict, response.status, response.bodyAsText())
+        assertTrue(requests.deleted.isEmpty(), "nunca se borra una cuenta con rol de administracion")
     }
 
     @Test

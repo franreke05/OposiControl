@@ -52,6 +52,7 @@ class AdminAccessRequestPublicRouteTest {
         override suspend fun find(id: String) = error("no interviene")
         override suspend fun resolve(id: String, estado: String, actorId: String, motivo: String?) = error("no interviene")
         override suspend fun confirmEmail(usuarioId: String) = error("no interviene")
+        override suspend fun deleteAccount(usuarioId: String) = error("no interviene")
     }
 
     private fun Application.module(gateway: AdminAccessRequestGateway?, limiter: OposiBotsAuthRateLimiter = TestAllowAllLimiter) {

@@ -281,6 +281,20 @@ class SupabaseAdminAccessRequestGatewayTest {
     }
 
     @Test
+    fun deletingTheAccountIsOneAdminDeleteAndAnAccountAlreadyGoneIsNotAnError() = runTest {
+        val wire = Wire { json(HttpStatusCode.OK, "{}") }
+        gateway(wire).deleteAccount(newUserId)
+        assertEquals(listOf("DELETE /auth/v1/admin/users/$newUserId"), wire.calls())
+
+        val gone = Wire { json(HttpStatusCode.NotFound, """{"code":404,"error_code":"user_not_found","msg":"User not found"}""") }
+        gateway(gone).deleteAccount(newUserId)
+
+        val broken = Wire { json(HttpStatusCode.InternalServerError, """{"msg":"Database error deleting user"}""") }
+        assertEquals(500, assertFailsWith<SupabaseHttpStatusException> { gateway(broken).deleteAccount(newUserId) }.status)
+        assertFailsWith<Exception> { gateway(wire).deleteAccount("../otra-ruta") }
+    }
+
+    @Test
     fun resolvingARequestThatIsNoLongerPendingReturnsNull() = runTest {
         val wire = Wire { json(HttpStatusCode.OK, "[]") }
         assertNull(gateway(wire).resolve(requestId, "aprobada", actorId, null))

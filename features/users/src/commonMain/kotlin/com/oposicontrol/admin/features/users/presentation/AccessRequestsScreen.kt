@@ -67,7 +67,7 @@ internal const val ACCESS_REQUESTS_DETAIL_TAG: String = "access-requests-detail"
  *
  * El mismo workspace que OposiTickets —catalogo a la izquierda, ficha a la derecha— porque la tarea es la misma: recorrer
  * una cola y decidir sobre cada fila. Aprobar concede el rol `admin` (lo decide el servidor: aqui no se elige rol) y
- * rechazar deja la cuenta sin activar y sin rol. Hasta que se aprueba, la cuenta no puede iniciar sesion. Las dos piden
+ * rechazar BORRA la cuenta que se creo al pedir acceso. Hasta que se aprueba, la cuenta no puede iniciar sesion. Las dos piden
  * confirmacion.
  */
 @Composable
@@ -119,7 +119,7 @@ internal fun accessDecisionMessage(pending: PendingAccessDecision): String = bui
         )
         AccessDecisionKind.REJECT -> {
             if (pending.reason.isNotBlank()) append("Motivo: ${pending.reason}\n\n")
-            append("La solicitud quedará rechazada. La cuenta seguirá sin activar y sin ningún rol: no podrá iniciar sesión.")
+            append("Se rechazará la solicitud y se borrará la cuenta que se creó al pedir acceso. Si quiere entrar, tendrá que enviar otra solicitud.")
         }
     }
 }
@@ -283,12 +283,21 @@ private fun RequestDetailPane(
                 title = "Solicitud aprobada",
                 detail = "La cuenta tiene el rol de administrador. Para cambiarlo o retirarlo, abre su ficha en la pestaña Usuarios.",
             )
-            AccessRequestStatus.REJECTED -> WorkspaceNotice(
-                tone = WorkspaceNoticeTone.WARNING,
-                title = "Solicitud rechazada",
-                detail = request.resolutionReason?.takeIf { it.isNotBlank() }?.let { "Motivo: $it" }
-                    ?: "No se indicó ningún motivo. La cuenta sigue sin activar y sin ningún rol.",
-            )
+            // Solo se llega aqui con un rechazo antiguo (de cuando rechazar no borraba la cuenta) o si el borrado fallo:
+            // un rechazo normal quita la fila de la lista.
+            AccessRequestStatus.REJECTED -> {
+                WorkspaceNotice(
+                    tone = WorkspaceNoticeTone.WARNING,
+                    title = "Solicitud rechazada, pero su cuenta sigue creada",
+                    detail = (request.resolutionReason?.takeIf { it.isNotBlank() }?.let { "Motivo: ${it.trim().trimEnd('.')}. " } ?: "") +
+                        "La cuenta está sin activar y sin ningún rol: no puede iniciar sesión. Bórrala para terminar el rechazo.",
+                )
+                DangerOutlineButton(
+                    text = "Borrar la cuenta",
+                    onClick = { onIntent(AccessRequestsIntent.AskReject(request.id)) },
+                    enabled = !state.isDeciding,
+                )
+            }
         }
     }
 }
