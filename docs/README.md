@@ -51,7 +51,6 @@ data
 features/auth
 features/dashboard
 features/users
-features/roles
 features/settings
 features/audit
 features/specialties

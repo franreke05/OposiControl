@@ -27,7 +27,6 @@ Source: `settings.gradle.kts`, filesystem and feature source paths. These are mo
 | `:features:auth` | Auth |
 | `:features:dashboard` | Dashboard |
 | `:features:users` | Users |
-| `:features:roles` | Roles |
 | `:features:settings` | Settings (source-only additional section) |
 | `:features:audit` | Audit |
 | `:features:specialties` | Specialties |

@@ -53,8 +53,7 @@ class UsersLoop6GrantAndPresentationTest {
     }
 
     private object NoRoles : RolesRepository {
-        override fun observeRoles(): Flow<List<Role>> = flowOf(emptyList())
-        override suspend fun upsertRole(role: Role): AppResult<Role> = error("unused")
+        override fun observeRoles(): Flow<AppResult<List<Role>>> = flowOf(AppResult.Success(emptyList()))
     }
 
     private class Moderation(val results: ArrayDeque<AppResult<Int>>) : ModerationRepository {

@@ -219,7 +219,7 @@ class NavigationInformationArchitectureTest {
 
     @Test
     fun theSixteenRemovedRoutesAreHiddenNotDeleted() {
-        // Las cuatro rutas de Sistema (Roles/Settings/Diagnostics/Audit) suman
+        // Las cuatro rutas de Sistema con fila en el catálogo (Roles/Settings/Diagnostics/Audit) suman
         // sólo tres aquí: Settings es la que se dejó visible como "Sistema" —
         // ver systemSettingsIsTheOneVisibleSystemEntryRelabeledSistema.
         //
@@ -257,12 +257,30 @@ class NavigationInformationArchitectureTest {
     @Test
     fun systemSettingsIsTheOneVisibleSystemEntryRelabeledSistema() {
         // De las cuatro rutas de Sistema, Settings es la que se dejó visible
-        // (abre el hub en su pestaña "Preferencias") — las otras tres
+        // (abre el hub en su pestaña por defecto, «Estado») — las otras tres
         // (Roles/Diagnostics/Audit) están ocultas, cubiertas por
         // theSeventeenRemovedRoutesAreHiddenNotDeleted.
         val settings = allItems.single { it.route == AppRoute.System.Settings }
         assertTrue(settings.metadata.showInSidebar)
         assertEquals("Sistema", settings.metadata.title)
+        // El texto del menú y de la cabecera dice lo que hay hoy detrás: ni «Preferencias» ni «Seguridad».
+        assertEquals("Estado, administradores y auditoría del panel.", settings.metadata.description)
+    }
+
+    @Test
+    fun theOldSecurityRouteIsNowCalledAdministradores() {
+        // `System.Roles` sigue existiendo (la usan atajos y la búsqueda), pero abre Administradores y se llama así en la
+        // cabecera y en las migas.
+        val roles = allItems.single { it.route == AppRoute.System.Roles }
+        assertEquals("Administradores", roles.metadata.title)
+        assertTrue(!roles.metadata.showInSidebar)
+    }
+
+    @Test
+    fun theStandaloneStatusRouteHasNoSidebarRowOfItsOwn() {
+        // `System.Status` no está en ningún grupo del menú; al declararse sin fila propia, en escritorio marca «Sistema».
+        assertTrue(allItems.none { it.route == AppRoute.System.Status })
+        assertTrue(!AppRoute.System.Status.metadata().showInSidebar)
     }
 
     @Test

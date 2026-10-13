@@ -7,11 +7,9 @@ import com.oposicontrol.admin.core.common.config.FeatureFlags
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
-import com.oposicontrol.admin.domain.model.AdminSettings
 import com.oposicontrol.admin.domain.model.AuthCredentials
 import com.oposicontrol.admin.domain.model.Session
 import com.oposicontrol.admin.domain.repository.AuthRepository
-import com.oposicontrol.admin.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -46,6 +44,17 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `without a session there is no profile and nothing is made up`() = runTest {
+        val viewModel = newViewModel(testScheduler, FakeAuthRepository())
+
+        advanceUntilIdle()
+
+        // Antes el estado traía un «Admin Principal» de un almacenamiento local: sin sesión no hay a quién nombrar.
+        assertEquals(UiAsync.Empty, viewModel.state.value.profile)
+        assertEquals("DEV", viewModel.state.value.environmentLabel)
+    }
+
+    @Test
     fun `logout delegates to real auth repository and exposes success`() = runTest {
         val auth = FakeAuthRepository()
         val viewModel = newViewModel(testScheduler, auth)
@@ -59,7 +68,6 @@ class SettingsViewModelTest {
 
     private fun newViewModel(scheduler: TestCoroutineScheduler, auth: AuthRepository) = SettingsViewModel(
         dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(scheduler)),
-        settingsRepository = FakeSettingsRepository(),
         authRepository = auth,
         appConfig = AppConfig(
             environment = Environment.DEV,
@@ -76,25 +84,6 @@ class SettingsViewModelTest {
     )
 }
 
-private class FakeSettingsRepository : SettingsRepository {
-    private val settings = MutableStateFlow(
-        AdminSettings(
-            displayName = "",
-            email = "",
-            receiveReleaseNotes = false,
-            defaultEnvironment = Environment.DEV,
-            enableVerboseLogs = false,
-        ),
-    )
-
-    override fun observeSettings(): Flow<AdminSettings> = settings
-    override suspend fun refreshSettings(): AppResult<AdminSettings> = AppResult.Success(settings.value)
-    override suspend fun updateSettings(settings: AdminSettings): AppResult<AdminSettings> {
-        this.settings.value = settings
-        return AppResult.Success(settings)
-    }
-}
-
 private class FakeAuthRepository(initial: Session? = null) : AuthRepository {
     private val session = MutableStateFlow(initial)
     var logoutCalls: Int = 0
@@ -108,4 +97,3 @@ private class FakeAuthRepository(initial: Session? = null) : AuthRepository {
         return AppResult.Success(Unit)
     }
 }
-

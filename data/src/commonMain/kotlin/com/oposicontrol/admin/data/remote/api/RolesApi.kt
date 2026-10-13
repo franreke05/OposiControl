@@ -41,11 +41,6 @@ class RolesApi(
             adminAuthHeaders(appConfig, sessionLocalDataSource)
         }.checkedBody<AdminRolesV1Response>(BackendRoutes.ADMIN_V1_ROLES).data.map { it.toDto() }
 
-    suspend fun upsertRole(role: RoleDto): RoleDto {
-        // ponytail: roles son de solo lectura por ahora (catálogo en roles_app)
-        error("upsertRole no disponible en V1 todavía")
-    }
-
     private suspend inline fun <reified T> HttpResponse.checkedBody(endpoint: String): T {
         if (!status.isSuccess()) error("backend ${status.value} $endpoint: ${bodyAsText().take(240)}")
         return body()

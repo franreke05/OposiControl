@@ -5,6 +5,9 @@ import com.oposicontrol.admin.data.remote.dto.RoleDto
 import com.oposicontrol.admin.domain.model.Permission
 import com.oposicontrol.admin.domain.model.Role
 
+// Solo DTO -> dominio: el catálogo de roles se lee, nunca se envía (los mapeadores de vuelta solo servían a un
+// `upsertRole` que siempre lanzaba).
+
 fun RoleDto.toDomain(): Role {
     return Role(
         id = id,
@@ -16,22 +19,6 @@ fun RoleDto.toDomain(): Role {
 
 fun PermissionDto.toDomain(): Permission {
     return Permission(
-        key = key,
-        label = label,
-    )
-}
-
-fun Role.toDto(): RoleDto {
-    return RoleDto(
-        id = id,
-        name = name,
-        code = code,
-        permissions = permissions.map { it.toDto() },
-    )
-}
-
-fun Permission.toDto(): PermissionDto {
-    return PermissionDto(
         key = key,
         label = label,
     )

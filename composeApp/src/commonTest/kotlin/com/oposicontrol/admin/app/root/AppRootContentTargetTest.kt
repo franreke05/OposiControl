@@ -216,11 +216,20 @@ class AppRootContentTargetTest {
     }
 
     @Test
-    fun desktopReachesSystemStatusWithoutCompactLayout() {
+    fun systemStatusIsAStandaloneScreenOnlyInTheNarrowView() {
+        // La pantalla suelta es de la vista estrecha (se llega desde Ajustes). En escritorio la MISMA ruta abre el hub de
+        // Sistema en su pestaña Estado: antes había dos pantallas de estado distintas según por dónde se entrara.
         assertEquals(
             AppContentTarget.SYSTEM_STATUS,
+            resolveContentTarget(AppRoute.System.Status, compactLayout = true, showTabPager = false, hasLegacyRoute = false),
+        )
+        assertEquals(
+            AppContentTarget.SYSTEM_HUB,
             resolveContentTarget(AppRoute.System.Status, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
         )
+        assertEquals(SystemHubTab.STATUS, systemTabFor(AppRoute.System.Status))
+        // Y en escritorio el menú lateral marca «Sistema», no se queda sin selección.
+        assertEquals("system.settings", sidebarRouteIdFor(AppRoute.System.Status, compactLayout = false))
     }
 
     @Test
@@ -458,8 +467,35 @@ class AppRootContentTargetTest {
     }
 
     @Test
-    fun rolesOpensTheSecurityTabOfTheSystemHub() {
-        assertEquals(SystemHubTab.SECURITY, systemTabFor(AppRoute.System.Roles))
+    fun rolesOpensTheAdminsTabOfTheSystemHub() {
+        // «Seguridad» ya no existe: lo que tenía de real (quién entra y con qué rol) está en Administradores.
+        assertEquals(SystemHubTab.ADMINS, systemTabFor(AppRoute.System.Roles))
+    }
+
+    @Test
+    fun theSystemMenuEntryOpensTheStatusTab() {
+        // `Settings` es la entrada «Sistema» del menú. Abría «Preferencias»; ahora abre Estado, la pestaña por defecto.
+        assertEquals(SystemHubTab.STATUS, systemTabFor(AppRoute.System.Settings))
+        // Una ruta que no es de Sistema no fija ninguna pestaña.
+        assertEquals(null, systemTabFor(AppRoute.Users.List))
+    }
+
+    @Test
+    fun everySystemRouteMarksTheSystemEntryInTheSidebar() {
+        listOf(
+            AppRoute.System.Settings,
+            AppRoute.System.Roles,
+            AppRoute.System.Diagnostics,
+            AppRoute.System.Status,
+            AppRoute.System.Audit,
+        ).forEach { route ->
+            assertEquals(
+                AppContentTarget.SYSTEM_HUB,
+                resolveContentTarget(route, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
+                "«$route» debe abrir el hub de Sistema en escritorio.",
+            )
+            assertEquals("system.settings", sidebarRouteIdFor(route, compactLayout = false), "«$route» debe marcar Sistema.")
+        }
     }
 
     @Test

@@ -44,8 +44,10 @@ class UsersViewModel(
     init {
         loadUsers()
         scope.launch {
-            rolesRepository.observeRoles().collectLatest { roles ->
-                updateState { it.copy(availableRoles = roles) }
+            rolesRepository.observeRoles().collectLatest { result ->
+                // Un fallo deja el catálogo como estaba (vacío la primera vez): la ficha ya trata «sin catálogo» como
+                // «no se ha podido cargar» y la lista no afirma de nadie que sea opositor ni administrador.
+                if (result is AppResult.Success) updateState { it.copy(availableRoles = result.value) }
             }
         }
     }

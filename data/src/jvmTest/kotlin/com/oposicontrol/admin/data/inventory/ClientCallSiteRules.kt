@@ -60,7 +60,6 @@ internal val SITE_EXCLUSIONS: List<SiteExclusion> = listOf(
  * Metodos publicos SIN HTTP (fichero -> metodo -> por que). No llevan fila porque no envian nada (una fila sin llamada falla).
  */
 internal val NON_HTTP_MEMBERS: Map<String, Map<String, String>> = mapOf(
-    "$API/RolesApi.kt" to mapOf("upsertRole" to "lanza error(): roles de solo lectura en V1, no envia peticion"),
     "$API/UserDetailApi.kt" to mapOf("toDomain" to "mapeador DTO -> dominio (fachada UserDetailApiKt)"),
     "$API/UsersApi.kt" to mapOf(
         "deleteUser" to "lanza error(): no hay borrado de usuarios desde KMP, no envia peticion",

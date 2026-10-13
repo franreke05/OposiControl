@@ -63,7 +63,7 @@ internal const val ACCESS_REQUESTS_CATALOG_TAG: String = "access-requests-catalo
 internal const val ACCESS_REQUESTS_DETAIL_TAG: String = "access-requests-detail"
 
 /**
- * Solicitudes de acceso al panel, en la pestana del hub de Usuarios que solo ve un superadministrador.
+ * Solicitudes de acceso al panel: el bloque de Sistema > Administradores que solo ve un superadministrador.
  *
  * El mismo workspace que OposiTickets —catalogo a la izquierda, ficha a la derecha— porque la tarea es la misma: recorrer
  * una cola y decidir sobre cada fila. Aprobar concede el rol `admin` (lo decide el servidor: aqui no se elige rol) y

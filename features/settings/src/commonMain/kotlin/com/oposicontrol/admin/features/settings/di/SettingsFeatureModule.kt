@@ -4,5 +4,5 @@ import com.oposicontrol.admin.features.settings.presentation.SettingsViewModel
 import org.koin.dsl.module
 
 val settingsFeatureModule = module {
-    single { SettingsViewModel(get(), get(), get(), get(), get()) }
+    single { SettingsViewModel(get(), get(), get(), get()) }
 }

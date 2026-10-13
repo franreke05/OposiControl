@@ -2,10 +2,8 @@ package com.oposicontrol.admin.features.settings.presentation
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,8 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -27,7 +23,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -35,41 +30,35 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.ConfirmDialog
-import com.oposicontrol.admin.core.ui.components.CrudSplitLayout
-import com.oposicontrol.admin.core.ui.components.FormFeedback
-import com.oposicontrol.admin.core.ui.components.FormSection
-import com.oposicontrol.admin.core.ui.components.GlassActionButton
 import com.oposicontrol.admin.core.ui.components.GlassSurface
-import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.components.LoadingStateCard
-import com.oposicontrol.admin.core.ui.components.SummaryCard
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import oposicontrol.core.ui.generated.resources.Res
 import oposicontrol.core.ui.generated.resources.ic_filter
-import oposicontrol.core.ui.generated.resources.ic_settings
 import oposicontrol.core.ui.generated.resources.ic_support
 import oposicontrol.core.ui.generated.resources.ic_users
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.painterResource
 
+/**
+ * Ajustes de la VISTA ESTRECHA (pestaña «Sistema» de la barra inferior): perfil de la sesión, acceso a «Estado del
+ * sistema» y «Cerrar sesión».
+ *
+ * En escritorio esta pantalla ya no existe. Era la pestaña «Preferencias» del hub de Sistema: un formulario con un nombre
+ * y un correo que no eran los de la sesión y dos interruptores que nada consultaba. Lo que el escritorio necesita de aquí
+ * ya está en otro sitio: el perfil y el entorno en Sistema > Estado, y «Cerrar sesión» al pie del menú lateral.
+ */
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     onSystemStatusClick: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
-
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        if (maxWidth < 720.dp) {
-            SettingsMobileContent(
-                state = state,
-                onIntent = viewModel::dispatch,
-                onSystemStatusClick = onSystemStatusClick,
-            )
-        } else {
-            SettingsDesktopContent(state = state, onIntent = viewModel::dispatch)
-        }
-    }
+    SettingsMobileContent(
+        state = state,
+        onIntent = viewModel::dispatch,
+        onSystemStatusClick = onSystemStatusClick,
+    )
 }
 
 @Composable
@@ -101,23 +90,6 @@ private fun SettingsMobileContent(
             UiAsync.Empty, UiAsync.Idle, is UiAsync.Error -> Unit
         }
 
-        SettingsSectionCard(title = "APLICACIÓN") {
-            SettingsPreferenceRow(
-                title = "Avisos de versiones",
-                description = "Recibir novedades del panel cuando estén disponibles.",
-                checked = state.receiveReleaseNotes,
-                onCheckedChange = { onIntent(SettingsIntent.ToggleReleaseNotes(it)) },
-            )
-            Spacer(modifier = Modifier.size(12.dp))
-            GlassActionButton(
-                text = "Guardar cambios",
-                modifier = Modifier.fillMaxWidth(),
-                enabled = state.actionState !is UiAsync.Loading,
-                onClick = { onIntent(SettingsIntent.Save) },
-            )
-            SettingsFeedback(state.actionState)
-        }
-
         SettingsSectionCard(title = "SISTEMA") {
             SettingsInfoRow(
                 icon = Res.drawable.ic_filter,
@@ -137,8 +109,13 @@ private fun SettingsMobileContent(
                 contentDescription = "Cerrar sesión.",
                 destructive = true,
             )
-            if (state.logoutState is UiAsync.Error) {
-                SettingsFeedback(state.logoutState)
+            val logoutState = state.logoutState
+            if (logoutState is UiAsync.Error) {
+                Text(
+                    text = logoutState.error.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }
@@ -250,126 +227,4 @@ private fun SettingsInfoRow(
             )
         }
     }
-}
-
-@Composable
-private fun SettingsPreferenceRow(
-    title: String,
-    description: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .defaultMinSize(minHeight = 64.dp)
-            .clickable { onCheckedChange(!checked) }
-            .semantics(mergeDescendants = true) {
-                contentDescription = "$title. ${if (checked) "Activado" else "Desactivado"}."
-            }
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Icon(
-            painter = painterResource(Res.drawable.ic_settings),
-            contentDescription = null,
-            tint = GlassTheme.tokens.accent,
-            modifier = Modifier.size(22.dp),
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.titleMedium, color = GlassTheme.tokens.textPrimary)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = GlassTheme.tokens.textSecondary)
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = null,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.White,
-                checkedTrackColor = GlassTheme.tokens.accent,
-                uncheckedThumbColor = Color.White,
-                uncheckedTrackColor = GlassTheme.tokens.textSecondary.copy(alpha = 0.4f),
-            ),
-        )
-    }
-}
-
-@Composable
-private fun SettingsFeedback(state: UiAsync<Unit>) {
-    when (state) {
-        UiAsync.Loading -> Text("Guardando…", style = MaterialTheme.typography.bodySmall, color = GlassTheme.tokens.textSecondary)
-        is UiAsync.Error -> Text(state.error.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        is UiAsync.Success -> Text("Cambios guardados en este dispositivo.", style = MaterialTheme.typography.bodySmall, color = GlassTheme.tokens.success)
-        UiAsync.Empty, UiAsync.Idle -> Unit
-    }
-}
-
-@Composable
-private fun SettingsDesktopContent(
-    state: SettingsState,
-    onIntent: (SettingsIntent) -> Unit,
-) {
-    CrudSplitLayout(
-        modifier = Modifier.fillMaxSize(),
-        listPane = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SummaryCard("Entorno", state.environmentLabel.ifBlank { "Sin definir" }, "Configuración efectiva del panel")
-                SummaryCard("Datos", "Reales", "Sin fallback de producción")
-                SummaryCard("Logs verbosos", if (state.enableVerboseLogs) "Activados" else "Desactivados", "Observabilidad del cliente")
-            }
-        },
-        detailPane = {
-            FormSection(
-                title = "Preferencias del administrador",
-                description = "Ajustes personales y flags operativos del panel.",
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    FieldLabel("Nombre visible")
-                    GlassTextField(
-                        value = state.displayName,
-                        onValueChange = { onIntent(SettingsIntent.UpdateDisplayName(it)) },
-                        placeholder = "Tu nombre en el panel",
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    FieldLabel("Email")
-                    GlassTextField(
-                        value = state.email,
-                        onValueChange = { onIntent(SettingsIntent.UpdateEmail(it)) },
-                        placeholder = "persona@dominio.com",
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    com.oposicontrol.admin.core.ui.components.GlassToggleRow(
-                        title = "Recibir release notes",
-                        description = "Avisos de nuevas versiones y cambios del panel.",
-                        checked = state.receiveReleaseNotes,
-                        onCheckedChange = { onIntent(SettingsIntent.ToggleReleaseNotes(it)) },
-                    )
-                    com.oposicontrol.admin.core.ui.components.GlassToggleRow(
-                        title = "Logs verbosos",
-                        description = "Más detalle de red y diagnóstico en consola.",
-                        checked = state.enableVerboseLogs,
-                        onCheckedChange = { onIntent(SettingsIntent.ToggleVerboseLogs(it)) },
-                    )
-                    GlassActionButton(
-                        text = "Guardar ajustes",
-                        onClick = { onIntent(SettingsIntent.Save) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    FormFeedback(state.actionState, successText = "Configuración guardada en este dispositivo.")
-                }
-            }
-        },
-    )
-}
-
-@Composable
-private fun FieldLabel(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelMedium,
-        color = GlassTheme.tokens.textSecondary,
-    )
 }

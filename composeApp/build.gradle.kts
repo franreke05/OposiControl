@@ -184,7 +184,6 @@ kotlin {
             implementation(projects.features.imports)
             implementation(projects.features.opositester)
             implementation(projects.features.questions)
-            implementation(projects.features.roles)
             implementation(projects.features.settings)
             implementation(projects.features.specialties)
             implementation(projects.features.analytics)

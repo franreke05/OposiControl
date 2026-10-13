@@ -24,8 +24,6 @@ import com.oposicontrol.admin.features.news.presentation.NewsScreen
 import com.oposicontrol.admin.features.opositester.presentation.TesterListScreen
 import com.oposicontrol.admin.features.rankings.presentation.RankingsScreen
 import com.oposicontrol.admin.features.reports.presentation.ReportsScreen
-import com.oposicontrol.admin.features.roles.presentation.RolesScreen
-import com.oposicontrol.admin.features.settings.presentation.SettingsScreen
 import com.oposicontrol.admin.features.settings.presentation.SystemStatusScreen
 import com.oposicontrol.admin.features.store.presentation.CommercialCatalogIntent
 import com.oposicontrol.admin.features.store.presentation.CommercialCatalogScreen
@@ -36,9 +34,8 @@ import com.oposicontrol.admin.features.tickets.presentation.TicketsIntent
 import com.oposicontrol.admin.features.tickets.presentation.TicketsScreen
 import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
 import com.oposicontrol.admin.features.users.presentation.AccessRequestsIntent
-import com.oposicontrol.admin.features.users.presentation.AccessRequestsScreen
-import com.oposicontrol.admin.features.users.presentation.AccessRequestsState
 import com.oposicontrol.admin.features.users.presentation.AccessRequestsViewModel
+import com.oposicontrol.admin.features.users.presentation.AdminsScreen
 import com.oposicontrol.admin.features.users.presentation.UsersIntent
 import com.oposicontrol.admin.features.users.presentation.UsersScreen
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
@@ -63,7 +60,7 @@ import com.oposicontrol.admin.features.store.presentation.MarketViewModel
  * que aquí cada pestaña es una pantalla entera en vez de una sección de un
  * único ViewModel — por eso el estado de pestaña es local (`rememberSaveable`),
  * no una intención de un ViewModel compartido: no hay un ViewModel que unifique
- * Roles+Configuración+Estado+Auditoría sin inventar una capa nueva, y eso es
+ * Estado+Administradores+Auditoría sin inventar una capa nueva, y eso es
  * justo lo que esta fase de navegación no pide.
  *
  * El botón de acción primaria de la cabecera se deja fuera a propósito (mismo
@@ -83,33 +80,69 @@ private fun ColumnScope.HubTabBody(tabId: String, content: @Composable () -> Uni
     Box(modifier = Modifier.weight(1f).fillMaxWidth().motionEntrance(key = tabId)) { content() }
 }
 
+/**
+ * Sistema responde a tres preguntas, en este orden: ¿funciona? (Estado, la pestaña por defecto), ¿quién puede entrar?
+ * (Administradores) y ¿qué se ha hecho? (Auditoría).
+ *
+ * «Preferencias» y «Seguridad» ya no están: la primera era un formulario con un nombre y un correo que no eran los de la
+ * sesión y dos interruptores sin efecto; la segunda, un editor de roles que el servidor nunca dejó guardar.
+ */
 internal enum class SystemHubTab(val id: String, val label: String, val icon: AppIcon) {
-    PREFERENCES("preferences", "Preferencias", AppIcon.SETTINGS),
-    SECURITY("security", "Seguridad", AppIcon.ROLES),
     STATUS("status", "Estado", AppIcon.STATUS),
+
+    /** Quién puede entrar, quién lo ha pedido y qué permite cada rol. Absorbe «Solicitudes de acceso», antes en Usuarios. */
+    ADMINS("admins", "Administradores", AppIcon.ROLES),
     AUDIT("audit", "Auditoría", AppIcon.AUDIT),
 }
 
+/**
+ * Las pestañas del hub de Sistema. «Administradores» avisa de las solicitudes de acceso pendientes para que no haga falta
+ * abrirla para saberlo; el recuento solo es mayor que cero cuando el SERVIDOR ha dejado leer la lista a esta sesión.
+ */
+internal fun systemHubTabs(pendingAccessRequests: Int): List<DesktopTab> = SystemHubTab.entries.map { tab ->
+    DesktopTab(
+        id = tab.id,
+        label = tab.label,
+        icon = tab.icon,
+        badge = pendingAccessRequests.takeIf { tab == SystemHubTab.ADMINS && it > 0 }?.toString(),
+    )
+}
+
+/**
+ * [onOpenUser] abre la ficha de una persona en Usuarios desde «Administradores» (que solo lista: los roles y la baja se
+ * cambian en la ficha).
+ *
+ * El ViewModel de solicitudes de acceso se pide al abrir el hub y no al pulsar la pestaña: su respuesta (una petición
+ * ligera) es la que dice si hay algo pendiente y si esta sesión puede revisarlo.
+ */
 @Composable
 internal fun SystemHubScreen(
     initialTab: SystemHubTab?,
-    onSystemStatusClick: () -> Unit,
+    onOpenUser: (String) -> Unit,
 ) {
-    var selectedTab by rememberSaveable { mutableStateOf((initialTab ?: SystemHubTab.PREFERENCES).id) }
+    var selectedTab by rememberSaveable { mutableStateOf((initialTab ?: SystemHubTab.STATUS).id) }
     LaunchedEffect(initialTab) { if (initialTab != null) selectedTab = initialTab.id }
+
+    val accessRequestsViewModel: AccessRequestsViewModel = koinInject()
+    val accessRequestsState by accessRequestsViewModel.state.collectAsState()
+    // Cada vez que se abre el hub se vuelve a preguntar: un permiso retirado deja de verse sin reiniciar la aplicación.
+    LaunchedEffect(Unit) { accessRequestsViewModel.dispatch(AccessRequestsIntent.Refresh) }
 
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         DesktopTabs(
-            tabs = SystemHubTab.entries.map { DesktopTab(it.id, it.label, it.icon) },
+            tabs = systemHubTabs(accessRequestsState.pendingCount),
             selectedId = selectedTab,
             onSelect = { selectedTab = it },
         )
         HubTabBody(selectedTab) {
             when (selectedTab) {
-                SystemHubTab.SECURITY.id -> RolesScreen(viewModel = koinInject())
-                SystemHubTab.STATUS.id -> SystemStatusScreen(viewModel = koinInject())
+                SystemHubTab.ADMINS.id -> AdminsScreen(
+                    viewModel = koinInject(),
+                    accessRequestsViewModel = accessRequestsViewModel,
+                    onOpenUser = onOpenUser,
+                )
                 SystemHubTab.AUDIT.id -> AuditScreen(viewModel = koinInject())
-                else -> SettingsScreen(viewModel = koinInject(), onSystemStatusClick = onSystemStatusClick)
+                else -> SystemStatusScreen(viewModel = koinInject())
             }
         }
     }
@@ -122,22 +155,7 @@ internal enum class UsersHubTab(val id: String, val label: String, val icon: App
     TICKETS("tickets", "OposiTickets", AppIcon.TICKETS),
     COMPETITION("competition", "Competición", AppIcon.RANKINGS),
     ACCESS("access", "Accesos", AppIcon.ACCESS),
-
-    /** Personas que piden entrar en el panel. SOLO para superadministradores: ver [visibleUsersHubTabs]. */
-    ACCESS_REQUESTS("access-requests", "Solicitudes de acceso", AppIcon.ROLES),
 }
-
-/**
- * Las pestañas del hub de Usuarios para esta sesión. «Solicitudes de acceso» solo existe si el SERVIDOR ha respondido al
- * listado de solicitudes ([AccessRequestsState.canReview]); mientras no responda, o si responde 403, no se pinta. Nunca
- * se decide con un dato del cliente (los roles de la sesión local no son fiables).
- */
-internal fun visibleUsersHubTabs(canReviewAccessRequests: Boolean): List<UsersHubTab> =
-    UsersHubTab.entries.filter { it != UsersHubTab.ACCESS_REQUESTS || canReviewAccessRequests }
-
-/** La pestaña que se pinta de verdad: una que ya no es visible (p. ej. el servidor retiró el permiso) cae en Usuarios. */
-internal fun effectiveUsersHubTab(selectedId: String, visible: List<UsersHubTab>): String =
-    visible.firstOrNull { it.id == selectedId }?.id ?: UsersHubTab.USERS.id
 
 /**
  * Usuarios y sus subpantallas. OposiTickets es una de ellas: ir de la ficha de una persona a su cartera, y volver, es
@@ -145,8 +163,8 @@ internal fun effectiveUsersHubTab(selectedId: String, visible: List<UsersHubTab>
  *
  * Los ViewModel de la otra pestaña se piden al pulsar (`getKoin`) y no al abrir el hub: pedirlos antes descargaría todas
  * las carteras cada vez que alguien mira un usuario, y toda la lista de usuarios cada vez que alguien mira una cartera.
- * La excepción es el de solicitudes de acceso, que se pide al abrir el hub: su respuesta (una petición ligera) es lo que
- * dice si la pestaña existe para esta persona.
+ *
+ * «Solicitudes de acceso» ya no vive aquí: quién entra en el panel es asunto de Sistema > Administradores.
  */
 @Composable
 internal fun UsersHubScreen(initialTab: UsersHubTab?) {
@@ -154,29 +172,14 @@ internal fun UsersHubScreen(initialTab: UsersHubTab?) {
     LaunchedEffect(initialTab) { if (initialTab != null) selectedTab = initialTab.id }
     val koin = getKoin()
 
-    val accessRequestsViewModel: AccessRequestsViewModel = koinInject()
-    val accessRequestsState by accessRequestsViewModel.state.collectAsState()
-    // Cada vez que se abre el hub se vuelve a preguntar: un permiso retirado deja de verse sin reiniciar la aplicación.
-    LaunchedEffect(Unit) { accessRequestsViewModel.dispatch(AccessRequestsIntent.Refresh) }
-    val visibleTabs = visibleUsersHubTabs(accessRequestsState.canReview)
-    val shownTab = effectiveUsersHubTab(selectedTab, visibleTabs)
-
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         DesktopTabs(
-            tabs = visibleTabs.map { tab ->
-                DesktopTab(
-                    id = tab.id,
-                    label = tab.label,
-                    icon = tab.icon,
-                    badge = accessRequestsState.pendingCount.takeIf { tab == UsersHubTab.ACCESS_REQUESTS && it > 0 }?.toString(),
-                )
-            },
-            selectedId = shownTab,
+            tabs = UsersHubTab.entries.map { DesktopTab(it.id, it.label, it.icon) },
+            selectedId = selectedTab,
             onSelect = { selectedTab = it },
         )
-        HubTabBody(shownTab) {
-            when (shownTab) {
-                UsersHubTab.ACCESS_REQUESTS.id -> AccessRequestsScreen(viewModel = accessRequestsViewModel)
+        HubTabBody(selectedTab) {
+            when (selectedTab) {
                 UsersHubTab.TICKETS.id -> TicketsScreen(
                     viewModel = koinInject(),
                     onOpenUser = { userId ->

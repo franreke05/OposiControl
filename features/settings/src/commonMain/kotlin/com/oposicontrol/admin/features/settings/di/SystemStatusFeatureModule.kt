@@ -20,7 +20,7 @@ import org.koin.dsl.module
 val systemStatusFeatureModule = module {
     single<SystemStatusRepository> { ktorSystemStatusRepository() }
     factory {
-        // Entorno y versión del panel salen del mismo `AppConfig` que usa Preferencias (`SettingsViewModel`).
+        // Entorno y versión del panel salen del mismo `AppConfig` que usa Ajustes (`SettingsViewModel`).
         val appConfig = get<AppConfig>()
         SystemStatusViewModel(
             dispatcherProvider = get(),

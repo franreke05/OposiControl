@@ -7,7 +7,6 @@ import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.NewsEditorDraftLocalDataSource
 import com.oposicontrol.admin.data.local.SqlDelightNewsEditorDraftLocalDataSource
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
-import com.oposicontrol.admin.data.local.SettingsLocalDataSource
 import com.oposicontrol.admin.data.remote.api.AuditApi
 import com.oposicontrol.admin.data.remote.api.AuthApi
 import com.oposicontrol.admin.data.remote.api.DashboardApi
@@ -42,7 +41,6 @@ import com.oposicontrol.admin.data.repository.KtorNewsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorTagSearchRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorTagsRepositoryImpl
 import com.oposicontrol.admin.data.repository.RolesRepositoryImpl
-import com.oposicontrol.admin.data.repository.SettingsRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorCommerceRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorCommercialCatalogRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorMarketCatalogRepositoryImpl
@@ -70,7 +68,6 @@ import com.oposicontrol.admin.domain.repository.ModerationRepository
 import com.oposicontrol.admin.domain.repository.NewsRepository
 import com.oposicontrol.admin.domain.repository.QuestionsRepository
 import com.oposicontrol.admin.domain.repository.RolesRepository
-import com.oposicontrol.admin.domain.repository.SettingsRepository
 import com.oposicontrol.admin.domain.repository.TagSearchRepository
 import com.oposicontrol.admin.domain.repository.TagsRepository
 import com.oposicontrol.admin.domain.repository.UsersRepository
@@ -79,7 +76,6 @@ import org.koin.dsl.module
 val dataModule = module {
     single { DatabaseFactory(get()).create() }
     single { SessionLocalDataSource(get()) }
-    single { SettingsLocalDataSource(get(), get()) }
     single<NewsEditorDraftLocalDataSource> { SqlDelightNewsEditorDraftLocalDataSource(get()) }
     single { PlatformFileReader(get()) }
 
@@ -288,5 +284,4 @@ val dataModule = module {
     single<DashboardRepository> { ContentDashboardRepositoryImpl(get(), get(), get(), get(), get()) }
     single<UsersRepository> { UsersRepositoryImpl(get()) }
     single<RolesRepository> { RolesRepositoryImpl(get()) }
-    single<SettingsRepository> { SettingsRepositoryImpl(get()) }
 }

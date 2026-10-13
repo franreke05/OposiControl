@@ -109,7 +109,7 @@ class SystemStatusVisualHarness {
                 onRouteSelected = {},
                 environmentLabel = "Entorno production",
                 title = "Sistema",
-                description = "Preferencias, seguridad, estado y auditoría del panel.",
+                description = "Estado, administradores y auditoría del panel.",
                 breadcrumbs = listOf("Sistema"),
                 globalSearch = {},
             ) {
@@ -237,9 +237,8 @@ internal object SystemStatusFixtures {
 }
 
 internal val SYSTEM_HUB_TABS: List<DesktopTab> = listOf(
-    DesktopTab("preferences", "Preferencias", AppIcon.SETTINGS),
-    DesktopTab("security", "Seguridad", AppIcon.ROLES),
     DesktopTab("status", "Estado", AppIcon.STATUS),
+    DesktopTab("admins", "Administradores", AppIcon.ROLES),
     DesktopTab("audit", "Auditoría", AppIcon.AUDIT),
 )
 

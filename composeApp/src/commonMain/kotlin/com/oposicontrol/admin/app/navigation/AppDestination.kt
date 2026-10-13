@@ -27,10 +27,12 @@ enum class AdminSection(
         description = "Gestion de usuarios administrativos y roles asignados.",
         primaryActionLabel = "Nuevo usuario",
     ),
+    // Ya no tiene pantalla propia (el editor de roles nunca pudo guardar): navegar a ROLES abre Sistema > Administradores.
+    // Sin acción primaria: «Nuevo rol» prometía algo que el servidor no permite.
     ROLES(
-        label = "Roles",
-        description = "Definicion de roles y permisos del panel.",
-        primaryActionLabel = "Nuevo rol",
+        label = "Administradores",
+        description = "Quién puede entrar en el panel y qué permite cada rol.",
+        primaryActionLabel = null,
     ),
     SPECIALTIES(
         label = "Especialidades",
@@ -94,8 +96,8 @@ enum class AdminSection(
     ),
     SETTINGS(
         label = "Ajustes",
-        description = "Preferencias locales y flags del panel administrativo.",
-        primaryActionLabel = "Actualizar",
+        description = "Perfil de la sesión, estado del sistema y cierre de sesión.",
+        primaryActionLabel = null,
     ),
     AUDIT(
         label = "Auditoría",

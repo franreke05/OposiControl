@@ -196,9 +196,9 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         "Sistema",
         listOf(
             // Settings es la entrada visible: abre el hub de Sistema en su
-            // pestaña "Preferencias" — ver systemTabFor() en AppRoot.kt.
-            item(AppRoute.System.Settings, "system.settings", "Sistema", "Preferencias, seguridad, estado y auditoría del panel.", NavigationGroupId.SYSTEM, AppIcon.SETTINGS.key),
-            item(AppRoute.System.Roles, "system.roles", "Roles", "Roles y acceso administrativo.", NavigationGroupId.SYSTEM, AppIcon.ROLES.key, showInSidebar = false),
+            // pestaña por defecto, «Estado» — ver systemTabFor() en AppRoot.kt.
+            item(AppRoute.System.Settings, "system.settings", "Sistema", "Estado, administradores y auditoría del panel.", NavigationGroupId.SYSTEM, AppIcon.SETTINGS.key),
+            item(AppRoute.System.Roles, "system.roles", "Administradores", "Quién entra en el panel y qué permite cada rol.", NavigationGroupId.SYSTEM, AppIcon.ROLES.key, showInSidebar = false),
             item(AppRoute.System.Diagnostics, "system.diagnostics", "Estado", "Conectividad y estado del backend.", NavigationGroupId.SYSTEM, AppIcon.STATUS.key, showInSidebar = false),
             // Movida de Operaciones a Sistema (§14).
             item(AppRoute.System.Audit, "system.audit", "Auditoría", "Trazabilidad de operaciones sensibles.", NavigationGroupId.SYSTEM, AppIcon.AUDIT.key, showInSidebar = false),
@@ -249,6 +249,9 @@ fun AppRoute.metadata(): AppRouteMetadata = when (this) {
         // es una pantalla mobile, igual que en la version de Screen 10 real
         // (feature/mobile-settings) -- se preserva desde la ruta ya preparada.
         visibility = NavigationVisibility.MOBILE_ONLY,
+        // No tiene fila propia en el menú. En escritorio esta ruta abre el hub de Sistema (pestaña Estado) y, sin esto,
+        // el menú lateral se quedaba sin ninguna entrada marcada: ver `sidebarRouteIdFor`.
+        showInSidebar = false,
     )
     is AppRoute.System -> appNavigationGroups.metadataFor(this)
 }
@@ -298,7 +301,7 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     // Estudio y Eventos ahora abren ProductAnalyticsScreen en su sección real
     // (ver analyticsSectionFor en AppRoot.kt) en vez de caer al Dashboard.
     AppRoute.Analytics.Events, AppRoute.Analytics.Performance -> null
-    // Sistema (Roles/Configuración/Estado/Auditoría) ahora abre el hub propio
+    // Sistema (Estado/Administradores/Auditoría) ahora abre el hub propio
     // de Sistema (ver systemTabFor en AppRoot.kt), no el adaptador legacy.
     AppRoute.System.Roles -> null
     AppRoute.System.Audit -> null

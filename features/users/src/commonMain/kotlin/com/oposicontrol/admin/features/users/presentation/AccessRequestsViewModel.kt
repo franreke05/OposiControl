@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 sealed interface AccessRequestsIntent {
-    /** Vuelve a preguntar al servidor (al abrir el hub de Usuarios y con el boton de actualizar). */
+    /** Vuelve a preguntar al servidor (al abrir el hub de Sistema y con el boton de actualizar). */
     data object Refresh : AccessRequestsIntent
     data class UpdateFilter(val filter: AccessRequestFilter) : AccessRequestsIntent
     data class Select(val requestId: String) : AccessRequestsIntent
@@ -85,7 +85,7 @@ internal fun orderAccessRequests(requests: List<AccessRequest>): List<AccessRequ
     )
 
 /**
- * Pestana «Solicitudes de acceso» del hub de Usuarios (solo superadministradores).
+ * «Solicitudes de acceso», dentro de Sistema > Administradores (solo superadministradores).
  *
  * La visibilidad de la pestana sale de [AccessRequestsState.availability], que SOLO cambia con una respuesta del servidor
  * al listado. Al cambiar la sesion (otra persona entra en este equipo) el estado se vacia y se vuelve a preguntar: lo que

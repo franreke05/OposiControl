@@ -5,6 +5,5 @@ import com.oposicontrol.admin.domain.model.Role
 import kotlinx.coroutines.flow.Flow
 
 interface RolesDataSource {
-    fun observeRoles(): Flow<List<Role>>
-    suspend fun upsertRole(role: Role): AppResult<Role>
+    fun observeRoles(): Flow<AppResult<List<Role>>>
 }

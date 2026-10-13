@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -57,7 +55,6 @@ import com.oposicontrol.admin.features.exams.presentation.MobileActionPill
 import com.oposicontrol.admin.features.exams.presentation.MobileActionSpec
 import com.oposicontrol.admin.features.exams.presentation.MobileIcon
 import com.oposicontrol.admin.features.exams.presentation.ResponsiveActionRow
-import com.oposicontrol.admin.features.settings.presentation.SettingsIntent
 import com.oposicontrol.admin.features.settings.presentation.SettingsViewModel
 import com.oposicontrol.admin.features.support.presentation.SupportIntent
 import com.oposicontrol.admin.features.support.presentation.SupportViewModel
@@ -147,7 +144,6 @@ fun MobileAdminPanel(
                     )
                     AdminSection.Ajustes -> AdminSettingsSection(
                         settingsState = settingsState,
-                        onIntent = settingsViewModel::dispatch,
                     )
                 }
             }
@@ -1343,7 +1339,6 @@ private fun SupportReplyCard(
 @Composable
 private fun AdminSettingsSection(
     settingsState: com.oposicontrol.admin.features.settings.presentation.SettingsState,
-    onIntent: (SettingsIntent) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
@@ -1362,66 +1357,27 @@ private fun AdminSettingsSection(
             }
         }
 
-        when (val loadState = settingsState.settings) {
+        // Quién ha iniciado sesión, tal como lo dice la sesión. Aquí había un formulario «Perfil admin» con un nombre y un
+        // correo que arrancaban inventados («Admin Principal») y dos interruptores («Release notes», «Logs verbosos»)
+        // que nada consultaba: se guardaban en este dispositivo y ahí se quedaban.
+        when (val profile = settingsState.profile) {
             is UiAsync.Loading -> LoadingStateCard()
-            is UiAsync.Error -> EmptyStateCard(
-                title = "Error al cargar",
-                message = loadState.error.message,
-            )
-            else -> Unit
-        }
-
-        GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(UiSpacing.panel),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("Perfil admin", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                GlassTextField(
-                    value = settingsState.displayName,
-                    onValueChange = { onIntent(SettingsIntent.UpdateDisplayName(it)) },
-                    placeholder = "Nombre visible",
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                GlassTextField(
-                    value = settingsState.email,
-                    onValueChange = { onIntent(SettingsIntent.UpdateEmail(it)) },
-                    placeholder = "Email",
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+            is UiAsync.Success -> GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text("Release notes", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = settingsState.receiveReleaseNotes,
-                        onCheckedChange = { onIntent(SettingsIntent.ToggleReleaseNotes(it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = GlassTheme.tokens.accent),
+                    Text("Sesión", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "${profile.value.displayName} · ${profile.value.roleLabel}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text("Logs verbosos", style = MaterialTheme.typography.bodyMedium)
-                    Switch(
-                        checked = settingsState.enableVerboseLogs,
-                        onCheckedChange = { onIntent(SettingsIntent.ToggleVerboseLogs(it)) },
-                        colors = SwitchDefaults.colors(checkedThumbColor = GlassTheme.tokens.accent),
-                    )
-                }
-                AdminActionRow(
-                    actionState = settingsState.actionState,
-                    saveLabel = "Guardar",
-                    onSave = { onIntent(SettingsIntent.Save) },
-                    onDelete = null,
-                )
             }
+            else -> Unit
         }
     }
 }

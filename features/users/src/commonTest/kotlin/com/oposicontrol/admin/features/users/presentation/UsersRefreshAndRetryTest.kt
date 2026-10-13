@@ -49,8 +49,7 @@ class UsersRefreshAndRetryTest {
     }
 
     private object NoRoles : RolesRepository {
-        override fun observeRoles(): Flow<List<Role>> = flowOf(emptyList())
-        override suspend fun upsertRole(role: Role): AppResult<Role> = error("unused")
+        override fun observeRoles(): Flow<AppResult<List<Role>>> = flowOf(AppResult.Success(emptyList()))
     }
 
     private object NoModeration : ModerationRepository {

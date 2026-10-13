@@ -1,21 +1,19 @@
 package com.oposicontrol.admin.features.settings.presentation
 
 import com.oposicontrol.admin.core.common.presentation.UiAsync
-import com.oposicontrol.admin.domain.model.AdminSettings
 
 data class SettingsProfile(
     val displayName: String,
     val roleLabel: String,
 )
 
+/**
+ * Ajustes de la vista estrecha. Todo lo que hay aquí es REAL: el perfil sale de la sesión iniciada y el entorno de la
+ * configuración de arranque. Antes llevaba además un «nombre visible» y un «correo» que arrancaban con valores inventados
+ * y dos interruptores sin efecto.
+ */
 data class SettingsState(
-    val settings: UiAsync<AdminSettings> = UiAsync.Loading,
     val profile: UiAsync<SettingsProfile> = UiAsync.Loading,
-    val displayName: String = "",
-    val email: String = "",
-    val receiveReleaseNotes: Boolean = false,
-    val enableVerboseLogs: Boolean = false,
     val environmentLabel: String = "",
-    val actionState: UiAsync<Unit> = UiAsync.Idle,
     val logoutState: UiAsync<Unit> = UiAsync.Idle,
 )

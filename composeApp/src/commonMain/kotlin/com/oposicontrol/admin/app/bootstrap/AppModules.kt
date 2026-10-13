@@ -18,7 +18,6 @@ import com.oposicontrol.admin.features.news.di.newsFeatureModule
 import com.oposicontrol.admin.features.questions.di.questionsFeatureModule
 import com.oposicontrol.admin.features.newstypes.di.newsTypesFeatureModule
 import com.oposicontrol.admin.features.reports.di.reportsFeatureModule
-import com.oposicontrol.admin.features.roles.di.rolesFeatureModule
 import com.oposicontrol.admin.features.settings.di.settingsFeatureModule
 import com.oposicontrol.admin.features.settings.di.systemStatusFeatureModule
 import com.oposicontrol.admin.features.specialties.di.specialtiesFeatureModule
@@ -41,7 +40,6 @@ fun appModules(
         authFeatureModule,
         dashboardFeatureModule,
         usersFeatureModule,
-        rolesFeatureModule,
         specialtiesFeatureModule,
         communitiesFeatureModule,
         tagsFeatureModule,

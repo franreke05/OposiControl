@@ -81,12 +81,7 @@ import com.oposicontrol.admin.features.reports.presentation.ReportsScreen
 import com.oposicontrol.admin.features.reports.presentation.ReportsViewModel
 import com.oposicontrol.admin.features.newstypes.presentation.NewsTypesScreen
 import com.oposicontrol.admin.features.newstypes.presentation.NewsTypesViewModel
-import com.oposicontrol.admin.features.roles.presentation.RolesIntent
-import com.oposicontrol.admin.features.roles.presentation.RolesScreen
-import com.oposicontrol.admin.features.roles.presentation.RolesViewModel
-import com.oposicontrol.admin.features.settings.presentation.SettingsIntent
 import com.oposicontrol.admin.features.settings.presentation.SettingsScreen
-import com.oposicontrol.admin.features.settings.presentation.SettingsViewModel
 import com.oposicontrol.admin.features.settings.presentation.SystemStatusScreen
 import com.oposicontrol.admin.features.settings.presentation.SystemStatusViewModel
 import com.oposicontrol.admin.features.specialties.presentation.SpecialtiesIntent
@@ -195,7 +190,10 @@ internal fun resolveContentTarget(
     // abajo, igual que hasta ahora.
     (route == AppRoute.Content.Exams || route is AppRoute.Content.ExamDetail) &&
         !compactLayout -> AppContentTarget.EXAM_WORKSPACE
-    route == AppRoute.System.Status -> AppContentTarget.SYSTEM_STATUS
+    // «Estado del sistema» como pantalla suelta existe SOLO en la vista estrecha, a la que se llega desde Ajustes. En
+    // escritorio la misma ruta abre el hub de Sistema en su pestaña Estado (más abajo): un único camino, no dos pantallas
+    // de estado distintas según por dónde se entre.
+    route == AppRoute.System.Status && compactLayout -> AppContentTarget.SYSTEM_STATUS
     route == AppRoute.Community.OposiRed -> AppContentTarget.FORUM
     route is AppRoute.Community.Thread -> AppContentTarget.THREAD_DETAIL
     // Moderación: hub con Reportes y OposiTester como pestañas (§11) — con
@@ -258,13 +256,14 @@ internal fun resolveContentTarget(
             route == AppRoute.Rankings ||
             route == AppRoute.Commercial.Subscriptions
         ) && !compactLayout -> AppContentTarget.USERS_HUB
-    // Sistema: hub con Roles/Configuración/Estado/Auditoría como pestañas — con
-    // cuál lo decide `systemTabFor`. Antes las cuatro eran pantallas top-level
-    // sueltas sin ningún destino que las agrupara.
+    // Sistema: hub con Estado/Administradores/Auditoría como pestañas — con
+    // cuál lo decide `systemTabFor`. Las cinco rutas de Sistema convergen aquí
+    // en escritorio, también `Status` (ver arriba).
     (
         route == AppRoute.System.Settings ||
             route == AppRoute.System.Roles ||
             route == AppRoute.System.Diagnostics ||
+            route == AppRoute.System.Status ||
             route == AppRoute.System.Audit
         ) && !compactLayout -> AppContentTarget.SYSTEM_HUB
     // Noticias: hub con Tipos añadido como pestaña — con cuál lo decide
@@ -490,7 +489,6 @@ fun AppRoot(
                     environmentLabel = environmentLabel,
                     openSection = navigator::openSection,
                     mobileExperience = compactLayout,
-                    onSystemStatusClick = { navigator.push(AppRoute.System.Status) },
                     onOpenContentUpload = { navigator.push(AppRoute.Content.Imports) },
                 )
             }
@@ -527,7 +525,7 @@ fun AppRoot(
             val authRepository: AuthRepository = koinInject()
             val logoutScope = rememberCoroutineScope()
             AppShell(
-                // El mismo cierre de sesion que Sistema > Preferencias; la app vuelve al acceso al quedarse sin sesion.
+                // El mismo cierre de sesion que Ajustes en la vista estrecha; la app vuelve al acceso al quedarse sin sesion.
                 onLogout = { logoutScope.launch { authRepository.logout() } },
                 currentRouteId = sidebarRouteIdFor(route, compactLayout),
                 groups = appNavigationGroups.toShellGroups(includeMobileOnly = compactLayout),
@@ -661,6 +659,14 @@ fun AppRoot(
                                 viewModel = koinInject(),
                                 onOpenReport = { reportId -> navigator.push(AppRoute.OposiTester.Detail(reportId)) },
                             )
+                            // Ajustes de la vista estrecha: perfil de la sesión, «Estado del sistema» y «Cerrar sesión».
+                            // Va aquí, como las otras pestañas con pantalla propia, porque `System.Settings` no tiene
+                            // sección legacy (en escritorio es el hub de Sistema) y sin esta rama la pestaña caía en el
+                            // marcador «ruta preparada para la migración».
+                            pageRoute == AppRoute.System.Settings -> SettingsScreen(
+                                viewModel = koinInject(),
+                                onSystemStatusClick = { navigator.push(AppRoute.System.Status) },
+                            )
                             pageRoute == route -> if (legacyRoute != null) legacyRoute.content() else LegacyRouteAdapter(metadata.title, metadata.description)
                             else -> MobilePrimaryTabContent(
                                 route = pageRoute,
@@ -742,10 +748,18 @@ fun AppRoot(
                     // El paso entre la ficha de una persona y su cartera lo resuelve el propio hub: son dos pestañas de
                     // la misma pantalla, no dos secciones.
                     AppContentTarget.USERS_HUB -> UsersHubScreen(initialTab = usersTabFor(route))
-                    AppContentTarget.SYSTEM_HUB -> SystemHubScreen(
-                        initialTab = systemTabFor(route),
-                        onSystemStatusClick = { navigator.push(AppRoute.System.Status) },
-                    )
+                    AppContentTarget.SYSTEM_HUB -> {
+                        val koin = getKoin()
+                        SystemHubScreen(
+                            initialTab = systemTabFor(route),
+                            // «Administradores» solo lista: los roles y la baja de una cuenta se cambian en su ficha, que
+                            // vive en Usuarios. El ViewModel de Usuarios se pide al pulsar, igual que desde Catálogo.
+                            onOpenUser = { userId ->
+                                koin.get<UsersViewModel>().dispatch(UsersIntent.SelectUser(userId))
+                                navigator.openSection(AdminSection.USERS)
+                            },
+                        )
+                    }
                     AppContentTarget.CATALOG_HUB -> {
                         val koin = getKoin()
                         CatalogHubScreen(
@@ -942,7 +956,6 @@ private fun adminSectionRoute(
     environmentLabel: String,
     openSection: (AdminSection) -> Unit,
     mobileExperience: Boolean,
-    onSystemStatusClick: () -> Unit = {},
     onOpenContentUpload: () -> Unit = {},
 ): AdminSectionRoute {
     return when (section) {
@@ -988,13 +1001,9 @@ private fun adminSectionRoute(
             )
         }
 
-        AdminSection.ROLES -> {
-            val viewModel: RolesViewModel = koinInject()
-            AdminSectionRoute(
-                onPrimaryAction = { viewModel.dispatch(RolesIntent.CreateNew) },
-                content = { RolesScreen(viewModel) },
-            )
-        }
+        // Ninguna ruta cae ya en esta sección (`toLegacySection` no la devuelve): la pantalla de roles se retiró y
+        // `AdminSection.ROLES` solo sobrevive como destino de navegación hacia Sistema > Administradores.
+        AdminSection.ROLES -> AdminSectionRoute(onPrimaryAction = null, content = {})
 
         AdminSection.SPECIALTIES -> {
             val viewModel: SpecialtiesViewModel = koinInject()
@@ -1115,18 +1124,9 @@ private fun adminSectionRoute(
             )
         }
 
-        AdminSection.SETTINGS -> {
-            val viewModel: SettingsViewModel = koinInject()
-            AdminSectionRoute(
-                onPrimaryAction = { viewModel.dispatch(SettingsIntent.Refresh) },
-                content = {
-                    SettingsScreen(
-                        viewModel = viewModel,
-                        onSystemStatusClick = onSystemStatusClick,
-                    )
-                },
-            )
-        }
+        // Igual que ROLES: `toLegacySection` no devuelve esta sección. En escritorio `System.Settings` es el hub de
+        // Sistema y en la vista estrecha la pinta la rama propia del paginador de pestañas (`SettingsScreen`).
+        AdminSection.SETTINGS -> AdminSectionRoute(onPrimaryAction = null, content = {})
 
         AdminSection.AUDIT -> {
             val viewModel: AuditViewModel = koinInject()
@@ -1210,10 +1210,20 @@ internal fun usersTabFor(route: AppRoute): UsersHubTab? = when (route) {
     else -> null
 }
 
-/** Pestaña del hub de Sistema con la que abrir según la entrada de menú usada. */
+/**
+ * Pestaña del hub de Sistema con la que abrir según la ruta.
+ *
+ * Todas las rutas de Sistema fijan pestaña (ninguna devuelve `null` salvo las que no son de Sistema): la entrada del menú
+ * —`Settings`— abre Estado, que es la pestaña por defecto ahora que «Preferencias» no existe; `Roles` abre
+ * Administradores, que es donde quedó lo que tenía de real «Seguridad»; y `Status` —la pantalla suelta de la vista
+ * estrecha— en escritorio es la misma pestaña Estado, no una segunda pantalla.
+ */
 internal fun systemTabFor(route: AppRoute): SystemHubTab? = when (route) {
-    AppRoute.System.Roles -> SystemHubTab.SECURITY
-    AppRoute.System.Diagnostics -> SystemHubTab.STATUS
+    AppRoute.System.Settings,
+    AppRoute.System.Diagnostics,
+    AppRoute.System.Status,
+    -> SystemHubTab.STATUS
+    AppRoute.System.Roles -> SystemHubTab.ADMINS
     AppRoute.System.Audit -> SystemHubTab.AUDIT
     else -> null
 }
