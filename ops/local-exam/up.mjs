@@ -5,7 +5,7 @@
 //   node ops/local-exam/up.mjs            crea o reutiliza el stack (los datos persisten en el volumen del contenedor)
 //   node ops/local-exam/up.mjs --reset    lo destruye (docker compose down -v) y lo vuelve a crear desde cero
 //
-// Salida: .local/compose.env (compose), .local/ktor.env (Ktor), .local/tokens.json (JWT de A y B), .local/jwks.json.
+// Salida: .local/compose.env (compose), .local/ktor.env (Ktor), .local/tokens.json (JWT de A, B y P), .local/jwks.json.
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
@@ -83,6 +83,12 @@ if (!fixtures) {
   // Supabase da a service_role todos los privilegios por defecto; el overlay no sustituye grants de MAIN.
   psql('notify pgrst, \'reload schema\';');
 }
+// PHASE B (E5-B01): cartera y derechos. Ambos ficheros son idempotentes y aditivos: se aplican siempre, tambien sobre un
+// stack ya creado, sin reset.
+psql(fs.readFileSync(path.join(here, 'sql/01_overlay_wallet_entitlement.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(here, 'sql/02_overlay_idempotency_finalize.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), 'utf8'));
+psql('notify pgrst, \'reload schema\';');
 
 compose('up', '-d', 'rest', 'storage', 'gateway');
 const service = { apikey: secrets.serviceKey, Authorization: `Bearer ${secrets.serviceKey}` };
@@ -115,7 +121,8 @@ const es256 = (sub, email) => {
   const sig = crypto.sign('sha256', Buffer.from(`${head}.${body}`), { key, dsaEncoding: 'ieee-p1363' });
   return `${head}.${body}.${b64url(sig)}`;
 };
-const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a', 'a@exam.local'), B: es256('0b000000-0000-4000-8000-00000000000b', 'b@exam.local') };
+const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a', 'a@exam.local'), B: es256('0b000000-0000-4000-8000-00000000000b', 'b@exam.local'),
+  P: es256('0f000000-0000-4000-8000-00000000000f', 'p@exam.local') };
 fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
 
 fs.writeFileSync(path.join(local, 'ktor.env'), [
