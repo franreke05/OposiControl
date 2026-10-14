@@ -154,7 +154,7 @@ class CatalogRoutesTest {
 
     private fun JsonObject.examIds(): List<String> = this["items"]!!.jsonArray.map { it.jsonObject["examen"]!!.jsonObject["id"]!!.jsonPrimitive.content }
 
-    private fun Application.catalogModule() {
+    private fun Application.catalogModule(limit: suspend (CanonicalUserId) -> Unit = {}) {
         install(ContentNegotiation) { json(testJson) }
         installRequestCorrelation()
         installBackendStatusPages()
@@ -165,7 +165,7 @@ class CatalogRoutesTest {
         )
         val gateway = CatalogGateway(TransportCatalogUpstream(transport), json)
         val clock = { now }
-        routing { catalogRoutes(CatalogRuntime(resolver, CatalogService(gateway, clock), EntitlementService(gateway, clock))) }
+        routing { catalogRoutes(CatalogRuntime(resolver, CatalogService(gateway, clock), EntitlementService(gateway, clock), limit)) }
     }
 
     private fun exam(
@@ -415,6 +415,34 @@ class CatalogRoutesTest {
         assertTrue(upstream.urls.single { it.contains("intentos_examen") }.contains("usuario_id=eq.$TEST_UID&examen_id=eq.$e1&origen_intento=eq.examen&creado_por_comando=not.is.null&estado=in.(en_progreso,finalizado)&order=estado.asc,finalizado_en.desc.nullslast,id.desc&limit=2"))
         assertNull(exam["ultimoIntentoFinalizadoId"], "sin intento finalizado: el campo no viaja")
         assertNoQuestionTables()
+    }
+
+    // =================================================================== E2-P02 / FA19
+
+    @Test
+    fun catalogAndEntitlementReadsShareOnePerUserBucketAnd429WithRetryAfter() = testApplication {
+        val limiter = InMemoryOposiBotsAuthRateLimiter()
+        application { catalogModule(limiter.subjectLimit(OposiBotsAuthOperation.CATALOG_READ)) }
+        val paths = listOf("/api/v1/app/examenes", "/api/v1/app/me/entitlement", "/api/v1/app/me/examenes?vista=EN_CURSO")
+        repeat(OposiBotsAuthOperation.CATALOG_READ.subjectLimit) { i ->
+            val response = client.getAs(paths[i % paths.size])
+            assertTrue(response.status != HttpStatusCode.TooManyRequests, "peticion $i dentro del limite")
+        }
+        for (path in paths + "/api/v1/app/examenes/00000000-0000-4000-8000-000000000001") {
+            val response = client.getAs(path)
+            assertEquals(HttpStatusCode.TooManyRequests, response.status, path)
+            assertEquals("RATE_LIMITED", code(response.bodyAsText()))
+            assertNotNull(response.headers[HttpHeaders.RetryAfter])
+        }
+        assertEquals(120, OposiBotsAuthOperation.CATALOG_READ.subjectLimit)
+        assertEquals(60L, OposiBotsAuthOperation.CATALOG_READ.windowSeconds)
+    }
+
+    @Test
+    fun publicSpecialtiesAreNotUserLimited() = testApplication {
+        application { catalogModule { throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 7) } }
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/public/especialidades").status)
+        assertEquals(HttpStatusCode.TooManyRequests, client.getAs("/api/v1/app/examenes").status)
     }
 
     // =================================================================== D2-17

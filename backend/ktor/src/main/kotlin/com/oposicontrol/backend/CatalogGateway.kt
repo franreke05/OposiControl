@@ -231,6 +231,13 @@ internal data class KeysetPosition(val timestamp: String, val id: String) {
 
 internal fun encodeQuery(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8)
 
+/**
+ * E2-P03: predicado de examen PUBLICADO YA (`publicado_en` no nulo y no futuro) para las rutas /v1 heredadas, el mismo que
+ * aplica el catalogo canonico ([CatalogGateway] publishedPredicate). Un examen programado no se sirve antes de su hora.
+ */
+internal fun publishedByNow(now: java.time.Instant = java.time.Instant.now()): String =
+    "&publicado_en=not.is.null&publicado_en=lte.${encodeQuery(now.toString())}"
+
 private fun parseInstantOrNull(value: String?): Instant? = value?.let { runCatching { OffsetDateTime.parse(it).toInstant() }.getOrNull() }
 
 internal class CatalogGateway(

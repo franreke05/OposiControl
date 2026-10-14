@@ -105,6 +105,9 @@ components:
             $ref: '../common/errors.yaml#/components/responses/BadRequest'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+            description: 'RATE_LIMITED (FA19, per-user read limit; Retry-After).'
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
             description: 'EXAM_NOT_FOUND (also draft or archived).'
@@ -181,6 +184,9 @@ components:
             $ref: '../common/errors.yaml#/components/responses/BadRequest'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+            description: 'RATE_LIMITED (FA19, per-user read limit; Retry-After).'
     PublicExams:
       get:
         operationId: listPublicExams

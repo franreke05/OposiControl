@@ -77,6 +77,16 @@ internal enum class OposiBotsAuthOperation(
     ATTEMPT_READ(240, 120, 60),
 
     /**
+     * E2-P02 / FA19: lecturas de catalogo y derechos con identidad (D2-01, D2-02, D2-13, D7-02), un solo cubo por usuario.
+     * La Home V1 pide 2-3 en paralelo y el Market pagina de 20 en 20: 120 por minuto son decenas de cargas completas y
+     * frenan un bucle o un raspado.
+     */
+    CATALOG_READ(240, 120, 60),
+
+    /** E2-P02 / FA19: lecturas de cartera (D6-01, D6-02). 60 por minuto: la Home y la pantalla de cartera piden 1-2 por carga. */
+    WALLET_READ(120, 60, 60),
+
+    /**
      * Solicitud PUBLICA de acceso de administrador (`POST /v1/auth/admin-access-requests`, AdminAccessRequests.kt). Crea una
      * cuenta de Auth, asi que es tan estricta como [REGISTER]: pocas por IP y hora, y un tope SILENCIOSO por email.
      */
@@ -93,6 +103,20 @@ internal interface OposiBotsAuthRateLimiter : AutoCloseable {
     suspend fun checkSubject(operation: OposiBotsAuthOperation, subject: String): OposiBotsRateLimitDecision
     override fun close() = Unit
 }
+
+/**
+ * Limite por usuario como funcion `beforeLookup` de [CanonicalIdentityResolver.activeIdentity]: corre con el `sub` ya
+ * verificado y ANTES de leer el perfil. Sin limitador (pruebas, perfil sin auth) no limita.
+ */
+internal fun OposiBotsAuthRateLimiter?.subjectLimit(operation: OposiBotsAuthOperation): suspend (CanonicalUserId) -> Unit =
+    { userId ->
+        if (this != null) {
+            val decision = checkSubject(operation, userId.value)
+            if (!decision.allowed) {
+                throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = decision.retryAfterSeconds.coerceIn(1, 3_600).toInt())
+            }
+        }
+    }
 
 internal object OposiBotsAuthRateLimiterFactory {
     fun create(configuration: OposiBotsAuthConfiguration): OposiBotsAuthRateLimiter {

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Control negativo de db-pg17-gate.sh (DB-CI-PG17), con PostgreSQL 17 REAL (Docker): una copia sin tocar del arbol PASA y cada
 # mutacion sembrada FALLA por SU motivo (mensaje FAIL concreto), nunca por otro. Desde la captura de MAIN del 2026-10-14
-# (supabase/baseline/MAIN_MIGRATION_HISTORY.txt) la unica pendiente es 20261016100000 (revisiones de pregunta):
+# (supabase/baseline/MAIN_MIGRATION_HISTORY.txt) las pendientes son 20261016100000 (revisiones de pregunta) y 20261017100000 (E2-P03);
 #   manifiesto: la pendiente borrada de PENDING_MIGRATIONS.txt / una ya aplicada en MAIN anadida / un VERIFY ausente
 #   (a) grant select de solicitudes_eliminacion_cuenta a authenticated en la pendiente -> frontera de assertions.sql
 #   (a2) grant execute de idem_begin (objeto de MAIN) a authenticated -> la matriz grants/RLS de assertions.sql
@@ -24,7 +24,7 @@ expect_fail() { # $1 = escenario, $2 = mensaje FAIL esperado
 mutated() { cmp -s "$1" "${1#$w/}" && { echo "TEST FAIL: mutacion vacua en $1"; exit 1; }; return 0; }
 rev=supabase/migrations/20261016100000_slice3_attempt_content_revisions.sql
 pend=supabase/baseline/PENDING_MIGRATIONS.txt
-fresh; sed -i '/^20261016100000_/d' "$w/$pend"; echo '20261015100000_security_audit_log_index' >> "$w/$pend"; mutated "$w/$pend"
+fresh; sed -i 's/^20261016100000_slice3_attempt_content_revisions/20261015100000_security_audit_log_index/' "$w/$pend"; mutated "$w/$pend"
 expect_fail "pendiente sustituida por una ya aplicada en MAIN" "PENDING_MIGRATIONS.txt y (repo - historial de MAIN) difieren"
 fresh; sed -i '/^-- VERIFY-BEGIN/,/^-- VERIFY-END/d' "$w/$rev"; mutated "$w/$rev"
 expect_fail "bloque VERIFY ausente" "20261016100000_slice3_attempt_content_revisions: bloque VERIFY ausente"

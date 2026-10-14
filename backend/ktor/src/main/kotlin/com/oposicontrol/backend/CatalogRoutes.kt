@@ -14,13 +14,19 @@ internal class CatalogRuntime(
     val resolver: CanonicalIdentityResolver,
     val catalog: CatalogService,
     val entitlement: EntitlementService,
+    /** E2-P02 / FA19: limite por usuario (CATALOG_READ) antes de leer el perfil. Por defecto no limita (pruebas). */
+    val limit: suspend (CanonicalUserId) -> Unit = {},
 ) {
     companion object {
         /** Cableado de produccion: misma credencial de servicio y mismo bucket de portadas que el resto del backend. */
-        fun fromEnvironment(resolver: CanonicalIdentityResolver, environment: (String) -> String? = System::getenv): CatalogRuntime? {
+        fun fromEnvironment(
+            resolver: CanonicalIdentityResolver,
+            limiter: OposiBotsAuthRateLimiter? = null,
+            environment: (String) -> String? = System::getenv,
+        ): CatalogRuntime? {
             val upstream = TransportCatalogUpstream.fromEnvironment(environment) ?: return null
             val gateway = CatalogGateway(upstream)
-            return CatalogRuntime(resolver, CatalogService(gateway), EntitlementService(gateway))
+            return CatalogRuntime(resolver, CatalogService(gateway), EntitlementService(gateway), limiter.subjectLimit(OposiBotsAuthOperation.CATALOG_READ))
         }
     }
 }
@@ -55,7 +61,7 @@ internal fun Route.catalogRoutes(runtime: CatalogRuntime?) {
     route("/api/v1/app") {
         get("/examenes") {
             val rt = runtime.orMisconfigured()
-            val identity = rt.resolver.activeIdentity(call)
+            val identity = rt.resolver.activeIdentity(call, rt.limit)
             val query = parseExamListQuery(call.request.queryParameters)
             val page = rt.catalog.listExams(identity.userId, query)
             call.cache("private, max-age=60")
@@ -63,7 +69,7 @@ internal fun Route.catalogRoutes(runtime: CatalogRuntime?) {
         }
         get("/examenes/{examId}") {
             val rt = runtime.orMisconfigured()
-            val identity = rt.resolver.activeIdentity(call)
+            val identity = rt.resolver.activeIdentity(call, rt.limit)
             val examId = call.parameters["examId"].orEmpty().trim()
             if (!examId.isUuid()) throw validationError(ErrorIssue("examId", CanonicalIssue.INVALID_FORMAT))
             val exam = rt.catalog.getExam(identity.userId, examId.lowercase())
@@ -74,7 +80,7 @@ internal fun Route.catalogRoutes(runtime: CatalogRuntime?) {
         route("/me") {
             get("/examenes") {
                 val rt = runtime.orMisconfigured()
-                val identity = rt.resolver.activeIdentity(call)
+                val identity = rt.resolver.activeIdentity(call, rt.limit)
                 val query = parseMyExamsQuery(call.request.queryParameters)
                 val page = rt.catalog.listMyExams(identity.userId, query)
                 call.cache("private, max-age=30")
@@ -82,7 +88,7 @@ internal fun Route.catalogRoutes(runtime: CatalogRuntime?) {
             }
             get("/entitlement") {
                 val rt = runtime.orMisconfigured()
-                val identity = rt.resolver.activeIdentity(call)
+                val identity = rt.resolver.activeIdentity(call, rt.limit)
                 val entitlement = rt.entitlement.entitlement(identity.userId)
                 call.cache("private, no-store")
                 // Objeto DESNUDO (sin envoltorio `data`): OAS `Entitlement`.

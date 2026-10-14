@@ -796,7 +796,7 @@ class AppV1Gateway private constructor(
     }
 
     fun listExamenes(): List<AppExamenDto> {
-        val rows = get("/rest/v1/examenes?select=*&activo=eq.true&publicado_en=not.is.null&order=anio.desc.nullslast,titulo.asc")
+        val rows = get("/rest/v1/examenes?select=*&activo=eq.true${publishedByNow()}&order=anio.desc.nullslast,titulo.asc")
         val codigos = rows.comunidadCodigos()
         return rows.map { it.toExamenDto(codigos) }
     }
@@ -821,7 +821,7 @@ class AppV1Gateway private constructor(
      */
     fun examenDetalle(examenId: String): AppExamenDetalleResponse? {
         examenId.validatedUuid("examenId")
-        val examen = get("/rest/v1/examenes?select=*&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1").firstOrNull() ?: return null
+        val examen = get("/rest/v1/examenes?select=*&id=eq.$examenId&activo=eq.true${publishedByNow()}&limit=1").firstOrNull() ?: return null
         val comunidadCodigos = listOf(examen).comunidadCodigos()
         val asociaciones = get("/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId&order=posicion.asc")
         val preguntaIds = asociaciones.mapNotNull { it.str("pregunta_id") }
@@ -902,7 +902,7 @@ class AppV1Gateway private constructor(
         // Precondición: el examen existe, está activo y está publicado. Sólo se
         // pide el `id` porque lo único que se necesita saber es si la fila está.
         val existe = get(
-            "/rest/v1/examenes?select=id&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1",
+            "/rest/v1/examenes?select=id&id=eq.$examenId&activo=eq.true${publishedByNow()}&limit=1",
         ).isNotEmpty()
         // K0-6 (EX-15): 404 y no 500. `error(...)` salía como `IllegalStateException`,
         // es decir, un 500 redactado indistinguible de un Supabase caído. Mismo

@@ -45,3 +45,7 @@ AUTORIA de MAIN no estan en el subconjunto: el contenido de los fixtures se siem
 ## Un solo worktree arranca el stack
 
 `docker compose` recrea los contenedores si cambian `.local/secrets.json` o las rutas de los ficheros montados, y la base NO tiene volumen: lanzar `up.mjs` desde otro worktree (otro `.local/`) BORRA la base. Lanza `up.mjs` solo desde el worktree que posee el stack (STACK_LOCK.md) y, si cambias de worktree, copia antes su `.local/secrets.json`.
+
+## STACK_LOCK (obligatorio)
+
+`up.mjs`, `run-ktor.mjs` y `e2e.mjs` llaman a `stack-lock.mjs` antes de tocar nada: si existe `STACK_LOCK.md` (por defecto `%LOCALAPPDATA%\OposiBotPhaseB\handoffs\STACK_LOCK.md`, o `STACK_LOCK_FILE`) y su `HOLDER:` no es `STACK_HOLDER`, salen con codigo 3 sin escribir. Para trabajar: crear el bloqueo con tu `HOLDER`, exportar `STACK_HOLDER=<tu nombre>`, y borrar el bloqueo al terminar.
