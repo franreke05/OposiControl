@@ -7,6 +7,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requireStackLock } from './stack-lock.mjs';
+
+// Escritura en el stack compartido: falla (exit 3) si STACK_LOCK es de otro. Ver stack-lock.mjs.
+requireStackLock('e2e.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const local = path.join(here, '.local');
