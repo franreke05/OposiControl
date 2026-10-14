@@ -33,6 +33,12 @@ insert into public.documentos_legales (id, tipo_documento, version, titulo, cont
   ('d1000000-0000-0000-0000-000000000002','privacidad','v2','P','x',true,now()),
   ('d1000000-0000-0000-0000-000000000003','terminos','v1','T1','x',false,now()),
   ('d1000000-0000-0000-0000-000000000004','cookies','v1','C','x',true,now());
+-- MAIN crea el perfil desde auth.users: el trigger (y su funcion) tienen que estar en el bootstrap. Nombrarlo aqui lo
+-- mete tambien en el cierre de scripts/db-pg17-bootstrap-extract.mjs (semillas = pendientes + este fichero).
+do $$ begin
+  assert exists (select 1 from pg_trigger t where t.tgrelid = 'auth.users'::regclass
+                 and t.tgfoid = 'public.handle_new_auth_user()'::regprocedure and not t.tgisinternal), 'auth.users profile trigger present';
+end $$;
 insert into auth.users (id, email) values
   ('a0000000-0000-0000-0000-00000000000a','a@fx.local'),   -- A active
   ('a0000000-0000-0000-0000-00000000000b','b@fx.local'),   -- B bloqueada
@@ -242,7 +248,8 @@ declare
   ok3 constant uuid := '0a300000-0000-0000-0003-000000000001';
   r jsonb; a uuid; a2 uuid;
 begin
-  -- D2-03 start: published only, non-empty only, one open attempt, frozen set without archived / annulled questions.
+  -- D2-03 start: published only, non-empty only, one open attempt. Frozen set: every ACTIVE question, annulled ones included
+  -- (20261010100000; never evaluable), each bound to its immutable revision (20261016100000). Archived ones stay out.
   assert public.app_start_exam_attempt(ua, 'e3000000-0000-0000-0000-000000000002') ->> 'outcome' = 'EXAM_NOT_FOUND', 'draft exam is not startable';
   assert public.app_start_exam_attempt(ua, gen_random_uuid()) ->> 'outcome' = 'EXAM_NOT_FOUND', 'unknown exam';
   assert public.app_start_exam_attempt(ua, 'e3000000-0000-0000-0000-000000000003') ->> 'outcome' = 'EXAM_EMPTY', 'exam without questions';
@@ -252,9 +259,10 @@ begin
   r := public.app_start_exam_attempt(ua, ex);
   assert r ->> 'outcome' = 'RESUMED' and (r ->> 'intento_id')::uuid = a, 'second start returns the open attempt: ' || r;
   assert (select count(*) from public.intentos_examen where usuario_id = ua and examen_id = ex and estado = 'en_progreso') = 1, 'one open attempt';
-  assert (select array_agg(pregunta_id order by posicion) from public.preguntas_intento where intento_id = a) = array[p1, p2, p3, p4],
-    'frozen set = active and not annulled, in exam order';
-  assert (select array_agg(posicion order by posicion) from public.preguntas_intento where intento_id = a) = array[1, 2, 3, 4], 'positions renumbered 1..n';
+  assert (select array_agg(pregunta_id order by posicion) from public.preguntas_intento where intento_id = a) = array[p1, p2, p3, p4, 'f3000000-0000-0000-0000-000000000006'::uuid],
+    'frozen set = every active question (annulled included), in exam order';
+  assert not exists (select 1 from public.preguntas_intento where intento_id = a and revision_pregunta_id is null), 'every frozen question bound to a revision';
+  assert (select array_agg(posicion order by posicion) from public.preguntas_intento where intento_id = a) = array[1, 2, 3, 4, 5], 'positions renumbered 1..n';
   assert (select total_preguntas = 4 and especialidad_snapshot_id = 'e1000000-0000-0000-0000-000000000001' and tipo_examen_snapshot = 'rafaga'
             and intento_numero_usuario = 1 and motivo_fin is null from public.intentos_examen where id = a), 'attempt row at start';
   perform pg_temp.expect(format($q$insert into public.intentos_examen (usuario_id, examen_id) values (%L, %L)$q$, ua, ex), '23505');
@@ -263,11 +271,13 @@ begin
 
   -- D2-09 answers: owner only, frozen set only, skip, revision, lock, first response.
   assert public.app_record_attempt_answer(ub, a, p1, ok1, 100, 0, null) ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'another user''s attempt';
-  assert public.app_record_attempt_answer(ua, a, 'f3000000-0000-0000-0000-000000000006', null, 0, 0, null) ->> 'outcome' = 'QUESTION_NOT_IN_ATTEMPT', 'annulled-before-start question is not in the set';
+  assert public.app_record_attempt_answer(ua, a, 'f3000000-0000-0000-0000-000000000005', null, 0, 0, null) ->> 'outcome' = 'QUESTION_NOT_IN_ATTEMPT', 'archived question is not in the set';
+  assert public.app_record_attempt_answer(ua, a, 'f3000000-0000-0000-0000-000000000006', null, 0, 0, null) ->> 'estado' = 'ANNULLED', 'annulled-before-start question is in the set and stores nothing';
   assert public.app_record_attempt_answer(ua, a, p1, ko2, 0, 0, null) ->> 'outcome' = 'OPTION_NOT_IN_QUESTION', 'option of another question';
   assert public.app_record_attempt_answer(ua, a, p1, ok1, 0, 3, null) = '{"outcome":"REVISION_CONFLICT","current_revision":0}'::jsonb, 'stale base revision';
   r := public.app_record_attempt_answer(ua, a, p1, ok1, 999999999, 0, 2);
-  assert r = '{"outcome":"OK","estado":"ANSWERED","revision":1,"es_primera_respuesta":true,"respondidas":1,"noop":false}'::jsonb, 'first answer: ' || r;
+  assert r = jsonb_build_object('outcome', 'OK', 'estado', 'ANSWERED', 'revision', 1, 'es_primera_respuesta', true, 'respondidas', 1,
+                               'es_correcta', true, 'opcion_correcta_id', ok1, 'noop', false), 'first answer (with its DEC-015 reveal): ' || r;
   assert (select es_correcta and primera_es_correcta and primera_opcion_id = ok1 and revision = 1 and actualizada_en is not null
             and tiempo_respuesta_ms < 60000 and (metadatos ->> 'tiempoRecortado')::boolean and (metadatos ->> 'nivelConfianza')::int = 2
             and posicion_pregunta = 1 and es_primer_intento_pregunta
@@ -291,7 +301,7 @@ begin
   -- D2-10 finish: totals over evaluable questions, frozen statuses, tag summary, idempotent.
   assert public.app_finish_exam_attempt(ub, a) ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'another user cannot finish';
   assert public.app_finish_exam_attempt(ua, a) = '{"outcome":"OK","already":false}'::jsonb, 'finish';
-  assert (select array_agg(estado_final order by posicion) from public.preguntas_intento where intento_id = a) = array['CORRECT', 'WRONG', 'ANNULLED', 'UNANSWERED'],
+  assert (select array_agg(estado_final order by posicion) from public.preguntas_intento where intento_id = a) = array['CORRECT', 'WRONG', 'ANNULLED', 'UNANSWERED', 'ANNULLED'],
     'statuses frozen at finish';
   assert (select estado = 'finalizado' and motivo_fin = 'USER' and finalizado_en is not null and duracion_segundos >= 0 and total_preguntas = 4
             and total_respondidas = 2 and total_correctas = 1 and total_falladas = 1 and total_sin_responder = 1 and porcentaje_acierto = 50
@@ -299,7 +309,7 @@ begin
   assert (select total_preguntas = 3 and correctas = 1 and falladas = 1 and sin_responder = 1 from public.resumen_intento_etiqueta where intento_id = a), 'tag summary';
   update public.preguntas_examen set anulada = false, motivo_anulacion = null where examen_id = ex and pregunta_id = p3;
   assert public.app_finish_exam_attempt(ua, a) = '{"outcome":"OK","already":true}'::jsonb, 'finish is idempotent';
-  assert (select array_agg(estado_final order by posicion) from public.preguntas_intento where intento_id = a) = array['CORRECT', 'WRONG', 'ANNULLED', 'UNANSWERED'],
+  assert (select array_agg(estado_final order by posicion) from public.preguntas_intento where intento_id = a) = array['CORRECT', 'WRONG', 'ANNULLED', 'UNANSWERED', 'ANNULLED'],
     'a later annulment change does not rewrite the frozen result';
   assert public.app_record_attempt_answer(ua, a, p4, null, 0, 0, null) = '{"outcome":"ATTEMPT_NOT_IN_PROGRESS","estado":"finalizado"}'::jsonb, 'no answer after finish';
   assert public.app_abandon_exam_attempt(ua, a, 1, 'salida_usuario') ->> 'outcome' = 'ATTEMPT_ALREADY_FINISHED', 'no abandon after finish';
@@ -366,7 +376,7 @@ begin
             and metadatos ->> 'cerradoPor' = 'app_start_exam_attempt' from public.intentos_examen where id = legacy), 'the unmarked open attempt is closed';
   assert not exists (select 1 from public.preguntas_intento where intento_id = legacy), 'and still has no frozen set';
   assert (select creado_por_comando = 'app_start_exam_attempt' and origen_intento = 'examen' from public.intentos_examen where id = a), 'new attempt is marked';
-  assert (select count(*) from public.preguntas_intento where intento_id = a) = 4, 'new attempt frozen at start';
+  assert (select count(*) from public.preguntas_intento where intento_id = a) = 5, 'new attempt frozen at start (annulled question included, 20261010100000)';
   assert (select count(*) from public.intentos_examen where usuario_id = ub and examen_id = ex and estado = 'en_progreso') = 1, 'still one open attempt';
   r := public.app_start_exam_attempt(ub, ex);
   assert r ->> 'outcome' = 'RESUMED' and (r ->> 'intento_id')::uuid = a, 'a marked attempt is resumed: ' || r;
