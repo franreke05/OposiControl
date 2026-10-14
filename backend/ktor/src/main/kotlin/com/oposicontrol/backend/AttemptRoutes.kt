@@ -20,7 +20,13 @@ internal enum class AttemptOperation(val limit: OposiBotsAuthOperation) {
     ANSWER(OposiBotsAuthOperation.ATTEMPT_ANSWER),
     CLOSE(OposiBotsAuthOperation.ATTEMPT_CLOSE),
     REVIEW(OposiBotsAuthOperation.ATTEMPT_REVIEW),
+    RESOURCE(OposiBotsAuthOperation.ATTEMPT_RESOURCE),
+    READ(OposiBotsAuthOperation.ATTEMPT_READ),
 }
+
+/** EX13: metricas sin PII de la ruta; se instala ANTES que la idempotencia (cuenta tambien lo que su puerta rechaza). */
+private fun Route.measured(operation: String, registry: io.micrometer.core.instrument.MeterRegistry?): Route =
+    apply { install(ExamMetrics) { this.operation = operation; registry?.let { this.registry = it } } }
 
 /** Lo que las rutas de intento necesitan (SLICE 3). Se construye en el arranque cuando hay resolver de identidad. */
 internal class AttemptRuntime(
@@ -29,6 +35,8 @@ internal class AttemptRuntime(
     val idempotency: IdempotencyStore,
     /** Limite por usuario (JWT sub ya verificado), ANTES de leer el perfil. Lanza 429 RATE_LIMITED. Por defecto no limita (pruebas). */
     val limit: suspend (AttemptOperation, CanonicalUserId) -> Unit = { _, _ -> },
+    /** EX13: registro de las metricas del examen (por defecto el de `/metrics`; las pruebas pasan uno propio). */
+    val metrics: io.micrometer.core.instrument.MeterRegistry = BackendPrometheusMetrics.registry,
 ) {
     companion object {
         /** Cableado de produccion: misma credencial de servicio que el catalogo y el almacen real de idempotencia. */
@@ -68,6 +76,7 @@ internal class AttemptRuntime(
  *  - D2-11 `POST /api/v1/app/intentos/{attemptId}/abandonar`             abandonar (idempotente por estado)
  *  - D2-12 `GET  /api/v1/app/intentos/{attemptId}/resultado`             resultado (solo finalizado)
  *  - D2-65 `GET  /api/v1/app/intentos/{attemptId}/revision`              revision (solo finalizado)
+ *  - D2-66 `GET  /api/v1/app/intentos/{attemptId}/recursos/{recursoId}`  acceso temporal a un recurso de la revision del intento (EX14)
  *
  * Orden fijo en TODAS: (1) identidad = SOLO el `sub` del JWT, deny-by-default como `/api/v1/app/me*`
  * ([CanonicalIdentityResolver.activeIdentity]: 401 / 403 ACCOUNT_BLOCKED / ACCOUNT_DELETION_PENDING / PROFILE_MISSING), con el
@@ -96,7 +105,7 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
             } else {
                 call.respond(started.response)
             }
-        }.install(CanonicalIdempotency) {
+        }.measured(ExamOp.START, runtime?.metrics).install(CanonicalIdempotency) {
             routeTemplate = "/api/v1/app/examenes/{examId}/intentos"
             required = true
             this.store = store
@@ -107,12 +116,18 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
         route("/intentos/{attemptId}") {
             get {
                 val rt = runtime.orMisconfigured()
-                val identity = call.attemptGate(runtime, null, "attemptId")
+                val identity = call.attemptGate(runtime, AttemptOperation.READ, "attemptId")
                 call.respond(rt.attempts.get(identity.userId, call.pathUuid("attemptId")))
-            }
+            }.measured(ExamOp.GET, runtime?.metrics)
+            // EX14: acceso temporal a los bytes de un recurso de la revision del intento (Ktor autoriza, Storage sirve).
+            get("/recursos/{recursoId}") {
+                val rt = runtime.orMisconfigured()
+                val identity = call.attemptGate(runtime, AttemptOperation.RESOURCE, "attemptId", "recursoId")
+                call.respond(rt.attempts.resourceAccess(identity.userId, call.pathUuid("attemptId"), call.pathUuid("recursoId")))
+            }.measured(ExamOp.RESOURCE_ACCESS, runtime?.metrics)
             get("/preguntas") {
                 val rt = runtime.orMisconfigured()
-                val identity = call.attemptGate(runtime, null, "attemptId")
+                val identity = call.attemptGate(runtime, AttemptOperation.READ, "attemptId")
                 val page = parseAttemptPage(
                     call.request.queryParameters,
                     AttemptService.QUESTIONS_DEFAULT_LIMIT,
@@ -120,14 +135,14 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
                     "preguntas",
                 )
                 call.respond(rt.attempts.questions(identity.userId, call.pathUuid("attemptId"), page))
-            }
+            }.measured(ExamOp.QUESTION_PAGE, runtime?.metrics)
             put("/respuestas/{preguntaId}") {
                 val rt = runtime.orMisconfigured()
                 val identity = call.gatedIdentity()
                 // `opcionSeleccionadaId` es nullable en el contrato: `null` explicito = ausente = saltar.
                 val request = call.receiveCanonicalCommand<AnswerRequest>(nullableFields = setOf("opcionSeleccionadaId"))
                 call.respond(rt.attempts.answer(identity.userId, call.pathUuid("attemptId"), call.pathUuid("preguntaId"), request))
-            }.install(CanonicalIdempotency) {
+            }.measured(ExamOp.ANSWER, runtime?.metrics).install(CanonicalIdempotency) {
                 routeTemplate = "/api/v1/app/intentos/{attemptId}/respuestas/{preguntaId}"
                 required = true
                 this.store = store
@@ -139,7 +154,7 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
                 val identity = call.gatedIdentity()
                 call.receiveCanonicalCommand<AttemptFinishRequest>()
                 call.respond(rt.attempts.finish(identity.userId, call.pathUuid("attemptId")))
-            }.install(CanonicalIdempotency) {
+            }.measured(ExamOp.FINISH, runtime?.metrics).install(CanonicalIdempotency) {
                 routeTemplate = "/api/v1/app/intentos/{attemptId}/finalizar"
                 required = false
                 this.store = store
@@ -152,12 +167,12 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
                 val request = call.receiveCanonicalCommand<AbandonRequest>()
                 rt.attempts.abandon(identity.userId, call.pathUuid("attemptId"), request)
                 call.respond(HttpStatusCode.NoContent)
-            }
+            }.measured(ExamOp.ABANDON, runtime?.metrics)
             get("/resultado") {
                 val rt = runtime.orMisconfigured()
-                val identity = call.attemptGate(runtime, null, "attemptId", cacheControl = RESULT_CACHE)
+                val identity = call.attemptGate(runtime, AttemptOperation.READ, "attemptId", cacheControl = RESULT_CACHE)
                 call.respond(rt.attempts.result(identity.userId, call.pathUuid("attemptId")))
-            }
+            }.measured(ExamOp.RESULT, runtime?.metrics)
             get("/revision") {
                 val rt = runtime.orMisconfigured()
                 val identity = call.attemptGate(runtime, AttemptOperation.REVIEW, "attemptId")
@@ -168,7 +183,7 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
                     "revision",
                 )
                 call.respond(rt.attempts.review(identity.userId, call.pathUuid("attemptId"), page))
-            }
+            }.measured(ExamOp.REVIEW, runtime?.metrics)
         }
     }
 }

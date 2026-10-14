@@ -62,6 +62,21 @@ internal enum class OposiBotsAuthOperation(
     ATTEMPT_REVIEW(240, 120, 60),
 
     /**
+     * EX14: acceso temporal a los bytes de un recurso de un intento propio. Un examen inmersivo de 200 preguntas con
+     * imagen + audio pide como mucho ~400 accesos en todo el intento (mas la renovacion de URLs caducadas a los 300 s):
+     * 300 por minuto no lo alcanza un opositor rapido y si frena una descarga masiva.
+     */
+    ATTEMPT_RESOURCE(600, 300, 60),
+
+    /**
+     * E2-S01: lecturas D2-07 / D2-08 / D2-12. El cliente real lee 1 D2-07 + ceil(N/20) D2-08 por arranque o reanudacion
+     * (como mucho 11 para 200 preguntas), lo mismo por cada resincronizacion (REVISION_CONFLICT / ANSWER_LOCKED) y 1 D2-12
+     * al terminar: 120 por minuto son mas de 10 recargas completas por minuto. Frena un bucle de lecturas sin tocar al
+     * opositor rapido.
+     */
+    ATTEMPT_READ(240, 120, 60),
+
+    /**
      * Solicitud PUBLICA de acceso de administrador (`POST /v1/auth/admin-access-requests`, AdminAccessRequests.kt). Crea una
      * cuenta de Auth, asi que es tan estricta como [REGISTER]: pocas por IP y hora, y un tope SILENCIOSO por email.
      */

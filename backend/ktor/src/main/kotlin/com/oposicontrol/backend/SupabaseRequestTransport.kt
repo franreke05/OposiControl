@@ -445,6 +445,8 @@ class SupabaseRequestTransport internal constructor(
         path: String,
         request: () -> HttpRequest,
     ): HttpResponse<String> = try {
+        // EX12/EX13: viaje de ida y vuelta al upstream contado para la peticion en curso (solo si alguien la mide).
+        UpstreamCallLedger.record(org.slf4j.MDC.get(MDC_REQUEST_ID))
         client.send(request(), HttpResponse.BodyHandlers.ofString())
     } catch (error: Exception) {
         throw IllegalStateException(

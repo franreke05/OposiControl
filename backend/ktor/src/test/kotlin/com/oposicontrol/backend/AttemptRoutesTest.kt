@@ -92,6 +92,12 @@ class AttemptRoutesTest {
         var questionPage: (String) -> String = { "[]" }
         var reviewPage: (String) -> String = { "[]" }
         var resultQuestions = "[]"
+        var questionRevision: ((String) -> String)? = null
+        var reviewRevision: ((String) -> String)? = null
+        var resultRevision: String? = null
+        var resourceLookup: (String) -> String = { "[]" }
+        var signBody = """{"signedURL":"/object/sign/recursos-pregunta/x?token=t0k"}"""
+        var signStatus = 200
         var answers = "[]"
 
         /** Estado HTTP de la lectura de `respuestas_intento` (por defecto 200): otro valor simula el upstream caido. */
@@ -100,7 +106,7 @@ class AttemptRoutesTest {
         var tags = "[]"
 
         fun respond(rawUri: String): V1StubResponse {
-            val uri = URLDecoder.decode(rawUri, Charsets.UTF_8)
+            val uri = legacyFallbackAsPage(URLDecoder.decode(rawUri, Charsets.UTF_8))
             val body = when {
                 uri.endsWith("/rest/v1/rpc/app_start_exam_attempt") -> startOutcome
                 uri.endsWith("/rest/v1/rpc/app_record_attempt_answer") -> answerOutcome
@@ -118,6 +124,15 @@ class AttemptRoutesTest {
                             // Como PostgREST: el filtro del marcador solo deja pasar la fila que lo tiene.
                             (attemptHasCommandMarker || !uri.contains("&creado_por_comando=not.is.null"))
                     }?.let { "[$it]" } ?: "[]"
+                // 20261016100000: lecturas por revision. Sin revision configurada se devuelven las filas legacy (sin
+                // `revisiones_pregunta`), y la pasarela completa con la lectura viva de siempre.
+                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id,revisiones_pregunta(contenido)&") ->
+                    questionRevision?.invoke(uri) ?: questionPage(uri)
+                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id,revisiones_pregunta(contenido,solucion") ->
+                    reviewRevision?.invoke(uri) ?: reviewPage(uri)
+                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id,revisiones_pregunta(solucion") ->
+                    resultRevision ?: resultQuestions
+                uri.contains("/rest/v1/preguntas_intento?select=revisiones_pregunta!inner(recursos:contenido->recursos)") -> resourceLookup(uri)
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final&") -> frozen
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,preguntas(soluciones_pregunta") -> resultQuestions
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,preguntas(") && uri.contains("soluciones_pregunta") -> reviewPage(uri)
@@ -125,13 +140,35 @@ class AttemptRoutesTest {
                 uri.contains("/rest/v1/respuestas_intento") -> answers
                 uri.contains("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$exam&anulada=eq.true") -> annulled
                 uri.contains("/rest/v1/resumen_intento_etiqueta") -> tags
+                uri.contains("/storage/v1/object/sign/") -> signBody
                 else -> error("peticion inesperada al upstream: $uri")
             }
-            return V1StubResponse(if (uri.contains("/rest/v1/respuestas_intento")) answersStatus else 200, body)
+            return V1StubResponse(
+                when {
+                    uri.contains("/rest/v1/respuestas_intento") -> answersStatus
+                    uri.contains("/storage/v1/object/sign/") -> signStatus
+                    else -> 200
+                },
+                body,
+            )
         }
     }
 
+    /**
+     * La lectura viva de respaldo (filas sin revision) pide `posicion=in.(a,b,..)`; los manejadores de pagina del stub
+     * entienden `posicion=gt.N&limit=M`. Las posiciones de una pagina son consecutivas: se traduce a esa forma.
+     */
+    private fun legacyFallbackAsPage(uri: String): String {
+        val match = Regex("""&posicion=in\.\(([0-9,]+)\)""").find(uri) ?: return uri
+        val positions = match.groupValues[1].split(',').map(String::toInt)
+        return uri.replace(match.value, "&posicion=gt.${positions.min() - 1}")
+            .replace(Regex("""&limit=\d+"""), "&limit=${positions.size}")
+    }
+
     private val upstream = Upstream()
+
+    /** EX13: registro propio de esta prueba (las metricas del examen se comprueban sin mezclar otras pruebas). */
+    private val examMetrics = io.micrometer.core.instrument.simple.SimpleMeterRegistry()
 
     private fun Application.attemptModule(runtimePresent: Boolean = true) {
         install(ContentNegotiation) { json(testJson) }
@@ -148,6 +185,7 @@ class AttemptRoutesTest {
             resolver = resolver,
             attempts = AttemptService(AttemptGateway(TransportAttemptUpstream(transport), json), catalog, clock),
             idempotency = InMemoryIdempotencyStore(),
+            metrics = examMetrics,
             limit = { operation, _ ->
                 limited += operation
                 if (operation == rateLimit) throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 7)
@@ -288,6 +326,7 @@ class AttemptRoutesTest {
             listOf("POST", "$root/abandonar", """{"posicionPregunta":1,"motivo":"salida_usuario"}""", null),
             listOf("GET", "$root/resultado", null, null),
             listOf("GET", "$root/revision", null, null),
+            listOf("GET", "$root/recursos/5e5e5e5e-0000-4000-8000-000000000001", null, null),
         )
     }
 
@@ -450,7 +489,7 @@ class AttemptRoutesTest {
             "la correccion sale de la fila propia, sin la primera respuesta ni los tiempos: ${upstream.urls}",
         )
         assertTrue(upstream.urls.all { "usuario_id=eq.$TEST_UID" in it || "intentos_examen" !in it }, "el intento se lee SIEMPRE filtrado por su dueno")
-        assertTrue(limited.isEmpty(), "D2-07 no declara 429")
+        assertEquals(listOf(AttemptOperation.READ), limited, "E2-S01: D2-07 lleva el limite de lectura por usuario (enmienda 2026-10-14)")
     }
 
     @Test
@@ -538,9 +577,9 @@ class AttemptRoutesTest {
 
         // limite: por defecto 10, tope 20 (se recorta), invalido 400; cursor de otra lista o corrupto 400 INVALID_CURSOR
         client.call(HttpMethod.Get, "$base/preguntas")
-        assertTrue(upstream.urls.last { "preguntas_intento" in it }.endsWith("limit=11"))
+        assertTrue(upstream.urls.last { "revisiones_pregunta(" in it }.endsWith("limit=11"))
         client.call(HttpMethod.Get, "$base/preguntas?limit=999")
-        assertTrue(upstream.urls.last { "preguntas_intento" in it }.endsWith("limit=21"))
+        assertTrue(upstream.urls.last { "revisiones_pregunta(" in it }.endsWith("limit=21"))
         val before = upstream.sent.size
         assertEquals("VALIDATION", code(client.call(HttpMethod.Get, "$base/preguntas?limit=0").bodyAsText()))
         assertEquals("INVALID_CURSOR", code(client.call(HttpMethod.Get, "$base/preguntas?cursor=AAAA").bodyAsText()))
@@ -1017,7 +1056,7 @@ class AttemptRoutesTest {
         assertNull(obj(next)["nextCursor"])
         // limite por defecto 20 y tope 50; un cursor de D2-08 no vale para la revision
         client.call(HttpMethod.Get, "$base/revision?limit=500")
-        assertTrue(upstream.urls.last { "preguntas_intento" in it }.endsWith("limit=51"))
+        assertTrue(upstream.urls.last { "revisiones_pregunta(" in it }.endsWith("limit=51"))
         val foreignCursor = PageCursorCodec.encode(listOf(kotlinx.serialization.json.JsonPrimitive(2)), CursorScope(listOf("posicion asc"), mapOf("lista" to "preguntas")).fingerprint())
         assertEquals("INVALID_CURSOR", code(client.call(HttpMethod.Get, "$base/revision?cursor=$foreignCursor").bodyAsText()))
     }
@@ -1046,6 +1085,21 @@ class AttemptRoutesTest {
         assertEquals("RATE_LIMITED", code(response.bodyAsText()))
         assertEquals("7", response.headers[HttpHeaders.RetryAfter])
         assertTrue(upstream.sent.isEmpty())
+    }
+
+    @Test
+    fun theReadLimitAppliesToGetQuestionsAndResultBeforeTheProfileRead() = testApplication {
+        // E2-S01: D2-07, D2-08 y D2-12 tambien llevan limite por usuario (antes no tenian ninguno).
+        application { attemptModule() }
+        upstream.attemptRow = finishedRow()
+        rateLimit = AttemptOperation.READ
+        listOf(base, "$base/preguntas", "$base/resultado").forEach { path ->
+            val response = client.call(HttpMethod.Get, path)
+            assertEquals(HttpStatusCode.TooManyRequests, response.status, path)
+            assertEquals("RATE_LIMITED", code(response.bodyAsText()))
+            assertEquals("7", response.headers[HttpHeaders.RetryAfter])
+        }
+        assertTrue(upstream.sent.isEmpty(), "rechazado antes de tocar el upstream")
     }
 
     // =================================================================== transversales
@@ -1168,5 +1222,164 @@ class AttemptRoutesTest {
         // sinonimo legacy aceptado SOLO al leer y normalizado
         upstream.attemptRow = attemptRow(tipo = "guiado")
         assertEquals("razonado", obj(client.call(HttpMethod.Get, base).bodyAsText())["intento"]!!.jsonObject["tipoExamen"]!!.jsonPrimitive.content)
+    }
+
+    // =================================================================== EX14 / EX15: revision inmutable y recursos V1
+
+    private val resImage = "5e5e5e5e-0000-4000-8000-000000000001"
+    private val resAudio = "5e5e5e5e-0000-4000-8000-000000000002"
+    private val resOther = "5e5e5e5e-0000-4000-8000-0000000000ff"
+
+    private fun rev(n: Int) = "7e7e7e7e-0000-4000-8000-00000000000$n"
+
+    private fun resourceJson(id: String, tipo: String, ext: String, mime: String, n: Int = 1, envelope: String = "null", bucket: String = "recursos-pregunta") =
+        """{"id":"$id","tipo":"$tipo","titulo":"T-$tipo","posicion":1,"bucket":"$bucket","ruta":"preguntas/${q(n)}/$id.$ext",""" +
+            """"mime":"$mime","bytes":1200,"durationMs":${if (tipo == "audio") "4100" else "null"},"envelope":$envelope}"""
+
+    /** Fila tal como la devuelve PostgREST para una pregunta LIGADA a su revision (`solucion` ya proyectada por la flecha). */
+    private fun revisionRow(n: Int, status: String? = null, solution: Boolean = false, resources: String = "[]") =
+        """{"posicion":$n,"pregunta_id":"${q(n)}","estado_final":${status?.let { "\"$it\"" } ?: "null"},"revision_pregunta_id":"${rev(n)}",""" +
+            """"revisiones_pregunta":{"contenido":{"v":1,"codigo":"P-$n","tipo":"rafaga","titulo":"Enunciado X $n",""" +
+            """"opciones":[{"id":"${opt(n, 2)}","letra":"B","texto":"dos X","posicion":2},{"id":"${opt(n, 1)}","letra":"A","texto":"uno X","posicion":1}],""" +
+            """"recursos":$resources,"etiquetas":[{"id":"$tag","nombre":"Tema 1"}]}""" +
+            (if (solution) ""","solucion":"${opt(n, 1)}"""" else "") + "}}"
+
+    private val envelopeJson = """{"stepMs":50,"samples":"AH//gA=="}"""
+
+    @Test
+    fun questionsOfABoundAttemptComeFromItsRevisionWithResourceMetadataButNoStoragePath() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = attemptRow()
+        upstream.questionRevision = {
+            "[" + revisionRow(1, resources = "[${resourceJson(resImage, "imagen", "png", "image/png")},${resourceJson(resAudio, "audio", "mp3", "audio/mpeg", envelope = envelopeJson)}]") +
+                "," + revisionRow(2) + "]"
+        }
+        upstream.answers = "[]"
+        val response = client.call(HttpMethod.Get, "$base/preguntas?limit=2")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertConforms("D2-08", "200", body)
+        val items = obj(body)["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("Enunciado X 1", "Enunciado X 2"), items.map { it["titulo"]!!.jsonPrimitive.content }, "contenido de la REVISION, no el vivo")
+        assertEquals(listOf("uno X", "dos X"), items[0]["opciones"]!!.jsonArray.map { it.jsonObject["texto"]!!.jsonPrimitive.content })
+        val recursos = items[0]["recursos"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf(resImage, resAudio), recursos.map { it["id"]!!.jsonPrimitive.content })
+        assertEquals(setOf("id", "tipo", "titulo", "mimeType", "version", "sizeBytes"), recursos[0].keys)
+        assertEquals(setOf("id", "tipo", "titulo", "mimeType", "version", "sizeBytes", "durationMs", "envelope"), recursos[1].keys)
+        assertEquals(obj(envelopeJson), recursos[1]["envelope"]!!.jsonObject)
+        assertEquals(16, recursos[0]["version"]!!.jsonPrimitive.content.length)
+        assertNull(items[1]["recursos"], "sin recursos: el campo aditivo no viaja")
+        listOf("preguntas/", "recursos-pregunta", "ruta", "bucket", "solucion", "razonamiento").forEach {
+            assertFalse(it in body, "nunca la ruta interna, el bucket ni la solucion: $it")
+        }
+        assertFalse(upstream.urls.any { "preguntas(" in it }, "intento ligado: ninguna lectura del contenido vivo")
+        assertNoSolutionWasRead()
+        assertFalse(upstream.urls.any { "solucion" in it }, "D2-08 no pide la solucion de la revision")
+    }
+
+    @Test
+    fun reviewAndResultOfABoundAttemptUseTheRevisionSolutionNotTheLiveOne() = testApplication {
+        application { attemptModule() }
+        finishedFixture()
+        upstream.reviewRevision = { "[" + (1..4).joinToString(",") { revisionRow(it, if (it == 1) "CORRECT" else "WRONG", solution = true) } + "]" }
+        upstream.resultRevision = "[" + (1..4).joinToString(",") { revisionRow(it, if (it == 1) "CORRECT" else "WRONG", solution = true) } + "]"
+        val review = client.call(HttpMethod.Get, "$base/revision")
+        val body = review.bodyAsText()
+        assertEquals(HttpStatusCode.OK, review.status, body)
+        assertConforms("D2-65", "200", body)
+        val first = obj(body)["items"]!!.jsonArray[0].jsonObject
+        assertEquals("Enunciado X 1", first["enunciado"]!!.jsonPrimitive.content)
+        assertEquals(opt(1, 1), first["correctAnswer"]!!.jsonObject["opcionId"]!!.jsonPrimitive.content)
+        assertEquals(JsonNull, first["explanation"] ?: JsonNull, "DEC-025: la explicacion sigue sin servirse (politica unica)")
+        assertFalse(upstream.urls.any { "razonamiento" in it || "soluciones_pregunta" in it || "preguntas(" in it }, "solo la revision")
+        val result = client.call(HttpMethod.Get, "$base/resultado").bodyAsText()
+        assertConforms("D2-12", "200", result)
+        assertEquals(opt(2, 1), obj(result)["preguntas"]!!.jsonArray[1].jsonObject["opcionCorrecta"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun answerRevealsTheCorrectionOfTheCommandInOneRoundTrip() = testApplication {
+        application { attemptModule() }
+        upstream.answerOutcome =
+            """{"outcome":"OK","estado":"ANSWERED","revision":1,"es_primera_respuesta":true,"respondidas":1,"es_correcta":false,"opcion_correcta_id":"${opt(1, 1)}","noop":false}"""
+        val response = client.call(HttpMethod.Put, "$base/respuestas/${q(1)}", answerBody(1, 2), key1)
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertConforms("D2-09", "200", body)
+        assertEquals(false, obj(body)["esCorrecta"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(opt(1, 1), obj(body)["opcionCorrectaId"]!!.jsonPrimitive.content)
+        assertEquals(1, upstream.sent.size, "una sola llamada: la RPC (sin releer respuestas_intento)")
+        val dbCalls = examMetrics.find("exam_db_calls").tag("op", ExamOp.ANSWER).summary()
+        assertNotNull(dbCalls)
+        assertEquals(1.0, dbCalls.max(), "DB_CALLS_PER_ANSWER (sin identidad ni idempotencia remotas en la prueba)")
+        // Reintento con la misma clave: replay sin ejecutar, contado.
+        client.call(HttpMethod.Put, "$base/respuestas/${q(1)}", answerBody(1, 2), key1)
+        assertEquals(1, upstream.sent.size)
+        assertEquals(1.0, examMetrics.find("exam_idempotency_replay_total").tag("op", ExamOp.ANSWER).counter()!!.count())
+    }
+
+    @Test
+    fun resourceAccessIsOwnerAndAttemptBoundAndSignsOnlyTheContractPath() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = attemptRow()
+        val image = resourceJson(resImage, "imagen", "png", "image/png")
+        upstream.resourceLookup = { uri ->
+            if (resImage in uri) """[{"revisiones_pregunta":{"recursos":[$image]}}]""" else "[]"
+        }
+        val ok = client.call(HttpMethod.Get, "$base/recursos/$resImage")
+        val body = ok.bodyAsText()
+        assertEquals(HttpStatusCode.OK, ok.status, body)
+        assertEquals("no-store", ok.headers[HttpHeaders.CacheControl])
+        assertEquals(setOf("url", "expiresAt", "mimeType", "version"), obj(body).keys)
+        assertTrue(obj(body)["url"]!!.jsonPrimitive.content.contains("token="))
+        assertEquals(now.plusSeconds(AttemptService.RESOURCE_URL_TTL_SECONDS.toLong()).toString(), obj(body)["expiresAt"]!!.jsonPrimitive.content)
+        assertTrue(upstream.urls.any { it.contains("/storage/v1/object/sign/recursos-pregunta/preguntas/${q(1)}/$resImage.png") })
+        assertTrue(upstream.urls.any { it.contains("&intento_id=eq.$attempt&revisiones_pregunta.contenido=cs.") }, "el recurso se busca SOLO en las revisiones de ESTE intento")
+        assertEquals(AttemptOperation.RESOURCE, limited.last())
+
+        // Un recurso que no esta en el intento (aunque exista en otro): 404 RESOURCE_NOT_FOUND, sin firmar nada.
+        val signs = upstream.urls.count { "/storage/v1/" in it }
+        val missing = client.call(HttpMethod.Get, "$base/recursos/$resOther")
+        assertEquals(HttpStatusCode.NotFound, missing.status)
+        assertEquals("RESOURCE_NOT_FOUND", code(missing.bodyAsText()))
+        // Intento ajeno: el mismo 404 de siempre, sin buscar el recurso.
+        val foreign = client.call(HttpMethod.Get, "/api/v1/app/intentos/$other/recursos/$resImage")
+        assertEquals("ATTEMPT_NOT_FOUND", code(foreign.bodyAsText()))
+        // Ubicacion fuera del contrato Q3 (bucket ajeno o ruta que no es la del recurso): nunca se firma.
+        upstream.resourceLookup = { """[{"revisiones_pregunta":{"recursos":[${resourceJson(resImage, "imagen", "png", "image/png", bucket = "news-assets")}]}}]""" }
+        assertEquals("RESOURCE_NOT_FOUND", code(client.call(HttpMethod.Get, "$base/recursos/$resImage").bodyAsText()))
+        upstream.resourceLookup = { """[{"revisiones_pregunta":{"recursos":[${resourceJson(resImage, "imagen", "png", "image/png").replace("$resImage.png", "$resOther.png")}]}}]""" }
+        assertEquals("RESOURCE_NOT_FOUND", code(client.call(HttpMethod.Get, "$base/recursos/$resImage").bodyAsText()))
+        upstream.resourceLookup = { """[{"revisiones_pregunta":{"recursos":[${resourceJson(resImage, "pdf", "pdf", "application/pdf")}]}}]""" }
+        assertEquals("RESOURCE_NOT_FOUND", code(client.call(HttpMethod.Get, "$base/recursos/$resImage").bodyAsText()), "PDF fuera de V1")
+        assertEquals(signs, upstream.urls.count { "/storage/v1/" in it }, "ningun rechazo firma nada")
+        // Storage caido o lento: 503 reintentable, nunca la ruta en el error.
+        upstream.resourceLookup = { """[{"revisiones_pregunta":{"recursos":[$image]}}]""" }
+        upstream.signStatus = 500
+        val down = client.call(HttpMethod.Get, "$base/recursos/$resImage")
+        assertEquals(HttpStatusCode.ServiceUnavailable, down.status)
+        assertFalse("preguntas/" in down.bodyAsText())
+        // Id mal formado: 400 antes de tocar nada.
+        assertEquals(HttpStatusCode.BadRequest, client.call(HttpMethod.Get, "$base/recursos/no-es-uuid").status)
+        // Sin token: 401.
+        assertEquals(HttpStatusCode.Unauthorized, client.call(HttpMethod.Get, "$base/recursos/$resImage", token = null).status)
+        // Metricas sin PII: ninguna etiqueta lleva un id, una ruta o un texto.
+        val errors = examMetrics.find("exam_resource_access_error_total").counters().sumOf { it.count() }
+        assertTrue(errors >= 5.0, "errores de acceso contados: $errors")
+        examMetrics.meters.filter { it.id.name.startsWith("exam_") }.flatMap { it.id.tags }.forEach { t ->
+            assertTrue(t.value.matches(Regex("^([a-z_0-9]+|[A-Z_0-9]+)$")), "etiqueta sin PII: ${t.key}=${t.value}")
+        }
+    }
+
+    @Test
+    fun aRevisionConflictIsDeterministicAndCounted() = testApplication {
+        application { attemptModule() }
+        upstream.answerOutcome = """{"outcome":"REVISION_CONFLICT","current_revision":1}"""
+        val response = client.call(HttpMethod.Put, "$base/respuestas/${q(1)}", answerBody(1, 1), key1)
+        assertEquals(HttpStatusCode.Conflict, response.status)
+        assertEquals("REVISION_CONFLICT", code(response.bodyAsText()))
+        assertEquals(1L, obj(response.bodyAsText())["details"]!!.jsonObject["currentRevision"]!!.jsonPrimitive.content.toLong())
+        assertEquals(1.0, examMetrics.find("exam_revision_conflict_total").tag("op", ExamOp.ANSWER).counter()!!.count())
+        assertEquals(1.0, examMetrics.find("exam_4xx_total").tag("code", "REVISION_CONFLICT").counter()!!.count())
     }
 }

@@ -28,7 +28,12 @@ import java.time.OffsetDateTime
 //   DEC-014  sin pausa. Sin limite de tiempo: `deadline` = null y `motivoFin` siempre USER (TIMEOUT / ATTEMPT_EXPIRED no
 //            se emiten: si la duracion del examen corta el intento es una pregunta abierta del motor).
 //   DEC-004/016/019  `comparativa`, `probabilidadPlaza`, `pctAciertoGlobal` = null.
-//   DEC-025/040      D2-65 `explanation` = null y `resources` = []; D2-12 `razonamiento` = null (no se leen de la base).
+//   DEC-025          D2-65 `explanation` = null; D2-12 `razonamiento` = null (no se leen de la base; politica unica sin cambios).
+//   VERSIONADO P0    (dueno 2026-10-14, 20261016100000) el intento queda ligado a una revision INMUTABLE de cada pregunta:
+//                    D2-08 / D2-12 / D2-65 leen la revision; la correccion de D2-09 sale de ella. Intento legacy sin
+//                    revision: contenido vivo.
+//   RECURSOS V1      (dueno 2026-10-14) imagen / audio (video extensible): metadatos en D2-08 `recursos` y D2-65
+//                    `resources`; bytes via `GET /intentos/{id}/recursos/{recursoId}` (URL firmada corta).
 //   DEC-018  `resumen.modo` = tipo canonico del examen del intento.
 //   DEMO     `modo: DEMO` no abre nada que la politica no permita (semantica abierta): se ignora como modo.
 // =====================================================================
@@ -114,6 +119,8 @@ internal data class AttemptQuestionDto(
     val anulada: Boolean,
     val opciones: List<QuestionOptionDto>,
     val respuesta: AttemptQuestionAnswer? = null,
+    /** Aditivo (EX14): recursos V1 de la revision ligada al intento. Nunca la solucion ni la explicacion. */
+    val recursos: List<AttemptResourceDto> = emptyList(),
 )
 
 @Serializable
@@ -207,8 +214,33 @@ internal data class ReviewCorrectAnswer(val opcionId: String, val letra: String)
 @Serializable
 internal data class ReviewExplanation(val razonamiento: String)
 
+/**
+ * Recurso V1 (imagen, audio, video) tal como quedo en la revision del intento (EX14). Solo metadatos: los bytes los sirve
+ * Storage tras pedir acceso a `GET /intentos/{id}/recursos/{recursoId}` (URL firmada, temporal, nunca persistida).
+ * Contrato canonico: resourceId = [id], type = [tipo], [mimeType], version = [version], [durationMs], access = la ruta.
+ */
 @Serializable
-internal data class ReviewResource(val id: String, val tipo: String, val titulo: String)
+internal data class AttemptResourceDto(
+    val id: String,
+    val tipo: String,
+    val titulo: String,
+    val mimeType: String? = null,
+    /** Token estable del objeto (los bytes de un `recursoId` no se reescriben: la subida es idempotente por id). Clave de cache. */
+    val version: String,
+    val sizeBytes: Long? = null,
+    /** `null` hasta que la ingesta (autoria protegida) lo calcule: PROTECTED_FILE_REQUIRED. */
+    val durationMs: Long? = null,
+    /** Solo audio. `null` hasta que la ingesta lo calcule una vez (EX14, [AudioEnvelope]). */
+    val envelope: AudioEnvelopeDto? = null,
+)
+
+/** Envolvente de audio compacta: una muestra UInt8 (0..255, normalizada al pico del fichero) cada [stepMs] ms, en base64. */
+@Serializable
+internal data class AudioEnvelopeDto(val stepMs: Int, val samples: String)
+
+/** Acceso temporal a los bytes de un recurso. `url` caduca en [expiresAt]; se pide otra al caducar. */
+@Serializable
+internal data class AttemptResourceAccess(val url: String, val expiresAt: String, val mimeType: String? = null, val version: String)
 
 @Serializable
 internal data class ReviewTimings(val tiempoRespuestaMs: Int? = null, val respondidaEn: String? = null, val actualizadaEn: String? = null)
@@ -232,8 +264,8 @@ internal data class ReviewItem(
     val correctAnswer: ReviewCorrectAnswer? = null,
     /** DEC-025 / DEC-040 abiertas: `null`. */
     val explanation: ReviewExplanation? = null,
-    /** DEC-025 / DEC-040 abiertas: vacio. */
-    val resources: List<ReviewResource>,
+    /** Recursos V1 de la revision del intento (decision del dueno 2026-10-14); `[]` si no tiene o el intento es legacy. */
+    val resources: List<AttemptResourceDto>,
     val timings: ReviewTimings,
     val etiquetas: List<ReviewTag>,
 )
@@ -263,12 +295,24 @@ internal fun positionAfter(keys: List<JsonElement>?): Int {
 
 internal data class StartedAttempt(val response: AttemptStartResponse, val created: Boolean)
 
+/** Una pregunta del intento ya normalizada (revision inmutable o, legacy, contenido vivo). */
+private data class QuestionView(
+    val codigo: String,
+    val tipo: String,
+    val titulo: String,
+    val opciones: List<QuestionOptionDto>,
+    val recursos: List<AttemptResourceDto>,
+    val etiquetas: List<ReviewTag>,
+    val correctId: String?,
+)
+
 // ---------- servicio ----------
 
 internal class AttemptService(
     private val gateway: AttemptGateway,
     private val catalog: CatalogService,
     private val clock: () -> Instant = Instant::now,
+    private val metrics: io.micrometer.core.instrument.MeterRegistry = BackendPrometheusMetrics.registry,
 ) {
     // ----- D2-03 -----
     suspend fun start(userId: CanonicalUserId, examId: String, request: AttemptStartRequest): StartedAttempt = withUpstreamIo {
@@ -336,17 +380,18 @@ internal class AttemptService(
         val annulled = if (row.estado == FINISHED || cut.items.isEmpty()) emptySet() else row.examenId?.let(gateway::annulledNow).orEmpty()
         AttemptQuestionPage(
             items = cut.items.map { question ->
-                val content = question.preguntas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+                val content = question.view()
                 val answer = answers[question.preguntaId]
                 val isAnnulled = question.estadoFinal == STATUS_ANNULLED || question.preguntaId in annulled
                 AttemptQuestionDto(
                     posicion = question.posicion,
                     preguntaId = question.preguntaId,
-                    codigoPregunta = content.codigoPregunta.orContractError(),
-                    tipoPregunta = questionType(content.tipoPregunta),
-                    titulo = content.titulo.orContractError(),
+                    codigoPregunta = content.codigo,
+                    tipoPregunta = content.tipo,
+                    titulo = content.titulo,
                     anulada = isAnnulled,
-                    opciones = options(content),
+                    opciones = content.opciones,
+                    recursos = content.recursos,
                     respuesta = answer?.let {
                         val revealed = it.takeIf { _ -> reveals && !isAnnulled && it.opcionSeleccionadaId != null }
                         AttemptQuestionAnswer(
@@ -386,14 +431,29 @@ internal class AttemptService(
                 val estado = outcome.estado?.takeIf { it in ANSWER_STATES } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
                 val respondidas = outcome.respondidas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
                 // DEC-015: solo una respuesta (primera vez o la misma opcion reenviada, que la RPC devuelve como no-op) revela;
-                // un salto y una anulada, nada. Si esta lectura falla, falla la llamada: el plugin de idempotencia no guarda
-                // errores, asi que el reintento con la misma clave cae en el no-op de la RPC y revela.
-                val revealed = if (estado == ANSWER_ANSWERED && attemptRevealsOnAnswer(userId, attemptId)) revealedAnswer(userId, attemptId, questionId) else null
+                // un salto y una anulada, nada. Desde 20261016100000 la RPC devuelve la correccion de la fila que acaba de
+                // escribir (corregida con la REVISION del intento): una sola llamada. Una base sin esa migracion no la
+                // devuelve y se lee la fila (segunda llamada); si esa lectura falla, falla la llamada (el reintento con la
+                // misma clave cae en el no-op de la RPC y revela).
+                val reveals = estado == ANSWER_ANSWERED && attemptRevealsOnAnswer(userId, attemptId)
+                val esCorrecta: Boolean?
+                val opcionCorrectaId: String?
+                if (reveals && outcome.esCorrecta != null) {
+                    esCorrecta = outcome.esCorrecta
+                    opcionCorrectaId = outcome.opcionCorrectaId?.takeIf { it.isUuid() }
+                } else if (reveals) {
+                    val row = revealedAnswer(userId, attemptId, questionId)
+                    esCorrecta = row.esCorrecta
+                    opcionCorrectaId = row.opcionCorrectaId
+                } else {
+                    esCorrecta = null
+                    opcionCorrectaId = null
+                }
                 AnswerResult(
                     revision = revision,
                     estado = estado,
-                    esCorrecta = revealed?.esCorrecta,
-                    opcionCorrectaId = revealed?.opcionCorrectaId,
+                    esCorrecta = esCorrecta,
+                    opcionCorrectaId = opcionCorrectaId,
                     esPrimeraRespuesta = outcome.esPrimeraRespuesta ?: false,
                     respondidas = respondidas,
                 )
@@ -519,7 +579,7 @@ internal class AttemptService(
                 ResultQuestion(
                     posicion = question.posicion,
                     opcionElegida = answer?.opcionSeleccionadaId?.takeUnless { annulled },
-                    opcionCorrecta = gateway.correctOptionId(question.preguntas)?.takeUnless { annulled },
+                    opcionCorrecta = question.correctOptionId()?.takeUnless { annulled },
                     razonamiento = null,
                     tiempoSeg = answerSeconds(answer),
                     pctAciertoGlobal = null,
@@ -541,20 +601,20 @@ internal class AttemptService(
     }
 
     private fun reviewItem(question: FrozenQuestionRow, answer: AttemptAnswerRow?): ReviewItem {
-        val content = question.preguntas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val content = question.view()
         val status = question.estadoFinal?.takeIf { it in REVIEW_STATUSES } ?: legacyStatus(answer)
         val annulled = status == STATUS_ANNULLED
         val shown = answer?.takeUnless { annulled }
-        val options = options(content)
+        val options = content.opciones
         // Fila anterior a SLICE 3 (`actualizada_en` nulo): no hubo cambio posible, primera = final.
         val legacyRow = shown != null && shown.actualizadaEn == null
         val answeredAt = shown?.let { instant(it.respondidaEn ?: it.creadaEn) }
         return ReviewItem(
             posicion = question.posicion,
             preguntaId = question.preguntaId,
-            codigoPregunta = content.codigoPregunta.orContractError(),
-            tipoPregunta = questionType(content.tipoPregunta),
-            enunciado = content.titulo.orContractError(),
+            codigoPregunta = content.codigo,
+            tipoPregunta = content.tipo,
+            enunciado = content.titulo,
             opciones = options,
             status = status,
             firstAnswer = shown?.let {
@@ -574,19 +634,120 @@ internal class AttemptService(
             },
             cambioRespuesta = shown?.cambioRespuesta ?: false,
             esPrimeraRespuesta = shown?.esPrimerIntentoPregunta ?: false,
-            correctAnswer = gateway.correctOptionId(content)?.takeUnless { annulled }?.let { correctId ->
+            correctAnswer = content.correctId?.takeUnless { annulled }?.let { correctId ->
                 options.firstOrNull { it.id == correctId }?.let { ReviewCorrectAnswer(opcionId = correctId, letra = it.letra) }
             },
             explanation = null,
-            resources = emptyList(),
+            resources = content.recursos,
             timings = ReviewTimings(
                 tiempoRespuestaMs = shown?.let { it.tiempoRespuestaMs ?: it.tiempoRespuestaSegundos?.let { s -> s.toLong() * 1_000 }?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() }?.coerceAtLeast(0),
                 respondidaEn = answeredAt,
                 actualizadaEn = shown?.actualizadaEn?.let(::instant),
             ),
-            etiquetas = content.etiquetas.mapNotNull { it.etiquetas }.distinctBy { it.id }.sortedBy { it.nombre }.map { ReviewTag(it.id, it.nombre) },
+            etiquetas = content.etiquetas,
         )
     }
+
+    /**
+     * El contenido de una pregunta del intento: el de SU revision inmutable (20261016100000) o, en un intento congelado
+     * antes de la migracion, el vivo. [QuestionView.correctId] solo existe si la lectura pidio la solucion (D2-12 / D2-65).
+     */
+    private fun FrozenQuestionRow.view(): QuestionView {
+        val frozen = revision?.contenido
+        if (revisionId != null && frozen != null) {
+            return QuestionView(
+                codigo = frozen.codigo.orContractError(),
+                tipo = questionType(frozen.tipo),
+                titulo = frozen.titulo.orContractError(),
+                opciones = frozen.opciones.sortedBy { it.posicion }.map { option ->
+                    QuestionOptionDto(
+                        id = option.id,
+                        letra = option.letra.takeIf { it in OPTION_LETTERS } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
+                        texto = option.texto,
+                    )
+                },
+                recursos = frozen.recursos.sortedWith(compareBy({ it.posicion }, { it.id })).mapNotNull(::resourceDto),
+                etiquetas = frozen.etiquetas.distinctBy { it.id }.sortedBy { it.nombre }.map { ReviewTag(it.id, it.nombre) },
+                correctId = revision.solucion?.opcionCorrectaId,
+            )
+        }
+        val content = preguntas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        return QuestionView(
+            codigo = content.codigoPregunta.orContractError(),
+            tipo = questionType(content.tipoPregunta),
+            titulo = content.titulo.orContractError(),
+            opciones = options(content),
+            recursos = emptyList(),
+            etiquetas = content.etiquetas.mapNotNull { it.etiquetas }.distinctBy { it.id }.sortedBy { it.nombre }.map { ReviewTag(it.id, it.nombre) },
+            correctId = gateway.correctOptionId(content),
+        )
+    }
+
+    private fun FrozenQuestionRow.correctOptionId(): String? =
+        if (revisionId != null && revision != null) revision.solucion?.opcionCorrectaId else gateway.correctOptionId(preguntas)
+
+    // ----- EX14: acceso a los bytes de un recurso -----
+
+    /**
+     * El dueno de un intento pide acceso a un recurso de la revision de ESE intento: Ktor autoriza (dueno + recurso
+     * congelado en una revision ligada al intento), Storage sirve los bytes con una URL firmada de vida corta. Sin
+     * intento propio no hay acceso: un `recursoId` suelto no abre nada. El intento solo existe si D2-03 paso la politica
+     * de acceso (EntitlementPolicy) al empezarlo; como D2-08 / D2-65, no se re-evalua el entitlement (el conjunto congelado
+     * es el alcance). Un recurso que no es de este intento es 404 RESOURCE_NOT_FOUND; uno con bucket o ruta fuera del
+     * contrato Q3 tambien (falla cerrado, nunca se firma una ruta arbitraria).
+     */
+    suspend fun resourceAccess(userId: CanonicalUserId, attemptId: String, resourceId: String): AttemptResourceAccess = withUpstreamIo {
+        val row = ownedAttempt(userId, attemptId)
+        val started = System.nanoTime()
+        val resource = gateway.frozenResource(row.id, resourceId)
+        metrics.timer("exam_media_metadata_seconds").record(java.time.Duration.ofNanos(System.nanoTime() - started))
+        val path = resource?.ruta
+        if (resource == null || resource.tipo !in RESOURCE_TYPES || resource.bucket != RESOURCES_BUCKET || path == null ||
+            !RESOURCE_PATH.matches(path) || path.split('/')[2].substringBefore('.') != resourceId
+        ) {
+            throw CanonicalErrorCode.RESOURCE_NOT_FOUND.exception()
+        }
+        val now = clock()
+        val url = try {
+            gateway.signedUrl(RESOURCES_BUCKET, path, RESOURCE_URL_TTL_SECONDS)
+        } catch (failure: BackendDomainException) {
+            throw failure
+        } catch (failure: Exception) {
+            throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(retryAfterSeconds = 2, cause = failure)
+        }
+        AttemptResourceAccess(
+            url = url,
+            expiresAt = now.plusSeconds(RESOURCE_URL_TTL_SECONDS.toLong()).toString(),
+            mimeType = resource.mimeString(),
+            version = resource.version(),
+        )
+    }
+
+    private fun resourceDto(resource: RevisionResource): AttemptResourceDto? {
+        if (resource.tipo !in RESOURCE_TYPES || !resource.id.isUuid()) return null
+        return AttemptResourceDto(
+            id = resource.id,
+            tipo = resource.tipo,
+            titulo = resource.titulo.orEmpty(),
+            mimeType = resource.mimeString(),
+            version = resource.version(),
+            sizeBytes = resource.bytes.longOrNull()?.takeIf { it >= 0 },
+            durationMs = resource.durationMs.longOrNull()?.takeIf { it >= 0 },
+            envelope = if (resource.tipo == "audio") AudioEnvelope.fromStored(resource.envelope) else null,
+        )
+    }
+
+    private fun RevisionResource.mimeString(): String? =
+        (mime as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { MIME.matches(it) }
+
+    /** sha256(id|ruta|mime|bytes), 16 hex: cambia si cambia el objeto o sus metadatos; estable mientras no. */
+    private fun RevisionResource.version(): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest("$id|${ruta.orEmpty()}|${mimeString().orEmpty()}|${bytes.longOrNull() ?: ""}".toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }.take(16)
+    }
+
+    private fun JsonElement?.longOrNull(): Long? = (this as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toLongOrNull()
 
     private fun AttemptRow.toDto(now: Instant, openUnanswered: Int?): AttemptDto {
         if (estado !in ATTEMPT_STATES) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
@@ -719,6 +880,21 @@ internal class AttemptService(
         }
         private val ABANDON_REASONS = setOf("salida_usuario", "otro")
         private val REVIEW_STATUSES = setOf("CORRECT", "WRONG", "SKIPPED", "UNANSWERED", "ANNULLED")
+
+        /** Recursos V1 (decision del dueno 2026-10-14): imagen y audio; video extensible. PDF / texto / enlace fuera. */
+        internal val RESOURCE_TYPES = setOf("imagen", "audio", "video")
+
+        /** Bucket PRIVADO de Q3 (`recursos_pregunta_ubicacion_formato_chk`). */
+        internal const val RESOURCES_BUCKET = "recursos-pregunta"
+
+        /** La ruta que exige el CHECK de Q3: `preguntas/<pregunta>/<recurso>.<ext>`. Nada fuera de esta forma se firma. */
+        private val RESOURCE_PATH = Regex(
+            "^preguntas/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[a-z0-9]{2,4}$",
+        )
+        private val MIME = Regex("^[a-z]+/[a-z0-9.+-]+$")
+
+        /** Vida de la URL firmada: corta (un enlace filtrado caduca pronto); el cliente pide otra al caducar. */
+        internal const val RESOURCE_URL_TTL_SECONDS = 300
         private val OPTION_LETTERS = setOf("A", "B", "C", "D")
 
         /** DEC-013 (default tecnico): correctas / evaluables * 10, half-up a 2 decimales. Sin evaluables, 0. */

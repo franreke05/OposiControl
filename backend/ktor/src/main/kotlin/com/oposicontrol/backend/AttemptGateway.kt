@@ -1,4 +1,4 @@
-package com.oposicontrol.backend
+﻿package com.oposicontrol.backend
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -21,8 +21,11 @@ import kotlinx.serialization.serializer
 //   `20261008100200_slice3_attempt_hardening.sql` (SECURITY DEFINER, EXECUTE solo `service_role`). Devuelven `{outcome: ...}`; traducirlo al sobre canonico es de [AttemptService].
 // - LECTURAS: SIEMPRE con `usuario_id = <sub del JWT>` en el filtro del intento (un intento ajeno no existe), y siempre
 //   ACOTADAS (un intento tiene como mucho [MAX_ATTEMPT_QUESTIONS] preguntas). Ninguna regla de negocio aqui.
-// - SEC-004: `soluciones_pregunta` solo se lee en [reviewPage] y [resultQuestions], que el servicio llama UNICAMENTE con
-//   el intento ya `finalizado`. [questionPage] (D2-08) jamas la nombra, ni `razonamiento` se lee en ningun sitio.
+// - SEC-004: la solucion (`revisiones_pregunta.solucion`, o `soluciones_pregunta` en un intento legacy sin revision) solo
+//   se lee en [reviewPage] y [resultQuestions], que el servicio llama UNICAMENTE con el intento ya `finalizado`, y solo su
+//   `opcion_correcta_id`. [questionPage] (D2-08) pide `contenido` y nada mas; `razonamiento` no se lee en ningun sitio.
+// - VERSIONADO P0 (20261016100000): las lecturas de contenido van a la revision INMUTABLE ligada al empezar; las rutas y
+//   buckets de los recursos que guarda son internos y solo [AttemptService.resourceAccess] los usa (para firmar).
 // - DEC-015 (decidida 2026-10-13): la correccion que se ensena con el intento ABIERTO sale SOLO de la fila propia del
 //   usuario en `respuestas_intento` (`es_correcta`, `opcion_correcta_id`, que `app_record_attempt_answer` escribe al
 //   responder). Una pregunta sin tocar no tiene fila y una saltada las tiene a `null`: no hay nada que leer de mas.
@@ -33,12 +36,19 @@ internal interface AttemptUpstream {
     fun get(path: String): String
 
     fun rpc(function: String, body: String): String
+
+    /** URL firmada y temporal de un objeto de un bucket PRIVADO (Storage sirve los bytes; nunca se persiste). */
+    fun signedUrl(bucket: String, objectPath: String, expiresInSeconds: Int): String =
+        throw CanonicalErrorCode.INTERNAL.exception()
 }
 
 internal class TransportAttemptUpstream(private val transport: SupabaseRequestTransport) : AttemptUpstream {
     override fun get(path: String): String = transport.get(path)
 
     override fun rpc(function: String, body: String): String = transport.rpc(function, body)
+
+    override fun signedUrl(bucket: String, objectPath: String, expiresInSeconds: Int): String =
+        transport.storageSignedUrl(bucket, objectPath, expiresInSeconds)
 
     companion object {
         fun fromEnvironment(environment: (String) -> String? = System::getenv): TransportAttemptUpstream? =
@@ -114,8 +124,57 @@ internal data class FrozenQuestionRow(
     val posicion: Int,
     @SerialName("pregunta_id") val preguntaId: String,
     @SerialName("estado_final") val estadoFinal: String? = null,
+    /** 20261016100000: la revision INMUTABLE a la que el intento quedo ligado al empezar. `null` = intento anterior (legacy, contenido vivo). */
+    @SerialName("revision_pregunta_id") val revisionId: String? = null,
+    @SerialName("revisiones_pregunta") val revision: RevisionRef? = null,
     val preguntas: QuestionRef? = null,
 )
+
+// ---------- revision inmutable (public.revisiones_pregunta, 20261016100000) ----------
+
+@Serializable
+internal data class RevisionOption(val id: String, val letra: String, val texto: String, val posicion: Int = 0)
+
+/** Recurso V1 congelado en la revision. `ruta` / `bucket` son internos: Ktor NUNCA los serializa al cliente. */
+@Serializable
+internal data class RevisionResource(
+    val id: String,
+    val tipo: String,
+    val titulo: String? = null,
+    val posicion: Int = 0,
+    val bucket: String? = null,
+    val ruta: String? = null,
+    val mime: JsonElement? = null,
+    val bytes: JsonElement? = null,
+    val durationMs: JsonElement? = null,
+    val envelope: JsonElement? = null,
+)
+
+@Serializable
+internal data class RevisionContent(
+    val codigo: String? = null,
+    val tipo: String? = null,
+    val titulo: String? = null,
+    val opciones: List<RevisionOption> = emptyList(),
+    val recursos: List<RevisionResource> = emptyList(),
+    val etiquetas: List<TagRef> = emptyList(),
+)
+
+@Serializable
+internal data class RevisionSolution(@SerialName("opcion_correcta_id") val opcionCorrectaId: String? = null)
+
+/**
+ * `revisiones_pregunta` embebida. [solucion] SOLO se pide con el intento finalizado (D2-12 / D2-65) y solo su opcion
+ * correcta: D2-08 pide [contenido] y nada mas (SEC-004). `razonamiento` no se pide nunca (DEC-025 sin cambios).
+ */
+@Serializable
+internal data class RevisionRef(val contenido: RevisionContent? = null, val solucion: RevisionSolution? = null)
+
+@Serializable
+private data class ResourceLookupRow(@SerialName("revisiones_pregunta") val revision: ResourceLookupRef? = null)
+
+@Serializable
+private data class ResourceLookupRef(val recursos: List<RevisionResource> = emptyList())
 
 @Serializable
 private data class AnnulledRow(@SerialName("pregunta_id") val preguntaId: String)
@@ -144,6 +203,9 @@ internal data class AttemptCommandOutcome(
     @SerialName("es_primera_respuesta") val esPrimeraRespuesta: Boolean? = null,
     val respondidas: Int? = null,
     val already: Boolean? = null,
+    /** 20261016100000: la revelacion DEC-015 sale de la propia RPC (una sola llamada por respuesta). */
+    @SerialName("es_correcta") val esCorrecta: Boolean? = null,
+    @SerialName("opcion_correcta_id") val opcionCorrectaId: String? = null,
 )
 
 internal class AttemptGateway(
@@ -244,39 +306,107 @@ internal class AttemptGateway(
         )
     }
 
-    /** D2-08: una pagina del conjunto congelado con enunciado y opciones. NUNCA `soluciones_pregunta` (la correccion de lo ya respondido sale de [answers]). */
+    /**
+     * D2-08: una pagina del conjunto congelado con el contenido de SU revision (20261016100000). NUNCA la solucion (la
+     * correccion de lo ya respondido sale de [answers]). Las filas sin revision (intento congelado antes de la migracion)
+     * se completan con [legacyContent]: una segunda lectura SOLO si hace falta.
+     */
     fun questionPage(attemptId: String, afterPosition: Int, fetchLimit: Int): List<FrozenQuestionRow> {
         require(attemptId.isUuid()) { "attemptId" }
-        return decodeList(
+        val rows = decodeList<FrozenQuestionRow>(
             upstream.get(
-                "/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,preguntas($QUESTION_COLUMNS)&intento_id=eq.$attemptId" +
-                    "&posicion=gt.$afterPosition&order=posicion.asc&limit=$fetchLimit",
-            ),
-        )
-    }
-
-    /** D2-65: una pagina de la revision (intento YA finalizado): contenido vivo + opcion correcta + etiquetas. */
-    fun reviewPage(attemptId: String, afterPosition: Int, fetchLimit: Int): List<FrozenQuestionRow> {
-        require(attemptId.isUuid()) { "attemptId" }
-        return decodeList(
-            upstream.get(
-                "/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final," +
-                    "preguntas($QUESTION_COLUMNS,soluciones_pregunta(opcion_correcta_id),etiquetas_pregunta(etiquetas(id,nombre)))" +
+                "/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id,revisiones_pregunta(contenido)" +
                     "&intento_id=eq.$attemptId&posicion=gt.$afterPosition&order=posicion.asc&limit=$fetchLimit",
             ),
         )
+        return legacyContent(attemptId, rows, "preguntas($QUESTION_COLUMNS)")
     }
 
-    /** D2-12: el conjunto congelado con la opcion correcta (intento YA finalizado). Pide un maximo + 1. */
-    fun resultQuestions(attemptId: String): List<FrozenQuestionRow> {
+    /** D2-65: una pagina de la revision (intento YA finalizado): contenido + opcion correcta de SU revision. */
+    fun reviewPage(attemptId: String, afterPosition: Int, fetchLimit: Int): List<FrozenQuestionRow> {
         require(attemptId.isUuid()) { "attemptId" }
-        return decodeList(
-            upstream.get(
-                "/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,preguntas(soluciones_pregunta(opcion_correcta_id))" +
-                    "&intento_id=eq.$attemptId&order=posicion.asc&limit=${MAX_ATTEMPT_QUESTIONS + 1}",
+        val rows = decodeList<FrozenQuestionRow>(
+            wrapSolution(
+                upstream.get(
+                    "/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id," +
+                        "revisiones_pregunta(contenido,solucion:solucion-%3Eopcion_correcta_id)" +
+                        "&intento_id=eq.$attemptId&posicion=gt.$afterPosition&order=posicion.asc&limit=$fetchLimit",
+                ),
             ),
         )
+        return legacyContent(
+            attemptId,
+            rows,
+            "preguntas($QUESTION_COLUMNS,soluciones_pregunta(opcion_correcta_id),etiquetas_pregunta(etiquetas(id,nombre)))",
+        )
     }
+
+    /** D2-12: el conjunto congelado con la opcion correcta de SU revision (intento YA finalizado). Pide un maximo + 1. */
+    fun resultQuestions(attemptId: String): List<FrozenQuestionRow> {
+        require(attemptId.isUuid()) { "attemptId" }
+        val rows = decodeList<FrozenQuestionRow>(
+            wrapSolution(
+                upstream.get(
+                    "/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id," +
+                        "revisiones_pregunta(solucion:solucion-%3Eopcion_correcta_id)" +
+                        "&intento_id=eq.$attemptId&order=posicion.asc&limit=${MAX_ATTEMPT_QUESTIONS + 1}",
+                ),
+            ),
+        )
+        return legacyContent(attemptId, rows, "preguntas(soluciones_pregunta(opcion_correcta_id))")
+    }
+
+    /**
+     * El recurso [resourceId] tal como quedo congelado en una revision ligada a ESTE intento, o `null` (no es de este
+     * intento). Filtro de contencion jsonb sobre la revision embebida (`!inner`): una lectura, como mucho una fila.
+     */
+    fun frozenResource(attemptId: String, resourceId: String): RevisionResource? {
+        require(attemptId.isUuid() && resourceId.isUuid()) { "ids" }
+        val containment = java.net.URLEncoder.encode("""{"recursos":[{"id":"$resourceId"}]}""", Charsets.UTF_8)
+        val rows = decodeList<ResourceLookupRow>(
+            upstream.get(
+                "/rest/v1/preguntas_intento?select=revisiones_pregunta!inner(recursos:contenido-%3Erecursos)" +
+                    "&intento_id=eq.$attemptId&revisiones_pregunta.contenido=cs.$containment&limit=1",
+            ),
+        )
+        return rows.firstOrNull()?.revision?.recursos?.firstOrNull { it.id == resourceId }
+    }
+
+    /**
+     * PostgREST devuelve `solucion:solucion->opcion_correcta_id` (la flecha va codificada `-%3E` en la URL) como el valor suelto (`"uuid"` o `null`); se envuelve en
+     * `{opcion_correcta_id: ...}` para leerlo con [RevisionSolution]. Solo se pide la opcion correcta, nunca `razonamiento`.
+     */
+    private fun wrapSolution(body: String): String {
+        val rows = json.parseToJsonElement(body) as? JsonArray ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        return JsonArray(
+            rows.map { row ->
+                val obj = row as? JsonObject ?: return@map row
+                val revision = obj["revisiones_pregunta"] as? JsonObject ?: return@map row
+                val correct = revision["solucion"] ?: JsonNull
+                val wrapped = JsonObject(revision + ("solucion" to JsonObject(mapOf("opcion_correcta_id" to correct))))
+                JsonObject(obj + ("revisiones_pregunta" to wrapped))
+            },
+        ).toString()
+    }
+
+    /** Filas sin revision (intento congelado antes de 20261016100000): su contenido VIVO, en una segunda lectura acotada. */
+    private fun legacyContent(attemptId: String, rows: List<FrozenQuestionRow>, embed: String): List<FrozenQuestionRow> {
+        val missing = rows.filter { it.revisionId == null || it.revision == null }.mapTo(LinkedHashSet()) { it.posicion }
+        if (missing.isEmpty()) return rows
+        val live = decodeList<FrozenQuestionRow>(
+            upstream.get(
+                "/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,$embed&intento_id=eq.$attemptId" +
+                    "&posicion=in.(${missing.joinToString(",")})&order=posicion.asc&limit=${missing.size}",
+            ),
+        ).associateBy { it.posicion }
+        return rows.map { row ->
+            if (row.posicion in missing) live[row.posicion] ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception() else row
+        }
+    }
+
+    /** URL firmada de un objeto de recurso (ver [AttemptService.resourceAccess], que valida bucket y ruta antes). */
+    fun signedUrl(bucket: String, objectPath: String, expiresInSeconds: Int): String =
+        upstream.signedUrl(bucket, objectPath, expiresInSeconds)
 
     /**
      * Respuestas del intento; con [questionIds] solo las de esa pagina (como mucho 50 ids ya validados).

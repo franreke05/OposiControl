@@ -955,6 +955,9 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     QUESTION_NOT_IN_ATTEMPT(HttpStatusCode.UnprocessableEntity, "La pregunta no pertenece al intento."),
     OPTION_NOT_IN_QUESTION(HttpStatusCode.UnprocessableEntity, "La opcion no pertenece a la pregunta."),
 
+    /** EX14: el recurso no esta en ninguna revision ligada a ese intento (o su ubicacion no es la del contrato). */
+    RESOURCE_NOT_FOUND(HttpStatusCode.NotFound, "El recurso no existe."),
+
     // Noticias admin (`openapi/news/news.yaml`, D4-01..D4-11).
     NEWS_NOT_FOUND(HttpStatusCode.NotFound, "La noticia no existe."),
     NEWS_NOT_EDITABLE(HttpStatusCode.Conflict, "Solo se pueden editar las noticias en borrador o programadas."),

@@ -165,8 +165,8 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NONE
-        x-error-codes: [VALIDATION, UNAUTHENTICATED, ATTEMPT_NOT_FOUND]
-        description: 'Owner only; a foreign attempt is 404. May lazily finalize (TIMEOUT) first. Grid bounded by the attempt question count.'
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, RATE_LIMITED]
+        description: 'Owner only; a foreign attempt is 404. May lazily finalize (TIMEOUT) first. Grid bounded by the attempt question count. Per-user read limit (E2-S01, amendment 2026-10-14).'
         security:
           - bearerAuth: []
         parameters:
@@ -188,6 +188,8 @@ components:
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
             description: 'ATTEMPT_NOT_FOUND (also not owner).'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
     AttemptQuestions:
       get:
         operationId: listAttemptQuestions
@@ -199,8 +201,8 @@ components:
         x-roles: [USER]
         x-pagination: CURSOR
         x-idempotency: NONE
-        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND]
-        description: 'Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. No solutions, explanations or resources: the only correction carried is the one of the user own answer (respuesta.esCorrecta, respuesta.opcionCorrectaId; DEC-015), for an open and for a finished attempt alike.'
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, RATE_LIMITED]
+        description: 'Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. Content comes from the immutable question revision bound at start (amendment 2026-10-14). No solutions or explanations; V1 resource METADATA only (recursos; bytes via D2-66): the only correction carried is the one of the user own answer (respuesta.esCorrecta, respuesta.opcionCorrectaId; DEC-015), for an open and for a finished attempt alike.'
         security:
           - bearerAuth: []
         parameters:
@@ -230,6 +232,8 @@ components:
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
             description: 'ATTEMPT_NOT_FOUND.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
     AttemptAnswer:
       put:
         operationId: recordAttemptAnswer
@@ -367,8 +371,8 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NONE
-        x-error-codes: [UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_FINISHED]
-        description: 'Owner only, finalizado only. Immutable; private cache allowed. Bounded by the attempt question count.'
+        x-error-codes: [UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_FINISHED, RATE_LIMITED]
+        description: 'Owner only, finalizado only. Correct options come from the bound question revision (amendment 2026-10-14). Immutable; private cache allowed. Bounded by the attempt question count.'
         security:
           - bearerAuth: []
         parameters:
@@ -388,6 +392,8 @@ components:
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
             description: 'ATTEMPT_NOT_FINISHED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
     AttemptReview:
       get:
         operationId: getAttemptReview
@@ -400,7 +406,7 @@ components:
         x-pagination: CURSOR
         x-idempotency: NONE
         x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_FINISHED, RATE_LIMITED]
-        description: 'Available only when estado=finalizado (motivoFin USER or TIMEOUT; the lazy TIMEOUT runs first). Owner by JWT sub only, no entitlement re-check. Items in attempt order (preguntas_intento.posicion), keyset posicion, bounded by attempt size (<= 200). Read-only (repeating is D2-03). Per-question status comes from the snapshot frozen at finish; statement, options, explanation and resource refs are read live. Policy-dependent content (explanation, resources) is nullable or empty (DEC-025, DEC-040). Totals, nota and band stay in D2-12.'
+        description: 'Available only when estado=finalizado (motivoFin USER or TIMEOUT; the lazy TIMEOUT runs first). Owner by JWT sub only, no entitlement re-check. Items in attempt order (preguntas_intento.posicion), keyset posicion, bounded by attempt size (<= 200). Read-only (repeating is D2-03). Per-question status comes from the snapshot frozen at finish; statement, options, correct option and resource refs come from the immutable question revision bound at start (amendment 2026-10-14; attempts frozen before it read live content). Explanation stays null (DEC-025, single policy); resources are the V1 media of the revision (owner decision 2026-10-14). Totals, nota and band stay in D2-12.'
         security:
           - bearerAuth: []
         parameters:
@@ -440,6 +446,50 @@ components:
             description: 'ATTEMPT_NOT_FINISHED (en_progreso or abandonado).'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    AttemptResourceAccess:
+      get:
+        operationId: getAttemptResourceAccess
+        summary: 'Temporary access to the bytes of a resource of the attempt'
+        tags: [attempts]
+        x-contract-id: D2-66
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, RESOURCE_NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Amendment 2026-10-14 (owner decision: resources V1 image and audio, video extensible, PDF out). Owner by JWT sub only; the resource must belong to a question revision bound to THIS attempt (a bare resourceId opens nothing); no entitlement re-check (the attempt exists only if D2-03 passed the access policy). Ktor authorizes, Storage serves the bytes through a short-lived signed URL (never persisted, never the internal path). Any attempt state (open, finished, abandoned).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
+          - name: recursoId
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'Signed URL and its expiry.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptResourceAccess'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND (also not owner) or RESOURCE_NOT_FOUND (not in a revision bound to this attempt, or outside V1).'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+            description: 'UPSTREAM_UNAVAILABLE: Storage could not sign (object missing or Storage down). Retryable.'
   headers:
     NoStore:
       description: 'no-store'
@@ -642,6 +692,65 @@ components:
               type: [string, 'null']
               format: uuid
               description: 'DEC-015: the correct option, under the same condition as esCorrecta. May be null while esCorrecta is present.'
+        recursos:
+          type: array
+          description: 'Amendment 2026-10-14: V1 resources of the bound revision; absent when none.'
+          items:
+            $ref: '#/components/schemas/AttemptResource'
+    AttemptResource:
+      type: object
+      description: 'Amendment 2026-10-14. A V1 media resource of the immutable question revision bound to the attempt. Metadata only: bytes via D2-66. Canonical mapping: resourceId = id, type = tipo, access = D2-66.'
+      required: [id, tipo, titulo, version]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipo:
+          type: string
+          enum: [imagen, audio, video]
+        titulo:
+          type: string
+        mimeType:
+          type: [string, 'null']
+        version:
+          type: string
+          description: 'Stable 16-hex token of the stored object (cache key). Bytes of a resourceId are never rewritten.'
+        sizeBytes:
+          type: [integer, 'null']
+          minimum: 0
+        durationMs:
+          type: [integer, 'null']
+          minimum: 0
+          description: 'Audio/video duration measured at ingest; null until ingest computes it.'
+        envelope:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/AudioEnvelope'
+    AudioEnvelope:
+      type: object
+      description: 'Computed ONCE at ingest. One UInt8 sample (0..255) per stepMs: RMS of the window centred on k*stepMs, normalised to the resource maximum; base64.'
+      required: [stepMs, samples]
+      properties:
+        stepMs:
+          type: integer
+          minimum: 10
+          maximum: 1000
+        samples:
+          type: string
+          format: byte
+    AttemptResourceAccess:
+      type: object
+      required: [url, expiresAt, version]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: 'Short-lived signed URL; no Authorization header needed. Ask again when it expires.'
+        expiresAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        mimeType:
+          type: [string, 'null']
+        version:
+          type: string
     AnswerRequest:
       type: object
       x-entity: pregunta
@@ -897,18 +1006,9 @@ components:
               $ref: '../common/identifiers.yaml#/components/schemas/Markdown'
         resources:
           type: array
-          description: 'Refs only; signed URLs via D4-19. Empty when none or hidden by policy.'
+          description: 'V1 resources of the bound revision (amendment 2026-10-14); bytes via D2-66. Empty when none.'
           items:
-            type: object
-            required: [id, tipo, titulo]
-            properties:
-              id:
-                $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
-              tipo:
-                type: string
-                enum: [imagen, audio, video, texto, pdf, enlace]
-              titulo:
-                type: string
+            $ref: '#/components/schemas/AttemptResource'
         timings:
           type: object
           required: []

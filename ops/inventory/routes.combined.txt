@@ -123,6 +123,7 @@ GET /api/v1/app/examenes/{}
 GET /api/v1/app/home
 GET /api/v1/app/intentos/{}
 GET /api/v1/app/intentos/{}/preguntas
+GET /api/v1/app/intentos/{}/recursos/{}
 GET /api/v1/app/intentos/{}/resultado
 GET /api/v1/app/intentos/{}/revision
 GET /api/v1/app/legal/documents

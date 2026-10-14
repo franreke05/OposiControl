@@ -116,6 +116,7 @@ class OpenApiContractTest {
         "D2-11" to "POST /api/v1/app/intentos/{attemptId}/abandonar",
         "D2-12" to "GET /api/v1/app/intentos/{attemptId}/resultado",
         "D2-65" to "GET /api/v1/app/intentos/{attemptId}/revision",
+        "D2-66" to "GET /api/v1/app/intentos/{attemptId}/recursos/{recursoId}",
         // FA11: noticias admin (D4-01..D4-11) y lecturas de wallet (D6-01, D6-02), TARGET.
         "D4-01" to "GET /api/v1/admin/noticias",
         "D4-02" to "GET /api/v1/admin/noticias/{noticiaId}",

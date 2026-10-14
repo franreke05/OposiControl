@@ -129,6 +129,7 @@ GET	/api/v1/app/examenes/{}	BOT	user-jwt	Consumer app API: examenes/{}	OposiBot
 GET	/api/v1/app/home	BOT	user-jwt	Consumer app API: home	OposiBot
 GET	/api/v1/app/intentos/{}	BOT	user-jwt	Consumer app API: intentos/{} (D2-07)	OposiBot
 GET	/api/v1/app/intentos/{}/preguntas	BOT	user-jwt	Consumer app API: intentos/{}/preguntas (D2-08)	OposiBot
+GET	/api/v1/app/intentos/{}/recursos/{}	BOT	user-jwt	Consumer app API: intentos/{}/recursos/{} (D2-66)	OposiBot
 GET	/api/v1/app/intentos/{}/resultado	BOT	user-jwt	Consumer app API: intentos/{}/resultado (D2-12)	OposiBot
 GET	/api/v1/app/intentos/{}/revision	BOT	user-jwt	Consumer app API: intentos/{}/revision (D2-65)	OposiBot
 GET	/api/v1/app/legal/documents	BOT	none	Legal documents (public, IP rate limit; mounted with the consumer auth runtime)	OposiBot

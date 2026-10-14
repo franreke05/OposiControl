@@ -194,6 +194,8 @@ paths:
     $ref: 'attempts/attempts.yaml#/components/pathItems/AttemptResult'
   /api/v1/app/intentos/{attemptId}/revision:
     $ref: 'attempts/attempts.yaml#/components/pathItems/AttemptReview'
+  /api/v1/app/intentos/{attemptId}/recursos/{recursoId}:
+    $ref: 'attempts/attempts.yaml#/components/pathItems/AttemptResourceAccess'
   /api/v1/admin/noticias:
     $ref: 'news/news.yaml#/components/pathItems/AdminNews'
   /api/v1/admin/noticias/assets:
