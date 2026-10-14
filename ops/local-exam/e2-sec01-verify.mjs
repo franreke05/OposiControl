@@ -7,6 +7,10 @@ import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { requireStackLock } from './stack-lock.mjs';
+
+// Arranca un Ktor / ejecuta sondas contra el stack compartido: falla (exit 3) ANTES de nada si STACK_LOCK es de otro.
+requireStackLock('e2-sec01-verify.mjs');
 
 const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:/Users/franr/AndroidStudioProjects/OposiControl-PhaseB-Server/ops/local-exam/.local';
 const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8090';

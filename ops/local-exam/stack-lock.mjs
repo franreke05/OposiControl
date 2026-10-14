@@ -1,21 +1,24 @@
-// Guardia de STACK_LOCK (PHASE B): toda escritura en el stack local compartido (up.mjs, run-ktor.mjs, e2e.mjs) llama a
-// requireStackLock() ANTES de tocar nada. Si el fichero de bloqueo existe y su HOLDER no es quien ejecuta, sale con codigo 3:
-// nunca imprime y continua.
-//   STACK_LOCK_FILE  ruta del bloqueo (por defecto %LOCALAPPDATA%\OposiBotPhaseB\handoffs\STACK_LOCK.md)
-//   STACK_HOLDER     quien ejecuta (p. ej. E1); obligatorio si el bloqueo existe
-// Sin fichero de bloqueo no hay a quien molestar: se permite (stack de un solo desarrollador).
+// Guardia de STACK_LOCK (PHASE B, regla dura del propietario): todo script que escribe en el stack local compartido, reinicia
+// Ktor, toca Docker o ejecuta suites que mutan usuarios/datos llama a requireStackLock() ANTES de cualquier mutacion.
+//   - STACK_LOCK.md existe y su HOLDER no es STACK_HOLDER -> exit 3 sin hacer nada (nunca avisar y seguir).
+//   - No se puede localizar el bloqueo (sin LOCALAPPDATA) -> exit 3 (sin bloqueo verificable no se escribe).
+//   - Sin fichero de bloqueo -> se permite (nadie lo tiene; el procedimiento es crearlo antes con tu HOLDER).
+// La ruta es FIJA (%LOCALAPPDATA%\OposiBotPhaseB\handoffs\STACK_LOCK.md): no hay variable para apuntarla a otro sitio.
 import fs from 'node:fs';
 import path from 'node:path';
 
 export function stackLockFile() {
-  if (process.env.STACK_LOCK_FILE) return process.env.STACK_LOCK_FILE;
   const base = process.env.LOCALAPPDATA;
   return base ? path.join(base, 'OposiBotPhaseB', 'handoffs', 'STACK_LOCK.md') : null;
 }
 
 export function requireStackLock(action) {
   const file = stackLockFile();
-  if (!file || !fs.existsSync(file)) return;
+  if (!file) {
+    console.error(`STACK_LOCK: ${action} BLOQUEADO. Sin LOCALAPPDATA no se puede comprobar el bloqueo.`);
+    process.exit(3);
+  }
+  if (!fs.existsSync(file)) return;
   const text = fs.readFileSync(file, 'utf8');
   const holder = /^\s*HOLDER:\s*(\S+)/m.exec(text)?.[1] ?? '(sin HOLDER)';
   const me = process.env.STACK_HOLDER;

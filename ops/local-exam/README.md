@@ -48,4 +48,4 @@ AUTORIA de MAIN no estan en el subconjunto: el contenido de los fixtures se siem
 
 ## STACK_LOCK (obligatorio)
 
-`up.mjs`, `run-ktor.mjs` y `e2e.mjs` llaman a `stack-lock.mjs` antes de tocar nada: si existe `STACK_LOCK.md` (por defecto `%LOCALAPPDATA%\OposiBotPhaseB\handoffs\STACK_LOCK.md`, o `STACK_LOCK_FILE`) y su `HOLDER:` no es `STACK_HOLDER`, salen con codigo 3 sin escribir. Para trabajar: crear el bloqueo con tu `HOLDER`, exportar `STACK_HOLDER=<tu nombre>`, y borrar el bloqueo al terminar.
+`up.mjs`, `run-ktor.mjs`, `e2e.mjs` y los scripts de E2 (`e2-ktor.mjs`, `e2-phaseb.mjs`, `e2-security.mjs`, `e2-sec01-verify.mjs`) llaman a `stack-lock.mjs` antes de tocar nada: si existe `STACK_LOCK.md` (`%LOCALAPPDATA%\OposiBotPhaseB\handoffs\STACK_LOCK.md`; ruta FIJA, sin variable para cambiarla) y su `HOLDER:` no es `STACK_HOLDER`, salen con codigo 3 sin escribir. Para trabajar: crear el bloqueo con tu `HOLDER`, exportar `STACK_HOLDER=<tu nombre>`, y borrar el bloqueo al terminar.
