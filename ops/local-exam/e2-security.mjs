@@ -8,6 +8,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requireStackLock } from './stack-lock.mjs';
+
+// Escribe en el stack compartido (usuarios/fixtures de E2): falla (exit 3) si STACK_LOCK es de otro.
+requireStackLock('e2-security.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:\\Users\\franr\\AndroidStudioProjects\\OposiControl-ExamServer\\ops\\local-exam\\.local';
