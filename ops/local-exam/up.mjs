@@ -96,6 +96,7 @@ psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), '
 // aplica sobre un stack creado antes de ella. En un stack nuevo ya la aplico el bucle de pendientes.
 psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261017100000_security_exam_publication_time.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/93_phase_b_scheduled_exam.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(here, 'sql/94_e2e_users.sql'), 'utf8'));
 psql('notify pgrst, \'reload schema\';');
 
 compose('up', '-d', 'rest', 'storage', 'gateway');
@@ -130,7 +131,8 @@ const es256 = (sub, email) => {
   return `${head}.${body}.${b64url(sig)}`;
 };
 const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a', 'a@exam.local'), B: es256('0b000000-0000-4000-8000-00000000000b', 'b@exam.local'),
-  P: es256('0f000000-0000-4000-8000-00000000000f', 'p@exam.local') };
+  P: es256('0f000000-0000-4000-8000-00000000000f', 'p@exam.local'),
+  XA: es256('1a000000-0000-4000-8000-00000000001a', 'xa@exam.local'), XB: es256('1b000000-0000-4000-8000-00000000001b', 'xb@exam.local') };
 fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
 
 fs.writeFileSync(path.join(local, 'ktor.env'), [

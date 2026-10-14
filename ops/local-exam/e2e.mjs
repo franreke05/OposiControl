@@ -15,7 +15,12 @@ requireStackLock('e2e.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const local = path.join(here, '.local');
 const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
-const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+// E5-B03: el e2e usa SUS PROPIOS usuarios para todo lo que escribe (intentos, cubos de limite): XA/XB (sql/94). A, B y P son
+// de los recorridos de la app: solo se LEEN (cartera, derechos, premium) y nunca se tocan sus intentos.
+const rawTokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+if (!rawTokens.XA || !rawTokens.XB) { console.error('tokens.json sin XA/XB: ejecuta up.mjs'); process.exit(2); }
+const tokens = { A: rawTokens.XA, B: rawTokens.XB, RA: rawTokens.A, RB: rawTokens.B, P: rawTokens.P };
+const XA = '1a000000-0000-4000-8000-00000000001a', XB = '1b000000-0000-4000-8000-00000000001b';
 const secrets = JSON.parse(fs.readFileSync(path.join(local, 'secrets.json'), 'utf8'));
 const ktorEnv = Object.fromEntries(fs.readFileSync(path.join(local, 'ktor.env'), 'utf8').split(/\r?\n/).filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
 
@@ -69,7 +74,7 @@ function check(id, ok, detail = '') { results.push({ id, status: ok ? 'PASS' : '
 async function scenario(id, fn) { try { await fn(); } catch (e) { check(id, false, `exception: ${e.message}`); } }
 
 function resetAttempts() {
-  sql(`update public.intentos_examen set estado = 'abandonado' where estado = 'en_progreso' and usuario_id in ('0a000000-0000-4000-8000-00000000000a','0b000000-0000-4000-8000-00000000000b');`);
+  sql(`update public.intentos_examen set estado = 'abandonado' where estado = 'en_progreso' and usuario_id in ('${XA}','${XB}');`);
 }
 function republishX() { // vuelve P1..P3 de EX_NORMAL al contenido X (idempotente)
   sql(`set session_replication_role = replica;
@@ -96,10 +101,10 @@ await scenario('AUTH_STUB', async () => {
     fetch(GW + path, { method, headers: token ? { Authorization: `Bearer ${token}` } : {} });
   const ok = await get(tokens.A);
   const body = ok.status === 200 ? await ok.json() : null;
-  check('AUTH_STUB.valid_token_echoes_claims', body?.id === '0a000000-0000-4000-8000-00000000000a' && body.email === 'a@exam.local'
+  check('AUTH_STUB.valid_token_echoes_claims', body?.id === XA && body.email === 'xa@exam.local'
     && body.app_metadata?.providers?.[0] === 'email', JSON.stringify(body));
   const now = Math.floor(Date.now() / 1000);
-  const base = { sub: '0a000000-0000-4000-8000-00000000000a', role: 'authenticated', aud: 'authenticated', iss: `${GW}/auth/v1`, iat: now };
+  const base = { sub: XA, role: 'authenticated', aud: 'authenticated', iss: `${GW}/auth/v1`, iat: now };
   const other = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey;
   const denied = await Promise.all([
     get(null), get('nope'), get(tokens.A.slice(0, -2) + 'AA'),
@@ -278,7 +283,7 @@ await scenario('CONCURRENCY', async () => {
   const starts = await Promise.all(Array.from({ length: 20 }, () => start('A', EX.RAZONADA)));
   const ids = new Set(starts.map((r) => r.json?.intento?.id));
   const created = starts.filter((r) => r.status === 201).length;
-  const open = sql(`select count(*) from public.intentos_examen where usuario_id = '0a000000-0000-4000-8000-00000000000a' and examen_id = '${EX.RAZONADA}' and estado = 'en_progreso'`);
+  const open = sql(`select count(*) from public.intentos_examen where usuario_id = '${XA}' and examen_id = '${EX.RAZONADA}' and estado = 'en_progreso'`);
   check('CONCURRENCY.20_parallel_starts_one_attempt', ids.size === 1 && created === 1 && open === '1', `ids=${ids.size} 201s=${created} open=${open} statuses=${[...new Set(starts.map((r) => r.status))]}`);
   const a = [...ids][0];
   const answers = await Promise.all(Array.from({ length: 20 }, (_, i) => answer('A', a, q(2, 1), o(2, 1, (i % 2) + 1))));
@@ -298,8 +303,8 @@ await scenario('CONCURRENCY', async () => {
 
 // ---------- WALLET / ENTITLEMENT (E5-B01): D6-01, D6-02, D7-02 sobre sql/92_phase_b_wallet_entitlement.sql ----------
 await scenario('WALLET', async () => {
-  const [wa, wb, ma, mb] = await Promise.all([call('A', 'GET', '/api/v1/app/wallet'), call('B', 'GET', '/api/v1/app/wallet'),
-    call('A', 'GET', '/api/v1/app/wallet/movimientos?limit=10'), call('B', 'GET', '/api/v1/app/wallet/movimientos?limit=10')]);
+  const [wa, wb, ma, mb] = await Promise.all([call('RA', 'GET', '/api/v1/app/wallet'), call('RB', 'GET', '/api/v1/app/wallet'),
+    call('RA', 'GET', '/api/v1/app/wallet/movimientos?limit=10'), call('RB', 'GET', '/api/v1/app/wallet/movimientos?limit=10')]);
   check('WALLET.D6_01_A_balance_and_recent', wa.status === 200 && wa.json.saldo === 35 && wa.json.recientes?.length === 5
     && wa.json.recientes[0].saldoResultante === 35, `${wa.status} saldo=${wa.json?.saldo} recientes=${wa.json?.recientes?.length}`);
   const tipos = new Set((ma.json?.items ?? []).map((m) => m.tipo));
@@ -310,7 +315,7 @@ await scenario('WALLET', async () => {
   check('WALLET.D6_02_B_empty', mb.status === 200 && mb.json.items.length === 0, `${mb.status}`);
   check('WALLET.own_only', !(mb.text.includes('7d000000') || wb.text.includes('7d000000')), 'B never sees A ledger ids');
   // E2-B02: compras_usuario (captura de MAIN) presente; D7-05 kind=purchase solo lee compras (suscripciones no esta en el stack local).
-  const [pa, pb] = await Promise.all(['A', 'B'].map((u) => call(u, 'GET', '/api/v1/app/me/billing-history?kind=purchase')));
+  const [pa, pb] = await Promise.all(['RA', 'RB'].map((u) => call(u, 'GET', '/api/v1/app/me/billing-history?kind=purchase')));
   check('WALLET.D7_05_purchases_own_only', pa.status === 200 && pa.json.items?.length === 1 && pa.json.items[0].id === '7d100000-0000-4000-8000-000000000001'
     && pa.json.items[0].estado === 'pagada' && pb.status === 200 && pb.json.items.length === 0, `A=${pa.status}/${pa.json?.items?.length} B=${pb.status}/${pb.json?.items?.length}`);
   const fk = sql("select count(*) from pg_constraint where conname in ('transacciones_cartera_compra_id_fkey', 'compras_usuario_usuario_id_fkey', 'transacciones_cartera_idempotency_key_key')");
@@ -328,7 +333,7 @@ await scenario('WALLET', async () => {
 });
 
 await scenario('ENTITLEMENT', async () => {
-  const [ea, eb, ep] = await Promise.all(['A', 'B', 'P'].map((u) => call(u, 'GET', '/api/v1/app/me/entitlement')));
+  const [ea, eb, ep] = await Promise.all(['RA', 'RB', 'P'].map((u) => call(u, 'GET', '/api/v1/app/me/entitlement')));
   const credit = ea.json?.credits ?? [];
   check('ENTITLEMENT.D7_02_A_non_premium_with_credits', ea.status === 200 && ea.json.isPremium === false && ea.json.status === 'sin_suscripcion'
     && credit.length === 1 && credit[0].tipoExamen === 'razonado' && credit[0].restantes === 3, `${ea.status} ${JSON.stringify(ea.json)?.slice(0, 160)}`);
@@ -336,7 +341,7 @@ await scenario('ENTITLEMENT', async () => {
   check('ENTITLEMENT.D7_02_P_premium_subscription', ep.status === 200 && ep.json.isPremium === true && ep.json.status === 'activa'
     && ep.json.planCodigo === 'premium' && ep.json.planNivel === 1, `${ep.status} ${JSON.stringify(ep.json)?.slice(0, 160)}`);
   const pd = await call('P', 'GET', `/api/v1/app/examenes/${EX.PREMIUM}`);
-  const ad = await call('A', 'GET', `/api/v1/app/examenes/${EX.PREMIUM}`);
+  const ad = await call('RA', 'GET', `/api/v1/app/examenes/${EX.PREMIUM}`);
   check('ENTITLEMENT.D2_02_premium_exam_SUBSCRIPTION_for_P_LOCKED_for_A',
     pd.status === 200 && JSON.stringify(pd.json).includes('SUBSCRIPTION') && ad.status === 200 && !JSON.stringify(ad.json).includes('SUBSCRIPTION'),
     `P=${pd.status} A=${ad.status}`);
@@ -385,13 +390,19 @@ await scenario('SCHEDULED', async () => {
     `list=${list.status}/${list.text.includes(SCHED)} detail=${detail.status} preguntas=${questions.status}`);
   const d202 = await call('A', 'GET', `/api/v1/app/examenes/${SCHED}`);
   check('SCHEDULED.d2_02_not_found', d202.status === 404, `${d202.status} ${d202.json?.code}`);
-  const rest = async (p) => (await (await fetch(`http://localhost:54321/rest/v1/${p}`, {
-    headers: { apikey: ktorEnv.SUPABASE_ANON_KEY, Authorization: `Bearer ${ktorEnv.SUPABASE_ANON_KEY}` } })).text());
+  // PostgREST directo como usuario autenticado XA (HS256 con el secreto local, el unico que acepta PostgREST). Como anon la
+  // lectura ya falla en MAIN y en local: las politicas llaman a es_admin() y anon no tiene EXECUTE sobre ella (42501).
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const nowS = Math.floor(Date.now() / 1000);
+  const unsigned = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: XA, role: 'authenticated', aud: 'authenticated', iat: nowS, exp: nowS + 300 })}`;
+  const userJwt = `${unsigned}.${crypto.createHmac('sha256', secrets.jwtSecret).update(unsigned).digest('base64url')}`;
+  const rest = async (p, jwt = userJwt) => (await (await fetch(`http://localhost:54321/rest/v1/${p}`, {
+    headers: { apikey: ktorEnv.SUPABASE_ANON_KEY, Authorization: `Bearer ${jwt}` } })).text());
   const rows = await Promise.all([rest(`examenes?select=id&id=eq.${SCHED}`), rest('preguntas?select=id&id=eq.f9000000-0000-4000-8000-000000000001'),
     rest(`preguntas_examen?select=pregunta_id&examen_id=eq.${SCHED}`), rest('opciones_pregunta?select=id&pregunta_id=eq.f9000000-0000-4000-8000-000000000001')]);
-  check('SCHEDULED.postgrest_anon_rls_hides_it', rows.every((t) => t.trim() === '[]'), rows.join(' '));
+  check('SCHEDULED.postgrest_user_rls_hides_it', rows.every((t) => t.trim() === '[]'), rows.join(' '));
   const pub = await rest(`examenes?select=id&id=eq.${EX.NORMAL}`);
-  check('SCHEDULED.postgrest_anon_still_reads_published_free', pub.includes(EX.NORMAL), pub);
+  check('SCHEDULED.postgrest_user_still_reads_published_free', pub.includes(EX.NORMAL), pub);
 });
 
 // ---------- E2-P02 / FA19: limites de lectura por usuario. LO ULTIMO: agota los cubos de B ----------
