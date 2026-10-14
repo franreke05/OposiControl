@@ -6,6 +6,8 @@ Solo local. Sin MAIN, sin secretos de produccion, sin coste. Imagenes ya fijadas
 ```
 node ops/local-exam/up.mjs            # crea/reutiliza el stack; --reset lo rehace desde cero
 node ops/local-exam/run-ktor.mjs      # Ktor de este worktree en http://127.0.0.1:8089 (--no-build para no recompilar)
+node ops/local-exam/run-ktor.mjs --detach   # igual, en segundo plano e independiente de la terminal (log .local/ktor.log)
+node ops/local-exam/run-ktor.mjs --stop     # para el de --detach
 node ops/local-exam/e2e.mjs           # E2E: versionado X->Y, seguridad, recursos, concurrencia, metricas (necesita Ktor recien arrancado: el limitador es en memoria)
 docker compose --env-file ops/local-exam/.local/compose.env -f ops/local-exam/docker-compose.yaml exec -T db \
   psql -U postgres -h localhost -X -f - < ops/local-exam/sql/95_explain_volume.sql   # volumen sintetico + EXPLAIN
