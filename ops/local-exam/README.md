@@ -27,5 +27,12 @@ Los JWT de usuario se firman con una clave EC local que la pasarela publica como
 produccion (ES256, `iss = <SUPABASE_URL>/auth/v1`). La clave de servicio es un JWT HS256 local que PostgREST y Storage
 aceptan. `APP_ENV=local` habilita el limitador en memoria.
 
-Limites: no hay GoTrue (los JWT se acuñan aqui), no hay Valkey (limitador en memoria), no hay Caddy. Los triggers de
+Stub de Auth (E5-I01, decision del owner 2026-10-14): la pasarela responde `GET /auth/v1/user` (lo que Ktor pide en
+`GET /v1/auth/me` y `GET /api/v1/app/me`) con njs (`auth-stub.js`, `nginx.main.conf`), SOLO desde los claims de un JWT ES256
+firmado por la clave local del JWKS de este stack (firma, `kid`, `iss`, `exp` y `role` verificados; cualquier otro token = 401).
+No emite tokens ni concede nada: no hay login, registro, refresh ni ninguna otra ruta `/auth/v1/*` (404; PUT = 405). Escucha solo
+en 127.0.0.1 y solo existe en ops/local-exam: nunca en la imagen de Ktor ni en produccion. Los JWT de `tokens.json` llevan `email`
+y `app_metadata.providers` como los de GoTrue. Prueba: `e2e.mjs` escenario AUTH_STUB.
+
+Limites: no hay GoTrue (los JWT se acuñan aqui; solo el stub de /auth/v1/user), no hay Valkey (limitador en memoria), no hay Caddy. Los triggers de
 AUTORIA de MAIN no estan en el subconjunto: el contenido de los fixtures se siembra con `session_replication_role = replica`.

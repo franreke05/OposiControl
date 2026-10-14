@@ -111,14 +111,15 @@ for (const [objectPath, bytes, mime] of [
 
 // ---------- JWT ES256 de los usuarios de prueba (el JWKS lo sirve la pasarela en /auth/v1) ----------
 const key = crypto.createPrivateKey({ key: secrets.privateJwk, format: 'jwk' });
-const es256 = (sub) => {
+// Mismos claims que un access token de GoTrue (email + app_metadata): el stub de /auth/v1/user (auth-stub.js) responde solo con ellos.
+const es256 = (sub, email) => {
   const now = Math.floor(Date.now() / 1000);
   const head = b64url(JSON.stringify({ alg: 'ES256', typ: 'JWT', kid: secrets.kid }));
-  const body = b64url(JSON.stringify({ sub, role: 'authenticated', aud: 'authenticated', iss: `${GATEWAY}/auth/v1`, iat: now, exp: now + 12 * 3600 }));
+  const body = b64url(JSON.stringify({ sub, email, app_metadata: { provider: 'email', providers: ['email'] }, role: 'authenticated', aud: 'authenticated', iss: `${GATEWAY}/auth/v1`, iat: now, exp: now + 12 * 3600 }));
   const sig = crypto.sign('sha256', Buffer.from(`${head}.${body}`), { key, dsaEncoding: 'ieee-p1363' });
   return `${head}.${body}.${b64url(sig)}`;
 };
-const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a'), B: es256('0b000000-0000-4000-8000-00000000000b') };
+const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a', 'a@exam.local'), B: es256('0b000000-0000-4000-8000-00000000000b', 'b@exam.local') };
 fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
 
 fs.writeFileSync(path.join(local, 'ktor.env'), [

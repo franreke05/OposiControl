@@ -60,6 +60,41 @@ set session_replication_role = origin;`);
 resetAttempts();
 republishX();
 
+// ---------- AUTH_STUB (E5-I01): /auth/v1/user solo desde los claims de un JWT local valido; nada mas de GoTrue ----------
+await scenario('AUTH_STUB', async () => {
+  const GW = 'http://localhost:54321';
+  const mint = (claims, key = crypto.createPrivateKey({ key: secrets.privateJwk, format: 'jwk' }), kid = secrets.kid) => {
+    const h = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'JWT', kid })).toString('base64url');
+    const b = Buffer.from(JSON.stringify(claims)).toString('base64url');
+    return `${h}.${b}.${crypto.sign('sha256', Buffer.from(`${h}.${b}`), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url')}`;
+  };
+  const get = (token, path = '/auth/v1/user', method = 'GET') =>
+    fetch(GW + path, { method, headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  const ok = await get(tokens.A);
+  const body = ok.status === 200 ? await ok.json() : null;
+  check('AUTH_STUB.valid_token_echoes_claims', body?.id === '0a000000-0000-4000-8000-00000000000a' && body.email === 'a@exam.local'
+    && body.app_metadata?.providers?.[0] === 'email', JSON.stringify(body));
+  const now = Math.floor(Date.now() / 1000);
+  const base = { sub: '0a000000-0000-4000-8000-00000000000a', role: 'authenticated', aud: 'authenticated', iss: `${GW}/auth/v1`, iat: now };
+  const other = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey;
+  const denied = await Promise.all([
+    get(null), get('nope'), get(tokens.A.slice(0, -2) + 'AA'),
+    get(mint({ ...base, exp: now - 10 })),                       // caducado
+    get(mint({ ...base, exp: now + 60 }, other)),                // otra clave con el mismo kid
+    get(mint({ ...base, exp: now + 60, iss: 'https://evil.example/auth/v1' })),
+    get(mint({ ...base, exp: now + 60, role: 'service_role' })),
+  ]);
+  check('AUTH_STUB.invalid_tokens_401', denied.every((r) => r.status === 401), denied.map((r) => r.status).join(','));
+  const others = await Promise.all([get(tokens.A, '/auth/v1/user', 'PUT'), get(null, '/auth/v1/token?grant_type=password', 'POST'),
+    get(null, '/auth/v1/signup', 'POST'), get(tokens.A, '/auth/v1/admin/users')]);
+  check('AUTH_STUB.no_other_auth_routes', others[0].status === 405 && others.slice(1).every((r) => r.status === 404), others.map((r) => r.status).join(','));
+  const me = await call('A', 'GET', '/api/v1/app/me');
+  const authMe = await call('A', 'GET', '/v1/auth/me');
+  check('AUTH_STUB.app_me_and_auth_me_200', me.status === 200 && authMe.status === 200, `${me.status}/${authMe.status}`);
+  const forged = await fetch(`${KTOR}/api/v1/app/me`, { headers: { Authorization: `Bearer ${mint({ ...base, exp: now + 60 }, other)}` } });
+  check('AUTH_STUB.ktor_still_rejects_foreign_key', forged.status === 401, `${forged.status}`);
+});
+
 // ---------- VERSIONING_E2E: publish X -> start X -> publish Y -> continuar -> preguntas X -> finish -> review X ----------
 await scenario('VERSIONING_E2E', async () => {
   const s = await start('A', EX.NORMAL);
