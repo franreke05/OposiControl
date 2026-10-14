@@ -7,6 +7,8 @@ import com.oposicontrol.admin.core.common.presentation.MviViewModel
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.AdminSettings
+import com.oposicontrol.admin.domain.model.Session
+import com.oposicontrol.admin.domain.repository.AuthRepository
 import com.oposicontrol.admin.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -14,6 +16,7 @@ import kotlinx.coroutines.launch
 class SettingsViewModel(
     dispatcherProvider: DispatcherProvider,
     private val settingsRepository: SettingsRepository,
+    private val authRepository: AuthRepository,
     private val appConfig: AppConfig,
     private val analyticsTracker: AnalyticsTracker,
 ) : MviViewModel<SettingsState, SettingsIntent>(
@@ -24,6 +27,9 @@ class SettingsViewModel(
         scope.launch {
             settingsRepository.observeSettings().collectLatest(::applySettings)
         }
+        scope.launch {
+            authRepository.observeSession().collectLatest(::applySession)
+        }
         dispatch(SettingsIntent.Refresh)
     }
 
@@ -31,6 +37,7 @@ class SettingsViewModel(
         when (intent) {
             SettingsIntent.Refresh -> refresh()
             SettingsIntent.Save -> save()
+            SettingsIntent.Logout -> logout()
             is SettingsIntent.ToggleReleaseNotes -> updateState { it.copy(receiveReleaseNotes = intent.value) }
             is SettingsIntent.ToggleVerboseLogs -> updateState { it.copy(enableVerboseLogs = intent.value) }
             is SettingsIntent.UpdateDisplayName -> updateState { it.copy(displayName = intent.value) }
@@ -65,6 +72,33 @@ class SettingsViewModel(
                 applySettings(result.value)
                 updateState { it.copy(actionState = UiAsync.Success(Unit)) }
             }
+        }
+    }
+
+    private suspend fun logout() {
+        analyticsTracker.trackAction("settings.logout")
+        updateState { it.copy(logoutState = UiAsync.Loading) }
+        when (val result = authRepository.logout()) {
+            is AppResult.Failure -> updateState { it.copy(logoutState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> updateState { it.copy(logoutState = UiAsync.Success(Unit)) }
+        }
+    }
+
+    private fun applySession(session: Session?) {
+        val displayName = session?.displayName?.trim().orEmpty()
+        if (session == null || displayName.isBlank()) {
+            updateState { it.copy(profile = UiAsync.Empty) }
+            return
+        }
+
+        val normalizedRoles = session.roleIds.map { it.trim().lowercase() }
+        val roleLabel = when {
+            normalizedRoles.any { it == "superadmin" || it == "super-admin" || it == "admin" } -> "Administrador"
+            normalizedRoles.any { it == "moderador" || it == "moderator" } -> "Moderador"
+            else -> "Usuario"
+        }
+        updateState {
+            it.copy(profile = UiAsync.Success(SettingsProfile(displayName, roleLabel)))
         }
     }
 
