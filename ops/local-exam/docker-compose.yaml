@@ -1,0 +1,65 @@
+# EX16: stack LOCAL del motor de examen (Postgres de Supabase + PostgREST + Storage + pasarela). SOLO local: credenciales
+# de juguete generadas por `up.mjs` en `.local/` (gitignored), sin secretos de produccion, sin MAIN. Ver README.md.
+# Imagenes fijadas por digest (las mismas que ya usa el repo: gate PG17 y ops/loadtest).
+name: oposi-exam-local
+
+services:
+  db:
+    image: public.ecr.aws/supabase/postgres@sha256:658d1c9b09ae4f61b8e95087b6859181b4b7d6940d769cf7b605609c8aad43e9 # 17.6.1.171
+    environment:
+      POSTGRES_PASSWORD: postgres
+      JWT_SECRET: ${LOCAL_JWT_SECRET:?run up.mjs}
+    ports:
+      - "127.0.0.1:54329:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost"]
+      interval: 2s
+      retries: 60
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest@sha256:d155c6718ed9a9f990d159a2ab7c0a3f16944dbb6d0a0344557421042acfe0df # v16.4
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:postgres@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: ${LOCAL_JWT_SECRET:?run up.mjs}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_LOG_LEVEL: info
+    restart: on-failure
+
+  storage:
+    image: public.ecr.aws/supabase/storage-api@sha256:6a32896ae2d1ae2ea2d05ecaf6ed6c8a6b091739b469a8cf860ee89b2604d28f # v1.79.36
+    depends_on:
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    environment:
+      ANON_KEY: ${LOCAL_ANON_KEY:?run up.mjs}
+      SERVICE_KEY: ${LOCAL_SERVICE_KEY:?run up.mjs}
+      AUTH_JWT_SECRET: ${LOCAL_JWT_SECRET:?run up.mjs}
+      PGRST_JWT_SECRET: ${LOCAL_JWT_SECRET:?run up.mjs}
+      POSTGREST_URL: http://rest:3000
+      DATABASE_URL: postgres://supabase_storage_admin:postgres@db:5432/postgres
+      FILE_SIZE_LIMIT: "52428800"
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: local
+      REGION: local
+      GLOBAL_S3_BUCKET: local
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+    restart: on-failure
+
+  gateway:
+    image: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 # 1.27-alpine
+    depends_on:
+      - rest
+      - storage
+    ports:
+      - "127.0.0.1:54321:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./.local/jwks.json:/srv/jwks.json:ro
