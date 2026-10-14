@@ -242,6 +242,8 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "OposiControlAdmin"
             packageVersion = "1.0.0"
+            // jpackage runtime must carry java.sql (SQLite JDBC), java.naming, etc.: DriverManager failed at startup without it
+            includeAllModules = true
         }
     }
 }
