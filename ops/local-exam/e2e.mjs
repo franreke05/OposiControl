@@ -315,6 +315,16 @@ await scenario('WALLET', async () => {
     && pa.json.items[0].estado === 'pagada' && pb.status === 200 && pb.json.items.length === 0, `A=${pa.status}/${pa.json?.items?.length} B=${pb.status}/${pb.json?.items?.length}`);
   const fk = sql("select count(*) from pg_constraint where conname in ('transacciones_cartera_compra_id_fkey', 'compras_usuario_usuario_id_fkey', 'transacciones_cartera_idempotency_key_key')");
   check('WALLET.ledger_schema_matches_main_capture', fk === '3', `constraints=${fk}`);
+  // Decision 4: B tiene una fila REAL de cartera con saldo 0 (el 0 lo confirma el servidor, no la ausencia de fila).
+  const bRow = sql("select count(*) || ':' || coalesce(max(saldo_tickets), -1) from public.carteras_usuario where usuario_id = '0b000000-0000-4000-8000-00000000000b'");
+  check('WALLET.B_real_zero_row_server_confirmed', bRow === '1:0' && wb.json?.saldo === 0, `row=${bRow} saldo=${wb.json?.saldo}`);
+  // Decision 3: la forma local de las tablas de cartera/compras/derechos == captura de catalogo de MAIN (main-wallet-shape.txt).
+  const norm = (t) => t.split(/\r?\n/).filter((l) => l && !l.startsWith('#') && l !== 'SET').map((l) => {
+    const m = l.match(/^(\S+) COLS (.*)$/); return m ? `${m[1]} COLS ${m[2].split(', ').sort().join(', ')}` : l; }).sort();
+  const want = norm(fs.readFileSync(path.join(here, 'main-wallet-shape.txt'), 'utf8'));
+  const got = norm(sql(fs.readFileSync(path.join(here, 'sql/wallet_shape.sql'), 'utf8')));
+  const diff = [...want.filter((l) => !got.includes(l)).map((l) => '- ' + l), ...got.filter((l) => !want.includes(l)).map((l) => '+ ' + l)];
+  check('WALLET.local_schema_matches_main', diff.length === 0, diff.length ? diff.slice(0, 4).join(' || ').slice(0, 400) : `${want.length} lines`);
 });
 
 await scenario('ENTITLEMENT', async () => {

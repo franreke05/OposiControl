@@ -6,7 +6,8 @@
 --                    categorias distintas (recarga, reto_diario, regalo, compra_examen, potenciador) con saldo encadenado;
 --                    1 activacion `activa` de potenciador.
 --                    A NO es premium a proposito: e2e SECURITY.no_entitlement_start_denied exige 403 en EX_PREMIUM.
---   B 0b000000-…-0b  vacio: sin cartera (saldo 0), sin movimientos, sin premium, sin creditos.
+--   B 0b000000-…-0b  fila REAL de cartera con saldo 0 (el servidor confirma 0, decision 4), sin movimientos, sin premium,
+--                    sin creditos, sin compras.
 --   P 0f000000-…-0f  PREMIUM (SUBSCRIPTION): estado_premium_usuario activa, producto premium_mensual -> plan premium nivel 1,
 --                    fin_en dentro de 30 dias. EX_PREMIUM le da SUBSCRIPTION. JWT: .local/tokens.json "P".
 
@@ -29,9 +30,9 @@ insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, pre
 values ('7b000000-0000-4000-8000-000000000001', 'premium_mensual', 'suscripcion', 'Premium mensual', 999, '7a000000-0000-4000-8000-000000000001')
 on conflict (id) do nothing;
 
-insert into public.servicios (id, codigo, nombre)
-values ('7c000000-0000-4000-8000-000000000001', 'potenciador', 'Potenciador'),
-       ('7c000000-0000-4000-8000-000000000002', 'protector', 'Protector')
+insert into public.servicios (id, codigo, nombre, tipo_servicio)
+values ('7c000000-0000-4000-8000-000000000001', 'potenciador', 'Potenciador', 'potenciador'),
+       ('7c000000-0000-4000-8000-000000000002', 'protector', 'Protector', 'protector_racha')
 on conflict (id) do nothing;
 
 -- ---------- premium (P) ----------
@@ -47,7 +48,8 @@ on conflict (id) do nothing;
 
 -- ---------- cartera y libro (A) ----------
 insert into public.carteras_usuario (usuario_id, saldo_tickets)
-values ('0a000000-0000-4000-8000-00000000000a', 35)
+values ('0a000000-0000-4000-8000-00000000000a', 35),
+       ('0b000000-0000-4000-8000-00000000000b', 0)
 on conflict (usuario_id) do nothing;
 
 insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, saldo_anterior, saldo_resultante, descripcion, creado_en)
