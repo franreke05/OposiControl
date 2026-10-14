@@ -31,6 +31,7 @@ internal class CatalogRuntime(
  *  - D2-01 `GET /api/v1/app/examenes`            lista paginada por cursor, `accessState`
  *  - D2-02 `GET /api/v1/app/examenes/{examId}`   detalle SIN cuerpos de pregunta (SEC-004)
  *  - D2-13 `GET /api/v1/app/me/examenes`         `vista` EN_CURSO / ADQUIRIDOS / COLECCION
+ *  - D2-17 `GET /api/v1/public/especialidades`   catalogo de especialidades activas (ANON, sin identidad, cacheado)
  *  - D7-02 `GET /api/v1/app/me/entitlement`      estado premium + creditos (solo para mostrar; la puerta es D7-25)
  *
  * Identidad = SOLO el `sub` del JWT, deny-by-default como el resto de `/api/v1/app`: [CanonicalIdentityResolver.activeIdentity]
@@ -38,6 +39,19 @@ internal class CatalogRuntime(
  * Sin runtime (sin resolver de identidad) las rutas existen pero fallan cerrado con 500: nunca sirven sin identidad.
  */
 internal fun Route.catalogRoutes(runtime: CatalogRuntime?) {
+    // D2-17 (ANON): catalogo de especialidades activas con ids REALES. Sin sesion: una cache de proceso acota la carga en la
+    // base (como las lecturas publicas de /v1) y la respuesta es cacheable por el cliente.
+    val specialtiesCache = java.util.concurrent.atomic.AtomicReference<Pair<Long, PublicSpecialtiesResponse>?>(null)
+    route("/api/v1/public") {
+        get("/especialidades") {
+            val rt = runtime.orMisconfigured()
+            val now = System.currentTimeMillis()
+            val body = specialtiesCache.get()?.takeIf { now - it.first < SPECIALTIES_CACHE_MS }?.second
+                ?: rt.catalog.publicSpecialties().also { specialtiesCache.set(now to it) }
+            call.cache("public, max-age=300")
+            call.respond(body)
+        }
+    }
     route("/api/v1/app") {
         get("/examenes") {
             val rt = runtime.orMisconfigured()
@@ -77,6 +91,9 @@ internal fun Route.catalogRoutes(runtime: CatalogRuntime?) {
         }
     }
 }
+
+/** D2-17: vida de la cache de proceso del catalogo de especialidades. */
+private const val SPECIALTIES_CACHE_MS = 60_000L
 
 private fun ApplicationCall.cache(value: String) {
     response.header(HttpHeaders.CacheControl, value)

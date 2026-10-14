@@ -85,7 +85,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [VALIDATION, UNAUTHENTICATED, EXAM_NOT_FOUND, INTERNAL, UPSTREAM_ERROR]
-        description: 'No question bodies. precio values are pending DEC-035 (nullable). Cache private, no-store for accessState.'
+        description: 'No question bodies. precio values are pending DEC-035 (nullable). Cache private, no-store for accessState. intentoAbiertoId and ultimoIntentoFinalizadoId (FA18) come from one bounded read of the caller attempts on this exam (command-created only).'
         security:
           - bearerAuth: []
         parameters:
@@ -287,7 +287,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [RATE_LIMITED, INTERNAL, UPSTREAM_ERROR]
-        description: 'Bounded catalog of active specialties with their capabilities.'
+        description: 'Bounded catalog of active specialties with their capabilities. ids are the real especialidades ids (the ones of the profile and of D2-01 especialidadId). Served by Ktor since 2026-10-14 (FA18), public cache.'
         security: []
         responses:
           '200':
@@ -2083,6 +2083,10 @@ components:
         intentoAbiertoId:
           type: [string, 'null']
           format: uuid
+        ultimoIntentoFinalizadoId:
+          type: [string, 'null']
+          format: uuid
+          description: 'FA18 (2026-10-14, PERF01): the most recent FINISHED attempt of the caller on this exam (result D2-12 / review D2-65), so a cover never pages D2-13. One bounded read on (usuario_id, examen_id); null when there is none.'
         precio:
           $ref: '#/components/schemas/ExamPrice'
     MyExamItem:

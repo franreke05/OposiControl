@@ -62,12 +62,25 @@ internal data class AppExamDetail(
     val portadaUrl: String? = null,
     val accessState: AccessState,
     val intentoAbiertoId: String? = null,
+    /** FA18 (PERF01): el ultimo intento FINALIZADO del usuario en este examen (resultado / revision sin recorrer D2-13). */
+    val ultimoIntentoFinalizadoId: String? = null,
     /** DEC-035 abierta: SIEMPRE `null` en SLICE 2 (los valores guardados no son fiables). */
     val precio: ExamPrice? = null,
 )
 
 @Serializable
 internal data class AppExamResponse(val examen: AppExamDetail)
+
+/** D2-17 `PublicSpecialty.capacidades`. */
+@Serializable
+internal data class PublicSpecialtyCapabilities(val permiteRafagas: Boolean, val permiteRazonados: Boolean, val permiteInmersivos: Boolean)
+
+/** D2-17 `PublicSpecialty`: id REAL de `especialidades` (el que llevan el perfil y `examenes.especialidad_id`). */
+@Serializable
+internal data class PublicSpecialty(val id: String, val codigo: String, val nombre: String, val slug: String, val capacidades: PublicSpecialtyCapabilities)
+
+@Serializable
+internal data class PublicSpecialtiesResponse(val items: List<PublicSpecialty>)
 
 @Serializable
 internal data class MyExamRef(
@@ -222,6 +235,21 @@ internal class CatalogService(
     private val gateway: CatalogGateway,
     private val clock: () -> Instant = Instant::now,
 ) {
+    // ----- D2-17 -----
+    /** Catalogo acotado de especialidades activas con sus capacidades (sin fila de capacidades = abierto, como la politica). */
+    suspend fun publicSpecialties(): PublicSpecialtiesResponse = withUpstreamIo {
+        val rows = gateway.activeSpecialties(MAX_PUBLIC_SPECIALTIES)
+        // Mas que el tope no se trunca en silencio: falla cerrado.
+        if (rows.size > MAX_PUBLIC_SPECIALTIES) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val capabilities = gateway.capabilitiesFor(rows.map { it.id })
+        PublicSpecialtiesResponse(
+            rows.map { row ->
+                val c = capabilities[row.id] ?: SpecialtyAccessCapabilities.OPEN
+                PublicSpecialty(row.id, row.codigo, row.nombre, row.slug, PublicSpecialtyCapabilities(c.allowsRafagas, c.allowsRazonados, c.allowsInmersivos))
+            },
+        )
+    }
+
     // ----- D2-01 -----
     suspend fun listExams(userId: CanonicalUserId, query: ExamListQuery): AppExamPage = withUpstreamIo {
         val now = clock()
@@ -269,6 +297,7 @@ internal class CatalogService(
         val row = gateway.getPublished(examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
         val verdict = accessFor(userId.value, listOf(row), now).getValue(row.id)
         val covers = signedCovers(listOf(row))
+        val attempts = gateway.attemptRefs(userId.value, row.id)
         AppExamResponse(
             AppExamDetail(
                 id = row.id,
@@ -284,7 +313,8 @@ internal class CatalogService(
                 anio = row.anio,
                 portadaUrl = row.portadaStoragePath?.let(covers::get),
                 accessState = verdict.state,
-                intentoAbiertoId = gateway.openAttemptId(userId.value, row.id),
+                intentoAbiertoId = attempts.openId,
+                ultimoIntentoFinalizadoId = attempts.lastFinishedId,
                 precio = null,
             ),
         )
@@ -421,6 +451,9 @@ internal class CatalogService(
     companion object {
         const val COVER_URL_TTL_SECONDS = 3600
         const val FACET_ROWS_MAX = 2000
+
+        /** D2-17: tope del catalogo de especialidades (hoy 3 en MAIN). */
+        const val MAX_PUBLIC_SPECIALTIES = 100
         private val ATTEMPT_STATES = setOf("en_progreso", "finalizado", "abandonado")
     }
 }

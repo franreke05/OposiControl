@@ -80,6 +80,7 @@ class CatalogRoutesTest {
                 .map { Json.parseToJsonElement(readRequestBody(it)).jsonObject }
         var grantFacts = "[]"
         var capabilities = "[]"
+        var specialties = "[]"
         var premium = "[]"
         var plan = "[]"
         var credits = "[]"
@@ -97,9 +98,10 @@ class CatalogRoutesTest {
                 uri.contains("/rest/v1/productos_comerciales") -> plan
                 uri.contains("/rest/v1/creditos_contenido_usuario") -> credits
                 uri.contains("/rest/v1/capacidades_especialidad") -> capabilities
+                uri.contains("/rest/v1/especialidades?select=id,codigo,nombre,slug") -> specialties
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=examen_id,motivo") -> grantFacts
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=id,valido_desde") -> myGrants(uri)
-                uri.contains("/rest/v1/intentos_examen?select=id&usuario_id") -> openAttempt
+                uri.contains("/rest/v1/intentos_examen?select=id,estado&usuario_id") -> openAttempt
                 uri.contains("/rest/v1/intentos_examen?select=id,examen_id,estado") -> latestAttempts
                 uri.contains("/rest/v1/intentos_examen?select=id,estado,total_respondidas") -> attempts(uri)
                 uri.contains("/rest/v1/examenes?select=tipo_examen,anio,comunidades_autonomas") -> facets
@@ -394,7 +396,7 @@ class CatalogRoutesTest {
     fun detailReturnsMetadataOnlyWithAccessStateOpenAttemptAndNullPrice() = testApplication {
         application { catalogModule() }
         upstream.examById = { "[${exam(e1, acceso = "premium", cover = "exam-covers/$e1/a.png")}]" }
-        upstream.openAttempt = """[{"id":"$intento"}]"""
+        upstream.openAttempt = """[{"id":"$intento","estado":"en_progreso"}]"""
         upstream.grantFacts = "[${grantFact(e1, motivo = "regalo")}]"
         upstream.signed = """[{"path":"exam-covers/$e1/a.png","signedURL":"https://stub.supabase.test/storage/v1/object/sign/exam-resources/exam-covers/$e1/a.png?token=t"}]"""
         val response = client.getAs("/api/v1/app/examenes/${e1.uppercase()}")
@@ -410,8 +412,54 @@ class CatalogRoutesTest {
         listOf("preguntas", "opciones", "totalEvaluables", "demoDisponible", "precioRef").forEach { assertFalse(body.contains("\"$it\""), "$it no forma parte del detalle") }
         val byId = upstream.urls.single { it.contains("/rest/v1/examenes?") }
         assertTrue(byId.contains("&id=eq.$e1&activo=eq.true&publicado_en=not.is.null&publicado_en=lte.2026-10-08T12:00:00Z&limit=1"), byId)
-        assertTrue(upstream.urls.single { it.contains("intentos_examen") }.contains("usuario_id=eq.$TEST_UID&examen_id=eq.$e1&estado=eq.en_progreso"))
+        assertTrue(upstream.urls.single { it.contains("intentos_examen") }.contains("usuario_id=eq.$TEST_UID&examen_id=eq.$e1&origen_intento=eq.examen&creado_por_comando=not.is.null&estado=in.(en_progreso,finalizado)&order=estado.asc,finalizado_en.desc.nullslast,id.desc&limit=2"))
+        assertNull(exam["ultimoIntentoFinalizadoId"], "sin intento finalizado: el campo no viaja")
         assertNoQuestionTables()
+    }
+
+    // =================================================================== D2-17
+
+    @Test
+    fun publicSpecialtiesServeRealIdsWithCapabilitiesWithoutSessionAndCached() = testApplication {
+        application { catalogModule() }
+        val s1 = "5a000000-0000-4000-8000-000000000001"
+        val s2 = "5a000000-0000-4000-8000-000000000002"
+        upstream.specialties = """[{"id":"$s1","codigo":"EF","nombre":"Educacion Fisica","slug":"ef"},{"id":"$s2","codigo":"ING","nombre":"Ingles","slug":"ing"}]"""
+        upstream.capabilities = """[{"especialidad_id":"$s2","permite_rafagas":true,"permite_razonados":false,"permite_inmersivos":false,"permite_demos":true}]"""
+        val response = client.get("/api/v1/public/especialidades")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertEquals("public, max-age=300", response.headers[HttpHeaders.CacheControl])
+        assertConforms("D2-17", body)
+        val items = JsonObjectOf(body)["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf(s1, s2), items.map { it["id"]!!.jsonPrimitive.content })
+        assertEquals("true", items[0]["capacidades"]!!.jsonObject["permiteInmersivos"]!!.jsonPrimitive.content, "sin fila de capacidades: abierto")
+        assertEquals("false", items[1]["capacidades"]!!.jsonObject["permiteRazonados"]!!.jsonPrimitive.content)
+        assertTrue(upstream.urls.single { it.contains("/rest/v1/especialidades?") }.contains("activa=eq.true&order=posicion.asc,nombre.asc,id.asc&limit=101"))
+        val before = upstream.sent.size
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/public/especialidades").status)
+        assertEquals(before, upstream.sent.size, "segunda lectura servida por la cache de proceso")
+    }
+
+    @Test
+    fun detailCarriesTheLastFinishedAttemptInTheSameBoundedReadPerf01() = testApplication {
+        application { catalogModule() }
+        upstream.examById = { "[${exam(e1)}]" }
+        val done = "cccccccc-0000-4000-8000-000000000002"
+        // Sin intento abierto: la fila 1 ya es la ultima finalizada (el orden lo da PostgREST).
+        upstream.openAttempt = """[{"id":"$done","estado":"finalizado"},{"id":"cccccccc-0000-4000-8000-000000000001","estado":"finalizado"}]"""
+        val exam = JsonObjectOf(client.getAs("/api/v1/app/examenes/$e1").bodyAsText())["examen"]!!.jsonObject
+        assertEquals(done, exam["ultimoIntentoFinalizadoId"]!!.jsonPrimitive.content)
+        assertNull(exam["intentoAbiertoId"])
+        // Con abierto + finalizado: los dos, en la MISMA lectura (una sola peticion a intentos_examen).
+        upstream.openAttempt = """[{"id":"$intento","estado":"en_progreso"},{"id":"$done","estado":"finalizado"}]"""
+        val body = client.getAs("/api/v1/app/examenes/$e1").bodyAsText()
+        assertConforms("D2-02", body)
+        val both = JsonObjectOf(body)["examen"]!!.jsonObject
+        assertEquals(intento, both["intentoAbiertoId"]!!.jsonPrimitive.content)
+        assertEquals(done, both["ultimoIntentoFinalizadoId"]!!.jsonPrimitive.content)
+        assertEquals(2, upstream.urls.count { it.contains("/rest/v1/intentos_examen") }, "una lectura por portada, no paginas de D2-13")
+        assertTrue(upstream.urls.none { it.contains("app_my_exams_collection") || it.contains("contenido_desbloqueado_usuario?select=id,valido_desde") })
     }
 
     @Test
