@@ -23,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -213,6 +214,10 @@ private fun FilterRow(
 private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
     GlassSurface(
         modifier = Modifier
+            // Reserva 48dp táctiles sin agrandar la píldora visible (que sigue
+            // midiendo 40dp): mismo criterio que
+            // TesterListScreen.FilterPill — ver el comentario allí.
+            .minimumInteractiveComponentSize()
             .defaultMinSize(minHeight = 40.dp)
             .clip(RoundedCornerShape(20.dp))
             .clickable(onClick = onClick)
