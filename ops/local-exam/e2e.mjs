@@ -305,6 +305,12 @@ await scenario('WALLET', async () => {
   check('WALLET.D6_01_B_empty', wb.status === 200 && wb.json.saldo === 0 && wb.json.recientes.length === 0 && wb.json.consumibles.length === 0, `${wb.status}`);
   check('WALLET.D6_02_B_empty', mb.status === 200 && mb.json.items.length === 0, `${mb.status}`);
   check('WALLET.own_only', !(mb.text.includes('7d000000') || wb.text.includes('7d000000')), 'B never sees A ledger ids');
+  // E2-B02: compras_usuario (captura de MAIN) presente; D7-05 kind=purchase solo lee compras (suscripciones no esta en el stack local).
+  const [pa, pb] = await Promise.all(['A', 'B'].map((u) => call(u, 'GET', '/api/v1/app/me/billing-history?kind=purchase')));
+  check('WALLET.D7_05_purchases_own_only', pa.status === 200 && pa.json.items?.length === 1 && pa.json.items[0].id === '7d100000-0000-4000-8000-000000000001'
+    && pa.json.items[0].estado === 'pagada' && pb.status === 200 && pb.json.items.length === 0, `A=${pa.status}/${pa.json?.items?.length} B=${pb.status}/${pb.json?.items?.length}`);
+  const fk = sql("select count(*) from pg_constraint where conname in ('transacciones_cartera_compra_id_fkey', 'compras_usuario_usuario_id_fkey', 'transacciones_cartera_idempotency_key_key')");
+  check('WALLET.ledger_schema_matches_main_capture', fk === '3', `constraints=${fk}`);
 });
 
 await scenario('ENTITLEMENT', async () => {

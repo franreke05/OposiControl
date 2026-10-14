@@ -40,6 +40,11 @@ values ('0f000000-0000-4000-8000-00000000000f', true, 'activa', 'premium_mensual
         now() - interval '1 day', now() + interval '30 days', now() + interval '30 days')
 on conflict (usuario_id) do nothing;
 
+-- ---------- compras (A): una compra pagada de OposiTickets (D7-05 kind=purchase); B y P sin compras ----------
+insert into public.compras_usuario (id, usuario_id, proveedor, producto_codigo, tipo_producto, estado, precio_centimos, moneda, creado_en)
+values ('7d100000-0000-4000-8000-000000000001', '0a000000-0000-4000-8000-00000000000a', 'google_play', 'pack_50', 'opositickets', 'pagada', 499, 'EUR', now() - interval '5 days')
+on conflict (id) do nothing;
+
 -- ---------- cartera y libro (A) ----------
 insert into public.carteras_usuario (usuario_id, saldo_tickets)
 values ('0a000000-0000-4000-8000-00000000000a', 35)
