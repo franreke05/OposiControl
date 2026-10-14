@@ -149,6 +149,7 @@ internal class OposiBotsAuthRuntime(
         // MASTER2-OBS-004: un cierre fallido se registra (redactado) en vez de tragarse en silencio.
         runCatching { rateLimiter.close() }.onFailure { logCloseFailure("rateLimiter", it) }
         runCatching { (gateway as? AutoCloseable)?.close() }.onFailure { logCloseFailure("gateway", it) }
+        runCatching { (accessRequestMailGuard as? AutoCloseable)?.close() }.onFailure { logCloseFailure("accessRequestMailGuard", it) }
     }
 
     private fun logCloseFailure(resource: String, failure: Throwable) {
@@ -191,14 +192,22 @@ internal class OposiBotsAuthRuntime(
 
         /**
          * La guarda real: misma URL y misma clave de servicio que el resto del runtime de auth, y el seudonimo con clave
-         * del correo para sus logs. Devuelve el tipo concreto porque es a la vez guarda de correo y puerta de sesion.
+         * del correo para sus logs. Devuelve el tipo concreto porque es a la vez guarda de correo y puerta de sesion. Su
+         * almacen es un [SupabaseAdminAccessRequestGateway] propio (lee la tabla, la API de administracion de GoTrue y
+         * escribe la auditoria de las solicitudes que dejan de reservar el correo); no abre ninguna conexion al construirse
+         * y se cierra con el runtime.
          */
-        internal fun accessRequestMailGuard(configuration: OposiBotsAuthConfiguration): PostgrestAccessRequestMailGuard {
-            val transport = SupabaseRequestTransport(configuration.supabaseUrl, SupabaseRequestAuthPolicy(configuration.secretKey))
-            return PostgrestAccessRequestMailGuard(
-                upstream = { path -> transport.get(path) },
+        internal fun accessRequestMailGuard(
+            configuration: OposiBotsAuthConfiguration,
+            json: Json = Json { ignoreUnknownKeys = true },
+        ): PostgrestAccessRequestMailGuard {
+            val store = SupabaseAdminAccessRequestGateway(
+                supabaseUrl = configuration.supabaseUrl,
+                serviceRoleKey = configuration.secretKey,
+                json = json,
                 emailRef = configuration::authLogEmailRef,
             )
+            return PostgrestAccessRequestMailGuard(store = store, emailRef = configuration::authLogEmailRef)
         }
 
         /**

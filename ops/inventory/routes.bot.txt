@@ -42,6 +42,8 @@ POST /api/v1/app/intentos/{}/responder
 POST /api/v1/app/me/legal-acceptances
 POST /api/v1/app/me/onboarding
 POST /v1/auth/admin-access-requests
+POST /v1/auth/admin-access-requests/resend-code
+POST /v1/auth/admin-access-requests/verify
 POST /v1/auth/email/exchange
 POST /v1/auth/email/resend
 POST /v1/auth/login

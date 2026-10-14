@@ -38,8 +38,9 @@ import kotlin.test.assertTrue
 class AdminAccessRequestPublicRouteTest {
     private val password = "S3creta-Larga-No-Repetible-9731"
 
-    private class FakeGateway(var outcome: AdminAccessSubmitOutcome = AdminAccessSubmitOutcome.CREATED) : AdminAccessRequestGateway {
+    private class FakeGateway(var outcome: AdminAccessSubmitOutcome = AdminAccessSubmitOutcome.CREATED) : UnusedAdminAccessRequestGateway() {
         val submissions = CopyOnWriteArrayList<AdminAccessSubmission>()
+        val codeMails = CopyOnWriteArrayList<String>()
         var failure: Exception? = null
 
         override suspend fun submit(submission: AdminAccessSubmission): AdminAccessSubmitOutcome {
@@ -48,11 +49,12 @@ class AdminAccessRequestPublicRouteTest {
             return outcome
         }
 
-        override suspend fun list(estado: String?, limit: Int, offset: Int) = error("no interviene")
-        override suspend fun find(id: String) = error("no interviene")
-        override suspend fun resolve(id: String, estado: String, actorId: String, motivo: String?) = error("no interviene")
-        override suspend fun confirmEmail(usuarioId: String) = error("no interviene")
-        override suspend fun deleteAccount(usuarioId: String) = error("no interviene")
+        /** Ninguna solicitud previa para el correo: el alta sigue. */
+        override suspend fun nonApprovedByEmail(email: String): List<AccessRequestReservation> = emptyList()
+
+        override suspend fun sendAccessCode(email: String) {
+            codeMails += email
+        }
     }
 
     private fun Application.module(gateway: AdminAccessRequestGateway?, limiter: OposiBotsAuthRateLimiter = TestAllowAllLimiter) {
@@ -67,9 +69,11 @@ class AdminAccessRequestPublicRouteTest {
     private fun body(
         nombre: String = "  Ada Lovelace ",
         email: String = " Ada@Example.com ",
-        password: String = this.password,
         motivo: String = "Coordino el equipo de contenido de Enfermeria.",
-    ) = """{"nombre":${JsonPrimitive(nombre)},"email":"$email","password":"$password","motivo":${JsonPrimitive(motivo)}}"""
+        legacyPassword: String? = null,
+    ) = """{"nombre":${JsonPrimitive(nombre)},"email":"$email",""" +
+        legacyPassword.orEmpty().let { if (legacyPassword == null) "" else """"password":${JsonPrimitive(it)},""" } +
+        """"motivo":${JsonPrimitive(motivo)}}"""
 
     private suspend fun ApplicationTestBuilder.submit(payload: String, type: ContentType = ContentType.Application.Json): HttpResponse =
         client.post("/v1/auth/admin-access-requests") {
@@ -109,9 +113,42 @@ class AdminAccessRequestPublicRouteTest {
         val sent = gateway.submissions.single()
         assertEquals("Ada Lovelace", sent.nombre)
         assertEquals("ada@example.com", sent.email)
-        assertEquals(password, sent.password)
         assertEquals("Coordino el equipo de contenido de Enfermeria.", sent.motivo)
         assertFalse(password in response.bodyAsText())
+        // Cuenta creada: se pide a GoTrue EXACTAMENTE un correo con el codigo, al correo canonico.
+        assertEquals(listOf("ada@example.com"), gateway.codeMails.toList())
+    }
+
+    /** Sin alta nueva (duplicado, rechazo de Auth) no sale ningun correo con codigo. */
+    @Test
+    fun onlyACreatedRequestTriggersTheCodeMail() = testApplication {
+        val gateway = FakeGateway(AdminAccessSubmitOutcome.ALREADY_REGISTERED)
+        application { module(gateway) }
+
+        submit(body())
+        gateway.outcome = AdminAccessSubmitOutcome.REJECTED_BY_AUTH
+        submit(body())
+
+        assertEquals(2, gateway.submissions.size)
+        assertTrue(gateway.codeMails.isEmpty())
+    }
+
+    /**
+     * Revision 2026-10-14 (DO_NOT_SHIP): el alta ya no lleva contrasena. Un campo `password` de un cliente antiguo se IGNORA
+     * como cualquier campo desconocido del plano de auth (valido o no): misma 202 y no llega a ningun sitio.
+     */
+    @Test
+    fun aLegacyPasswordFieldIsIgnoredAndNeverReachesTheGateway() = testApplication {
+        val gateway = FakeGateway()
+        application { module(gateway) }
+
+        for (legacy in listOf(password, "a".repeat(11), "ñ".repeat(12), "")) {
+            val response = submit(body(legacyPassword = legacy))
+            assertEquals(HttpStatusCode.Accepted, response.status, legacy)
+            assertEquals("recibida", response.json()["estado"]!!.jsonPrimitive.content)
+        }
+        assertEquals(4, gateway.submissions.size)
+        assertTrue(gateway.submissions.none { password in it.nombre || password in it.email || password in it.motivo })
     }
 
     // ------------------------------------------------------------------------------------------------ sin enumeracion
@@ -175,8 +212,6 @@ class AdminAccessRequestPublicRouteTest {
         assertEquals(listOf("motivo" to "OUT_OF_RANGE"), issuesOf(body(motivo = "m".repeat(1_001))))
         assertEquals(listOf("identifier" to "INVALID_IDENTIFIER"), issuesOf(body(email = "sin-arroba")))
         assertEquals(listOf("identifier" to "BLANK_IDENTIFIER"), issuesOf(body(email = "")))
-        assertEquals(listOf("password" to "INVALID_PASSWORD"), issuesOf(body(password = "corta-11ch!")))
-        assertEquals(listOf("password" to "BLANK_PASSWORD"), issuesOf(body(password = "")))
         assertTrue(gateway.submissions.isEmpty(), "nada invalido llega a Supabase")
     }
 
@@ -187,8 +222,7 @@ class AdminAccessRequestPublicRouteTest {
 
         assertEquals(HttpStatusCode.Accepted, submit(body(nombre = "a".repeat(120), motivo = "m".repeat(1_000))).status)
         assertEquals(HttpStatusCode.Accepted, submit(body(motivo = "Linea uno\nLinea dos\tcon tabulador")).status)
-        assertEquals(HttpStatusCode.Accepted, submit(body(password = "exacta-12-ch")).status)
-        assertEquals(3, gateway.submissions.size)
+        assertEquals(2, gateway.submissions.size)
     }
 
     @Test
@@ -253,13 +287,13 @@ class AdminAccessRequestPublicRouteTest {
                 val gateway = FakeGateway()
                 application { module(gateway) }
 
-                val accepted = submit(body())
+                val accepted = submit(body(legacyPassword = password))
                 gateway.outcome = AdminAccessSubmitOutcome.ALREADY_REGISTERED
-                val duplicate = submit(body())
+                val duplicate = submit(body(legacyPassword = password))
                 // Un fallo del upstream cuyo mensaje no controla esta ruta: sale 503 y nada del cuerpo.
                 gateway.failure = IllegalStateException("Supabase network error on POST /auth/v1/admin/users: ConnectException")
-                val failed = submit(body())
-                val invalid = submit(body(nombre = ""))
+                val failed = submit(body(legacyPassword = password))
+                val invalid = submit(body(nombre = "", legacyPassword = password))
 
                 assertEquals(HttpStatusCode.ServiceUnavailable, failed.status)
                 listOf(accepted, duplicate, failed, invalid).forEach { response ->
@@ -276,8 +310,11 @@ class AdminAccessRequestPublicRouteTest {
 
     @Test
     fun theRequestObjectsDoNotPrintTheirPassword() {
-        val body = AdminAccessRequestBody(nombre = "Ada", email = "ada@example.com", password = password, motivo = "m")
-        assertFalse(password in body.toString())
-        assertFalse(password in body.validated().toString())
+        val body = AdminAccessRequestBody(nombre = "Ada", email = "ada@example.com", motivo = "m")
+        assertFalse("ada@example.com" in body.toString())
+        assertFalse("ada@example.com" in body.validated().toString())
+        val verify = AdminAccessVerifyBody(email = "ada@example.com", code = "123456", password = password)
+        assertFalse(password in verify.toString())
+        assertFalse("123456" in verify.toString())
     }
 }

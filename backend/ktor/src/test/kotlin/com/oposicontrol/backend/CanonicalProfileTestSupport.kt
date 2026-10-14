@@ -112,8 +112,8 @@ private fun q(value: String?) = value?.let { "\"$it\"" } ?: "null"
  * ejercitan. Produccion ya no tiene ningun valor por defecto que no bloquee: quien monta un runtime o un gateway a mano
  * tiene que nombrar uno de estos (o la guarda real sobre un upstream falso).
  */
-internal val NoAccessRequestsMailGuard = AccessRequestMailGuard { false }
-internal val NoAccessRequestsSessionGate = AccessRequestSessionGate { false }
+internal val NoAccessRequestsMailGuard = AccessRequestMailGuard { _, _ -> false }
+internal val NoAccessRequestsSessionGate = AccessRequestSessionGate { _, _ -> AccessRequestGateDecision.Allow }
 
 /** El gateway real con la puerta de sesion de solicitudes de acceso apagada A PROPOSITO (pruebas que no tratan de ella). */
 internal fun authGatewayWithoutAccessRequests(

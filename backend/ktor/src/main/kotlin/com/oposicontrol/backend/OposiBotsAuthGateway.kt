@@ -131,7 +131,7 @@ internal class SupabaseOposiBotsAuthGateway(
             "/auth/v1/resend${emailConfirmRedirectQuery()}",
             buildJsonObject {
                 put("type", "signup")
-                put("email", request.email.trim())
+                put("email", request.email.canonicalForUpstream())
                 request.captchaToken?.takeIf(String::isNotBlank)?.let { put("captcha_token", it) }
             },
             context = context,
@@ -193,7 +193,7 @@ internal class SupabaseOposiBotsAuthGateway(
             context = context,
         )
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response, purpose = AuthPurpose.EXCHANGE)
-        return response.toSession(context)
+        return response.toSession(context, AccessRequestSessionGrant.EMAIL_LINK)
     }
 
     override suspend fun login(
@@ -207,7 +207,7 @@ internal class SupabaseOposiBotsAuthGateway(
             context = context,
         )
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response, purpose = AuthPurpose.LOGIN)
-        return response.toSession(context)
+        return response.toSession(context, AccessRequestSessionGrant.PASSWORD)
     }
 
     override suspend fun refresh(
@@ -227,7 +227,12 @@ internal class SupabaseOposiBotsAuthGateway(
         // MASTER2-AUTH-003: GoTrue YA roto el refresh token; si la lectura falla y el cliente reintenta fuera de la
         // ventana de reutilizacion, la deteccion de reuso revoca la familia. Por eso, SOLO aqui, la lectura de la
         // puerta se reintenta con un backoff corto y acotado antes de tratar el fallo como transitorio (nunca fail-open).
-        return response.toSession(context, transientRevocation = null, transientReadRetryDelaysMillis = REFRESH_GATE_RETRY_DELAYS_MS)
+        return response.toSession(
+            context,
+            AccessRequestSessionGrant.REFRESH,
+            transientRevocation = null,
+            transientReadRetryDelaysMillis = REFRESH_GATE_RETRY_DELAYS_MS,
+        )
     }
 
     override suspend fun logout(accessToken: String, context: OposiBotsAuthContext) {
@@ -260,7 +265,7 @@ internal class SupabaseOposiBotsAuthGateway(
             HttpMethod.Post,
             "/auth/v1/recover$redirect",
             buildJsonObject {
-                put("email", request.resolvedIdentifier().trim())
+                put("email", request.resolvedIdentifier().canonicalForUpstream())
                 request.captchaToken?.takeIf(String::isNotBlank)?.let { put("captcha_token", it) }
             },
             context = context,
@@ -368,7 +373,7 @@ internal class SupabaseOposiBotsAuthGateway(
         )
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = true)
         val mintedSession = response.decode<SupabaseSession>()
-        val session = response.toSession(context, mintedSession)
+        val session = response.toSession(context, AccessRequestSessionGrant.OAUTH, mintedSession)
         try {
             beforeClaim()
             claimOAuthCredential(provider, idToken, context)
@@ -563,8 +568,10 @@ internal class SupabaseOposiBotsAuthGateway(
         }
     }
 
+    /** [grant] = como se acuño la sesion (H1): la puerta de solicitudes de acceso lo necesita para una solicitud sin verificar. */
     private suspend fun AuthResponse.toSession(
         context: OposiBotsAuthContext,
+        grant: AccessRequestSessionGrant,
         decodedSession: SupabaseSession? = null,
         transientRevocation: String? = "local",
         transientReadRetryDelaysMillis: List<Long> = emptyList(),
@@ -573,7 +580,7 @@ internal class SupabaseOposiBotsAuthGateway(
         if (session.accessToken.isBlank() || session.refreshToken.isBlank()) {
             throw OposiBotsAuthProblem.unavailable()
         }
-        val identity = enforceAccountGate(session, context, transientRevocation, transientReadRetryDelaysMillis)
+        val identity = enforceAccountGate(session, context, grant, transientRevocation, transientReadRetryDelaysMillis)
         return OposiBotsAuthSessionDto(
             accessToken = session.accessToken,
             refreshToken = session.refreshToken,
@@ -600,27 +607,77 @@ internal class SupabaseOposiBotsAuthGateway(
      * - Solicitud de acceso de administrador NO aprobada ([AccessRequestSessionGate], por id de usuario): denegacion
      *   definitiva, 403 FORBIDDEN y revocacion `global`, igual que una cuenta bloqueada. Se decide ANTES que el estado del
      *   perfil (es la causa mas especifica y no depende de que la cuenta tenga fila de perfil). Si esa lectura falla es
-     *   un fallo transitorio como el del perfil: 503, nunca se entrega la sesion.
+     *   un fallo transitorio como el del perfil: 503, nunca se entrega la sesion. Con una solicitud SIN verificar decide
+     *   [grant] (H1, AccessRequestMailGuard.kt): contrasena/refresh -> denegacion; OAuth o enlace de correo -> pasa tras
+     *   neutralizar la credencial del creador y revocar sus demas sesiones (`scope=others`); si eso falla, 503 y global.
+     * - M-1: la lectura (perfil + decision de la solicitud) es SIN efectos y es lo unico que se reintenta y se acota. La
+     *   limpieza va despues, una vez, bajo `NonCancellable`; una denegacion revoca SIEMPRE en global.
      */
     private suspend fun enforceAccountGate(
         session: SupabaseSession,
         context: OposiBotsAuthContext,
+        grant: AccessRequestSessionGrant,
         transientRevocation: String? = "local",
         transientReadRetryDelaysMillis: List<Long> = emptyList(),
     ): CanonicalUserIdentity {
+        // M-1: la revocacion global de una denegacion de solicitud de acceso va dentro del bloque no cancelable de su limpieza;
+        // este indicador evita repetirla (o sustituirla por una local) en los `catch`.
+        var revokedGlobally = false
         suspend fun revokeTransient() {
+            if (revokedGlobally) return
             transientRevocation?.let { revokeMintedSession(session.accessToken, context, scope = it) }
         }
         try {
             val userId = CanonicalUserId.fromJwtSubject(session.user.id)
-            val gate = readGateRetryingTransient(userId, context, transientReadRetryDelaysMillis)
-            if (gate.heldByAccessRequest) {
-                GatewayLogger.warn(
-                    "account gate denied the session: non-approved admin access request userId={} requestId={}",
-                    userId.value,
-                    context.requestId,
-                )
-                throw CanonicalErrorCode.FORBIDDEN.exception()
+            // La lectura (perfil + decision de la solicitud) es SIN efectos y es lo unico que se reintenta y se acota.
+            val gate = readGateRetryingTransient(userId, context, grant, transientReadRetryDelaysMillis)
+            when (val decision = gate.accessRequest) {
+                AccessRequestGateDecision.Allow -> Unit
+                is AccessRequestGateDecision.Deny -> {
+                    // DESPUES de la lectura, una sola vez y sin poder cancelarse a medias: la limpieza (mejor esfuerzo, la
+                    // denegacion no depende de ella) y SIEMPRE la revocacion global.
+                    withContext(NonCancellable) {
+                        runDenyCleanup(decision, grant, userId, context)
+                        revokeMintedSession(session.accessToken, context, scope = "global")
+                        revokedGlobally = true
+                    }
+                    GatewayLogger.warn(
+                        "account gate denied the session: non-approved admin access request userId={} requestId={}",
+                        userId.value,
+                        context.requestId,
+                    )
+                    throw CanonicalErrorCode.FORBIDDEN.exception()
+                }
+                is AccessRequestGateDecision.AllowAfterCleanup -> {
+                    // El estado del perfil decide antes: una cuenta que no puede entrar se deniega sin limpiar nada.
+                    (gate.identity ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()).requireActive()
+                    val allowed = withContext(NonCancellable) {
+                        try {
+                            accessRequestSessionGate.cleanUp(decision, grant) { revokeOtherSessions(session.accessToken, context) }
+                        } catch (failure: Exception) {
+                            GatewayLogger.warn(
+                                "account gate: access request cleanup failed, session denied userId={} requestId={} error={}",
+                                userId.value,
+                                context.requestId,
+                                failure::class.simpleName,
+                            )
+                            null
+                        }
+                    }
+                    when (allowed) {
+                        true -> Unit
+                        // La fila sigue (alguien la verifico entre medias): denegacion definitiva.
+                        false -> throw CanonicalErrorCode.FORBIDDEN.exception()
+                        // La limpieza fallo: nunca se entrega una sesion con la credencial del creador viva. 503 y global.
+                        null -> {
+                            withContext(NonCancellable) {
+                                revokeMintedSession(session.accessToken, context, scope = "global")
+                                revokedGlobally = true
+                            }
+                            throw OposiBotsAuthProblem.unavailable()
+                        }
+                    }
+                }
             }
             val identity = gate.identity ?: throw CanonicalErrorCode.PROFILE_MISSING.exception()
             return identity.requireActive()
@@ -628,7 +685,7 @@ internal class SupabaseOposiBotsAuthGateway(
             revokeTransient()
             throw cancelled
         } catch (denied: BackendDomainException) {
-            revokeMintedSession(session.accessToken, context, scope = "global")
+            if (!revokedGlobally) revokeMintedSession(session.accessToken, context, scope = "global")
             throw denied
         } catch (problem: OposiBotsAuthProblem) {
             revokeTransient()
@@ -640,6 +697,44 @@ internal class SupabaseOposiBotsAuthGateway(
         }
     }
 
+    /** La limpieza de una denegacion: mejor esfuerzo (se deniega igual), con un ERROR si falla. Nunca lanza salvo cancelacion. */
+    private suspend fun runDenyCleanup(
+        decision: AccessRequestGateDecision.Deny,
+        grant: AccessRequestSessionGrant,
+        userId: CanonicalUserId,
+        context: OposiBotsAuthContext,
+    ) {
+        if (decision.neutralise == null) return
+        try {
+            accessRequestSessionGate.cleanUp(decision, grant) { error("una denegacion no revoca con scope=others") }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            GatewayLogger.error(
+                "account gate: access request credential neutralisation failed on a denied session userId={} requestId={} error={}",
+                userId.value,
+                context.requestId,
+                failure::class.simpleName,
+            )
+        }
+    }
+
+    /**
+     * Revoca las DEMAS sesiones del usuario con la recien acuñada (`POST /auth/v1/logout?scope=others`): conserva la del
+     * titular que esta entrando y mata las que el creador de la solicitud pudiera tener. A diferencia de
+     * [revokeMintedSession] NO es de mejor esfuerzo: cualquier respuesta que no sea 2xx lanza (la puerta deniega).
+     */
+    private suspend fun revokeOtherSessions(accessToken: String, context: OposiBotsAuthContext) {
+        val response = authRequest(
+            method = HttpMethod.Post,
+            path = "/auth/v1/logout?scope=others",
+            body = null,
+            accessToken = accessToken,
+            context = context,
+        )
+        check(response.status.isSuccessStatus()) { "logout scope=others -> ${response.status.value}" }
+    }
+
     /**
      * MASTER2-AUTH-003: reintenta SOLO fallos transitorios de lectura (503/red/decodificacion); una denegacion de
      * dominio o una cancelacion se propagan al primer intento. Agotados los reintentos, se relanza el ultimo fallo.
@@ -647,15 +742,16 @@ internal class SupabaseOposiBotsAuthGateway(
     private suspend fun readGateRetryingTransient(
         userId: CanonicalUserId,
         context: OposiBotsAuthContext,
+        grant: AccessRequestSessionGrant,
         retryDelaysMillis: List<Long>,
     ): GateRead {
-        if (retryDelaysMillis.isEmpty()) return readGate(userId, context)
+        if (retryDelaysMillis.isEmpty()) return readGate(userId, context, grant)
         // MASTER3-AUTH-005: plazo global. `withTimeoutOrNull` solo absorbe SU propio timeout: una cancelacion externa
         // (cliente desconectado) se sigue propagando como cancelacion. Corre en Dispatchers.IO para que plazos y esperas
         // sean SIEMPRE de reloj real, sea cual sea el dispatcher de quien llama.
         val read = withContext(Dispatchers.IO) {
             withTimeoutOrNull(REFRESH_GATE_DEADLINE_MS) {
-                retryingGateRead(userId, context, retryDelaysMillis)
+                retryingGateRead(userId, context, grant, retryDelaysMillis)
             }
         }
         if (read == null) {
@@ -669,29 +765,33 @@ internal class SupabaseOposiBotsAuthGateway(
      * Lo que la puerta lee de una vez. Envoltorio no nulo: distingue "sin fila de perfil" (`identity == null`) de "se
      * agoto el plazo" (`withTimeoutOrNull` -> null).
      */
-    private class GateRead(val identity: CanonicalUserIdentity?, val heldByAccessRequest: Boolean)
+    private class GateRead(val identity: CanonicalUserIdentity?, val accessRequest: AccessRequestGateDecision)
 
     /**
      * Las DOS lecturas de la puerta (perfil y solicitud de acceso) A LA VEZ: la segunda no suma su latencia a la primera,
      * la puerta tarda lo que la mas lenta. Si una falla, la otra se cancela y sale el fallo original; los limites por
      * intento, el plazo global y los reintentos de refresh cubren a las dos porque envuelven esta funcion.
+     *
+     * M-1: aqui SOLO se lee ([AccessRequestSessionGate.decide] no escribe nada). Un intento cortado o repetido no puede
+     * dejar una limpieza hecha que el siguiente intento lea como «ya no hay solicitud» (una denegacion convertida en entrega).
      */
-    private suspend fun readGate(userId: CanonicalUserId, context: OposiBotsAuthContext): GateRead = coroutineScope {
-        val heldByAccessRequest = async { accessRequestSessionGate.deniesSession(userId.value) }
+    private suspend fun readGate(userId: CanonicalUserId, context: OposiBotsAuthContext, grant: AccessRequestSessionGrant): GateRead = coroutineScope {
+        val accessRequest = async { accessRequestSessionGate.decide(userId.value, grant) }
         val identity = findProfile(userId, context)
-        GateRead(identity, heldByAccessRequest.await())
+        GateRead(identity, accessRequest.await())
     }
 
     private suspend fun retryingGateRead(
         userId: CanonicalUserId,
         context: OposiBotsAuthContext,
+        grant: AccessRequestSessionGrant,
         retryDelaysMillis: List<Long>,
     ): GateRead {
         var attempt = 0
         while (true) {
             try {
                 // Limite POR INTENTO: un intento lento cuenta como fallo transitorio y deja sitio al reintento.
-                return withTimeoutOrNull(REFRESH_GATE_ATTEMPT_TIMEOUT_MS) { readGate(userId, context) }
+                return withTimeoutOrNull(REFRESH_GATE_ATTEMPT_TIMEOUT_MS) { readGate(userId, context, grant) }
                     ?: throw OposiBotsAuthProblem.unavailable()
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -928,7 +1028,7 @@ internal class SupabaseOposiBotsAuthGateway(
 
     private fun credentialBody(identifier: String, password: String, captchaToken: String?): JsonObject =
         buildJsonObject {
-            put("email", identifier.trim().lowercase())
+            put("email", identifier.canonicalForUpstream())
             put("password", password)
             captchaToken?.takeIf(String::isNotBlank)?.let { put("captcha_token", it) }
         }
@@ -1013,6 +1113,13 @@ private fun defaultAuthHttpClient(): HttpClient = HttpClient(Java) {
 }
 
 private fun HttpStatusCode.isSuccessStatus(): Boolean = value in 200..299
+
+/**
+ * El correo que se envia a GoTrue: SIEMPRE la forma canonica unica ([canonicalAuthEmail]), la misma que usan los limites y
+ * la guarda de correo (antes resend y recover mandaban el correo solo recortado). Las rutas ya validaron la forma; si un
+ * llamador directo pasa algo sin forma canonica, se envia recortado y GoTrue decide (nunca se inventa un correo).
+ */
+private fun String.canonicalForUpstream(): String = canonicalAuthEmail(this)?.takeIf(String::isNotEmpty) ?: trim()
 
 private fun String.urlEncode(): String =
     URLEncoder.encode(this, StandardCharsets.UTF_8).replace("+", "%20")
