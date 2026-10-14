@@ -141,7 +141,13 @@ internal data class CollectionGroupRow(@SerialName("comunidad_codigo") val comun
 internal data class MyCollectionPage(val items: List<MyCollectionRow>, val grupos: List<CollectionGroupRow>? = null)
 
 @Serializable
-private data class OpenAttemptRow(val id: String)
+private data class ExamAttemptRow(val id: String, val estado: String)
+
+/** D2-02: el intento abierto (como mucho uno: ux_intentos_examen_abierto) y el ULTIMO finalizado del usuario en un examen. */
+internal data class ExamAttemptRefs(val openId: String?, val lastFinishedId: String?)
+
+@Serializable
+internal data class SpecialtyRow(val id: String, val codigo: String, val nombre: String, val slug: String)
 
 @Serializable
 private data class GrantFactRow(
@@ -262,11 +268,22 @@ internal class CatalogGateway(
         return decodeList(upstream.get(query.toString()))
     }
 
-    /** El intento abierto mas reciente del usuario en el examen (MAIN no tiene indice unico de intento abierto). */
-    fun openAttemptId(userId: String, examId: String): String? {
-        val query = "/rest/v1/intentos_examen?select=id&usuario_id=eq.$userId&examen_id=eq.$examId&estado=eq.en_progreso" +
-            "&order=iniciado_en.desc,id.desc&limit=1"
-        return decodeList<OpenAttemptRow>(upstream.get(query)).firstOrNull()?.id
+    /**
+     * D2-02 (PERF01, FA18): en UNA lectura acotada (limit 2) el intento abierto y el ultimo FINALIZADO del usuario en ESTE
+     * examen. `estado` ordena en_progreso antes que finalizado y, dentro de los finalizados, el mas reciente primero: la
+     * fila 1 es el abierto si existe (como mucho uno) y la siguiente finalizada es la ultima. Solo intentos del comando
+     * canonico (los demas no existen para D2-07 / D2-12). Indice (usuario_id, examen_id): no crece con el historial del
+     * usuario en otros examenes.
+     */
+    fun attemptRefs(userId: String, examId: String): ExamAttemptRefs {
+        val query = "/rest/v1/intentos_examen?select=id,estado&usuario_id=eq.$userId&examen_id=eq.$examId" +
+            "&origen_intento=eq.examen&creado_por_comando=not.is.null&estado=in.(en_progreso,finalizado)" +
+            "&order=estado.asc,finalizado_en.desc.nullslast,id.desc&limit=2"
+        val rows = decodeList<ExamAttemptRow>(upstream.get(query))
+        return ExamAttemptRefs(
+            openId = rows.firstOrNull { it.estado == "en_progreso" }?.id,
+            lastFinishedId = rows.firstOrNull { it.estado == "finalizado" }?.id,
+        )
     }
 
     // ---------- "mis examenes" (D2-13) ----------
@@ -369,6 +386,10 @@ internal class CatalogGateway(
     }
 
     /** `capacidades_especialidad` por especialidad; sin fila = abierto (default de la tabla). */
+    /** D2-17: especialidades ACTIVAS (catalogo acotado). Pide [max] + 1 para que el llamante falle cerrado si hay mas. */
+    fun activeSpecialties(max: Int): List<SpecialtyRow> =
+        decodeList(upstream.get("/rest/v1/especialidades?select=id,codigo,nombre,slug&activa=eq.true&order=posicion.asc,nombre.asc,id.asc&limit=${max + 1}"))
+
     fun capabilitiesFor(specialtyIds: Collection<String>): Map<String, SpecialtyAccessCapabilities> {
         if (specialtyIds.isEmpty()) return emptyMap()
         val query = "/rest/v1/capacidades_especialidad?select=especialidad_id,permite_rafagas,permite_razonados,permite_inmersivos,permite_demos" +

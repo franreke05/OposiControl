@@ -160,6 +160,7 @@ GET	/search	CONTROL	admin	Admin legacy (outside /admin prefix): /search	OposiCon
 GET	/tags	CONTROL	admin	Admin legacy (outside /admin prefix): /tags	OposiControl
 GET	/v1/auth/me	AUTH	user-jwt	Consumer auth: me	OposiBot
 GET	/v1/especialidades	SHARED	none	Public read: especialidades	OposiControl
+GET	/api/v1/public/especialidades	BOT	none	Consumer public read: especialidades (D2-17)	OposiBot
 GET	/v1/examenes	SHARED	none	Public read: examenes	OposiControl
 GET	/v1/examenes/{}	SHARED	none	Public read: examenes/{}	none
 GET	/v1/examenes/{}/preguntas	SHARED	none	Public read: examenes/{}/preguntas	none

@@ -175,7 +175,7 @@ await scenario('SECURITY', async () => {
   const first = await answer('A', a, q(1, 1), o(1, 1, 1), 0, k);
   const replay = await answer('A', a, q(1, 1), o(1, 1, 1), 0, k);
   const rows = sql(`select count(*) from public.respuestas_intento where intento_id = '${a}' and pregunta_id = '${q(1, 1)}'`);
-  check('SECURITY.idempotent_replay_no_duplicate', first.status === 200 && replay.status === 200 && replay.headers.get('idempotent-replayed') === 'true' && rows === '1' && canon(replay.json) === canon(first.json), `rows=${rows} (same body, keys reordered by the jsonb store)`);
+  check('SECURITY.idempotent_replay_no_duplicate', first.status === 200 && replay.status === 200 && replay.headers.get('idempotent-replayed') === 'true' && rows === '1' && canon(replay.json) === canon(first.json), `rows=${rows} first=${first.status} replay=${replay.status} hdr=${replay.headers.get('idempotent-replayed')} same=${canon(replay.json) === canon(first.json)} ${replay.text.slice(0, 200)}`);
   const reused = await answer('A', a, q(1, 2), o(1, 2, 1), 0, k);
   check('SECURITY.key_reused_other_body', reused.status === 422 && reused.json.code === 'IDEMPOTENCY_KEY_REUSED', `${reused.status} ${reused.json?.code}`);
   const changed = await answer('A', a, q(1, 1), o(1, 1, 2), 1);
@@ -290,6 +290,36 @@ await scenario('CONCURRENCY', async () => {
   const late = sql(`select count(*) from public.respuestas_intento r join public.intentos_examen i on i.id = r.intento_id where r.intento_id = '${a}' and r.creada_en > i.finalizado_en`);
   check('CONCURRENCY.double_finish_same_result', f1.status === 200 && f2.status === 200 && JSON.stringify(f1.json) === JSON.stringify(f2.json), `${f1.status}/${f2.status}`);
   check('CONCURRENCY.finish_vs_answer_no_late_row', (f3.status === 200 || (f3.status === 409 && f3.json.code === 'ATTEMPT_NOT_IN_PROGRESS')) && late === '0', `answer=${f3.status} late=${late} tagRows=${tags}`);
+});
+
+// ---------- WALLET / ENTITLEMENT (E5-B01): D6-01, D6-02, D7-02 sobre sql/92_phase_b_wallet_entitlement.sql ----------
+await scenario('WALLET', async () => {
+  const [wa, wb, ma, mb] = await Promise.all([call('A', 'GET', '/api/v1/app/wallet'), call('B', 'GET', '/api/v1/app/wallet'),
+    call('A', 'GET', '/api/v1/app/wallet/movimientos?limit=10'), call('B', 'GET', '/api/v1/app/wallet/movimientos?limit=10')]);
+  check('WALLET.D6_01_A_balance_and_recent', wa.status === 200 && wa.json.saldo === 35 && wa.json.recientes?.length === 5
+    && wa.json.recientes[0].saldoResultante === 35, `${wa.status} saldo=${wa.json?.saldo} recientes=${wa.json?.recientes?.length}`);
+  const tipos = new Set((ma.json?.items ?? []).map((m) => m.tipo));
+  check('WALLET.D6_02_A_movements_several_categories', ma.status === 200 && ma.json.items.length === 5 && tipos.size === 5
+    && ma.json.items.every((m, i, all) => i === 0 || m.saldoResultante === all[i - 1].saldoAnterior), `${ma.status} tipos=${[...tipos].join(',')}`);
+  check('WALLET.D6_01_A_consumable_active', (wa.json?.consumibles ?? []).some((c) => c.servicioCodigo === 'potenciador'), JSON.stringify(wa.json?.consumibles ?? null).slice(0, 120));
+  check('WALLET.D6_01_B_empty', wb.status === 200 && wb.json.saldo === 0 && wb.json.recientes.length === 0 && wb.json.consumibles.length === 0, `${wb.status}`);
+  check('WALLET.D6_02_B_empty', mb.status === 200 && mb.json.items.length === 0, `${mb.status}`);
+  check('WALLET.own_only', !(mb.text.includes('7d000000') || wb.text.includes('7d000000')), 'B never sees A ledger ids');
+});
+
+await scenario('ENTITLEMENT', async () => {
+  const [ea, eb, ep] = await Promise.all(['A', 'B', 'P'].map((u) => call(u, 'GET', '/api/v1/app/me/entitlement')));
+  const credit = ea.json?.credits ?? [];
+  check('ENTITLEMENT.D7_02_A_non_premium_with_credits', ea.status === 200 && ea.json.isPremium === false && ea.json.status === 'sin_suscripcion'
+    && credit.length === 1 && credit[0].tipoExamen === 'razonado' && credit[0].restantes === 3, `${ea.status} ${JSON.stringify(ea.json)?.slice(0, 160)}`);
+  check('ENTITLEMENT.D7_02_B_empty', eb.status === 200 && eb.json.isPremium === false && eb.json.credits.length === 0, `${eb.status}`);
+  check('ENTITLEMENT.D7_02_P_premium_subscription', ep.status === 200 && ep.json.isPremium === true && ep.json.status === 'activa'
+    && ep.json.planCodigo === 'premium' && ep.json.planNivel === 1, `${ep.status} ${JSON.stringify(ep.json)?.slice(0, 160)}`);
+  const pd = await call('P', 'GET', `/api/v1/app/examenes/${EX.PREMIUM}`);
+  const ad = await call('A', 'GET', `/api/v1/app/examenes/${EX.PREMIUM}`);
+  check('ENTITLEMENT.D2_02_premium_exam_SUBSCRIPTION_for_P_LOCKED_for_A',
+    pd.status === 200 && JSON.stringify(pd.json).includes('SUBSCRIPTION') && ad.status === 200 && !JSON.stringify(ad.json).includes('SUBSCRIPTION'),
+    `P=${pd.status} A=${ad.status}`);
 });
 
 // ---------- DB CALLS / LATENCY (EX12 / EX13) from /metrics ----------

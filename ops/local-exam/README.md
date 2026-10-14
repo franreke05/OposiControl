@@ -20,8 +20,10 @@ docker compose --env-file ops/local-exam/.local/compose.env -f ops/local-exam/do
 | Postgres | `127.0.0.1:54329`, usuario `postgres` / `postgres` |
 | Esquema | `supabase/baseline/main_shape_subset.sql` + `sql/00_overlay_main_objects.sql` (objetos de MAIN fuera del subconjunto) + TODAS las migraciones de `supabase/baseline/PENDING_MIGRATIONS.txt` en orden, `ON_ERROR_STOP` |
 | Fixtures | `sql/90_fixtures.sql` (usuarios A/B, examen normal, razonada, inmersiva imagen (PNG 1200x800 generado por `up.mjs` y creado por la ingesta, recurso 5e...07), inmersiva audio con envolvente, recurso invalido pdf, audio ausente, premium bloqueado, examen de 200) |
+| Cartera y derechos (PHASE B) | `sql/01_overlay_wallet_entitlement.sql` (tablas de D6-01/D6-02/D7-02 fuera del subconjunto) + `sql/92_phase_b_wallet_entitlement.sql` (A: 35 tickets, 5 movimientos de 5 categorias, potenciador activo, creditos razonado 5/2, sin premium; B vacio; P premium activa -> SUBSCRIPTION). Idempotentes: `up.mjs` los aplica siempre, sin reset |
+| Idempotencia | `sql/02_overlay_idempotency_finalize.sql`: `idem_complete`/`idem_release` (el subconjunto solo trae `idem_begin`) |
 | Revision Y | `sql/91_publish_revision_y.sql` (edicion simulada de EX_NORMAL tras empezar un intento; la autoria real es protegida) |
-| Claves, JWT, env | `.local/` (gitignored): `ktor.env`, `tokens.json` (JWT ES256 de A y B, 12 h), `secrets.json` |
+| Claves, JWT, env | `.local/` (gitignored): `ktor.env`, `tokens.json` (JWT ES256 de A, B y P, 12 h), `secrets.json` |
 
 Los JWT de usuario se firman con una clave EC local que la pasarela publica como JWKS: Ktor los verifica igual que en
 produccion (ES256, `iss = <SUPABASE_URL>/auth/v1`). La clave de servicio es un JWT HS256 local que PostgREST y Storage
@@ -39,3 +41,7 @@ video (H.264 160x120) con el ffmpeg/ffprobe de la imagen local `oposicontrol-bac
 
 Limites: no hay GoTrue (los JWT se acuñan aqui; solo el stub de /auth/v1/user), no hay Valkey (limitador en memoria), no hay Caddy. Los triggers de
 AUTORIA de MAIN no estan en el subconjunto: el contenido de los fixtures se siembra con `session_replication_role = replica`.
+
+## Un solo worktree arranca el stack
+
+`docker compose` recrea los contenedores si cambian `.local/secrets.json` o las rutas de los ficheros montados, y la base NO tiene volumen: lanzar `up.mjs` desde otro worktree (otro `.local/`) BORRA la base. Lanza `up.mjs` solo desde el worktree que posee el stack (STACK_LOCK.md) y, si cambias de worktree, copia antes su `.local/secrets.json`.

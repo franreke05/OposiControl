@@ -23,6 +23,7 @@ GET /api/v1/app/opositester/me
 GET /api/v1/app/reto-diario
 GET /api/v1/app/wallet
 GET /api/v1/app/wallet/movimientos
+GET /api/v1/public/especialidades
 GET /health
 GET /health/live
 GET /health/ready
