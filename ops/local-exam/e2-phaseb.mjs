@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:/Users/franr/AndroidStudioProjects/OposiControl-ExamServer/ops/local-exam/.local';
+const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:/Users/franr/AndroidStudioProjects/OposiControl-PhaseB-Server/ops/local-exam/.local';
 const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8090';
 const GATEWAY = 'http://localhost:54321';
 const OUT = process.env.E2_OUT ?? path.join(process.cwd(), 'e2-phaseb-result.json');
@@ -56,8 +56,14 @@ function check(id, ok, detail = '', finding = null) {
 }
 async function scenario(id, fn) { try { await fn(); } catch (e) { check(id, false, `exception: ${e.message}`); } }
 
-// ---------- E2 fixtures: another specialty with a free and a premium exam, a FUTURE-published free rafaga exam, a draft ----------
+// ---------- E2 fixtures: own users, another specialty with a free and a premium exam, a FUTURE-published free rafaga exam, a draft ----------
 sql(`set session_replication_role = replica;
+insert into auth.users (id, email, aud, role, raw_user_meta_data, created_at, updated_at) values
+ ('${U.C}', 'c@e2.local', 'authenticated', 'authenticated', '{}'::jsonb, now(), now()), ('${U.D}', 'd@e2.local', 'authenticated', 'authenticated', '{}'::jsonb, now(), now())
+on conflict (id) do nothing;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta) values
+ ('${U.C}', 'E2 C', 'e2_c', true, 'activa'), ('${U.D}', 'E2 D', 'e2_d', true, 'activa')
+on conflict (usuario_id) do update set estado_cuenta = 'activa';
 insert into public.especialidades (id, codigo, nombre, slug) values ('${SPEC_OTHER}', 'E2B', 'E2 otra', 'e2-otra') on conflict (id) do nothing;
 insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas) values
  ('${EX.FREE_OTHER}', 'E2B-FREE', '${SPEC_OTHER}', 'E2B gratis otra', 'rafaga', 'gratuito', true, now() - interval '1 day', 1),
@@ -81,7 +87,7 @@ update public.intentos_examen set estado = 'abandonado' where estado = 'en_progr
 set session_replication_role = origin;`);
 
 const counts = () => sql(`select (select count(*) from public.transacciones_cartera) || '|' || (select count(*) from public.contenido_desbloqueado_usuario) || '|' ||
-  (select count(*) from public.estado_premium_usuario) || '|' || (select count(*) from public.compras_usuario);`);
+  (select count(*) from public.estado_premium_usuario);`);
 const before = counts();
 
 // ---------- ENTITLEMENT / visibility (Ktor canonical routes) ----------
@@ -189,6 +195,64 @@ await scenario('DIRECT_DB', async () => {
   check('DIRECT_DB.future_published_question_bodies_not_readable', !futT.includes('E2B enunciado'), `${futQ.status} ${futT.includes('E2B enunciado') ? 'question text of a FUTURE exam readable with the anon key' : 'hidden'}`, 'E2-P03');
   const after = counts();
   check('DIRECT_DB.money_and_grant_tables_unchanged', after === before, `${before} -> ${after}`);
+});
+
+// ---------- WALLET + ENTITLEMENT on the Phase B fixtures (A: balance 35 + credits, B: empty, P: premium). Read-only on A/B/P. ----------
+await scenario('WALLET_ENT', async () => {
+  const tk = JSON.parse(fs.readFileSync(path.join(stackLocal, 'tokens.json'), 'utf8'));
+  Object.assign(T, { A: tk.A, B: tk.B, P: tk.P });
+  const ID = { A: '0a000000-0000-4000-8000-00000000000a', B: '0b000000-0000-4000-8000-00000000000b', P: '0f000000-0000-4000-8000-00000000000f' };
+  const money = () => sql(`select coalesce((select string_agg(usuario_id || ':' || saldo_tickets, ',' order by usuario_id) from public.carteras_usuario), '') || '|' ||
+    (select count(*) from public.transacciones_cartera) || '|' || (select count(*) from public.creditos_contenido_usuario) || '|' ||
+    (select count(*) from public.estado_premium_usuario where es_premium) || '|' || (select count(*) from public.contenido_desbloqueado_usuario);`);
+  const m0 = money();
+  const wA = await call('A', 'GET', '/api/v1/app/wallet'); const wB = await call('B', 'GET', '/api/v1/app/wallet');
+  check('WALLET.d6_01_own_balance_no_store', wA.status === 200 && wA.json.saldo === 35 && wB.status === 200 && (wB.json.saldo ?? 0) === 0 &&
+    wA.headers.get('cache-control')?.includes('no-store') && wB.headers.get('cache-control')?.includes('no-store'), `A=${wA.status}/${wA.json?.saldo} B=${wB.status}/${wB.json?.saldo}`);
+  const aIds = (wA.json?.recientes ?? []).map((r) => r.id);
+  const forgedW = await call('B', 'GET', `/api/v1/app/wallet?usuarioId=${ID.A}&userId=${ID.A}`, undefined, { 'X-Usuario-Id': ID.A, 'X-User-Id': ID.A });
+  check('WALLET.d6_01_forged_user_ids_ignored', forgedW.status === 400 || (forgedW.status === 200 && (forgedW.json.saldo ?? 0) === 0 && !aIds.some((i) => forgedW.text.includes(i))), `${forgedW.status} saldo=${forgedW.json?.saldo}`);
+  const mA = await call('A', 'GET', '/api/v1/app/wallet/movimientos?limit=2');
+  const mB = await call('B', 'GET', '/api/v1/app/wallet/movimientos?limit=50');
+  const forgedM = await call('B', 'GET', `/api/v1/app/wallet/movimientos?usuarioId=${ID.A}`, undefined, { 'X-Usuario-Id': ID.A });
+  const cursorReplay = mA.json?.nextCursor ? await call('B', 'GET', `/api/v1/app/wallet/movimientos?cursor=${encodeURIComponent(mA.json.nextCursor)}`) : null;
+  const leak = [mB, forgedM, cursorReplay].filter(Boolean).some((r) => aIds.some((i) => r.text.includes(i)));
+  check('WALLET.d6_02_own_only_forged_ids_and_cursor_replay', mA.status === 200 && (mA.json.items ?? []).length === 2 && mB.status === 200 && !leak,
+    `A=${mA.status} B=${mB.status} forged=${forgedM.status} cursorReplay=${cursorReplay?.status ?? 'n/a'} leak=${leak}`);
+  const eA = await call('A', 'GET', '/api/v1/app/me/entitlement'); const eB = await call('B', 'GET', '/api/v1/app/me/entitlement'); const eP = await call('P', 'GET', '/api/v1/app/me/entitlement');
+  check('ENTITLEMENT.d7_02_own_state', eA.json?.isPremium === false && eA.json.credits?.[0]?.restantes === 3 && eB.json?.isPremium === false && (eB.json.credits ?? []).length === 0 &&
+    eP.json?.isPremium === true && eP.json.status === 'activa' && [eA, eB, eP].every((r) => r.headers.get('cache-control')?.includes('no-store')), `A=${eA.status} B=${eB.status} P=${eP.status}`);
+  const forgedE = await call('A', 'GET', `/api/v1/app/me/entitlement?usuarioId=${ID.P}`, undefined, { 'X-Usuario-Id': ID.P, 'X-Premium': 'true' });
+  check('ENTITLEMENT.d7_02_forged_ids_ignored', forgedE.status === 400 || (forgedE.status === 200 && forgedE.json.isPremium === false), `${forgedE.status} isPremium=${forgedE.json?.isPremium}`);
+  const PREM = 'e0000000-0000-4000-8000-000000000005';
+  const dP = await call('P', 'GET', `/api/v1/app/examenes/${PREM}`); const dA = await call('A', 'GET', `/api/v1/app/examenes/${PREM}`);
+  check('ENTITLEMENT.premium_verdict_per_viewer', dP.json?.examen?.accessState === 'SUBSCRIPTION' && dA.json?.examen?.accessState === 'LOCKED', `P=${dP.json?.examen?.accessState} A=${dA.json?.examen?.accessState}`);
+  const bad = [];
+  for (const u of ['A', 'P']) for (const p of ['/api/v1/app/wallet', '/api/v1/app/wallet/movimientos', '/api/v1/app/me/entitlement', `/api/v1/app/wallet/movimientos/${aIds[0] ?? ID.A}`])
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      const r = await call(u, method, p, { saldo: 99999, cantidad: 99999, isPremium: true, status: 'activa', restantes: 99 });
+      if (![404, 405].includes(r.status)) bad.push(`${u} ${method} ${p} -> ${r.status}`);
+    }
+  check('WALLET_ENT.read_only_endpoints', bad.length === 0, bad.slice(0, 4).join(' | ') || '32 write attempts -> 404/405');
+  const userA = { apikey: secrets.anonKey, Authorization: `Bearer ${hs256(ID.A)}`, 'Content-Type': 'application/json', Prefer: 'return=representation' };
+  const direct = [
+    ['PATCH', `/rest/v1/carteras_usuario?usuario_id=eq.${ID.A}`, { saldo_tickets: 99999 }],
+    ['POST', '/rest/v1/transacciones_cartera', { usuario_id: ID.A, tipo: 'recarga', cantidad: 99999 }],
+    ['POST', '/rest/v1/creditos_contenido_usuario', { usuario_id: ID.A, tipo_examen: 'razonado', cantidad_total: 99 }],
+    ['PATCH', `/rest/v1/creditos_contenido_usuario?usuario_id=eq.${ID.A}`, { cantidad_usada: 0 }],
+    ['PATCH', `/rest/v1/estado_premium_usuario?usuario_id=eq.${ID.A}`, { es_premium: true }],
+    ['POST', '/rest/v1/activaciones_servicio_usuario', { usuario_id: ID.A, estado: 'activa' }],
+  ];
+  const accepted = [];
+  for (const [method, p, body] of direct) {
+    const r = await fetch(GATEWAY + p, { method, headers: userA, body: JSON.stringify(body) });
+    const t = await r.text(); if (r.status < 300 && t !== '[]') accepted.push(`${method} ${p.split('?')[0]} -> ${r.status}`);
+  }
+  const peek = await fetch(`${GATEWAY}/rest/v1/carteras_usuario?select=usuario_id,saldo_tickets&usuario_id=eq.${ID.P}`, { headers: userA });
+  const peekT = await peek.text();
+  check('WALLET_ENT.direct_db_user_token_cannot_write_or_read_others', accepted.length === 0 && !peekT.includes(ID.P), `${accepted.join(' | ') || '6 writes denied'}; read P wallet as A -> ${peek.status} ${peekT.slice(0, 30)}`);
+  const m1 = money();
+  check('WALLET_ENT.balances_credits_premium_grants_unchanged', m0 === m1, m0 === m1 ? 'unchanged' : `${m0} -> ${m1}`);
 });
 
 // ---------- Public unauthenticated /v1 reads (shared profile) ----------
