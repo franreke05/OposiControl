@@ -96,7 +96,7 @@ class OAuthReplayGuardSignatureMalleabilityTest {
                 else -> error("Unexpected request: ${request.method} ${request.url}")
             }
         })
-        val gateway = SupabaseOposiBotsAuthGateway(configuration(), Json { ignoreUnknownKeys = true }, client)
+        val gateway = authGatewayWithoutAccessRequests(configuration(), Json { ignoreUnknownKeys = true }, client)
 
         gateway.google(OposiBotsGoogleRequest(idToken = token(signature)), context)
         val replay = assertFailsWith<OposiBotsAuthProblem> { gateway.google(OposiBotsGoogleRequest(idToken = malleated()), context) }

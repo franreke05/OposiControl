@@ -136,6 +136,27 @@ internal fun accessRequestStatusTone(status: AccessRequestStatus): StatusTone = 
     AccessRequestStatus.REJECTED -> StatusTone.NEGATIVE
 }
 
+/** Insignia de verificacion del correo de una solicitud pendiente (el servidor calcula los dos indicadores). */
+internal enum class AccessVerificationBadge(val label: String, val tone: StatusTone) {
+    VERIFIED("Correo verificado", StatusTone.POSITIVE),
+    UNVERIFIED("Sin verificar", StatusTone.ATTENTION),
+    EXPIRED("Caducada", StatusTone.NEGATIVE),
+}
+
+internal fun accessVerificationBadge(request: AccessRequest): AccessVerificationBadge = when {
+    request.emailVerified -> AccessVerificationBadge.VERIFIED
+    request.expired -> AccessVerificationBadge.EXPIRED
+    else -> AccessVerificationBadge.UNVERIFIED
+}
+
+internal const val ACCESS_UNVERIFIED_TITLE = "Correo sin verificar"
+internal const val ACCESS_UNVERIFIED_DETAIL =
+    "Quien la envía aún no ha introducido el código que le llegó por correo. No se puede aprobar hasta que lo haga; " +
+        "si pasa 1 hora sin verificarlo, la solicitud caduca."
+internal const val ACCESS_EXPIRED_TITLE = "Solicitud caducada"
+internal const val ACCESS_EXPIRED_DETAIL =
+    "Pasó 1 hora sin que se verificara el correo y ya no se puede aprobar. Puedes rechazarla; si quiere entrar, tendrá que enviar otra."
+
 /** «Hace 3 h» / «el 12/10/2026»; una fecha ilegible no se inventa. */
 internal fun accessRequestTimeLabel(iso: String?, now: Instant): String =
     formatRelativeTime(iso.orEmpty(), now).replaceFirstChar { it.uppercase() }.ifBlank { "Fecha desconocida" }
@@ -215,13 +236,20 @@ private fun RequestCatalogPane(
                                 description = request.email,
                                 meta = listOf(accessRequestTimeLabel(request.createdAt, now)),
                                 trailing = {
-                                    StatusChip(
-                                        status = accessRequestStatusLabel(request.status),
-                                        tone = accessRequestStatusTone(request.status),
-                                    )
+                                    // Todas las pendientes dirian «Pendiente» (ya lo cuenta la pastilla de arriba): lo que
+                                    // distingue a una pendiente es si se puede aprobar, asi que su fila lleva la verificacion.
+                                    if (request.status == AccessRequestStatus.PENDING) {
+                                        val badge = accessVerificationBadge(request)
+                                        StatusChip(status = badge.label, tone = badge.tone)
+                                    } else {
+                                        StatusChip(
+                                            status = accessRequestStatusLabel(request.status),
+                                            tone = accessRequestStatusTone(request.status),
+                                        )
+                                    }
                                 },
-                                // La fila recien aprobada o rechazada se resalta un instante.
-                                changeKey = request.status,
+                                // La fila recien aprobada, rechazada o verificada se resalta un instante.
+                                changeKey = request.status to accessVerificationBadge(request),
                             )
                         }
                     }
@@ -257,6 +285,10 @@ private fun RequestDetailPane(
             ) {
                 if (request != null) {
                     StatusChip(status = accessRequestStatusLabel(request.status), tone = accessRequestStatusTone(request.status))
+                    if (request.status == AccessRequestStatus.PENDING) {
+                        val badge = accessVerificationBadge(request)
+                        StatusChip(status = badge.label, tone = badge.tone)
+                    }
                 }
             }
         },
@@ -308,6 +340,9 @@ private fun RequestFacts(request: AccessRequest, now: Instant) {
         WorkspaceMetaLine(label = "Nombre", value = request.name.ifBlank { "Sin nombre" })
         WorkspaceMetaLine(label = "Correo", value = request.email)
         WorkspaceMetaLine(label = "Enviada", value = accessRequestTimeLabel(request.createdAt, now))
+        if (request.emailVerifiedAt != null) {
+            WorkspaceMetaLine(label = "Correo verificado", value = accessRequestTimeLabel(request.emailVerifiedAt, now))
+        }
         if (request.status != AccessRequestStatus.PENDING) {
             WorkspaceMetaLine(label = "Resuelta", value = accessRequestTimeLabel(request.resolvedAt, now))
         }
@@ -324,6 +359,20 @@ private fun RequestFacts(request: AccessRequest, now: Instant) {
 
 @Composable
 private fun PendingDecisionPanel(request: AccessRequest, state: AccessRequestsState, onIntent: (AccessRequestsIntent) -> Unit) {
+    // Aprobar solo se ofrece con el correo verificado y a tiempo; el servidor lo vuelve a comprobar (409 si no).
+    when (accessVerificationBadge(request)) {
+        AccessVerificationBadge.VERIFIED -> Unit
+        AccessVerificationBadge.UNVERIFIED -> WorkspaceNotice(
+            tone = WorkspaceNoticeTone.INFO,
+            title = ACCESS_UNVERIFIED_TITLE,
+            detail = ACCESS_UNVERIFIED_DETAIL,
+        )
+        AccessVerificationBadge.EXPIRED -> WorkspaceNotice(
+            tone = WorkspaceNoticeTone.WARNING,
+            title = ACCESS_EXPIRED_TITLE,
+            detail = ACCESS_EXPIRED_DETAIL,
+        )
+    }
     WorkspacePanel {
         LabeledField(
             label = "Motivo del rechazo (opcional)",
@@ -335,23 +384,27 @@ private fun PendingDecisionPanel(request: AccessRequest, state: AccessRequestsSt
             supportingText = "${state.rejectionReason.length} / ${AccessRequestRules.RESOLUTION_REASON_MAX}",
         )
         Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs), verticalAlignment = Alignment.CenterVertically) {
-            PrimaryButton(
-                text = "Aprobar",
-                onClick = { onIntent(AccessRequestsIntent.AskApprove(request.id)) },
-                enabled = !state.isDeciding,
-                loading = state.isDeciding,
-                icon = { AppIconImage(AppIcon.CHECK, size = 14.dp) },
-            )
+            if (request.canBeApproved) {
+                PrimaryButton(
+                    text = "Aprobar",
+                    onClick = { onIntent(AccessRequestsIntent.AskApprove(request.id)) },
+                    enabled = !state.isDeciding,
+                    loading = state.isDeciding,
+                    icon = { AppIconImage(AppIcon.CHECK, size = 14.dp) },
+                )
+            }
             DangerOutlineButton(
                 text = "Rechazar",
                 onClick = { onIntent(AccessRequestsIntent.AskReject(request.id)) },
                 enabled = !state.isDeciding,
             )
         }
-        Text(
-            text = "Aprobar concede el rol de administrador (nunca el de superadministrador).",
-            style = MaterialTheme.typography.bodySmall,
-            color = GlassTheme.tokens.textSecondary,
-        )
+        if (request.canBeApproved) {
+            Text(
+                text = "Aprobar concede el rol de administrador (nunca el de superadministrador).",
+                style = MaterialTheme.typography.bodySmall,
+                color = GlassTheme.tokens.textSecondary,
+            )
+        }
     }
 }

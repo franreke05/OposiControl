@@ -14,6 +14,8 @@ import io.ktor.http.headersOf
 import io.ktor.utils.io.ByteReadChannel
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -66,7 +68,6 @@ class SupabaseAdminAccessRequestGatewayTest {
     private fun submission() = AdminAccessSubmission(
         nombre = "Ada Lovelace",
         email = "ada@example.com",
-        password = password,
         motivo = "Coordino el equipo de contenido.",
     )
 
@@ -91,7 +92,11 @@ class SupabaseAdminAccessRequestGatewayTest {
         assertEquals(listOf("POST /auth/v1/admin/users", "POST /rest/v1/solicitudes_acceso_admin"), wire.calls())
         val auth = Json.parseToJsonElement(wire.sent[0].body).jsonObject
         assertEquals("ada@example.com", auth["email"]!!.jsonPrimitive.content)
-        assertEquals(password, auth["password"]!!.jsonPrimitive.content)
+        // Revision 2026-10-14 (DO_NOT_SHIP): contrasena ALEATORIA del servidor (43 caracteres base64url, 256 bits), nunca
+        // una elegida por quien pide: la suya la fija al verificar el codigo.
+        val serverPassword = auth["password"]!!.jsonPrimitive.content
+        assertTrue(Regex("[A-Za-z0-9_-]{43}").matches(serverPassword), "contrasena aleatoria del servidor")
+        assertFalse(serverPassword in wire.sent[1].body, "la fila guardada no lleva la contrasena")
         assertEquals("Ada Lovelace", auth["user_metadata"]!!.jsonObject["nombre"]!!.jsonPrimitive.content)
         // SIN confirmar: la cuenta no puede obtener sesion en ningun sitio hasta que un superadministrador la apruebe.
         assertEquals("false", auth["email_confirm"]!!.jsonPrimitive.content)
@@ -253,31 +258,193 @@ class SupabaseAdminAccessRequestGatewayTest {
         assertTrue(body["resuelto_en"]!!.jsonPrimitive.content.isNotBlank())
     }
 
+    // ------------------------------------------------------------------------------------------------ codigo de verificacion
+
+    /**
+     * H1: el correo con el codigo es el OTP de GoTrue (`/otp`, plantilla «Magic Link») con `create_user:false`; NUNCA el
+     * `resend` de tipo signup (plantilla «Confirm signup», con el enlace del consumidor). Sin redireccion ni contrasena.
+     */
     @Test
-    fun confirmingTheEmailIsOneAdminPutThatOnlySetsEmailConfirm() = runTest {
-        val wire = Wire { json(HttpStatusCode.OK, """{"id":"$newUserId","email_confirmed_at":"2026-10-13T10:00:00Z"}""") }
+    fun sendingTheCodeIsOneOtpWithoutUserCreationAndWithTheServiceKey() = runTest {
+        val wire = Wire { json(HttpStatusCode.OK, "{}") }
 
-        gateway(wire).confirmEmail(newUserId)
-        // Confirmar una cuenta ya confirmada es la misma llamada y GoTrue la acepta: repetirla no falla.
-        gateway(wire).confirmEmail(newUserId.uppercase())
+        gateway(wire).sendAccessCode("ada@example.com")
 
-        assertEquals(listOf("PUT /auth/v1/admin/users/$newUserId", "PUT /auth/v1/admin/users/$newUserId"), wire.calls())
-        val body = Json.parseToJsonElement(wire.sent.first().body).jsonObject
-        // Solo la confirmacion: ni contrasena, ni correo, ni metadatos (no se puede usar para cambiar la cuenta).
-        assertEquals(setOf("email_confirm"), body.keys)
-        assertEquals("true", body["email_confirm"]!!.jsonPrimitive.content)
-        assertEquals("service-role-key", wire.sent.first().headers["apikey"])
+        assertEquals(listOf("POST /auth/v1/otp"), wire.calls())
+        val sent = wire.sent.single()
+        assertEquals("", sent.query)
+        val body = Json.parseToJsonElement(sent.body).jsonObject
+        assertEquals(setOf("email", "create_user"), body.keys)
+        assertEquals("false", body["create_user"]!!.jsonPrimitive.content)
+        assertFalse(body["create_user"]!!.jsonPrimitive.isString)
+        assertEquals("ada@example.com", body["email"]!!.jsonPrimitive.content)
+        assertEquals("service-role-key", sent.headers["apikey"])
+        assertTrue(wire.sent.none { it.path == "/auth/v1/resend" || it.path == "/auth/v1/signup" })
+    }
+
+    /** 429 (un correo por minuto) u otro 4xx no lanzan: no sale correo y la respuesta publica no cambia. 5xx y red, si. */
+    @Test
+    fun aRejectedCodeMailIsSwallowedButAServerFailurePropagates() = runTest {
+        gateway(Wire { json(HttpStatusCode.TooManyRequests, """{"code":429,"error_code":"over_email_send_rate_limit"}""") }).sendAccessCode("ada@example.com")
+        gateway(Wire { json(HttpStatusCode.BadRequest, """{"code":400,"error_code":"captcha_failed"}""") }).sendAccessCode("ada@example.com")
+
+        val broken = assertFailsWith<SupabaseHttpStatusException> {
+            gateway(Wire { json(HttpStatusCode.BadGateway, "{}") }).sendAccessCode("ada@example.com")
+        }
+        assertEquals(502, broken.status)
     }
 
     @Test
-    fun aFailedConfirmationPropagatesWithItsStatusAndAnInvalidIdNeverLeaves() = runTest {
-        val wire = Wire { json(HttpStatusCode.NotFound, """{"code":404,"error_code":"user_not_found","msg":"User not found"}""") }
+    fun verifyingTheCodeSendsTypeEmailWithEmailAndTokenAndReturnsTheSessionToRevoke() = runTest {
+        val wire = Wire {
+            json(HttpStatusCode.OK, """{"access_token":"verify-access","refresh_token":"verify-refresh","user":{"id":"$newUserId","email":"ada@example.com"}}""")
+        }
 
-        val failure = assertFailsWith<SupabaseHttpStatusException> { gateway(wire).confirmEmail(newUserId) }
-        assertEquals(404, failure.status)
-        assertFailsWith<Exception> { gateway(wire).confirmEmail("../otra-ruta") }
+        val verified = gateway(wire).verifyAccessCode("ada@example.com", "123456")!!
 
-        assertEquals(1, wire.sent.size)
+        assertEquals(newUserId, verified.userId)
+        assertEquals("verify-access", verified.accessToken)
+        assertFalse("verify-access" in verified.toString(), "toString no imprime la sesion")
+        val body = Json.parseToJsonElement(wire.sent.single().body).jsonObject
+        assertEquals(setOf("type", "email", "token"), body.keys)
+        assertEquals("email", body["type"]!!.jsonPrimitive.content)
+        assertEquals("ada@example.com", body["email"]!!.jsonPrimitive.content)
+        assertEquals("123456", body["token"]!!.jsonPrimitive.content)
+        assertEquals("POST /auth/v1/verify", wire.calls().single())
+    }
+
+    @Test
+    fun aRejectedCodeIsNullAThrottledOneIsUpstreamUnavailableAndAServerFailurePropagates() = runTest {
+        for (status in listOf(HttpStatusCode.Forbidden, HttpStatusCode.BadRequest, HttpStatusCode.UnprocessableEntity, HttpStatusCode.NotFound)) {
+            assertNull(gateway(Wire { json(status, """{"error_code":"otp_expired"}""") }).verifyAccessCode("ada@example.com", "123456"), status.toString())
+        }
+        // El 429 de GoTrue es su limite (compartido por la IP del backend), no el del solicitante: 503 con Retry-After.
+        val throttled = assertFailsWith<OposiBotsAuthProblem> {
+            gateway(Wire { json(HttpStatusCode.TooManyRequests, "{}") }).verifyAccessCode("ada@example.com", "123456")
+        }
+        assertEquals(HttpStatusCode.ServiceUnavailable, throttled.status)
+        assertEquals(CanonicalErrorCode.UPSTREAM_UNAVAILABLE, throttled.canonicalCode())
+        assertEquals(60L, throttled.retryAfterSeconds)
+        assertFailsWith<SupabaseHttpStatusException> {
+            gateway(Wire { json(HttpStatusCode.InternalServerError, "{}") }).verifyAccessCode("ada@example.com", "123456")
+        }
+    }
+
+    /** La sesion de la verificacion se revoca con SU token (no con la clave de servicio) y en global. */
+    @Test
+    fun revokingTheVerifySessionIsAGlobalLogoutWithTheUserToken() = runTest {
+        val token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIyMjIyIn0.c2lnbmF0dXJl"
+        val wire = Wire { json(HttpStatusCode.NoContent, "") }
+
+        assertTrue(gateway(wire).revokeSession(token))
+
+        val sent = wire.sent.single()
+        assertEquals("POST /auth/v1/logout", "${sent.method.value} ${sent.path}")
+        assertEquals("scope=global", sent.query)
+        assertEquals("Bearer $token", sent.headers[HttpHeaders.Authorization])
+        assertEquals("service-role-key", sent.headers["apikey"])
+        // 401/404 = la sesion ya no existe: objetivo cumplido. Otro fallo: false, nunca una excepcion.
+        assertTrue(gateway(Wire { json(HttpStatusCode.Unauthorized, "{}") }).revokeSession(token))
+        assertFalse(gateway(Wire { json(HttpStatusCode.InternalServerError, "{}") }).revokeSession(token))
+    }
+
+    /** La marca de verificado esta CONDICIONADA: esa fila, ese usuario, pendiente y todavia sin verificar. */
+    @Test
+    fun markingTheEmailVerifiedIsAConditionalPatch() = runTest {
+        val wire = Wire { json(HttpStatusCode.OK, "[${row()}]") }
+
+        val marked = gateway(wire).markEmailVerified(requestId, newUserId.uppercase())
+
+        assertEquals(requestId, marked!!.id)
+        val patch = wire.sent.single()
+        assertEquals(HttpMethod.Patch, patch.method)
+        assertEquals("id=eq.$requestId&usuario_id=eq.$newUserId&estado=eq.pendiente&correo_verificado_en=is.null", patch.query)
+        assertEquals("return=representation", patch.headers["Prefer"])
+        assertEquals(setOf("correo_verificado_en"), Json.parseToJsonElement(patch.body).jsonObject.keys)
+        assertNull(gateway(Wire { json(HttpStatusCode.OK, "[]") }).markEmailVerified(requestId, newUserId))
+    }
+
+    // ------------------------------------------------------------------------------------------------ guarda
+
+    @Test
+    fun theAccountStateComesFromTheAdminApiAndAMissingAccountIsNull() = runTest {
+        val confirmed = Wire { json(HttpStatusCode.OK, """{"id":"$newUserId","email_confirmed_at":"2026-10-14T10:00:00Z"}""") }
+        assertEquals(AuthAccountState(emailConfirmed = true), gateway(confirmed).authAccount(newUserId))
+        assertEquals("GET /auth/v1/admin/users/$newUserId", confirmed.calls().single())
+        assertEquals(
+            AuthAccountState(emailConfirmed = false),
+            gateway(Wire { json(HttpStatusCode.OK, """{"id":"$newUserId","email_confirmed_at":null}""") }).authAccount(newUserId),
+        )
+        assertNull(gateway(Wire { json(HttpStatusCode.NotFound, """{"error_code":"user_not_found"}""") }).authAccount(newUserId))
+        // Otro usuario en la respuesta no es esta cuenta: falla cerrado.
+        assertFailsWith<IllegalStateException> {
+            gateway(Wire { json(HttpStatusCode.OK, """{"id":"$actorId","email_confirmed_at":null}""") }).authAccount(newUserId)
+        }
+        assertFailsWith<Exception> { gateway(confirmed).authAccount("../otra-ruta") }
+    }
+
+    /** Revision #3 M1: `banned_until` en el futuro = baneada; pasado o ausente = no; presente e ilegible = baneada. */
+    @Test
+    fun theAccountStateReadsTheBanFromBannedUntil() = runTest {
+        suspend fun stateWith(bannedUntil: String?) = gateway(
+            Wire {
+                json(
+                    HttpStatusCode.OK,
+                    """{"id":"$newUserId","email_confirmed_at":"2026-10-14T10:00:00Z","banned_until":${bannedUntil?.let { "\"$it\"" } ?: "null"}}""",
+                )
+            },
+        ).authAccount(newUserId)
+        assertEquals(AuthAccountState(emailConfirmed = true, banned = true), stateWith("2126-10-14T10:00:00Z"))
+        assertEquals(AuthAccountState(emailConfirmed = true, banned = true), stateWith("2126-10-14T10:00:00.123456+00:00"))
+        assertEquals(AuthAccountState(emailConfirmed = true, banned = false), stateWith("2001-01-01T00:00:00Z"))
+        assertEquals(AuthAccountState(emailConfirmed = true, banned = false), stateWith(null))
+        assertEquals(AuthAccountState(emailConfirmed = true, banned = true), stateWith("no-es-una-fecha"))
+    }
+
+    /** Revision #3 L1: la purga es la RPC con la clave de servicio y solo `p_user_id`; una respuesta no entera falla cerrado. */
+    @Test
+    fun purgingTheSessionsCallsTheServiceRoleRpc() = runTest {
+        val wire = Wire { json(HttpStatusCode.OK, "2") }
+
+        assertEquals(2, gateway(wire).purgeSessions(newUserId.uppercase()))
+
+        val sent = wire.sent.single()
+        assertEquals("POST /rest/v1/rpc/$ADMIN_PURGE_USER_SESSIONS_RPC", "${sent.method.value} ${sent.path}")
+        assertEquals(mapOf("p_user_id" to newUserId), Json.parseToJsonElement(sent.body).jsonObject.mapValues { it.value.jsonPrimitive.content })
+        assertEquals("service-role-key", sent.headers["apikey"])
+        assertFailsWith<IllegalStateException> { gateway(Wire { json(HttpStatusCode.OK, "{}") }).purgeSessions(newUserId) }
+        assertFailsWith<SupabaseHttpStatusException> { gateway(Wire { json(HttpStatusCode.Forbidden, "{}") }).purgeSessions(newUserId) }
+        assertFailsWith<Exception> { gateway(wire).purgeSessions("../otra-ruta") }
+    }
+
+    @Test
+    fun deletingAnUnverifiedRowIsConditionalAndAuditRowsCarryNoActor() = runTest {
+        val wire = Wire { sent -> json(HttpStatusCode.OK, if (sent.method == HttpMethod.Delete) """[{"id":"$requestId"}]""" else "") }
+
+        assertTrue(gateway(wire).deleteUnverifiedRequest(requestId))
+        gateway(wire).audit(ACTION_ACCESS_REQUEST_EXPIRED, requestId, buildJsonObject { put("motivo", "x") })
+
+        val delete = wire.sent[0]
+        assertEquals("id=eq.$requestId&correo_verificado_en=is.null&estado=neq.aprobada", delete.query)
+        assertEquals("return=representation", delete.headers["Prefer"])
+        val audit = wire.sent[1]
+        assertEquals("POST /rest/v1/auditoria_log", "${audit.method.value} ${audit.path}")
+        val row = Json.parseToJsonElement(audit.body).jsonArray.single().jsonObject
+        assertEquals(setOf("accion", "tabla_afectada", "registro_id", "despues"), row.keys)
+        assertEquals(ACTION_ACCESS_REQUEST_EXPIRED, row["accion"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun theListComputesVerifiedAndExpiredFlags() = runTest {
+        val old = row().replace("\"creado_en\":\"2026-10-13T09:00:00+00:00\"", "\"creado_en\":\"2000-01-01T00:00:00+00:00\"")
+        val verified = row().replace("\"estado\":\"pendiente\"", "\"estado\":\"pendiente\",\"correo_verificado_en\":\"2026-10-13T09:05:00+00:00\"")
+        val wire = Wire { json(HttpStatusCode.OK, "[$old,$verified]") }
+
+        val items = gateway(wire).list(null, 10, 0)
+
+        assertEquals(listOf(false, true), items.map { it.correoVerificado })
+        assertEquals(listOf(true, false), items.map { it.caducada })
+        assertTrue("correo_verificado_en" in wire.sent.single().query)
     }
 
     @Test
@@ -298,6 +465,157 @@ class SupabaseAdminAccessRequestGatewayTest {
     fun resolvingARequestThatIsNoLongerPendingReturnsNull() = runTest {
         val wire = Wire { json(HttpStatusCode.OK, "[]") }
         assertNull(gateway(wire).resolve(requestId, "aprobada", actorId, null))
+    }
+
+    // ------------------------------------------------------------------------------------------------ revision de seguridad
+
+    /** M1: banear y desbanear son un PUT de administracion con `ban_duration` (876000h / none) y nada mas. */
+    @Test
+    fun banAndUnbanAreOneAdminPutWithTheBanDuration() = runTest {
+        val wire = Wire { json(HttpStatusCode.OK, """{"id":"$newUserId"}""") }
+
+        gateway(wire).setBanned(newUserId.uppercase(), banned = true)
+        gateway(wire).setBanned(newUserId, banned = false)
+
+        assertEquals(listOf("PUT /auth/v1/admin/users/$newUserId", "PUT /auth/v1/admin/users/$newUserId"), wire.calls())
+        assertEquals(listOf("876000h", "none"), wire.sent.map { Json.parseToJsonElement(it.body).jsonObject.getValue("ban_duration").jsonPrimitive.content })
+        assertTrue(wire.sent.all { Json.parseToJsonElement(it.body).jsonObject.keys == setOf("ban_duration") })
+        assertEquals(500, assertFailsWith<SupabaseHttpStatusException> {
+            gateway(Wire { json(HttpStatusCode.InternalServerError, "{}") }).setBanned(newUserId, banned = true)
+        }.status)
+        assertFailsWith<Exception> { gateway(wire).setBanned("../otra", banned = true) }
+    }
+
+    /** La contrasena elegida al verificar: UN PUT de administracion con `password` y nada mas; nunca en URL, cabecera ni error. */
+    @Test
+    fun settingTheChosenPasswordIsOneAdminPutWithOnlyThePassword() = runTest {
+        val wire = Wire { json(HttpStatusCode.OK, """{"id":"$newUserId"}""") }
+
+        gateway(wire).setPassword(newUserId.uppercase(), password)
+
+        assertEquals(listOf("PUT /auth/v1/admin/users/$newUserId"), wire.calls())
+        assertEquals(mapOf("password" to password), Json.parseToJsonElement(wire.sent.single().body).jsonObject.mapValues { it.value.jsonPrimitive.content })
+        assertTrue(wire.sent.none { password in it.path || password in it.query || it.headers.values.any { value -> password in value } })
+        val failure = assertFailsWith<SupabaseHttpStatusException> {
+            gateway(Wire { json(HttpStatusCode.UnprocessableEntity, """{"error_code":"weak_password","msg":"$password"}""") }).setPassword(newUserId, password)
+        }
+        assertEquals(422, failure.status)
+        assertFalse(password in failure.message.orEmpty())
+        assertFailsWith<Exception> { gateway(wire).setPassword("../otra", password) }
+    }
+
+    /** H1: contrasena aleatoria del servidor (PUT), inicio con ELLA y cierre global; nunca la contrasena en URL ni en cabeceras. */
+    @Test
+    fun neutralisingTheCredentialRotatesThePasswordAndRevokesEverySession() = runTest {
+        val wire = Wire { sent ->
+            when (sent.path) {
+                "/auth/v1/admin/users/$newUserId" -> json(HttpStatusCode.OK, """{"id":"$newUserId","email":"ada@example.com"}""")
+                "/auth/v1/token" -> json(HttpStatusCode.OK, """{"access_token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIyMjIyIn0.bmV1dHJhbGlzZQ","refresh_token":"r","user":{"id":"$newUserId"}}""")
+                else -> json(HttpStatusCode.NoContent, "")
+            }
+        }
+
+        gateway(wire).neutraliseCredential(newUserId, revokeSessions = true)
+
+        assertEquals(listOf("PUT /auth/v1/admin/users/$newUserId", "POST /auth/v1/token", "POST /auth/v1/logout"), wire.calls())
+        val newPassword = Json.parseToJsonElement(wire.sent[0].body).jsonObject.getValue("password").jsonPrimitive.content
+        assertTrue(newPassword.length >= 43 && newPassword.all { it.code in 0x21..0x7E }, "256 bits ASCII")
+        assertEquals("grant_type=password", wire.sent[1].query)
+        assertEquals(newPassword, Json.parseToJsonElement(wire.sent[1].body).jsonObject.getValue("password").jsonPrimitive.content)
+        assertEquals("scope=global", wire.sent[2].query)
+        assertEquals("Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIyMjIyIn0.bmV1dHJhbGlzZQ", wire.sent[2].headers[HttpHeaders.Authorization])
+        assertTrue(wire.sent.none { newPassword in it.query || it.headers.values.any { v -> newPassword in v } })
+        // Dos llamadas, dos contrasenas distintas.
+        val again = Wire { json(HttpStatusCode.OK, """{"id":"$newUserId","email":"ada@example.com"}""") }
+        gateway(again).neutraliseCredential(newUserId, revokeSessions = false)
+        assertEquals(listOf("PUT /auth/v1/admin/users/$newUserId"), again.calls())
+        assertFalse(newPassword == Json.parseToJsonElement(again.sent.single().body).jsonObject.getValue("password").jsonPrimitive.content)
+        // Si no se pueden revocar las sesiones, falla (la guarda falla cerrado y lo reintenta todo).
+        val noLogout = Wire { sent ->
+            when (sent.path) {
+                "/auth/v1/logout" -> json(HttpStatusCode.InternalServerError, "{}")
+                "/auth/v1/token" -> json(HttpStatusCode.OK, """{"access_token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIyMjIyIn0.dA","refresh_token":"r"}""")
+                else -> json(HttpStatusCode.OK, """{"id":"$newUserId","email":"ada@example.com"}""")
+            }
+        }
+        assertFailsWith<IllegalStateException> { gateway(noLogout).neutraliseCredential(newUserId, revokeSessions = true) }
+    }
+
+    /** M2: el contador de fallos es un PATCH condicionado al valor leido; ante una carrera se relee y se reintenta. */
+    @Test
+    fun theFailedAttemptCounterIsAnOptimisticConditionalPatch() = runTest {
+        val reservation = AccessRequestReservation(requestId, newUserId, "pendiente", null, "2026-10-13T09:00:00Z", intentosVerificacion = 2)
+        val wire = Wire { sent ->
+            when {
+                sent.method == HttpMethod.Patch && "intentos_verificacion=eq.2" in sent.query -> json(HttpStatusCode.OK, "[]")
+                sent.method == HttpMethod.Get -> json(
+                    HttpStatusCode.OK,
+                    """[{"id":"$requestId","usuario_id":"$newUserId","estado":"pendiente","creado_en":"2026-10-13T09:00:00Z","intentos_verificacion":3}]""",
+                )
+                else -> json(HttpStatusCode.OK, "[${row()}]")
+            }
+        }
+
+        assertEquals(4, gateway(wire).recordFailedVerification(reservation))
+
+        assertEquals(listOf("PATCH /rest/v1/solicitudes_acceso_admin", "GET /rest/v1/solicitudes_acceso_admin", "PATCH /rest/v1/solicitudes_acceso_admin"), wire.calls())
+        assertEquals(
+            "id=eq.$requestId&estado=eq.pendiente&correo_verificado_en=is.null&intentos_verificacion=eq.2",
+            wire.sent[0].query,
+        )
+        assertEquals("3", Json.parseToJsonElement(wire.sent[0].body).jsonObject.getValue("intentos_verificacion").jsonPrimitive.content)
+        assertTrue("intentos_verificacion=eq.3" in wire.sent[2].query)
+        // La fila ya no esta viva: null.
+        assertNull(gateway(Wire { json(HttpStatusCode.OK, "[]") }).recordFailedVerification(reservation))
+    }
+
+    /** L1: revertir la aprobacion vuelve a `pendiente` condicionado a `aprobada` y al mismo actor, con la resolucion vacia. */
+    @Test
+    fun revertingAnApprovalIsConditionalOnApprovedAndTheActor() = runTest {
+        val wire = Wire { json(HttpStatusCode.OK, "[${row()}]") }
+
+        assertEquals("pendiente", gateway(wire).revertApproval(requestId, actorId.uppercase())!!.estado)
+
+        val patch = wire.sent.single()
+        assertEquals("id=eq.$requestId&estado=eq.aprobada&resuelto_por=eq.$actorId", patch.query)
+        val body = Json.parseToJsonElement(patch.body).jsonObject
+        assertEquals("pendiente", body["estado"]!!.jsonPrimitive.content)
+        assertEquals(setOf("estado", "resuelto_en", "resuelto_por", "motivo_resolucion"), body.keys)
+        assertTrue(listOf("resuelto_en", "resuelto_por", "motivo_resolucion").all { body[it] is kotlinx.serialization.json.JsonNull })
+        assertNull(gateway(Wire { json(HttpStatusCode.OK, "[]") }).revertApproval(requestId, actorId))
+    }
+
+    /** L2: la fila guarda el correo que devuelve GoTrue; si su minusculado no es el canonico, no se guarda nada (y se borra la cuenta). */
+    @Test
+    fun theRowStoresTheUpstreamEmailAndADivergentSpellingIsDiscarded() = runTest {
+        val same = Wire { sent ->
+            if (sent.path == "/auth/v1/admin/users") json(HttpStatusCode.OK, """{"id":"$newUserId","email":"ada@example.com"}""") else json(HttpStatusCode.Created, "")
+        }
+        assertEquals(AdminAccessSubmitOutcome.CREATED, gateway(same).submit(submission()))
+        assertEquals("ada@example.com", Json.parseToJsonElement(same.sent[1].body).jsonArray.single().jsonObject["email"]!!.jsonPrimitive.content)
+
+        val divergent = Wire { sent ->
+            if (sent.method == HttpMethod.Post) json(HttpStatusCode.OK, """{"id":"$newUserId","email":"i̇nfo@example.com"}""") else json(HttpStatusCode.OK, "{}")
+        }
+        assertEquals(AdminAccessSubmitOutcome.REJECTED_BY_AUTH, gateway(divergent).submit(submission()))
+        assertEquals(listOf("POST /auth/v1/admin/users", "DELETE /auth/v1/admin/users/$newUserId"), divergent.calls())
+    }
+
+    /** L6: fuera de desarrollo el gateway exige el secreto del seudonimo; en desarrollo conserva el respaldo sin clave. */
+    @Test
+    fun outsideDevelopmentTheEmailPseudonymSecretIsRequired() {
+        val base = mapOf("SUPABASE_URL" to "https://example.supabase.co", "SUPABASE_SECRET_KEY" to "service-role-key")
+        val json = Json { ignoreUnknownKeys = true }
+        for (env in listOf(null, "production", "staging")) {
+            val failure = assertFailsWith<IllegalStateException>(env.toString()) {
+                SupabaseAdminAccessRequestGateway.fromEnvironment(json) { (base + listOfNotNull(env?.let { "APP_ENV" to it })).toMap()[it] }
+            }
+            assertTrue("AUTH_RATE_LIMIT_HMAC_SECRET" in failure.message.orEmpty())
+        }
+        (SupabaseAdminAccessRequestGateway.fromEnvironment(json) { (base + ("APP_ENV" to "development"))[it] } as AutoCloseable).close()
+        (SupabaseAdminAccessRequestGateway.fromEnvironment(json) { (base + ("AUTH_RATE_LIMIT_HMAC_SECRET" to "x".repeat(32)))[it] } as AutoCloseable).close()
+        // Sin URL ni clave sigue siendo null (rutas fallan cerradas), sin exigir nada mas.
+        assertNull(SupabaseAdminAccessRequestGateway.fromEnvironment(json) { null })
     }
 
     @Test

@@ -33,7 +33,13 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 request.validate(runtime.configuration)
                 // MASTER-SEC-003: el tope por email es SILENCIOSO (misma 202, sin llamar a GoTrue): un tercero que nombra
                 // el email de la victima no puede bloquearla con 429, solo deja de disparar correos.
-                if (!withinSilentSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())) {
+                // B1 (2026-10-13): y si el email tiene una solicitud de acceso de administrador no aprobada, la MISMA 202 sin
+                // llamar a GoTrue (AccessRequestMailGuard.kt): esa cuenta no puede confirmarse sola por esta via.
+                val email = request.resolvedIdentifier().normalizedIdentifier()
+                if (
+                    !withinSilentSubjectLimit(runtime, email) ||
+                    runtime.accessRequestHoldsMail(OposiBotsAuthOperation.REGISTER, email)
+                ) {
                     respond(HttpStatusCode.Accepted, OposiBotsRegisterResponse())
                     return@authEndpoint
                 }
@@ -45,7 +51,12 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 val request = receiveAuthJson<OposiBotsEmailResendRequest>(runtime.json)
                 request.validate(runtime.configuration)
                 // MASTER-SEC-003: tope por email silencioso (misma 204, sin reenviar).
-                if (withinSilentSubjectLimit(runtime, request.email.normalizedIdentifier())) {
+                // B1 (2026-10-13): solicitud de acceso no aprobada -> misma 204, sin reenviar (AccessRequestMailGuard.kt).
+                val email = request.email.normalizedIdentifier()
+                if (
+                    withinSilentSubjectLimit(runtime, email) &&
+                    !runtime.accessRequestHoldsMail(OposiBotsAuthOperation.RESEND, email)
+                ) {
                     runtime.gateway.resend(request, authContext(runtime.configuration))
                 }
                 respond(HttpStatusCode.NoContent)
@@ -116,7 +127,13 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 val request = receiveAuthJson<OposiBotsRecoverRequest>(runtime.json)
                 request.validate(runtime.configuration)
                 // MASTER-SEC-003: tope por email silencioso (misma 204, sin enviar otro correo de recuperacion).
-                if (withinSilentSubjectLimit(runtime, request.resolvedIdentifier().normalizedIdentifier())) {
+                // B1 (2026-10-13): solicitud de acceso no aprobada -> misma 204, sin correo de recuperacion (el enlace de
+                // recuperacion tambien confirmaria la cuenta; AccessRequestMailGuard.kt).
+                val email = request.resolvedIdentifier().normalizedIdentifier()
+                if (
+                    withinSilentSubjectLimit(runtime, email) &&
+                    !runtime.accessRequestHoldsMail(OposiBotsAuthOperation.RECOVER, email)
+                ) {
                     runtime.gateway.recover(request, authContext(runtime.configuration))
                 }
                 respond(HttpStatusCode.NoContent)
@@ -290,11 +307,23 @@ private suspend inline fun <reified T : Any> ApplicationCall.receiveAuthJson(jso
 
 /**
  * Costuras para `AdminAccessRequests.kt` (solicitud publica de acceso de administrador, mismo plano `/v1/auth`): la MISMA
- * lectura acotada del cuerpo ([receiveAuthJson], 16 KB) y la MISMA validacion de email y contrasena que el registro.
+ * lectura acotada del cuerpo ([receiveAuthJson], 16 KB) y la MISMA validacion de email y contrasena que el registro
+ * (correo canonico unico y contrasena nueva 12..72 ASCII imprimible).
  */
 internal suspend fun ApplicationCall.receiveAdminAccessRequestBody(json: Json): AdminAccessRequestBody = receiveAuthJson(json)
 
-internal fun validateAuthEmailAndPassword(email: String, password: String) = validateIdentifierAndPassword(email, password)
+/** La misma lectura acotada para `POST /v1/auth/admin-access-requests/verify` (`{email, code}`). */
+internal suspend fun ApplicationCall.receiveAdminAccessVerifyBody(json: Json): AdminAccessVerifyBody = receiveAuthJson(json)
+
+/** La misma lectura acotada para `POST /v1/auth/admin-access-requests/resend-code` (`{email}`). */
+internal suspend fun ApplicationCall.receiveAdminAccessResendCodeBody(json: Json): AdminAccessResendCodeBody = receiveAuthJson(json)
+
+/** El limite por sujeto NO silencioso del plano (429 + `Retry-After` al superarlo), con la operacion explicita. */
+internal suspend fun ApplicationCall.requireAuthSubjectLimit(runtime: OposiBotsAuthRuntime, operation: OposiBotsAuthOperation, subject: String) =
+    requireSubjectLimit(runtime, subject, operation)
+
+internal fun validateAuthEmailAndPassword(email: String, password: String) =
+    validateIdentifierAndPassword(email, password, newPassword = true)
 
 private fun ApplicationCall.requiredBearerToken(): String {
     val header = request.headers[HttpHeaders.Authorization].orEmpty()
@@ -333,28 +362,21 @@ internal fun resolveTrustedClientIp(
 }
 
 private fun OposiBotsRegisterRequest.validate(configuration: OposiBotsAuthConfiguration) {
-    validateIdentifierAndPassword(resolvedIdentifier(), password)
+    validateIdentifierAndPassword(resolvedIdentifier(), password, newPassword = true)
     validateCaptcha(captchaToken, configuration)
 }
 
 private fun OposiBotsEmailResendRequest.validate(configuration: OposiBotsAuthConfiguration) {
-    if (email.isBlank()) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.BLANK_IDENTIFIER)
-    if (!email.isValidEmail()) {
-        throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
-    }
+    requireCanonicalAuthEmail(email)
     validateCaptcha(captchaToken, configuration)
 }
 
 private fun OposiBotsLoginRequest.validate() {
-    validateIdentifierAndPassword(resolvedIdentifier(), password)
+    validateIdentifierAndPassword(resolvedIdentifier(), password, newPassword = false)
 }
 
 private fun OposiBotsRecoverRequest.validate(configuration: OposiBotsAuthConfiguration) {
-    val identifier = resolvedIdentifier()
-    if (identifier.isBlank()) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.BLANK_IDENTIFIER)
-    if (!identifier.isValidEmail()) {
-        throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
-    }
+    requireCanonicalAuthEmail(resolvedIdentifier())
     validateCaptcha(captchaToken, configuration)
 }
 
@@ -377,12 +399,18 @@ private fun OposiBotsProfileRequest.validate() {
     }
 }
 
-private fun validateIdentifierAndPassword(identifier: String, password: String) {
+/**
+ * [newPassword] = la peticion FIJA una contrasena (registro, solicitud de acceso): se le aplica la regla de contrasena nueva
+ * ([isAcceptableNewPassword]: 12..72 caracteres ASCII imprimibles). El login solo comprueba una que ya existe y conserva su
+ * regla de siempre (12..128 caracteres). El correo, en los dos casos, con la regla canonica unica ([authEmailIssue]).
+ */
+private fun validateIdentifierAndPassword(identifier: String, password: String, newPassword: Boolean) {
     val issues = buildSet {
-        if (identifier.isBlank()) add(OposiBotsValidationIssue.BLANK_IDENTIFIER)
-        else if (!identifier.isValidEmail()) add(OposiBotsValidationIssue.INVALID_IDENTIFIER)
+        authEmailIssue(identifier)?.let(::add)
         if (password.isBlank()) add(OposiBotsValidationIssue.BLANK_PASSWORD)
-        else if (password.length !in 12..128) add(OposiBotsValidationIssue.INVALID_PASSWORD)
+        else if (if (newPassword) !password.isAcceptableNewPassword() else password.length !in 12..128) {
+            add(OposiBotsValidationIssue.INVALID_PASSWORD)
+        }
     }
     if (issues.isNotEmpty()) {
         throw OposiBotsAuthProblem(HttpStatusCode.BadRequest, OposiBotsErrorCode.Validation, issues)
@@ -391,7 +419,7 @@ private fun validateIdentifierAndPassword(identifier: String, password: String) 
 
 private fun validatePassword(password: String) {
     if (password.isBlank()) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.BLANK_PASSWORD)
-    if (password.length !in 12..128) {
+    if (!password.isAcceptableNewPassword()) {
         throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_PASSWORD)
     }
 }
@@ -405,11 +433,6 @@ private fun validateCaptcha(token: String?, configuration: OposiBotsAuthConfigur
     }
 }
 
-private fun String.isValidEmail(): Boolean {
-    val normalized = trim()
-    return normalized.length in 3..320 &&
-        EMAIL_REGEX.matches(normalized)
-}
 
 /** Sin zone id (`%eth0`), sin corchetes, en minusculas y acotado: forma canonica para comparar literales IP. */
 internal fun normalizePeerAddress(raw: String): String =
@@ -483,10 +506,13 @@ private fun String.requireCredential(maxLength: Int = AUTH_CREDENTIAL_MAX_LENGTH
     }
 }
 
-private fun String.normalizedIdentifier(): String = trim().lowercase()
+/**
+ * El correo canonico ([canonicalAuthEmail]) de un identificador YA validado por la ruta: clave de los limites por sujeto y
+ * de la guarda de correo (y lo mismo que el gateway envia a GoTrue).
+ */
+private fun String.normalizedIdentifier(): String = requireCanonicalAuthEmail(this)
 
 private const val AUTH_BODY_MAX_BYTES = 16 * 1_024
 private const val AUTH_CREDENTIAL_MAX_LENGTH = 16_384
 private val AuthRequestIdKey = AttributeKey<String>("oposibots-auth-request-id")
 private val AuthLogger = LoggerFactory.getLogger("OC-KTOR-AUTH")
-private val EMAIL_REGEX = Regex("""^[^\s@]+@[^\s@]+\.[^\s@]+$""")

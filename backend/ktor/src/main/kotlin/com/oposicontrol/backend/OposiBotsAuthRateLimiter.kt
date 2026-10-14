@@ -66,6 +66,24 @@ internal enum class OposiBotsAuthOperation(
      * cuenta de Auth, asi que es tan estricta como [REGISTER]: pocas por IP y hora, y un tope SILENCIOSO por email.
      */
     ADMIN_ACCESS_REQUEST(5, 3, 3_600),
+
+    /**
+     * `POST /v1/auth/admin-access-requests/verify` (AdminAccessRequests.kt): el codigo de 6 cifras que demuestra el buzon.
+     * Sujeto = (correo canonico, IP de cliente), como el login (M2): un tercero que agota el cupo desde SU IP no bloquea al
+     * solicitante desde la suya. El tope DIARIO por correo ([ADMIN_ACCESS_VERIFY_DAILY]) y el contador de fallos por
+     * solicitud (`intentos_verificacion`, 5 = solicitud agotada) acotan la fuerza bruta distribuida; el cupo por IP frena el
+     * barrido de correos.
+     */
+    ADMIN_ACCESS_VERIFY(10, 5, 900),
+
+    /** `POST /v1/auth/admin-access-requests/resend-code`: reenvia el codigo. Tan estricta como [RESEND]; tope por correo SILENCIOSO. */
+    ADMIN_ACCESS_RESEND_CODE(6, 3, 3_600),
+
+    /**
+     * M2: techo DIARIO por correo (solo email, sin IP) de `/verify`, ademas de [ADMIN_ACCESS_VERIFY]. Rotar IPs ya no da
+     * intentos ilimitados contra el codigo de una cuenta. Solo se usa como limite por sujeto (el de IP no se consulta).
+     */
+    ADMIN_ACCESS_VERIFY_DAILY(10, 20, 86_400),
 }
 
 internal data class OposiBotsRateLimitDecision(

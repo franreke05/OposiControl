@@ -258,6 +258,8 @@ POST	/content/solucionarios/{}/portada	CONTROL	admin	Legacy content: solucionari
 POST	/content/solucionarios/{}/preguntas	CONTROL	admin	Legacy content: solucionarios/{}/preguntas	OposiControl
 POST	/search/reindex	CONTROL	admin	Admin legacy (outside /admin prefix): /search/reindex	OposiControl
 POST	/v1/auth/admin-access-requests	AUTH	none	Admin access request: public submit (creates account without role)	OposiControl
+POST	/v1/auth/admin-access-requests/resend-code	AUTH	none	Admin access request: resend the 6-digit e-mail code (silent 202)	OposiControl
+POST	/v1/auth/admin-access-requests/verify	AUTH	none	Admin access request: verify mailbox ownership with the 6-digit code	OposiControl
 POST	/v1/auth/email/exchange	AUTH	none	Consumer auth: email/exchange	OposiBot
 POST	/v1/auth/email/resend	AUTH	none	Consumer auth: email/resend	OposiBot
 POST	/v1/auth/login	AUTH	none	Consumer auth: login	OposiBot

@@ -33,7 +33,7 @@ class SupabaseOposiBotsAuthGatewayTest {
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         })
-        val gateway = SupabaseOposiBotsAuthGateway(
+        val gateway = authGatewayWithoutAccessRequests(
             testAuthConfiguration(forwardClientIp = true),
             Json { ignoreUnknownKeys = true },
             client,
@@ -59,7 +59,7 @@ class SupabaseOposiBotsAuthGatewayTest {
             bodies += (request.body as io.ktor.http.content.TextContent).text
             respond(ByteReadChannel("""{"user":{"id":"user"}}"""), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
         })
-        val gateway = SupabaseOposiBotsAuthGateway(testAuthConfiguration(), Json { ignoreUnknownKeys = true }, client)
+        val gateway = authGatewayWithoutAccessRequests(testAuthConfiguration(), Json { ignoreUnknownKeys = true }, client)
 
         gateway.register(OposiBotsRegisterRequest(email = "  Canon@Example.com ", password = "safe-password-12"), context)
         gateway.register(OposiBotsRegisterRequest(identifier = "Legacy@Example.com", password = "safe-password-12"), context)
@@ -80,7 +80,7 @@ class SupabaseOposiBotsAuthGatewayTest {
                 headersOf(HttpHeaders.ContentType, "application/json"),
             )
         })
-        val gateway = SupabaseOposiBotsAuthGateway(testAuthConfiguration(), Json { ignoreUnknownKeys = true }, client)
+        val gateway = authGatewayWithoutAccessRequests(testAuthConfiguration(), Json { ignoreUnknownKeys = true }, client)
 
         gateway.register(OposiBotsRegisterRequest(email = "dup@example.com", password = "safe-password-12"), context)
     }
@@ -94,7 +94,7 @@ class SupabaseOposiBotsAuthGatewayTest {
                 headersOf(HttpHeaders.ContentType, "application/json"),
             )
         })
-        val gateway = SupabaseOposiBotsAuthGateway(testAuthConfiguration(), Json { ignoreUnknownKeys = true }, client)
+        val gateway = authGatewayWithoutAccessRequests(testAuthConfiguration(), Json { ignoreUnknownKeys = true }, client)
 
         // MASTER3-AUTH-002: un rechazo de la contraseña por GoTrue es 400 VALIDATION/INVALID_PASSWORD, no 401.
         val problem = assertFailsWith<OposiBotsAuthProblem> {
@@ -116,7 +116,7 @@ class SupabaseOposiBotsAuthGatewayTest {
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         })
-        val gateway = SupabaseOposiBotsAuthGateway(
+        val gateway = authGatewayWithoutAccessRequests(
             testAuthConfiguration(),
             Json { ignoreUnknownKeys = true },
             client,
@@ -161,7 +161,7 @@ class SupabaseOposiBotsAuthGatewayTest {
                 else -> error("Unexpected request: ${request.url}")
             }
         })
-        val gateway = SupabaseOposiBotsAuthGateway(
+        val gateway = authGatewayWithoutAccessRequests(
             testAuthConfiguration(),
             Json { ignoreUnknownKeys = true },
             client,
@@ -489,7 +489,7 @@ class SupabaseOposiBotsAuthGatewayTest {
         val configuration = testAuthConfiguration().let {
             if (appleConfigured) it.copy(appleClientId = "apple-client", appleClientSecret = "apple-secret") else it
         }
-        return Harness(SupabaseOposiBotsAuthGateway(configuration, Json { ignoreUnknownKeys = true }, client), requests)
+        return Harness(authGatewayWithoutAccessRequests(configuration, Json { ignoreUnknownKeys = true }, client), requests)
     }
 
     private fun bodyOf(request: HttpRequestData): String = (request.body as io.ktor.http.content.TextContent).text

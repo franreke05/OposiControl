@@ -23,6 +23,9 @@ import kotlinx.serialization.serializer
 //   ACOTADAS (un intento tiene como mucho [MAX_ATTEMPT_QUESTIONS] preguntas). Ninguna regla de negocio aqui.
 // - SEC-004: `soluciones_pregunta` solo se lee en [reviewPage] y [resultQuestions], que el servicio llama UNICAMENTE con
 //   el intento ya `finalizado`. [questionPage] (D2-08) jamas la nombra, ni `razonamiento` se lee en ningun sitio.
+// - DEC-015 (decidida 2026-10-13): la correccion que se ensena con el intento ABIERTO sale SOLO de la fila propia del
+//   usuario en `respuestas_intento` (`es_correcta`, `opcion_correcta_id`, que `app_record_attempt_answer` escribe al
+//   responder). Una pregunta sin tocar no tiene fila y una saltada las tiene a `null`: no hay nada que leer de mas.
 // =====================================================================
 
 /** Puerto bloqueante hacia Supabase para los intentos. */
@@ -69,6 +72,8 @@ internal data class AttemptAnswerRow(
     @SerialName("pregunta_id") val preguntaId: String,
     @SerialName("opcion_seleccionada_id") val opcionSeleccionadaId: String? = null,
     @SerialName("es_correcta") val esCorrecta: Boolean? = null,
+    /** La opcion correcta copiada en la fila al responder (FK `ON DELETE SET NULL`: puede faltar con `es_correcta` presente). */
+    @SerialName("opcion_correcta_id") val opcionCorrectaId: String? = null,
     val revision: Int = 1,
     @SerialName("respondida_en") val respondidaEn: String? = null,
     @SerialName("actualizada_en") val actualizadaEn: String? = null,
@@ -239,7 +244,7 @@ internal class AttemptGateway(
         )
     }
 
-    /** D2-08: una pagina del conjunto congelado con enunciado y opciones. NUNCA soluciones ni marcas de correccion. */
+    /** D2-08: una pagina del conjunto congelado con enunciado y opciones. NUNCA `soluciones_pregunta` (la correccion de lo ya respondido sale de [answers]). */
     fun questionPage(attemptId: String, afterPosition: Int, fetchLimit: Int): List<FrozenQuestionRow> {
         require(attemptId.isUuid()) { "attemptId" }
         return decodeList(
@@ -275,17 +280,27 @@ internal class AttemptGateway(
 
     /**
      * Respuestas del intento; con [questionIds] solo las de esa pagina (como mucho 50 ids ya validados).
-     * [graded] = false (intento ABIERTO o D2-08): ni siquiera se piden las columnas de correccion (SEC-004 / DEC-015).
+     * [graded] = false (intento ABIERTO, D2-08 o la revelacion de D2-09): la respuesta propia con SU correccion (`es_correcta`,
+     * `opcion_correcta_id` de la misma fila, DEC-015), sin la primera respuesta ni los tiempos. Nunca `soluciones_pregunta` (SEC-004).
+     * [ownerId] (la revelacion de D2-09, que no lee antes el intento): ademas `usuario_id=eq.`, defensa en profundidad para que
+     * esa lectura no dependa solo de que la RPC haya validado al dueno del intento.
      */
-    fun answers(attemptId: String, graded: Boolean, questionIds: Collection<String>? = null): Map<String, AttemptAnswerRow> {
+    fun answers(
+        attemptId: String,
+        graded: Boolean,
+        questionIds: Collection<String>? = null,
+        ownerId: String? = null,
+    ): Map<String, AttemptAnswerRow> {
         require(attemptId.isUuid()) { "attemptId" }
+        require(ownerId == null || ownerId.isUuid()) { "ownerId" }
         if (questionIds != null && questionIds.isEmpty()) return emptyMap()
+        val owner = ownerId?.let { "&usuario_id=eq.$it" }.orEmpty()
         val filter = questionIds?.let { ids ->
             require(ids.size <= MAX_PAGE_IDS && ids.all(String::isUuid)) { "questionIds" }
             "&pregunta_id=in.(${ids.joinToString(",")})"
         }.orEmpty()
         val columns = if (graded) GRADED_ANSWER_COLUMNS else OPEN_ANSWER_COLUMNS
-        val query = "/rest/v1/respuestas_intento?select=$columns&intento_id=eq.$attemptId$filter" +
+        val query = "/rest/v1/respuestas_intento?select=$columns&intento_id=eq.$attemptId$owner$filter" +
             "&order=pregunta_id.asc&limit=${MAX_ATTEMPT_QUESTIONS + 1}"
         return decodeList<AttemptAnswerRow>(upstream.get(query)).associateBy { it.preguntaId }
     }
@@ -337,8 +352,11 @@ internal class AttemptGateway(
         /** Contenido de pregunta que ve el opositor DURANTE el intento. Sin soluciones (SEC-004). */
         internal const val QUESTION_COLUMNS = "codigo_pregunta,tipo_pregunta,titulo,opciones_pregunta(id,letra,texto_opcion,posicion)"
 
-        /** Lo que el opositor ya sabe de su propia respuesta con el intento abierto: que marco y cuando. Sin correccion. */
-        internal const val OPEN_ANSWER_COLUMNS = "pregunta_id,opcion_seleccionada_id,revision,respondida_en,creada_en"
+        /**
+         * Lo que el opositor ya sabe de su propia respuesta con el intento abierto: que marco, cuando y (DEC-015, decidida
+         * 2026-10-13) si acerto y cual era la correcta, tal como quedo en SU fila al responder.
+         */
+        internal const val OPEN_ANSWER_COLUMNS = "pregunta_id,opcion_seleccionada_id,es_correcta,opcion_correcta_id,revision,respondida_en,creada_en"
 
         /** Con el intento FINALIZADO (D2-07 grid, D2-12, D2-65): ademas la correccion y la primera respuesta. */
         internal const val GRADED_ANSWER_COLUMNS =

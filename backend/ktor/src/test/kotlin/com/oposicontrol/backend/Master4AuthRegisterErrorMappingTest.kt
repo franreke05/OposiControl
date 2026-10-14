@@ -26,7 +26,7 @@ class Master4AuthRegisterErrorMappingTest {
     private val register = OposiBotsRegisterRequest(email = "a@example.com", password = "safe-password-12")
 
     private suspend fun registerFailingWith(status: HttpStatusCode, code: String, msg: String): OposiBotsAuthProblem {
-        val gateway = SupabaseOposiBotsAuthGateway(
+        val gateway = authGatewayWithoutAccessRequests(
             m4Config(), Json { ignoreUnknownKeys = true },
             HttpClient(MockEngine { respond(ByteReadChannel("""{"code":${status.value},"error_code":"$code","msg":"$msg"}"""), status, jsonHeaders) }),
         )
@@ -93,7 +93,7 @@ class Master4AuthRegisterErrorMappingTest {
     fun aDuplicateSignupIsAcceptedLikeANewOneWhateverTheClientErrorStatus() = runTest {
         listOf(HttpStatusCode.UnprocessableEntity, HttpStatusCode.BadRequest).forEach { status ->
             listOf("user_already_exists", "email_exists").forEach { code ->
-                val gateway = SupabaseOposiBotsAuthGateway(
+                val gateway = authGatewayWithoutAccessRequests(
                     m4Config(), Json { ignoreUnknownKeys = true },
                     HttpClient(MockEngine { respond(ByteReadChannel("""{"code":${status.value},"error_code":"$code","msg":"x"}"""), status, jsonHeaders) }),
                 )
@@ -107,7 +107,7 @@ class Master4AuthRegisterErrorMappingTest {
     fun theResetPasswordStepAppliesTheSameClassification() = runTest {
         val session =
             """{"access_token":"recovery-access","refresh_token":"recovery-refresh","expires_in":3600,"user":{"id":"11111111-1111-4111-8111-111111111111"}}"""
-        val gateway = SupabaseOposiBotsAuthGateway(
+        val gateway = authGatewayWithoutAccessRequests(
             m4Config(), Json { ignoreUnknownKeys = true },
             HttpClient(MockEngine { request ->
                 when {

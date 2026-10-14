@@ -47,6 +47,7 @@ class AuditPresentationTest {
         "advertencia_usuario",
         // AdminAccessRequests.kt
         "solicitud_acceso_aprobada", "solicitud_acceso_rechazada", "solicitud_acceso_cuenta_eliminada", "solicitud_acceso_email_confirmado",
+        "solicitud_acceso_email_verificado", "solicitud_acceso_caducada", "solicitud_acceso_aprobacion_revertida",
         // OposiBotsUserAdminRoutes.kt
         "oposibots_usuario_creacion_solicitada", "oposibots_usuario_creado", "oposibots_usuario_creacion_fallida",
         "oposibots_usuario_actualizacion_solicitada", "oposibots_usuario_actualizado", "oposibots_usuario_actualizacion_fallida",

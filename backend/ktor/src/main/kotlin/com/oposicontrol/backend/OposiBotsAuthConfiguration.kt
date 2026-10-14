@@ -17,6 +17,11 @@ internal data class OposiBotsAuthConfiguration(
     val rateLimitMode: String,
     val rateLimitHmacSecret: String,
     val valkeyUrl: String?,
+    /**
+     * B2 (2026-10-13): `redirect_to` del correo de CONFIRMACION (signup y resend), como [passwordRecoveryRedirectUrl] lo es
+     * del de recuperacion. `null` (variable ausente o vacia) = no se envia `redirect_to`, el comportamiento de siempre.
+     */
+    val emailConfirmRedirectUrl: String? = null,
 ) {
     val development: Boolean
         get() = AppEnvironment.isDevelopment(appEnvironment)
@@ -81,6 +86,7 @@ internal data class OposiBotsAuthConfiguration(
                 rateLimitMode = rateLimitMode,
                 rateLimitHmacSecret = hmacSecret,
                 valkeyUrl = optionalEnvironment("VALKEY_URL"),
+                emailConfirmRedirectUrl = optionalEnvironment("OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL"),
             )
             configuration.requireDeployable()
             return configuration
@@ -128,6 +134,12 @@ internal class OposiBotsAuthRuntime(
     val json: Json,
     /** SLICE 1: perfil canonico, borrado de cuenta y adaptadores legacy. Obligatorio (MASTER-ARCH-005): sin costura nula. */
     val canonical: CanonicalProfileRuntime,
+    /**
+     * B1 (2026-10-13): retiene el correo de register/resend/recover si el email tiene una solicitud de acceso de
+     * administrador no aprobada (AccessRequestMailGuard.kt). OBLIGATORIO y sin valor por defecto: un runtime no puede
+     * quedarse sin guarda por omision. [fromConfiguration] cablea la real; las pruebas pasan su doble de forma explicita.
+     */
+    val accessRequestMailGuard: AccessRequestMailGuard,
 ) : AutoCloseable {
     /**
      * MASTER-ARCH-008: cierre ordenado (cliente Valkey del limitador y `HttpClient` del gateway) al parar la
@@ -137,6 +149,7 @@ internal class OposiBotsAuthRuntime(
         // MASTER2-OBS-004: un cierre fallido se registra (redactado) en vez de tragarse en silencio.
         runCatching { rateLimiter.close() }.onFailure { logCloseFailure("rateLimiter", it) }
         runCatching { (gateway as? AutoCloseable)?.close() }.onFailure { logCloseFailure("gateway", it) }
+        runCatching { (accessRequestMailGuard as? AutoCloseable)?.close() }.onFailure { logCloseFailure("accessRequestMailGuard", it) }
     }
 
     private fun logCloseFailure(resource: String, failure: Throwable) {
@@ -147,7 +160,21 @@ internal class OposiBotsAuthRuntime(
     companion object {
         fun fromEnvironment(json: Json, required: Boolean, jwtVerifier: SupabaseJwtVerifier? = null): OposiBotsAuthRuntime? {
             val configuration = OposiBotsAuthConfiguration.fromEnvironment(required) ?: return null
-            val gateway = SupabaseOposiBotsAuthGateway(configuration, json)
+            return fromConfiguration(configuration, json, jwtVerifier)
+        }
+
+        /**
+         * Todo el cableado de [fromEnvironment] salvo la lectura del entorno, para poder probarlo: UNA sola guarda real
+         * ([PostgrestAccessRequestMailGuard]) hace de guarda de correo del runtime y de puerta de sesion del gateway.
+         * No abre ninguna conexion al construirse.
+         */
+        internal fun fromConfiguration(
+            configuration: OposiBotsAuthConfiguration,
+            json: Json,
+            jwtVerifier: SupabaseJwtVerifier? = null,
+        ): OposiBotsAuthRuntime {
+            val accessRequests = accessRequestMailGuard(configuration)
+            val gateway = SupabaseOposiBotsAuthGateway(configuration, json, accessRequestSessionGate = accessRequests)
             return OposiBotsAuthRuntime(
                 configuration = configuration,
                 gateway = gateway,
@@ -159,7 +186,28 @@ internal class OposiBotsAuthRuntime(
                     verifier = jwtVerifier ?: SupabaseJwtVerifier(configuration.supabaseUrl, json),
                     json = json,
                 ),
+                accessRequestMailGuard = accessRequests,
             )
+        }
+
+        /**
+         * La guarda real: misma URL y misma clave de servicio que el resto del runtime de auth, y el seudonimo con clave
+         * del correo para sus logs. Devuelve el tipo concreto porque es a la vez guarda de correo y puerta de sesion. Su
+         * almacen es un [SupabaseAdminAccessRequestGateway] propio (lee la tabla, la API de administracion de GoTrue y
+         * escribe la auditoria de las solicitudes que dejan de reservar el correo); no abre ninguna conexion al construirse
+         * y se cierra con el runtime.
+         */
+        internal fun accessRequestMailGuard(
+            configuration: OposiBotsAuthConfiguration,
+            json: Json = Json { ignoreUnknownKeys = true },
+        ): PostgrestAccessRequestMailGuard {
+            val store = SupabaseAdminAccessRequestGateway(
+                supabaseUrl = configuration.supabaseUrl,
+                serviceRoleKey = configuration.secretKey,
+                json = json,
+                emailRef = configuration::authLogEmailRef,
+            )
+            return PostgrestAccessRequestMailGuard(store = store, emailRef = configuration::authLogEmailRef)
         }
 
         /**

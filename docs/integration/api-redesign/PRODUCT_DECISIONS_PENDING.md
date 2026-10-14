@@ -31,7 +31,7 @@ External: D7-03 (payment provider verification) needs the provider chosen in DEC
 |---|---|---|
 | `precio` | exam detail D2-02 | DEC-035 |
 | score formula (technical default `correct / evaluable * 10` in use) | result D2-12 | DEC-013 |
-| reveal of the correct answer before finish, answer change | D2-07, D2-09 (nothing revealed, answer locked once given) | DEC-015 |
+| reveal of the correct answer before finish, answer change | D2-07, D2-08, D2-09 | RESOLVED in FA16: DEC-015 decided by the owner on 2026-10-13 (section 17). No longer pending. |
 | pause / resume, deadline | attempts (not offered) | DEC-014 |
 | `comparativa`, `probabilidadPlaza`, `pctAciertoGlobal` | result D2-12 | DEC-004, DEC-016, DEC-019 |
 | explanation / resources in review | D2-65 | DEC-025, DEC-040 |
@@ -245,3 +245,18 @@ The desktop news editor was rebuilt on the canonical contract (D4-01..D4-09). Fo
 4. **Banner action.** The row has no link or call-to-action columns: what the banner's "Ir" button opens is undefined.
 5. **Editing a published item** is not allowed by the contract (`NEWS_NOT_EDITABLE`): archive and create another.
 6. **Body text and card image** (`texto`, `imagenPath`) are stored but no app surface shows them yet.
+
+## 17. Decided: DEC-015, reveal of the correction during an attempt (owner, 2026-10-13; FA16)
+
+No longer pending. Rule decided by the owner (Francisco) on 2026-10-13 and implemented:
+
+- The correction is revealed when the user answers, for the three exam types (rafaga, razonado, inmersivo): D2-09 returns
+  `esCorrecta` and `opcionCorrectaId`.
+- It stays visible when the attempt is read again (resume): the D2-07 grid says `correcta` / `incorrecta` and the D2-08
+  `respuesta` carries `esCorrecta` and `opcionCorrectaId` (open and finished attempts alike).
+- A given answer stays locked (409 `ANSWER_LOCKED`). A skip reveals nothing and can still be answered once later. An
+  annulled question reveals nothing.
+- `intento.correctas` / `intento.falladas` stay null until the attempt is finished.
+- No migration: the values come only from the user's own `respuestas_intento` row, written at answer time by
+  `app_record_attempt_answer`. `soluciones_pregunta` is still never read for an open attempt (SEC-004).
+- A rule per exam type, if ever wanted, is one line (`AttemptService.revealsOnAnswer`).

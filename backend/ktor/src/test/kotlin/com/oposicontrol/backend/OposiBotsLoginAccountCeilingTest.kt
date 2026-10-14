@@ -131,7 +131,7 @@ class OposiBotsLoginAccountCeilingTest {
             val configuration = configuration(appEnvironment = "test", trustProxyHeaders = true, trustedProxyHosts = setOf("localhost"), mode = "memory")
                 .copy(captchaRequired = false)
             routing {
-                oposiBotsAuthRoutes(OposiBotsAuthRuntime(configuration, gateway, InMemoryOposiBotsAuthRateLimiter(), json, CanonicalTestEnv().runtime().canonical))
+                oposiBotsAuthRoutes(OposiBotsAuthRuntime(configuration, gateway, InMemoryOposiBotsAuthRateLimiter(), json, CanonicalTestEnv().runtime().canonical, NoAccessRequestsMailGuard))
             }
         }
     }

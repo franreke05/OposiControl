@@ -5,6 +5,7 @@ import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.AccessRequest
+import com.oposicontrol.admin.domain.model.AccessRequestCodeOutcome
 import com.oposicontrol.admin.domain.model.AccessRequestStatus
 import com.oposicontrol.admin.domain.model.AccessRequestSubmission
 import com.oposicontrol.admin.domain.model.AuthCredentials
@@ -38,6 +39,8 @@ class AccessRequestsViewModelTest {
         createdAt: String = "2026-10-13T09:00:00Z",
         resolvedAt: String? = null,
         name: String = "Persona $id",
+        verified: Boolean = true,
+        expired: Boolean = false,
     ) = AccessRequest(
         id = id,
         userId = "user-$id",
@@ -47,6 +50,8 @@ class AccessRequestsViewModelTest {
         status = status,
         createdAt = createdAt,
         resolvedAt = resolvedAt,
+        emailVerified = verified,
+        expired = expired,
     )
 
     private class FakeRepository(initial: List<AccessRequest>) : AccessRequestsRepository {
@@ -58,6 +63,8 @@ class AccessRequestsViewModelTest {
         val rejected = mutableListOf<Pair<String, String?>>()
 
         override suspend fun submitRequest(submission: AccessRequestSubmission): AppResult<Unit> = error("no interviene")
+        override suspend fun verifyEmail(email: String, code: String, password: String): AppResult<AccessRequestCodeOutcome> = error("no interviene")
+        override suspend fun resendCode(email: String): AppResult<AccessRequestCodeOutcome> = error("no interviene")
 
         override suspend fun listRequests(status: AccessRequestStatus?): AppResult<List<AccessRequest>> {
             listCalls++
@@ -384,5 +391,60 @@ class AccessRequestsViewModelTest {
 
         assertFalse(vm.state.value.canReview)
         assertTrue(vm.state.value.allRequests.isEmpty())
+    }
+
+    // ------------------------------------------------------------------------------------------------ verificacion
+
+    @Test
+    fun `approval is only offered for a verified request that has not expired but rejection still is`() = runTest {
+        val repository = FakeRepository(
+            listOf(
+                request("unverified", verified = false),
+                request("expired", verified = false, expired = true),
+                request("verified"),
+            ),
+        )
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+
+        vm.dispatch(AccessRequestsIntent.AskApprove("unverified"))
+        advanceUntilIdle()
+        assertNull(vm.state.value.pendingDecision, "sin verificar no se aprueba")
+        vm.dispatch(AccessRequestsIntent.AskApprove("expired"))
+        advanceUntilIdle()
+        assertNull(vm.state.value.pendingDecision, "caducada no se aprueba")
+
+        vm.dispatch(AccessRequestsIntent.AskReject("expired"))
+        advanceUntilIdle()
+        assertEquals(AccessDecisionKind.REJECT, vm.state.value.pendingDecision!!.kind)
+        vm.dispatch(AccessRequestsIntent.DismissDecision)
+
+        vm.dispatch(AccessRequestsIntent.AskApprove("verified"))
+        advanceUntilIdle()
+        assertEquals(AccessDecisionKind.APPROVE, vm.state.value.pendingDecision!!.kind)
+        assertTrue(repository.approved.isEmpty())
+    }
+
+    @Test
+    fun `the domain gate matches the server rule`() {
+        assertTrue(request("a").canBeApproved)
+        assertFalse(request("a", verified = false).canBeApproved)
+        assertFalse(request("a", verified = false, expired = true).canBeApproved)
+        assertFalse(request("a", status = AccessRequestStatus.APPROVED).canBeApproved)
+        assertFalse(request("a", status = AccessRequestStatus.REJECTED).canBeApproved)
+    }
+
+    @Test
+    fun `the server conflict message on approve is shown verbatim`() = runTest {
+        val message = "La solicitud no tiene el correo verificado."
+        val repository = FakeRepository(seed).apply { decisionFailure = AppError.Validation(message, code = "CONFLICT") }
+        val vm = viewModel(repository)
+        advanceUntilIdle()
+
+        vm.dispatch(AccessRequestsIntent.AskApprove("pending-new"))
+        vm.dispatch(AccessRequestsIntent.ConfirmDecision)
+        advanceUntilIdle()
+
+        assertEquals(message, (vm.state.value.decisionState as UiAsync.Error).error.message)
     }
 }

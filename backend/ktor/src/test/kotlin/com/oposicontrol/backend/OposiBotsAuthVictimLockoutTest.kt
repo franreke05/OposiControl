@@ -92,7 +92,7 @@ class OposiBotsAuthVictimLockoutTest {
                 valkeyUrl = null,
             )
             routing {
-                oposiBotsAuthRoutes(OposiBotsAuthRuntime(configuration, gateway, InMemoryOposiBotsAuthRateLimiter(), json, CanonicalTestEnv().runtime().canonical))
+                oposiBotsAuthRoutes(OposiBotsAuthRuntime(configuration, gateway, InMemoryOposiBotsAuthRateLimiter(), json, CanonicalTestEnv().runtime().canonical, NoAccessRequestsMailGuard))
             }
         }
     }

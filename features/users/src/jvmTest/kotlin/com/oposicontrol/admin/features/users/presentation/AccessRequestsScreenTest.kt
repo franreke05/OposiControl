@@ -38,6 +38,8 @@ class AccessRequestsScreenTest {
         reason = "Coordino el equipo de contenido de Enfermería.",
         status = AccessRequestStatus.PENDING,
         createdAt = "2026-10-12T09:00:00Z",
+        emailVerified = true,
+        emailVerifiedAt = "2026-10-12T09:10:00Z",
     )
     private val rejected = AccessRequest(
         id = "r-2",
@@ -133,6 +135,44 @@ class AccessRequestsScreenTest {
             onNodeWithText("Motivo: No pertenece al equipo.", substring = true).assertExists()
         }
         assertEquals(listOf<AccessRequestsIntent>(AccessRequestsIntent.DismissDecision), sent)
+    }
+
+    @Test
+    fun aVerifiedPendingRequestCarriesItsBadge() {
+        render(state()) {
+            assertTrue(onAllNodesWithText("Correo verificado").fetchSemanticsNodes().isNotEmpty())
+            onNodeWithText(ACCESS_UNVERIFIED_TITLE).assertDoesNotExist()
+            onNodeWithText("Aprobar").assertExists()
+        }
+    }
+
+    @Test
+    fun anUnverifiedOrExpiredRequestCanOnlyBeRejected() {
+        val unverified = pending.copy(id = "r-3", emailVerified = false, emailVerifiedAt = null)
+        val expired = pending.copy(id = "r-4", emailVerified = false, emailVerifiedAt = null, expired = true)
+        fun stateWith(selected: AccessRequest) = AccessRequestsState(
+            availability = AccessReviewAvailability.ALLOWED,
+            allRequests = listOf(unverified, expired),
+            requests = UiAsync.Success(listOf(unverified, expired)),
+            selectedId = selected.id,
+        )
+        val sent = mutableListOf<AccessRequestsIntent>()
+        render(stateWith(unverified), capture = "access-requests-unverified.png", onIntent = { sent += it }) {
+            assertTrue(onAllNodesWithText("Sin verificar").fetchSemanticsNodes().isNotEmpty())
+            assertTrue(onAllNodesWithText("Caducada").fetchSemanticsNodes().isNotEmpty())
+            onNodeWithText(ACCESS_UNVERIFIED_TITLE).assertExists()
+            onNodeWithText("Aprobar").assertDoesNotExist()
+            onNodeWithText("Rechazar").performClick()
+        }
+        render(stateWith(expired), capture = "access-requests-expired.png") {
+            onNodeWithText(ACCESS_EXPIRED_TITLE).assertExists()
+            onNodeWithText("Aprobar").assertDoesNotExist()
+            onNodeWithText("Rechazar").assertExists()
+        }
+        assertEquals(listOf<AccessRequestsIntent>(AccessRequestsIntent.AskReject("r-3")), sent)
+        assertEquals(AccessVerificationBadge.UNVERIFIED, accessVerificationBadge(unverified))
+        assertEquals(AccessVerificationBadge.EXPIRED, accessVerificationBadge(expired))
+        assertEquals(AccessVerificationBadge.VERIFIED, accessVerificationBadge(pending))
     }
 
     @Test

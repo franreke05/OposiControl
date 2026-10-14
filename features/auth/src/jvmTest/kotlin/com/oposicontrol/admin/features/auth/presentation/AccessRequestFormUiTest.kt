@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onNodeWithTag
@@ -19,6 +20,7 @@ import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.ui.theme.AdminTheme
 import com.oposicontrol.admin.domain.model.AccessRequest
+import com.oposicontrol.admin.domain.model.AccessRequestCodeOutcome
 import com.oposicontrol.admin.domain.model.AccessRequestStatus
 import com.oposicontrol.admin.domain.model.AccessRequestSubmission
 import com.oposicontrol.admin.domain.model.AuthCredentials
@@ -65,6 +67,16 @@ class AccessRequestFormUiTest {
             return AppResult.Success(Unit)
         }
 
+        val verifications = mutableListOf<Triple<String, String, String>>()
+        var verifyResult: AppResult<AccessRequestCodeOutcome> = AppResult.Success(AccessRequestCodeOutcome.Accepted)
+
+        override suspend fun verifyEmail(email: String, code: String, password: String): AppResult<AccessRequestCodeOutcome> {
+            verifications += Triple(email, code, password)
+            return verifyResult
+        }
+
+        override suspend fun resendCode(email: String): AppResult<AccessRequestCodeOutcome> = AppResult.Success(AccessRequestCodeOutcome.Accepted)
+
         override suspend fun listRequests(status: AccessRequestStatus?): AppResult<List<AccessRequest>> = error("no interviene")
         override suspend fun approve(requestId: String): AppResult<AccessRequest> = error("no interviene")
         override suspend fun reject(requestId: String, reason: String?): AppResult<AccessRequest> = error("no interviene")
@@ -110,6 +122,8 @@ class AccessRequestFormUiTest {
             onNodeWithText("Entrar").assertDoesNotExist()
             onNodeWithText("Solicitar acceso").assertExists()
             onNodeWithText("Enviar solicitud").assertExists()
+            // Revision 2026-10-14: pedir el acceso ya no pide contrasena.
+            onNodeWithText("Contraseña *").assertDoesNotExist()
             capture("auth-access-request-form.png")
 
             onNodeWithText("Volver al inicio de sesión").performScrollTo().performClick()
@@ -163,7 +177,6 @@ class AccessRequestFormUiTest {
 
             onNodeWithText("Escribe tu nombre.").assertExists()
             onNodeWithText("Escribe tu correo.").assertExists()
-            onNodeWithText("Elige una contraseña.").assertExists()
             onNodeWithText("Cuenta para qué necesitas el acceso.").assertExists()
             capture("auth-access-request-errors.png")
         }
@@ -171,15 +184,13 @@ class AccessRequestFormUiTest {
     }
 
     @Test
-    fun anAcceptedRequestShowsThePendingApprovalNoticeInsteadOfTheForm() {
+    fun anAcceptedRequestAsksForTheCodeAndAVerifiedEmailShowsThePendingApprovalNotice() {
         val requests = Requests()
         screen(requests) { viewModel ->
             onNodeWithTag(AUTH_REQUEST_ACCESS_LINK_TAG).performClick()
             waitForIdle()
             viewModel!!.dispatch(AccessRequestIntent.UpdateName("Ada Lovelace"))
             viewModel.dispatch(AccessRequestIntent.UpdateEmail("ada@example.com"))
-            viewModel.dispatch(AccessRequestIntent.UpdatePassword(password))
-            viewModel.dispatch(AccessRequestIntent.UpdatePasswordConfirmation(password))
             viewModel.dispatch(AccessRequestIntent.UpdateReason("Coordino el equipo de contenido."))
             waitForIdle()
             capture("auth-access-request-filled.png")
@@ -187,16 +198,84 @@ class AccessRequestFormUiTest {
             onNodeWithText("Enviar solicitud").performScrollTo().performClick()
             waitForIdle()
 
-            onNodeWithTag(ACCESS_REQUEST_SENT_TAG).assertExists()
-            onNodeWithText(ACCESS_REQUEST_SENT_TITLE).assertExists()
-            onNodeWithText(ACCESS_REQUEST_SENT_DETAIL).assertExists()
+            onNodeWithTag(ACCESS_REQUEST_VERIFY_TAG).assertExists()
+            onNodeWithText(ACCESS_REQUEST_VERIFY_TITLE).assertExists()
+            onNodeWithText(accessVerifyIntro("ada@example.com")).assertExists()
             onNodeWithTag(ACCESS_REQUEST_FORM_TAG).assertDoesNotExist()
-            capture("auth-access-request-sent.png")
+            onNodeWithText("Reenviar código", substring = true).assertIsNotEnabled()
+            onNodeWithText("Verificar").assertIsNotEnabled()
+            // Codigo, despues la contrasena del panel, y el aviso de no pulsar enlaces.
+            onNodeWithText(ACCESS_REQUEST_CHOOSE_PASSWORD).assertExists()
+            onNodeWithText("Contraseña *").assertExists()
+            onNodeWithText("Repite la contraseña *").assertExists()
+            onNodeWithText(ACCESS_REQUEST_NO_LINKS_NOTE).assertExists()
+            capture("auth-access-request-verify.png")
+
+            viewModel.dispatch(AccessRequestIntent.UpdateCode("123456"))
+            viewModel.dispatch(AccessRequestIntent.UpdatePassword(password))
+            viewModel.dispatch(AccessRequestIntent.UpdatePasswordConfirmation(password))
+            waitForIdle()
+            onNodeWithText("Verificar").performScrollTo().performClick()
+            waitForIdle()
+
+            onNodeWithTag(ACCESS_REQUEST_VERIFIED_TAG).assertExists()
+            onNodeWithText(ACCESS_REQUEST_VERIFIED_TITLE).assertExists()
+            onNodeWithText(ACCESS_REQUEST_VERIFIED_DETAIL).assertExists()
+            capture("auth-access-request-verified.png")
 
             onNodeWithText("Volver al inicio de sesión").performClick()
             waitForIdle()
             onNodeWithText("Entrar").assertExists()
         }
         assertEquals("ada@example.com", requests.submissions.single().email)
+        assertEquals(listOf(Triple("ada@example.com", "123456", password)), requests.verifications)
+    }
+
+    @Test
+    fun aRejectedCodeShowsTheGenericMessage() {
+        val requests = Requests().apply { verifyResult = AppResult.Success(AccessRequestCodeOutcome.InvalidCode) }
+        screen(requests) { viewModel ->
+            onNodeWithTag(AUTH_REQUEST_ACCESS_LINK_TAG).performClick()
+            waitForIdle()
+            viewModel!!.dispatch(AccessRequestIntent.UpdateName("Ada Lovelace"))
+            viewModel.dispatch(AccessRequestIntent.UpdateEmail("ada@example.com"))
+            viewModel.dispatch(AccessRequestIntent.UpdateReason("Coordino el equipo de contenido."))
+            viewModel.dispatch(AccessRequestIntent.Submit)
+            waitForIdle()
+            viewModel.dispatch(AccessRequestIntent.UpdateCode("000000"))
+            viewModel.dispatch(AccessRequestIntent.UpdatePassword(password))
+            viewModel.dispatch(AccessRequestIntent.UpdatePasswordConfirmation(password))
+            viewModel.dispatch(AccessRequestIntent.Verify)
+            waitForIdle()
+
+            onNodeWithText(ACCESS_CODE_INVALID_MESSAGE).assertExists()
+            onNodeWithTag(ACCESS_REQUEST_VERIFY_TAG).assertExists()
+            capture("auth-access-request-invalid-code.png")
+        }
+    }
+
+    /** El servidor rechaza la contrasena elegida (400 sobre `password`): el campo dice la regla y el paso sigue. */
+    @Test
+    fun aPasswordRejectedAtVerificationShowsThePasswordRule() {
+        val requests = Requests().apply { verifyResult = AppResult.Success(AccessRequestCodeOutcome.InvalidPassword) }
+        screen(requests) { viewModel ->
+            onNodeWithTag(AUTH_REQUEST_ACCESS_LINK_TAG).performClick()
+            waitForIdle()
+            viewModel!!.dispatch(AccessRequestIntent.UpdateName("Ada Lovelace"))
+            viewModel.dispatch(AccessRequestIntent.UpdateEmail("ada@example.com"))
+            viewModel.dispatch(AccessRequestIntent.UpdateReason("Coordino el equipo de contenido."))
+            viewModel.dispatch(AccessRequestIntent.Submit)
+            waitForIdle()
+            viewModel.dispatch(AccessRequestIntent.UpdateCode("123456"))
+            viewModel.dispatch(AccessRequestIntent.UpdatePassword(password))
+            viewModel.dispatch(AccessRequestIntent.UpdatePasswordConfirmation(password))
+            viewModel.dispatch(AccessRequestIntent.Verify)
+            waitForIdle()
+
+            onNodeWithText(PASSWORD_RULE_MESSAGE).assertExists()
+            onNodeWithText(ACCESS_CODE_INVALID_MESSAGE).assertDoesNotExist()
+            onNodeWithTag(ACCESS_REQUEST_VERIFY_TAG).assertExists()
+            capture("auth-access-request-invalid-password.png")
+        }
     }
 }

@@ -516,3 +516,14 @@ Implementable without a decision, a schema object or a client migration: none le
 | Ops config | `bash scripts/verify-ops-config.sh` | PASS |
 
 No migration was added, so the database gates were not run.
+
+## 13. FA16: DEC-015 decided (2026-10-13)
+
+Not a new batch: no contract is added. The owner decided DEC-015 on 2026-10-13 and `openapi/attempts/attempts.yaml` states the
+decided rule (see `PRODUCT_DECISIONS_PENDING.md` section 17).
+
+### 13.1 Proposed amendment row FA16 (text for CONTRACT_FREEZE.md, OposiBot repo)
+
+| ID | Fecha | Contrato / fichero | Cambio | Motivo | DEC |
+|---|---|---|---|---|---|
+| FA16 | 2026-10-13 | `openapi/attempts/attempts.yaml` (D2-07, D2-08, D2-09) | AMPLIACION ADITIVA + TEXTO, sin operacion nueva ni renombrada, sin campo obligatorio nuevo y sin codigo de error nuevo. `AttemptQuestion.respuesta` (D2-08) gana dos propiedades opcionales y anulables, `esCorrecta` (boolean) y `opcionCorrectaId` (uuid), presentes solo con opcion marcada y pregunta no anulada, igual con el intento abierto que finalizado. Solo texto: `description` de D2-08 (deja de decir "No solutions." a secas) y de D2-09, de `AttemptGridItem.estado` (D2-07: lo respondido es `correcta` / `incorrecta` tambien antes de finalizar) y de `AnswerResult.esCorrecta` / `opcionCorrectaId` (D2-09: se revelan al responder; null en SKIPPED y ANNULLED). Manifiesto `freeze-manifest.sha256` actualizado (1 fichero cambiado). `frozenRoutes`, inventarios y `route-profiles.tsv` no cambian | Decision del dueno: la correccion se revela al responder en los tres tipos de examen (rafaga, razonado, inmersivo) y se sigue viendo al reanudar; la respuesta dada queda bloqueada (409 ANSWER_LOCKED); un salto no revela nada y se puede responder una vez despues. Sin migracion: sale de la fila propia `respuestas_intento`; `soluciones_pregunta` sigue sin leerse con el intento abierto (SEC-004) | DEC-015 DECIDIDA (dueno, 2026-10-13). `intento.correctas` / `falladas` siguen null hasta finalizar. Ratificacion del lead pendiente |

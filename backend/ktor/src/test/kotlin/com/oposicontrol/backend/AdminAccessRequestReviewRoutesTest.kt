@@ -99,21 +99,24 @@ class AdminAccessRequestReviewRoutesTest {
             .map { Json.parseToJsonElement(readRequestBody(it)).jsonArray.single().jsonObject }
     }
 
-    private class InMemoryRequests(vararg seed: AdminAccessRequestDto) : AdminAccessRequestGateway {
+    private class InMemoryRequests(vararg seed: AdminAccessRequestDto) : UnusedAdminAccessRequestGateway() {
         val rows = ConcurrentHashMap(seed.associateBy { it.id })
         val listCalls = CopyOnWriteArrayList<Triple<String?, Int, Int>>()
         var resolveCalls = 0
 
-        /** Cuentas de Auth cuyo correo se ha confirmado (lo que haria `PUT /auth/v1/admin/users/{id}`). */
-        val confirmed = CopyOnWriteArrayList<String>()
-        var confirmFailure: Exception? = null
+        /** Cuentas de Auth con el correo confirmado (lo que diria `GET /auth/v1/admin/users/{id}`); por defecto, todas. */
+        val unconfirmedAccounts = CopyOnWriteArrayList<String>()
+        val missingAccounts = CopyOnWriteArrayList<String>()
+        val accountReads = CopyOnWriteArrayList<String>()
+        var accountFailure: Exception? = null
         var resolveFailure: Exception? = null
         var onEvent: (String) -> Unit = {}
 
-        override suspend fun confirmEmail(usuarioId: String) {
-            confirmFailure?.let { throw it }
-            onEvent("confirmar")
-            confirmed += usuarioId
+        override suspend fun authAccount(usuarioId: String): AuthAccountState? {
+            accountReads += usuarioId
+            accountFailure?.let { throw it }
+            if (usuarioId in missingAccounts) return null
+            return AuthAccountState(emailConfirmed = usuarioId !in unconfirmedAccounts)
         }
 
         /** Cuentas de Auth borradas (lo que haria `DELETE /auth/v1/admin/users/{id}`). */
@@ -126,8 +129,6 @@ class AdminAccessRequestReviewRoutesTest {
             deleted += usuarioId
         }
 
-        override suspend fun submit(submission: AdminAccessSubmission) = error("no interviene")
-
         override suspend fun list(estado: String?, limit: Int, offset: Int): List<AdminAccessRequestDto> {
             listCalls += Triple(estado, limit, offset)
             return rows.values.filter { estado == null || it.estado == estado }.sortedBy { it.id }
@@ -135,17 +136,65 @@ class AdminAccessRequestReviewRoutesTest {
 
         override suspend fun find(id: String) = rows[id]
 
+        /** Se ejecuta justo antes de aplicar una resolucion (simula a otro superadministrador que llega a la vez). */
+        var beforeResolve: (String) -> Unit = {}
+
         override suspend fun resolve(id: String, estado: String, actorId: String, motivo: String?): AdminAccessRequestDto? {
             resolveCalls++
             resolveFailure?.let { throw it }
+            beforeResolve(id)
             onEvent("marcar:$estado")
+            return applyResolve(id, estado, actorId, motivo)
+        }
+
+        fun applyResolve(id: String, estado: String, actorId: String, motivo: String?): AdminAccessRequestDto? {
             val current = rows[id]?.takeIf { it.estado == ADMIN_ACCESS_ESTADO_PENDIENTE } ?: return null
             return current.copy(estado = estado, resueltoEn = "2026-10-13T10:00:00Z", resueltoPor = actorId, motivoResolucion = motivo)
                 .also { rows[id] = it }
         }
+
+        /** Baneos de GoTrue (M1): `true` = baneada. */
+        val banned = ConcurrentHashMap<String, Boolean>()
+        var unbanFailure: Exception? = null
+
+        var rebanFailure: Exception? = null
+
+        /** Revision #3 L1: purgas de sesiones (RPC), en orden. */
+        val purged = CopyOnWriteArrayList<String>()
+        var purgeFailure: Exception? = null
+
+        override suspend fun purgeSessions(usuarioId: String): Int {
+            purgeFailure?.let { throw it }
+            onEvent("purgar")
+            purged += usuarioId
+            return 0
+        }
+
+        override suspend fun setBanned(usuarioId: String, banned: Boolean) {
+            if (!banned) unbanFailure?.let { throw it }
+            if (banned) rebanFailure?.let { throw it }
+            onEvent(if (banned) "banear" else "desbanear")
+            this.banned[usuarioId] = banned
+        }
+
+        var revertCalls = 0
+
+        override suspend fun revertApproval(id: String, actorId: String): AdminAccessRequestDto? {
+            revertCalls++
+            onEvent("revertir")
+            val current = rows[id]?.takeIf { it.estado == ADMIN_ACCESS_ESTADO_APROBADA && it.resueltoPor == actorId } ?: return null
+            return current.copy(estado = ADMIN_ACCESS_ESTADO_PENDIENTE, resueltoEn = null, resueltoPor = null, motivoResolucion = null)
+                .also { rows[id] = it }
+        }
     }
 
-    private fun request(id: String, usuarioId: String, estado: String = ADMIN_ACCESS_ESTADO_PENDIENTE) = AdminAccessRequestDto(
+    private fun request(
+        id: String,
+        usuarioId: String,
+        estado: String = ADMIN_ACCESS_ESTADO_PENDIENTE,
+        verified: Boolean = true,
+        expired: Boolean = false,
+    ) = AdminAccessRequestDto(
         id = id,
         usuarioId = usuarioId,
         nombre = "Ada Lovelace",
@@ -153,13 +202,25 @@ class AdminAccessRequestReviewRoutesTest {
         motivo = "Coordino el equipo de contenido.",
         estado = estado,
         creadoEn = "2026-10-13T09:00:00Z",
+        correoVerificado = verified,
+        caducada = !verified && expired,
+        correoVerificadoEn = if (verified) "2026-10-13T09:05:00Z" else null,
     )
 
-    /** Orden real de los pasos de una aprobacion: `confirmar`, `rol` (la RPC auditada) y `marcar:<estado>`. */
+    /** Orden real de los pasos de una aprobacion (L1/M1): `marcar:<estado>`, `desbanear`, `rol` (la RPC auditada); y la reversion. */
     private val timeline = CopyOnWriteArrayList<String>()
 
-    private fun requests() = InMemoryRequests(request(pendingId, applicant), request(pendingWithRoleId, applicantWithRole))
-        .also { it.onEvent = { event -> timeline += event } }
+    private val unverifiedId = "77777777-7777-4777-8777-000000000003"
+    private val expiredId = "77777777-7777-4777-8777-000000000004"
+    private val unverifiedApplicant = "5a5a5a5a-0000-4000-8000-000000000005"
+    private val expiredApplicant = "5a5a5a5a-0000-4000-8000-000000000006"
+
+    private fun requests() = InMemoryRequests(
+        request(pendingId, applicant),
+        request(pendingWithRoleId, applicantWithRole),
+        request(unverifiedId, unverifiedApplicant, verified = false),
+        request(expiredId, expiredApplicant, verified = false, expired = true),
+    ).also { it.onEvent = { event -> timeline += event } }
 
     private fun Application.module(stub: Stub, requests: AdminAccessRequestGateway?) {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
@@ -253,13 +314,18 @@ class AdminAccessRequestReviewRoutesTest {
         assertEquals(HttpStatusCode.OK, all.status, all.bodyAsText())
         assertEquals("no-store", all.headers[HttpHeaders.CacheControl])
         val items = all.json()["items"]!!.jsonArray.map { it.jsonObject }
-        assertEquals(listOf(pendingId, pendingWithRoleId), items.map { it["id"]!!.jsonPrimitive.content })
+        assertEquals(listOf(pendingId, pendingWithRoleId, unverifiedId, expiredId), items.map { it["id"]!!.jsonPrimitive.content })
         val first = items.first()
         assertEquals("Ada Lovelace", first["nombre"]!!.jsonPrimitive.content)
         assertEquals("ada@example.com", first["email"]!!.jsonPrimitive.content)
         assertEquals("Coordino el equipo de contenido.", first["motivo"]!!.jsonPrimitive.content)
         assertEquals("pendiente", first["estado"]!!.jsonPrimitive.content)
         assertEquals("2026-10-13T09:00:00Z", first["creadoEn"]!!.jsonPrimitive.content)
+        // Lo que el panel necesita para decidir si ensena «Aprobar»: siempre presentes, tambien cuando son `false`.
+        assertEquals(listOf("true", "true", "false", "false"), items.map { it["correoVerificado"]!!.jsonPrimitive.content })
+        assertEquals(listOf("false", "false", "false", "true"), items.map { it["caducada"]!!.jsonPrimitive.content })
+        assertEquals("2026-10-13T09:05:00Z", first["correoVerificadoEn"]!!.jsonPrimitive.content)
+        assertFalse("correoVerificadoEn" in items[2], "sin verificar: el instante no viaja (null omitido)")
         assertFalse("password" in all.bodyAsText().lowercase())
 
         assertEquals(HttpStatusCode.OK, list(superActor, "?estado=Rechazada&limit=999&offset=5").status)
@@ -302,23 +368,19 @@ class AdminAccessRequestReviewRoutesTest {
         assertEquals(listOf(roleAdmin), rpc["p_role_ids"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals(emptyList(), rpc["p_expected_role_ids"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals(listOf(roleAdmin), stub.rolesOf[applicant])
-        // El orden: primero se confirma el correo de ESA cuenta, despues el rol y al final se marca la solicitud.
-        assertEquals(listOf("confirmar", "rol", "marcar:aprobada"), timeline.toList())
-        assertEquals(listOf(applicant), requests.confirmed.toList())
-        // Auditoria: la confirmacion, intencion y resultado de la sincronizacion de roles y la resolucion, todas con el actor.
+        // L1/M1: la cuenta se comprueba (solo lectura), PRIMERO se marca (condicionado), despues se desbanea y al final el rol.
+        assertEquals(listOf("marcar:aprobada", "purgar", "desbanear", "rol"), timeline.toList())
+        assertEquals(listOf(applicant), requests.accountReads.toList())
+        // Auditoria: intencion y resultado de la sincronizacion de roles y la resolucion, todas con el actor.
         val audits = stub.audits()
         assertEquals(
-            listOf(ACTION_ACCESS_REQUEST_EMAIL_CONFIRMED, ACTION_ROLES_SYNC_INTENT, ACTION_ROLES_SYNCED, ACTION_ACCESS_REQUEST_APPROVED),
+            listOf(ACTION_ROLES_SYNC_INTENT, ACTION_ROLES_SYNCED, ACTION_ACCESS_REQUEST_APPROVED),
             audits.map { it["accion"]!!.jsonPrimitive.content },
         )
         assertTrue(audits.all { it["usuario_id"]!!.jsonPrimitive.content == superActor }, "$audits")
-        val confirmation = audits.first()
-        assertEquals(pendingId, confirmation["registro_id"]!!.jsonPrimitive.content)
-        assertEquals(applicant, confirmation["despues"]!!.jsonObject["usuarioId"]!!.jsonPrimitive.content)
-        assertEquals("true", confirmation["despues"]!!.jsonObject["emailConfirmado"]!!.jsonPrimitive.content)
-        assertFalse("ada@example.com" in confirmation.toString() || "Ada Lovelace" in confirmation.toString())
         val resolution = audits.last()
-        assertEquals("true", resolution["despues"]!!.jsonObject["emailConfirmado"]!!.jsonPrimitive.content)
+        assertEquals("true", resolution["despues"]!!.jsonObject["correoVerificado"]!!.jsonPrimitive.content)
+        assertFalse("emailConfirmado" in resolution["despues"]!!.jsonObject, "la aprobacion ya no confirma ningun correo")
         assertEquals(ADMIN_ACCESS_TABLE, resolution["tabla_afectada"]!!.jsonPrimitive.content)
         assertEquals(pendingId, resolution["registro_id"]!!.jsonPrimitive.content)
         assertEquals("pendiente", resolution["antes"]!!.jsonObject["estado"]!!.jsonPrimitive.content)
@@ -369,29 +431,73 @@ class AdminAccessRequestReviewRoutesTest {
         assertEquals(first.bodyAsText(), second.bodyAsText())
         assertEquals(1, stub.rpcBodies().size)
         assertEquals(1, requests.resolveCalls)
-        assertEquals(1, requests.confirmed.size, "una ya aprobada no vuelve a tocar la cuenta")
+        assertEquals(1, requests.accountReads.size, "una ya aprobada no vuelve a mirar la cuenta")
         assertEquals(1, stub.audits().count { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVED })
     }
 
+    /** Sin verificar (caducada o no): 409 CONFLICT y NADA mas (ni lectura de la cuenta, ni rol, ni marca, ni auditoria). */
     @Test
-    fun ifTheConfirmationFailsNothingElseHappensAndARetryCompletesIt() = testApplication {
+    fun anUnverifiedOrExpiredRequestCannotBeApproved() = testApplication {
         val stub = Stub()
-        val requests = requests().apply { confirmFailure = SupabaseHttpStatusException(502, "Supabase PUT /auth/v1/admin/users -> 502 (sin codigo)") }
+        val requests = requests()
+        application { module(stub, requests) }
+
+        val unverified = approve(superActor, unverifiedId)
+        val expired = approve(superActor, expiredId)
+
+        for (response in listOf(unverified, expired)) {
+            assertEquals(HttpStatusCode.Conflict, response.status, response.bodyAsText())
+            assertEquals("CONFLICT", response.code())
+        }
+        assertTrue("introducir el código" in unverified.json()["message"]!!.jsonPrimitive.content, unverified.bodyAsText())
+        assertTrue("caducó" in expired.json()["message"]!!.jsonPrimitive.content, expired.bodyAsText())
+        assertTrue(requests.accountReads.isEmpty())
+        assertTrue(stub.rpcBodies().isEmpty(), "sin el buzon demostrado no se concede ningun rol")
+        assertEquals(0, requests.resolveCalls)
+        assertTrue(stub.audits().isEmpty())
+        assertEquals(ADMIN_ACCESS_ESTADO_PENDIENTE, requests.rows[unverifiedId]!!.estado)
+    }
+
+    /** Doble comprobacion: verificada en la tabla pero Supabase Auth no tiene el correo confirmado (o no hay cuenta): 409. */
+    @Test
+    fun aVerifiedRequestWhoseAuthAccountIsNotConfirmedCannotBeApproved() = testApplication {
+        val stub = Stub()
+        val requests = requests().apply {
+            unconfirmedAccounts += applicant
+            missingAccounts += applicantWithRole
+        }
+        application { module(stub, requests) }
+
+        val unconfirmed = approve(superActor, pendingId)
+        val missing = approve(superActor, pendingWithRoleId)
+
+        for (response in listOf(unconfirmed, missing)) {
+            assertEquals(HttpStatusCode.Conflict, response.status, response.bodyAsText())
+            assertEquals("CONFLICT", response.code())
+        }
+        assertEquals(listOf(applicant, applicantWithRole), requests.accountReads.toList())
+        assertTrue(stub.rpcBodies().isEmpty())
+        assertEquals(0, requests.resolveCalls)
+        assertTrue(stub.audits().isEmpty())
+    }
+
+    /** Una lectura de la cuenta que falla PROPAGA (5xx), nunca se convierte en un «si»: nada se concede. */
+    @Test
+    fun ifTheAccountLookupFailsNothingIsGrantedAndARetryCompletesIt() = testApplication {
+        val stub = Stub()
+        val requests = requests().apply { accountFailure = SupabaseHttpStatusException(502, "Supabase GET /auth/v1/admin/users -> 502 (sin codigo)") }
         application { module(stub, requests) }
 
         val failed = approve(superActor, pendingId)
 
         assertTrue(failed.status.value >= 500, failed.bodyAsText())
-        assertEquals(ADMIN_ACCESS_ESTADO_PENDIENTE, requests.rows[pendingId]!!.estado)
-        assertTrue(requests.confirmed.isEmpty())
-        assertTrue(stub.rpcBodies().isEmpty(), "sin confirmar la cuenta no se concede ningun rol")
-        assertEquals(emptyList(), stub.rolesOf[applicant])
+        assertTrue(stub.rpcBodies().isEmpty())
         assertEquals(0, requests.resolveCalls)
         assertTrue(stub.audits().isEmpty())
 
-        requests.confirmFailure = null
+        requests.accountFailure = null
         assertEquals(HttpStatusCode.OK, approve(superActor, pendingId).status)
-        assertEquals(listOf("confirmar", "rol", "marcar:aprobada"), timeline.toList())
+        assertEquals(listOf("marcar:aprobada", "purgar", "desbanear", "rol"), timeline.toList())
         assertEquals(ADMIN_ACCESS_ESTADO_APROBADA, requests.rows[pendingId]!!.estado)
     }
 
@@ -402,25 +508,54 @@ class AdminAccessRequestReviewRoutesTest {
         application { module(stub, requests) }
 
         val failed = approve(superActor, pendingId)
-        assertTrue(failed.status.value >= 500, failed.bodyAsText())
+        // L1: la marca ya estaba; el rol falla -> se vuelve a banear, la marca vuelve a `pendiente`, se audita y 503.
+        assertEquals(HttpStatusCode.ServiceUnavailable, failed.status, failed.bodyAsText())
+        assertEquals("UPSTREAM_UNAVAILABLE", failed.code())
         assertEquals(ADMIN_ACCESS_ESTADO_PENDIENTE, requests.rows[pendingId]!!.estado)
-        assertEquals(0, requests.resolveCalls)
-        // La cuenta ya quedo confirmada (paso 1) y queda auditado, pero sin rol y con la solicitud pendiente.
-        assertEquals(listOf(applicant), requests.confirmed.toList())
+        assertEquals(null, requests.rows[pendingId]!!.resueltoPor)
+        assertEquals(1, requests.resolveCalls)
+        assertEquals(1, requests.revertCalls)
+        assertEquals(true, requests.banned[applicant], "sin rol, la cuenta vuelve a quedar baneada")
         assertEquals(emptyList(), stub.rolesOf[applicant])
-        assertEquals(ACTION_ACCESS_REQUEST_EMAIL_CONFIRMED, stub.audits().first()["accion"]!!.jsonPrimitive.content)
-        assertFalse(stub.audits().any { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVED })
+        assertEquals(listOf("marcar:aprobada", "purgar", "desbanear", "banear", "revertir"), timeline.toList())
+        val audits = stub.audits()
+        assertFalse(audits.any { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVED })
+        val reverted = audits.single { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVAL_REVERTED }
+        assertEquals("pendiente", reverted["despues"]!!.jsonObject["estado"]!!.jsonPrimitive.content)
+        assertEquals("rol", reverted["despues"]!!.jsonObject["pasoFallido"]!!.jsonPrimitive.content)
+        assertEquals("true", reverted["despues"]!!.jsonObject["revertida"]!!.jsonPrimitive.content)
+        assertEquals(superActor, reverted["usuario_id"]!!.jsonPrimitive.content)
 
+        timeline.clear()
         stub.rpcStatus = 200
         assertEquals(HttpStatusCode.OK, approve(superActor, pendingId).status)
         assertEquals(ADMIN_ACCESS_ESTADO_APROBADA, requests.rows[pendingId]!!.estado)
-        // El reintento repite los tres pasos; confirmar otra vez la misma cuenta es inocuo.
-        assertEquals(listOf("confirmar", "confirmar", "rol", "marcar:aprobada"), timeline.toList())
+        // El reintento vuelve a comprobar la cuenta (solo lectura) y completa marca, desbaneo y rol.
+        assertEquals(listOf("marcar:aprobada", "purgar", "desbanear", "rol"), timeline.toList())
+        assertEquals(listOf(applicant, applicant), requests.accountReads.toList())
         assertEquals(listOf(roleAdmin), stub.rolesOf[applicant])
+        assertEquals(false, requests.banned[applicant])
+    }
+
+    /** M1: si el desbaneo falla, no se concede el rol, la marca se revierte y la aprobacion falla con 503. */
+    @Test
+    fun ifTheUnbanFailsNoRoleIsGrantedAndTheApprovalIsReverted() = testApplication {
+        val stub = Stub()
+        val requests = requests().apply { unbanFailure = SupabaseHttpStatusException(500, "Supabase PUT /auth/v1/admin/users -> 500 (sin codigo)") }
+        application { module(stub, requests) }
+
+        val failed = approve(superActor, pendingId)
+
+        assertEquals(HttpStatusCode.ServiceUnavailable, failed.status, failed.bodyAsText())
+        assertTrue(stub.rpcBodies().isEmpty(), "sin desbaneo no hay rol")
+        assertEquals(ADMIN_ACCESS_ESTADO_PENDIENTE, requests.rows[pendingId]!!.estado)
+        assertEquals(listOf("marcar:aprobada", "purgar", "revertir"), timeline.toList(), "nunca desbaneada: no se vuelve a banear")
+        val reverted = stub.audits().single { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVAL_REVERTED }
+        assertEquals("desbaneo", reverted["despues"]!!.jsonObject["pasoFallido"]!!.jsonPrimitive.content)
     }
 
     @Test
-    fun ifMarkingTheRequestFailsARetryDoesNotSyncRolesAgainAndCompletesIt() = testApplication {
+    fun ifMarkingTheRequestFailsNothingElseHappensAndARetryCompletesIt() = testApplication {
         val stub = Stub()
         val requests = requests().apply { resolveFailure = SupabaseHttpStatusException(503, "Supabase PATCH /rest/v1/solicitudes_acceso_admin -> 503 (sin codigo)") }
         application { module(stub, requests) }
@@ -429,7 +564,9 @@ class AdminAccessRequestReviewRoutesTest {
 
         assertTrue(failed.status.value >= 500, failed.bodyAsText())
         assertEquals(ADMIN_ACCESS_ESTADO_PENDIENTE, requests.rows[pendingId]!!.estado)
-        assertEquals(listOf(roleAdmin), stub.rolesOf[applicant])
+        // L1: la marca va PRIMERO; si falla, ni desbaneo ni rol.
+        assertEquals(emptyList(), stub.rolesOf[applicant])
+        assertTrue(requests.banned.isEmpty())
         assertFalse(stub.audits().any { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVED })
 
         requests.resolveFailure = null
@@ -437,9 +574,50 @@ class AdminAccessRequestReviewRoutesTest {
 
         assertEquals(HttpStatusCode.OK, retried.status, retried.bodyAsText())
         assertEquals("aprobada", retried.json()["estado"]!!.jsonPrimitive.content)
-        assertEquals(1, stub.rpcBodies().size, "el rol ya estaba: el reintento no vuelve a sincronizar")
-        assertEquals(listOf("confirmar", "rol", "confirmar", "marcar:aprobada"), timeline.toList())
+        assertEquals(1, stub.rpcBodies().size)
+        assertEquals(listOf("marcar:aprobada", "purgar", "desbanear", "rol"), timeline.toList())
         assertEquals(1, stub.audits().count { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVED })
+    }
+
+    /** L1, carrera: el rechazo gana justo antes de que la aprobacion marque. La aprobacion no marca, no desbanea ni concede rol: 409. */
+    @Test
+    fun aRejectionThatWinsTheRaceLeavesNoAdminRoleOnTheRejectedRequest() = testApplication {
+        val stub = Stub()
+        val requests = requests()
+        requests.beforeResolve = { id ->
+            if (requests.rows[id]!!.estado == ADMIN_ACCESS_ESTADO_PENDIENTE) requests.applyResolve(id, ADMIN_ACCESS_ESTADO_RECHAZADA, superActor, null)
+        }
+        application { module(stub, requests) }
+
+        val response = approve(superActor, pendingId)
+
+        assertEquals(HttpStatusCode.Conflict, response.status, response.bodyAsText())
+        assertEquals(ADMIN_ACCESS_ESTADO_RECHAZADA, requests.rows[pendingId]!!.estado)
+        assertTrue(stub.rpcBodies().isEmpty(), "una solicitud rechazada nunca recibe admin")
+        assertEquals(emptyList(), stub.rolesOf[applicant])
+        assertTrue(requests.banned.isEmpty())
+    }
+
+    /** L1, carrera inversa: la aprobacion ya marco; un rechazo que llega mientras concede el rol no puede marcar (409 en su ruta). */
+    @Test
+    fun aRejectionDuringTheGrantCannotFlipAnApprovedRequest() = testApplication {
+        val stub = Stub()
+        val requests = requests()
+        var rejectSawResolution: AdminAccessRequestDto? = AdminAccessRequestDto("", "", "", "", "", "", "", false, false)
+        requests.onEvent = { event ->
+            timeline += event
+            if (event == "desbanear") rejectSawResolution = requests.applyResolve(pendingId, ADMIN_ACCESS_ESTADO_RECHAZADA, superActor, null)
+        }
+        application { module(stub, requests) }
+
+        val response = approve(superActor, pendingId)
+
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        assertEquals(null, rejectSawResolution, "el rechazo concurrente no encontro la solicitud pendiente")
+        assertEquals(ADMIN_ACCESS_ESTADO_APROBADA, requests.rows[pendingId]!!.estado)
+        assertEquals(listOf(roleAdmin), stub.rolesOf[applicant])
+        val rejected = reject(superActor, pendingId)
+        assertEquals(HttpStatusCode.Conflict, rejected.status)
     }
 
     @Test
@@ -482,7 +660,7 @@ class AdminAccessRequestReviewRoutesTest {
         assertEquals(HttpStatusCode.OK, withoutBody.status, withoutBody.bodyAsText())
         assertNull(withoutBody.json()["motivoResolucion"])
         assertTrue(stub.rpcBodies().isEmpty(), "rechazar no concede ni retira roles")
-        assertTrue(requests.confirmed.isEmpty(), "rechazar no confirma la cuenta: sigue sin poder iniciar sesion")
+        assertTrue(requests.accountReads.isEmpty(), "rechazar no consulta ni confirma la cuenta")
         // Primero se marca y se audita; la cuenta se borra despues (si el borrado falla, ya consta como rechazada).
         assertEquals(listOf("marcar:rechazada", "borrar", "marcar:rechazada", "borrar"), timeline.toList())
         assertEquals(listOf(applicant, applicantWithRole), requests.deleted.toList(), "rechazar no deja la cuenta creada")
@@ -557,5 +735,116 @@ class AdminAccessRequestReviewRoutesTest {
         assertEquals(HttpStatusCode.BadRequest, reject(superActor, pendingId, "[]").status)
         assertEquals(0, requests.resolveCalls)
         assertEquals(HttpStatusCode.OK, reject(superActor, pendingId, """{"motivo":"${"x".repeat(500)}"}""").status)
+    }
+
+    // ------------------------------------------------------------------------------------------------ revision #3
+
+    /** L1: las sesiones se purgan justo ANTES del desbaneo; si la purga falla no se desbanea, no hay rol y se revierte (503). */
+    @Test
+    fun aFailedSessionPurgeAtApprovalFailsClosedWithoutUnbanning() = testApplication {
+        val stub = Stub()
+        val requests = requests().apply { purgeFailure = SupabaseHttpStatusException(500, "Supabase POST /rest/v1/rpc/admin_purge_user_sessions -> 500 (sin codigo)") }
+        application { module(stub, requests) }
+
+        val failed = approve(superActor, pendingId)
+
+        assertEquals(HttpStatusCode.ServiceUnavailable, failed.status, failed.bodyAsText())
+        assertEquals("UPSTREAM_UNAVAILABLE", failed.code())
+        assertEquals(null, requests.banned[applicant], "ni desbaneada ni tocada")
+        assertTrue(stub.rpcBodies().isEmpty(), "sin purga no hay rol")
+        assertEquals(ADMIN_ACCESS_ESTADO_PENDIENTE, requests.rows[pendingId]!!.estado)
+        assertEquals(listOf("marcar:aprobada", "revertir"), timeline.toList())
+        val reverted = stub.audits().single { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVAL_REVERTED }
+        assertEquals("purga", reverted["despues"]!!.jsonObject["pasoFallido"]!!.jsonPrimitive.content)
+
+        timeline.clear()
+        requests.purgeFailure = null
+        assertEquals(HttpStatusCode.OK, approve(superActor, pendingId).status)
+        assertEquals(listOf("marcar:aprobada", "purgar", "desbanear", "rol"), timeline.toList())
+        assertEquals(listOf(applicant), requests.purged.toList())
+    }
+
+    /**
+     * L2: el rol falla y el RE-BANEO de la reversion tambien. La cuenta queda desbaneada y sin rol: la solicitud NO vuelve a
+     * `pendiente` (fuera del camino de reanudacion) sino que se queda `aprobada`, auditada `revertida:false` con el motivo.
+     * Repetir la aprobacion la reanuda: purga, desbaneo y rol.
+     */
+    @Test
+    fun aFailedReBanKeepsTheRequestApprovedAndApprovingAgainResumesIt() = testApplication {
+        val stub = Stub().apply { rpcStatus = 500 }
+        val requests = requests().apply { rebanFailure = SupabaseHttpStatusException(500, "Supabase PUT /auth/v1/admin/users -> 500 (sin codigo)") }
+        application { module(stub, requests) }
+
+        val failed = approve(superActor, pendingId)
+
+        assertEquals(HttpStatusCode.ServiceUnavailable, failed.status, failed.bodyAsText())
+        assertEquals(ADMIN_ACCESS_ESTADO_APROBADA, requests.rows[pendingId]!!.estado, "no se revierte: la reanudacion la termina")
+        assertEquals(superActor, requests.rows[pendingId]!!.resueltoPor)
+        assertEquals(0, requests.revertCalls)
+        assertEquals(false, requests.banned[applicant], "el re-baneo fallo")
+        assertEquals(emptyList(), stub.rolesOf[applicant])
+        val reverted = stub.audits().single { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVAL_REVERTED }.getValue("despues").jsonObject
+        assertEquals("false", reverted["revertida"]!!.jsonPrimitive.content)
+        assertEquals("false", reverted["rebaneada"]!!.jsonPrimitive.content)
+        assertEquals("aprobada", reverted["estado"]!!.jsonPrimitive.content)
+        assertEquals("rebaneo_fallido_pendiente_de_reanudar", reverted["motivoNoRevertida"]!!.jsonPrimitive.content)
+
+        timeline.clear()
+        stub.rpcStatus = 200
+        requests.rebanFailure = null
+        val resumed = approve(superActor, pendingId)
+
+        assertEquals(HttpStatusCode.OK, resumed.status, resumed.bodyAsText())
+        assertEquals(listOf("purgar", "desbanear", "rol"), timeline.toList())
+        assertEquals(listOf(roleAdmin), stub.rolesOf[applicant])
+        assertEquals(false, requests.banned[applicant])
+        val audit = stub.audits().last { it["accion"]!!.jsonPrimitive.content == ACTION_ACCESS_REQUEST_APPROVED }
+        assertEquals("true", audit["despues"]!!.jsonObject["reanudada"]!!.jsonPrimitive.content)
+    }
+
+    /** L1 en la reanudacion: purga antes del desbaneo; si falla, 503 sin desbanear ni rol. */
+    @Test
+    fun resumingAStuckApprovalPurgesSessionsFirstAndFailsClosedIfThePurgeFails() = testApplication {
+        val stub = Stub()
+        val stuckId = "77777777-7777-4777-8777-000000000005"
+        val requests = InMemoryRequests(request(stuckId, applicant, estado = ADMIN_ACCESS_ESTADO_APROBADA))
+            .also { it.onEvent = { event -> timeline += event } }
+        requests.purgeFailure = IllegalStateException("Supabase network error on POST /rest/v1/rpc/admin_purge_user_sessions")
+        application { module(stub, requests) }
+
+        val failed = approve(superActor, stuckId)
+
+        assertEquals(HttpStatusCode.ServiceUnavailable, failed.status, failed.bodyAsText())
+        assertEquals(emptyList(), timeline.toList(), "sin purga no se desbanea")
+        assertTrue(stub.rpcBodies().isEmpty())
+
+        requests.purgeFailure = null
+        assertEquals(HttpStatusCode.OK, approve(superActor, stuckId).status)
+        assertEquals(listOf("purgar", "desbanear", "rol"), timeline.toList())
+        assertEquals(listOf(applicant), requests.purged.toList())
+    }
+
+    /** Revision #3 (c): la reanudacion repite la doble comprobacion: cuenta inexistente o sin confirmar = 409 y nada mas. */
+    @Test
+    fun resumingAStuckApprovalRechecksThatTheAuthAccountIsConfirmed() = testApplication {
+        val stub = Stub()
+        val stuckId = "77777777-7777-4777-8777-000000000005"
+        val requests = InMemoryRequests(request(stuckId, applicant, estado = ADMIN_ACCESS_ESTADO_APROBADA))
+            .also { it.onEvent = { event -> timeline += event } }
+        requests.unconfirmedAccounts += applicant
+        application { module(stub, requests) }
+
+        val unconfirmed = approve(superActor, stuckId)
+        assertEquals(HttpStatusCode.Conflict, unconfirmed.status, unconfirmed.bodyAsText())
+        assertEquals("CONFLICT", unconfirmed.code())
+
+        requests.unconfirmedAccounts.clear()
+        requests.missingAccounts += applicant
+        assertEquals(HttpStatusCode.Conflict, approve(superActor, stuckId).status)
+
+        assertEquals(listOf(applicant, applicant), requests.accountReads.toList())
+        assertEquals(emptyList(), timeline.toList(), "ni purga, ni desbaneo, ni rol")
+        assertTrue(stub.rpcBodies().isEmpty())
+        assertEquals(emptyList(), stub.rolesOf[applicant])
     }
 }

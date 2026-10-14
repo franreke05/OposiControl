@@ -61,9 +61,9 @@ internal class AttemptRuntime(
  * Runtime de examen del consumidor (SLICE 3, `openapi/attempts/attempts.yaml`, CONGELADO):
  *
  *  - D2-03 `POST /api/v1/app/examenes/{examId}/intentos`                 abrir o reanudar (`Idempotency-Key` obligatoria)
- *  - D2-07 `GET  /api/v1/app/intentos/{attemptId}`                       estado + grid
- *  - D2-08 `GET  /api/v1/app/intentos/{attemptId}/preguntas`             preguntas congeladas, SIN soluciones
- *  - D2-09 `PUT  /api/v1/app/intentos/{attemptId}/respuestas/{preguntaId}` responder o saltar (`Idempotency-Key` obligatoria)
+ *  - D2-07 `GET  /api/v1/app/intentos/{attemptId}`                       estado + grid (lo respondido, ya corregido: DEC-015)
+ *  - D2-08 `GET  /api/v1/app/intentos/{attemptId}/preguntas`             preguntas congeladas, SIN soluciones; la respuesta propia lleva su correccion
+ *  - D2-09 `PUT  /api/v1/app/intentos/{attemptId}/respuestas/{preguntaId}` responder o saltar (`Idempotency-Key` obligatoria); al responder revela la correccion
  *  - D2-10 `POST /api/v1/app/intentos/{attemptId}/finalizar`             finalizar (`Idempotency-Key` opcional; idempotente por estado)
  *  - D2-11 `POST /api/v1/app/intentos/{attemptId}/abandonar`             abandonar (idempotente por estado)
  *  - D2-12 `GET  /api/v1/app/intentos/{attemptId}/resultado`             resultado (solo finalizado)
@@ -74,6 +74,10 @@ internal class AttemptRuntime(
  * limite por usuario antes de leer el perfil; (2) ids de ruta (400 VALIDATION); (3) solo entonces la `Idempotency-Key` y
  * el cuerpo. Un intento ajeno o inexistente es 404 ATTEMPT_NOT_FOUND (nunca revela que existe): el filtro por dueno va en la
  * lectura y dentro de cada RPC. Sin runtime las rutas existen pero fallan cerrado con 500.
+ *
+ * DEC-015 (dueno, 2026-10-13): D2-09 devuelve `esCorrecta` / `opcionCorrectaId` al responder (los tres tipos de examen); un
+ * salto y una anulada no revelan nada; lo ya respondido sigue bloqueado (409 ANSWER_LOCKED). La correccion sale solo de la
+ * fila propia del usuario: `soluciones_pregunta` no se lee con el intento abierto (SEC-004).
  *
  * D2-10 sustituye al antiguo `POST /intentos/{id}/finalizar` de [appV1Routes] (misma URL): el cierre del intento es ahora
  * UNA RPC atomica y la respuesta es el `AttemptResult` congelado.

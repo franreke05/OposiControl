@@ -170,6 +170,8 @@ class SupabaseOposiBotsUserAdminGateway(
 
     override suspend fun createUser(request: OposiBotsUserAdminCreateRequest): OposiBotsUserAdminDto {
         require(request.email.isNotBlank()) { "El usuario necesita email." }
+        // L8: el correo canonico unico del plano de auth (solo A-Z se minuscula), el mismo en Auth, en `usuario` y al reconciliar.
+        val email = requireNotNull(canonicalAuthEmail(request.email)?.takeIf { it.isNotEmpty() && isValidAuthEmailShape(it) }) { "El usuario necesita un email valido." }
         require(request.nombre.isNotBlank()) { "El usuario necesita nombre." }
         require(request.apellidos.isNotBlank()) { "El usuario necesita apellidos." }
         require(request.especialidadRegistro.isNotBlank()) { "El usuario necesita especialidad." }
@@ -178,7 +180,7 @@ class SupabaseOposiBotsUserAdminGateway(
         val authPassword = request.password?.takeIf(String::isNotBlank) ?: generateRandomPassword()
         val authBody = json.encodeToString(
             buildJsonObject {
-                put("email", request.email.trim())
+                put("email", email)
                 put("password", authPassword)
                 put("email_confirm", true)
             },
@@ -188,10 +190,10 @@ class SupabaseOposiBotsUserAdminGateway(
         // identidad) se lanzaba en el contexto ya cancelado, fallaba al instante y quedaba una identidad de Auth
         // huerfana; y cancelar DURANTE el POST de Auth podia dejarla creada sin que nadie supiera su id. Cada peticion
         // esta acotada por el HttpTimeout del cliente (15 s), asi que la unidad termina siempre.
-        return withContext(NonCancellable) { createUserAtomically(request, authBody) }
+        return withContext(NonCancellable) { createUserAtomically(request, email, authBody) }
     }
 
-    private suspend fun createUserAtomically(request: OposiBotsUserAdminCreateRequest, authBody: String): OposiBotsUserAdminDto {
+    private suspend fun createUserAtomically(request: OposiBotsUserAdminCreateRequest, email: String, authBody: String): OposiBotsUserAdminDto {
         // MASTER7-IDEM-001: instante previo al POST de Auth; solo una identidad creada DESPUES (menos el margen de reloj)
         // puede ser la que este POST creo y cuya respuesta se perdio.
         val startedAt = Instant.now()
@@ -204,11 +206,11 @@ class SupabaseOposiBotsUserAdminGateway(
                 // MASTER6-API-004: un rechazo de GoTrue causado por el cliente no es un fallo del upstream (502).
                 goTrueCreateRejection(rejected)?.let { throw it }
                 // MASTER7-IDEM-001: un 5xx puede llegar DESPUES de que GoTrue confirmara la identidad (resultado ambiguo).
-                if (rejected.status >= 500) reconcileLostAuthCreate(request.email.trim(), startedAt)
+                if (rejected.status >= 500) reconcileLostAuthCreate(email, startedAt)
                 throw rejected
             } catch (lost: IllegalStateException) {
                 // MASTER7-IDEM-001: transporte/timeout: la respuesta se perdio y la identidad pudo quedar creada.
-                reconcileLostAuthCreate(request.email.trim(), startedAt)
+                reconcileLostAuthCreate(email, startedAt)
                 throw lost
             },
         ).id
@@ -218,7 +220,7 @@ class SupabaseOposiBotsUserAdminGateway(
                 add(
                     buildJsonObject {
                         put("auth_user_id", authUserId)
-                        put("email", request.email.trim())
+                        put("email", email)
                         put("nombre", request.nombre.trim())
                         put("apellidos", request.apellidos.trim())
                         request.username?.trim()?.let { put("username", it) }
@@ -262,12 +264,12 @@ class SupabaseOposiBotsUserAdminGateway(
      * lanza el mismo estilo de error que la compensacion existente, con el auth_user_id para limpieza manual.
      */
     private suspend fun reconcileLostAuthCreate(email: String, startedAt: Instant) {
-        val emailRef = sha256Hex(email.lowercase().toByteArray(StandardCharsets.UTF_8)).take(12)
+        val emailRef = sha256Hex(email.toByteArray(StandardCharsets.UTF_8)).take(12)
         val notBefore = startedAt.minusMillis(LOST_AUTH_CREATE_CLOCK_SKEW_MS)
         val ghostId = try {
             val path = "/auth/v1/admin/users?filter=${URLEncoder.encode(email, StandardCharsets.UTF_8)}&per_page=50"
             val matches = json.decodeFromString<GoTrueAdminUserListWire>(request(HttpMethod.Get, path, null)).users
-                .filter { it.email?.trim()?.equals(email, ignoreCase = true) == true }
+                .filter { user -> user.email?.let(::canonicalAuthEmail) == email }
             val candidate = matches.singleOrNull()
             val createdAt = candidate?.createdAt?.let { runCatching { OffsetDateTime.parse(it).toInstant() }.getOrNull() }
             if (candidate == null || !candidate.id.isUuid() || createdAt == null || createdAt.isBefore(notBefore)) {

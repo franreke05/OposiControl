@@ -47,7 +47,7 @@ class OposiBotsAuthRefreshGateDeadlineTest {
             }
         })
         val directory = CanonicalProfileDirectory { read(reads.incrementAndGet()) }
-        return Harness(SupabaseOposiBotsAuthGateway(configuration(), Json { ignoreUnknownKeys = true }, client, directory), requests, reads)
+        return Harness(authGatewayWithoutAccessRequests(configuration(), Json { ignoreUnknownKeys = true }, client, directory), requests, reads)
     }
 
     private fun active() = CanonicalUserIdentity(CanonicalUserId.fromJwtSubject(UID), AccountStatus.ACTIVA, true)

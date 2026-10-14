@@ -125,7 +125,7 @@ class Master6AuthL2Loop6Test {
             rateLimitHmacSecret = "test-only-rate-limit-secret-32chars",
             valkeyUrl = null,
         )
-        return SupabaseOposiBotsAuthGateway(configuration, Json { ignoreUnknownKeys = true }, client) to requests
+        return authGatewayWithoutAccessRequests(configuration, Json { ignoreUnknownKeys = true }, client) to requests
     }
 
     @Test
