@@ -359,8 +359,16 @@ components:
     Password:
       type: string
       minLength: 12
+      maxLength: 72
+      pattern: '^[\x20-\x7E]{12,72}$'
+      format: password
+      description: 'A NEW password (register, reset): 12 to 72 characters, printable ASCII only (U+0020 space to U+007E tilde, both included). Characters equal bytes, so the 72-byte bcrypt limit of the auth provider is never exceeded. Any other character, including non-ASCII letters, emoji and control characters, is 400 VALIDATION with INVALID_PASSWORD (FA17).'
+    LoginPassword:
+      type: string
+      minLength: 12
       maxLength: 128
       format: password
+      description: 'An EXISTING password presented at login: the historical bounds (12..128 characters) are kept so no password set before FA17 is locked out.'
     RegisterRequest:
       type: object
       required: [email, password]
@@ -409,7 +417,7 @@ components:
           type: string
           format: email
         password:
-          $ref: '#/components/schemas/Password'
+          $ref: '#/components/schemas/LoginPassword'
     AppleSignInRequest:
       type: object
       required: [identityToken, authorizationCode]

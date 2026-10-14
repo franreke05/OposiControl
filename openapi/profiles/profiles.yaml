@@ -1029,8 +1029,10 @@ components:
         newPassword:
           type: string
           minLength: 12
-          maxLength: 128
+          maxLength: 72
+          pattern: '^[\x20-\x7E]{12,72}$'
           format: password
+          description: 'Same rule as auth Password (FA17): 12 to 72 characters, printable ASCII only (U+0020 space to U+007E tilde, both included).'
         newEmail:
           type: string
           format: email
