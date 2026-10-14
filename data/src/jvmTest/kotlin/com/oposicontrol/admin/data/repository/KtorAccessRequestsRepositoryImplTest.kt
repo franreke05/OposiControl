@@ -11,6 +11,7 @@ import com.oposicontrol.admin.core.database.AdminDatabase
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.domain.model.AccessRequest
+import com.oposicontrol.admin.domain.model.AccessRequestCodeOutcome
 import com.oposicontrol.admin.domain.model.AccessRequestStatus
 import com.oposicontrol.admin.domain.model.AccessRequestSubmission
 import io.ktor.client.HttpClient
@@ -101,7 +102,6 @@ class KtorAccessRequestsRepositoryImplTest {
     private fun submission() = AccessRequestSubmission(
         name = "Ada Lovelace",
         email = "ada@example.com",
-        password = password,
         reason = "Coordino el equipo de contenido.",
     )
 
@@ -112,7 +112,7 @@ class KtorAccessRequestsRepositoryImplTest {
     // ------------------------------------------------------------------------------------------------ envio publico
 
     @Test
-    fun submittingPostsToThePublicAuthRouteWithoutAnyCredentialAndThePasswordOnlyInTheBody() = runTest {
+    fun submittingPostsToThePublicAuthRouteWithoutAnyCredentialAndWithoutAnyPassword() = runTest {
         val requests = mutableListOf<Recorded>()
         val repository = repository(requests) { json(HttpStatusCode.Accepted, """{"estado":"recibida"}""") }
 
@@ -126,18 +126,16 @@ class KtorAccessRequestsRepositoryImplTest {
         // Publica: ni el token de sesion ni el token estatico de desarrollo viajan.
         assertNull(sent.request.headers[HttpHeaders.Authorization])
         assertTrue(sent.request.url.parameters.isEmpty(), "nada en la URL")
-        assertFalse(password in sent.request.url.toString())
-        assertFalse(sent.request.headers.entries().any { (_, values) -> values.any { password in it } })
         val body = Json.parseToJsonElement(sent.body).jsonObject
-        assertEquals(setOf("nombre", "email", "password", "motivo"), body.keys)
+        // Revision de seguridad 2026-10-14: la solicitud ya no lleva contrasena (se elige al verificar).
+        assertEquals(setOf("nombre", "email", "motivo"), body.keys)
         assertEquals("Ada Lovelace", body["nombre"]!!.jsonPrimitive.content)
         assertEquals("ada@example.com", body["email"]!!.jsonPrimitive.content)
-        assertEquals(password, body["password"]!!.jsonPrimitive.content)
         assertEquals("Coordino el equipo de contenido.", body["motivo"]!!.jsonPrimitive.content)
     }
 
     @Test
-    fun aRejectedSubmissionIsAFailureWithTheServerMessageAndThePasswordNeverReachesTheLog() = runTest {
+    fun aRejectedSubmissionIsAFailureWithTheServerMessage() = runTest {
         val requests = mutableListOf<Recorded>()
         val logger = RecordingLogger()
         val replies = ArrayDeque(
@@ -157,12 +155,133 @@ class KtorAccessRequestsRepositoryImplTest {
         assertIs<AppError.Validation>(assertIs<AppResult.Failure>(invalid).error)
         assertEquals(503, (assertIs<AppResult.Failure>(down).error as AppError.Network).code)
         assertTrue(logger.lines.isNotEmpty(), "los fallos se registran")
-        assertFalse(logger.lines.any { password in it }, "la contrasena no llega al log del cliente")
-        listOf(limited, invalid, down).forEach { assertFalse(password in it.toString()) }
-        assertFalse(password in submission().toString())
+        assertFalse("ada@example.com" in submission().toString())
+    }
+
+    // ------------------------------------------------------------------------------------------------ verificacion del correo
+
+    private fun MockRequestHandleScope.limited(retryAfter: String?) = respond(
+        content = ByteReadChannel("""{"error":"TemporarilyUnavailable","code":"RATE_LIMITED","message":"Demasiadas peticiones."}"""),
+        status = HttpStatusCode.TooManyRequests,
+        headers = if (retryAfter == null) {
+            headersOf(HttpHeaders.ContentType, "application/json")
+        } else {
+            headersOf(HttpHeaders.ContentType to listOf("application/json"), HttpHeaders.RetryAfter to listOf(retryAfter))
+        },
+    )
+
+    private val invalidCredential =
+        """{"error":"Validation","message":"Algun dato de la peticion no es valido.","code":"VALIDATION","requestId":"r",""" +
+            """"details":{"issues":[{"field":"credential","issue":"INVALID_CREDENTIAL"}]}}"""
+    private val invalidIdentifier =
+        """{"error":"Validation","message":"Algun dato de la peticion no es valido.","code":"VALIDATION","requestId":"r",""" +
+            """"details":{"issues":[{"field":"identifier","issue":"INVALID_IDENTIFIER"}]}}"""
+    private val invalidPassword =
+        """{"error":"Validation","message":"Algun dato de la peticion no es valido.","code":"VALIDATION","requestId":"r",""" +
+            """"details":{"issues":[{"field":"password","issue":"INVALID_PASSWORD"}]}}"""
+
+    @Test
+    fun verifyingPostsEmailCodeAndChosenPasswordToThePublicRouteAndA204IsAccepted() = runTest {
+        val requests = mutableListOf<Recorded>()
+        val logger = RecordingLogger()
+        val repository = repository(requests, logger) { respond(content = ByteReadChannel(""), status = HttpStatusCode.NoContent) }
+
+        val result = repository.verifyEmail("ada@example.com", "123456", password)
+
+        assertEquals(AccessRequestCodeOutcome.Accepted, assertIs<AppResult.Success<AccessRequestCodeOutcome>>(result).value)
+        val sent = requests.single()
+        assertEquals("POST", sent.request.method.value)
+        assertEquals("/v1/auth/admin-access-requests/verify", sent.request.url.encodedPath)
+        assertNull(sent.request.headers[HttpHeaders.Authorization])
+        assertTrue(sent.request.url.parameters.isEmpty(), "el codigo no viaja en la URL")
+        val body = Json.parseToJsonElement(sent.body).jsonObject
+        assertEquals(setOf("email", "code", "password"), body.keys)
+        assertEquals("ada@example.com", body["email"]!!.jsonPrimitive.content)
+        assertEquals("123456", body["code"]!!.jsonPrimitive.content)
+        assertEquals(password, body["password"]!!.jsonPrimitive.content)
+        // La contrasena solo en el cuerpo: ni URL, ni cabeceras, ni log del cliente.
+        assertFalse(password in sent.request.url.toString())
+        assertFalse(sent.request.headers.entries().any { (_, values) -> values.any { password in it } })
+        assertFalse(logger.lines.any { password in it })
+    }
+
+    @Test
+    fun verifyFailuresAreReadFromTheEnvelopeAndRetryAfter() = runTest {
+        val replies = ArrayDeque<MockRequestHandleScope.() -> HttpResponseData>(
+            listOf(
+                { json(HttpStatusCode.BadRequest, invalidCredential) },
+                { json(HttpStatusCode.BadRequest, invalidIdentifier) },
+                { json(HttpStatusCode.BadRequest, invalidPassword) },
+                { limited("120") },
+                { limited(null) },
+                { limited("Wed, 21 Oct 2026 07:28:00 GMT") },
+                { json(HttpStatusCode.ServiceUnavailable, """{"error":"TemporarilyUnavailable","code":"UPSTREAM_UNAVAILABLE","message":"x"}""") },
+            ),
+        )
+        val repository = repository(mutableListOf()) { replies.removeFirst().invoke(this) }
+
+        fun AppResult<AccessRequestCodeOutcome>.outcome() = assertIs<AppResult.Success<AccessRequestCodeOutcome>>(this).value
+        assertEquals(AccessRequestCodeOutcome.InvalidCode, repository.verifyEmail("ada@example.com", "000000", password).outcome())
+        assertEquals(AccessRequestCodeOutcome.InvalidEmail, repository.verifyEmail("ada@", "000000", password).outcome())
+        assertEquals(AccessRequestCodeOutcome.InvalidPassword, repository.verifyEmail("ada@example.com", "000000", password).outcome())
+        assertEquals(AccessRequestCodeOutcome.RateLimited(120), repository.verifyEmail("ada@example.com", "000000", password).outcome())
+        assertEquals(AccessRequestCodeOutcome.RateLimited(null), repository.verifyEmail("ada@example.com", "000000", password).outcome())
+        assertEquals(AccessRequestCodeOutcome.RateLimited(null), repository.verifyEmail("ada@example.com", "000000", password).outcome())
+        val down = repository.verifyEmail("ada@example.com", "000000", password)
+        assertEquals(503, (assertIs<AppResult.Failure>(down).error as AppError.Network).code)
+    }
+
+    @Test
+    fun resendingPostsOnlyTheEmailAndReadsTheSameAnswers() = runTest {
+        val requests = mutableListOf<Recorded>()
+        val replies = ArrayDeque<MockRequestHandleScope.() -> HttpResponseData>(
+            listOf(
+                { json(HttpStatusCode.Accepted, """{"estado":"recibida"}""") },
+                { json(HttpStatusCode.BadRequest, invalidIdentifier) },
+                { limited("30") },
+                { json(HttpStatusCode.BadRequest, """{"error":"Validation","code":"VALIDATION","message":"Algun dato de la peticion no es valido."}""") },
+            ),
+        )
+        val repository = repository(requests) { replies.removeFirst().invoke(this) }
+
+        fun AppResult<AccessRequestCodeOutcome>.outcome() = assertIs<AppResult.Success<AccessRequestCodeOutcome>>(this).value
+        assertEquals(AccessRequestCodeOutcome.Accepted, repository.resendCode("ada@example.com").outcome())
+        assertEquals(AccessRequestCodeOutcome.InvalidEmail, repository.resendCode("ada@").outcome())
+        assertEquals(AccessRequestCodeOutcome.RateLimited(30), repository.resendCode("ada@example.com").outcome())
+        // Un 400 sin campo conocido sigue el mapeo de siempre.
+        assertIs<AppError.Validation>(assertIs<AppResult.Failure>(repository.resendCode("ada@example.com")).error)
+
+        val sent = requests.first()
+        assertEquals("/v1/auth/admin-access-requests/resend-code", sent.request.url.encodedPath)
+        assertNull(sent.request.headers[HttpHeaders.Authorization])
+        assertEquals(setOf("email"), Json.parseToJsonElement(sent.body).jsonObject.keys)
     }
 
     // ------------------------------------------------------------------------------------------------ revision
+
+    @Test
+    fun listingReadsTheVerificationFlagsWithAndWithoutTheVerifiedInstant() = runTest {
+        val verified =
+            """{"id":"v","estado":"pendiente","creadoEn":"2026-10-13T09:00:00Z","correoVerificado":true,"caducada":false,""" +
+                """"correoVerificadoEn":"2026-10-13T09:05:00Z"}"""
+        val expired = """{"id":"x","estado":"pendiente","creadoEn":"2026-10-13T07:00:00Z","correoVerificado":false,"caducada":true}"""
+        val legacy = """{"id":"l","estado":"pendiente","creadoEn":"2026-10-13T07:00:00Z"}"""
+        val repository = repository(mutableListOf()) { json(HttpStatusCode.OK, """{"items":[$verified,$expired,$legacy]}""") }
+
+        val rows = assertIs<AppResult.Success<List<AccessRequest>>>(repository.listRequests()).value
+
+        assertTrue(rows[0].emailVerified)
+        assertFalse(rows[0].expired)
+        assertEquals("2026-10-13T09:05:00Z", rows[0].emailVerifiedAt)
+        assertTrue(rows[0].canBeApproved)
+        assertFalse(rows[1].emailVerified)
+        assertTrue(rows[1].expired)
+        assertNull(rows[1].emailVerifiedAt)
+        assertFalse(rows[1].canBeApproved)
+        // Sin los campos (servidor antiguo): sin verificar, nunca aprobable desde la pantalla.
+        assertFalse(rows[2].emailVerified)
+        assertFalse(rows[2].canBeApproved)
+    }
 
     @Test
     fun listingSendsTheSessionCredentialTheFilterAndReadsTheRows() = runTest {

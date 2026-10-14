@@ -133,15 +133,19 @@ class AccessRequestsViewModel(
     }
 
     /**
-     * Solo una solicitud PENDIENTE admite decision, y solo si el servidor dijo que esta sesion puede revisar. La excepcion
-     * es volver a RECHAZAR una ya rechazada cuya cuenta sigue existiendo (rechazos antiguos, o un borrado que fallo): eso
-     * termina de borrar la cuenta.
+     * Solo una solicitud PENDIENTE admite decision, y solo si el servidor dijo que esta sesion puede revisar. Aprobar exige
+     * ademas el correo verificado y la solicitud sin caducar ([AccessRequest.canBeApproved]; el servidor lo repite con un
+     * 409). La excepcion es volver a RECHAZAR una ya rechazada cuya cuenta sigue existiendo (rechazos antiguos, o un
+     * borrado que fallo): eso termina de borrar la cuenta.
      */
     private fun ask(requestId: String, kind: AccessDecisionKind) {
         updateState { state ->
             val request = state.allRequests.firstOrNull {
                 it.id == requestId &&
-                    (it.status == AccessRequestStatus.PENDING || (kind == AccessDecisionKind.REJECT && it.status == AccessRequestStatus.REJECTED))
+                    when (kind) {
+                        AccessDecisionKind.APPROVE -> it.canBeApproved
+                        AccessDecisionKind.REJECT -> it.status == AccessRequestStatus.PENDING || it.status == AccessRequestStatus.REJECTED
+                    }
             }
             if (!state.canReview || state.isDeciding || request == null) return@updateState state
             val reason = if (kind == AccessDecisionKind.REJECT && state.selectedId == requestId) state.rejectionReason.trim() else ""
