@@ -83,6 +83,27 @@ class SupabaseV1GatewayExamAccessTest {
     }
 
     /**
+     * E2-P03: un examen PROGRAMADO (`publicado_en` futuro) no sale por las rutas publicas /v1 antes de su hora. El doble
+     * solo lo entrega si la query no filtra `publicado_en=lte.<ahora>`: lista, detalle y preguntas filtran en la base.
+     */
+    @Test fun scheduledExamIsNotServedBeforeItsPublicationTime() {
+        val uris = mutableListOf<String>()
+        val gateway = gatewayWith(record = { uris += java.net.URLDecoder.decode(it.uri().toString(), Charsets.UTF_8) }) { uri ->
+            when {
+                uri.contains("/rest/v1/examenes") && !uri.contains("publicado_en=lte.") ->
+                    V1StubResponse(200, "[${examenRow(publicadoEn = "\"2999-01-01T00:00:00Z\"")}]")
+                else -> V1StubResponse(200, "[]")
+            }
+        }
+
+        assertTrue(gateway.listExamenes(V1ExamenesFilter()).isEmpty())
+        assertEquals(null, gateway.getExamen(examenId))
+        assertEquals(V1PreguntasExamenResult.NotFound, gateway.getPreguntasExamenRafaga(examenId))
+        assertEquals(3, uris.size)
+        uris.forEach { assertTrue(Regex("publicado_en=not\\.is\\.null&publicado_en=lte\\.\\d{4}-").containsMatchIn(it), it) }
+    }
+
+    /**
      * No-regresion. Sin este caso, "devolver NotFound siempre" pasaria el test
      * principal y el endpoint quedaria roto para su uso legitimo.
      */

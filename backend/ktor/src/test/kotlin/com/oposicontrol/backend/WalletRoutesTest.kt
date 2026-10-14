@@ -115,7 +115,7 @@ class WalletRoutesTest {
 
     private val upstream = Upstream()
 
-    private fun Application.walletModule() {
+    private fun Application.walletModule(limit: suspend (CanonicalUserId) -> Unit = {}) {
         install(ContentNegotiation) { json(testJson) }
         installRequestCorrelation()
         installBackendStatusPages()
@@ -125,7 +125,7 @@ class WalletRoutesTest {
             V1StubHttpClient({ upstream.sent += it }, upstream::respond),
         )
         val gateway = WalletGateway(upstream = { path -> transport.get(path) })
-        routing { walletRoutes(WalletRuntime(resolver, WalletService(gateway) { now })) }
+        routing { walletRoutes(WalletRuntime(resolver, WalletService(gateway) { now }, limit)) }
     }
 
     private suspend fun HttpClient.getAs(path: String, token: String? = TEST_TOKEN): HttpResponse =
@@ -157,6 +157,27 @@ class WalletRoutesTest {
     private val listPath = "/api/v1/app/wallet/movimientos"
 
     // =================================================================== D6-01
+
+    // E2-P02 / FA19: limite por usuario WALLET_READ (60 / 60 s), un solo cubo para D6-01 y D6-02, ANTES de leer nada.
+    @Test
+    fun walletReadsShareOnePerUserBucketAnd429WithRetryAfterBeforeAnyUpstreamRead() = testApplication {
+        val limiter = InMemoryOposiBotsAuthRateLimiter()
+        application { walletModule(limiter.subjectLimit(OposiBotsAuthOperation.WALLET_READ)) }
+        repeat(OposiBotsAuthOperation.WALLET_READ.subjectLimit) { i ->
+            val path = if (i % 2 == 0) "/api/v1/app/wallet" else "/api/v1/app/wallet/movimientos"
+            assertTrue(client.getAs(path).status != HttpStatusCode.TooManyRequests, "peticion $i dentro del limite")
+        }
+        val before = upstream.sent.size
+        for (path in listOf("/api/v1/app/wallet", "/api/v1/app/wallet/movimientos")) {
+            val response = client.getAs(path)
+            assertEquals(HttpStatusCode.TooManyRequests, response.status, path)
+            assertEquals("RATE_LIMITED", code(response.bodyAsText()))
+            assertTrue(response.headers[HttpHeaders.RetryAfter] != null)
+        }
+        assertEquals(before, upstream.sent.size, "un limite agotado no paga lecturas upstream")
+        assertEquals(60, OposiBotsAuthOperation.WALLET_READ.subjectLimit)
+        assertEquals(60L, OposiBotsAuthOperation.WALLET_READ.windowSeconds)
+    }
 
     @Test
     fun summaryReturnsBalanceEarningsRecentsAndConsumablesAndConformsToTheFrozenWire() = testApplication {

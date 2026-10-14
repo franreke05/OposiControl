@@ -362,6 +362,44 @@ await scenario('METRICS', async () => {
   check('METRICS.no_pii_in_exam_metrics', examLines.length > 0 && leaks.length === 0, `lines=${examLines.length} leaks=${leaks.length}`);
 });
 
+// ---------- E2-P03: un examen PROGRAMADO (sql/93, publicado_en +7 dias) no sale por ninguna puerta antes de su hora ----------
+await scenario('SCHEDULED', async () => {
+  const SCHED = 'e0000000-0000-4000-8000-000000000009';
+  const anon = async (p) => { const r = await fetch(KTOR + p); return { status: r.status, text: await r.text() }; };
+  const [list, detail, questions] = await Promise.all([anon('/v1/examenes'), anon(`/v1/examenes/${SCHED}`), anon(`/v1/examenes/${SCHED}/preguntas`)]);
+  check('SCHEDULED.v1_public_routes_hide_it', list.status === 200 && !list.text.includes(SCHED) && detail.status === 404 && questions.status === 404,
+    `list=${list.status}/${list.text.includes(SCHED)} detail=${detail.status} preguntas=${questions.status}`);
+  const d202 = await call('A', 'GET', `/api/v1/app/examenes/${SCHED}`);
+  check('SCHEDULED.d2_02_not_found', d202.status === 404, `${d202.status} ${d202.json?.code}`);
+  const rest = async (p) => (await (await fetch(`http://localhost:54321/rest/v1/${p}`, {
+    headers: { apikey: ktorEnv.SUPABASE_ANON_KEY, Authorization: `Bearer ${ktorEnv.SUPABASE_ANON_KEY}` } })).text());
+  const rows = await Promise.all([rest(`examenes?select=id&id=eq.${SCHED}`), rest('preguntas?select=id&id=eq.f9000000-0000-4000-8000-000000000001'),
+    rest(`preguntas_examen?select=pregunta_id&examen_id=eq.${SCHED}`), rest('opciones_pregunta?select=id&pregunta_id=eq.f9000000-0000-4000-8000-000000000001')]);
+  check('SCHEDULED.postgrest_anon_rls_hides_it', rows.every((t) => t.trim() === '[]'), rows.join(' '));
+  const pub = await rest(`examenes?select=id&id=eq.${EX.NORMAL}`);
+  check('SCHEDULED.postgrest_anon_still_reads_published_free', pub.includes(EX.NORMAL), pub);
+});
+
+// ---------- E2-P02 / FA19: limites de lectura por usuario. LO ULTIMO: agota los cubos de B ----------
+await scenario('RATE', async () => {
+  // Home V1 legitima: D2-13 EN_CURSO + D2-13 ADQUIRIDOS + D6-01 en paralelo, 5 cargas seguidas -> nunca 429.
+  const homes = [];
+  for (let i = 0; i < 5; i++) {
+    homes.push(...await Promise.all([call('A', 'GET', '/api/v1/app/me/examenes?vista=EN_CURSO'), call('A', 'GET', '/api/v1/app/me/examenes?vista=ADQUIRIDOS'),
+      call('A', 'GET', '/api/v1/app/wallet')]));
+  }
+  check('RATE.home_v1_parallel_never_429', homes.every((r) => r.status === 200), homes.map((r) => r.status).join(','));
+  const burst = await Promise.all(Array.from({ length: 150 }, () => call('B', 'GET', '/api/v1/app/examenes?limit=1')));
+  const limited = burst.filter((r) => r.status === 429);
+  check('RATE.catalog_burst_150_gets_429', limited.length >= 30 && limited.every((r) => r.json?.code === 'RATE_LIMITED' && r.headers.get('retry-after'))
+    && burst.filter((r) => r.status === 200).length <= 120, `200=${burst.filter((r) => r.status === 200).length} 429=${limited.length}`);
+  const ent = await call('B', 'GET', '/api/v1/app/me/entitlement');
+  check('RATE.catalog_bucket_shared_with_d7_02', ent.status === 429, `${ent.status}`);
+  const wburst = await Promise.all(Array.from({ length: 80 }, () => call('B', 'GET', '/api/v1/app/wallet')));
+  const wl = wburst.filter((r) => r.status === 429).length;
+  check('RATE.wallet_burst_80_gets_429', wl >= 20 && wburst.filter((r) => r.status === 200).length <= 60, `200=${wburst.filter((r) => r.status === 200).length} 429=${wl}`);
+});
+
 async function scrape() {
   const text = await (await fetch(`${KTOR}/metrics`, { headers: { Authorization: `Bearer ${ktorEnv.METRICS_SCRAPE_TOKEN}` } })).text();
   const out = {};

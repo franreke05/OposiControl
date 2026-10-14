@@ -50,7 +50,7 @@ class SupabaseV1Gateway private constructor(
             // Mismo filtro que la ruta autenticada: sin él, un examen sin publicar es
             // visible para cualquiera y sin sesión, justo donde un usuario logueado
             // no puede verlo.
-            append("&publicado_en=not.is.null")
+            append(publishedByNow())
             filters.especialidadId?.let { append("&especialidad_id=eq.${it.toPostgrestValue()}") }
             filters.comunidadId?.let { append("&comunidad_id=eq.${it.toPostgrestValue()}") }
             filters.tipoExamen?.let { append("&tipo_examen=eq.${it.toPostgrestValue()}") }
@@ -67,7 +67,7 @@ class SupabaseV1Gateway private constructor(
         return request(
             method = "GET",
             path = "/rest/v1/examenes?select=*&id=eq.${examenId.toPostgrestValue()}" +
-                "&activo=eq.true&publicado_en=not.is.null&limit=1",
+                "&activo=eq.true${publishedByNow()}&limit=1",
             body = null,
         )
             .decodeList<JsonObject>()
@@ -115,7 +115,7 @@ class SupabaseV1Gateway private constructor(
         val examen = request(
             method = "GET",
             path = "/rest/v1/examenes?select=*&id=eq.${examenId.toPostgrestValue()}" +
-                "&activo=eq.true&publicado_en=not.is.null&limit=1",
+                "&activo=eq.true${publishedByNow()}&limit=1",
             body = null,
         )
             .decodeList<JsonObject>()

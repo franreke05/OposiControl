@@ -1,3 +1,4 @@
 # Migraciones del repo que MAIN AUN NO tiene (historial real: supabase/baseline/MAIN_MIGRATION_HISTORY.txt, 2026-10-14).
 # Divergencias conocidas que NO son pendientes: ver supabase/baseline/README.md.
 20261016100000_slice3_attempt_content_revisions
+20261017100000_security_exam_publication_time

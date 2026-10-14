@@ -562,9 +562,9 @@ fun Application.module() {
     } else {
         null
     }
-    val catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it) }
+    val catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it, authRuntime?.rateLimiter) }
     // SLICE 7: lecturas de cartera (D6-01, D6-02), solo lectura, misma credencial de servicio.
-    val walletRuntime = canonicalIdentityResolver?.let { WalletRuntime.fromEnvironment(it) }
+    val walletRuntime = canonicalIdentityResolver?.let { WalletRuntime.fromEnvironment(it, authRuntime?.rateLimiter) }
     // FA15: lecturas de consumidor (D7-05, D5-01, D5-16), solo lectura, misma credencial de servicio.
     val appReadsRuntime = canonicalIdentityResolver?.let { AppReadsRuntime.fromEnvironment(it) }
     // FA11 (D4-01..D4-11): noticias canonicas. UN servicio compartido con `/content/noticias*`; la auditoria usa el actor del JWT.

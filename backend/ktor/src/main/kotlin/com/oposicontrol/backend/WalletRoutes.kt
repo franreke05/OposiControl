@@ -12,12 +12,22 @@ import io.ktor.server.routing.route
 internal class WalletRuntime(
     val resolver: CanonicalIdentityResolver,
     val wallet: WalletService,
+    /** E2-P02 / FA19: limite por usuario (WALLET_READ) antes de leer el perfil. Por defecto no limita (pruebas). */
+    val limit: suspend (CanonicalUserId) -> Unit = {},
 ) {
     companion object {
         /** Cableado de produccion: la misma credencial de servicio que el resto del backend. */
-        fun fromEnvironment(resolver: CanonicalIdentityResolver, environment: (String) -> String? = System::getenv): WalletRuntime? {
+        fun fromEnvironment(
+            resolver: CanonicalIdentityResolver,
+            limiter: OposiBotsAuthRateLimiter? = null,
+            environment: (String) -> String? = System::getenv,
+        ): WalletRuntime? {
             val transport = SupabaseRequestTransport.fromEnvironment(environment) ?: return null
-            return WalletRuntime(resolver, WalletService(WalletGateway(upstream = { path -> transport.get(path) })))
+            return WalletRuntime(
+                resolver,
+                WalletService(WalletGateway(upstream = { path -> transport.get(path) })),
+                limiter.subjectLimit(OposiBotsAuthOperation.WALLET_READ),
+            )
         }
     }
 }
@@ -36,14 +46,14 @@ internal fun Route.walletRoutes(runtime: WalletRuntime?) {
     route("/api/v1/app/wallet") {
         get {
             val rt = runtime.orMisconfigured()
-            val identity = rt.resolver.activeIdentity(call)
+            val identity = rt.resolver.activeIdentity(call, rt.limit)
             val summary = rt.wallet.summary(identity.userId)
             call.response.header(HttpHeaders.CacheControl, "private, no-store")
             call.respond(summary)
         }
         get("/movimientos") {
             val rt = runtime.orMisconfigured()
-            val identity = rt.resolver.activeIdentity(call)
+            val identity = rt.resolver.activeIdentity(call, rt.limit)
             val query = parseWalletMovementsQuery(call.request.queryParameters)
             val page = rt.wallet.movements(identity.userId, query)
             // El saldo es del usuario y cambia con cada movimiento: nunca se cachea.
