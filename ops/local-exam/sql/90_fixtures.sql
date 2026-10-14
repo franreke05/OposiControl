@@ -6,13 +6,13 @@
 --   Especialidad e5000000-…-01 con capacidades abiertas (rafaga, razonado, inmersivo)
 --   EX_NORMAL    e0000000-…-01 rafaga gratuito, 3 preguntas (P1..P3), P1 es la del escenario de REVISION X -> Y
 --   EX_RAZONADA  e0000000-…-02 razonado gratuito, 2 preguntas razonadas
---   EX_IMAGEN    e0000000-…-03 inmersivo gratuito, 1 pregunta con IMAGEN
+--   EX_IMAGEN    e0000000-…-03 inmersivo gratuito, 1 pregunta con IMAGEN 1200x800 (ingesta real, recurso 5e…07)
 --   EX_AUDIO     e0000000-…-04 inmersivo gratuito, 1 pregunta con AUDIO (envolvente + durationMs de la ingesta real), un recurso INVALIDO (pdf, fuera de V1) y un audio AUSENTE (fila sin objeto en Storage)
 --   EX_PREMIUM   e0000000-…-05 rafaga premium (A y B sin premium: 403 EXAM_LOCKED)
 --   EX_GRANDE    e0000000-…-06 rafaga gratuito, 200 preguntas (rendimiento / paginas)
 --   EX_VIDEO     e0000000-…-07 inmersivo gratuito, 1 pregunta con VIDEO mp4 real
 --   EX_LENTO     e0000000-…-08 inmersivo gratuito, 1 pregunta con AUDIO de 30 s servido a 32 KB/s (nginx.conf)
--- Audio, video y audio lento los crea la INGESTA REAL (AdminV1Gateway.addRecursoArchivo) desde up.mjs: durationMs y
+-- Imagen, audio, video y audio lento los crea la INGESTA REAL (AdminV1Gateway.addRecursoArchivo) desde up.mjs: durationMs y
 -- envelope del audio los calcula la ingesta, no este fichero.
 -- Revision X = este contenido. Revision Y = sql/91_publish_revision_y.sql (edicion simulada, solo local).
 
@@ -79,8 +79,6 @@ on conflict do nothing;
 
 -- Recursos V1 (el objeto lo sube up.mjs; el audio AUSENTE no se sube nunca).
 insert into public.recursos_pregunta (id, pregunta_id, codigo_recurso, tipo_recurso, titulo, bucket_storage, ruta_storage, posicion, metadatos) values
-  ('5e000000-0000-4000-8000-000000000001', 'f3000000-0000-4000-8000-000000000001', 'LOC-R1', 'imagen', 'Plano', 'recursos-pregunta',
-   'preguntas/f3000000-0000-4000-8000-000000000001/5e000000-0000-4000-8000-000000000001.png', 1, '{"mime":"image/png","bytes":70}'),
   ('5e000000-0000-4000-8000-000000000003', 'f4000000-0000-4000-8000-000000000001', 'LOC-R3', 'pdf', 'Fuera de V1', 'recursos-pregunta',
    'preguntas/f4000000-0000-4000-8000-000000000001/5e000000-0000-4000-8000-000000000003.pdf', 2, '{"mime":"application/pdf","bytes":10}'),
   ('5e000000-0000-4000-8000-000000000004', 'f4000000-0000-4000-8000-000000000001', 'LOC-R4', 'audio', 'Ausente', 'recursos-pregunta',

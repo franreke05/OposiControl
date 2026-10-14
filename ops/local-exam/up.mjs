@@ -8,6 +8,7 @@
 // Salida: .local/compose.env (compose), .local/ktor.env (Ktor), .local/tokens.json (JWT de A y B), .local/jwks.json.
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,15 +100,10 @@ await fetch(`${GATEWAY}/storage/v1/bucket`, {
   method: 'POST', headers: { ...service, 'Content-Type': 'application/json' },
   body: JSON.stringify({ id: 'recursos-pregunta', name: 'recursos-pregunta', public: false }),
 });
-const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
-for (const [objectPath, bytes, mime] of [
-  ['preguntas/f3000000-0000-4000-8000-000000000001/5e000000-0000-4000-8000-000000000001.png', png, 'image/png'],
-]) {
-  const r = await fetch(`${GATEWAY}/storage/v1/object/recursos-pregunta/${objectPath}`, {
-    method: 'POST', headers: { ...service, 'Content-Type': mime, 'x-upsert': 'true' }, body: bytes,
-  });
-  if (!r.ok) throw new Error(`upload ${objectPath}: ${r.status} ${await r.text()}`);
-}
+// E5-A1: el PNG 1x1 que se subia aqui directamente estaba CORRUPTO (IDAT truncado). La imagen de EX_IMAGEN se crea ahora por
+// la INGESTA (abajo, recurso 5e...0007) y la fila antigua 5e...0001 de stacks ya creados queda inactiva (las revisiones de
+// intentos anteriores la conservan; las nuevas ya no la ven).
+psql("update public.recursos_pregunta set activo = false where id = '5e000000-0000-4000-8000-000000000001' and activo");
 
 // ---------- JWT ES256 de los usuarios de prueba (el JWKS lo sirve la pasarela en /auth/v1) ----------
 const key = crypto.createPrivateKey({ key: secrets.privateJwk, format: 'jwk' });
@@ -132,8 +128,11 @@ fs.writeFileSync(path.join(local, 'ktor.env'), [
 // ---------- recursos inmersivos por la INGESTA REAL (AdminV1Gateway.addRecursoArchivo, autorizada 2026-10-14) ----------
 // audio (2 s), video (mp4 real hecho con el ffmpeg de la imagen local del backend, si existe) y audio LENTO (30 s, la
 // pasarela lo sirve a 32 KB/s). La ingesta calcula durationMs + envelope del audio; nada de eso se escribe a mano.
-const ingested = psql("select count(*) from public.recursos_pregunta where id = '5e000000-0000-4000-8000-000000000002'") === '1';
+// Imagen de 1200x800 (3:2, no cuadrada) generada aqui (sin descargas) y creada por la ingesta como el resto.
+const required = ['5e000000-0000-4000-8000-000000000002', '5e000000-0000-4000-8000-000000000005', '5e000000-0000-4000-8000-000000000006', '5e000000-0000-4000-8000-000000000007'];
+const ingested = psql(`select count(*) from public.recursos_pregunta where id in (${required.map((id) => `'${id}'`).join(', ')})`) === String(required.length);
 if (!ingested) {
+  fs.writeFileSync(path.join(local, 'image.png'), makePng(1200, 800));
   fs.writeFileSync(path.join(local, 'audio.wav'), makeWav(2000, (t) => (t < 500 ? 0.2 : 0.9)));
   fs.writeFileSync(path.join(local, 'slow.wav'), makeWav(30000, (t) => 0.3 + 0.6 * Math.abs(Math.sin(t / 700))));
   makeVideo(path.join(local, 'video.mp4'));
@@ -172,4 +171,44 @@ function makeVideo(target) {
     '-f', 'lavfi', '-i', 'testsrc=duration=2:size=160x120:rate=10', '-pix_fmt', 'yuv420p', '-c:v', 'libx264',
     '-movflags', 'frag_keyframe+empty_moov', '-f', 'mp4', 'pipe:1'], { maxBuffer: 64 * 1024 * 1024 });
   fs.writeFileSync(target, mp4);
+}
+
+/**
+ * PNG RGB de [w]x[h] (por defecto 1200x800, 3:2): un "plano" con papel con grano, cuadricula, muros, mobiliario y un
+ * recorrido. Determinista (PRNG con semilla fija), chunks con CRC32 reales y IDAT deflate: decodificable por cualquier
+ * visor (Android BitmapFactory incluido). E5-A1: sustituye al PNG 1x1 corrupto anterior.
+ */
+function makePng(w = 1200, h = 800) {
+  let seed = 20261014;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) >>> 0) / 4294967296);
+  const px = Buffer.alloc(w * h * 3);
+  const set = (x, y, r, g, b) => { if (x < 0 || y < 0 || x >= w || y >= h) return; const i = (y * w + x) * 3; px[i] = r; px[i + 1] = g; px[i + 2] = b; };
+  const rect = (x0, y0, x1, y1, c) => { for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) set(x, y, ...c); };
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const n = (((x >> 2) * 7 + (y >> 2) * 13) % 5) + (rnd() < 0.02 ? 8 : 0);
+    set(x, y, 236 - n, 232 - n, 220 - n);                                   // papel con grano
+    if (x % 40 === 0 || y % 40 === 0) set(x, y, 190, 205, 225);              // cuadricula
+  }
+  const wall = [45, 45, 52];
+  rect(80, 80, 1120, 92, wall); rect(80, 708, 1120, 720, wall); rect(80, 80, 92, 720, wall); rect(1108, 80, 1120, 720, wall);
+  rect(480, 92, 492, 420, wall); rect(480, 500, 492, 708, wall); rect(92, 400, 380, 412, wall); rect(760, 300, 1108, 312, wall);
+  rect(140, 140, 360, 260, [176, 132, 92]); rect(560, 160, 700, 240, [96, 140, 176]); rect(820, 380, 1040, 640, [120, 170, 120]);
+  rect(160, 480, 400, 560, [200, 170, 120]); rect(600, 560, 700, 660, [150, 110, 160]);
+  for (let t = 0; t < 1; t += 0.0005) {                                     // recorrido de evacuacion
+    const x = Math.round(240 + 760 * t), y = Math.round(600 - 400 * Math.sin(Math.PI * t));
+    rect(x - 3, y - 3, x + 3, y + 3, [210, 40, 40]);
+  }
+  for (let a = 0; a < 2 * Math.PI; a += 0.002) {
+    for (let r = 26; r < 34; r++) set(Math.round(1000 + r * Math.cos(a)), Math.round(200 + r * Math.sin(a)), 210, 40, 40);
+  }
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) { raw[y * (w * 3 + 1)] = 0; px.copy(raw, y * (w * 3 + 1) + 1, y * w * 3, (y + 1) * w * 3); }
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(Buffer.concat([Buffer.from(type), data])) >>> 0);
+    return Buffer.concat([len, Buffer.from(type), data, crc]);
+  };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
 }

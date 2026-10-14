@@ -19,7 +19,27 @@ const EX = { NORMAL: 'e0000000-0000-4000-8000-000000000001', RAZONADA: 'e0000000
   AUDIO: 'e0000000-0000-4000-8000-000000000004', PREMIUM: 'e0000000-0000-4000-8000-000000000005', GRANDE: 'e0000000-0000-4000-8000-000000000006' };
 const q = (e, n) => `f${e}000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const o = (e, n, l) => `0${e}000000-0000-4000-8${l}00-${String(n).padStart(12, '0')}`;
-const RES = { IMG: '5e000000-0000-4000-8000-000000000001', AUD: '5e000000-0000-4000-8000-000000000002', PDF: '5e000000-0000-4000-8000-000000000003', ABSENT: '5e000000-0000-4000-8000-000000000004' };
+const RES = { IMG: '5e000000-0000-4000-8000-000000000007', AUD: '5e000000-0000-4000-8000-000000000002', PDF: '5e000000-0000-4000-8000-000000000003', ABSENT: '5e000000-0000-4000-8000-000000000004' };
+
+// DECODIFICACION REAL de un fixture binario (E5-A1): ffprobe + ffmpeg de la imagen LOCAL del backend (el mismo ffmpeg de produccion),
+// por stdin. Devuelve el primer stream ({codec_name, width, height, duration}) y si el decodificado completo termino sin errores.
+const FFMPEG_IMAGE = execFileSync('docker', ['images', '--format', '{{.Repository}}:{{.Tag}}', 'oposicontrol-backend'], { encoding: 'utf8' })
+  .split(String.fromCharCode(10)).map((l) => l.trim()).find(Boolean);
+function decode(bytes) {
+  if (!FFMPEG_IMAGE) throw new Error('sin imagen local oposicontrol-backend (ffmpeg) para decodificar');
+  const run = (bin, args) => { try { return { ok: true, out: execFileSync('docker', ['run', '-i', '--rm', '--entrypoint', bin, FFMPEG_IMAGE, ...args], { input: bytes, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }) }; } catch (e) { return { ok: false, out: String(e.stderr ?? e.message) }; } };
+  const probe = run('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_name,width,height,duration', '-of', 'json', '-i', 'pipe:0']);
+  const full = run('ffmpeg', ['-v', 'error', '-xerror', '-i', 'pipe:0', '-f', 'null', '-']);
+  const stream = probe.ok ? JSON.parse(probe.out).streams?.[0] ?? null : null;
+  // Audio por stdin: ffprobe no conoce la duracion de un flujo no buscable; se DECODIFICA a PCM y se mide.
+  let seconds = stream?.duration ? Number(stream.duration) : null;
+  if (stream && stream.width === undefined) {
+    const pcm = execFileSync('docker', ['run', '-i', '--rm', '--entrypoint', 'ffmpeg', FFMPEG_IMAGE, '-v', 'error', '-i', 'pipe:0', '-f', 's16le', '-ac', '1', '-ar', '16000', 'pipe:1'],
+      { input: bytes, maxBuffer: 64 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
+    seconds = pcm.length / 32000;
+  }
+  return { stream, seconds, decoded: probe.ok && full.ok && full.out.trim() === '' };
+}
 
 const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
   'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
@@ -183,6 +203,9 @@ await scenario('RESOURCES', async () => {
   const bytes = acc.status === 200 ? await fetch(acc.json.url) : null;
   const body = bytes ? Buffer.from(await bytes.arrayBuffer()) : Buffer.alloc(0);
   check('RESOURCES.image_signed_bytes', acc.status === 200 && bytes.status === 200 && body.length === img.sizeBytes && body.subarray(1, 4).toString() === 'PNG', `access=${acc.status} bytes=${bytes?.status} len=${body.length}`);
+  const imgDec = decode(body);
+  check('RESOURCES.image_decodes_1200x800', imgDec.decoded && imgDec.stream?.codec_name === 'png' && imgDec.stream.width === 1200 && imgDec.stream.height === 800,
+    `${JSON.stringify(imgDec.stream)} decoded=${imgDec.decoded} version=${img?.version} bytes=${body.length}`);
   const sa = await start('A', EX.AUDIO); const aa = sa.json.intento.id;
   const pa = await call('A', 'GET', `/api/v1/app/intentos/${aa}/preguntas`);
   const rec = pa.json.items[0].recursos ?? [];
@@ -194,7 +217,11 @@ await scenario('RESOURCES', async () => {
   check('RESOURCES.invalid_pdf_denied', pdf.status === 404 && pdf.json.code === 'RESOURCE_NOT_FOUND', `${pdf.status} ${pdf.json?.code}`);
   const audAcc = await call('A', 'GET', `/api/v1/app/intentos/${aa}/recursos/${RES.AUD}`);
   const audBytes = audAcc.status === 200 ? await fetch(audAcc.json.url) : null;
+  const audBody = audBytes ? Buffer.from(await audBytes.arrayBuffer()) : Buffer.alloc(0);
   check('RESOURCES.audio_signed_bytes', audAcc.status === 200 && audBytes?.status === 200, `${audAcc.status} ${audBytes?.status}`);
+  const audDec = decode(audBody);
+  check('RESOURCES.audio_decodes_2s', audDec.decoded && audDec.stream?.codec_name === 'pcm_s16le' && Math.abs(audDec.seconds - 2) < 0.01,
+    `${JSON.stringify(audDec.stream)} seconds=${audDec.seconds} decoded=${audDec.decoded}`);
   const absent = await call('A', 'GET', `/api/v1/app/intentos/${aa}/recursos/${RES.ABSENT}`);
   check('RESOURCES.absent_object_503_retryable', absent.status === 503 && !!absent.headers.get('retry-after') && !absent.text.includes('preguntas/'), `${absent.status} ${absent.json?.code}`);
   const cross = await call('A', 'GET', `/api/v1/app/intentos/${ai}/recursos/${RES.AUD}`);
@@ -218,6 +245,9 @@ await scenario('RESOURCES_VIDEO_SLOW', async () => {
   const va = await call('A', 'GET', `/api/v1/app/intentos/${av}/recursos/${vid?.id}`);
   const vb = va.status === 200 ? Buffer.from(await (await fetch(va.json.url)).arrayBuffer()) : Buffer.alloc(0);
   check('RESOURCES.video_signed_bytes_mp4', va.status === 200 && vb.length === vid.sizeBytes && vb.subarray(4, 8).toString() === 'ftyp', `len=${vb.length} box=${vb.subarray(4, 8)}`);
+  const vidDec = decode(vb);
+  check('RESOURCES.video_decodes_h264_160x120', vidDec.decoded && vidDec.stream?.codec_name === 'h264' && vidDec.stream.width === 160 && vidDec.stream.height === 120,
+    `${JSON.stringify(vidDec.stream)} decoded=${vidDec.decoded}`);
   const ss = await start('A', 'e0000000-0000-4000-8000-000000000008'); const as = ss.json.intento.id;
   const ps = await call('A', 'GET', `/api/v1/app/intentos/${as}/preguntas`);
   const slow = ps.json.items[0].recursos?.[0];
@@ -231,6 +261,11 @@ await scenario('RESOURCES_VIDEO_SLOW', async () => {
   const kbps = got / 1024 / ((performance.now() - t1) / 1000);
   await reader.cancel();
   check('RESOURCES.slow_bytes_throttled_access_fast', sa.status === 200 && accessMs < 1000 && kbps < 64, `access=${accessMs.toFixed(0)}ms download=${kbps.toFixed(1)}KB/s`);
+  // El lento se decodifica leyendo el objeto con la clave de servicio (sin el limite de 32 KB/s de la URL firmada).
+  const slowObj = await fetch(`http://localhost:54321/storage/v1/object/authenticated/recursos-pregunta/preguntas/f8000000-0000-4000-8000-000000000001/${slow?.id}.wav`,
+    { headers: { apikey: secrets.serviceKey, Authorization: `Bearer ${secrets.serviceKey}` } });
+  const slowDec = decode(Buffer.from(await slowObj.arrayBuffer()));
+  check('RESOURCES.slow_audio_decodes_30s', slowObj.ok && slowDec.decoded && Math.abs(slowDec.seconds - 30) < 0.01, `${JSON.stringify(slowDec.stream)} seconds=${slowDec.seconds} decoded=${slowDec.decoded}`);
 });
 
 // ---------- CONCURRENCY (E2-I01 items 2, 3, 5, 4) ----------

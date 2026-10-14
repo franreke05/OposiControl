@@ -11,7 +11,8 @@ import kotlin.test.assertTrue
 
 /**
  * EX16 (SOLO stack LOCAL, `ops/local-exam`): crea los recursos inmersivos de los fixtures con la INGESTA REAL
- * (`AdminV1Gateway.addRecursoArchivo`: Storage privado + fila + `metadatos` con `durationMs`/`envelope` del audio).
+ * (`AdminV1Gateway.addRecursoArchivo`: Storage privado + fila + `metadatos` con `durationMs`/`envelope` del audio): imagen
+ * 1200x800, audio, video y audio lento.
  * Se OMITE salvo que `LOCAL_EXAM_INGEST` apunte al `.local` del stack (lo pone `up.mjs`); nunca toca otro proyecto: la
  * URL debe ser `http://localhost:54321`.
  */
@@ -27,6 +28,7 @@ class LocalExamStackIngestFixture {
 
         // (pregunta, recurso, tipo, mime, fichero) -- ids fijos de sql/90_fixtures.sql
         val items = listOf(
+            listOf("f3000000-0000-4000-8000-000000000001", "5e000000-0000-4000-8000-000000000007", "imagen", "image/png", "image.png"),
             listOf("f4000000-0000-4000-8000-000000000001", "5e000000-0000-4000-8000-000000000002", "audio", "audio/wav", "audio.wav"),
             listOf("f7000000-0000-4000-8000-000000000001", "5e000000-0000-4000-8000-000000000005", "video", "video/mp4", "video.mp4"),
             listOf("f8000000-0000-4000-8000-000000000001", "5e000000-0000-4000-8000-000000000006", "audio", "audio/wav", "slow.wav"),

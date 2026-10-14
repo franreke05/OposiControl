@@ -19,7 +19,7 @@ docker compose --env-file ops/local-exam/.local/compose.env -f ops/local-exam/do
 | Pasarela (rest, storage, JWKS) | `http://localhost:54321` (`/rest/v1`, `/storage/v1`, `/auth/v1/.well-known/jwks.json`) |
 | Postgres | `127.0.0.1:54329`, usuario `postgres` / `postgres` |
 | Esquema | `supabase/baseline/main_shape_subset.sql` + `sql/00_overlay_main_objects.sql` (objetos de MAIN fuera del subconjunto) + TODAS las migraciones de `supabase/baseline/PENDING_MIGRATIONS.txt` en orden, `ON_ERROR_STOP` |
-| Fixtures | `sql/90_fixtures.sql` (usuarios A/B, examen normal, razonada, inmersiva imagen, inmersiva audio con envolvente, recurso invalido pdf, audio ausente, premium bloqueado, examen de 200) |
+| Fixtures | `sql/90_fixtures.sql` (usuarios A/B, examen normal, razonada, inmersiva imagen (PNG 1200x800 generado por `up.mjs` y creado por la ingesta, recurso 5e...07), inmersiva audio con envolvente, recurso invalido pdf, audio ausente, premium bloqueado, examen de 200) |
 | Revision Y | `sql/91_publish_revision_y.sql` (edicion simulada de EX_NORMAL tras empezar un intento; la autoria real es protegida) |
 | Claves, JWT, env | `.local/` (gitignored): `ktor.env`, `tokens.json` (JWT ES256 de A y B, 12 h), `secrets.json` |
 
@@ -33,6 +33,9 @@ firmado por la clave local del JWKS de este stack (firma, `kid`, `iss`, `exp` y 
 No emite tokens ni concede nada: no hay login, registro, refresh ni ninguna otra ruta `/auth/v1/*` (404; PUT = 405). Escucha solo
 en 127.0.0.1 y solo existe en ops/local-exam: nunca en la imagen de Ktor ni en produccion. Los JWT de `tokens.json` llevan `email`
 y `app_metadata.providers` como los de GoTrue. Prueba: `e2e.mjs` escenario AUTH_STUB.
+
+Fixtures binarios (E5-A1): `e2e.mjs` DECODIFICA de verdad la imagen (PNG 1200x800), el audio (PCM 2 s), el audio lento (30 s) y el
+video (H.264 160x120) con el ffmpeg/ffprobe de la imagen local `oposicontrol-backend` (el mismo de produccion), no solo la cabecera.
 
 Limites: no hay GoTrue (los JWT se acuñan aqui; solo el stub de /auth/v1/user), no hay Valkey (limitador en memoria), no hay Caddy. Los triggers de
 AUTORIA de MAIN no estan en el subconjunto: el contenido de los fixtures se siembra con `session_replication_role = replica`.
