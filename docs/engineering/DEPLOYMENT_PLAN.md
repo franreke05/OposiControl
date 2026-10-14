@@ -144,3 +144,255 @@ Steps 1 to 4 do not touch the running backend or the edge. Step 5 onwards is the
   received bytes are exported as `upstream_response_wire_bytes_total` with two alert rules, the Supabase disk metrics read is
   cached for 10 minutes, and backend images are built only with `scripts/build-backend-image.sh` (three images built with
   a bare `docker build` on 2026-10-09/10 carried the jar of the first cutover: the Dockerfile copies `installDist` output).
+
+## 10. Preparación del backend de consumo y de las solicitudes de acceso (2026-10-14, PREPARADO, NO EJECUTADO)
+
+Rama `feature/oposibot-consumer-backend`. Nada de esta sección se ha hecho en producción: cada paso necesita el GO del propietario. Inventario leído por SSH y metadatos de Supabase en solo lectura, con su autorización expresa del 2026-10-14.
+
+### 10.1 Inventario real de producción (leído por SSH y metadatos de Supabase, 2026-10-14, solo lectura)
+
+| Pieza | Valor |
+|---|---|
+| Servidor | `oposibots-prod-01`, Ubuntu 26.04.1 LTS, 4 vCPU, 7,7 GB RAM |
+| Caddy | servicio del sistema, `caddy 2.6.2`, `/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile`. Se leyó la copia `~/Caddyfile.hostcaddy` (10-oct); el fichero real necesita sudo y no se leyó |
+| Rutas en Caddy (copia) | `@bot` = `/v1/auth/*`, `/v1/especialidades`, `/v1/examenes`, `/v1/examenes/*`, `/api/v1/app`, `/api/v1/app/*` → 127.0.0.1:18081 y :18082; `@control` (rutas de administración) → :18083; `/metrics` y rutas dev → 404; resto → 404 |
+| bot-1 | `oposibots-ktor-bot-1-1`, `oposicontrol-backend:cfa2e14afc8e`, 127.0.0.1:18081→8080, 1 CPU, 768 MiB, `unless-stopped`, red `oposibots_edge` |
+| bot-2 | `oposibots-ktor-bot-2-1`, misma imagen, 127.0.0.1:18082→8080, 1 CPU, 768 MiB |
+| control | `oposibots-ktor-control-1`, misma imagen, 127.0.0.1:18083→8080, 1,5 CPU, 2 GiB |
+| Valkey | `oposibots-valkey-1`, `valkey/valkey:8.1-alpine`, 0,25 CPU, 96 MiB, solo red interna |
+| Prometheus | `oposibots-prometheus-1`, `prom/prometheus:v3.14.0`, 0,5 CPU, 512 MiB |
+| Grafana | `oposibots-grafana-1`, `grafana/grafana:11.6.0`, 0,5 CPU, 256 MiB |
+| Alertmanager | `oposibots-alertmanager-1`, `prom/alertmanager:v0.27.0` |
+| Restos de la pila anterior | `oposicontrol-ktor` (parado), `oposicontrol-prometheus` (127.0.0.1:9090), `oposicontrol-cadvisor`, `oposicontrol-node-exporter` |
+| Compose | proyecto `oposibots`, `/opt/oposicontrol-monitoring/oposibots-next/ops/deploy/compose.production.yaml` + `compose.hostcaddy.override.yaml` |
+| Entorno | `/home/opsadmin/oposibots-stack/env/`: `backend.common.env`, `backend.bot.env` (solo bots), `backend.control.env` (solo control), `compose.env` |
+| Despliegue | `~/redeploy-rolling.sh <imagen>`: bot-1 → sano → bot-2 → sano → control, con vuelta a la imagen anterior si uno no queda sano |
+| Supabase MAIN | `ndiooyyqtaeysnedywer` (eu-west-1). Migraciones aplicadas hasta `20261015100000`, incluida `20261013100000` |
+| `solicitudes_acceso_admin` | presente; RLS activado sin políticas; permisos solo `postgres` y `service_role`; índices: PK, `UNIQUE(usuario_id)`, revisión, `resuelto_por`; sin índice en `email` |
+
+Variables de auth en los bots (nombres; ningún valor secreto se imprimió):
+
+| Variable | Estado | Efecto hoy |
+|---|---|---|
+| `AUTH_CAPTCHA_REQUIRED` | NOT_SET | Con `APP_ENV=production` el backend exige captcha. La app no lo envía: registro, reenvío y recuperación deberían responder 400 `INVALID_CAPTCHA` |
+| `OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL` | NOT_SET | La variable solo existe en la rama nueva |
+| `OPOSIBOTS_PASSWORD_RECOVERY_REDIRECT_URL` | NOT_SET | `/recover` no pasa `redirect_to` |
+
+Producción (`cfa2e14`) no tiene la guarda de solicitudes de acceso ni la puerta de sesión: el salto de autoconfirmación está desplegado. Que se pueda explotar depende de si el captcha está activo dentro de Supabase (UNKNOWN).
+
+UNKNOWN (no visible con las herramientas autorizadas): plantillas de correo, Site URL y redirecciones permitidas, captcha de Supabase, SMTP y límites de envío, duración del JWT y política de contraseñas de Supabase, contenido real de `/etc/caddy/Caddyfile`.
+
+### 10.2 Cambio de entorno preparado
+
+Fichero real: `/home/opsadmin/oposibots-stack/env/backend.bot.env` (lo leen solo los dos bots).
+
+```bash
+cd ~/oposibots-stack/env
+```
+
+```bash
+cp backend.bot.env "backend.bot.env.bak-$(date +%Y%m%d%H%M)"
+```
+
+```bash
+grep -q '^AUTH_CAPTCHA_REQUIRED=' backend.bot.env || echo 'AUTH_CAPTCHA_REQUIRED=false' >> backend.bot.env
+```
+
+- `OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL` y `OPOSIBOTS_PASSWORD_RECOVERY_REDIRECT_URL`: se dejan sin definir. Las plantillas de Supabase llevan el enlace fijo (sección 3), así que no hacen falta.
+- Control: no consume estas variables, no se toca su fichero.
+- Bot-1 y bot-2: se recrean en el despliegue rodante con la imagen nueva y leen el fichero en ese momento.
+- Control: se redespliega igualmente, porque la aprobación de solicitudes vive en su imagen.
+
+SECURITY_NOTE: quitar el captcha no es la protección antiabuso definitiva. Siguen pendientes Cloudflare delante del origen (DEBT-093), el límite por usuario en las rutas de lectura (DEBT-092) y la vigilancia del abuso de registro y recuperación. Hoy protegen los límites por IP y por correo del backend en Valkey, que cierran (503) si Valkey cae.
+
+### 10.3 Supabase Auth (lo cambia el propietario en el panel, tras el GO)
+
+- **Confirm signup** (registro de la app): enlace `oposibots://auth?token_hash={{ .TokenHash }}&type=signup`. No usar `{{ .ConfirmationURL }}`. Debe llevar TAMBIEN `{{ .Token }}` (ver la nota de abajo, revision 2026-10-14).
+- **Magic Link** (solo solicitudes de acceso al panel): únicamente el código `{{ .Token }}` y el texto de la solicitud de acceso; sin enlaces (`{{ .ConfirmationURL }}`, `{{ .TokenHash }}`) ni enlace de la app. El proyecto no usa enlaces mágicos para nada más.
+- **Reset password**: `oposibots://auth?token_hash={{ .TokenHash }}&type=recovery`.
+- **Captcha** de Supabase Auth: apagado (coherente con la sección 2).
+- **Confirm email**: activado (consta activado el 14-oct según el traspaso).
+- **SMTP**: proveedor propio recomendado antes de tener usuarios reales. El correo integrado puede limitar destinatarios y envíos por hora (UNKNOWN).
+- **Redirecciones permitidas**: solo hacen falta si algún día se usan las variables de redirección.
+- **Riesgo abierto**: no se ha probado si un enlace `oposibots://` se puede pulsar en Gmail Android o en Mail de iOS. Si no, hace falta un puente https (no implementado). Se comprueba con un único correo real después del GO.
+- **Nota (revisión de seguridad 2026-10-14, DEBT-117/118)**: para una cuenta SIN confirmar, GoTrue puede mandar «Confirm signup» en lugar de «Magic Link» cuando el backend pide el código de una solicitud de acceso (`/otp`). Por eso «Confirm signup» DEBE incluir también `{{ .Token }}` (con una línea del tipo «si has pedido acceso al panel de OposiControl, tu código es …»): si no, el solicitante recibiría solo el enlace de la app y no podría verificar. Pulsar ese enlace ya no da la cuenta a nadie: la cuenta de una solicitud se crea con una contraseña aleatoria del servidor y la contraseña del panel se elige al verificar el código; el panel avisa «No pulses ningún enlace del correo: usa solo el código».
+
+### 10.4 SQL de revisión antes de desplegar (lo ejecuta el propietario en el editor SQL de Supabase)
+
+Solo lectura. Agregados, sin datos personales.
+
+```sql
+select s.estado,
+       count(*) as solicitudes,
+       count(*) filter (where u.email_confirmed_at is not null) as con_correo_confirmado,
+       count(*) filter (where s.creado_en < now() - interval '1 hour') as con_mas_de_1_hora
+from public.solicitudes_acceso_admin s
+left join auth.users u on u.id = s.usuario_id
+group by s.estado
+order by s.estado;
+```
+
+Cuentas con solicitud no aprobada que tienen sesiones abiertas:
+
+```sql
+select count(distinct s.usuario_id) as cuentas_con_sesion, count(se.id) as sesiones
+from public.solicitudes_acceso_admin s
+join auth.sessions se on se.user_id = s.usuario_id
+where s.estado <> 'aprobada';
+```
+
+Si la segunda consulta devuelve algo distinto de 0, cerrar esas sesiones (escritura: solo con GO expreso):
+
+```sql
+delete from auth.sessions
+where user_id in (select usuario_id from public.solicitudes_acceso_admin where estado <> 'aprobada');
+```
+
+Tras el despliegue el refresco ya se deniega para esas cuentas; un token de acceso vivo dura como mucho la duración del JWT del proyecto (UNKNOWN, 1 hora por defecto en Supabase).
+
+### 10.5 Migración
+
+`20261020100000_security_access_request_email_verified.sql` (columnas `correo_verificado_en` e `intentos_verificacion`). Va antes del despliegue: el código nuevo la lee. Se aplica con el procedimiento habitual del propietario (copiar el fichero y aplicarlo). No se ha ejecutado.
+
+### 10.6 Orden del despliegue (preparado, NO ejecutado)
+
+1. Instantánea: copia de `~/oposibots-stack/env/*.env`, `docker ps` e imágenes actuales (`cfa2e14afc8e` es la vuelta atrás).
+2. SQL de revisión (sección 4).
+3. Aplicar la migración `20261020100000`.
+4. Plantillas de Supabase (sección 3).
+5. Entorno (sección 2).
+6. Fusión autorizada de `feature/oposibot-consumer-backend` en `main`.
+7. Imagen con el script oficial: `bash scripts/build-backend-image.sh`, desde el árbol limpio en `origin/main` (lo hace `publicar-oposicontrol.sh`).
+8. `redeploy-rolling.sh`: bot-1 → sano → bot-2 → sano → control.
+8b. **OBLIGATORIO, con GO expreso y solo cuando TODAS las réplicas (bot-1, bot-2 y control) ya corren la imagen nueva**: limpieza de las solicitudes del flujo ANTERIOR (revisión de seguridad #3). Ver el detalle debajo de esta lista.
+9. Pruebas mínimas contra producción, una de cada (sección 7).
+10. Logs: `held by a non-approved admin access request`, `rejected by upstream`; métricas de 4xx/5xx en `/v1/auth/*`.
+11. Observación de 24 horas.
+
+Caddy, Valkey, Prometheus, Grafana y los límites de recursos: sin cambios.
+
+#### 10.6.8b Limpieza de las solicitudes del flujo anterior (preparado, NO ejecutado)
+
+Por qué: las solicitudes creadas ANTES del despliegue nacieron con la contraseña que eligió quien las pidió (sin demostrar el buzón), sin `correo_verificado_en` y, si alguien pulsó un enlace, con la cuenta confirmada y sesiones vivas. El código nuevo las trata como sin verificar y las libera de forma perezosa (DEBT-116), pero hasta entonces esas credenciales y sesiones siguen ahí. Este paso las limpia de una vez. Se ejecuta DESPUÉS de que todas las réplicas corran la imagen nueva (así ninguna réplica vieja crea filas del flujo anterior mientras tanto) y SOLO las filas creadas antes del despliegue: `<INSTANTE_DEL_DESPLIEGUE>` es el instante (UTC) en que arrancó la PRIMERA réplica con la imagen nueva (`docker inspect -f '{{.State.StartedAt}}' <contenedor>` de bot-1 en el paso 8). Sin ese filtro se borrarían solicitudes NUEVAS que alguien está verificando.
+
+Esquema comprobado en el repositorio: `public.roles_usuario (usuario_id, rol_id)` y `public.roles_app (id, codigo)` (`supabase/baseline/main_shape_subset.sql`); `public.solicitudes_acceso_admin.usuario_id → auth.users(id) on delete cascade` (`20261013100000`); `pgcrypto` en el esquema `extensions` (`CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions` en la línea base), así que `extensions.crypt`, `extensions.gen_salt` y `extensions.gen_random_bytes` existen. El esquema `auth` no está en el repositorio: la consulta 0 lo comprueba en vivo.
+
+**0) Consulta previa (solo lectura).** Reglas de borrado de las FK hacia `auth.users` y de `auth.refresh_tokens` hacia `auth.sessions` (`c` = cascade, `n` = set null, `a`/`r` = bloquean el borrado: si alguna tabla con filas de estas cuentas tiene `a`/`r`, el `delete` de abajo falla y la transacción entera se deshace, que es lo seguro):
+
+```sql
+select conrelid::regclass as tabla, conname, confdeltype
+from pg_constraint
+where contype = 'f' and confrelid = 'auth.users'::regclass
+order by 1;
+
+select conrelid::regclass as tabla, conname, confdeltype
+from pg_constraint
+where contype = 'f' and conrelid = 'auth.refresh_tokens'::regclass and confrelid = 'auth.sessions'::regclass;
+```
+
+Si la segunda devuelve `confdeltype = 'c'`, los refresh tokens con `session_id` caen en cascada al borrar las sesiones; el `delete` explícito de `auth.refresh_tokens` de abajo se mantiene igualmente porque los tokens anteriores a esa columna tienen `session_id` nulo y no caen en cascada (no hace daño si no hay ninguno).
+
+**1) Listados previos (solo lectura, sin datos personales).**
+
+Solicitudes no aprobadas y sin verificar cuya cuenta TIENE roles (no se tocan aquí: se resuelven a mano, una a una):
+
+```sql
+select s.id, s.usuario_id, s.estado, s.creado_en,
+       (u.email_confirmed_at is not null) as confirmada,
+       array_agg(ra.codigo order by ra.codigo) as roles
+from public.solicitudes_acceso_admin s
+join public.roles_usuario ru on ru.usuario_id = s.usuario_id
+join public.roles_app ra on ra.id = ru.rol_id
+left join auth.users u on u.id = s.usuario_id
+where s.estado <> 'aprobada' and s.correo_verificado_en is null
+  and s.creado_en < '<INSTANTE_DEL_DESPLIEGUE>'::timestamptz
+group by s.id, s.usuario_id, s.estado, s.creado_en, u.email_confirmed_at
+order by s.creado_en;
+```
+
+Administradores YA aprobados por el flujo anterior (aprobados sin que nadie demostrara el buzón):
+
+```sql
+select s.id, s.usuario_id, s.resuelto_en, s.resuelto_por,
+       (u.email_confirmed_at is not null) as confirmada,
+       u.banned_until,
+       (select count(*) from auth.sessions se where se.user_id = s.usuario_id) as sesiones
+from public.solicitudes_acceso_admin s
+left join auth.users u on u.id = s.usuario_id
+where s.estado = 'aprobada' and s.correo_verificado_en is null
+order by s.resuelto_en;
+```
+
+Para cada uno, el propietario decide UNA de dos opciones:
+
+- **(A) Confirmar fuera de banda** (por un canal ya conocido, no por ese correo) que la persona es la titular del buzón. Si lo es, no se escribe nada; se anota la decisión en el ledger.
+- **(B) Rotar la contraseña y purgar las sesiones** (solo con GO expreso, una cuenta cada vez): el titular real del buzón tendrá que usar `recover` para volver a entrar; quien pidió el acceso con un correo ajeno se queda fuera.
+
+```sql
+-- solo con GO expreso
+begin;
+update auth.users
+   set encrypted_password = extensions.crypt(encode(extensions.gen_random_bytes(32), 'base64'), extensions.gen_salt('bf'))
+ where id = '<usuario_id>';
+select public.admin_purge_user_sessions('<usuario_id>');
+commit;
+```
+
+**2) Limpieza (escritura, solo con GO expreso, todo o nada).** Solicitudes del flujo anterior no aprobadas, sin verificar y cuya cuenta NO tiene roles: cuenta nunca confirmada → se borra (la fila cae en cascada); cuenta confirmada → contraseña aleatoria, sesiones y refresh tokens fuera y se borra solo la fila (la cuenta queda para el titular del buzón, que entra con `recover`). Cada escritura repite las condiciones por si algo cambió entre la foto y la escritura.
+
+```sql
+-- solo con GO expreso
+begin;
+
+create temp table pre_change on commit drop as
+  select s.id, s.usuario_id, (u.email_confirmed_at is not null) as confirmed
+  from public.solicitudes_acceso_admin s
+  join auth.users u on u.id = s.usuario_id
+  where s.estado <> 'aprobada'
+    and s.correo_verificado_en is null
+    and s.creado_en < '<INSTANTE_DEL_DESPLIEGUE>'::timestamptz
+    and not exists (select 1 from public.roles_usuario r where r.usuario_id = s.usuario_id);
+
+-- solo con GO expreso
+delete from auth.users u
+ where u.id in (select usuario_id from pre_change where not confirmed)
+   and u.email_confirmed_at is null
+   and not exists (select 1 from public.roles_usuario r where r.usuario_id = u.id);
+
+-- solo con GO expreso
+update auth.users u
+   set encrypted_password = extensions.crypt(encode(extensions.gen_random_bytes(32), 'base64'), extensions.gen_salt('bf'))
+ where u.id in (select usuario_id from pre_change where confirmed)
+   and not exists (select 1 from public.roles_usuario r where r.usuario_id = u.id);
+
+-- solo con GO expreso (refresh tokens sin session_id: no caen en cascada; ver la consulta 0)
+delete from auth.refresh_tokens
+ where user_id in (select usuario_id::text from pre_change where confirmed);
+
+-- solo con GO expreso
+delete from auth.sessions
+ where user_id in (select usuario_id from pre_change where confirmed);
+
+-- solo con GO expreso
+delete from public.solicitudes_acceso_admin s
+ where s.id in (select id from pre_change where confirmed)
+   and s.correo_verificado_en is null
+   and s.estado <> 'aprobada';
+
+commit;
+```
+
+Comprobación después (solo lectura): repetir los dos listados de 1) y la consulta de sesiones de la sección 10.4; las filas no aprobadas, sin verificar, anteriores al despliegue y sin roles deben ser 0. No hay auditoría automática de este paso: anotar en el ledger cuántas cuentas se borraron y cuántas se neutralizaron (los contadores de filas de cada sentencia).
+
+Requisito nuevo: `AUTH_RATE_LIMIT_HMAC_SECRET` (32+ caracteres) es obligatorio fuera de desarrollo también para el proceso de control; hoy solo está en `backend.bot.env`. Antes de desplegar, copiar el mismo valor a `backend.control.env` (sin imprimirlo), o control no arranca.
+
+### 10.7 Pruebas mínimas para después del GO (no ejecutadas)
+
+- **Registro**: cuenta nueva → correo → enlace abre la app → verificada → login.
+- **Recuperación**: petición → correo → enlace → nueva contraseña → login.
+- **Solicitud de acceso**: petición (nombre, correo, motivo; sin contraseña) → correo con código → código y contraseña elegida en el panel → verificada (cuenta bloqueada en Supabase) → aprobación por superadmin (desbloqueo + rol) → acceso al panel.
+- **Antes de nada, comprobar con un único correo** que `/otp` sobre una cuenta creada por el administrador y sin confirmar envía la plantilla Magic Link con el código y no la de confirmación ni cambia la contraseña (DEBT-118).
+- **Primera prueba tras el GO (obligatoria)**: anotar QUÉ plantilla llega para una solicitud de acceso nueva («Magic Link» o «Confirm signup») y que el código que trae verifica; si llega «Confirm signup», comprobar que lleva el código (nota de 10.3) y registrar el resultado en DEBT-118. Comprobar también que tras verificar se entra al panel con la contraseña elegida (después de aprobar) y no con ninguna otra.
+- **Cuenta retenida**: solicitud verificada pendiente → login 403, refresco denegado, OAuth denegado.
+- **Solicitud sin verificar** con el correo de otra persona → el dueño real se registra con normalidad y la solicitud desaparece.
+- **Rechazo**: rechazar → la cuenta se borra y el correo queda libre.
