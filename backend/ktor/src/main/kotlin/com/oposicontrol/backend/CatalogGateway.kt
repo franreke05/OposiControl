@@ -73,6 +73,9 @@ internal class TransportCatalogUpstream(
 internal data class CommunityRef(val codigo: String? = null)
 
 @Serializable
+internal data class CommunityNameRow(val codigo: String, val nombre: String)
+
+@Serializable
 internal data class CatalogExamRow(
     val id: String,
     @SerialName("codigo_examen") val codigoExamen: String? = null,
@@ -391,6 +394,11 @@ internal class CatalogGateway(
             row.examenId to ExamGrantFact(row.motivo, from, until)
         }.groupBy({ it.first }, { it.second })
     }
+
+    /** V1: nombre legible de cada comunidad por codigo (tabla pequena y acotada). Nunca se muestra el codigo crudo (ES-MD). */
+    fun communityNames(): Map<String, String> =
+        decodeList<CommunityNameRow>(upstream.get("/rest/v1/comunidades_autonomas?select=codigo,nombre&order=codigo.asc&limit=200"))
+            .associate { it.codigo to it.nombre }
 
     /** `capacidades_especialidad` por especialidad; sin fila = abierto (default de la tabla). */
     /** D2-17: especialidades ACTIVAS (catalogo acotado). Pide [max] + 1 para que el llamante falle cerrado si hay mas. */

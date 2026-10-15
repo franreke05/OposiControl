@@ -177,6 +177,9 @@ components:
                             properties:
                               comunidadCodigo:
                                 type: string
+                              comunidadNombre:
+                                type: [string, 'null']
+                                description: 'V1: readable community name (e.g. Comunidad de Madrid) served by the API; clients never show the raw code. Null only for legacy exams without a community.'
                               total:
                                 type: integer
                                 minimum: 0
@@ -2012,6 +2015,9 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadCodigo:
           type: [string, 'null']
+        comunidadNombre:
+          type: [string, 'null']
+          description: 'V1: readable community name (e.g. Comunidad de Madrid) served by the API; clients never show the raw code. Null only for legacy exams without a community.'
         totalPreguntas:
           type: integer
           minimum: 0
@@ -2073,6 +2079,9 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadCodigo:
           type: [string, 'null']
+        comunidadNombre:
+          type: [string, 'null']
+          description: 'V1: readable community name (e.g. Comunidad de Madrid) served by the API; clients never show the raw code. Null only for legacy exams without a community.'
         duracionMinutos:
           type: [integer, 'null']
           minimum: 0
@@ -2111,6 +2120,9 @@ components:
               $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
             comunidadCodigo:
               type: [string, 'null']
+            comunidadNombre:
+              type: [string, 'null']
+              description: 'V1: readable community name (e.g. Comunidad de Madrid) served by the API; clients never show the raw code. Null only for legacy exams without a community.'
             portadaUrl:
               type: [string, 'null']
               format: uri
@@ -2217,6 +2229,7 @@ components:
         comunidadId:
           type: [string, 'null']
           format: uuid
+          description: 'Null only for legacy exams created before the V1 rule; they stay editable but cannot be published until a community is assigned (409 EXAM_PUBLISH_REQUIRES_COMMUNITY).'
         titulo:
           type: string
         descripcion:
@@ -2257,7 +2270,7 @@ components:
           format: date-time
     AdminExamenCreateRequest:
       type: object
-      required: [codigoExamen, especialidadId, titulo, tipoExamen, tipoAcceso]
+      required: [codigoExamen, especialidadId, comunidadId, titulo, tipoExamen, tipoAcceso]
       additionalProperties: false
       properties:
         codigoExamen:
@@ -2266,6 +2279,7 @@ components:
         especialidadId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadId:
+          description: 'V1 (owner 2026-10-15): MANDATORY. Missing, null or blank is 422 EXAM_COMMUNITY_REQUIRED; an id that is not an active community is 422 UNKNOWN_COMMUNITY.'
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         titulo:
           type: string
@@ -2304,9 +2318,9 @@ components:
         especialidadId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadId:
-          type: [string, 'null']
+          type: string
           format: uuid
-          description: 'null clears the community.'
+          description: 'V1: replaces the community; it can no longer be cleared (null is 422 EXAM_COMMUNITY_REQUIRED). Unknown or inactive community is 422 UNKNOWN_COMMUNITY.'
         duracionMinutos:
           type: [integer, 'null']
           minimum: 1

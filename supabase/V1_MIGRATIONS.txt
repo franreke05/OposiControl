@@ -1,0 +1,2 @@
+# V1 (owner scope 2026-10-15): migraciones de la version 1 completa (comunidad obligatoria, economia). Una version completa sin .sql por linea.
+20261018100000_v1_exam_community_required

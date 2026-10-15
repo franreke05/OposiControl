@@ -36,8 +36,8 @@ grant select, insert, update, delete on table public.recursos_pregunta to servic
 create table if not exists public.capacidades_especialidad (
   especialidad_id uuid primary key references public.especialidades(id) on delete cascade,
   permite_rafagas boolean not null default true,
-  permite_razonados boolean not null default false,
-  permite_inmersivos boolean not null default false,
+  permite_razonados boolean not null default true,
+  permite_inmersivos boolean not null default true,
   permite_demos boolean not null default true,
   permite_oposimarket boolean not null default true,
   mensaje_limitacion text,

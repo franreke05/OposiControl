@@ -38,15 +38,21 @@ insert into public.etiquetas (id, nombre, slug) values
   ('7a000000-0000-4000-8000-000000000002', 'Tema 2', 'loc-tema-2')
 on conflict (id) do nothing;
 
-insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas) values
-  ('e0000000-0000-4000-8000-000000000001', 'LOC-NORMAL',   'e5000000-0000-4000-8000-000000000001', 'Normal',    'rafaga',    'gratuito', true, now() - interval '1 day', 3),
-  ('e0000000-0000-4000-8000-000000000002', 'LOC-RAZONADA', 'e5000000-0000-4000-8000-000000000001', 'Razonada',  'razonado',  'gratuito', true, now() - interval '1 day', 2),
-  ('e0000000-0000-4000-8000-000000000003', 'LOC-IMAGEN',   'e5000000-0000-4000-8000-000000000001', 'Imagen',    'inmersivo', 'gratuito', true, now() - interval '1 day', 1),
-  ('e0000000-0000-4000-8000-000000000004', 'LOC-AUDIO',    'e5000000-0000-4000-8000-000000000001', 'Audio',     'inmersivo', 'gratuito', true, now() - interval '1 day', 1),
-  ('e0000000-0000-4000-8000-000000000005', 'LOC-PREMIUM',  'e5000000-0000-4000-8000-000000000001', 'Premium',   'rafaga',    'premium',  true, now() - interval '1 day', 1),
-  ('e0000000-0000-4000-8000-000000000006', 'LOC-GRANDE',   'e5000000-0000-4000-8000-000000000001', 'Grande',    'rafaga',    'gratuito', true, now() - interval '1 day', 200),
-  ('e0000000-0000-4000-8000-000000000007', 'LOC-VIDEO',    'e5000000-0000-4000-8000-000000000001', 'Video',     'inmersivo', 'gratuito', true, now() - interval '1 day', 1),
-  ('e0000000-0000-4000-8000-000000000008', 'LOC-LENTO',    'e5000000-0000-4000-8000-000000000001', 'Lento',     'inmersivo', 'gratuito', true, now() - interval '1 day', 1)
+-- V1: toda examen lleva comunidad (columna NOT NULL). Comunidad de PRUEBA local; nunca un valor por defecto de producto.
+insert into public.comunidades_autonomas (id, codigo, nombre, slug, activa, posicion) values
+  ('c1000000-0000-4000-8000-000000000001', 'ES-MD', 'Comunidad de Madrid', 'comunidad-de-madrid', true, 13),
+  ('c1000000-0000-4000-8000-000000000002', 'ES-AN', 'Andalucía', 'andalucia', true, 1)
+on conflict (id) do nothing;
+
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas) values
+  ('e0000000-0000-4000-8000-000000000001', 'LOC-NORMAL',   'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'Normal',    'rafaga',    'gratuito', true, now() - interval '1 day', 3),
+  ('e0000000-0000-4000-8000-000000000002', 'LOC-RAZONADA', 'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'Razonada',  'razonado',  'gratuito', true, now() - interval '1 day', 2),
+  ('e0000000-0000-4000-8000-000000000003', 'LOC-IMAGEN',   'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'Imagen',    'inmersivo', 'gratuito', true, now() - interval '1 day', 1),
+  ('e0000000-0000-4000-8000-000000000004', 'LOC-AUDIO',    'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'Audio',     'inmersivo', 'gratuito', true, now() - interval '1 day', 1),
+  ('e0000000-0000-4000-8000-000000000005', 'LOC-PREMIUM',  'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'Premium',   'rafaga',    'premium',  true, now() - interval '1 day', 1),
+  ('e0000000-0000-4000-8000-000000000006', 'LOC-GRANDE',   'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'Grande',    'rafaga',    'gratuito', true, now() - interval '1 day', 200),
+  ('e0000000-0000-4000-8000-000000000007', 'LOC-VIDEO',    'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'Video',     'inmersivo', 'gratuito', true, now() - interval '1 day', 1),
+  ('e0000000-0000-4000-8000-000000000008', 'LOC-LENTO',    'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'Lento',     'inmersivo', 'gratuito', true, now() - interval '1 day', 1)
 on conflict (id) do nothing;
 
 -- Preguntas: q(examen, n) = 'f<examen>000000-0000-4000-8000-<n 12 digitos>'

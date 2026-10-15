@@ -85,6 +85,7 @@ class CatalogRoutesTest {
         var plan = "[]"
         var credits = "[]"
         var signed = "[]"
+        var communities = """[{"codigo":"MAD","nombre":"Comunidad de Madrid"},{"codigo":"AND","nombre":"Andalucía"}]"""
         var failOn: String? = null
 
         fun respond(rawUri: String): V1StubResponse {
@@ -98,6 +99,7 @@ class CatalogRoutesTest {
                 uri.contains("/rest/v1/productos_comerciales") -> plan
                 uri.contains("/rest/v1/creditos_contenido_usuario") -> credits
                 uri.contains("/rest/v1/capacidades_especialidad") -> capabilities
+                uri.contains("/rest/v1/comunidades_autonomas?select=codigo,nombre") -> communities
                 uri.contains("/rest/v1/especialidades?select=id,codigo,nombre,slug") -> specialties
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=examen_id,motivo") -> grantFacts
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=id,valido_desde") -> myGrants(uri)
@@ -353,7 +355,8 @@ class CatalogRoutesTest {
     fun anOversizedLimitIsClampedToFifty() = testApplication {
         application { catalogModule() }
         assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/examenes?limit=500").status)
-        assertTrue(upstream.urls.single().contains("&limit=51"), upstream.urls.single())
+        val examsUrl = upstream.urls.single { it.contains("select=id,codigo_examen") }
+        assertTrue(examsUrl.contains("&limit=51"), examsUrl)
     }
 
     @Test
@@ -415,6 +418,49 @@ class CatalogRoutesTest {
         assertTrue(upstream.urls.single { it.contains("intentos_examen") }.contains("usuario_id=eq.$TEST_UID&examen_id=eq.$e1&origen_intento=eq.examen&creado_por_comando=not.is.null&estado=in.(en_progreso,finalizado)&order=estado.asc,finalizado_en.desc.nullslast,id.desc&limit=2"))
         assertNull(exam["ultimoIntentoFinalizadoId"], "sin intento finalizado: el campo no viaja")
         assertNoQuestionTables()
+    }
+
+    @Test
+    fun anUnknownQueryParameterIsRejectedInsteadOfSilentlyIgnored() = testApplication {
+        application { catalogModule() }
+        for (path in listOf("/api/v1/app/examenes?especialidad=Local", "/api/v1/app/me/examenes?vista=EN_CURSO&foo=1")) {
+            val response = client.getAs(path)
+            val body = response.bodyAsText()
+            assertEquals(HttpStatusCode.BadRequest, response.status, "$path -> $body")
+            assertTrue(body.contains("UNKNOWN_FIELD"), body)
+        }
+        assertTrue(upstream.sent.isEmpty(), "un parametro desconocido no debe producir ninguna lectura upstream: ${upstream.urls}")
+    }
+
+    // =================================================================== V1 STEP 2: comunidad legible
+
+    @Test
+    fun theReadableCommunityNameIsServedOnListDetailAndCollectionNeverTheRawCode() = testApplication {
+        application { catalogModule() }
+        val e1 = "e1111111-1111-4111-8111-111111111111"
+        val e2 = "e2222222-2222-4222-8222-222222222222"
+        upstream.exams = { "[${exam(e1, comunidad = "MAD")},${exam(e2, comunidad = null)}]" }
+        val list = JsonObjectOf(client.getAs("/api/v1/app/examenes").bodyAsText())["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("Comunidad de Madrid", list.first { it["id"]!!.jsonPrimitive.content == e1 }["comunidadNombre"]!!.jsonPrimitive.content)
+        assertNull(list.first { it["id"]!!.jsonPrimitive.content == e2 }["comunidadNombre"], "un examen heredado sin comunidad no inventa nombre")
+
+        upstream.examById = { "[${exam(e1, comunidad = "MAD")}]" }
+        val detail = client.getAs("/api/v1/app/examenes/$e1")
+        assertConforms("D2-02", detail.bodyAsText())
+        assertEquals("Comunidad de Madrid", JsonObjectOf(detail.bodyAsText())["examen"]!!.jsonObject["comunidadNombre"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun aFailureReadingCommunityNamesNeverBreaksTheCatalog() = testApplication {
+        application { catalogModule() }
+        val e1 = "e1111111-1111-4111-8111-111111111111"
+        upstream.exams = { "[${exam(e1, comunidad = "MAD")}]" }
+        upstream.failOn = "comunidades_autonomas?select=codigo,nombre"
+        val response = client.getAs("/api/v1/app/examenes")
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        val item = JsonObjectOf(response.bodyAsText())["items"]!!.jsonArray[0].jsonObject
+        assertEquals("MAD", item["comunidadCodigo"]!!.jsonPrimitive.content)
+        assertNull(item["comunidadNombre"], "sin nombre el cliente no muestra cabecera: nunca el codigo crudo")
     }
 
     // =================================================================== E2-P02 / FA19
@@ -555,9 +601,13 @@ class CatalogRoutesTest {
     }
 
     @Test
-    fun myExamsUsesTheJwtSubjectOnlyAndIgnoresAnyUserInTheQuery() = testApplication {
+    fun myExamsUsesTheJwtSubjectOnlyAndRejectsAnyUserInTheQuery() = testApplication {
         application { catalogModule() }
-        client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO&usuarioId=dddddddd-dddd-4ddd-8ddd-000000000009&userId=x")
+        // V1 (E5): un usuario en el query ya no se ignora en silencio, se RECHAZA (400 UNKNOWN_FIELD) y no sale ninguna lectura.
+        val forged = client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO&usuarioId=dddddddd-dddd-4ddd-8ddd-000000000009&userId=x")
+        assertEquals(HttpStatusCode.BadRequest, forged.status, forged.bodyAsText())
+        assertTrue(upstream.sent.isEmpty(), "una consulta con usuario forjado no debe llegar a la base: ${upstream.urls}")
+        client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO")
         val url = upstream.urls.single()
         assertTrue(url.contains("usuario_id=eq.$TEST_UID"))
         assertFalse(url.contains("dddddddd"))
@@ -621,7 +671,7 @@ class CatalogRoutesTest {
         assertTrue(items.all { it["nota"] == null && it["calificacion"] == null }, "DEC-013 / Q-08: sin nota ni calificacion")
         assertEquals("https://stub.supabase.test/storage/v1/object/sign/exam-resources/exam-covers/$e1/a.png?token=t", items[0]["examen"]!!.jsonObject["portadaUrl"]!!.jsonPrimitive.content)
         assertNull(items[3]["examen"]!!.jsonObject["comunidadCodigo"])
-        assertEquals(setOf("id", "titulo", "tipoExamen", "comunidadCodigo", "portadaUrl"), items[0]["examen"]!!.jsonObject.keys, "solo los campos del contrato")
+        assertEquals(setOf("id", "titulo", "tipoExamen", "comunidadCodigo", "comunidadNombre", "portadaUrl"), items[0]["examen"]!!.jsonObject.keys, "solo los campos del contrato")
         assertEquals(
             listOf("AND" to 1, "MAD" to 2),
             page["grupos"]!!.jsonArray.map { it.jsonObject["comunidadCodigo"]!!.jsonPrimitive.content to it.jsonObject["total"]!!.jsonPrimitive.content.toInt() },
@@ -652,7 +702,7 @@ class CatalogRoutesTest {
     fun coleccionSendsTheValidatedFiltersAndOnlyTheJwtSubjectToTheReadRpc() = testApplication {
         application { catalogModule() }
         val foreign = "dddddddd-dddd-4ddd-8ddd-000000000009"
-        val page = client.myExams("vista=COLECCION&tipoExamen=guiado&comunidadId=${com.uppercase()}&anio=2024&limit=500&usuarioId=$foreign&userId=$foreign&p_usuario_id=$foreign&especialidadId=$foreign")
+        val page = client.myExams("vista=COLECCION&tipoExamen=guiado&comunidadId=${com.uppercase()}&anio=2024&limit=500&especialidadId=$foreign")
         assertEquals(emptyList(), page.examIds())
         assertEquals(JsonArray(emptyList()), page["grupos"], "coleccion vacia: grupos vacios, no null")
         val call = upstream.collectionCalls.single()

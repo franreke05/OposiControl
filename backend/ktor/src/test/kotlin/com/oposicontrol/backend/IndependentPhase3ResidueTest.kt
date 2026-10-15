@@ -186,7 +186,7 @@ class IndependentPhase3ResidueTest {
         client.post("/api/v1/admin/examenes") {
             contentType(ContentType.Application.Json)
             setBody(
-                """{"especialidadId":"$especialidadId","titulo":"Examen",""" +
+                """{"especialidadId":"$especialidadId","comunidadId":"77777777-7777-4777-8777-777777777777","titulo":"Examen",""" +
                     """"publicadoEn":"2020-01-01T00:00:00Z"}""",
             )
         }
@@ -307,6 +307,7 @@ class IndependentPhase3ResidueTest {
                     client = V1StubHttpClient({ upstream += it; record(it) }) { uri ->
                         when {
                             uri.contains("/rest/v1/examenes") -> V1StubResponse(200, examenRows)
+                            uri.contains("/rest/v1/comunidades_autonomas") -> V1StubResponse(200, """[{"id":"77777777-7777-4777-8777-777777777777"}]""")
                             else -> V1StubResponse(200, "[]")
                         }
                     },

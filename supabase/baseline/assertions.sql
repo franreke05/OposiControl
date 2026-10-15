@@ -211,10 +211,10 @@ end $$;
 -- bootstrap does not carry every authoring helper those triggers call, and the authoring flow is not under test here.
 -- Everything after the seed runs with triggers ON (preparar_intento_examen, validar_y_calcular_respuesta_intento, FKs).
 set local session_replication_role = replica;
-insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en) values
-  ('e3000000-0000-0000-0000-000000000001','S3-EX1','e1000000-0000-0000-0000-000000000001','Slice 3','rafaga','gratuito',true,now() - interval '1 day'),
-  ('e3000000-0000-0000-0000-000000000002','S3-EX2','e1000000-0000-0000-0000-000000000001','Draft','rafaga','gratuito',false,null),
-  ('e3000000-0000-0000-0000-000000000003','S3-EX3','e1000000-0000-0000-0000-000000000001','Empty','rafaga','gratuito',true,now() - interval '1 day');
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en) values
+  ('e3000000-0000-0000-0000-000000000001','S3-EX1','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','Slice 3','rafaga','gratuito',true,now() - interval '1 day'),
+  ('e3000000-0000-0000-0000-000000000002','S3-EX2','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','Draft','rafaga','gratuito',false,null),
+  ('e3000000-0000-0000-0000-000000000003','S3-EX3','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','Empty','rafaga','gratuito',true,now() - interval '1 day');
 insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
 select ('f3000000-0000-0000-0000-00000000000' || n)::uuid, 'S3-P' || n, 'rafaga', 'Pregunta ' || n, n <> 5
 from generate_series(1, 6) n;
@@ -408,7 +408,7 @@ insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, t
   ('52000000-0000-0000-0000-000000000002','S2-X2','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X2','rafaga','premium',true,now() - interval '9 day',2023),
   ('52000000-0000-0000-0000-000000000003','S2-X3','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000002','X3','razonado','premium',true,now() - interval '9 day',2024),
   ('52000000-0000-0000-0000-000000000004','S2-X4','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X4 draft','rafaga','premium',false,null,2024),
-  ('52000000-0000-0000-0000-000000000005','S2-X5','e1000000-0000-0000-0000-000000000001',null,'X5 expired grant','rafaga','premium',true,now() - interval '9 day',2024),
+  ('52000000-0000-0000-0000-000000000005','S2-X5','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X5 expired grant','rafaga','premium',true,now() - interval '9 day',2024),
   ('52000000-0000-0000-0000-000000000006','S2-X6','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X6 legacy attempt','rafaga','premium',true,now() - interval '9 day',2024),
   ('52000000-0000-0000-0000-000000000007','S2-X7','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000002','X7 other user','rafaga','premium',true,now() - interval '9 day',2024),
   ('52000000-0000-0000-0000-000000000008','S2-X8','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X8 scheduled','rafaga','premium',true,now() + interval '1 day',2024),
@@ -609,3 +609,38 @@ begin
   assert exists (select 1 from pg_policy p where p.polrelid = 'public.contenido_desbloqueado_usuario'::regclass and p.polname = 'contenido_desbloqueado_select_propio' and p.polcmd = 'r'), 'falta contenido_desbloqueado_select_propio';
 end;
 $$;
+
+-- 20261018100000: V1, un examen lleva comunidad (INSERT, poner NULL y publicar sin ella se rechazan; los heredados siguen editables).
+begin;
+create function pg_temp.expect_c(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_state text; v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_state = returned_sqlstate, v_msg = message_text; end;
+  if v_state is distinct from '23514' or v_msg is distinct from p_msg then
+    raise exception 'ASSERT FAILED: % -> expected 23514/% got %/%', p_sql, p_msg, v_state, v_msg;
+  end if;
+end $$;
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000c1','EC','EC','ec',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000c1','CC','Com','com');
+-- 1. INSERT sin comunidad.
+select pg_temp.expect_c($q$insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso) values ('e4000000-0000-0000-0000-000000000001','C-NO','e1000000-0000-0000-0000-0000000000c1','x','rafaga','gratuito')$q$, 'EXAM_COMMUNITY_REQUIRED');
+-- 2. INSERT con comunidad y borrador: vale.
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso) values ('e4000000-0000-0000-0000-000000000002','C-OK','e1000000-0000-0000-0000-0000000000c1','c1000000-0000-0000-0000-0000000000c1','x','rafaga','gratuito');
+-- 3. Poner la comunidad a NULL.
+select pg_temp.expect_c($q$update public.examenes set comunidad_id = null where id = 'e4000000-0000-0000-0000-000000000002'$q$, 'EXAM_COMMUNITY_REQUIRED');
+-- 4. Una comunidad en uso no se puede borrar (FK RESTRICT, ya no SET NULL).
+do $$ declare v_state text; begin
+  begin delete from public.comunidades_autonomas where id = 'c1000000-0000-0000-0000-0000000000c1'; exception when others then get stacked diagnostics v_state = returned_sqlstate; end;
+  assert v_state = '23503', 'community in use must not be deletable, got ' || coalesce(v_state, 'no error');
+end $$;
+-- 5. La columna es NOT NULL: ni siquiera con los triggers desactivados (replica) entra un examen sin comunidad.
+set local session_replication_role = replica;
+do $$ declare v_state text; begin
+  begin insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso) values ('e4000000-0000-0000-0000-000000000003','C-LEG','e1000000-0000-0000-0000-0000000000c1','x','rafaga','gratuito'); exception when others then get stacked diagnostics v_state = returned_sqlstate; end;
+  assert v_state = '23502', 'comunidad_id must be NOT NULL even with triggers off, got ' || coalesce(v_state, 'no error');
+end $$;
+set local session_replication_role = origin;
+-- 6. Un examen con comunidad se publica.
+update public.examenes set publicado_en = now() where id = 'e4000000-0000-0000-0000-000000000002';
+do $$ begin raise notice 'OK exam community required'; end $$;
+rollback;

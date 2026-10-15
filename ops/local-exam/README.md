@@ -49,3 +49,16 @@ AUTORIA de MAIN no estan en el subconjunto: el contenido de los fixtures se siem
 ## STACK_LOCK (obligatorio)
 
 `up.mjs`, `run-ktor.mjs`, `e2e.mjs` y los scripts de E2 (`e2-ktor.mjs`, `e2-phaseb.mjs`, `e2-security.mjs`, `e2-sec01-verify.mjs`) llaman a `stack-lock.mjs` antes de tocar nada: si existe `STACK_LOCK.md` (`%LOCALAPPDATA%\OposiBotPhaseB\handoffs\STACK_LOCK.md`; ruta FIJA, sin variable para cambiarla) y su `HOLDER:` no es `STACK_HOLDER`, salen con codigo 3 sin escribir. Para trabajar: crear el bloqueo con tu `HOLDER`, exportar `STACK_HOLDER=<tu nombre>`, y borrar el bloqueo al terminar.
+
+## Registro local (J6): stub de GoTrue
+`gotrue-stub.mjs` (proceso del HOST, 127.0.0.1:9999; el gateway le enruta `/auth/v1/*` salvo `GET /auth/v1/user`) implementa SOLO lo que Ktor usa para
+registrar: `signup`, `resend`, `verify`, `token` (password y refresh), `logout`, `recover` (sin correo). Crea la fila en `auth.users`; el trigger
+`trg_auth_user_created` crea el perfil, como en produccion. Tokens ES256 con la clave local (los verifica el JWKS del gateway).
+- Arrancar / parar (con tu STACK_LOCK): `STACK_HOLDER=<tu> APP_ENV=local node ops/local-exam/run-gotrue-stub.mjs --detach | --stop`.
+- **Se niega a arrancar si `APP_ENV` no es EXACTAMENTE `local` o `test`** (exit 4), igual que el proveedor de pago sandbox; escucha solo en 127.0.0.1.
+- Sin SMTP: el codigo de verificacion de un alta se lee del buzon local `GET http://127.0.0.1:9999/__local/mailbox?email=<correo>` (o `.local/mailbox.jsonl`).
+  Nunca se escribe en un log. Ningun log contiene correos, contrasenas ni tokens.
+- Los refresh tokens viven en memoria del stub: reiniciarlo los invalida (se vuelve a hacer login).
+- La tabla `solicitudes_acceso_admin` (migracion 20261013100000, ya en MAIN) la necesita el registro (AccessRequestMailGuard falla cerrado sin ella);
+  `up.mjs` la aplica solo si falta.
+- Escenario `REGISTER_J6` del e2e: registro -> correo -> verificar -> perfil con `especialidadId` -> `GET /me` -> login -> refresh -> relogin.

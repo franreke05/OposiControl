@@ -385,7 +385,12 @@ private fun OposiBotsProfileRequest.validate() {
     val issues = buildSet {
         if (firstName.isBlank() || firstName.length > 100) add(OposiBotsValidationIssue.BLANK_FIRST_NAME)
         if (lastName.isBlank() || lastName.length > 100) add(OposiBotsValidationIssue.BLANK_LAST_NAME)
-        if (specialty.isBlank() || specialty.length > 100) add(OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED)
+        // V1: con `especialidadId` el nombre no hace falta (y si llegan los dos, gana el id). Un id mal formado es 400.
+        if (especialidadId != null) {
+            if (!especialidadId.isUuid()) add(OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED)
+        } else if (specialty.isBlank() || specialty.length > 100) {
+            add(OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED)
+        }
         if (username != null && (username.length !in 3..30 || !username.matches(Regex("[A-Za-z0-9._-]+")))) {
             add(OposiBotsValidationIssue.INVALID_USERNAME)
         }

@@ -26,6 +26,8 @@ internal data class AppExamSummary(
     val tipoAcceso: String,
     val especialidadId: String,
     val comunidadCodigo: String? = null,
+    /** V1: nombre legible de la comunidad (p. ej. "Comunidad de Madrid"). Null solo en examenes heredados sin comunidad. */
+    val comunidadNombre: String? = null,
     val totalPreguntas: Int,
     val anio: Int? = null,
     val duracionMinutos: Int? = null,
@@ -56,6 +58,7 @@ internal data class AppExamDetail(
     val tipoAcceso: String,
     val especialidadId: String,
     val comunidadCodigo: String? = null,
+    val comunidadNombre: String? = null,
     val duracionMinutos: Int? = null,
     val totalPreguntas: Int,
     val anio: Int? = null,
@@ -88,6 +91,7 @@ internal data class MyExamRef(
     val titulo: String,
     val tipoExamen: String,
     val comunidadCodigo: String? = null,
+    val comunidadNombre: String? = null,
     val portadaUrl: String? = null,
 )
 
@@ -104,7 +108,7 @@ internal data class MyExamItem(
 )
 
 @Serializable
-internal data class MyExamGroup(val comunidadCodigo: String, val total: Int)
+internal data class MyExamGroup(val comunidadCodigo: String, val total: Int, val comunidadNombre: String? = null)
 
 @Serializable
 internal data class MyExamsPage(
@@ -170,6 +174,16 @@ private fun catalogFilterOf(params: Parameters, issues: MutableList<ErrorIssue>)
 
 private val YEAR_RANGE = 1900..2200
 
+private val EXAM_LIST_PARAMS = setOf("tipoExamen", "especialidadId", "comunidadId", "anio", "includeFacets", "cursor", "limit")
+private val MY_EXAMS_PARAMS = setOf("vista", "tipoExamen", "especialidadId", "comunidadId", "anio", "cursor", "limit")
+
+/** E5 (V1): un parametro de consulta desconocido (p. ej. `especialidad=Local`) ya no se ignora en silencio: 400 UNKNOWN_FIELD. */
+private fun rejectUnknownParams(params: Parameters, allowed: Set<String>, issues: MutableList<ErrorIssue>) {
+    params.names().filter { it !in allowed }.sorted().forEach { name ->
+        issues += ErrorIssue(if (name.length <= 40 && name.all { it.isLetterOrDigit() || it == '_' }) name else "(desconocido)", CanonicalIssue.UNKNOWN_FIELD)
+    }
+}
+
 private fun scopeFilters(filter: CatalogFilter, extra: Map<String, String?> = emptyMap()): Map<String, String?> = extra + mapOf(
     "tipoExamen" to filter.kind?.wire,
     "especialidadId" to filter.specialtyId,
@@ -180,6 +194,7 @@ private fun scopeFilters(filter: CatalogFilter, extra: Map<String, String?> = em
 /** D2-01. Todo parametro invalido se acumula y sale en UN 400 VALIDATION; un cursor ajeno/corrupto es 400 INVALID_CURSOR. */
 internal fun parseExamListQuery(params: Parameters): ExamListQuery {
     val issues = mutableListOf<ErrorIssue>()
+    rejectUnknownParams(params, EXAM_LIST_PARAMS, issues)
     val filter = catalogFilterOf(params, issues)
     val includeFacets = params["includeFacets"]?.let { raw ->
         when (raw.trim().lowercase()) {
@@ -202,6 +217,7 @@ internal fun parseExamListQuery(params: Parameters): ExamListQuery {
 /** D2-13. `vista` es obligatoria; el cursor lleva la vista en su huella. */
 internal fun parseMyExamsQuery(params: Parameters): MyExamsQuery {
     val issues = mutableListOf<ErrorIssue>()
+    rejectUnknownParams(params, MY_EXAMS_PARAMS, issues)
     val view = when (val raw = params["vista"]) {
         null -> { issues += invalid("vista", CanonicalIssue.REQUIRED); null }
         else -> MyExamsView.entries.firstOrNull { it.wire == raw.trim() } ?: run { issues += invalid("vista"); null }
@@ -235,6 +251,18 @@ internal class CatalogService(
     private val gateway: CatalogGateway,
     private val clock: () -> Instant = Instant::now,
 ) {
+    /**
+     * V1: nombres legibles de las comunidades (codigo -> nombre), cacheados 5 min. Si la lectura falla el catalogo NO falla:
+     * los nombres salen vacios (el cliente no muestra cabecera, nunca el codigo crudo) y el fallo no se cachea.
+     */
+    private val namesCache = java.util.concurrent.atomic.AtomicReference<Pair<Long, Map<String, String>>?>(null)
+
+    internal fun communityNames(): Map<String, String> {
+        val now = System.currentTimeMillis()
+        namesCache.get()?.takeIf { now - it.first < COMMUNITY_NAMES_CACHE_MS }?.let { return it.second }
+        return runCatching { gateway.communityNames() }.getOrNull()?.also { namesCache.set(now to it) } ?: emptyMap()
+    }
+
     // ----- D2-17 -----
     /** Catalogo acotado de especialidades activas con sus capacidades (sin fila de capacidades = abierto, como la politica). */
     suspend fun publicSpecialties(): PublicSpecialtiesResponse = withUpstreamIo {
@@ -258,6 +286,7 @@ internal class CatalogService(
         val page = query.page.page(rows) { KeysetPosition(it.publicadoEnOrFail(), it.id).toKeys() }
         val verdicts = accessFor(userId.value, page.items, now)
         val covers = signedCovers(page.items)
+        val names = communityNames()
         val items = page.items.map { row ->
             AppExamSummary(
                 id = row.id,
@@ -266,6 +295,7 @@ internal class CatalogService(
                 tipoAcceso = row.accessType(),
                 especialidadId = row.especialidadId,
                 comunidadCodigo = row.comunidad?.codigo,
+                comunidadNombre = row.comunidad?.codigo?.let(names::get),
                 totalPreguntas = row.totalPreguntas,
                 anio = row.anio,
                 duracionMinutos = row.duracionMinutos,
@@ -297,6 +327,7 @@ internal class CatalogService(
         val row = gateway.getPublished(examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
         val verdict = accessFor(userId.value, listOf(row), now).getValue(row.id)
         val covers = signedCovers(listOf(row))
+        val names = communityNames()
         val attempts = gateway.attemptRefs(userId.value, row.id)
         AppExamResponse(
             AppExamDetail(
@@ -308,6 +339,7 @@ internal class CatalogService(
                 tipoAcceso = row.accessType(),
                 especialidadId = row.especialidadId,
                 comunidadCodigo = row.comunidad?.codigo,
+                comunidadNombre = row.comunidad?.codigo?.let(names::get),
                 duracionMinutos = row.duracionMinutos,
                 totalPreguntas = row.totalPreguntas,
                 anio = row.anio,
@@ -370,7 +402,7 @@ internal class CatalogService(
                         myItem(row.examenes, verdicts, covers, attempt?.id, attempt?.estado, attempt?.totalRespondidas ?: 0, attempt?.totalPreguntas ?: 0)
                     },
                     nextCursor = page.nextCursor,
-                    grupos = collection.grupos?.map { MyExamGroup(it.comunidadCodigo, it.total) },
+                    grupos = collection.grupos?.map { MyExamGroup(it.comunidadCodigo, it.total, communityNames()[it.comunidadCodigo]) },
                 )
             }
         }
@@ -390,6 +422,7 @@ internal class CatalogService(
             titulo = exam.titulo,
             tipoExamen = exam.kind().wire,
             comunidadCodigo = exam.comunidad?.codigo,
+            comunidadNombre = exam.comunidad?.codigo?.let(communityNames()::get),
             portadaUrl = exam.portadaStoragePath?.let(covers::get),
         ),
         accessState = verdicts.getValue(exam.id).state,
@@ -454,6 +487,7 @@ internal class CatalogService(
 
         /** D2-17: tope del catalogo de especialidades (hoy 3 en MAIN). */
         const val MAX_PUBLIC_SPECIALTIES = 100
+        const val COMMUNITY_NAMES_CACHE_MS = 300_000L
         private val ATTEMPT_STATES = setOf("en_progreso", "finalizado", "abandonado")
     }
 }

@@ -100,7 +100,8 @@ internal class LegacyProfileAdapter(
         request: OposiBotsProfileRequest,
         context: OposiBotsAuthContext,
     ) {
-        val specialtyId = specialties.resolve(request.specialty)
+        // V1: el id canonico gana sobre el nombre; la base lo valida (existe y esta activa -> 422 UNKNOWN_SPECIALTY).
+        val specialtyId = request.especialidadId?.lowercase() ?: specialties.resolve(request.specialty)
             ?: throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED)
         val username = request.username?.trim()?.takeIf(String::isNotEmpty)
             ?: profiles.me(identity, accessToken, context).me.profile.username

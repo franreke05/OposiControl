@@ -633,6 +633,33 @@ internal fun examCoverTypeInvalidException(): BackendDomainException =
         "La portada tiene que ser JPG, PNG o WEBP.",
     )
 
+/** V1: toda examen lleva comunidad. Ver [examCommunityRequiredException]. */
+internal const val EXAM_COMMUNITY_REQUIRED_CODE: String = "EXAM_COMMUNITY_REQUIRED"
+
+/** Un examen se crea y se edita CON comunidad (decision del propietario 2026-10-15): ausente, nula o en blanco es un 422. */
+internal fun examCommunityRequiredException(): BackendDomainException =
+    BackendDomainException(
+        EXAM_COMMUNITY_REQUIRED_CODE,
+        HttpStatusCode.UnprocessableEntity,
+        "El examen necesita una comunidad.",
+    )
+
+/** La comunidad del cuerpo no existe o no esta activa en el catalogo (`comunidades_autonomas`). */
+internal fun examCommunityUnknownException(): BackendDomainException =
+    BackendDomainException(
+        "UNKNOWN_COMMUNITY",
+        HttpStatusCode.UnprocessableEntity,
+        "La comunidad elegida no existe o no esta activa.",
+    )
+
+/** Un examen sin comunidad no se publica (los heredados sin comunidad siguen editables hasta que se les asigne una). */
+internal fun examPublishRequiresCommunityException(): BackendDomainException =
+    BackendDomainException(
+        "EXAM_PUBLISH_REQUIRES_COMMUNITY",
+        HttpStatusCode.Conflict,
+        "No se puede publicar un examen sin comunidad.",
+    )
+
 /** Código de dominio de [examPublishRequiresQuestionsException]. */
 internal const val EXAM_PUBLISH_REQUIRES_QUESTIONS_CODE: String = "EXAM_PUBLISH_REQUIRES_QUESTIONS"
 

@@ -418,10 +418,13 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 // F-07: los dos ids del CUERPO acaban en columnas uuid del INSERT.
                 // Sin validar, un valor que no es UUID llegaba a Postgres, volvía
                 // como 22P02 y salía como 500. Ahora es un 400 que nombra el campo
-                // y no sale ninguna petición a Supabase. (`comunidadId` ausente o
-                // `null` es "Nacional" y no se valida.)
+                // y no sale ninguna petición a Supabase.
+                // V1 (2026-10-15): la comunidad es OBLIGATORIA. Ausente, nula o en blanco es un 422
+                // EXAM_COMMUNITY_REQUIRED, y debe existir y estar activa en el catalogo (422 UNKNOWN_COMMUNITY).
                 if (body.especialidadId.isNotBlank()) body.especialidadId.validatedUuid("especialidadId")
-                body.comunidadId?.validatedUuid("comunidadId")
+                val community = body.comunidadId?.takeIf { it.isNotBlank() } ?: throw examCommunityRequiredException()
+                community.validatedUuid("comunidadId")
+                withUpstreamIo { gateway.requireActiveCommunity(community) }
                 val saved = withUpstreamIo { gateway.createExamen(body) }
                 call.respond(HttpStatusCode.Created, AdminExamenResponse(saved))
             }
@@ -457,6 +460,9 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 val raw = call.receive<JsonObject>()
                 // Cuarta ruta de la misma familia: un id que no existe es un 404
                 // con el MISMO `ErrorDto` que `GET /examenes/{id}`, no un 500.
+                (raw["comunidadId"] as? JsonPrimitive)?.takeIf { it.isString }?.let { community ->
+                    withUpstreamIo { gateway.requireActiveCommunity(community.content.validatedUuid("comunidadId")) }
+                }
                 val saved = withUpstreamIo { gateway.updateExamen(id, raw) }
                     ?: return@patch call.respond(
                         HttpStatusCode.NotFound,
@@ -1953,7 +1959,7 @@ private val PATCHABLE_EXAMEN_COLUMNS: Map<String, String> = linkedMapOf(
  * clave admitida un `null` es un 400: no hay columna NOT NULL que se pueda vaciar
  * por accidente.
  */
-private val CLEARABLE_EXAMEN_KEYS: Set<String> = setOf("comunidadId", "anio", "duracionMinutos")
+private val CLEARABLE_EXAMEN_KEYS: Set<String> = setOf("anio", "duracionMinutos")
 
 /** Mismo 400 y mismo mensaje que daba `call.receive<AdminExamenDto>()`, sin nombres de campo. */
 private fun badExamBody(): Nothing = throw BadRequestException("El cuerpo de la petición no es válido.")
@@ -1971,6 +1977,8 @@ internal fun examenPatchFrom(raw: JsonObject): JsonObject = buildJsonObject {
     PATCHABLE_EXAMEN_COLUMNS.forEach { (key, column) ->
         val value = raw[key] ?: return@forEach
         if (value is JsonNull) {
+            // V1: la comunidad ya no se puede borrar (volver a "Nacional" ya no existe).
+            if (key == "comunidadId") throw examCommunityRequiredException()
             if (key in CLEARABLE_EXAMEN_KEYS) put(column, JsonNull) else badExamBody()
             return@forEach
         }
@@ -4271,6 +4279,14 @@ class AdminV1Gateway private constructor(
         ).decodeList<AdminExamenRow>().firstOrNull()?.toDto().withSignedCover()
     }
 
+    /** V1: la comunidad debe existir y estar activa; 422 UNKNOWN_COMMUNITY si no. */
+    fun requireActiveCommunity(communityId: String) {
+        val found = request("GET", "/rest/v1/comunidades_autonomas?select=id&id=eq.$communityId&activa=eq.true&limit=1", null)
+            .decodeList<JsonObject>()
+            .isNotEmpty()
+        if (!found) throw examCommunityUnknownException()
+    }
+
     /**
      * Publica. `null` = el examen no existe, y eso lo traduce la ruta a 404.
      *
@@ -4293,15 +4309,16 @@ class AdminV1Gateway private constructor(
         requireExamImmersivesHaveAudio(id)
         val saved = request(
             "PATCH",
-            "/rest/v1/examenes?id=eq.$id&total_preguntas=gt.0",
+            "/rest/v1/examenes?id=eq.$id&total_preguntas=gt.0&comunidad_id=not.is.null",
             """{"publicado_en":"${Instant.now()}","activo":true}""",
             prefer = "return=representation",
         ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
         if (saved == null) {
-            val existe = request("GET", "/rest/v1/examenes?select=id&id=eq.$id&limit=1", null)
+            val row = request("GET", "/rest/v1/examenes?select=id,comunidad_id&id=eq.$id&limit=1", null)
                 .decodeList<JsonObject>()
-                .isNotEmpty()
-            if (!existe) return null
+                .firstOrNull() ?: return null
+            // La comunidad se comprueba primero: sin ella no hay publicacion posible aunque tenga preguntas.
+            if (row["comunidad_id"] == null || row["comunidad_id"] is JsonNull) throw examPublishRequiresCommunityException()
             throw examPublishRequiresQuestionsException()
         }
         registrarAuditoria(
