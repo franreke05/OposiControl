@@ -50,7 +50,7 @@ internal class AttemptRuntime(
             val store = PostgrestIdempotencyStore.fromEnvironment(environment) ?: return null
             return AttemptRuntime(
                 resolver = resolver,
-                attempts = AttemptService(AttemptGateway(upstream), catalog),
+                attempts = AttemptService(AttemptGateway(upstream), catalog, ServerClock.fromEnvironment(environment)),
                 idempotency = store,
                 limit = { operation, userId ->
                     if (limiter != null) {

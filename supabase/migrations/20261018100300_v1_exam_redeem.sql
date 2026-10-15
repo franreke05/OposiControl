@@ -14,6 +14,8 @@
 --         newValidUntil = max(db_now, latest valido_hasta of the user's ACTIVE grants of that exam) + dias_acceso_compra days   (DB clock, never shortened)
 --     Price, days and purchasability are read INSIDE from `examenes` (precio_tickets, dias_acceso_compra, comprable_con_tickets). Nothing is invented: unset
 --     price or comprable_con_tickets = false -> NOT_PURCHASABLE. The request fingerprint is stored in the ledger row so a replay returns the same result.
+--   * public.app_server_now(): the database clock for Ktor. Ktor decides 'until when does this access last' for D2-02 / D2-13 with the SAME clock that wrote
+--     `valido_hasta` here (ServerClock reads it, then advances monotonically); a JVM-clock skew can never show an expired exam as valid.
 --   * Domain errors (SQLSTATE P0001, message = code, numbers in DETAIL as JSON): EXAM_NOT_FOUND, NOT_PURCHASABLE, PRICE_CHANGED {"price"},
 --     ALREADY_ACCESSIBLE {"state"}, INSUFFICIENT_BALANCE {"balance","price"}, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_REUSED, WALLET_INVALID_USER.
 --     None of them writes anything.
@@ -21,6 +23,7 @@
 -- ROLLBACK (manual, executed verbatim by the PG17 gate)
 -- ROLLBACK-BEGIN
 -- begin;
+-- drop function if exists public.app_server_now();
 -- drop function if exists public.app_redeem_exam_access(uuid, uuid, text, integer);
 -- drop function if exists private.exam_access_verdict(uuid, uuid, timestamptz);
 -- drop index if exists public.ux_contenido_desbloqueado_compra;
@@ -39,6 +42,10 @@
 --        (case when has_function_privilege('anon', 'public.app_redeem_exam_access(uuid,uuid,text,integer)', 'execute')
 --                or has_function_privilege('authenticated', 'public.app_redeem_exam_access(uuid,uuid,text,integer)', 'execute')
 --                or not has_function_privilege('service_role', 'public.app_redeem_exam_access(uuid,uuid,text,integer)', 'execute') then 1 else 0 end)::bigint
+-- union all
+-- select 'server_now_not_service_role_only',
+--        (case when has_function_privilege('anon', 'public.app_server_now()', 'execute') or has_function_privilege('authenticated', 'public.app_server_now()', 'execute')
+--                or not has_function_privilege('service_role', 'public.app_server_now()', 'execute') then 1 else 0 end)::bigint
 -- union all
 -- select 'verdict_executable_by_clients',
 --        (case when has_function_privilege('anon', 'private.exam_access_verdict(uuid,uuid,timestamptz)', 'execute')
@@ -242,6 +249,15 @@ begin
   return query select 'CREATED'::text, v_ledger.id, p_examen, v_exam.precio_tickets, v_from, v_until, v_now, v_ledger.saldo_resultante;
 end;
 $$;
+
+create or replace function public.app_server_now()
+returns timestamptz
+language sql
+stable
+set search_path = ''
+as $$ select clock_timestamp(); $$;
+revoke all on function public.app_server_now() from public, anon, authenticated;
+grant execute on function public.app_server_now() to service_role;
 
 revoke all on function private.exam_access_verdict(uuid, uuid, timestamptz) from public, anon, authenticated;
 revoke all on function public.app_redeem_exam_access(uuid, uuid, text, integer) from public, anon, authenticated;

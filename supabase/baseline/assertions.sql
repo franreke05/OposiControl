@@ -1089,6 +1089,9 @@ begin
   assert not exists (select 1 from public.transacciones_cartera where idempotency_key = 'k-atomic'), 'ledger row rolled back';
   assert not exists (select 1 from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and examen_id = 'e5000000-0000-0000-0000-0000000000a8'), 'entitlement rolled back';
   assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'reconcile still clean';
+  assert abs(extract(epoch from (public.app_server_now() - clock_timestamp()))) < 5, 'app_server_now is the database clock';
+  assert has_function_privilege('service_role', 'public.app_server_now()', 'execute')
+    and not has_function_privilege('anon', 'public.app_server_now()', 'execute') and not has_function_privilege('authenticated', 'public.app_server_now()', 'execute'), 'app_server_now is service_role only';
   raise notice 'OK V1 redeem';
 end $$;
 rollback;

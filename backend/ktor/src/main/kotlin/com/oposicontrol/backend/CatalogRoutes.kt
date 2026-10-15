@@ -26,7 +26,9 @@ internal class CatalogRuntime(
         ): CatalogRuntime? {
             val upstream = TransportCatalogUpstream.fromEnvironment(environment) ?: return null
             val gateway = CatalogGateway(upstream)
-            return CatalogRuntime(resolver, CatalogService(gateway), EntitlementService(gateway), limiter.subjectLimit(OposiBotsAuthOperation.CATALOG_READ))
+            // V1: UN reloj para decidir el acceso: el de la base (el mismo que escribe `valido_hasta` en el canje).
+            val clock = ServerClock.fromEnvironment(environment)
+            return CatalogRuntime(resolver, CatalogService(gateway, clock), EntitlementService(gateway, clock), limiter.subjectLimit(OposiBotsAuthOperation.CATALOG_READ))
         }
     }
 }

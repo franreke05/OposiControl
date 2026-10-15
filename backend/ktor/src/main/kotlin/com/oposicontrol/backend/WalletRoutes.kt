@@ -25,7 +25,7 @@ internal class WalletRuntime(
             val transport = SupabaseRequestTransport.fromEnvironment(environment) ?: return null
             return WalletRuntime(
                 resolver,
-                WalletService(WalletGateway(upstream = { path -> transport.get(path) })),
+                WalletService(WalletGateway(upstream = { path -> transport.get(path) }), ServerClock.fromTransport(transport)),
                 limiter.subjectLimit(OposiBotsAuthOperation.WALLET_READ),
             )
         }
