@@ -22,16 +22,7 @@ class ForumViewModel(
     init {
         analyticsTracker.trackScreen("forum")
         dispatch(ForumIntent.Load)
-        // Misma fuente semántica que Home y el filtro "Pendientes" de Informes
-        // (ModerationRepository.listPendingReports): nunca un contador propio,
-        // para que los tres sitios concuerden siempre. No bloqueante: si falla,
-        // la banner simplemente no se muestra (pendingReportsCount se queda null).
-        scope.launch {
-            when (val result = moderationRepository.listPendingReports()) {
-                is AppResult.Success -> updateState { it.copy(pendingReportsCount = result.value.size) }
-                is AppResult.Failure -> Unit
-            }
-        }
+        scope.launch { loadPendingReportsCount() }
     }
 
     override suspend fun handleIntent(intent: ForumIntent) {
@@ -39,6 +30,11 @@ class ForumViewModel(
             ForumIntent.Load -> loadFirstPage()
             ForumIntent.PullToRefresh -> refresh()
             ForumIntent.LoadMore -> loadMore()
+            ForumIntent.RetryLoadMore -> {
+                updateState { it.copy(loadMoreError = null) }
+                loadMore()
+            }
+            ForumIntent.RetryPendingReportsCount -> loadPendingReportsCount()
             is ForumIntent.SetMainFilter -> {
                 if (intent.filter == currentState().mainFilter) return
                 updateState { it.copy(mainFilter = intent.filter, knownCategories = emptyList()) }
@@ -53,6 +49,18 @@ class ForumViewModel(
     }
 
     /**
+     * Mismo conteo que el filtro «Pendientes» de Informes: el total `pendientesTotal` que cuenta el servidor (antes se
+     * contaban las filas de una lectura que el servidor cortaba en 200). Un fallo, o un conteo que el servidor no pudo
+     * leer, se dice y se puede reintentar; nunca se pinta como 0.
+     */
+    private suspend fun loadPendingReportsCount() {
+        updateState { it.copy(pendingReportsCountFailed = false) }
+        val total = (moderationRepository.listReportsPage(includeResolved = false, cursor = null) as? AppResult.Success)
+            ?.value?.pendingTotal
+        updateState { it.copy(pendingReportsCount = total ?: it.pendingReportsCount, pendingReportsCountFailed = total == null) }
+    }
+
+    /**
      * [preserveContent] mantiene la lista ya visible mientras se recarga. Solo
      * lo usa el pull-to-refresh: ahí el indicador de `PullToRefreshBox` ya
      * comunica la carga, así que poner además `threads = Loading` borraba el
@@ -64,6 +72,7 @@ class ForumViewModel(
             it.copy(
                 threads = if (preserveContent) it.threads else UiAsync.Loading,
                 nextCursor = null,
+                loadMoreError = null,
             )
         }
         val state = currentState()
@@ -92,10 +101,11 @@ class ForumViewModel(
         // confinado a un solo hilo (Main real, o StandardTestDispatcher en
         // tests) esto basta para que dos LoadMore casi simultáneos nunca lancen
         // dos páginas a la vez, sin necesitar un Mutex adicional.
-        if (cursor == null || state.loadingMore || state.threads !is UiAsync.Success) return
+        // Tras un fallo solo reintenta [ForumIntent.RetryLoadMore]: el desplazamiento no relanza la pagina en bucle.
+        if (cursor == null || state.loadingMore || state.loadMoreError != null || state.threads !is UiAsync.Success) return
         updateState { it.copy(loadingMore = true) }
         when (val result = forumRepository.listThreads(cursor = cursor, reportedOnly = state.mainFilter == ForumMainFilter.REPORTED, categoryId = state.categoryFilter?.id)) {
-            is AppResult.Failure -> updateState { it.copy(loadingMore = false) }
+            is AppResult.Failure -> updateState { it.copy(loadingMore = false, loadMoreError = result.error) }
             is AppResult.Success -> updateState {
                 val existing = (it.threads as? UiAsync.Success)?.value.orEmpty()
                 val merged = (existing + result.value.items).distinctBy(ForumThread::id)

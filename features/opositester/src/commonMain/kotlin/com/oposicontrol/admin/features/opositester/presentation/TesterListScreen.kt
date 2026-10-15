@@ -66,6 +66,7 @@ fun TesterListScreen(
         onSetTypeFilter = { viewModel.dispatch(TesterIntent.SetTypeFilter(it)) },
         onPullToRefresh = { viewModel.dispatch(TesterIntent.PullToRefresh) },
         onLoadMore = { viewModel.dispatch(TesterIntent.LoadMore) },
+        onRetryLoadMore = { viewModel.dispatch(TesterIntent.RetryLoadMore) },
         onRetry = { viewModel.dispatch(TesterIntent.Load) },
     )
 }
@@ -78,6 +79,7 @@ private fun TesterListContent(
     onSetTypeFilter: (TesterTypeOption?) -> Unit,
     onPullToRefresh: () -> Unit,
     onLoadMore: () -> Unit,
+    onRetryLoadMore: () -> Unit,
     onRetry: () -> Unit,
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
@@ -105,8 +107,10 @@ private fun TesterListContent(
                 is UiAsync.Success -> ReportsList(
                     reports = reportsState.value,
                     loadingMore = state.loadingMore,
+                    loadMoreError = state.loadMoreError,
                     onOpenReport = onOpenReport,
                     onApproachingEnd = onLoadMore,
+                    onRetryLoadMore = onRetryLoadMore,
                 )
             }
         }
@@ -215,8 +219,10 @@ fun FilterIconButton(active: Boolean, onClick: () -> Unit) = com.oposicontrol.ad
 private fun ReportsList(
     reports: List<TesterReport>,
     loadingMore: Boolean,
+    loadMoreError: AppError?,
     onOpenReport: (String) -> Unit,
     onApproachingEnd: () -> Unit,
+    onRetryLoadMore: () -> Unit,
 ) {
     val now = remember(reports) { Clock.System.now() }
     val listState = rememberLazyListState()
@@ -242,6 +248,27 @@ private fun ReportsList(
             item(key = "loading-more") {
                 Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = GlassTheme.tokens.accent)
+                }
+            }
+        }
+        if (loadMoreError != null && !loadingMore) {
+            item(key = "load-more-error") {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(text = friendlyErrorMessage(loadMoreError), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    Text(
+                        text = "Reintentar",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = GlassTheme.tokens.accent,
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = 48.dp)
+                            .clickable(onClick = onRetryLoadMore)
+                            .padding(vertical = 12.dp),
+                    )
                 }
             }
         }

@@ -62,6 +62,7 @@ fun ReportsScreen(
         onSetMainFilter = { viewModel.dispatch(ReportsIntent.SetMainFilter(it)) },
         onPullToRefresh = { viewModel.dispatch(ReportsIntent.PullToRefresh) },
         onRetry = { viewModel.dispatch(ReportsIntent.Refresh) },
+        onLoadMore = { viewModel.dispatch(ReportsIntent.LoadMore) },
         onApplySecondaryFilters = { viewModel.dispatch(ReportsIntent.ApplySecondaryFilters(it)) },
         onClearSecondaryFilters = { viewModel.dispatch(ReportsIntent.ClearSecondaryFilters) },
     )
@@ -74,6 +75,7 @@ private fun ReportsContent(
     onSetMainFilter: (ReportsMainFilter) -> Unit,
     onPullToRefresh: () -> Unit,
     onRetry: () -> Unit,
+    onLoadMore: () -> Unit,
     onApplySecondaryFilters: (ReportSecondaryFilters) -> Unit,
     onClearSecondaryFilters: () -> Unit,
 ) {
@@ -92,8 +94,11 @@ private fun ReportsContent(
         ) {
             FilterRow(
                 mainFilter = state.mainFilter,
-                pendingCount = loadedReports.size.takeIf { state.mainFilter == ReportsMainFilter.PENDING && state.reports is UiAsync.Success },
-                allCount = loadedReports.size.takeIf { state.mainFilter == ReportsMainFilter.ALL && state.reports is UiAsync.Success },
+                // Pendientes: el total que cuenta el servidor (no las filas leídas). Todos: solo si ya se leyó la lista entera.
+                pendingCount = state.pendingTotal,
+                allCount = loadedReports.size.takeIf {
+                    state.mainFilter == ReportsMainFilter.ALL && state.reports is UiAsync.Success && state.nextCursor == null
+                },
                 secondaryFiltersActive = state.secondaryFilters.selectedEntityTypes.isNotEmpty(),
                 onSetMainFilter = onSetMainFilter,
                 onOpenFilterSheet = { showFilterSheet = true },
@@ -104,10 +109,10 @@ private fun ReportsContent(
                 is UiAsync.Error -> ErrorReportsState(error = reportsState.error, onRetry = onRetry)
                 is UiAsync.Success -> {
                     val visible = reportsState.value.filterBySecondary(state.secondaryFilters)
-                    if (visible.isEmpty()) {
+                    if (visible.isEmpty() && state.nextCursor == null) {
                         FilteredEmptyState(onClear = onClearSecondaryFilters)
                     } else {
-                        ReportsList(reports = visible, onOpenReport = onOpenReport)
+                        ReportsList(reports = visible, state = state, onOpenReport = onOpenReport, onLoadMore = onLoadMore)
                     }
                 }
             }
@@ -202,7 +207,12 @@ private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
 fun FilterIconButton(active: Boolean, onClick: () -> Unit) = com.oposicontrol.admin.core.ui.components.FilterIconButton(active, onClick)
 
 @Composable
-private fun ReportsList(reports: List<ForumReport>, onOpenReport: (String) -> Unit) {
+private fun ReportsList(
+    reports: List<ForumReport>,
+    state: ReportsState,
+    onOpenReport: (String) -> Unit,
+    onLoadMore: () -> Unit,
+) {
     val now = remember(reports) { Clock.System.now() }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -212,6 +222,41 @@ private fun ReportsList(reports: List<ForumReport>, onOpenReport: (String) -> Un
         items(reports, key = { it.id }) { report ->
             ReportCard(item = report.toUi(now), onClick = { onOpenReport(report.id) })
         }
+        if (state.nextCursor != null) {
+            item(key = "load-more") { LoadMoreFooter(state = state, onLoadMore = onLoadMore) }
+        }
+    }
+}
+
+/** Pie de la lista: pide la página siguiente al servidor; si falla lo dice y ofrece reintentar (lo leído se conserva). */
+@Composable
+private fun LoadMoreFooter(state: ReportsState, onLoadMore: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        state.loadMoreError?.let { error ->
+            Text(
+                text = friendlyErrorMessage(error),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        Text(
+            text = when {
+                state.loadingMore -> "Cargando…"
+                state.loadMoreError != null -> "Reintentar"
+                else -> "Cargar más informes"
+            },
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = if (state.loadingMore) MaterialTheme.colorScheme.onSurfaceVariant else GlassTheme.tokens.accent,
+            modifier = Modifier
+                .defaultMinSize(minHeight = 48.dp)
+                .clickable(enabled = !state.loadingMore, onClick = onLoadMore)
+                .padding(vertical = 12.dp),
+        )
     }
 }
 
@@ -382,7 +427,7 @@ private fun SecondaryFilterSheet(
                 )
             } else {
                 Text(
-                    "Tipo de contenido",
+                    "Tipo de contenido (de los informes ya cargados)",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

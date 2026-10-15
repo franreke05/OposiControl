@@ -8,6 +8,7 @@ import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.ForumReplyPage
 import com.oposicontrol.admin.domain.model.ForumReport
 import com.oposicontrol.admin.domain.model.ForumReportDetail
+import com.oposicontrol.admin.domain.model.ForumReportsPage
 import com.oposicontrol.admin.domain.model.ForumThread
 import com.oposicontrol.admin.domain.model.ForumThreadDetail
 import com.oposicontrol.admin.domain.model.ForumThreadPage
@@ -82,9 +83,18 @@ private class GatedForumRepository(
 }
 
 private class FakeModerationRepository(
-    private val pendingReports: AppResult<List<ForumReport>> = AppResult.Success(emptyList()),
+    /** Respuestas sucesivas del conteo de pendientes (la ultima se repite). */
+    vararg totals: AppResult<Int?> = arrayOf(AppResult.Success(0)),
 ) : ModerationRepository {
-    override suspend fun listPendingReports(): AppResult<List<ForumReport>> = pendingReports
+    private val queue = ArrayDeque(totals.toList())
+    override suspend fun listReportsPage(includeResolved: Boolean, cursor: String?): AppResult<ForumReportsPage> {
+        val next = if (queue.size > 1) queue.removeFirst() else queue.first()
+        return when (next) {
+            is AppResult.Failure -> next
+            is AppResult.Success -> AppResult.Success(ForumReportsPage(emptyList(), null, next.value))
+        }
+    }
+    override suspend fun listPendingReports(): AppResult<List<ForumReport>> = error("ya no se cuenta leyendo filas")
     override suspend fun listReports(includeResolved: Boolean): AppResult<List<ForumReport>> = AppResult.Success(emptyList())
     override suspend fun getReport(reportId: String): AppResult<ForumReportDetail> = error("not used by ForumViewModel")
     override suspend fun resolveReport(reportId: String, action: String, notes: String?, ticketsReporter: Int): AppResult<Unit> = error("not used by ForumViewModel")
@@ -295,7 +305,8 @@ class ForumViewModelTest {
     @Test
     fun pendingReportsCount_usesTheSameSourceAsHomeAndInformes() = runTest {
         val repository = FakeForumRepository { _, _, _ -> AppResult.Success(ForumThreadPage(emptyList(), null)) }
-        val moderation = FakeModerationRepository(pendingReports = AppResult.Success(listOf(mockReport("r1"), mockReport("r2"), mockReport("r3"))))
+        // El total lo cuenta el servidor (pendientesTotal), no las filas de una lectura cortada.
+        val moderation = FakeModerationRepository(AppResult.Success(3))
         val viewModel = newViewModel(testScheduler, repository, moderation)
 
         testScheduler.advanceUntilIdle()
@@ -306,12 +317,58 @@ class ForumViewModelTest {
     @Test
     fun pendingReportsCount_staysNull_whenTheCallFails_ratherThanShowingAWrongZero() = runTest {
         val repository = FakeForumRepository { _, _, _ -> AppResult.Success(ForumThreadPage(emptyList(), null)) }
-        val moderation = FakeModerationRepository(pendingReports = AppResult.Failure(AppError.Network("sin conexion")))
+        val moderation = FakeModerationRepository(AppResult.Failure(AppError.Network("sin conexion")), AppResult.Success(4))
         val viewModel = newViewModel(testScheduler, repository, moderation)
 
         testScheduler.advanceUntilIdle()
 
         assertNull(viewModel.state.value.pendingReportsCount)
+        assertTrue(viewModel.state.value.pendingReportsCountFailed, "el fallo se dice, no se oculta")
+
+        viewModel.dispatch(ForumIntent.RetryPendingReportsCount)
+        testScheduler.advanceUntilIdle()
+        assertEquals(4, viewModel.state.value.pendingReportsCount)
+        assertEquals(false, viewModel.state.value.pendingReportsCountFailed)
+    }
+
+    @Test
+    fun pendingReportsCount_aCountTheServerCouldNotRead_isAFailureNotZero() = runTest {
+        val repository = FakeForumRepository { _, _, _ -> AppResult.Success(ForumThreadPage(emptyList(), null)) }
+        val viewModel = newViewModel(testScheduler, repository, FakeModerationRepository(AppResult.Success(null)))
+        testScheduler.advanceUntilIdle()
+        assertNull(viewModel.state.value.pendingReportsCount)
+        assertTrue(viewModel.state.value.pendingReportsCountFailed)
+    }
+
+    @Test
+    fun loadMore_failure_isSurfaced_doesNotAutoRetry_andRetryLoadsThePage() = runTest {
+        var failNext = true
+        val repository = FakeForumRepository { cursor, _, _ ->
+            when {
+                cursor == null -> AppResult.Success(ForumThreadPage(listOf(thread("t1")), "cursor-2"))
+                failNext -> AppResult.Failure(AppError.Network("sin conexion"))
+                else -> AppResult.Success(ForumThreadPage(listOf(thread("t2")), null))
+            }
+        }
+        val viewModel = newViewModel(testScheduler, repository)
+        testScheduler.advanceUntilIdle()
+
+        viewModel.dispatch(ForumIntent.LoadMore)
+        testScheduler.advanceUntilIdle()
+        assertIs<AppError.Network>(viewModel.state.value.loadMoreError)
+        assertEquals(listOf("t1"), (viewModel.state.value.threads as UiAsync.Success).value.map { it.id }, "lo leido se conserva")
+
+        // El desplazamiento vuelve a pedir LoadMore: no se relanza en bucle.
+        repository.calls.clear()
+        viewModel.dispatch(ForumIntent.LoadMore)
+        testScheduler.advanceUntilIdle()
+        assertTrue(repository.calls.isEmpty())
+
+        failNext = false
+        viewModel.dispatch(ForumIntent.RetryLoadMore)
+        testScheduler.advanceUntilIdle()
+        assertNull(viewModel.state.value.loadMoreError)
+        assertEquals(listOf("t1", "t2"), (viewModel.state.value.threads as UiAsync.Success).value.map { it.id })
     }
 
     /**
@@ -375,16 +432,4 @@ class ForumViewModelTest {
         repository.release()
         testScheduler.advanceUntilIdle()
     }
-
-    private fun mockReport(id: String) = ForumReport(
-        id = id,
-        entityType = "hilo",
-        entityId = "e-$id",
-        reason = "motivo",
-        description = "",
-        status = "pendiente",
-        createdAt = "2026-08-22T10:00:00Z",
-        reporterId = "u1",
-        reporterName = "Reportero",
-    )
 }

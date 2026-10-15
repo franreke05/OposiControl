@@ -1,6 +1,7 @@
 package com.oposicontrol.admin.features.opositester.presentation
 
 import com.oposicontrol.admin.core.common.presentation.UiAsync
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.domain.model.TesterReport
 
 /** Único filtro secundario con soporte real: tipo_feedback (feedback_pregunta
@@ -16,5 +17,7 @@ data class TesterListState(
     val reports: UiAsync<List<TesterReport>> = UiAsync.Loading,
     val nextCursor: String? = null,
     val loadingMore: Boolean = false,
+    /** Fallo al pedir la página siguiente: lo leído se conserva, se dice y se ofrece reintentar. */
+    val loadMoreError: AppError? = null,
     val refreshing: Boolean = false,
 )

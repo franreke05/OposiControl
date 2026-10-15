@@ -8,6 +8,7 @@ import com.oposicontrol.admin.data.remote.api.BackendRoutes
 import com.oposicontrol.admin.domain.model.ForumReport
 import com.oposicontrol.admin.domain.model.ForumReportContentPreview
 import com.oposicontrol.admin.domain.model.ForumReportDetail
+import com.oposicontrol.admin.domain.model.ForumReportsPage
 import com.oposicontrol.admin.domain.repository.ModerationRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -44,6 +45,26 @@ class KtorModerationRepositoryImpl(
         }
         r.requireSuccess(BackendRoutes.ADMIN_V1_REPORTES)
         r.body<ReportesV1Response>().data.map { it.toDomain() }
+    }
+
+    /**
+     * D5-25: una pagina de [REPORTS_PAGE_LIMIT] con su `nextCursor` (keyset `creado_en,id` ascendente) y `pendientesTotal`.
+     * El cursor solo vale con los mismos filtros: el servidor lo rechaza (400) si cambian.
+     */
+    override suspend fun listReportsPage(includeResolved: Boolean, cursor: String?) = adapter.safeCall {
+        val r = client.get(url(BackendRoutes.ADMIN_V1_REPORTES)) {
+            backendHeaders()
+            if (includeResolved) parameter("estado", "todos")
+            parameter("limit", REPORTS_PAGE_LIMIT)
+            cursor?.let { parameter("cursor", it) }
+        }
+        r.requireSuccess(BackendRoutes.ADMIN_V1_REPORTES)
+        val body = r.body<ReportesV1Response>()
+        ForumReportsPage(
+            items = body.data.map { it.toDomain() },
+            nextCursor = body.nextCursor?.takeIf { it.isNotBlank() },
+            pendingTotal = body.pendientesTotal,
+        )
     }
 
     override suspend fun getReport(reportId: String) = adapter.safeCall {
@@ -131,7 +152,14 @@ class KtorModerationRepositoryImpl(
     val threadTitle: String? = null,
     val currentState: String = "",
 )
-@Serializable private data class ReportesV1Response(val data: List<ReporteV1Dto>)
+/** Tamano de pagina de informes que pide el cliente (el servidor admite 1..200). */
+internal const val REPORTS_PAGE_LIMIT = 50
+
+@Serializable private data class ReportesV1Response(
+    val data: List<ReporteV1Dto>,
+    val nextCursor: String? = null,
+    val pendientesTotal: Int? = null,
+)
 @Serializable private data class ResolverReporteBody(val accion: String, val notas: String? = null, val ticketsReporter: Int = 0)
 // La clave de idempotencia viaja en el cuerpo: sin ella el backend responde 422,
 // asi que la version anterior de este DTO hacia que conceder tickets fuese
