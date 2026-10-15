@@ -18,7 +18,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
+import io.ktor.client.request.parameter
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -33,18 +35,38 @@ class KtorAdminOperationsRepositoryImpl(
     private val sessionLocalDataSource: SessionLocalDataSource,
     private val adapter: NetworkResultAdapter,
 ) : AdminOperationsRepository {
+    /**
+     * D4-10: todas las páginas (activos e inactivos). Un fallo en cualquier página es un fallo, nunca una lista parcial
+     * o vacía que se lea como «no hay tipos».
+     */
     override suspend fun getNewsTypes(): AppResult<List<NewsType>> = adapter.safeCall {
-        client.get("${adminUrl()}/news-types") { backendHeaders() }
-            .checkedBody<List<NewsTypeDto>>("/admin/news-types")
-            .map { it.toDomain() }
+        val all = mutableListOf<NewsType>()
+        var offset = 0
+        while (true) {
+            val page = client.get("${adminV1Url()}/tipos-noticia") {
+                backendHeaders()
+                parameter("includeInactive", true)
+                parameter("limit", NEWS_TYPES_PAGE_SIZE)
+                parameter("offset", offset)
+            }.checkedBody<TipoNoticiaPageDto>("/api/v1/admin/tipos-noticia")
+            all += page.items.map { it.toDomain() }
+            offset += page.items.size
+            val total = page.total
+            val more = if (total != null) offset < total else page.items.size >= NEWS_TYPES_PAGE_SIZE
+            if (!more || page.items.isEmpty() || offset >= NEWS_TYPES_MAX_ROWS) break
+        }
+        all
     }
 
+    /** D4-11: alta o edición por `codigo` (clave natural). Sin código no hay a qué tipo escribir. */
     override suspend fun upsertNewsType(newsType: NewsType): AppResult<NewsType> = adapter.safeCall {
-        client.post("${adminUrl()}/news-types") {
+        val code = newsType.code.trim()
+        require(code.isNotEmpty()) { "El tipo de noticia necesita código." }
+        client.put("${adminV1Url()}/tipos-noticia/$code") {
             backendHeaders()
             contentType(ContentType.Application.Json)
-            setBody(newsType.toDto())
-        }.checkedBody<NewsTypeDto>("/admin/news-types").toDomain()
+            setBody(newsType.toPutDto())
+        }.checkedBody<TipoNoticiaDto>("/api/v1/admin/tipos-noticia/$code").toDomain()
     }
 
     override suspend fun getExamAccesses(): AppResult<List<ExamAccess>> = adapter.safeCall {
@@ -120,7 +142,8 @@ class KtorAdminOperationsRepositoryImpl(
         client.post("${adminV1Url()}/soporte/conversaciones/$conversationId/mensajes") {
             backendHeaders()
             contentType(ContentType.Application.Json)
-            setBody(SupportReplyDto(assignee = assignee, text = text, internal = internal))
+            // El `assignee` del llamador no viaja: el backend nunca lo aplicó (ver el KDoc de la interfaz).
+            setBody(SupportReplyDto(text = text, assignee = "", internal = internal))
         }.checkedBody<SupportMessageDto>("/api/v1/admin/soporte/conversaciones/$conversationId/mensajes").toDomain()
     }
 
@@ -130,15 +153,15 @@ class KtorAdminOperationsRepositoryImpl(
             .map { it.toDomain() }
     }
 
+    /** RC-01: el cuerpo canónico (`targetUserId` uuid + `actionType` + `reason`); el ejecutor sale del JWT. Responde 201 sin fila. */
     override suspend fun appendModerationAction(action: ModerationAction): AppResult<ModerationAction> = adapter.safeCall {
-        client.post("${adminUrl()}/moderation/actions") {
+        client.post("${adminV1Url()}/moderacion/actions") {
             backendHeaders()
             contentType(ContentType.Application.Json)
-            setBody(action.toDto())
-        }.checkedBody<ModerationActionDto>("/admin/moderation/actions").toDomain()
+            setBody(ModerationCommandDto(targetUserId = action.targetUser.trim(), actionType = action.actionType, reason = action.reason))
+        }.requireSuccess("/api/v1/admin/moderacion/actions")
+        action
     }
-
-    private fun adminUrl(): String = "${appConfig.baseUrl.trimEnd('/')}/admin"
 
     private fun adminV1Url(): String = "${appConfig.baseUrl.trimEnd('/')}/api/v1/admin"
 
@@ -146,20 +169,63 @@ class KtorAdminOperationsRepositoryImpl(
         adminAuthHeaders(appConfig, sessionLocalDataSource)
     }
 
-    private suspend inline fun <reified T> HttpResponse.checkedBody(endpoint: String): T {
+    private suspend fun HttpResponse.requireSuccess(endpoint: String) {
         if (!status.isSuccess()) {
             error("backend ${status.value} $endpoint: ${bodyAsText().take(240)}")
         }
+    }
+
+    private suspend inline fun <reified T> HttpResponse.checkedBody(endpoint: String): T {
+        requireSuccess(endpoint)
         return body()
+    }
+
+    private companion object {
+        /** El tope del servidor (TYPES_MAX_LIMIT): menos peticiones, y la misma página siempre. */
+        const val NEWS_TYPES_PAGE_SIZE = 200
+
+        /** Techo de seguridad del bucle de páginas: un catálogo editorial no llega ni de lejos. */
+        const val NEWS_TYPES_MAX_ROWS = 2_000
     }
 }
 
+/** `TipoNoticiaWire` del backend (NewsService.kt). */
 @Serializable
-private data class NewsTypeDto(
+private data class TipoNoticiaDto(
     val id: String,
-    val name: String,
+    val codigo: String,
+    val nombre: String,
     val slug: String,
-    val isActive: Boolean,
+    val descripcion: String? = null,
+    val activo: Boolean,
+    val posicion: Int,
+)
+
+/** `OffsetPage<TipoNoticiaWire>` (AdminPagination.kt). */
+@Serializable
+private data class TipoNoticiaPageDto(
+    val items: List<TipoNoticiaDto>,
+    val total: Int? = null,
+    val limit: Int? = null,
+    val offset: Int? = null,
+)
+
+/** Cuerpo exacto de `NewsCommands.parseTipo`: campos desconocidos son 400, así que no viaja nada más. */
+@Serializable
+private data class TipoNoticiaPutDto(
+    val nombre: String,
+    val slug: String,
+    val descripcion: String? = null,
+    val activo: Boolean,
+    val posicion: Int,
+)
+
+/** `WarnUserRequest` del backend (RC-01). */
+@Serializable
+private data class ModerationCommandDto(
+    val targetUserId: String,
+    val actionType: String,
+    val reason: String,
 )
 
 @Serializable
@@ -239,8 +305,10 @@ private data class SupportMessageDto(
 
 @Serializable
 private data class SupportReplyDto(
-    val assignee: String,
     val text: String,
+    // Los backends ya desplegados declaran `assignee` OBLIGATORIO en `AdminSupportReplyDto` (y lo ignoran): viaja siempre
+    // vacío para no convertir cada respuesta en un 400 de deserialización.
+    val assignee: String,
     val internal: Boolean,
 )
 
@@ -254,9 +322,23 @@ private data class ModerationActionDto(
     val createdAt: String,
 )
 
-private fun NewsTypeDto.toDomain() = NewsType(id = id, name = name, slug = slug, isActive = isActive)
+private fun TipoNoticiaDto.toDomain() = NewsType(
+    id = id,
+    name = nombre,
+    slug = slug,
+    isActive = activo,
+    code = codigo,
+    description = descripcion,
+    position = posicion,
+)
 
-private fun NewsType.toDto() = NewsTypeDto(id = id, name = name, slug = slug, isActive = isActive)
+private fun NewsType.toPutDto() = TipoNoticiaPutDto(
+    nombre = name.trim(),
+    slug = slug.trim(),
+    descripcion = description,
+    activo = isActive,
+    posicion = position,
+)
 
 private fun ExamAccessDto.toDomain() = ExamAccess(
     id = id,
@@ -328,15 +410,6 @@ private fun SupportMessageDto.toDomain() = SupportMessage(
 )
 
 private fun ModerationActionDto.toDomain() = ModerationAction(
-    id = id,
-    actionType = actionType,
-    targetUser = targetUser,
-    executor = executor,
-    reason = reason,
-    createdAt = createdAt,
-)
-
-private fun ModerationAction.toDto() = ModerationActionDto(
     id = id,
     actionType = actionType,
     targetUser = targetUser,

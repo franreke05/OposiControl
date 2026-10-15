@@ -99,7 +99,7 @@ fun NewsTypesScreen(
                     when (val actionState = state.actionState) {
                         is UiAsync.Error -> Text(actionState.error.message, color = MaterialTheme.colorScheme.error)
                         UiAsync.Loading -> Text("Guardando...")
-                        is UiAsync.Success -> Text("Categoría editorial preparada.")
+                        is UiAsync.Success -> Text("Tipo de noticia guardado.")
                         else -> Unit
                     }
                 }

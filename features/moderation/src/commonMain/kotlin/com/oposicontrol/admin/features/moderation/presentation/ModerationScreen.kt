@@ -2,8 +2,6 @@ package com.oposicontrol.admin.features.moderation.presentation
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +12,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AdminTable
 import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
@@ -42,8 +41,8 @@ fun ModerationScreen(
                     placeholder = "Buscar usuario o acción",
                 )
                 GlassActionButton(
-                    text = "Nueva acción",
-                    modifier = Modifier.width(136.dp),
+                    text = "Nueva advertencia",
+                    modifier = Modifier.width(168.dp),
                     onClick = { viewModel.dispatch(ModerationIntent.CreateNew) },
                 )
                 AsyncStatePane(state.actions, emptyMessage = "No hay acciones de moderación.") { actions ->
@@ -68,71 +67,75 @@ fun ModerationScreen(
             }
         },
         detailPane = {
-            FormSection(
-                title = if (state.selectedId == null) "Nueva acción" else "Detalle de moderación",
-                description = "Warnings, mutes, cierres de chat y notas internas.",
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    if (state.editorActionType.isNotBlank()) {
+            val selected = state.selectedId?.let { id -> (state.actions as? UiAsync.Success)?.value?.firstOrNull { it.id == id } }
+            if (state.selectedId != null) {
+                FormSection(
+                    title = "Detalle de moderación",
+                    description = "Acción registrada en el historial. Solo lectura.",
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         StatusChip(state.editorActionType)
+                        FieldLabel("Usuario")
+                        DetailText(state.editorTargetUser)
+                        FieldLabel("Ejecutado por")
+                        DetailText(selected?.executor.orEmpty())
+                        FieldLabel("Fecha")
+                        DetailText(selected?.createdAt.orEmpty())
+                        FieldLabel("Razón")
+                        DetailText(state.editorReason)
                     }
-                    FieldLabel("Tipo de acción")
-                    ActionTypeSelector(
-                        selected = state.editorActionType,
-                        onSelected = { viewModel.dispatch(ModerationIntent.UpdateActionType(it)) },
-                    )
-                    FieldLabel("Usuario objetivo")
-                    GlassTextField(
-                        value = state.editorTargetUser,
-                        onValueChange = { viewModel.dispatch(ModerationIntent.UpdateTargetUser(it)) },
-                        placeholder = "ID o nombre del usuario",
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    FieldLabel("Ejecutado por")
-                    Text(
-                        text = state.editorExecutor.ifBlank { "Cargando..." },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    FieldLabel("Razón")
-                    GlassTextField(
-                        value = state.editorReason,
-                        onValueChange = { viewModel.dispatch(ModerationIntent.UpdateReason(it)) },
-                        placeholder = "Motivo de la medida",
-                        singleLine = false,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    GlassActionButton(
-                        text = "Registrar acción",
-                        onClick = { viewModel.dispatch(ModerationIntent.Save) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    FormFeedback(state.actionState, successText = "Acción registrada.")
+                }
+            } else {
+                FormSection(
+                    title = "Nueva advertencia",
+                    description = "La advertencia es la única medida que el servidor aplica hoy. Queda registrada en Auditoría con su motivo.",
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        FieldLabel("Tipo de acción")
+                        StatusChip("Advertencia")
+                        FieldLabel("Usuario objetivo (UUID)")
+                        GlassTextField(
+                            value = state.editorTargetUser,
+                            onValueChange = { viewModel.dispatch(ModerationIntent.UpdateTargetUser(it)) },
+                            placeholder = "00000000-0000-0000-0000-000000000000",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        FieldLabel("Ejecutado por")
+                        DetailText(state.editorExecutor.ifBlank { "Tu sesión de administrador" })
+                        FieldLabel("Motivo")
+                        GlassTextField(
+                            value = state.editorReason,
+                            onValueChange = { viewModel.dispatch(ModerationIntent.UpdateReason(it)) },
+                            placeholder = "Motivo de la advertencia",
+                            singleLine = false,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        GlassActionButton(
+                            text = "Registrar advertencia",
+                            enabled = state.actionState !is UiAsync.Loading,
+                            loading = state.actionState is UiAsync.Loading,
+                            onClick = { viewModel.dispatch(ModerationIntent.Save) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        FormFeedback(
+                            state.actionState,
+                            successText = "Advertencia registrada. Consúltala en Auditoría: este historial muestra las " +
+                                "acciones sobre reportes.",
+                        )
+                    }
                 }
             }
         },
     )
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ActionTypeSelector(selected: String, onSelected: (String) -> Unit) {
-    val actionTypes = listOf("ocultar", "restaurar", "eliminar", "advertir", "bloquear_usuario", "descartar")
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        actionTypes.forEach { type ->
-            GlassActionButton(
-                text = type,
-                modifier = Modifier.width(148.dp),
-                tint = if (selected == type) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                textColor = if (selected == type) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                onClick = { onSelected(type) },
-            )
-        }
-    }
+private fun DetailText(text: String) {
+    Text(
+        text = text.ifBlank { "—" },
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurface,
+    )
 }
 
 @Composable

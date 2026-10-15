@@ -83,13 +83,23 @@ class NewsTypesViewModel(
             updateState { it.copy(actionState = UiAsync.Error(AppError.Validation("El tipo de noticia necesita nombre."))) }
             return
         }
-        val slug = currentState().editorSlug.trim().ifBlank { name.lowercase().replace(" ", "-") }
+        val slug = currentState().editorSlug.trim().ifBlank { newsTypeCodeFrom(name) }
+        val existing = currentState().selectedId?.let { id -> allItems.firstOrNull { it.id == id } }
+        // Un tipo existente conserva su código (la clave del PUT); uno nuevo lo toma del slug.
+        val code = existing?.code?.takeIf { it.isNotBlank() } ?: newsTypeCodeFrom(slug)
+        if (slug.isBlank() || code.isBlank()) {
+            updateState { it.copy(actionState = UiAsync.Error(AppError.Validation("El slug necesita letras o números."))) }
+            return
+        }
         updateState { it.copy(actionState = UiAsync.Loading) }
         val item = NewsType(
-            id = currentState().selectedId.orEmpty(),
+            id = existing?.id.orEmpty(),
             name = name,
             slug = slug,
             isActive = currentState().editorIsActive,
+            code = code,
+            description = existing?.description,
+            position = existing?.position ?: ((allItems.maxOfOrNull { it.position } ?: 0) + 1),
         )
         when (val result = repository.upsertNewsType(item)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
@@ -109,5 +119,8 @@ class NewsTypesViewModel(
         name = name,
         slug = slug,
         status = if (isActive) "active" else "inactive",
+        code = code,
+        description = description,
+        position = position,
     )
 }

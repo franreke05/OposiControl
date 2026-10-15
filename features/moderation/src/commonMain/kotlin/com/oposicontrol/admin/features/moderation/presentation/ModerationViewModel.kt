@@ -37,17 +37,16 @@ class ModerationViewModel(
             ModerationIntent.CreateNew -> updateState {
                 it.copy(
                     selectedId = null,
-                    editorActionType = "warning",
+                    editorActionType = MODERATION_ACTION_WARNING,
                     editorTargetUser = "",
                     editorReason = "",
                     actionState = UiAsync.Idle,
                 )
             }
 
-            ModerationIntent.Refresh -> refresh()
+            ModerationIntent.Refresh -> refresh(autoSelect = true)
             ModerationIntent.Save -> save()
             is ModerationIntent.Select -> select(intent.id)
-            is ModerationIntent.UpdateActionType -> updateState { it.copy(editorActionType = intent.value) }
             is ModerationIntent.UpdateReason -> updateState { it.copy(editorReason = intent.value) }
             is ModerationIntent.UpdateSearch -> {
                 updateState { it.copy(searchQuery = intent.value) }
@@ -58,16 +57,16 @@ class ModerationViewModel(
         }
     }
 
-    private fun select(id: String, resetActionState: Boolean = true) {
+    /** Una fila del historial se consulta, no se vuelve a enviar: el formulario solo existe en «Nueva acción». */
+    private fun select(id: String) {
         val item = allActions.firstOrNull { it.id == id } ?: return
         updateState {
             it.copy(
                 selectedId = item.id,
                 editorActionType = item.actionType,
                 editorTargetUser = item.targetUser,
-                editorExecutor = item.executor,
                 editorReason = item.reason,
-                actionState = if (resetActionState) UiAsync.Idle else it.actionState,
+                actionState = UiAsync.Idle,
             )
         }
     }
@@ -80,41 +79,49 @@ class ModerationViewModel(
         updateState { it.copy(actions = if (filtered.isEmpty()) UiAsync.Empty else UiAsync.Success(filtered)) }
     }
 
-    private suspend fun refresh() {
+    private suspend fun refresh(autoSelect: Boolean) {
         updateState { it.copy(actions = UiAsync.Loading) }
         when (val result = repository.getModerationActions()) {
             is AppResult.Failure -> updateState { it.copy(actions = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
                 allActions = result.value.map { it.toRow() }
                 publish()
-                if (currentState().selectedId == null) allActions.firstOrNull()?.let { select(it.id) }
+                if (autoSelect && currentState().selectedId == null) allActions.firstOrNull()?.let { select(it.id) }
             }
         }
     }
 
     private suspend fun save() {
-        if (currentState().editorTargetUser.isBlank() || currentState().editorReason.isBlank()) {
-            updateState { it.copy(actionState = UiAsync.Error(AppError.Validation("Usuario y razon son obligatorios."))) }
+        val state = currentState()
+        if (state.selectedId != null) return
+        val target = state.editorTargetUser.trim()
+        val reason = state.editorReason.trim()
+        val invalid = when {
+            !UUID.matches(target) -> "El usuario objetivo debe ser su identificador (UUID), no un nombre ni un correo."
+            reason.isBlank() -> "La advertencia necesita un motivo."
+            reason.length > REASON_MAX -> "El motivo no puede superar $REASON_MAX caracteres."
+            else -> null
+        }
+        if (invalid != null) {
+            updateState { it.copy(actionState = UiAsync.Error(AppError.Validation(invalid))) }
             return
         }
         updateState { it.copy(actionState = UiAsync.Loading) }
-        val row = ModerationAction(
-            id = currentState().selectedId.orEmpty(),
-            actionType = currentState().editorActionType,
-            targetUser = currentState().editorTargetUser,
-            executor = currentState().editorExecutor,
-            reason = currentState().editorReason,
+        val action = ModerationAction(
+            id = "",
+            actionType = MODERATION_ACTION_WARNING,
+            targetUser = target.lowercase(),
+            executor = "",
+            reason = reason,
             createdAt = "",
         )
-        when (val result = repository.appendModerationAction(row)) {
+        when (val result = repository.appendModerationAction(action)) {
             is AppResult.Failure -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
             is AppResult.Success -> {
-                val saved = result.value.toRow()
-                allActions = listOf(saved) + allActions.filterNot { it.id == saved.id }
-                analyticsTracker.trackAction("moderation_action_save", mapOf("action_id" to saved.id))
-                updateState { it.copy(selectedId = saved.id, actionState = UiAsync.Success(Unit)) }
-                publish()
-                select(saved.id, resetActionState = false)
+                analyticsTracker.trackAction("moderation_action_save", mapOf("action_type" to MODERATION_ACTION_WARNING))
+                updateState { it.copy(editorTargetUser = "", editorReason = "", actionState = UiAsync.Success(Unit)) }
+                // Nada de filas locales: lo que se ve es lo que el servidor devuelve.
+                refresh(autoSelect = false)
             }
         }
     }
@@ -127,4 +134,11 @@ class ModerationViewModel(
         reason = reason,
         createdAt = createdAt,
     )
+
+    private companion object {
+        val UUID = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+        /** AUDIT_TEXT_MAX del backend: más largo es un 400. */
+        const val REASON_MAX = 1_000
+    }
 }
