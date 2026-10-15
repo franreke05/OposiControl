@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
@@ -54,14 +53,6 @@ fun SupportContent(
                     searchValue = state.searchQuery,
                     onSearchChange = { onIntent(SupportIntent.UpdateSearch(it)) },
                     placeholder = "Buscar conversaciones",
-                    filters = {
-                        GlassTextField(
-                            value = state.statusFilter,
-                            onValueChange = { onIntent(SupportIntent.UpdateStatusFilter(it)) },
-                            placeholder = "Estado",
-                            modifier = Modifier.width(160.dp),
-                        )
-                    },
                 )
                 AsyncStatePane(state.conversations, emptyMessage = "No hay conversaciones abiertas.") { items ->
                     AdminTable(
@@ -69,12 +60,11 @@ fun SupportContent(
                             AdminTableColumn("Usuario", 1f),
                             AdminTableColumn("Asunto", 1.4f),
                             AdminTableColumn("Estado", 0.8f),
-                            AdminTableColumn("Asignado", 1f),
                         ),
                         rows = items.map { conversation ->
                             AdminTableRow(
                                 key = conversation.id,
-                                cells = listOf(conversation.userName, conversation.subject, conversation.status, conversation.assignedTo),
+                                cells = listOf(conversation.userName, conversation.subject, conversation.status),
                                 selected = conversation.id == state.selectedConversationId,
                                 supporting = conversation.lastMessage,
                             )
@@ -88,21 +78,14 @@ fun SupportContent(
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 FormSection(
                     title = "Detalle del hilo",
-                    description = "Lectura del chat, asignación y respuesta.",
+                    description = "Lectura del chat y respuesta.",
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         StatusChip(
                             (state.conversations as? UiAsync.Success)
                                 ?.value
                                 ?.firstOrNull { it.id == state.selectedConversationId }
-                                ?.status ?: "open",
-                        )
-                        FieldLabel("Asignado a")
-                        GlassTextField(
-                            value = state.assignee,
-                            onValueChange = { onIntent(SupportIntent.UpdateAssignee(it)) },
-                            placeholder = "Responsable del hilo",
-                            modifier = Modifier.fillMaxWidth(),
+                                ?.status?.ifBlank { null } ?: "Sin estado",
                         )
                         AsyncStatePane(state.messages, emptyMessage = "No hay mensajes en este hilo.") { messages ->
                             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -150,7 +133,7 @@ fun SupportContent(
                         )
                         GlassActionButton(
                             text = "Enviar respuesta",
-                            enabled = state.replyText.isNotBlank(),
+                            enabled = state.canSendReply,
                             onClick = { onIntent(SupportIntent.SendReply) },
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -179,7 +162,7 @@ private fun SupportScreenPreview() {
             state = SupportState(
                 conversations = UiAsync.Success(
                     listOf(
-                        SupportConversation("conv-1", "Alicia Torres", "No veo un examen comprado", "open", "Sonia Admin", "Necesito acceso hoy"),
+                        SupportConversation("conv-1", "Alicia Torres", "No veo un examen comprado", "abierta", "Necesito acceso hoy"),
                     ),
                 ),
                 messages = UiAsync.Success(
@@ -189,7 +172,6 @@ private fun SupportScreenPreview() {
                     ),
                 ),
                 selectedConversationId = "conv-1",
-                assignee = "Sonia Admin",
             ),
             onIntent = {},
         )

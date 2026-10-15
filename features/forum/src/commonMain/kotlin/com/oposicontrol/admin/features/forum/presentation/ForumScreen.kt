@@ -68,6 +68,8 @@ fun ForumScreen(
         onSetCategoryFilter = { viewModel.dispatch(ForumIntent.SetCategoryFilter(it)) },
         onPullToRefresh = { viewModel.dispatch(ForumIntent.PullToRefresh) },
         onLoadMore = { viewModel.dispatch(ForumIntent.LoadMore) },
+        onRetryLoadMore = { viewModel.dispatch(ForumIntent.RetryLoadMore) },
+        onRetryPendingCount = { viewModel.dispatch(ForumIntent.RetryPendingReportsCount) },
         onRetry = { viewModel.dispatch(ForumIntent.Load) },
     )
 }
@@ -81,6 +83,8 @@ private fun ForumContent(
     onSetCategoryFilter: (ForumCategoryOption?) -> Unit,
     onPullToRefresh: () -> Unit,
     onLoadMore: () -> Unit,
+    onRetryLoadMore: () -> Unit,
+    onRetryPendingCount: () -> Unit,
     onRetry: () -> Unit,
 ) {
     var showFilterSheet by remember { mutableStateOf(false) }
@@ -98,6 +102,9 @@ private fun ForumContent(
             if (pendingCount != null && pendingCount > 0) {
                 PendingReportsBanner(count = pendingCount, onClick = onOpenPendingReports)
             }
+            if (state.pendingReportsCountFailed) {
+                InlineRetry(message = "No se pudieron contar los reportes pendientes.", onRetry = onRetryPendingCount)
+            }
             FilterRow(
                 mainFilter = state.mainFilter,
                 categoryFilter = state.categoryFilter,
@@ -112,8 +119,10 @@ private fun ForumContent(
                 is UiAsync.Success -> ThreadsList(
                     threads = threadsState.value,
                     loadingMore = state.loadingMore,
+                    loadMoreError = state.loadMoreError,
                     onOpenThread = onOpenThread,
                     onApproachingEnd = onLoadMore,
+                    onRetryLoadMore = onRetryLoadMore,
                 )
             }
         }
@@ -249,8 +258,10 @@ fun FilterIconButton(active: Boolean, onClick: () -> Unit) = com.oposicontrol.ad
 private fun ThreadsList(
     threads: List<ForumThread>,
     loadingMore: Boolean,
+    loadMoreError: AppError?,
     onOpenThread: (String) -> Unit,
     onApproachingEnd: () -> Unit,
+    onRetryLoadMore: () -> Unit,
 ) {
     val now = remember(threads) { Clock.System.now() }
     val listState = rememberLazyListState()
@@ -279,6 +290,33 @@ private fun ThreadsList(
                 }
             }
         }
+        if (loadMoreError != null && !loadingMore) {
+            item(key = "load-more-error") {
+                InlineRetry(message = friendlyErrorMessage(loadMoreError), onRetry = onRetryLoadMore)
+            }
+        }
+    }
+}
+
+/** Aviso de fallo con su reintento, en linea: lo que ya se ve se conserva. */
+@Composable
+private fun InlineRetry(message: String, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(text = message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        Text(
+            text = "Reintentar",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = GlassTheme.tokens.accent,
+            modifier = Modifier
+                .defaultMinSize(minHeight = 48.dp)
+                .clickable(onClick = onRetry)
+                .padding(vertical = 12.dp),
+        )
     }
 }
 
@@ -425,7 +463,7 @@ private fun CategoryFilterSheet(
                 )
             } else {
                 Text(
-                    "Categoría",
+                    "Categoría (de los hilos ya cargados)",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -6,4 +6,8 @@ sealed interface ReportDetailIntent {
     data object Resolve : ReportDetailIntent
     data object Discard : ReportDetailIntent
     data object DismissActionResult : ReportDetailIntent
+    /** Notas de moderación (quedan en la acción de moderación; tope del servidor [REPORT_NOTES_MAX]). */
+    data class UpdateNotes(val value: String) : ReportDetailIntent
+    /** Recompensa al reportante al resolver, en OposiTickets (0..[REPORT_REWARD_MAX]; descartar nunca recompensa). */
+    data class UpdateReward(val value: String) : ReportDetailIntent
 }

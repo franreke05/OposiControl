@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
@@ -28,6 +29,7 @@ import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.EmptyStateCard
 import com.oposicontrol.admin.core.ui.components.GlassActionButton
+import com.oposicontrol.admin.core.ui.components.GlassTextField
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.domain.model.ForumReportDetail
 import kotlin.time.Clock
@@ -40,6 +42,8 @@ fun ReportDetailScreen(viewModel: ReportDetailViewModel) {
         onRetry = { viewModel.dispatch(ReportDetailIntent.Load) },
         onResolve = { viewModel.dispatch(ReportDetailIntent.Resolve) },
         onDiscard = { viewModel.dispatch(ReportDetailIntent.Discard) },
+        onNotesChange = { viewModel.dispatch(ReportDetailIntent.UpdateNotes(it)) },
+        onRewardChange = { viewModel.dispatch(ReportDetailIntent.UpdateReward(it)) },
     )
 }
 
@@ -49,6 +53,8 @@ private fun ReportDetailContent(
     onRetry: () -> Unit,
     onResolve: () -> Unit,
     onDiscard: () -> Unit,
+    onNotesChange: (String) -> Unit,
+    onRewardChange: (String) -> Unit,
 ) {
     when (val reportState = state.report) {
         UiAsync.Idle, UiAsync.Loading -> LoadingDetail()
@@ -59,9 +65,11 @@ private fun ReportDetailContent(
         is UiAsync.Error -> ErrorDetail(error = reportState.error, onRetry = onRetry)
         is UiAsync.Success -> ReportDetailBody(
             report = reportState.value,
-            actionState = state.actionState,
+            state = state,
             onResolve = onResolve,
             onDiscard = onDiscard,
+            onNotesChange = onNotesChange,
+            onRewardChange = onRewardChange,
         )
     }
 }
@@ -81,10 +89,13 @@ private fun ErrorDetail(error: AppError, onRetry: () -> Unit) {
 @Composable
 private fun ReportDetailBody(
     report: ForumReportDetail,
-    actionState: UiAsync<Unit>,
+    state: ReportDetailState,
     onResolve: () -> Unit,
     onDiscard: () -> Unit,
+    onNotesChange: (String) -> Unit,
+    onRewardChange: (String) -> Unit,
 ) {
+    val actionState = state.actionState
     val now = remember { Clock.System.now() }
     val ui = remember(report, now) { report.toDetailUi(now) }
     var pendingAction by remember { mutableStateOf<PendingAction?>(null) }
@@ -162,7 +173,8 @@ private fun ReportDetailBody(
 
         if (actionState is UiAsync.Error) {
             Text(
-                text = friendlyErrorMessageDetail(actionState.error),
+                // Un motivo de validacion (limites, informe ya cerrado) se ensena tal cual; el resto, con el texto amable.
+                text = (actionState.error as? AppError.Validation)?.message ?: friendlyErrorMessageDetail(actionState.error),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -175,9 +187,46 @@ private fun ReportDetailBody(
                 fontWeight = FontWeight.SemiBold,
                 color = GlassTheme.tokens.accent,
             )
+            Text(
+                text = "Notas de moderación (opcional)",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            GlassTextField(
+                value = state.notes,
+                onValueChange = onNotesChange,
+                placeholder = "Quedan registradas con la acción",
+                singleLine = false,
+                minLines = 2,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                text = "${state.notes.length} / $REPORT_NOTES_MAX",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (state.notes.length > REPORT_NOTES_MAX) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (state.rewardAvailable) {
+                Text(
+                    text = "Recompensa al reportante al resolver (OposiTickets, 0 a $REPORT_REWARD_MAX)",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                GlassTextField(
+                    value = state.rewardInput,
+                    onValueChange = onRewardChange,
+                    placeholder = "0",
+                    modifier = Modifier.width(160.dp),
+                )
+            } else {
+                Text(
+                    text = "Sin reportante identificado: resolver no concede recompensa.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             GlassActionButton(
                 text = if (busy) "Procesando…" else "Resolver informe",
-                enabled = !busy,
+                enabled = !busy && state.resolveBlocker == null,
                 modifier = Modifier.fillMaxWidth(),
                 onClick = { pendingAction = PendingAction.RESOLVE },
             )
@@ -188,7 +237,7 @@ private fun ReportDetailBody(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .defaultMinSize(minHeight = 48.dp)
-                    .clickable(enabled = !busy) { pendingAction = PendingAction.DISCARD }
+                    .clickable(enabled = !busy && state.discardBlocker == null) { pendingAction = PendingAction.DISCARD }
                     .padding(vertical = 12.dp)
                     .semantics { contentDescription = "Descartar informe" },
             )

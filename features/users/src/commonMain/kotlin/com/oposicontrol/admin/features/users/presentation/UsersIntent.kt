@@ -40,11 +40,8 @@ sealed interface UsersIntent {
     data object Save : UsersIntent
     data object DiscardChanges : UsersIntent
 
-    data class GrantTickets(val amount: Int) : UsersIntent
-    data object OpenTicketsDialog : UsersIntent
-    data object DismissTicketsDialog : UsersIntent
-    data class UpdateTicketsInput(val value: String) : UsersIntent
-    data object ConfirmTickets : UsersIntent
+    // Conceder OposiTickets ya no se hace desde Usuarios: el dialogo era inalcanzable en escritorio y los botones del movil
+    // fallaban siempre sin clave de idempotencia. Los ajustes de saldo viven en OposiTickets (con motivo e historico).
 
     data object OpenWarningDialog : UsersIntent
     data object DismissWarningDialog : UsersIntent

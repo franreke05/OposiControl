@@ -231,6 +231,36 @@ class TesterListViewModelTest {
      * pull-to-refresh el contenido anterior debe seguir visible.
      */
     @Test
+    fun loadMore_failure_isSurfaced_doesNotAutoRetry_andRetryLoadsThePage() = runTest {
+        var failNext = true
+        val repository = FakeTesterRepository { _, cursor, _ ->
+            when {
+                cursor == null -> AppResult.Success(TesterReportPage(listOf(report("t1")), "cursor-2"))
+                failNext -> AppResult.Failure(AppError.Network("sin conexion"))
+                else -> AppResult.Success(TesterReportPage(listOf(report("t2")), null))
+            }
+        }
+        val viewModel = newViewModel(testScheduler, repository)
+        testScheduler.advanceUntilIdle()
+
+        viewModel.dispatch(TesterIntent.LoadMore)
+        testScheduler.advanceUntilIdle()
+        assertIs<AppError.Network>(viewModel.state.value.loadMoreError)
+        assertEquals(listOf("t1"), (viewModel.state.value.reports as UiAsync.Success).value.map { it.id })
+
+        repository.calls.clear()
+        viewModel.dispatch(TesterIntent.LoadMore)
+        testScheduler.advanceUntilIdle()
+        assertTrue(repository.calls.isEmpty(), "el desplazamiento no relanza la pagina fallida en bucle")
+
+        failNext = false
+        viewModel.dispatch(TesterIntent.RetryLoadMore)
+        testScheduler.advanceUntilIdle()
+        assertEquals(null, viewModel.state.value.loadMoreError)
+        assertEquals(listOf("t1", "t2"), (viewModel.state.value.reports as UiAsync.Success).value.map { it.id })
+    }
+
+    @Test
     fun pullToRefresh_keepsThePreviousListVisibleWhileReloading() = runTest {
         val repository = GatedTesterRepository(firstPage = listOf(report("t1")), secondPage = listOf(report("t2")))
         val viewModel = newViewModel(testScheduler, repository)

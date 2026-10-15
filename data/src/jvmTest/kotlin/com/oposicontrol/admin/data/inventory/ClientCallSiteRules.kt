@@ -62,7 +62,6 @@ internal val SITE_EXCLUSIONS: List<SiteExclusion> = listOf(
 internal val NON_HTTP_MEMBERS: Map<String, Map<String, String>> = mapOf(
     "$API/UserDetailApi.kt" to mapOf("toDomain" to "mapeador DTO -> dominio (fachada UserDetailApiKt)"),
     "$API/UsersApi.kt" to mapOf(
-        "deleteUser" to "lanza error(): no hay borrado de usuarios desde KMP, no envia peticion",
         "collectAllUsers" to "paginador puro: recibe la funcion de pagina (el client.get de getUsers); no toca el cliente",
         "toUserDto" to "mapeador DTO -> DTO (fachada UsersApiKt)",
         "toUserDtos" to "mapeador DTO -> DTO (fachada UsersApiKt)",

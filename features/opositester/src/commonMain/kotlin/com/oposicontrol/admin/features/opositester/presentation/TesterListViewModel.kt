@@ -30,6 +30,10 @@ class TesterListViewModel(
             TesterIntent.Load -> loadFirstPage()
             TesterIntent.PullToRefresh -> refresh()
             TesterIntent.LoadMore -> loadMore()
+            TesterIntent.RetryLoadMore -> {
+                updateState { it.copy(loadMoreError = null) }
+                loadMore()
+            }
             is TesterIntent.SetMainFilter -> {
                 if (intent.filter == currentState().mainFilter) return
                 updateState { it.copy(mainFilter = intent.filter, knownTypes = emptyList()) }
@@ -55,6 +59,7 @@ class TesterListViewModel(
             it.copy(
                 reports = if (preserveContent) it.reports else UiAsync.Loading,
                 nextCursor = null,
+                loadMoreError = null,
             )
         }
         val state = currentState()
@@ -83,11 +88,12 @@ class TesterListViewModel(
         // Guardas antes de cualquier punto de suspensión: mismo razonamiento que
         // ForumViewModel.loadMore — suficiente en un dispatcher confinado a un
         // solo hilo para que dos LoadMore casi simultáneos no dupliquen página.
-        if (cursor == null || state.loadingMore || state.reports !is UiAsync.Success) return
+        // Tras un fallo solo reintenta [TesterIntent.RetryLoadMore]: el desplazamiento no relanza la pagina en bucle.
+        if (cursor == null || state.loadingMore || state.loadMoreError != null || state.reports !is UiAsync.Success) return
         updateState { it.copy(loadingMore = true) }
         val status = if (state.mainFilter == TesterMainFilter.PENDING) PENDING_STATUS else null
         when (val result = testerRepository.listReports(status = status, cursor = cursor, type = state.typeFilter?.value)) {
-            is AppResult.Failure -> updateState { it.copy(loadingMore = false) }
+            is AppResult.Failure -> updateState { it.copy(loadingMore = false, loadMoreError = result.error) }
             is AppResult.Success -> updateState {
                 val existing = (it.reports as? UiAsync.Success)?.value.orEmpty()
                 val merged = (existing + result.value.items).distinctBy(TesterReport::id)

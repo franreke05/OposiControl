@@ -35,6 +35,8 @@ private class FakeModerationRepository(
 ) : ModerationRepository {
     var resolveResult: AppResult<Unit> = AppResult.Success(Unit)
     val resolveActionsReceived = mutableListOf<String>()
+    val notesReceived = mutableListOf<String?>()
+    val rewardsReceived = mutableListOf<Int>()
 
     fun setDetail(result: AppResult<ForumReportDetail>) {
         detail = result
@@ -46,6 +48,8 @@ private class FakeModerationRepository(
 
     override suspend fun resolveReport(reportId: String, action: String, notes: String?, ticketsReporter: Int): AppResult<Unit> {
         resolveActionsReceived += action
+        notesReceived += notes
+        rewardsReceived += ticketsReporter
         return resolveResult
     }
 
@@ -140,5 +144,70 @@ class ReportDetailViewModelTest {
         testScheduler.advanceUntilIdle()
 
         assertIs<UiAsync.Error>(viewModel.state.value.actionState)
+    }
+
+    private fun kotlinx.coroutines.test.TestScope.vm(repository: FakeModerationRepository) = ReportDetailViewModel(
+        reportId = "r1",
+        dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
+        repository = repository,
+        analyticsTracker = NoOpAnalyticsTracker,
+    ).also { testScheduler.advanceUntilIdle() }
+
+    private fun kotlinx.coroutines.test.TestScope.send(vm: ReportDetailViewModel, vararg intents: ReportDetailIntent) {
+        intents.forEach { vm.dispatch(it); testScheduler.advanceUntilIdle() }
+    }
+
+    @Test
+    fun resolve_sendsTheTypedNotesAndReward() = runTest {
+        val repository = FakeModerationRepository()
+        val viewModel = vm(repository)
+        send(viewModel, ReportDetailIntent.UpdateNotes("  spam claro  "), ReportDetailIntent.UpdateReward("25"), ReportDetailIntent.Resolve)
+        assertEquals(listOf<String?>("spam claro"), repository.notesReceived)
+        assertEquals(listOf(25), repository.rewardsReceived)
+        assertEquals("", viewModel.state.value.notes, "tras resolver el formulario se limpia")
+    }
+
+    @Test
+    fun discard_neverSendsAReward() = runTest {
+        val repository = FakeModerationRepository()
+        val viewModel = vm(repository)
+        send(viewModel, ReportDetailIntent.UpdateReward("25"), ReportDetailIntent.Discard)
+        assertEquals(listOf(0), repository.rewardsReceived)
+        assertEquals(listOf<String?>(null), repository.notesReceived)
+    }
+
+    @Test
+    fun aRewardAboveTheServerLimit_blocksResolveWithoutCallingTheServer() = runTest {
+        val repository = FakeModerationRepository()
+        val viewModel = vm(repository)
+        send(viewModel, ReportDetailIntent.UpdateReward("10001"), ReportDetailIntent.Resolve)
+        assertTrue(repository.resolveActionsReceived.isEmpty())
+        assertIs<AppError.Validation>((viewModel.state.value.actionState as UiAsync.Error).error)
+    }
+
+    @Test
+    fun notesAboveTheServerLimit_blockBothActions() = runTest {
+        val repository = FakeModerationRepository()
+        val viewModel = vm(repository)
+        send(viewModel, ReportDetailIntent.UpdateNotes("x".repeat(REPORT_NOTES_MAX + 5)), ReportDetailIntent.Discard)
+        assertTrue(repository.resolveActionsReceived.isEmpty())
+        assertEquals(REPORT_NOTES_MAX + 1, viewModel.state.value.notes.length, "se conserva lo justo para avisar del exceso")
+    }
+
+    @Test
+    fun withoutAReporter_noRewardIsOfferedOrSent() = runTest {
+        val repository = FakeModerationRepository()
+        repository.setDetail(
+            AppResult.Success(
+                ForumReportDetail(
+                    report = ForumReport("r1", "hilo", "e1", "Spam", "", "pendiente", "2026-08-22T10:00:00Z", reporterId = "", reporterName = ""),
+                    contentPreview = null,
+                ),
+            ),
+        )
+        val viewModel = vm(repository)
+        assertEquals(false, viewModel.state.value.rewardAvailable)
+        send(viewModel, ReportDetailIntent.UpdateReward("25"), ReportDetailIntent.Resolve)
+        assertEquals(listOf(0), repository.rewardsReceived)
     }
 }

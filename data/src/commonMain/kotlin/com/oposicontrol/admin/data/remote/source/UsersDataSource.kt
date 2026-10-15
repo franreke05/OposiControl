@@ -10,8 +10,9 @@ interface UsersDataSource {
     fun observeUsers(): Flow<AppResult<List<User>>>
     /** Ver `UsersRepository.observeUsersWithRole`. */
     fun observeUsersWithRole(roleCode: String): Flow<AppResult<List<User>>>
+    /** Ver `UsersRepository.searchUsers`. */
+    suspend fun searchUsers(query: String, limit: Int): AppResult<List<User>>
     suspend fun getUser(userId: String): AppResult<User>
     suspend fun upsertUser(user: User, previous: User? = null): AppResult<User>
-    suspend fun deleteUser(userId: String): AppResult<Unit>
     suspend fun getUserDetail(userId: String): AppResult<UserDetail>
 }

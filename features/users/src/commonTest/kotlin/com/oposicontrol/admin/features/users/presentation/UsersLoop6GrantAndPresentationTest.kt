@@ -43,7 +43,6 @@ class UsersLoop6GrantAndPresentationTest {
         override fun observeUsers(): Flow<AppResult<List<User>>> = flowOf(AppResult.Success(rows))
         override suspend fun getUser(userId: String): AppResult<User> = AppResult.Success(rows.first { it.id == userId })
         override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = AppResult.Success(user)
-        override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> =
             if (failDetail) {
                 AppResult.Failure(AppError.Network("down"))
@@ -81,72 +80,6 @@ class UsersLoop6GrantAndPresentationTest {
             vm.dispatch(i)
             testScheduler.advanceUntilIdle()
         }
-    }
-
-    private fun timeout() = AppResult.Failure(AppError.Network("timeout"))
-
-    // --- IDEM-002 -----------------------------------------------------------
-
-    @Test fun aSuccessfulGrantOfAnotherAmountDoesNotForgetTheKeyOfAnEarlierAmbiguousGrant() = runTest {
-        // 5 -> resultado desconocido (k1); 10 -> exito; reintento de 5 debe REUTILIZAR k1 (si no, doble abono).
-        val moderation = Moderation(ArrayDeque(listOf(timeout(), AppResult.Success(20), AppResult.Success(25))))
-        val vm = vm(Repo(listOf(user("a", "Ana"))), moderation)
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"), UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("10"), UsersIntent.ConfirmTickets)
-        assertNotEquals(moderation.keys[0], moderation.keys[1])
-        assertEquals(listOf(5), vm.state.value.pendingGrants.map { it.amount }, "la pendiente de 5 sigue viva")
-
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        assertEquals(listOf(5, 10, 5), moderation.amounts)
-        assertEquals(moderation.keys[0], moderation.keys[2], "el reintento de 5 reutiliza la clave original")
-        assertTrue(vm.state.value.pendingGrants.isEmpty())
-    }
-
-    @Test fun aFailedGrantOfAnotherAmountDoesNotReplaceTheEarlierPendingKey() = runTest {
-        val moderation = Moderation(ArrayDeque(listOf(timeout(), timeout(), AppResult.Success(15))))
-        val vm = vm(Repo(listOf(user("a", "Ana"))), moderation)
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"), UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("7"), UsersIntent.ConfirmTickets)
-        assertEquals(setOf(5, 7), vm.state.value.pendingGrants.map { it.amount }.toSet())
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        assertEquals(moderation.keys[0], moderation.keys[2])
-    }
-
-    @Test fun successClearsOnlyThePendingWhoseKeyWasSent() = runTest {
-        val moderation = Moderation(ArrayDeque(listOf(timeout(), AppResult.Success(15))))
-        val vm = vm(Repo(listOf(user("a", "Ana"))), moderation)
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"), UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        val pendingKey = vm.state.value.pendingGrants.single().key
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("9"), UsersIntent.ConfirmTickets)
-        assertEquals(listOf(pendingKey), vm.state.value.pendingGrants.map { it.key })
-    }
-
-    // --- IDEM-001 (cliente) -------------------------------------------------
-
-    @Test fun theBalanceShownAfterAGrantIsReReadFromTheWalletNotTakenFromTheGrantAnswer() = runTest {
-        // La concesion responde 15 (p. ej. un asiento repetido: saldo ORIGINAL), pero la cartera vale ya 40.
-        val repo = Repo(listOf(user("a", "Ana")))
-        val vm = vm(repo, Moderation(ArrayDeque(listOf(AppResult.Success(15)))))
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"))
-        repo.walletBalance = 40
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        assertEquals(40, (vm.state.value.detail as UiAsync.Success).value.economy?.ticketBalance)
-        assertEquals(40, vm.state.value.loadedUsers.single().ticketsBalance)
-    }
-
-    @Test fun aFailedBalanceReReadKeepsWhatWasShown() = runTest {
-        val repo = Repo(listOf(user("a", "Ana")))
-        val vm = vm(repo, Moderation(ArrayDeque(listOf(AppResult.Success(15)))))
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"))
-        repo.failDetail = true
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        assertTrue(vm.state.value.detail is UiAsync.Success, "una relectura silenciosa fallida no vacia la ficha")
-        assertEquals(15, vm.state.value.loadedUsers.single().ticketsBalance)
     }
 
     // --- QUALITY-005 --------------------------------------------------------

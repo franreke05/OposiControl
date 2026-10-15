@@ -22,9 +22,6 @@ import com.oposicontrol.admin.domain.model.AccountStatus
  * Y sobra uno nuevo, [pendingSelectionUserId], que es el que impide perder
  * cambios al saltar de usuario.
  */
-/** Concesion de tickets con resultado desconocido: usuario, importe y la clave de idempotencia con la que se envio. */
-data class PendingGrant(val userId: String, val amount: Int, val key: String)
-
 data class UsersState(
     val users: UiAsync<List<User>> = UiAsync.Loading,
     val availableRoles: List<Role> = emptyList(),
@@ -60,21 +57,6 @@ data class UsersState(
     /** El alta está impedida; se explica en vez de abrir un editor que no guarda. */
     val createNoticeVisible: Boolean = false,
     // Quick-action dialogs
-    val ticketsDialogOpen: Boolean = false,
-    val ticketsInput: String = "",
-    /**
-     * Clave de idempotencia de la concesión en curso. Se fija al abrir el
-     * diálogo para que reintentos y dobles clics no concedan dos veces.
-     */
-    val ticketsIdempotencyKey: String? = null,
-    /**
-     * Concesion cuyo resultado no se conoce (fallo de red, timeout, respuesta perdida): el servidor pudo haberla
-     * aplicado. Conserva su clave para que reabrir el dialogo y confirmar el MISMO importe la reenvie con la misma
-     * clave (el backend devuelve el movimiento original) en vez de conceder dos veces (MASTER5-IDEM-001). Se borra al
-     * tener exito (solo la suya: MASTER6-IDEM-002, el exito de otra concesion no la borra); un importe distinto acuña una
-     * clave nueva y NO descarta las pendientes anteriores (una por usuario e importe).
-     */
-    val pendingGrants: List<PendingGrant> = emptyList(),
     val warningDialogOpen: Boolean = false,
     val warningInput: String = "",
     /** Diálogo de dar de baja / reactivar. El sentido lo fija el estado de la cuenta al abrirlo ([accountStatusBlocks]). */
@@ -86,13 +68,6 @@ data class UsersState(
     /** Estado de cuenta del usuario abierto: la ficha recién leída manda sobre la fila de la lista. */
     val selectedAccountStatus: AccountStatus?
         get() = selectedUser?.let { userEffectiveAccountStatus(it, (detail as? UiAsync.Success)?.value) }
-
-    /**
-     * La concesion pendiente MAS RECIENTE del usuario seleccionado (la que reabre el dialogo). MASTER6-IDEM-002: las
-     * pendientes son una por (usuario, importe), no una por usuario; ver [pendingGrants].
-     */
-    val pendingGrant: PendingGrant? get() = pendingGrants.lastOrNull { it.userId == selectedUserId }
-
     val loadedUsers: List<User> get() = (users as? UiAsync.Success)?.value.orEmpty()
 
     val selectedUser: User? get() = loadedUsers.firstOrNull { it.id == selectedUserId }

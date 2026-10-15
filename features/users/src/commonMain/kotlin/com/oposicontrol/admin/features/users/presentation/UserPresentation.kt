@@ -294,7 +294,7 @@ private val USER_CAPABILITIES: List<UserCapability> = listOf(
     UserCapability(
         name = "Conceder OposiTickets",
         level = UserCapabilityLevel.REAL,
-        note = "Queda registrado en el histórico y no se duplica si se reintenta.",
+        note = "Se hace en OposiTickets (con motivo e histórico): un solo sitio para mover saldo.",
     ),
     UserCapability(
         name = "Advertir",

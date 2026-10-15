@@ -13,12 +13,15 @@ import com.oposicontrol.admin.domain.model.SupportMessage
 import com.oposicontrol.admin.domain.model.TicketTransaction
 import com.oposicontrol.admin.domain.model.TicketWallet
 import com.oposicontrol.admin.domain.repository.AdminOperationsRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -61,8 +64,53 @@ class SupportViewModelTest {
         assertTrue(!viewModel.state.value.toString().contains("InternalNote", ignoreCase = true))
     }
 
+    @Test
+    fun `a second send while the first is in flight is ignored and the button is disabled`() = runTest {
+        val repository = FakeAdminOperationsRepository().apply { gate = CompletableDeferred() }
+        val viewModel = SupportViewModel(
+            dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
+            repository = repository,
+            analyticsTracker = NoOpAnalyticsTracker,
+        )
+        viewModel.dispatch(SupportIntent.SelectConversation("conv-1"))
+        viewModel.dispatch(SupportIntent.UpdateReplyText("Hola"))
+        viewModel.dispatch(SupportIntent.SendReply)
+        advanceUntilIdle()
+        assertIs<UiAsync.Loading>(viewModel.state.value.actionState)
+        assertFalse(viewModel.state.value.canSendReply)
+
+        viewModel.dispatch(SupportIntent.SendReply)
+        repository.gate!!.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(1, repository.sentAssignees.size)
+        assertIs<UiAsync.Success<Unit>>(viewModel.state.value.actionState)
+    }
+
+    @Test
+    fun `a failed send surfaces the error, keeps the text and sends no assignee`() = runTest {
+        val repository = FakeAdminOperationsRepository().apply { failSend = true }
+        val viewModel = SupportViewModel(
+            dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
+            repository = repository,
+            analyticsTracker = NoOpAnalyticsTracker,
+        )
+        viewModel.dispatch(SupportIntent.SelectConversation("conv-1"))
+        viewModel.dispatch(SupportIntent.UpdateReplyText("Hola"))
+        viewModel.dispatch(SupportIntent.SendReply)
+        advanceUntilIdle()
+
+        assertIs<UiAsync.Error>(viewModel.state.value.actionState)
+        assertEquals("Hola", viewModel.state.value.replyText)
+        assertEquals(listOf(""), repository.sentAssignees)
+        assertTrue(viewModel.state.value.canSendReply, "tras el fallo se puede reintentar")
+    }
+
     private class FakeAdminOperationsRepository : AdminOperationsRepository {
         val sentInternalFlags = mutableListOf<Boolean>()
+        val sentAssignees = mutableListOf<String>()
+        var gate: CompletableDeferred<Unit>? = null
+        var failSend = false
         private val messages = mutableListOf(
             SupportMessage(
                 id = "msg-1",
@@ -98,6 +146,9 @@ class SupportViewModelTest {
             internal: Boolean,
         ): AppResult<SupportMessage> {
             sentInternalFlags += internal
+            sentAssignees += assignee
+            gate?.await()
+            if (failSend) return AppResult.Failure(AppError.Network("caido"))
             val message = SupportMessage(
                 id = "msg-${messages.size + 1}",
                 conversationId = conversationId,

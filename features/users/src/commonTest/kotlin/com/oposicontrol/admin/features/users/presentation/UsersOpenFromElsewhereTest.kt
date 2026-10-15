@@ -43,7 +43,6 @@ class UsersOpenFromElsewhereTest {
         override fun observeUsers(): Flow<AppResult<List<User>>> = users
         override suspend fun getUser(userId: String): AppResult<User> = AppResult.Failure(AppError.Network("unused"))
         override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = error("unused")
-        override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = AppResult.Failure(AppError.Network("unused"))
     }
 
@@ -119,7 +118,6 @@ class UsersOpenFromElsewhereTest {
             override fun observeUsers(): Flow<AppResult<List<User>>> = flow { reads++; emit(AppResult.Success(server)) }
             override suspend fun getUser(userId: String): AppResult<User> = AppResult.Failure(AppError.Network("unused"))
             override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = error("unused")
-            override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
             override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = AppResult.Failure(AppError.Network("unused"))
         }
         val vm = UsersViewModel(

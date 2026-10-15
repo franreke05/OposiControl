@@ -14,7 +14,6 @@ import com.oposicontrol.admin.domain.usecase.users.UpsertUserUseCase
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
-import kotlin.time.Clock
 import com.oposicontrol.admin.domain.model.AccountStatus
 
 class UsersViewModel(
@@ -36,10 +35,8 @@ class UsersViewModel(
 
     /** Guardados en vuelo por usuario: un segundo Save del mismo usuario (aunque se cambie de fila y se vuelva) no se lanza. */
     private val savesInFlight = mutableSetOf<String>()
-    private var grantInFlight = false
     private var warningInFlight = false
     private var accountStatusInFlight = false
-    private var keySequence = 0
 
     /** Último usuario por el que ya se releyó la lista al no encontrarlo: la relectura es una, no un bucle. */
     private var missingReloadFor: String? = null
@@ -140,30 +137,6 @@ class UsersViewModel(
                     editorRoleIds = user.roleIds.toSet(),
                     actionState = UiAsync.Idle,
                 )
-            }
-
-            is UsersIntent.GrantTickets -> grantTickets(intent.amount)
-            UsersIntent.OpenTicketsDialog -> updateState {
-                // Si hay una concesión con resultado desconocido para ESTE usuario, se reabre con su importe y su clave:
-                // confirmar lo mismo la reenvía idempotente (MASTER5-IDEM-001). Si no, una clave nueva por apertura.
-                val pending = it.pendingGrant
-                it.copy(
-                    ticketsDialogOpen = true,
-                    ticketsInput = pending?.amount?.toString().orEmpty(),
-                    ticketsIdempotencyKey = pending?.key ?: mintGrantKey(it.selectedUserId.orEmpty(), null),
-                    actionState = UiAsync.Idle,
-                )
-            }
-            UsersIntent.DismissTicketsDialog -> updateState {
-                // pendingGrant NO se toca: cerrar el diálogo no dice si el servidor aplicó la concesión.
-                it.copy(ticketsDialogOpen = false, ticketsInput = "", ticketsIdempotencyKey = null)
-            }
-            is UsersIntent.UpdateTicketsInput -> updateState { it.copy(ticketsInput = intent.value) }
-            UsersIntent.ConfirmTickets -> {
-                val amount = currentState().ticketsInput.toIntOrNull() ?: return
-                if (grantInFlight) return
-                updateState { it.copy(ticketsDialogOpen = false, ticketsInput = "") }
-                grantTickets(amount)
             }
 
             UsersIntent.OpenWarningDialog -> updateState {
@@ -387,80 +360,6 @@ class UsersViewModel(
             state.copy(users = UiAsync.Success(state.loadedUsers.map { if (it.id == fresh.id) fresh.keepingKnownFrom(it) else it }))
         }
         return fresh
-    }
-
-    /** Clave nueva: usuario, importe (si se conoce), instante y secuencia local (dos aperturas en el mismo ms no colisionan). */
-    private fun mintGrantKey(userId: String, amount: Int?): String =
-        "grant:$userId:${amount ?: "_"}:${Clock.System.now().toEpochMilliseconds()}:${++keySequence}"
-
-    private suspend fun grantTickets(amount: Int) {
-        if (grantInFlight) return
-        val snapshot = currentState()
-        val userId = snapshot.selectedUserId ?: return
-        // MASTER5-IDEM-001: la clave identifica la OPERACIÓN, no el intento ni la apertura del diálogo.
-        //  - Hay una concesión con resultado desconocido para este usuario y el importe es el mismo: se reutiliza su clave
-        //    (un reintento tras un timeout no concede dos veces; el backend devuelve el movimiento original).
-        //  - Importe distinto: es otra operación, clave nueva.
-        //  - Sin pendiente: la clave fijada al abrir el diálogo (doble clic = misma clave).
-        val userPendings = snapshot.pendingGrants.filter { it.userId == userId }
-        val sameAmount = userPendings.lastOrNull { it.amount == amount }
-        val idempotencyKey = when {
-            sameAmount != null -> sameAmount.key
-            userPendings.isNotEmpty() -> mintGrantKey(userId, amount)
-            else -> snapshot.ticketsIdempotencyKey
-        } ?: return updateState {
-            it.copy(
-                actionState = UiAsync.Error(
-                    AppError.Validation("Vuelve a abrir el diálogo para conceder OposiTickets."),
-                ),
-            )
-        }
-        grantInFlight = true
-        try {
-            updateState { it.copy(actionState = UiAsync.Loading) }
-            when (val result = moderationRepository.grantTickets(userId, amount, "Ajuste manual", idempotencyKey)) {
-                is AppResult.Failure -> updateState {
-                    // El resultado es desconocido (puede haberse aplicado): se conserva la clave para el reintento.
-                    it.copy(
-                        // Una pendiente por (usuario, importe): la de otro importe sigue viva (MASTER6-IDEM-002).
-                        pendingGrants = it.pendingGrants.filterNot { p -> p.userId == userId && p.amount == amount } +
-                            PendingGrant(userId, amount, idempotencyKey),
-                        actionState = if (it.selectedUserId == userId) UiAsync.Error(result.error) else it.actionState,
-                    )
-                }
-                is AppResult.Success -> {
-                    analyticsTracker.trackAction("tickets_grant", mapOf("user_id" to userId, "amount" to amount.toString()))
-                    updateState { state ->
-                        val updated = state.loadedUsers.map { user ->
-                            if (user.id == userId) user.copy(ticketsBalance = result.value) else user
-                        }
-                        // MASTER5-OC-003: la ficha (saldo de Economía) se actualiza con el saldo devuelto.
-                        val detail = (state.detail as? UiAsync.Success)?.value
-                        val economy = detail?.economy
-                        val patchedDetail = if (detail != null && economy != null && state.selectedUserId == userId) {
-                            UiAsync.Success(detail.copy(economy = economy.copy(ticketBalance = result.value)))
-                        } else {
-                            state.detail
-                        }
-                        state.copy(
-                            users = if (updated.isEmpty()) state.users else UiAsync.Success(updated),
-                            detail = patchedDetail,
-                            // Solo se resuelve la concesion que SE ha enviado (por su clave), no las demas del usuario.
-                            pendingGrants = state.pendingGrants.filterNot { it.key == idempotencyKey },
-                            // Concesión resuelta: su clave no puede reutilizarse para otra operación.
-                            ticketsIdempotencyKey = if (state.ticketsDialogOpen) state.ticketsIdempotencyKey else null,
-                            actionState = if (state.selectedUserId == userId) UiAsync.Success(Unit) else state.actionState,
-                        )
-                    }
-                    // MASTER6-IDEM-001: el saldo devuelto por la concesion es el del asiento; en una repeticion idempotente
-                    // es el ORIGINAL. Se relee el saldo vigente de la ficha sin tocar la pantalla (el backend ya devuelve el
-                    // saldo actual, pero el cliente no presenta como vigente lo que no ha leido de la cartera).
-                    if (currentState().selectedUserId == userId) reloadUserDetail(userId, silent = true)
-                }
-            }
-        } finally {
-            grantInFlight = false
-        }
     }
 
     private suspend fun changeAccountStatus() {

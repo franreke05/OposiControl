@@ -14,3 +14,14 @@ data class ForumReport(
     /** ISO timestamp de cuando se resolvió/descartó, vacío si sigue pendiente. */
     val resolvedAt: String = "",
 )
+
+/**
+ * Una página de `GET /api/v1/admin/reportes` (D5-25), en el orden del servidor (`creado_en` ascendente: la cola, lo más
+ * antiguo primero). [nextCursor] = null cuando no hay más páginas. [pendingTotal] es el total de reportes `pendiente` del
+ * servidor con independencia del filtro, o null si el conteo no se pudo leer (nunca un 0 inventado).
+ */
+data class ForumReportsPage(
+    val items: List<ForumReport>,
+    val nextCursor: String?,
+    val pendingTotal: Int?,
+)

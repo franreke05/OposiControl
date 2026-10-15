@@ -3,12 +3,21 @@ package com.oposicontrol.admin.domain.repository
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.ForumReport
 import com.oposicontrol.admin.domain.model.ForumReportDetail
+import com.oposicontrol.admin.domain.model.ForumReportsPage
 import com.oposicontrol.admin.core.common.result.AppError
 
 interface ModerationRepository {
     suspend fun listPendingReports(): AppResult<List<ForumReport>>
     /** [includeResolved] = true trae todos los estados; false replica [listPendingReports]. */
     suspend fun listReports(includeResolved: Boolean): AppResult<List<ForumReport>>
+
+    /**
+     * Una página real de informes: [includeResolved] = false solo pendientes; [cursor] = el `nextCursor` de la página
+     * anterior (null = la primera). Con implementación por defecto: un repositorio que no pagine dice que no puede.
+     */
+    suspend fun listReportsPage(includeResolved: Boolean, cursor: String?): AppResult<ForumReportsPage> =
+        AppResult.Failure(AppError.Validation("Este entorno no puede paginar informes."))
+
     suspend fun getReport(reportId: String): AppResult<ForumReportDetail>
     suspend fun resolveReport(reportId: String, action: String, notes: String?, ticketsReporter: Int): AppResult<Unit>
     /** Concede tickets manualmente a un usuario. Devuelve el nuevo saldo. */

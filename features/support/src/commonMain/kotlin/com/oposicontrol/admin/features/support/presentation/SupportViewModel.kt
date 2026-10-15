@@ -30,15 +30,9 @@ class SupportViewModel(
             SupportIntent.Refresh -> refresh()
             SupportIntent.SendReply -> sendReply()
             is SupportIntent.SelectConversation -> selectConversation(intent.id)
-            is SupportIntent.UpdateAssignee -> updateState { it.copy(assignee = intent.value) }
             is SupportIntent.UpdateReplyText -> updateState { it.copy(replyText = intent.value) }
             is SupportIntent.UpdateSearch -> {
                 updateState { it.copy(searchQuery = intent.value) }
-                publishConversations()
-            }
-
-            is SupportIntent.UpdateStatusFilter -> {
-                updateState { it.copy(statusFilter = intent.value) }
                 publishConversations()
             }
         }
@@ -46,10 +40,8 @@ class SupportViewModel(
 
     private fun publishConversations() {
         val query = currentState().searchQuery.trim().lowercase()
-        val status = currentState().statusFilter.trim().lowercase()
         val filtered = allConversations.filter { conversation ->
-            (query.isBlank() || conversation.userName.lowercase().contains(query) || conversation.subject.lowercase().contains(query)) &&
-                (status == "all" || conversation.status.lowercase() == status)
+            (query.isBlank() || conversation.userName.lowercase().contains(query) || conversation.subject.lowercase().contains(query))
         }
         updateState { it.copy(conversations = if (filtered.isEmpty()) UiAsync.Empty else UiAsync.Success(filtered)) }
     }
@@ -67,11 +59,10 @@ class SupportViewModel(
     }
 
     private suspend fun selectConversation(id: String) {
-        val conversation = allConversations.firstOrNull { it.id == id } ?: return
+        if (allConversations.none { it.id == id }) return
         updateState {
             it.copy(
                 selectedConversationId = id,
-                assignee = conversation.assignedTo,
                 replyText = "",
                 messages = UiAsync.Loading,
                 actionState = UiAsync.Idle,
@@ -95,11 +86,14 @@ class SupportViewModel(
             updateState { it.copy(actionState = UiAsync.Error(AppError.Validation("El mensaje no puede estar vacio."))) }
             return
         }
+        // Un envio en curso bloquea el siguiente: el boton ya se deshabilita, esto cubre el doble intent.
+        if (currentState().actionState is UiAsync.Loading) return
         updateState { it.copy(actionState = UiAsync.Loading) }
         when (
             val result = repository.sendSupportMessage(
                 conversationId = conversationId,
-                assignee = currentState().assignee,
+                // El backend ignora el responsable: no se envia ninguno.
+                assignee = "",
                 text = currentState().replyText,
                 internal = false, // MASTER7-API-006: the backend cannot store internal notes; never request one.
             )
@@ -110,9 +104,11 @@ class SupportViewModel(
                     "support_send_reply",
                     mapOf("conversation_id" to conversationId),
                 )
-                updateState { it.copy(replyText = "", actionState = UiAsync.Success(Unit)) }
+                updateState { it.copy(replyText = "") }
                 refresh()
                 selectConversation(conversationId)
+                // Tras releer el hilo se confirma el envio (seleccionar limpia el estado de la accion).
+                updateState { it.copy(actionState = UiAsync.Success(Unit)) }
             }
         }
     }
@@ -122,7 +118,6 @@ class SupportViewModel(
         userName = userName,
         subject = subject,
         status = status,
-        assignedTo = assignedTo,
         lastMessage = lastMessage,
     )
 

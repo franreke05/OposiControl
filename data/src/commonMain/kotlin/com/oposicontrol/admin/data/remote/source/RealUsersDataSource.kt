@@ -30,6 +30,9 @@ class RealUsersDataSource(
         emit(adapter.safeCall { api.getUsers(roleCode).map { it.toDomain() } })
     }
 
+    override suspend fun searchUsers(query: String, limit: Int): AppResult<List<User>> =
+        adapter.safeCall { api.searchUsers(query, limit).map { it.toDomain() } }
+
     override suspend fun getUser(userId: String): AppResult<User> {
         return adapter.safeCall {
             api.getUser(userId).toDomain()
@@ -44,10 +47,4 @@ class RealUsersDataSource(
 
     override suspend fun getUserDetail(userId: String): AppResult<UserDetail> =
         adapter.safeCall { detailApi.getUserDetail(userId) }
-
-    override suspend fun deleteUser(userId: String): AppResult<Unit> {
-        return adapter.safeCall {
-            api.deleteUser(userId)
-        }
-    }
 }
