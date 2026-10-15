@@ -226,7 +226,7 @@ internal enum class CatalogHubTab(val id: String, val label: String, val icon: A
 
 /** La pestaña de Catálogo donde se edita lo que enseña una sección del escaparate; `null` si no se edita en Catálogo. */
 internal fun catalogTabForMarketSection(section: MarketSection): CatalogHubTab? = when (section) {
-    MarketSection.PRODUCTS, MarketSection.PACKS -> CatalogHubTab.PRODUCTS
+    MarketSection.PRODUCTS -> CatalogHubTab.PRODUCTS
     MarketSection.SERVICES -> CatalogHubTab.SERVICES
     MarketSection.PROMOTIONS -> CatalogHubTab.PROMOTIONS
     MarketSection.POPUPS -> CatalogHubTab.POPUPS

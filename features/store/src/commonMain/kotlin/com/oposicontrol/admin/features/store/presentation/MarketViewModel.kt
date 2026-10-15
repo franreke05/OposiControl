@@ -13,7 +13,6 @@ import com.oposicontrol.admin.domain.model.MarketPopupRule
 import com.oposicontrol.admin.domain.model.MarketPromotion
 import com.oposicontrol.admin.domain.model.MarketPromotionUsesPage
 import com.oposicontrol.admin.domain.model.MarketService
-import com.oposicontrol.admin.domain.model.MarketTicketPack
 import com.oposicontrol.admin.domain.repository.MarketCatalogRepository
 import com.oposicontrol.admin.domain.model.CommercialProduct
 
@@ -24,11 +23,10 @@ import com.oposicontrol.admin.domain.model.CommercialProduct
  * la tienda, y las otras cuatro son los precios y reglas que lo rodean.
  */
 /**
- * Secciones de la tienda. [PRODUCTS] es de solo consulta (los productos se editan en Catálogo). [PACKS] ya no se ofrece en
- * el panel: un pack de tickets es un producto de tipo «Pack de tickets» en Catálogo, que es lo que lee la app; el motor de
- * la tabla aparte se conserva sin pantalla.
+ * Secciones de la tienda. [PRODUCTS] es de solo consulta (los productos se editan en Catálogo). No hay sección de packs
+ * (DEBT-100): un pack de tickets es un producto de tipo «Pack de tickets» en Catálogo, que es lo que lee la app.
  */
-enum class MarketSection { EXAMS, PRODUCTS, PACKS, SERVICES, PROMOTIONS, POPUPS }
+enum class MarketSection { EXAMS, PRODUCTS, SERVICES, PROMOTIONS, POPUPS }
 
 sealed interface MarketIntent {
     data class SelectSection(val section: MarketSection) : MarketIntent
@@ -36,7 +34,6 @@ sealed interface MarketIntent {
     data class SetExamTypeFilter(val filter: ExamTypeFilter) : MarketIntent
     data class SetExamQuery(val query: String) : MarketIntent
 
-    data class Packs(val action: EditorAction<PackDraft>) : MarketIntent
     data class Services(val action: EditorAction<ServiceDraft>) : MarketIntent
     data class Promotions(val action: EditorAction<PromotionDraft>) : MarketIntent
     data class Popups(val action: EditorAction<PopupDraft>) : MarketIntent
@@ -62,7 +59,6 @@ data class MarketState(
     val examQuery: String = "",
     /** Productos del Catálogo, para el escaparate. Solo lectura aquí. */
     val products: UiAsync<List<CommercialProduct>> = UiAsync.Idle,
-    val packs: MarketEditor<MarketTicketPack, PackDraft> = MarketEditor(draft = PackDraft()),
     val services: MarketEditor<MarketService, ServiceDraft> = MarketEditor(draft = ServiceDraft()),
     val promotions: MarketEditor<MarketPromotion, PromotionDraft> = MarketEditor(draft = PromotionDraft()),
     val popups: MarketEditor<MarketPopupRule, PopupDraft> = MarketEditor(draft = PopupDraft()),
@@ -80,7 +76,7 @@ data class MarketState(
  *
  * Carga por sección y no de golpe: son cinco lecturas independientes y pedirlas todas al abrir gastaría cinco peticiones
  * para enseñar una. Cada sección tiene su propio estado, así que un fallo en promociones no deja la pantalla en blanco, y
- * un borrador a medias en Packs sigue ahí al volver de Servicios.
+ * un borrador a medias en Promociones sigue ahí al volver de Servicios.
  */
 class MarketViewModel(
     dispatcherProvider: DispatcherProvider,
@@ -106,7 +102,6 @@ class MarketViewModel(
             MarketIntent.Refresh -> loadSection(currentState().section, force = true)
             is MarketIntent.SetExamTypeFilter -> updateState { it.copy(examType = intent.filter) }
             is MarketIntent.SetExamQuery -> updateState { it.copy(examQuery = intent.query) }
-            is MarketIntent.Packs -> edit(PackSpec, { it.packs }, { copy(packs = it) }, intent.action, "pack") { repository.saveTicketPack(it) }
             is MarketIntent.Services -> edit(ServiceSpec, { it.services }, { copy(services = it) }, intent.action, "service") { repository.saveService(it) }
             is MarketIntent.Promotions -> {
                 val before = currentState().promotions.selectedId
@@ -183,11 +178,6 @@ class MarketViewModel(
                 }
                 updateState { it.copy(products = loaded) }
             }
-            MarketSection.PACKS -> {
-                updateState { it.copy(packs = it.packs.loading()) }
-                val result = repository.getTicketPacks()
-                updateState { it.copy(packs = it.packs.loaded(PackSpec, result)) }
-            }
             MarketSection.SERVICES -> {
                 updateState { it.copy(services = it.services.loading()) }
                 val result = repository.getServices()
@@ -255,7 +245,6 @@ class MarketViewModel(
 private fun MarketState.isLoaded(section: MarketSection): Boolean = when (section) {
     MarketSection.EXAMS -> exams is UiAsync.Success || exams is UiAsync.Empty
     MarketSection.PRODUCTS -> products is UiAsync.Success || products is UiAsync.Empty
-    MarketSection.PACKS -> packs.isLoaded
     MarketSection.SERVICES -> services.isLoaded
     MarketSection.PROMOTIONS -> promotions.isLoaded
     MarketSection.POPUPS -> popups.isLoaded

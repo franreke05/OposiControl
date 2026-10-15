@@ -9,11 +9,10 @@ import com.oposicontrol.admin.domain.model.MarketPromotion
 import com.oposicontrol.admin.domain.model.MarketPromotionUse
 import com.oposicontrol.admin.domain.model.MarketPromotionUsesPage
 import com.oposicontrol.admin.domain.model.MarketService
-import com.oposicontrol.admin.domain.model.MarketTicketPack
 import kotlin.test.Test
 
 /**
- * Banco de pruebas VISUAL de los catálogos editables de OposiMarket (packs, servicios, promociones y pop-ups).
+ * Banco de pruebas VISUAL de los catálogos editables de OposiMarket (servicios, promociones y pop-ups).
  *
  * Renderiza la pantalla real —el mismo `MarketContent` de producción— contra estados fabricados y escribe PNG en
  * `features/store/build/visual-harness/`. El escaparate de exámenes tiene su propio banco (`PublishedExamsVisualHarness`).
@@ -24,7 +23,7 @@ class MarketVisualHarness {
     private val fx = MarketFixtures
 
     @Test
-    fun capturaPacksYServicios() {
+    fun capturaServicios() {
         market("market-servicios-1920-light.png", fx.servicios(), height = 1300)
         market("market-servicios-1920-light-sin-precio.png", fx.servicioSinPrecio(), height = 1300)
         market("market-servicios-1920-light-campo-conservado.png", fx.servicioCampoConservado())
@@ -80,20 +79,13 @@ class MarketVisualHarness {
 private val MARKET_HUB = HarnessHub(
     routeId = "commercial.market",
     title = "OposiMarket",
-    description = "Escaparate, packs, servicios, promociones y pop-ups.",
+    description = "Escaparate, servicios, promociones y pop-ups.",
     tabs = emptyList<DesktopTab>(),
     selectedTab = "",
 )
 
 /** Estados fabricados. Los nombres y cifras son de ejemplo: nada de esto sale de un backend. */
 internal object MarketFixtures {
-    private val packList = listOf(
-        MarketTicketPack("p1", "pack_500", "500 OposiTickets", "Para empezar.", 500, 499, position = 1),
-        MarketTicketPack("p2", "pack_1200", "1.200 OposiTickets", null, 1200, 999, position = 2),
-        MarketTicketPack("p3", "pack_2600", "2.600 OposiTickets", "El que más compensa.", 2600, 1999, position = 3),
-        MarketTicketPack("p4", "pack_navidad", "Pack de Navidad", null, 800, 599, active = false, position = 4),
-    )
-
     private val serviceList = listOf(
         MarketService("s1", "protector_racha_7d", "Protector de racha", "Salva la racha un día sin estudiar.", "protector_racha", priceTickets = 30),
         MarketService("s2", "potenciador_x2", "Potenciador ×2", "Doble de puntos durante un rato.", "potenciador", priceTickets = 50, priceCents = 199),
@@ -142,19 +134,6 @@ internal object MarketFixtures {
 
     private fun <T, D> editor(spec: MarketEditorSpec<T, D>, items: List<T>) =
         MarketEditor<T, D>(draft = spec.emptyDraft).loaded(spec, AppResult.Success(items))
-
-    fun packs() = MarketState(section = MarketSection.PACKS, packs = editor(PackSpec, packList).reduce(PackSpec, EditorAction.Open("p3")))
-
-    fun packNuevo() = packs().let { state ->
-        state.copy(
-            packs = state.packs.reduce(PackSpec, EditorAction.Open(null))
-                .reduce(PackSpec, EditorAction.UpdateDraft(PackDraft(code = "pack_5000", name = "5.000 OposiTickets", ticketAmount = "5000", price = "34,99", position = "5"))),
-        )
-    }
-
-    fun packInvalido() = packs().let { state ->
-        state.copy(packs = state.packs.reduce(PackSpec, EditorAction.UpdateDraft(state.packs.draft.copy(ticketAmount = "0"))))
-    }
 
     fun servicios() = MarketState(section = MarketSection.SERVICES, services = editor(ServiceSpec, serviceList).reduce(ServiceSpec, EditorAction.Open("s2")))
 
@@ -214,27 +193,5 @@ internal object MarketFixtures {
         products = UiAsync.Error(AppError.Network("No se pudo contactar con el servidor.")),
     )
 
-    fun cargando() = MarketState(section = MarketSection.PACKS, packs = MarketEditor<MarketTicketPack, PackDraft>(draft = PackDraft()).loading())
-
-    fun vacio() = MarketState(section = MarketSection.PACKS, packs = editor(PackSpec, emptyList()))
-
-    fun caido() = MarketState(
-        section = MarketSection.PACKS,
-        packs = MarketEditor<MarketTicketPack, PackDraft>(draft = PackDraft()).loaded(PackSpec, AppResult.Failure(AppError.Network("No se pudo contactar con el servidor."))),
-    )
-
-    fun sinResultados() = packs().let { state ->
-        state.copy(packs = state.packs.reduce(PackSpec, EditorAction.UpdateSearch("zaragoza")).reduce(PackSpec, EditorAction.UpdateFilter(FILTER_INACTIVE)))
-    }
-
-    fun actualizando() = packs().let { it.copy(packs = it.packs.loading()) }
-
-    fun refrescoFallido() = packs().let {
-        it.copy(packs = it.packs.loading().loaded(PackSpec, AppResult.Failure(AppError.Network("No se pudo contactar con el servidor."))))
-    }
-
-    fun errorAlGuardar() = packs().let { state ->
-        val editing = state.packs.reduce(PackSpec, EditorAction.UpdateDraft(state.packs.draft.copy(price = "17,99")))
-        state.copy(packs = editing.saveFailed(AppError.Network("No se pudo contactar con el servidor.")))
-    }
+    fun cargando() = MarketState(section = MarketSection.SERVICES, services = MarketEditor<MarketService, ServiceDraft>(draft = ServiceDraft()).loading())
 }

@@ -6,7 +6,6 @@ import com.oposicontrol.admin.domain.model.MarketPopupRule
 import com.oposicontrol.admin.domain.model.MarketPromotion
 import com.oposicontrol.admin.domain.model.MarketPromotionUse
 import com.oposicontrol.admin.domain.model.MarketService
-import com.oposicontrol.admin.domain.model.MarketTicketPack
 import com.oposicontrol.admin.domain.model.formatPriceCents
 import kotlinx.datetime.LocalDate
 
@@ -78,94 +77,6 @@ private fun newCodeProblem(
 }
 
 private fun String.orNullIfBlank(): String? = trim().takeIf { it.isNotEmpty() }
-
-// =====================================================================================================================
-// Packs de OposiTickets
-// =====================================================================================================================
-
-data class PackDraft(
-    val code: String = "",
-    val name: String = "",
-    val description: String = "",
-    val ticketAmount: String = "",
-    val price: String = "",
-    val position: String = "1",
-    val active: Boolean = true,
-)
-
-internal object PackSpec : MarketEditorSpec<MarketTicketPack, PackDraft> {
-    override val emptyDraft = PackDraft()
-
-    override fun id(item: MarketTicketPack) = item.id
-
-    override fun toDraft(item: MarketTicketPack) = PackDraft(
-        code = item.code,
-        name = item.name,
-        description = item.description.orEmpty(),
-        ticketAmount = item.ticketAmount.toString(),
-        price = centsToInput(item.priceCents),
-        position = item.position.toString(),
-        active = item.active,
-    )
-
-    override fun problem(draft: PackDraft, isNew: Boolean, others: List<MarketTicketPack>): String? {
-        if (isNew) newCodeProblem(draft.code, others.map { it.code }, "El pack necesita un código.", "Ya existe un pack con ese código.")?.let { return it }
-        if (draft.name.isBlank()) return "El pack necesita un nombre."
-        val tickets = parseNonNegativeInt(draft.ticketAmount) ?: return "Los OposiTickets deben ser un número entero."
-        // Un pack de cero tickets cobra sin entregar nada.
-        if (tickets < 1) return "Un pack debe entregar al menos un OposiTicket."
-        if (draft.price.isBlank()) return "El pack necesita un precio (puede ser 0)."
-        if (parsePriceToCents(draft.price) == null) return "El precio debe ser un importe válido, por ejemplo 4,99."
-        if (parseNonNegativeInt(draft.position) == null) return "La posición debe ser un número entero no negativo."
-        return null
-    }
-
-    override fun toEntity(draft: PackDraft, base: MarketTicketPack?): MarketTicketPack? = MarketTicketPack(
-        id = base?.id.orEmpty(),
-        code = base?.code ?: draft.code.trim(),
-        name = draft.name.trim(),
-        description = draft.description.orNullIfBlank(),
-        ticketAmount = parseNonNegativeInt(draft.ticketAmount) ?: return null,
-        priceCents = parsePriceToCents(draft.price) ?: return null,
-        currency = base?.currency ?: "EUR",
-        active = draft.active,
-        position = parseNonNegativeInt(draft.position) ?: return null,
-    )
-
-    override fun matches(item: MarketTicketPack, query: String, filter: String?) =
-        matchesText(query, item.name, item.code) && matchesActive(item.active, filter)
-
-    override fun keptByServer(sent: MarketTicketPack, saved: MarketTicketPack): List<String> =
-        listOfNotNull("la descripción".takeIf { sent.description == null && saved.description != null })
-}
-
-internal fun packRowSpec(pack: MarketTicketPack): CatalogRowSpec {
-    val status = commerceStatus(pack.active)
-    return CatalogRowSpec(
-        key = pack.id,
-        title = pack.name.ifBlank { "Pack sin nombre" },
-        eyebrow = pack.code,
-        meta = listOf("${pack.ticketAmount} OT", formatPriceCents(pack.priceCents, pack.currency)),
-        status = status.label,
-        statusTone = status.tone,
-    )
-}
-
-internal fun packFacts(pack: MarketTicketPack?): List<WorkspaceFact> {
-    if (pack == null) return emptyList()
-    return buildList {
-        add(WorkspaceFact("Estado", commerceStatus(pack.active).label))
-        add(WorkspaceFact("OposiTickets", pack.ticketAmount.toString()))
-        add(WorkspaceFact("Precio", formatPriceCents(pack.priceCents, pack.currency)))
-        pack.centsPerTicket?.let { add(WorkspaceFact("Coste por OT", "${formatCentsPerTicket(it)} ${pack.currency}")) }
-        add(WorkspaceFact("Posición", pack.position.toString()))
-    }
-}
-
-internal val packInformationLines: List<String> = listOf(
-    "El coste por OposiTicket dice si la escala compensa: un pack mayor que no lo baje no le interesa a nadie.",
-    "El código identifica el pack y no se puede cambiar una vez creado.",
-)
 
 // =====================================================================================================================
 // Servicios

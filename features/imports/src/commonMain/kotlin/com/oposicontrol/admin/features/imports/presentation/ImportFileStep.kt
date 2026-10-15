@@ -21,7 +21,6 @@ import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.AppIconImage
 import com.oposicontrol.admin.core.ui.components.ButtonSize
 import com.oposicontrol.admin.core.ui.components.FormSection
-import com.oposicontrol.admin.core.ui.components.GhostButton
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.components.SemanticIconContainer
@@ -153,27 +152,6 @@ internal fun ImportFileStep(
                         color = tokens.textSecondary,
                     )
                 }
-            }
-
-            // Plantilla: no existe ninguna. Botón apagado con su motivo, no un
-            // enlace que no lleva a ningún sitio.
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-            ) {
-                GhostButton(
-                    text = "Descargar plantilla",
-                    onClick = {},
-                    enabled = false,
-                    size = ButtonSize.COMPACT,
-                    icon = { AppIconImage(AppIcon.DOWNLOAD, size = 13.dp) },
-                )
-                Text(
-                    text = IMPORT_TEMPLATE_BLOCKED,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = tokens.textSecondary,
-                )
             }
 
             if (state.actionState is UiAsync.Error) {
