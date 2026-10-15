@@ -18,7 +18,9 @@ requireStackLock('run-ktor.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
 const local = path.join(here, '.local');
-const pidFile = path.join(local, 'ktor.pid');
+// --admin: SEGUNDO Ktor con el perfil `control` (superficie de administracion) en el puerto 8090, con su propio pid y log. El de la app (bot, 8089) no se toca.
+const admin = process.argv.includes('--admin');
+const pidFile = path.join(local, admin ? 'ktor-admin.pid' : 'ktor.pid');
 const windows = process.platform === 'win32';
 
 if (process.argv.includes('--stop')) {
@@ -39,6 +41,7 @@ for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
   const i = line.indexOf('=');
   if (i > 0) env[line.slice(0, i)] = line.slice(i + 1);
 }
+if (admin) { env.SERVER_PROFILE = 'control'; env.PORT = '8090'; }
 if (!process.argv.includes('--no-build')) {
   execFileSync(path.join(repo, windows ? 'gradlew.bat' : 'gradlew'), [':backend:ktor:installDist', '-q', '--console=plain'], { cwd: repo, stdio: 'inherit', shell: windows });
 }
@@ -47,16 +50,16 @@ const lib = path.join(repo, 'backend', 'ktor', 'build', 'install', 'ktor', 'lib'
 const args = ['-cp', lib, 'com.oposicontrol.backend.ApplicationKt'];
 
 if (process.argv.includes('--detach')) {
-  const log = fs.openSync(path.join(local, 'ktor.log'), 'a');
+  const log = fs.openSync(path.join(local, admin ? 'ktor-admin.log' : 'ktor.log'), 'a');
   const child = spawn('java', args, { cwd: repo, env, stdio: ['ignore', log, log], detached: true, windowsHide: true });
   child.unref();
   fs.writeFileSync(pidFile, String(child.pid));
   const url = `http://${env.HOST ?? '127.0.0.1'}:${env.PORT ?? '8089'}/health/live`;
   for (let i = 0; i < 60; i++) {
-    try { if ((await fetch(url)).ok) { console.log(`Ktor en segundo plano (pid ${child.pid}): ${url} ok; log ${path.join(local, 'ktor.log')}`); process.exit(0); } } catch { /* arrancando */ }
+    try { if ((await fetch(url)).ok) { console.log(`Ktor en segundo plano (pid ${child.pid}): ${url} ok; log ${path.join(local, admin ? 'ktor-admin.log' : 'ktor.log')}`); process.exit(0); } } catch { /* arrancando */ }
     await new Promise((r) => setTimeout(r, 1000));
   }
-  console.error(`Ktor no respondio en 60 s; mira ${path.join(local, 'ktor.log')}`);
+  console.error(`Ktor no respondio en 60 s; mira ${path.join(local, admin ? 'ktor-admin.log' : 'ktor.log')}`);
   process.exit(1);
 }
 

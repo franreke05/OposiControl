@@ -48,6 +48,9 @@ internal data class AppExamPage(
 @Serializable
 internal data class ExamPrice(val tickets: Int, val diasAcceso: Int)
 
+/** Veredicto de acceso + fin del derecho (solo GRANTED con caducidad). */
+internal data class AccessInfo(val verdict: AccessVerdict, val validUntil: Instant?)
+
 @Serializable
 internal data class AppExamDetail(
     val id: String,
@@ -67,8 +70,10 @@ internal data class AppExamDetail(
     val intentoAbiertoId: String? = null,
     /** FA18 (PERF01): el ultimo intento FINALIZADO del usuario en este examen (resultado / revision sin recorrer D2-13). */
     val ultimoIntentoFinalizadoId: String? = null,
-    /** DEC-035 abierta: SIEMPRE `null` en SLICE 2 (los valores guardados no son fiables). */
+    /** V1: el precio en OposiTickets y los dias de acceso, TAL COMO estan en la base; `null` si el examen no es comprable con OT (nada se inventa). */
     val precio: ExamPrice? = null,
+    /** V1: hasta cuando vale el derecho (decidido por el servidor) cuando `accessState` es GRANTED con caducidad; `null` si no hay derecho o no caduca. */
+    val accesoValidoHasta: String? = null,
 )
 
 @Serializable
@@ -99,6 +104,8 @@ internal data class MyExamRef(
 internal data class MyExamItem(
     val examen: MyExamRef,
     val accessState: AccessState,
+    /** V1: fin del derecho vigente (GRANTED con caducidad), decidido por el servidor; `null` si no aplica. */
+    val accesoValidoHasta: String? = null,
     val intentoId: String? = null,
     val estadoIntento: String? = null,
     val progreso: Double? = null,
@@ -173,6 +180,13 @@ private fun catalogFilterOf(params: Parameters, issues: MutableList<ErrorIssue>)
 }
 
 private val YEAR_RANGE = 1900..2200
+
+/** Politica uniforme (V1): un parametro de consulta desconocido es 400 UNKNOWN_FIELD en TODAS las lecturas del consumidor. */
+internal fun requireOnlyKnownQueryParams(params: Parameters, allowed: Set<String>) {
+    val issues = mutableListOf<ErrorIssue>()
+    rejectUnknownParams(params, allowed, issues)
+    if (issues.isNotEmpty()) throw validationError(*issues.toTypedArray())
+}
 
 private val EXAM_LIST_PARAMS = setOf("tipoExamen", "especialidadId", "comunidadId", "anio", "includeFacets", "cursor", "limit")
 private val MY_EXAMS_PARAMS = setOf("vista", "tipoExamen", "especialidadId", "comunidadId", "anio", "cursor", "limit")
@@ -325,7 +339,8 @@ internal class CatalogService(
         val now = clock()
         // Borrador, archivado e inexistente son indistinguibles: 404 sin filtrar la existencia.
         val row = gateway.getPublished(examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
-        val verdict = accessFor(userId.value, listOf(row), now).getValue(row.id)
+        val info = accessInfoFor(userId.value, listOf(row), now).getValue(row.id)
+        val verdict = info.verdict
         val covers = signedCovers(listOf(row))
         val names = communityNames()
         val attempts = gateway.attemptRefs(userId.value, row.id)
@@ -347,7 +362,8 @@ internal class CatalogService(
                 accessState = verdict.state,
                 intentoAbiertoId = attempts.openId,
                 ultimoIntentoFinalizadoId = attempts.lastFinishedId,
-                precio = null,
+                precio = row.purchasePrice(),
+                accesoValidoHasta = info.validUntil?.toString(),
             ),
         )
     }
@@ -362,7 +378,7 @@ internal class CatalogService(
                 val rows = gateway.myOpenAttempts(uid, query.filter, after, query.page.fetchLimit, now)
                 val page = query.page.page(rows) { KeysetPosition(it.actualizadoEn, it.id).toKeys() }
                 val exams = page.items.map { it.examenes }
-                val verdicts = accessFor(uid, exams, now)
+                val verdicts = accessInfoFor(uid, exams, now)
                 val covers = signedCovers(exams)
                 MyExamsPage(
                     items = page.items.map { attempt ->
@@ -375,7 +391,7 @@ internal class CatalogService(
                 val rows = gateway.myActiveGrants(uid, query.filter, after, query.page.fetchLimit, now)
                 val page = query.page.page(rows) { KeysetPosition(it.validoDesde, it.id).toKeys() }
                 val exams = page.items.map { it.examenes }
-                val verdicts = accessFor(uid, exams, now)
+                val verdicts = accessInfoFor(uid, exams, now)
                 val covers = signedCovers(exams)
                 val latest = gateway.latestAttempts(uid, exams.map { it.id }.distinct())
                 MyExamsPage(
@@ -394,7 +410,7 @@ internal class CatalogService(
                 val collection = gateway.myCollection(uid, query.filter, after, query.page.fetchLimit, withGroups = after == null)
                 val page = query.page.page(collection.items) { KeysetPosition(it.ordenEn, it.examenes.id).toKeys() }
                 val exams = page.items.map { it.examenes }
-                val verdicts = accessFor(uid, exams, now)
+                val verdicts = accessInfoFor(uid, exams, now)
                 val covers = signedCovers(exams)
                 MyExamsPage(
                     items = page.items.map { row ->
@@ -410,7 +426,7 @@ internal class CatalogService(
 
     private fun myItem(
         exam: CatalogExamRow,
-        verdicts: Map<String, AccessVerdict>,
+        verdicts: Map<String, AccessInfo>,
         covers: Map<String, String?>,
         attemptId: String?,
         attemptState: String?,
@@ -425,7 +441,8 @@ internal class CatalogService(
             comunidadNombre = exam.comunidad?.codigo?.let(communityNames()::get),
             portadaUrl = exam.portadaStoragePath?.let(covers::get),
         ),
-        accessState = verdicts.getValue(exam.id).state,
+        accessState = verdicts.getValue(exam.id).verdict.state,
+        accesoValidoHasta = verdicts.getValue(exam.id).validUntil?.toString(),
         intentoId = attemptId,
         estadoIntento = attemptState?.takeIf { it in ATTEMPT_STATES },
         progreso = if (attemptId != null && total > 0) (answered.toDouble() / total).coerceIn(0.0, 1.0) else null,
@@ -444,21 +461,35 @@ internal class CatalogService(
     }
 
     // ----- D7-25 por lotes: los hechos del usuario se leen UNA vez por peticion -----
-    private fun accessFor(userId: String, exams: List<CatalogExamRow>, now: Instant): Map<String, AccessVerdict> {
+    private fun accessFor(userId: String, exams: List<CatalogExamRow>, now: Instant): Map<String, AccessVerdict> =
+        accessInfoFor(userId, exams, now).mapValues { it.value.verdict }
+
+    /** El veredicto de [EntitlementPolicy] y, si es GRANTED con caducidad, el fin del derecho (el servidor decide cuando acaba). */
+    private fun accessInfoFor(userId: String, exams: List<CatalogExamRow>, now: Instant): Map<String, AccessInfo> {
         if (exams.isEmpty()) return emptyMap()
         val examIds = exams.map { it.id }.distinct()
         val premium = gateway.premiumRow(userId)?.toFact()
         val grants = gateway.grantsFor(userId, examIds)
         val capabilities = gateway.capabilitiesFor(exams.map { it.especialidadId }.distinct())
         return exams.associate { exam ->
-            exam.id to EntitlementPolicy.check(
+            val examGrants = grants[exam.id].orEmpty()
+            val verdict = EntitlementPolicy.check(
                 exam = ExamAccessSubject(exam.id, exam.kind(), free = exam.accessType() == "gratuito", demoAvailable = exam.demoDisponible),
                 capabilities = capabilities[exam.especialidadId] ?: SpecialtyAccessCapabilities.OPEN,
-                user = UserAccessFacts(premium = premium, grants = grants[exam.id].orEmpty()),
+                user = UserAccessFacts(premium = premium, grants = examGrants),
                 now = now,
             )
+            exam.id to AccessInfo(verdict, if (verdict.state == AccessState.GRANTED) grantedUntil(examGrants, now) else null)
         }
     }
+
+    /** Fin del derecho vigente: el MAYOR `valido_hasta` entre las concesiones vigentes; `null` si alguna no caduca (o ninguna). */
+    private fun grantedUntil(grants: List<ExamGrantFact>, now: Instant): Instant? {
+        val active = grants.filter { it.activeAt(now) }
+        if (active.isEmpty() || active.any { it.validUntil == null }) return null
+        return active.maxOf { it.validUntil!! }
+    }
+
 
     /** UNA peticion a Storage para toda la pagina; un fallo deja las portadas en `null` y la lectura sigue. */
     private fun signedCovers(exams: List<CatalogExamRow>): Map<String, String?> {
@@ -471,6 +502,10 @@ internal class CatalogService(
             emptyMap()
         }
     }
+
+    /** Precio en OT y dias de acceso, solo si el examen es de pago, comprable y la base tiene AMBOS valores; si no, `null` (nada se inventa). */
+    private fun CatalogExamRow.purchasePrice(): ExamPrice? =
+        if (tipoAcceso == "premium" && comprableConTickets && (precioTickets ?: 0) > 0 && (diasAccesoCompra ?: 0) > 0) ExamPrice(precioTickets!!, diasAccesoCompra!!) else null
 
     private fun CatalogExamRow.kind(): ExamKind =
         ExamKind.fromWireOrNull(tipoExamen) ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()

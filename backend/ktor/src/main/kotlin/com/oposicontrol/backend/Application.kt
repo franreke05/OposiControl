@@ -140,6 +140,8 @@ internal fun scrubBreadcrumb(breadcrumb: io.sentry.Breadcrumb): io.sentry.Breadc
 }
 
 fun main() {
+    // V1 economia: el proveedor de pago sandbox no puede existir fuera de local/test. Se comprueba ANTES de nada: sin enlazar el puerto.
+    enforceSandboxProviderGuard()
     initializeSentry()
 
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
@@ -607,6 +609,7 @@ fun Application.module() {
         // Solicitudes de acceso de administrador: la solicitud publica vive en `bot` y la revision en `control`.
         accessRequestGateway = SupabaseAdminAccessRequestGateway.fromEnvironment(json),
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
+        economyRuntime = canonicalIdentityResolver?.let { EconomyRuntime.fromEnvironment(it, authRuntime) },
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
             catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter) }
         },
@@ -671,6 +674,8 @@ internal class CombinedRoutingDeps(
     internal val walletRuntime: WalletRuntime? = null,
     /** SLICE 3 (D2-03, D2-07..D2-12, D2-65). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val attemptRuntime: AttemptRuntime? = null,
+    /** V1 economia: canje, paquetes, pedidos de pago y avisos del proveedor. */
+    internal val economyRuntime: EconomyRuntime? = null,
     /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
     internal val newsRuntime: NewsRuntime? = null,
     /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
@@ -730,6 +735,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     appReadsRoutes(appReadsRuntime)
     // SLICE 3: runtime de examen del consumidor (D2-03, D2-07, D2-08, D2-09, D2-10, D2-11, D2-12, D2-65).
     attemptRoutes(attemptRuntime)
+    // V1 economia (OposiTickets): canje D6-03, paquetes D6-11, pedidos D6-12..D6-14 y aviso del proveedor.
+    economyRoutes(economyRuntime)
     authRuntime?.let {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).

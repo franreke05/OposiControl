@@ -644,3 +644,454 @@ set local session_replication_role = origin;
 update public.examenes set publicado_en = now() where id = 'e4000000-0000-0000-0000-000000000002';
 do $$ begin raise notice 'OK exam community required'; end $$;
 rollback;
+
+-- 20261018100100: V1 wallet ledger hardening (per-wallet seq, append-only, snapshot only by the ledger, reconcile, per-user idempotency).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000d1','led1@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000d2','led2@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000d3','led3@test.local','authenticated','authenticated');
+do $$
+declare r record; n int;
+begin
+  select * into r from public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000d1', 100, 'credit', 'k-1', 'ajuste');
+  assert r.saldo_anterior = 0 and r.saldo_resultante = 100, 'first credit';
+  assert (select seq from public.transacciones_cartera where id = r.transaction_id) = 1, 'seq starts at 1 for the wallet';
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000d1') = 100, 'snapshot written by the ledger trigger';
+  -- replay with the same key and content returns the SAME row and writes nothing
+  select * into r from public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000d1', 100, 'credit', 'k-1', 'ajuste');
+  select count(*) into n from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000d1';
+  assert n = 1, 'replay must not create a second row';
+  -- the same key from ANOTHER user is independent, and its seq starts at 1 (per wallet, never global)
+  perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000d2', 7, 'credit', 'k-1', 'ajuste');
+  assert (select seq from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000d2') = 1, 'seq is per wallet';
+  -- a debit is allocated FIFO to the credit that paid it
+  perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000d1', -30, 'debit', 'k-2', 'ajuste');
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000d1') = 70, 'balance after debit';
+  assert (select sum(cantidad) from public.ot_consumos where usuario_id = 'a0000000-0000-0000-0000-0000000000d1') = 30, 'debit traced to its credit';
+  assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'reconcile is clean';
+  assert (select count(*) from public.v_wallet_reconcile) = 0, 'reconcile view is clean';
+end $$;
+select pg_temp.expect_e($q$select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000d1', 101, 'credit', 'k-1', 'ajuste')$q$, 'WALLET_IDEMPOTENCY_CONFLICT');
+select pg_temp.expect_e($q$select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000d1', -1000, 'debit', 'k-3', 'ajuste')$q$, 'WALLET_INSUFFICIENT_BALANCE');
+-- a direct INSERT cannot break the chain and cannot overdraw
+select pg_temp.expect_e($q$insert into public.transacciones_cartera (usuario_id, tipo, cantidad, seq) values ('a0000000-0000-0000-0000-0000000000d1','ajuste',1,99)$q$, 'WALLET_CHAIN_MISMATCH');
+select pg_temp.expect_e($q$insert into public.transacciones_cartera (usuario_id, tipo, cantidad, saldo_anterior) values ('a0000000-0000-0000-0000-0000000000d1','ajuste',1,5)$q$, 'WALLET_CHAIN_MISMATCH');
+select pg_temp.expect_e($q$insert into public.transacciones_cartera (usuario_id, tipo, cantidad, saldo_resultante) values ('a0000000-0000-0000-0000-0000000000d1','ajuste',1,5000)$q$, 'WALLET_CHAIN_MISMATCH');
+select pg_temp.expect_e($q$insert into public.transacciones_cartera (usuario_id, tipo, cantidad) values ('a0000000-0000-0000-0000-0000000000d1','ajuste',-1000)$q$, 'WALLET_INSUFFICIENT_BALANCE');
+select pg_temp.expect_e($q$insert into public.transacciones_cartera (usuario_id, tipo, cantidad) values ('a0000000-0000-0000-0000-0000000000d1','ajuste',0)$q$, 'WALLET_AMOUNT_INVALID');
+-- the ledger is append-only
+select pg_temp.expect_e($q$update public.transacciones_cartera set descripcion = 'x' where usuario_id = 'a0000000-0000-0000-0000-0000000000d1'$q$, 'LEDGER_IMMUTABLE');
+select pg_temp.expect_e($q$delete from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000d1'$q$, 'LEDGER_IMMUTABLE');
+select pg_temp.expect_e($q$delete from public.ot_consumos where usuario_id = 'a0000000-0000-0000-0000-0000000000d1'$q$, 'LEDGER_IMMUTABLE');
+-- the snapshot is written ONLY by the ledger trigger
+select pg_temp.expect_e($q$update public.carteras_usuario set saldo_tickets = 1 where usuario_id = 'a0000000-0000-0000-0000-0000000000d1'$q$, 'WALLET_SNAPSHOT_READ_ONLY');
+select pg_temp.expect_e($q$insert into public.carteras_usuario (usuario_id, saldo_tickets) values ('a0000000-0000-0000-0000-0000000000d3', 5)$q$, 'WALLET_SNAPSHOT_READ_ONLY');
+select pg_temp.expect_e($q$delete from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000d1'$q$, 'WALLET_SNAPSHOT_READ_ONLY');
+create function pg_temp.sneak() returns void language plpgsql security definer as $$ begin update public.carteras_usuario set saldo_tickets = 999; end $$;
+select pg_temp.expect_e($q$select pg_temp.sneak()$q$, 'WALLET_SNAPSHOT_READ_ONLY');
+-- a NEW profile gets an EMPTY wallet (balance 0, no movement) in the same transaction: a real row, equivalent to a ledger sum of 0
+do $$ begin
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000d3') = 0, 'a new profile has a real wallet row with balance 0';
+  assert not exists (select 1 from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000d3'), 'and no movement';
+end $$;
+-- reconcile DETECTS a tampered snapshot (guard switched off by the superuser of this test only)
+alter table public.carteras_usuario disable trigger trg_wallet_snapshot_guard;
+update public.carteras_usuario set saldo_tickets = 71 where usuario_id = 'a0000000-0000-0000-0000-0000000000d1';
+alter table public.carteras_usuario enable trigger trg_wallet_snapshot_guard;
+do $$ begin
+  assert exists (select 1 from public.app_wallet_reconcile('a0000000-0000-0000-0000-0000000000d1') where kind = 'SNAPSHOT_NE_LEDGER' and expected = 70 and actual = 71), 'reconcile must flag a tampered snapshot';
+end $$;
+-- the ledger refuses to extend a chain whose snapshot disagrees
+select pg_temp.expect_e($q$select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000d1', 1, 'credit', 'k-4', 'ajuste')$q$, 'WALLET_INCONSISTENT');
+alter table public.carteras_usuario disable trigger trg_wallet_snapshot_guard;
+update public.carteras_usuario set saldo_tickets = 70 where usuario_id = 'a0000000-0000-0000-0000-0000000000d1';
+alter table public.carteras_usuario enable trigger trg_wallet_snapshot_guard;
+-- grants: no write path for app roles
+do $$ declare r text; t text; begin
+  foreach t in array array['public.transacciones_cartera','public.carteras_usuario','public.ot_consumos'] loop
+    foreach r in array array['anon','authenticated','service_role'] loop
+      assert not has_table_privilege(r, t, 'insert') and not has_table_privilege(r, t, 'update') and not has_table_privilege(r, t, 'delete'), 'write privilege for ' || r || ' on ' || t;
+    end loop;
+  end loop;
+  assert not has_function_privilege('authenticated', 'public.app_wallet_reconcile(uuid)', 'execute') and has_function_privilege('service_role', 'public.app_wallet_reconcile(uuid)', 'execute'), 'reconcile is service-role only';
+end $$;
+-- account deletion still works (the cascade is the only way a ledger row can go)
+delete from auth.users where id = 'a0000000-0000-0000-0000-0000000000d2';
+do $$ begin
+  assert not exists (select 1 from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000d2')
+     and not exists (select 1 from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000d2'), 'account deletion cascades the wallet';
+  raise notice 'OK V1 wallet ledger';
+end $$;
+rollback;
+
+-- 20261018100200: V1 payment orders (frozen amounts, credit exactly once, late payment, refund chain, state machine).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.expect_state(p_sql text, p_state text) returns void language plpgsql as $$
+declare v_state text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_state = returned_sqlstate; end;
+  if v_state is distinct from p_state then raise exception 'ASSERT FAILED: % -> expected sqlstate % got %', p_sql, p_state, v_state; end if;
+end $$;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000e1','ord1@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000e2','ord2@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000e3','ord3@test.local','authenticated','authenticated');
+insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, cantidad_tickets, activo, visible) values
+  ('b0000000-0000-0000-0000-000000000001','pack-100','pack_tickets','Pack 100',499,'EUR',100,true,true),
+  ('b0000000-0000-0000-0000-000000000002','pack-50','pack_tickets','Pack 50',299,'EUR',50,true,true),
+  ('b0000000-0000-0000-0000-000000000003','pack-1000','pack_tickets','Pack 1000',3999,'EUR',1000,true,true),
+  ('b0000000-0000-0000-0000-000000000004','pack-unpriced','pack_tickets','Sin precio',null,'EUR',100,true,true),
+  ('b0000000-0000-0000-0000-000000000005','pack-hidden','pack_tickets','Oculto',499,'EUR',100,true,false);
+
+-- ---- orders: catalogue, freeze, idempotency
+select pg_temp.expect_e($q$select * from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-unpriced','google_play','o-1')$q$, 'PRODUCT_NOT_AVAILABLE');
+select pg_temp.expect_e($q$select * from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-hidden','google_play','o-1')$q$, 'PRODUCT_NOT_AVAILABLE');
+select pg_temp.expect_e($q$select * from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','nope','google_play','o-1')$q$, 'PRODUCT_NOT_AVAILABLE');
+select pg_temp.expect_e($q$select * from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-100','google_play','')$q$, 'IDEMPOTENCY_KEY_REQUIRED');
+select pg_temp.expect_state($q$select * from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-100','sandbox','o-sb')$q$, '23514');
+do $$
+declare o record; o2 record; n int;
+begin
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-100','google_play','o-1');
+  assert o.outcome = 'CREATED' and o.estado = 'pendiente' and o.cantidad_tickets = 100 and o.importe_centimos = 499 and o.moneda = 'EUR', 'order frozen from the catalogue';
+  assert o.expira_en > now() + interval '29 minutes' and o.expira_en <= now() + interval '30 minutes', 'TTL is 30 minutes';
+  select * into o2 from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-100','google_play','o-1');
+  assert o2.outcome = 'REPLAY' and o2.orden_id = o.orden_id, 'same key and same body replays the same order';
+  select * into o2 from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-100','google_play','o-1');
+  assert o2.outcome = 'CREATED' and o2.orden_id <> o.orden_id, 'another user with the same key is independent';
+  select count(*) into n from public.compras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e1' and idempotency_key = 'o-1';
+  assert n = 1, 'one order per (user, key)';
+  -- changing the catalogue price later does NOT change the frozen order
+  update public.productos_comerciales set precio_centimos = 999 where codigo = 'pack-100';
+  select * into o2 from public.app_get_payment_order('a0000000-0000-0000-0000-0000000000e1', o.orden_id);
+  assert o2.importe_centimos = 499, 'amount is frozen at creation';
+  update public.productos_comerciales set precio_centimos = 499 where codigo = 'pack-100';
+end $$;
+select pg_temp.expect_e($q$select * from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-50','google_play','o-1')$q$, 'IDEMPOTENCY_KEY_REUSED');
+select pg_temp.expect_e($q$select * from public.app_get_payment_order('a0000000-0000-0000-0000-0000000000e2', (select id from public.compras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e1' and idempotency_key = 'o-1'))$q$, 'ORDER_NOT_FOUND');
+
+-- ---- credit exactly once
+do $$
+declare o record; r record; oid uuid; n int; bal int;
+begin
+  select orden_id into oid from public.app_get_payment_order('a0000000-0000-0000-0000-0000000000e1', (select id from public.compras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e1' and idempotency_key = 'o-1')) o;
+  -- wrong amount, wrong currency, wrong product: no credit, order goes to review
+  select * into r from public.app_credit_payment_order('google_play', 'ev-bad-amount', oid, 'tx-1', 100, 'EUR', 'pack-100');
+  assert r.outcome = 'EN_REVISION' and r.estado = 'en_revision', 'amount mismatch -> en_revision';
+  assert not exists (select 1 from public.transacciones_cartera where compra_id = oid), 'no credit on mismatch';
+  -- a fresh order for the successful path
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-100','google_play','o-2');
+  select * into r from public.app_credit_payment_order('google_play', 'ev-bad-cur', o.orden_id, 'tx-2', 499, 'USD', 'pack-100');
+  assert r.outcome = 'EN_REVISION', 'currency mismatch -> en_revision';
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-100','google_play','o-3');
+  select * into r from public.app_credit_payment_order('google_play', 'ev-bad-prod', o.orden_id, 'tx-3', 499, 'EUR', 'pack-50');
+  assert r.outcome = 'EN_REVISION', 'product mismatch -> en_revision (tampered package)';
+  -- success
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-100','google_play','o-4');
+  select * into r from public.app_credit_payment_order('google_play', 'ev-ok', o.orden_id, 'tx-4', 499, 'EUR', 'pack-100');
+  assert r.outcome = 'CREDITED' and r.estado = 'pagada' and r.saldo = 100 and r.transaccion_id is not null, 'verified payment credits exactly the frozen OT';
+  assert (select usuario_id from public.transacciones_cartera where id = r.transaccion_id) = 'a0000000-0000-0000-0000-0000000000e1', 'credit goes to the order owner';
+  -- duplicate callback (same event) and a second event for the same order: no second credit
+  select * into r from public.app_credit_payment_order('google_play', 'ev-ok', o.orden_id, 'tx-4', 499, 'EUR', 'pack-100');
+  assert r.outcome = 'REPLAY' and r.saldo = 100, 'duplicate callback is a no-op';
+  select * into r from public.app_credit_payment_order('google_play', 'ev-ok-2', o.orden_id, 'tx-4', 499, 'EUR', 'pack-100');
+  assert r.outcome = 'REPLAY' and r.saldo = 100, 'a different event id for a credited order is a no-op';
+  select count(*) into n from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'pack_tickets';
+  assert n = 1, 'exactly one credit row per order';
+  -- the same provider transaction on ANOTHER order is refused (no credit, review)
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-100','google_play','o-5');
+  select * into r from public.app_credit_payment_order('google_play', 'ev-dup-tx', o.orden_id, 'tx-4', 499, 'EUR', 'pack-100');
+  assert r.outcome = 'EN_REVISION', 'a provider transaction already used by another order is refused';
+  select saldo_tickets into bal from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e1';
+  assert bal = 100, 'balance only moved once';
+  -- unknown order / foreign provider
+  begin
+    perform * from public.app_credit_payment_order('google_play', 'ev-x', 'b0000000-0000-0000-0000-0000000000ff', 'tx-9', 499, 'EUR', 'pack-100');
+    assert false, 'unknown order must fail';
+  exception when others then
+    assert sqlerrm = 'ORDER_NOT_FOUND', 'unknown order -> ORDER_NOT_FOUND, got ' || sqlerrm;
+  end;
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-100','google_play','o-6');
+  begin
+    perform * from public.app_credit_payment_order('app_store', 'ev-y', o.orden_id, 'tx-10', 499, 'EUR', 'pack-100');
+    assert false, 'another provider must not credit the order';
+  exception when others then
+    assert sqlerrm = 'ORDER_NOT_FOUND', 'provider mismatch -> ORDER_NOT_FOUND, got ' || sqlerrm;
+  end;
+end $$;
+
+-- ---- late payment, cancelled and failed orders
+do $$
+declare o record; r record; bal int;
+begin
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-50','app_store','l-1');
+  alter table public.compras_usuario disable trigger trg_compras_usuario_order_machine;
+  update public.compras_usuario set expira_en = now() - interval '1 minute' where id = o.orden_id;
+  alter table public.compras_usuario enable trigger trg_compras_usuario_order_machine;
+  select * into r from public.app_get_payment_order('a0000000-0000-0000-0000-0000000000e2', o.orden_id);
+  assert r.estado = 'expirada', 'a pending order past its TTL expires';
+  select * into r from public.app_credit_payment_order('app_store', 'ev-late', o.orden_id, 'tx-l1', 299, 'EUR', 'pack-50');
+  assert r.outcome = 'CREDITED_LATE' and r.estado = 'pagada' and r.saldo = 50, 'an authentic late confirmation of an expired order with matching data is paid';
+  assert exists (select 1 from public.auditoria_log where accion = 'pago_tardio_acreditado' and registro_id = o.orden_id), 'late payment is audited';
+  -- cancelled order + paid event -> review, NO credit
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-50','app_store','l-2');
+  update public.compras_usuario set estado = 'cancelada' where id = o.orden_id;
+  select * into r from public.app_credit_payment_order('app_store', 'ev-cancel', o.orden_id, 'tx-l2', 299, 'EUR', 'pack-50');
+  assert r.outcome = 'EN_REVISION' and r.saldo = 50, 'cancelled + paid event -> en_revision without credit';
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-50','app_store','l-3');
+  update public.compras_usuario set estado = 'fallida' where id = o.orden_id;
+  select * into r from public.app_credit_payment_order('app_store', 'ev-failed', o.orden_id, 'tx-l3', 299, 'EUR', 'pack-50');
+  assert r.outcome = 'EN_REVISION' and r.saldo = 50, 'failed + paid event -> en_revision without credit';
+end $$;
+
+-- ---- state machine and frozen fields
+select pg_temp.expect_e($q$update public.compras_usuario set estado = 'pagada' where usuario_id = 'a0000000-0000-0000-0000-0000000000e2' and idempotency_key = 'l-3'$q$, 'ORDER_STATE_TRANSITION_FORBIDDEN');
+select pg_temp.expect_e($q$update public.compras_usuario set precio_centimos = 1 where usuario_id = 'a0000000-0000-0000-0000-0000000000e2' and idempotency_key = 'l-1'$q$, 'ORDER_FROZEN');
+select pg_temp.expect_e($q$update public.compras_usuario set estado = 'pendiente' where usuario_id = 'a0000000-0000-0000-0000-0000000000e2' and idempotency_key = 'l-1'$q$, 'ORDER_STATE_TRANSITION_FORBIDDEN');
+
+-- ---- refund chain: the owner's example (buy 1000, spend 800, 200 left, refund the payment)
+do $$
+declare o record; r record; credit_id uuid; c record;
+begin
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e1','pack-1000','google_play','r-1');
+  select * into r from public.app_credit_payment_order('google_play', 'ev-r1', o.orden_id, 'tx-r1', 3999, 'EUR', 'pack-1000');
+  assert r.outcome = 'CREDITED' and r.saldo = 1100, 'credit 1000 on top of the earlier 100';
+  credit_id := r.transaccion_id;
+  perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000e1', -800, 'spend', 'sp-1', 'ajuste');
+  -- the earlier 100 OT are consumed FIRST (FIFO), then 700 of the 1000: the refunded credit has 300 unspent
+  assert private.ot_credit_remaining(credit_id) = 300, 'FIFO: the older credit is consumed first';
+  select * into r from public.app_refund_payment_order('google_play', 'ev-r1-refund', o.orden_id);
+  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.estado = 'reembolsada', 'refund with spent OT opens a case';
+  select * into c from public.refund_case where compra_id = o.orden_id;
+  assert c.ot_revertidos = 300 and c.ot_gastados = 700 and c.estado = 'abierto', 'U = 300 reverted, S = 700 case';
+  assert (select cantidad from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'devolucion') = -300, 'only the unspent part is reversed';
+  assert (select referencia_id from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'devolucion') = credit_id, 'the reversal names the credit it reverses';
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e1') = 0, 'balance never negative';
+  select * into r from public.app_refund_payment_order('google_play', 'ev-r1-refund', o.orden_id);
+  assert r.outcome = 'REPLAY', 'duplicate refund event is a no-op';
+  select * into r from public.app_refund_payment_order('google_play', 'ev-r1-refund-2', o.orden_id);
+  assert r.outcome = 'REPLAY', 'a second refund of a refunded order is a no-op';
+end $$;
+-- THE OWNER'S EXAMPLE, exactly: buy 1000 OT, spend 800 on an immersive exam, 200 left, refund the original payment.
+do $$
+declare o record; r record; credit_id uuid;
+begin
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e3','pack-1000','app_store','x-1');
+  select * into r from public.app_credit_payment_order('app_store', 'ev-x1', o.orden_id, 'tx-x1', 3999, 'EUR', 'pack-1000');
+  credit_id := r.transaccion_id;
+  assert r.saldo = 1000, 'bought 1000';
+  perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000e3', -800, 'immersive exam', 'x-sp', 'ajuste');
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e3') = 200, '200 left';
+  select * into r from public.app_refund_payment_order('app_store', 'ev-x1-refund', o.orden_id);
+  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.estado = 'reembolsada' and r.saldo = 0, 'refund: balance 0, never negative';
+  assert (select cantidad from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'devolucion') = -200, 'exactly the unspent 200 are reversed';
+  assert (select ot_revertidos from public.refund_case where compra_id = o.orden_id) = 200 and (select ot_gastados from public.refund_case where compra_id = o.orden_id) = 800, 'case: 800 spent, nothing revoked';
+  assert (select detalle -> 0 ->> 'ot_desde_este_credito' from public.refund_case where compra_id = o.orden_id) = '800', 'the case traces the debit funded by this credit';
+  assert (select count(*) from public.app_wallet_reconcile('a0000000-0000-0000-0000-0000000000e3')) = 0, 'reconcile clean';
+end $$;
+-- refund of an unspent order (case A), of an order never paid, and of mixed purchases (case F)
+do $$
+declare o1 record; o2 record; r record; c1 uuid; c2 uuid;
+begin
+  select * into o1 from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-100','google_play','f-1');
+  select * into r from public.app_refund_payment_order('google_play', 'ev-f1-unpaid', o1.orden_id);
+  assert r.outcome = 'NOOP', 'refund of an unpaid order credits and reverses nothing';
+  select * into r from public.app_credit_payment_order('google_play', 'ev-f1', o1.orden_id, 'tx-f1', 499, 'EUR', 'pack-100');
+  c1 := r.transaccion_id;
+  select * into r from public.app_refund_payment_order('google_play', 'ev-f1-refund', o1.orden_id);
+  assert r.outcome = 'REFUNDED' and r.saldo = 50, 'case A: unspent credit fully reversed (the 50 from the late order remain)';
+  assert not exists (select 1 from public.refund_case where compra_id = o1.orden_id), 'case A: no case';
+  -- case F: two purchases, spending crosses both
+  select * into o1 from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-100','google_play','f-2');
+  select * into r from public.app_credit_payment_order('google_play', 'ev-f2', o1.orden_id, 'tx-f2', 499, 'EUR', 'pack-100');
+  c1 := r.transaccion_id;
+  select * into o2 from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-50','google_play','f-3');
+  select * into r from public.app_credit_payment_order('google_play', 'ev-f3', o2.orden_id, 'tx-f3', 299, 'EUR', 'pack-50');
+  c2 := r.transaccion_id;
+  -- balance now 50 (late order) + 100 + 50 = 200; spend 170: 50 from the late credit, 100 from c1, 20 from c2
+  perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000e2', -170, 'spend', 'sp-f', 'ajuste');
+  assert private.ot_credit_remaining(c1) = 0 and private.ot_credit_remaining(c2) = 30, 'FIFO across mixed purchases';
+  select * into r from public.app_refund_payment_order('google_play', 'ev-f2-refund', o1.orden_id);
+  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.saldo = 30, 'fully spent credit: no reversal, case S = 100, the other purchase is untouched';
+  assert (select ot_gastados from public.refund_case where compra_id = o1.orden_id) = 100 and (select ot_revertidos from public.refund_case where compra_id = o1.orden_id) = 0, 'case values';
+  select * into r from public.app_refund_payment_order('google_play', 'ev-f3-refund', o2.orden_id);
+  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.saldo = 0, 'second purchase: 30 reversed, 20 case';
+  assert (select ot_gastados from public.refund_case where compra_id = o2.orden_id) = 20 and (select ot_revertidos from public.refund_case where compra_id = o2.orden_id) = 30, 'second case values';
+  assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'reconcile is clean after credits, debits and refunds';
+end $$;
+
+-- ---- no client path
+do $$ declare t text; r text; f text; begin
+  foreach t in array array['public.eventos_pago','public.refund_case'] loop
+    foreach r in array array['anon','authenticated','service_role'] loop
+      assert not has_table_privilege(r, t, 'insert') and not has_table_privilege(r, t, 'update') and not has_table_privilege(r, t, 'delete'), 'write privilege for ' || r || ' on ' || t;
+    end loop;
+    assert not has_table_privilege('anon', t, 'select') and not has_table_privilege('authenticated', t, 'select'), 'client read on ' || t;
+  end loop;
+  foreach f in array array['public.app_create_payment_order(uuid,text,text,text)','public.app_get_payment_order(uuid,uuid)','public.app_credit_payment_order(text,text,uuid,text,integer,text,text)','public.app_refund_payment_order(text,text,uuid)'] loop
+    assert not has_function_privilege('anon', f, 'execute') and not has_function_privilege('authenticated', f, 'execute') and has_function_privilege('service_role', f, 'execute'), 'function grants ' || f;
+  end loop;
+  raise notice 'OK V1 payment orders';
+end $$;
+rollback;
+
+-- 20261018100300: V1 redeem an exam with OT in ONE transaction (atomic, idempotent, extension, expiry, accessibility, no price from the client).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.expect_state(p_sql text, p_state text) returns void language plpgsql as $$
+declare v_state text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_state = returned_sqlstate; end;
+  if v_state is distinct from p_state then raise exception 'ASSERT FAILED: % -> expected sqlstate % got %', p_sql, p_state, v_state; end if;
+end $$;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000f1','rd1@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000f2','rd2@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000f3','rd3@test.local','authenticated','authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000f1','RX','RX','rx',true), ('e1000000-0000-0000-0000-0000000000f2','RY','RY','ry',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000f1','CF','Com F','com-f');
+insert into public.capacidades_especialidad (especialidad_id, permite_rafagas, permite_razonados, permite_inmersivos, permite_demos)
+  values ('e1000000-0000-0000-0000-0000000000f2', true, true, false, true);
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, comprable_con_tickets, precio_tickets, dias_acceso_compra, demo_disponible) values
+  ('e5000000-0000-0000-0000-0000000000a1','R-BUY','e1000000-0000-0000-0000-0000000000f1','c1000000-0000-0000-0000-0000000000f1','Compra','inmersivo','premium',true, now() - interval '1 day', true, 100, 30, false),
+  ('e5000000-0000-0000-0000-0000000000a2','R-NOTBUY','e1000000-0000-0000-0000-0000000000f1','c1000000-0000-0000-0000-0000000000f1','No comprable','inmersivo','premium',true, now() - interval '1 day', false, 100, 30, false),
+  ('e5000000-0000-0000-0000-0000000000a3','R-FUTURE','e1000000-0000-0000-0000-0000000000f1','c1000000-0000-0000-0000-0000000000f1','Futuro','inmersivo','premium',true, now() + interval '1 day', true, 100, 30, false),
+  ('e5000000-0000-0000-0000-0000000000a4','R-FREE','e1000000-0000-0000-0000-0000000000f1','c1000000-0000-0000-0000-0000000000f1','Gratis','rafaga','gratuito',true, now() - interval '1 day', true, 100, 30, false),
+  ('e5000000-0000-0000-0000-0000000000a5','R-NOPRICE','e1000000-0000-0000-0000-0000000000f1','c1000000-0000-0000-0000-0000000000f1','Sin precio','inmersivo','premium',true, now() - interval '1 day', true, null, 30, false),
+  ('e5000000-0000-0000-0000-0000000000a6','R-CAPOFF','e1000000-0000-0000-0000-0000000000f2','c1000000-0000-0000-0000-0000000000f1','Modo apagado','inmersivo','premium',true, now() - interval '1 day', true, 100, 30, false),
+  ('e5000000-0000-0000-0000-0000000000a7','R-DEMO','e1000000-0000-0000-0000-0000000000f1','c1000000-0000-0000-0000-0000000000f1','Demo','rafaga','premium',true, now() - interval '1 day', true, 100, 30, true),
+  ('e5000000-0000-0000-0000-0000000000a8','R-ONE','e1000000-0000-0000-0000-0000000000f1','c1000000-0000-0000-0000-0000000000f1','Un OT','inmersivo','premium',true, now() - interval '1 day', true, 1, 30, false);
+select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f1', 500, 'seed', 'seed-1', 'ajuste');
+
+-- ---- refusals write NOTHING
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a2','k-1')$q$, 'NOT_PURCHASABLE');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a5','k-1')$q$, 'NOT_PURCHASABLE');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a3','k-1')$q$, 'EXAM_NOT_FOUND');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000ff','k-1')$q$, 'EXAM_NOT_FOUND');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1','k-1', 90)$q$, 'PRICE_CHANGED');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a4','k-1')$q$, 'ALREADY_ACCESSIBLE');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a1','k-1')$q$, 'INSUFFICIENT_BALANCE');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1','')$q$, 'IDEMPOTENCY_KEY_REQUIRED');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000ff','e5000000-0000-0000-0000-0000000000a1','k-1')$q$, 'WALLET_INVALID_USER');
+do $$
+declare d text;
+begin
+  begin perform * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a1','k-poor');
+  exception when others then get stacked diagnostics d = pg_exception_detail; end;
+  assert d::jsonb = '{"balance":0,"price":100}'::jsonb, 'INSUFFICIENT_BALANCE carries the SERVER numbers: ' || coalesce(d, 'null');
+  begin perform * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1','k-px', 90);
+  exception when others then get stacked diagnostics d = pg_exception_detail; end;
+  assert d::jsonb = '{"price":100}'::jsonb, 'PRICE_CHANGED carries the server price';
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1') = 500, 'refusals left the balance untouched';
+  assert (select count(*) from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000f1') = 1, 'refusals wrote no ledger row';
+  assert not exists (select 1 from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1'), 'and no entitlement';
+end $$;
+
+-- ---- success, replay, extension
+do $$
+declare r record; r2 record; first_until timestamptz; first_tx uuid;
+begin
+  select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1','k-buy-1', 100);
+  assert r.outcome = 'CREATED' and r.precio_pagado = 100 and r.saldo = 400, 'debit and balance come from the server';
+  assert r.valido_hasta between now() + interval '29 days 23 hours' and now() + interval '30 days 1 hour', 'access is 30 days (dias_acceso_compra)';
+  first_until := r.valido_hasta; first_tx := r.transaccion_id;
+  assert (select count(*) from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and examen_id = 'e5000000-0000-0000-0000-0000000000a1' and motivo = 'compra') = 1, 'one purchased row';
+  assert exists (select 1 from public.contenido_desbloqueado_usuario g where g.transaccion_id = first_tx and g.precio_pagado = 100 and g.moneda = 'OPOSITICKETS' and g.comprado_en is not null and g.valido_hasta = first_until), 'entitlement carries price, currency, transaction and purchase time';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1')) = 'GRANTED', 'the verdict sees the grant';
+  assert (select sum(cantidad) from public.ot_consumos where debit_tx_id = first_tx) = 100, 'the debit is traced to its credit';
+  -- same key, same body: the SAME result, one debit
+  select * into r2 from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1','k-buy-1', 100);
+  assert r2.outcome = 'REPLAY' and r2.transaccion_id = first_tx and r2.valido_hasta = first_until and r2.saldo = 400, 'replay returns the stored result';
+  assert (select count(*) from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and tipo = 'compra_examen') = 1, 'one debit';
+  -- re-purchase while active EXTENDS: old end + 30 days, balance -100
+  select * into r2 from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1','k-buy-2');
+  assert r2.outcome = 'CREATED' and r2.valido_hasta = first_until + interval '30 days' and r2.saldo = 300, 'extension = max(now, current end) + 30 days';
+  assert r2.valido_desde = r.valido_desde, 'an active entitlement keeps its start';
+  assert (select count(*) from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and examen_id = 'e5000000-0000-0000-0000-0000000000a1' and motivo = 'compra') = 1, 'still ONE purchased row';
+  assert r2.valido_hasta > first_until, 'never shortened';
+end $$;
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a8','k-buy-1')$q$, 'IDEMPOTENCY_KEY_REUSED');
+-- expired entitlement: a re-buy starts NOW (not at the old end)
+do $$
+declare r record;
+begin
+  update public.contenido_desbloqueado_usuario set valido_hasta = now() - interval '1 day', valido_desde = now() - interval '31 days'
+   where usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and examen_id = 'e5000000-0000-0000-0000-0000000000a1';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1')) = 'LOCKED', 'expired entitlement is enforced by the server';
+  select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1','k-buy-3');
+  assert r.valido_desde >= now() - interval '1 minute' and r.valido_hasta between now() + interval '29 days 23 hours' and now() + interval '30 days 1 hour' and r.saldo = 200, 'a re-buy after expiry restarts from now';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1')) = 'GRANTED', 'and it opens again';
+end $$;
+-- exact balance == price, then nothing left
+do $$
+declare r record;
+begin
+  perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f3', 1, 'seed', 'seed-3', 'ajuste');
+  select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f3','e5000000-0000-0000-0000-0000000000a8','k-one');
+  assert r.saldo = 0 and r.precio_pagado = 1, 'balance == price buys and leaves exactly 0';
+  assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'reconcile clean';
+end $$;
+-- the specialty switch does NOT block a purchase (no C3) and the policy as it is TODAY still reports LOCKED for it
+do $$
+declare r record;
+begin
+  select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a6','k-cap');
+  assert r.outcome = 'CREATED', 'purchase is not refused because of the specialty switch (owner decision, C3 withdrawn)';
+  assert (select reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a6')) = 'CAPABILITY_DISABLED', 'rule 0 is unchanged until the owner decides';
+end $$;
+-- subscription and unlimited grants make a purchase pointless
+insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, fin_en) values ('a0000000-0000-0000-0000-0000000000f2', true, 'activa', now() + interval '10 days');
+select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f2', 300, 'seed', 'seed-2', 'ajuste');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a1','k-sub')$q$, 'ALREADY_ACCESSIBLE');
+insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000f3', 'e5000000-0000-0000-0000-0000000000a1', 'admin', now() - interval '1 day', null);
+select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f3', 200, 'seed', 'seed-4', 'ajuste');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f3','e5000000-0000-0000-0000-0000000000a1','k-unl')$q$, 'ALREADY_ACCESSIBLE');
+-- a purchased row cannot be written incomplete
+select pg_temp.expect_e($q$insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a8','compra', now(), now() + interval '1 day')$q$, 'ENTITLEMENT_PURCHASE_INCOMPLETE');
+-- verdict matrix spot checks: DEMO and NOT_ENTITLED
+do $$ begin
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a7')) = 'SUBSCRIPTION', 'premium user gets SUBSCRIPTION';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a7')) = 'DEMO', 'demo exam without entitlement is DEMO';
+  assert (select reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f3','e5000000-0000-0000-0000-0000000000a2')) = 'NOT_ENTITLED', 'no entitlement is LOCKED';
+end $$;
+-- atomicity: a failure AFTER the debit leaves no trace (balance, ledger and entitlement all roll back)
+create function pg_temp.boom() returns trigger language plpgsql as $$ begin raise exception 'BOOM'; end $$;
+do $$
+declare before_bal int; ok boolean := false;
+begin
+  select saldo_tickets into before_bal from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1';
+  create trigger trg_boom before insert on public.contenido_desbloqueado_usuario for each row when (new.motivo = 'compra') execute function pg_temp.boom();
+  begin
+    perform * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a8','k-atomic');
+  exception when others then ok := sqlerrm = 'BOOM';
+  end;
+  drop trigger trg_boom on public.contenido_desbloqueado_usuario;
+  assert ok, 'the injected failure surfaced';
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1') = before_bal, 'balance rolled back';
+  assert not exists (select 1 from public.transacciones_cartera where idempotency_key = 'k-atomic'), 'ledger row rolled back';
+  assert not exists (select 1 from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and examen_id = 'e5000000-0000-0000-0000-0000000000a8'), 'entitlement rolled back';
+  assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'reconcile still clean';
+  assert abs(extract(epoch from (public.app_server_now() - clock_timestamp()))) < 5, 'app_server_now is the database clock';
+  assert has_function_privilege('service_role', 'public.app_server_now()', 'execute')
+    and not has_function_privilege('anon', 'public.app_server_now()', 'execute') and not has_function_privilege('authenticated', 'public.app_server_now()', 'execute'), 'app_server_now is service_role only';
+  raise notice 'OK V1 redeem';
+end $$;
+rollback;

@@ -25,7 +25,7 @@ internal class WalletRuntime(
             val transport = SupabaseRequestTransport.fromEnvironment(environment) ?: return null
             return WalletRuntime(
                 resolver,
-                WalletService(WalletGateway(upstream = { path -> transport.get(path) })),
+                WalletService(WalletGateway(upstream = { path -> transport.get(path) }), ServerClock.fromTransport(transport)),
                 limiter.subjectLimit(OposiBotsAuthOperation.WALLET_READ),
             )
         }
@@ -47,6 +47,7 @@ internal fun Route.walletRoutes(runtime: WalletRuntime?) {
         get {
             val rt = runtime.orMisconfigured()
             val identity = rt.resolver.activeIdentity(call, rt.limit)
+            requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
             val summary = rt.wallet.summary(identity.userId)
             call.response.header(HttpHeaders.CacheControl, "private, no-store")
             call.respond(summary)

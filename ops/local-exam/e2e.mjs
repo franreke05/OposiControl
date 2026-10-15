@@ -15,11 +15,13 @@ requireStackLock('e2e.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const local = path.join(here, '.local');
 const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+// V1: segundo Ktor con el perfil `control` (node ops/local-exam/run-ktor.mjs --admin) para la superficie de administracion.
+const ADMIN_KTOR = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
 // E5-B03: el e2e usa SUS PROPIOS usuarios para todo lo que escribe (intentos, cubos de limite): XA/XB (sql/94). A, B y P son
 // de los recorridos de la app: solo se LEEN (cartera, derechos, premium) y nunca se tocan sus intentos.
 const rawTokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
 if (!rawTokens.XA || !rawTokens.XB) { console.error('tokens.json sin XA/XB: ejecuta up.mjs'); process.exit(2); }
-const tokens = { A: rawTokens.XA, B: rawTokens.XB, RA: rawTokens.A, RB: rawTokens.B, P: rawTokens.P };
+const tokens = { A: rawTokens.XA, B: rawTokens.XB, RA: rawTokens.A, RB: rawTokens.B, P: rawTokens.P, Q1: rawTokens.Q1, Q2: rawTokens.Q2, Q2Z: rawTokens.Q2Z, Q3: rawTokens.Q3, Q4: rawTokens.Q4, ADMIN: rawTokens.ADMIN };
 const XA = '1a000000-0000-4000-8000-00000000001a', XB = '1b000000-0000-4000-8000-00000000001b';
 const secrets = JSON.parse(fs.readFileSync(path.join(local, 'secrets.json'), 'utf8'));
 const ktorEnv = Object.fromEntries(fs.readFileSync(path.join(local, 'ktor.env'), 'utf8').split(/\r?\n/).filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
@@ -310,8 +312,8 @@ await scenario('WALLET', async () => {
   check('WALLET.D6_01_A_balance_and_recent', wa.status === 200 && wa.json.saldo === 35 && wa.json.recientes?.length === 5
     && wa.json.recientes[0].saldoResultante === 35, `${wa.status} saldo=${wa.json?.saldo} recientes=${wa.json?.recientes?.length}`);
   const tipos = new Set((ma.json?.items ?? []).map((m) => m.tipo));
-  check('WALLET.D6_02_A_movements_several_categories', ma.status === 200 && ma.json.items.length === 5 && tipos.size === 5
-    && ma.json.items.every((m, i, all) => i === 0 || m.saldoResultante === all[i - 1].saldoAnterior), `${ma.status} tipos=${[...tipos].join(',')}`);
+  check('WALLET.D6_02_A_movements_several_categories', ma.status === 200 && ma.json.items.length === 6 && tipos.size === 6 && ma.json.items[0].tipo === 'ajuste' && ma.json.items[0].saldoResultante === 35
+    && ma.json.items.slice(1).every((m, i, all) => i === 0 || m.saldoResultante === all[i - 1].saldoAnterior), `${ma.status} tipos=${[...tipos].join(',')}`);
   check('WALLET.D6_01_A_consumable_active', (wa.json?.consumibles ?? []).some((c) => c.servicioCodigo === 'potenciador'), JSON.stringify(wa.json?.consumibles ?? null).slice(0, 120));
   check('WALLET.D6_01_B_empty', wb.status === 200 && wb.json.saldo === 0 && wb.json.recientes.length === 0 && wb.json.consumibles.length === 0, `${wb.status}`);
   check('WALLET.D6_02_B_empty', mb.status === 200 && mb.json.items.length === 0, `${mb.status}`);
@@ -320,8 +322,11 @@ await scenario('WALLET', async () => {
   const [pa, pb] = await Promise.all(['RA', 'RB'].map((u) => call(u, 'GET', '/api/v1/app/me/billing-history?kind=purchase')));
   check('WALLET.D7_05_purchases_own_only', pa.status === 200 && pa.json.items?.length === 1 && pa.json.items[0].id === '7d100000-0000-4000-8000-000000000001'
     && pa.json.items[0].estado === 'pagada' && pb.status === 200 && pb.json.items.length === 0, `A=${pa.status}/${pa.json?.items?.length} B=${pb.status}/${pb.json?.items?.length}`);
-  const fk = sql("select count(*) from pg_constraint where conname in ('transacciones_cartera_compra_id_fkey', 'compras_usuario_usuario_id_fkey', 'transacciones_cartera_idempotency_key_key')");
-  check('WALLET.ledger_schema_matches_main_capture', fk === '3', `constraints=${fk}`);
+  const fk = sql("select count(*) from pg_constraint where conname in ('transacciones_cartera_compra_id_fkey', 'compras_usuario_usuario_id_fkey', 'transacciones_cartera_usuario_idempotency_key', 'transacciones_cartera_usuario_seq_key')");
+  check('WALLET.ledger_schema_matches_main_capture', fk === '4', `constraints=${fk}`);
+  // V1: reconciliation is clean on the live local stack (ledger == snapshot, seq 1..n per wallet, chain closed)
+  const rec = sql('select count(*) from public.app_wallet_reconcile(null)');
+  check('WALLET.reconcile_is_clean', rec === '0', `rows=${rec}`);
   // Decision 4: B tiene una fila REAL de cartera con saldo 0 (el 0 lo confirma el servidor, no la ausencia de fila).
   const bRow = sql("select count(*) || ':' || coalesce(max(saldo_tickets), -1) from public.carteras_usuario where usuario_id = '0b000000-0000-4000-8000-00000000000b'");
   check('WALLET.B_real_zero_row_server_confirmed', bRow === '1:0' && wb.json?.saldo === 0, `row=${bRow} saldo=${wb.json?.saldo}`);
@@ -362,6 +367,9 @@ await scenario('REGISTER_J6', async () => {
   check('REGISTER_J6.register_202', reg.status === 202 || reg.status === 200, `${reg.status}`);
   const dup = await post('/v1/auth/register', { email: MAIL, password: PASS });
   check('REGISTER_J6.duplicate_is_indistinguishable', dup.status === reg.status, `${dup.status}`);
+  // E2-V1-S02: a control character in the e-mail is a 400 (never a 202 with a mail, never a 503)
+  const ctl = await Promise.all(['a\u0007b@exam.local', '\u0000@exam.local'].map((email) => post('/v1/auth/register', { email, password: PASS })));
+  check('REGISTER_J6.control_characters_in_email_are_a_400', ctl.every((r) => r.status === 400), ctl.map((r) => r.status).join(','));
   const early = await post('/v1/auth/login', { email: MAIL, password: PASS });
   check('REGISTER_J6.login_before_verification_refused', early.status >= 400 && !early.json?.accessToken, `${early.status}`);
   const mail = await fetch(stub + '/__local/mailbox?email=' + encodeURIComponent(MAIL)).then((r) => r.json());
@@ -372,6 +380,11 @@ await scenario('REGISTER_J6', async () => {
   check('REGISTER_J6.verify_email_gives_a_session', ex.status === 200 && !!token && ex.json.user?.email === MAIL, `${ex.status}`);
   const replay = await post('/v1/auth/email/exchange', { code: mail.code });
   check('REGISTER_J6.code_is_single_use', replay.status >= 400, `${replay.status}`);
+  // The new user has a REAL wallet row (balance 0, no movement) created with the profile, and D6-01 answers a real 0.
+  const walletRow = sql(`select count(*) || ':' || coalesce(max(c.saldo_tickets), -1) from public.carteras_usuario c join auth.users u on u.id = c.usuario_id where lower(u.email) = '${MAIL}'`);
+  const walletNew = await fetch(KTOR + '/api/v1/app/wallet', { headers: { Authorization: `Bearer ${token}` } });
+  const walletNewBody = await walletNew.json().catch(() => null);
+  check('REGISTER_J6.new_user_has_a_real_wallet_row_with_balance_0', walletRow === '1:0' && walletNew.status === 200 && walletNewBody?.saldo === 0 && walletNewBody?.recientes?.length === 0, `row=${walletRow} d6_01=${walletNew.status}/${walletNewBody?.saldo}`);
   const prof = await fetch(KTOR + '/api/v1/app/me', { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
   check('REGISTER_J6.profile_row_created_like_production', !!prof?.profile && prof.profile.especialidadPrincipalId == null, JSON.stringify(prof?.profile ?? null).slice(0, 120));
   const save = await post('/v1/auth/register/profile', { firstName: 'Jay', lastName: 'Seis', username: 'j6_local', especialidadId: ING }, token);
@@ -419,7 +432,7 @@ await scenario('SPECIALTY', async () => {
   const fresh = await fetch(KTOR + '/api/v1/app/me', { headers: { Authorization: `Bearer ${rawTokens.XA}` } }).then((r) => r.json());
   check('SPECIALTY.persists_across_sessions', fresh.profile?.especialidadPrincipalId === ING, `${fresh.profile?.especialidadPrincipalId}`);
   const mk = await call('A', 'GET', `/api/v1/app/examenes?especialidadId=${ING}`);
-  check('SPECIALTY.market_filter_by_id_is_server_side', mk.status === 200 && mk.json.items.length >= 1 && mk.json.items.every((i) => i.id === 'e1000000-0000-4000-8000-0000000000e2'), `${mk.json?.items?.length}`);
+  check('SPECIALTY.market_filter_by_id_is_server_side', mk.status === 200 && mk.json.items.length >= 1 && mk.json.items.every((i) => ['e1000000-0000-4000-8000-0000000000e2', 'e3000000-0000-4000-8000-000000000005'].includes(i.id)), `${mk.json?.items?.length}`);
   const none = await call('A', 'GET', `/api/v1/app/examenes?especialidadId=${OBS}`);
   check('SPECIALTY.specialty_is_not_authorization', none.status === 200 && none.json.items.length === 0 && (await call('A', 'GET', `/api/v1/app/examenes/${EX.NORMAL}`)).status === 200, `${none.status}`);
   await patch('A', { especialidadId: LOC }); // deja a XA como estaba
@@ -484,6 +497,223 @@ await scenario('SCHEDULED', async () => {
 });
 
 // ---------- E2-P02 / FA19: limites de lectura por usuario. LO ULTIMO: agota los cubos de B ----------
+// ---------- V1 ECONOMIA (STEP 3/4): canje, paquetes, pedidos de pago, aviso firmado, reembolso, reconciliacion ----------
+await scenario('ECONOMY', async () => {
+  const OT = { IMM30: 'e3000000-0000-4000-8000-000000000030', ONE: 'e3000000-0000-4000-8000-000000000001', EXPIRED: 'e3000000-0000-4000-8000-000000000010',
+    EXPIRING: 'e3000000-0000-4000-8000-000000000011', ING: 'e3000000-0000-4000-8000-000000000005' };
+  const Q = { Q1: '2a000000-0000-4000-8000-00000000002a', Q2: '2b000000-0000-4000-8000-00000000002b', Q2Z: '2c000000-0000-4000-8000-00000000002c',
+    Q3: '2d000000-0000-4000-8000-00000000002d', Q4: '2e000000-0000-4000-8000-00000000002e' };
+  const redeem = (user, examId, body = {}, k = key()) => call(user, 'POST', '/api/v1/app/wallet/canjes', { examId, ...body }, k);
+  const bal = (user) => sql("select saldo_tickets from public.carteras_usuario where usuario_id = '" + Q[user] + "'");
+  const ledgerCount = (user, ref) => Number(sql("select count(*) from public.transacciones_cartera where usuario_id = '" + Q[user] + "' and tipo = 'compra_examen' and referencia_id = '" + ref + "' and creado_en >= '" + t0 + "'"));
+  const day = 86400000;
+
+  // Repetible: devuelve el escenario al estado de los fixtures (sql/98) antes de empezar. Los saldos se corrigen con apuntes de AJUSTE en el libro
+  // (ledger-first: nunca se escribe el saldo), y los derechos de compra de estos examenes se borran y se vuelven a crear los de Q3.
+  const target = { Q1: 200, Q2: 29, Q2Z: 0, Q3: 30, Q4: 25 };
+  sql("delete from public.contenido_desbloqueado_usuario where motivo = 'compra' and usuario_id in ('" + Object.values(Q).join("','") + "') and examen_id::text like 'e3000000-%'");
+  for (const [u, want] of Object.entries(target)) {
+    const delta = want - Number(bal(u));
+    if (delta !== 0) sql("insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, idempotency_key, metadatos) values ('" + Q[u] + "', 'ajuste', " + delta + ", 'Reinicio de fixture e2e', 'e2e:reset:" + crypto.randomUUID() + "', '{\"op\":\"e2e_reset\"}')");
+  }
+  sql(fs.readFileSync(path.join(here, 'sql/98_v1_economy_fixtures.sql'), 'utf8'));
+  const t0 = sql('select clock_timestamp()');
+
+  // --- Q1: canje correcto, repeticion, misma clave con otro cuerpo ---
+  const k1 = key();
+  const r1 = await redeem('Q1', OT.IMM30, {}, k1);
+  const c1 = r1.json?.canje;
+  const spanDays = c1 ? (Date.parse(c1.validUntil) - Date.parse(c1.validFrom)) / day : 0;
+  check('ECONOMY.D6_03_redeem_201', r1.status === 201 && c1?.pricePaid === 30 && c1?.saldo === 170 && c1?.currency === 'OPOSITICKETS' && Math.abs(spanDays - 30) < 0.01 && !r1.headers.get('idempotent-replayed'),
+    r1.status + ' ' + r1.text.slice(0, 160));
+  const r1b = await redeem('Q1', OT.IMM30, {}, k1);
+  check('ECONOMY.D6_03_replay_same_key_same_body', r1b.status === 201 && r1b.headers.get('idempotent-replayed') === 'true' && r1b.json?.canje?.transactionId === c1?.transactionId && bal('Q1') === '170'
+    && ledgerCount('Q1', OT.IMM30) === 1, r1b.status + ' bal=' + bal('Q1'));
+  const r1c = await redeem('Q1', OT.IMM30, { expectedPrice: 30 }, k1);
+  check('ECONOMY.D6_03_same_key_different_body_422', r1c.status === 422 && r1c.json?.code === 'IDEMPOTENCY_KEY_REUSED' && bal('Q1') === '170', r1c.status + ' ' + r1c.json?.code);
+  const d02 = await call('Q1', 'GET', '/api/v1/app/examenes/' + OT.IMM30);
+  check('ECONOMY.D2_02_after_redeem_accessible', d02.status === 200 && d02.json?.examen?.accessState === 'GRANTED' && Math.abs((Date.parse(d02.json.examen.accesoValidoHasta) - Date.now()) / 86400000 - 30) < 0.01, d02.status + ' ' + JSON.stringify(d02.json?.examen ?? null).slice(0, 200));
+  const d02Before = await call('Q2', 'GET', '/api/v1/app/examenes/' + OT.IMM30);
+  check('ECONOMY.D2_02_price_comes_from_db_and_community_name', d02Before.status === 200 && d02Before.json?.examen?.precio?.tickets === 30 && d02Before.json?.examen?.precio?.diasAcceso === 30
+    && d02Before.json?.examen?.comunidadNombre === 'Andaluc\u00eda' && d02Before.json?.examen?.accessState === 'LOCKED',
+    d02Before.status + ' ' + JSON.stringify(d02Before.json?.examen ?? null).slice(0, 200));
+
+  // --- 5 peticiones simultaneas con la MISMA clave: un solo debito ---
+  const kp = key();
+  const par = await Promise.all(Array.from({ length: 5 }, () => redeem('Q1', OT.ING, {}, kp)));
+  const okPar = par.filter((r) => r.status === 201 || r.status === 200);
+  check('ECONOMY.D6_03_parallel_same_key_one_debit', ledgerCount('Q1', OT.ING) === 1 && bal('Q1') === '165' && new Set(okPar.map((r) => r.json?.canje?.transactionId)).size === 1,
+    'ok=' + okPar.length + ' codes=' + par.map((r) => r.status + (r.json?.code ? ':' + r.json.code : '')).join(',') + ' bal=' + bal('Q1'));
+
+  // --- guardas: precio esperado, saldo, gratis, sin precio, inexistente, premium ---
+  const pc = await redeem('Q1', OT.ONE, { expectedPrice: 5 });
+  check('ECONOMY.D6_03_price_changed_409', pc.status === 409 && pc.json?.code === 'PRICE_CHANGED' && pc.json?.details?.price === 1 && ledgerCount('Q1', OT.ONE) === 0, pc.status + ' ' + pc.text.slice(0, 120));
+  const short = await redeem('Q2', OT.IMM30);
+  check('ECONOMY.D6_03_one_OT_short_409', short.status === 409 && short.json?.code === 'INSUFFICIENT_BALANCE' && short.json?.details?.balance === 29 && short.json?.details?.price === 30 && bal('Q2') === '29', short.status + ' ' + short.text.slice(0, 140));
+  const zero = await redeem('Q2Z', OT.ONE);
+  check('ECONOMY.D6_03_zero_balance_409', zero.status === 409 && zero.json?.code === 'INSUFFICIENT_BALANCE' && zero.json?.details?.balance === 0 && bal('Q2Z') === '0', zero.status + ' ' + zero.text.slice(0, 140));
+  const free = await redeem('Q4', EX.NORMAL);
+  check('ECONOMY.D6_03_free_exam_is_not_purchasable_422', free.status === 422 && free.json?.code === 'NOT_PURCHASABLE', free.status + ' ' + free.json?.code);
+  const unset = await redeem('Q4', EX.PREMIUM);
+  check('ECONOMY.D6_03_no_ot_price_422', unset.status === 422 && unset.json?.code === 'NOT_PURCHASABLE', unset.status + ' ' + unset.json?.code);
+  const none = await redeem('Q4', 'e3999999-0000-4000-8000-000000000999');
+  check('ECONOMY.D6_03_unknown_exam_404', none.status === 404 && none.json?.code === 'EXAM_NOT_FOUND', none.status + ' ' + none.json?.code);
+  const forged = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE, usuarioId: Q.Q2, saldo: 9999, precioPagado: 0 }, key());
+  check('ECONOMY.D6_03_forged_fields_400', forged.status === 400 && forged.json?.code === 'VALIDATION' && ledgerCount('Q4', OT.ONE) === 0 && bal('Q2') === '29', forged.status + ' ' + forged.json?.code);
+  const noKey = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE });
+  check('ECONOMY.D6_03_key_required_400', noKey.status === 400 && noKey.json?.code === 'IDEMPOTENCY_KEY_REQUIRED', noKey.status + ' ' + noKey.json?.code);
+  const prem = await redeem('P', OT.ONE);
+  check('ECONOMY.D6_03_premium_subscriber_409', prem.status === 409 && prem.json?.code === 'ALREADY_ACCESSIBLE' && prem.json?.details?.accessState === 'SUBSCRIPTION', prem.status + ' ' + prem.text.slice(0, 140));
+
+  // --- Q3: derecho caducado (nueva ventana desde ahora) y derecho que caduca en 1 h (se EXTIENDE desde su fin) ---
+  const ex = await redeem('Q3', OT.EXPIRED);
+  const exFrom = ex.json?.canje ? Date.parse(ex.json.canje.validFrom) : 0;
+  check('ECONOMY.D6_03_expired_entitlement_new_window', ex.status === 201 && Math.abs(exFrom - Date.now()) < 120000 && Math.abs((Date.parse(ex.json.canje.validUntil) - Date.now()) / day - 30) < 0.01,
+    ex.status + ' ' + ex.text.slice(0, 200));
+  const ep = await redeem('Q3', OT.EXPIRING);
+  const epUntil = ep.json?.canje ? Date.parse(ep.json.canje.validUntil) : 0;
+  check('ECONOMY.D6_03_active_entitlement_extends_from_its_end', ep.status === 201 && Math.abs((epUntil - Date.now()) / day - (30 + 1 / 24)) < 0.01, ep.status + ' days=' + ((epUntil - Date.now()) / day));
+  check('ECONOMY.D6_03_one_entitlement_row_per_user_exam', sql("select count(*) from public.contenido_desbloqueado_usuario where usuario_id = '" + Q.Q3 + "' and examen_id = '" + OT.EXPIRING + "' and motivo = 'compra'") === '1');
+
+  // --- D6-11 paquetes ---
+  const packs = await call('Q4', 'GET', '/api/v1/app/wallet/paquetes');
+  const codes = (packs.json?.items ?? []).map((p) => p.code);
+  check('ECONOMY.D6_11_packs', packs.status === 200 && codes.join(',') === 'LOCAL_PACK_10,LOCAL_PACK_50' && packs.json.items[1].tickets === 50 && packs.json.items[1].priceCents === 449 && packs.json.items[1].currency === 'EUR',
+    packs.status + ' ' + codes.join(','));
+
+  // --- pagos: pedido, aviso firmado, repeticion, importes, caducidad, reembolso ---
+  const secret = ktorEnv.PAYMENTS_SANDBOX_SECRET;
+  const sign = (raw, ts) => crypto.createHmac('sha256', secret).update(ts + '.' + raw).digest('hex');
+  const hook = async (event, over = {}) => {
+    const raw = JSON.stringify(event);
+    const ts = over.ts ?? Math.floor(Date.now() / 1000);
+    return fetch(KTOR + '/api/v1/webhooks/payments/' + (over.provider ?? 'sandbox'), { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Sandbox-Timestamp': String(ts), 'X-Sandbox-Signature': over.sig ?? sign(raw, ts) }, body: over.body ?? raw })
+      .then(async (r) => { const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch { /* vacio */ } return { status: r.status, json, text }; });
+  };
+  const newOrder = (k = key(), productCode = 'LOCAL_PACK_50') => call('Q4', 'POST', '/api/v1/app/payments/orders', { productCode, provider: 'sandbox' }, k);
+  const evt = (order, over = {}) => ({ eventId: 'evt-' + crypto.randomUUID(), type: 'payment.succeeded', orderId: order.id, transactionId: 'tx-' + crypto.randomUUID(), amountCents: order.amountCents, currency: order.currency, productCode: order.productCode, ...over });
+  const events = () => Number(sql('select count(*) from public.eventos_pago'));
+  const credits = () => Number(sql("select count(*) from public.transacciones_cartera where usuario_id = '" + Q.Q4 + "' and tipo = 'pack_tickets' and creado_en >= '" + t0 + "'"));
+
+  const ko = key();
+  const o1 = await newOrder(ko);
+  const ord = o1.json?.order;
+  check('ECONOMY.D6_12_order_created', o1.status === 201 && ord?.status === 'PENDING' && ord?.tickets === 50 && ord?.amountCents === 449 && o1.headers.get('location') === '/api/v1/app/payments/orders/' + ord?.id && bal('Q4') === '25',
+    o1.status + ' ' + o1.text.slice(0, 200));
+  const o1b = await newOrder(ko);
+  check('ECONOMY.D6_12_order_replay_same_key', (o1b.status === 201 || o1b.status === 200) && o1b.headers.get('idempotent-replayed') === 'true' && o1b.json?.order?.id === ord?.id, o1b.status + ' ' + o1b.json?.order?.id);
+  const forgedOrder = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'sandbox', amountCents: 1, tickets: 9999 }, key());
+  check('ECONOMY.D6_12_client_amounts_rejected', forgedOrder.status === 400 && forgedOrder.json?.code === 'VALIDATION', forgedOrder.status + ' ' + forgedOrder.json?.code);
+  const tampered = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_UNKNOWN', provider: 'sandbox' }, key());
+  check('ECONOMY.D6_12_unknown_pack_422', tampered.status === 422 && tampered.json?.code === 'PRODUCT_NOT_AVAILABLE', tampered.status + ' ' + tampered.json?.code);
+  const badProv = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'stripe' }, key());
+  check('ECONOMY.D6_12_unknown_provider_422', badProv.status === 422 && badProv.json?.code === 'PAYMENT_PROVIDER_UNAVAILABLE', badProv.status + ' ' + badProv.json?.code);
+  const foreignRead = await call('Q1', 'GET', '/api/v1/app/payments/orders/' + ord.id);
+  check('ECONOMY.D6_13_other_user_order_404', foreignRead.status === 404 && foreignRead.json?.code === 'ORDER_NOT_FOUND', foreignRead.status + ' ' + foreignRead.json?.code);
+
+  // aviso con firma mala / vieja / cuerpo alterado: 401 y CERO escrituras
+  const e0 = events();
+  const raw0 = JSON.stringify(evt(ord));
+  const badSig = await hook(JSON.parse(raw0), { sig: '0'.repeat(64) });
+  const stale = await hook(JSON.parse(raw0), { ts: Math.floor(Date.now() / 1000) - 400 });
+  const alteredRaw = raw0.replace('"amountCents":449', '"amountCents":1');
+  const altered = await hook(JSON.parse(raw0), { body: alteredRaw });
+  check('ECONOMY.W01_bad_signature_stale_altered_401_zero_writes', [badSig, stale, altered].every((r) => r.status === 401 && r.json?.code === 'WEBHOOK_SIGNATURE_INVALID') && events() === e0 && bal('Q4') === '25' && credits() === 0,
+    [badSig.status, stale.status, altered.status].join(','));
+  const noProv = await hook(JSON.parse(raw0), { provider: 'stripe' });
+  check('ECONOMY.W01_unknown_provider_404', noProv.status === 404, String(noProv.status));
+  const big = await fetch(KTOR + '/api/v1/webhooks/payments/sandbox', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Sandbox-Timestamp': '1', 'X-Sandbox-Signature': '0' }, body: 'x'.repeat(70000) });
+  check('ECONOMY.W01_oversized_413', big.status === 413, String(big.status));
+
+  // importe distinto: no acredita, pedido a revision
+  const wrong = await hook(evt(ord, { amountCents: 1 }));
+  check('ECONOMY.W01_wrong_amount_no_credit_in_review', wrong.status === 200 && wrong.json?.result === 'EN_REVISION' && bal('Q4') === '25' && credits() === 0, wrong.status + ' ' + wrong.text);
+  const o2 = (await newOrder()).json.order;
+  const good = evt(o2);
+  const w1 = await hook(good);
+  check('ECONOMY.W01_paid_event_credits_once', w1.status === 200 && w1.json?.result === 'CREDITED' && bal('Q4') === '75' && credits() === 1, w1.status + ' ' + w1.text + ' bal=' + bal('Q4'));
+  const w2 = await hook(good);
+  const w3 = await hook(evt(o2));
+  check('ECONOMY.W01_duplicate_callback_and_second_event_do_not_credit_again', w2.json?.result === 'REPLAY' && w3.json?.result === 'REPLAY' && bal('Q4') === '75' && credits() === 1, w2.text + ' ' + w3.text);
+  const read2 = await call('Q4', 'GET', '/api/v1/app/payments/orders/' + o2.id);
+  check('ECONOMY.D6_13_paid_status_and_balance', read2.status === 200 && read2.json?.order?.status === 'PAID' && read2.json?.order?.balance === 75, read2.status + ' ' + read2.text.slice(0, 160));
+
+  // verify con justificante opaco ATADO a usuario y pedido
+  const o3 = (await newOrder()).json.order;
+  const receipt = (userId, order, eventId) => {
+    const payload = Buffer.from(JSON.stringify({ eventId, orderId: order.id, transactionId: 'tx-' + eventId, amountCents: order.amountCents, currency: order.currency, productCode: order.productCode })).toString('base64url');
+    return payload + '.' + crypto.createHmac('sha256', secret).update(userId + '|' + payload).digest('hex');
+  };
+  const foreignReceipt = await call('Q4', 'POST', '/api/v1/app/payments/orders/' + o3.id + '/verify', { receipt: receipt(Q.Q1, o3, 'rcpt-' + crypto.randomUUID()) });
+  check('ECONOMY.D6_14_receipt_of_another_user_422', foreignReceipt.status === 422 && foreignReceipt.json?.code === 'PAYMENT_RECEIPT_INVALID' && bal('Q4') === '75', foreignReceipt.status + ' ' + foreignReceipt.json?.code);
+  const rid = 'rcpt-' + crypto.randomUUID();
+  const v1 = await call('Q4', 'POST', '/api/v1/app/payments/orders/' + o3.id + '/verify', { receipt: receipt(Q.Q4, o3, rid) });
+  const v2 = await call('Q4', 'POST', '/api/v1/app/payments/orders/' + o3.id + '/verify', { receipt: receipt(Q.Q4, o3, rid) });
+  check('ECONOMY.D6_14_verify_credits_once_and_retry_is_safe', v1.status === 200 && v1.json?.order?.status === 'PAID' && v2.status === 200 && v2.json?.order?.status === 'PAID' && bal('Q4') === '125' && credits() === 2,
+    v1.status + ' ' + v2.status + ' bal=' + bal('Q4'));
+
+  // pedido caducado (30 min, reloj de la base): una confirmacion autentica TARDIA acredita; cancelado/fallido/reembolsado: a revision
+  const o4 = (await newOrder()).json.order;
+  // expira_en esta congelado por la maquina de estados: para SIMULAR que pasaron 30 minutos el arnes (superusuario, solo local) apaga el trigger un instante.
+  sql("begin; alter table public.compras_usuario disable trigger trg_compras_usuario_order_machine; update public.compras_usuario set expira_en = now() - interval '1 minute' where id = '" + o4.id + "'; alter table public.compras_usuario enable trigger trg_compras_usuario_order_machine; commit;");
+  const expired = await call('Q4', 'GET', '/api/v1/app/payments/orders/' + o4.id);
+  check('ECONOMY.D6_13_pending_order_past_30min_reads_EXPIRED', expired.status === 200 && expired.json?.order?.status === 'EXPIRED' && bal('Q4') === '125', expired.status + ' ' + expired.json?.order?.status);
+  const late = await hook(evt(o4));
+  check('ECONOMY.W01_late_authentic_payment_for_expired_order_credits', late.status === 200 && late.json?.result === 'CREDITED_LATE' && bal('Q4') === '175', late.status + ' ' + late.text + ' bal=' + bal('Q4'));
+  const o5 = (await newOrder()).json.order;
+  sql("update public.compras_usuario set estado = 'cancelada' where id = '" + o5.id + "'");
+  const paidCancelled = await hook(evt(o5));
+  check('ECONOMY.W01_paid_event_for_cancelled_order_goes_to_review_without_credit', paidCancelled.json?.result === 'EN_REVISION' && bal('Q4') === '175', paidCancelled.text);
+
+  // reembolso: se revierte SOLO lo no gastado de ESE credito
+  const refund = await hook({ eventId: 'evt-' + crypto.randomUUID(), type: 'payment.refunded', orderId: o2.id, transactionId: 'tx-r', amountCents: o2.amountCents, currency: o2.currency, productCode: o2.productCode });
+  check('ECONOMY.W01_refund_reverses_unspent_credit', refund.status === 200 && ['REFUNDED', 'REFUNDED_CASE_OPEN'].includes(refund.json?.result) && Number(bal('Q4')) <= 175, refund.text + ' bal=' + bal('Q4'));
+  const refundAgain = await hook({ eventId: 'evt-' + crypto.randomUUID(), type: 'payment.refunded', orderId: o2.id, transactionId: 'tx-r', amountCents: o2.amountCents, currency: o2.currency, productCode: o2.productCode });
+  check('ECONOMY.W01_second_refund_does_nothing', refundAgain.json?.result === 'REPLAY', refundAgain.text);
+
+  // reconciliacion limpia (libro == snapshot, cadena cerrada, seq 1..n) tras TODO lo anterior
+  check('ECONOMY.reconcile_clean_after_economy', sql('select count(*) from public.app_wallet_reconcile(null)') === '0');
+
+  // el secreto del proveedor jamas llega a los registros
+  const log = fs.existsSync(path.join(local, 'ktor.log')) ? fs.readFileSync(path.join(local, 'ktor.log'), 'utf8') : '';
+  check('ECONOMY.sandbox_secret_never_in_ktor_log', secret.length >= 32 && !log.includes(secret), 'log bytes=' + log.length);
+});
+
+// ---------- V1 COMUNIDAD OBLIGATORIA por HTTP real contra la superficie de administracion (Ktor perfil control, JWT de un admin local) ----------
+await scenario('ADMIN_COMMUNITY', async () => {
+  const admin = async (method, p, body) => {
+    const r = await fetch(ADMIN_KTOR + p, { method, headers: { Authorization: 'Bearer ' + tokens.ADMIN, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch { /* vacio */ }
+    return { status: r.status, json, text };
+  };
+  const noAuth = await fetch(ADMIN_KTOR + '/api/v1/admin/examenes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  check('ADMIN.no_token_401', noAuth.status === 401, String(noAuth.status));
+  const appUser = await fetch(ADMIN_KTOR + '/api/v1/admin/examenes', { method: 'POST', headers: { Authorization: 'Bearer ' + tokens.Q1, 'Content-Type': 'application/json' }, body: '{}' });
+  check('ADMIN.non_admin_user_403', appUser.status === 403, String(appUser.status));
+  const before = Number(sql("select count(*) from public.examenes where codigo_examen like 'E2E-COM-%'"));
+  const base = { especialidadId: 'e5000000-0000-4000-8000-000000000001', titulo: 'E2E comunidad', tipoExamen: 'rafaga', tipoAcceso: 'gratuito' };
+  const missing = await admin('POST', '/api/v1/admin/examenes', { codigoExamen: 'E2E-COM-1', ...base });
+  check('ADMIN.exam_without_community_rejected_422', missing.status === 422 && /exam_community_required/i.test(missing.text), missing.status + ' ' + missing.text.slice(0, 160));
+  const empty = await admin('POST', '/api/v1/admin/examenes', { codigoExamen: 'E2E-COM-2', comunidadId: null, ...base });
+  check('ADMIN.exam_with_null_community_rejected_422', empty.status === 422 && /exam_community_required/i.test(empty.text), empty.status + ' ' + empty.text.slice(0, 160));
+  const unknown = await admin('POST', '/api/v1/admin/examenes', { codigoExamen: 'E2E-COM-3', comunidadId: 'c1999999-0000-4000-8000-000000000999', ...base });
+  check('ADMIN.exam_with_unknown_community_rejected_422', unknown.status === 422 && /unknown_community/i.test(unknown.text), unknown.status + ' ' + unknown.text.slice(0, 160));
+  check('ADMIN.nothing_written_by_the_rejections', Number(sql("select count(*) from public.examenes where codigo_examen like 'E2E-COM-%'")) === before);
+  const ok = await admin('POST', '/api/v1/admin/examenes', { codigoExamen: 'E2E-COM-OK-' + Date.now(), comunidadId: 'c1000000-0000-4000-8000-000000000001', ...base });
+  const created = ok.json?.id ?? ok.json?.examen?.id ?? ok.json?.data?.id;
+  check('ADMIN.exam_with_active_community_created_201', ok.status === 201 && !!created, ok.status + ' ' + ok.text.slice(0, 160));
+  if (created) {
+    const clear = await admin('PATCH', '/api/v1/admin/examenes/' + created, { comunidadId: null });
+    check('ADMIN.community_cannot_be_cleared_422', clear.status === 422 && /exam_community_required/i.test(clear.text)
+      && sql("select comunidad_id is not null from public.examenes where id = '" + created + "'") === 't', clear.status + ' ' + clear.text.slice(0, 160));
+    sql("delete from public.examenes where id = '" + created + "'");
+  }
+  // el trigger de la base es la ultima defensa (aunque alguien se salte Ktor): sin comunidad no se inserta ni se publica
+  const direct = (() => { try { sql("insert into public.examenes (codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso) values ('E2E-COM-DB', 'e5000000-0000-4000-8000-000000000001', 'x', 'rafaga', 'gratuito')"); return 'inserted'; } catch (e) { return 'rejected'; } })();
+  check('ADMIN.database_rejects_exam_without_community_too', direct === 'rejected');
+});
+
 await scenario('RATE', async () => {
   // Home V1 legitima: D2-13 EN_CURSO + D2-13 ADQUIRIDOS + D6-01 en paralelo, 5 cargas seguidas -> nunca 429.
   const homes = [];

@@ -902,6 +902,9 @@ data class ErrorDetails(
     val accessState: String? = null,
     val currentRevision: Long? = null,
     val allowedValues: List<String>? = null,
+    /** V1 economia: saldo y precio en OposiTickets (INSUFFICIENT_BALANCE, PRICE_CHANGED). Datos del propio usuario, nunca de otros. */
+    val balance: Int? = null,
+    val price: Int? = null,
 )
 
 /** Valores canonicos de `ErrorIssue.issue` genericos. Un contrato puede anadir los suyos (UPPER_SNAKE). */
@@ -995,6 +998,17 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     ASSET_PATH_UNKNOWN(HttpStatusCode.UnprocessableEntity, "La ruta del recurso no corresponde a un archivo subido."),
     SLUG_CONFLICT(HttpStatusCode.Conflict, "Ya existe un tipo de noticia con ese slug."),
     INVALID_FILTER(HttpStatusCode.BadRequest, "Algun filtro de la lista no es valido."),
+
+    // V1 economia (OposiTickets, canje de examen, pedidos de pago). Los 409 son estados que el cliente puede resolver recargando.
+    INSUFFICIENT_BALANCE(HttpStatusCode.Conflict, "No tienes OposiTickets suficientes."),
+    PRICE_CHANGED(HttpStatusCode.Conflict, "El precio del examen ha cambiado. Revisalo antes de canjear."),
+    ALREADY_ACCESSIBLE(HttpStatusCode.Conflict, "Ya tienes acceso a este examen."),
+    NOT_PURCHASABLE(HttpStatusCode.UnprocessableEntity, "Este examen no se puede canjear con OposiTickets."),
+    PRODUCT_NOT_AVAILABLE(HttpStatusCode.UnprocessableEntity, "El paquete no esta disponible."),
+    PAYMENT_PROVIDER_UNAVAILABLE(HttpStatusCode.UnprocessableEntity, "El metodo de pago no esta disponible."),
+    ORDER_NOT_FOUND(HttpStatusCode.NotFound, "El pedido no existe."),
+    PAYMENT_RECEIPT_INVALID(HttpStatusCode.UnprocessableEntity, "El justificante de pago no es valido para este pedido."),
+    WEBHOOK_SIGNATURE_INVALID(HttpStatusCode.Unauthorized, "La firma del aviso de pago no es valida."),
     ;
 
     fun exception(

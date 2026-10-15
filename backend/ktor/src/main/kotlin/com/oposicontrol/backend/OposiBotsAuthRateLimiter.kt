@@ -86,6 +86,18 @@ internal enum class OposiBotsAuthOperation(
     /** E2-P02 / FA19: lecturas de cartera (D6-01, D6-02). 60 por minuto: la Home y la pantalla de cartera piden 1-2 por carga. */
     WALLET_READ(120, 60, 60),
 
+    /** V1 economia: canje de un examen con OposiTickets (D6-03). Escritura economica: 10 por minuto y usuario. */
+    WALLET_WRITE(30, 10, 60),
+
+    /** V1 economia: lectura de un pedido de pago y de los paquetes (D6-11, D6-13). Se consulta por sondeo tras pagar: 60 por minuto. */
+    ORDER_READ(120, 60, 60),
+
+    /** V1 economia: crear / verificar un pedido de pago (D6-12, D6-14). 10 por minuto y usuario. */
+    ORDER_WRITE(30, 10, 60),
+
+    /** V1 economia: avisos entrantes del proveedor de pago. SOLO limite por IP (el aviso no lleva usuario). */
+    PAYMENT_WEBHOOK(300, 0, 60),
+
     /**
      * Solicitud PUBLICA de acceso de administrador (`POST /v1/auth/admin-access-requests`, AdminAccessRequests.kt). Crea una
      * cuenta de Auth, asi que es tan estricta como [REGISTER]: pocas por IP y hora, y un tope SILENCIOSO por email.
