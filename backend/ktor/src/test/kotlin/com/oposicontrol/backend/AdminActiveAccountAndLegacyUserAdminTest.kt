@@ -135,6 +135,7 @@ class AdminActiveAccountAndLegacyUserAdminTest {
                     fake,
                     OposiBotsUserAdminPolicy(
                         isAdministrative = { it == adminAuth },
+                        isSuperadmin = { true },
                         audit = { accion, authUserId, _: JsonObject ->
                             if (auditFails) error("audit down")
                             audits += accion to authUserId

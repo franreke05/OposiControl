@@ -391,6 +391,9 @@ suspend fun ApplicationCall.canonicalRawBody(maxBytes: Long = CANONICAL_COMMAND_
     return bytes
 }
 
+/** El cuerpo crudo si ya se leyo (una ruta con [CanonicalIdempotency] y clave), o `null` si el canal sigue sin leer. */
+internal fun ApplicationCall.cachedCanonicalRawBodyOrNull(): ByteArray? = attributes.getOrNull(CanonicalRawBodyKey)
+
 // ---------------------------------------------------------------------
 // Plugin de ruta
 // ---------------------------------------------------------------------

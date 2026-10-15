@@ -330,7 +330,11 @@ internal fun String.toForoSnippet(maxLength: Int = 240): String {
     return trimmed.take(maxLength).trimEnd() + "…"
 }
 
-fun Route.adminV1Routes(gateway: AdminV1Gateway) {
+/**
+ * [idempotency]: almacen del `Idempotency-Key` OPCIONAL de la respuesta de soporte y de la advertencia de moderacion (E2).
+ * `null` = una peticion CON clave falla cerrada (500); sin clave, como siempre.
+ */
+fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? = null) {
     route("/api/v1/admin") {
         // F-10: todas las llamadas al gateway, en `withUpstreamIo` (el porqué, en el
         // bloque de comentario de `/examenes`, justo debajo). F-06: los `{id}` que
@@ -1394,9 +1398,9 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                     // (sin uuid) no puede firmar respuestas de soporte: 403 antes de leer el cuerpo o tocar Supabase.
                     val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
                         ?: throw CanonicalErrorCode.FORBIDDEN.exception()
-                    val body = call.receive<AdminSupportReplyDto>()
+                    val body = call.receiveAdminBody<AdminSupportReplyDto>()
                     call.respond(HttpStatusCode.Created, withUpstreamIo { gateway.sendSupportMessage(id, body, actorId) })
-                }
+                }.adminOptionalIdempotency("/api/v1/admin/soporte/conversaciones/{id}/mensajes", idempotency)
             }
         }
         route("/accesos") {
@@ -1419,12 +1423,12 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             post("/actions") {
                 // RC-01: actor = `sub` del JWT (403 al token estatico ANTES de leer el cuerpo o tocar Supabase).
                 val actorId = call.moderationActorOrForbidden()
-                val req = call.receive<WarnUserRequest>()
+                val req = call.receiveAdminBody<WarnUserRequest>()
                 // MASTER7-API-007: allow-list (el valor entra en `auditoria_log.accion` y en el log) y motivo acotado.
                 val command = ModerationCommand.validated(req.targetUserId, req.actionType, req.reason)
                 withUpstreamIo { gateway.applyModerationAction(actorId, command) }
                 call.respond(HttpStatusCode.Created, OkDto())
-            }
+            }.adminOptionalIdempotency("/api/v1/admin/moderacion/actions", idempotency)
             // D5-20 (FA12): `modo` (o el `reportados=true` del cliente actual), `limit` estricto y cursor validado.
             get("/hilos") {
                 val params = call.request.queryParameters
@@ -3878,6 +3882,7 @@ private data class SoporteMensajeRow(
 
 @Serializable
 private data class SoporteMensajeInsertRow(
+    val id: String,
     @SerialName("conversacion_id") val conversacionId: String,
     @SerialName("remitente_id") val remitenteId: String,
     val cuerpo: String,
@@ -6114,6 +6119,17 @@ class AdminV1Gateway private constructor(
                 throw CanonicalErrorCode.SUPERADMIN_REQUIRED.exception()
             }
         }
+        // E2 (2026-10-15): un superadmin no se retira SU PROPIO rol superadmin (la RPC solo impide quedarse sin ninguno; con
+        // otro superadmin vivo la auto-degradacion pasaba). Lo hace otro superadmin. FORBIDDEN: codigo ya declarado en D1-26.
+        if (actorId != null && actorId.equals(usuarioId, ignoreCase = true)) {
+            val hadSuperadmin = CanonicalAuthorization.hasSuperAdmin(before.mapNotNull(codeById::get))
+            val keepsSuperadmin = CanonicalAuthorization.hasSuperAdmin(requested.mapNotNull(codeById::get))
+            if (hadSuperadmin && !keepsSuperadmin) {
+                throw CanonicalErrorCode.FORBIDDEN.exception(
+                    "No puedes retirarte tu propio rol de superadministrador; tiene que hacerlo otro superadministrador.",
+                )
+            }
+        }
         // MASTER2-AUTH-008: la comprobacion de arriba es un read-then-write (TOCTOU con una concesion concurrente).
         // La RPC de 3 argumentos (migracion 20260930101600) REPITE la regla SUPERADMIN bajo el cerrojo consultivo de
         // `admin_sync_roles`, con el actor. `p_actor_id` se envia SIEMPRE (null incluido): omitirlo resolveria a la
@@ -7042,8 +7058,9 @@ class AdminV1Gateway private constructor(
      * guardarla como respuesta de staff la haria visible al usuario final. La respuesta informa siempre `internal = false`.
      *
      * Auditoria: fila OBLIGATORIA `soporte_respuesta_enviada` (required = true) con carga acotada (solo ids, nunca el
-     * cuerpo). RESIDUAL conocido: la fila se escribe DESPUES del insert; si falla, la peticion responde 500 pero el
-     * mensaje ya insertado queda. Hacerlo atomico exige una RPC/transaccion (migracion), propuesto para el siguiente paso.
+     * cuerpo). E2 (2026-10-15): se escribe ANTES del insert, con el id que el mensaje va a tener (lo fija el backend): si no
+     * se puede auditar no hay mensaje (antes quedaba el mensaje sin rastro y el reintento lo duplicaba). RESIDUAL: si el
+     * insert falla despues, queda una fila de auditoria de un mensaje que no existe (intencion), nunca al reves.
      */
     fun sendSupportMessage(rawConversationId: String, input: AdminSupportReplyDto, actorId: String): AdminSupportMessageDto {
         if (input.internal) {
@@ -7061,12 +7078,24 @@ class AdminV1Gateway private constructor(
         // El nombre del autor sale SOLO de la fila cuyo id es el actor: nunca de otra fila que devuelva el upstream.
         val senderProfile = request("GET", "/rest/v1/perfiles_usuario?select=*&usuario_id=eq.$senderId&limit=1", null)
             .decodeList<PerfilUsuarioRow>().firstOrNull { it.usuarioId == senderId }
+        val messageId = UUID.randomUUID().toString()
+        registrarAuditoria(
+            "soporte_respuesta_enviada",
+            "mensajes_soporte",
+            messageId,
+            despues = buildJsonObject {
+                put("conversacion_id", JsonPrimitive(conversationId))
+                put("remitente_id", JsonPrimitive(senderId))
+            },
+            required = true,
+        )
         val saved = request(
             "POST",
             "/rest/v1/mensajes_soporte",
             sbJson.encodeToString(
                 listOf(
                     SoporteMensajeInsertRow(
+                        id = messageId,
                         conversacionId = conversationId,
                         remitenteId = senderId,
                         cuerpo = input.text,
@@ -7076,16 +7105,6 @@ class AdminV1Gateway private constructor(
             ),
             prefer = "return=representation",
         ).decodeList<SoporteMensajeRow>().first()
-        registrarAuditoria(
-            "soporte_respuesta_enviada",
-            "mensajes_soporte",
-            saved.id,
-            despues = buildJsonObject {
-                put("conversacion_id", JsonPrimitive(saved.conversacionId))
-                put("remitente_id", JsonPrimitive(senderId))
-            },
-            required = true,
-        )
         return AdminSupportMessageDto(
             id = saved.id,
             conversationId = saved.conversacionId,
@@ -7731,7 +7750,8 @@ class AdminV1Gateway private constructor(
         val saved = request(
             "POST",
             "/rest/v1/productos_comerciales",
-            sbJson.encodeToString(listOf(row)),
+            // DEBT-089: nulos EXPLICITOS de las columnas anulables (vaciar un opcional ya guardado se guarda de verdad).
+            marketUpsertBody(row, "descripcion", "plan_id", "precio_centimos", "cantidad_tickets", "etiqueta_promocional"),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<ProductoComercialRow>().firstOrNull()
             ?: error("El producto comercial no se pudo guardar.")
@@ -8215,7 +8235,8 @@ class AdminV1Gateway private constructor(
         val saved = request(
             "POST",
             "/rest/v1/planes_suscripcion",
-            sbJson.encodeToString(listOf(valid.copy(id = id).toRow())),
+            // DEBT-089: vaciar la descripcion de un plan ya guardado se guarda de verdad.
+            marketUpsertBody(valid.copy(id = id).toRow(), "descripcion"),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<PlanRow>().firstOrNull() ?: error("El plan no se pudo guardar.")
         registrarAuditoria("plan_suscripcion_guardado", "planes_suscripcion", id)

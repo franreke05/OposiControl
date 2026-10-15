@@ -302,7 +302,7 @@ class AdminAuditAtomicityLoop3Test {
             authenticate("gateway-auth") {
                 oposiBotsUserAdminRoutes(
                     fake,
-                    OposiBotsUserAdminPolicy(isAdministrative = { false }, audit = { accion, _, detalle -> audits += accion to detalle }),
+                    OposiBotsUserAdminPolicy(isAdministrative = { false }, isSuperadmin = { true }, audit = { accion, _, detalle -> audits += accion to detalle }),
                 )
             }
         }

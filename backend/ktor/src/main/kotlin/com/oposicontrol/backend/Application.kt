@@ -611,6 +611,8 @@ fun Application.module() {
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
             catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter) }
         },
+        // E2: `Idempotency-Key` opcional de respuesta de soporte y advertencia de moderacion (mismo almacen que noticias).
+        adminIdempotencyStore = if (serverProfile.mountsControl) PostgrestIdempotencyStore.fromEnvironment() else null,
     )
     configureServerProfile(serverProfile, json, routingDeps)
 }
@@ -678,6 +680,8 @@ internal class CombinedRoutingDeps(
     internal val appReadsRuntime: AppReadsRuntime? = null,
     /** Solicitudes de acceso de administrador (AdminAccessRequests.kt). `null` = sin configuracion: las rutas existen y fallan cerradas. */
     internal val accessRequestGateway: AdminAccessRequestGateway? = null,
+    /** E2: almacen de `Idempotency-Key` de soporte y moderacion. `null` = una peticion CON clave falla cerrada (500). */
+    internal val adminIdempotencyStore: IdempotencyStore? = null,
 )
 
 /** Perfil historico: todo. Conjunto de rutas identico al de siempre. */
@@ -771,7 +775,7 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
             // MASTER-OBS-002: el `sub` del JWT como actor de toda auditoría administrativa.
             installAdminAuditActor()
             adminRoutes(adminGateway, adminV1Gateway)
-            adminV1Routes(adminV1Gateway)
+            adminV1Routes(adminV1Gateway, deps.adminIdempotencyStore)
             // FA11: noticias canonicas de administracion (D4-01..D4-11), mismo servicio que `/content/noticias*`.
             adminNewsRoutes(deps.newsRuntime)
             adminRankingsRoutes(adminRankingsGateway)
@@ -782,6 +786,13 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
                 oposiBotsUserAdminGateway,
                 OposiBotsUserAdminPolicy(
                     isAdministrative = { authUserId -> withUpstreamIo { appV1Gateway.hasAdminRole(authUserId) } },
+                    // DEBT-101a: borrar exige superadmin, leido en la base en cada llamada (mismo criterio que D1-26).
+                    isSuperadmin = { actorId ->
+                        withUpstreamIo {
+                            val codeById = adminV1Gateway.listRoles().associate { it.id to it.code }
+                            CanonicalAuthorization.hasSuperAdmin(adminV1Gateway.roleIdsOf(actorId).mapNotNull(codeById::get))
+                        }
+                    },
                     audit = { accion, authUserId, detalle ->
                         val deletion = accion.endsWith("_eliminado")
                         withUpstreamIo {

@@ -279,4 +279,27 @@ class AdminRoleSyncSuperadminAndAuditTest {
         assertNull(rows[1]["usuario_id"], "fuera de una peticion no hay actor: ${rows[1]}")
         assertNull(AdminAuditActor.current())
     }
+
+    // ---------------------------------------------------------------- E2: auto-degradacion
+
+    /** E2 (2026-10-15): un superadmin no puede retirarse SU PROPIO rol superadmin (otro superadmin tendria que hacerlo). */
+    @Test
+    fun aSuperadminCannotRemoveTheirOwnSuperadminRoleAndTheRpcIsNeverCalled() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+        val response = syncRoles(superActor, superActor, roleAdmin)
+        assertEquals(HttpStatusCode.Forbidden, response.status, response.bodyAsText())
+        assertEquals("FORBIDDEN", response.code())
+        assertEquals(0, stub.rpcCalls())
+        assertTrue(stub.auditBodies().isEmpty(), "rechazada antes de la auditoria de intencion")
+    }
+
+    @Test
+    fun aSuperadminKeepingTheirOwnSuperadminRoleCanStillEditTheirOtherRoles() = testApplication {
+        val stub = Stub()
+        application { module(stub) }
+        val response = syncRoles(superActor, superActor, roleSuper, roleMod)
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        assertEquals(1, stub.rpcCalls())
+    }
 }

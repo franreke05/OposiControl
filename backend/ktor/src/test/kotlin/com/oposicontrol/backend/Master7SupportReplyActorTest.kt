@@ -193,20 +193,21 @@ class Master7SupportReplyActorTest {
         val row = Json.parseToJsonElement(audit.body).jsonArray.single().jsonObject
         assertEquals("soporte_respuesta_enviada", row["accion"]!!.jsonPrimitive.content)
         assertEquals("mensajes_soporte", row["tabla_afectada"]!!.jsonPrimitive.content)
-        assertEquals("7c7c7c7c-0000-4000-8000-000000000001", row["registro_id"]!!.jsonPrimitive.content)
+        val insertedId = Json.parseToJsonElement(stub.inserts().single().body).jsonArray.single().jsonObject["id"]!!.jsonPrimitive.content
+        assertEquals(insertedId, row["registro_id"]!!.jsonPrimitive.content, "la fila nombra el id que el backend fija al mensaje")
         assertEquals(admin, row["usuario_id"]!!.jsonPrimitive.content)
         val despues = row["despues"]!!.jsonObject
         assertEquals(setOf("conversacion_id", "remitente_id"), despues.keys)
         assertEquals(conversation, despues["conversacion_id"]!!.jsonPrimitive.content)
         assertEquals(admin, despues["remitente_id"]!!.jsonPrimitive.content)
         assertTrue("cuerpo-secreto-del-mensaje" !in audit.body, "la auditoria nunca lleva el cuerpo del mensaje")
-        // Orden: el insert va antes que la fila de auditoria (la fila referencia el id del mensaje).
-        assertTrue(stub.sent.indexOf(stub.inserts().single()) < stub.sent.indexOf(audit))
+        // E2 (2026-10-15), CAMBIO DELIBERADO: la auditoria va ANTES del insert (con el id que tendra el mensaje).
+        assertTrue(stub.sent.indexOf(audit) < stub.sent.indexOf(stub.inserts().single()))
     }
 
     /**
      * required = true: si la fila de auditoria no se puede escribir la respuesta FALLA (500 INTERNAL), nunca 201.
-     * RESIDUAL documentado: el mensaje ya insertado permanece (no atomico sin RPC/migracion).
+     * E2 (2026-10-15): la auditoria va antes del insert, asi que un fallo al auditar ya no deja el mensaje (antes si).
      */
     @Test
     fun aFailedAuditWriteFailsTheReply() = testApplication {
@@ -216,6 +217,6 @@ class Master7SupportReplyActorTest {
         assertEquals(HttpStatusCode.InternalServerError, response.status)
         assertEquals("INTERNAL", Json.parseToJsonElement(response.bodyAsText()).jsonObject["code"]?.jsonPrimitive?.content)
         assertEquals(1, stub.audits().size)
-        assertEquals(1, stub.inserts().size, "residual: el insert ya ocurrio antes de la auditoria fallida")
+        assertEquals(0, stub.inserts().size, "sin auditoria no hay mensaje")
     }
 }

@@ -103,6 +103,9 @@ internal object OposiBotsUserAdminLegacyEndpoints {
  *
  * - [isAdministrative]: ¿el `auth_user_id` tiene rol `admin`/`superadmin`? Una cuenta de administración no se
  *   borra (borrado FÍSICO de la identidad de Auth) por esta ruta legacy. Un fallo de lectura propaga (500).
+ * - [isSuperadmin]: ¿el actor (`sub` del JWT) es SUPERADMIN? DEBT-101a (E2, 2026-10-15): borrar una cuenta por esta
+ *   superficie exige superadmin (antes bastaba `admin`); sin persona o sin el rol, 403 `SUPERADMIN_REQUIRED` antes de leer
+ *   nada. Un fallo de lectura propaga (500), nunca se convierte en un «si».
  * - [audit]: fila en `auditoria_log` (actor = sub del JWT). MASTER2-OBS-006: cada alta, modificacion y baja
  *   escribe una fila de INTENCION antes de mutar (OBLIGATORIA: si no se puede escribir, la petición falla sin
  *   mutar nada) y una de RESULTADO despues (si esta falla, se registra en ERROR con la carga y no se finge error).
@@ -111,6 +114,7 @@ internal object OposiBotsUserAdminLegacyEndpoints {
  */
 class OposiBotsUserAdminPolicy(
     val isAdministrative: suspend (authUserId: String) -> Boolean,
+    val isSuperadmin: suspend (actorId: String) -> Boolean,
     val audit: suspend (accion: String, authUserId: String?, detalle: JsonObject) -> Unit,
 )
 
@@ -170,6 +174,10 @@ fun Route.oposiBotsUserAdminRoutes(gateway: OposiBotsUserAdminGateway, policy: O
             call.respond(OposiBotsUserAdminSingleResponse(updated.toResponseDto()))
         }.legacyRoute(OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_002)
         delete("/{id}") {
+            // DEBT-101a: solo un superadmin borra (antes de validar el id o leer la cuenta).
+            val superActor = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+                ?: throw CanonicalErrorCode.SUPERADMIN_REQUIRED.exception()
+            if (!policy.isSuperadmin(superActor)) throw CanonicalErrorCode.SUPERADMIN_REQUIRED.exception()
             val id = call.parameters["id"]?.toIntOrNull() ?: throw IllegalArgumentException("id invalido.")
             val target = gateway.getUser(id) ?: throw OposiBotsUserAdminNotFoundException("Usuario $id no encontrado.")
             // MASTER-AUTH-001: ni la propia cuenta del actor ni una cuenta de administración se borran aquí.

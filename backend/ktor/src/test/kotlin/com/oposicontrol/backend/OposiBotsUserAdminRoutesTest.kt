@@ -4,6 +4,12 @@ import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.patch
 import io.ktor.client.request.delete
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
+import io.ktor.server.auth.Authentication
+import io.ktor.server.auth.UserIdPrincipal
+import io.ktor.server.auth.authenticate
+import io.ktor.server.auth.bearer
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -24,6 +30,8 @@ import kotlin.test.assertTrue
 
 class OposiBotsUserAdminRoutesTest {
     private val testJson = Json { ignoreUnknownKeys = true }
+    private val superadmin = "5a5a5a5a-0000-4000-8000-000000000001"
+    private val plainAdmin = "5a5a5a5a-0000-4000-8000-000000000002"
 
     private fun Application.userAdminTestModule(gateway: OposiBotsUserAdminGateway) {
         install(ContentNegotiation) { json(testJson) }
@@ -31,9 +39,19 @@ class OposiBotsUserAdminRoutesTest {
             exception<IllegalArgumentException> { call, cause -> call.respond(HttpStatusCode.BadRequest, ErrorDto("bad_request", cause.message ?: "Invalid request")) }
             exception<IllegalStateException> { call, cause -> call.respond(HttpStatusCode.InternalServerError, ErrorDto("backend_supabase_error", cause.message ?: "Backend error")) }
             exception<OposiBotsUserAdminNotFoundException> { call, cause -> call.respond(HttpStatusCode.NotFound, ErrorDto("not_found", cause.message ?: "Not found")) }
+            exception<BackendDomainException> { call, cause -> call.respond(cause.status, ErrorDto(cause.errorCode, cause.message ?: "")) }
         }
+        install(Authentication) { bearer("t") { authenticate { UserIdPrincipal(it.token) } } }
         // MASTER-AUTH-001: la politica es obligatoria; aqui ninguna cuenta es administrativa y la auditoria no falla.
-        routing { oposiBotsUserAdminRoutes(gateway, OposiBotsUserAdminPolicy(isAdministrative = { false }, audit = { _, _, _ -> })) }
+        // DEBT-101a: borrar exige superadmin; aqui solo [superadmin] lo es.
+        routing {
+            authenticate("t", optional = true) {
+                oposiBotsUserAdminRoutes(
+                    gateway,
+                    OposiBotsUserAdminPolicy(isAdministrative = { false }, isSuperadmin = { it == superadmin }, audit = { _, _, _ -> }),
+                )
+            }
+        }
     }
 
     @Test
@@ -103,11 +121,34 @@ class OposiBotsUserAdminRoutesTest {
         }
         val createdId = testJson.decodeFromString<OposiBotsUserAdminSingleResponse>(created.bodyAsText()).data.id
 
-        val firstDelete = client.delete("/api/v1/admin/oposibots/usuarios/$createdId")
-        val secondDelete = client.delete("/api/v1/admin/oposibots/usuarios/$createdId")
+        val firstDelete = client.delete("/api/v1/admin/oposibots/usuarios/$createdId") { header(HttpHeaders.Authorization, "Bearer $superadmin") }
+        val secondDelete = client.delete("/api/v1/admin/oposibots/usuarios/$createdId") { header(HttpHeaders.Authorization, "Bearer $superadmin") }
 
         assertEquals(HttpStatusCode.NoContent, firstDelete.status)
         assertEquals(HttpStatusCode.NotFound, secondDelete.status)
+    }
+
+    /** DEBT-101a (E2): un admin normal (o sin persona) ya no borra cuentas: 403 SUPERADMIN_REQUIRED antes de leer nada. */
+    @Test
+    fun onlyASuperadminCanDeleteAndNothingIsTouchedOtherwise() = testApplication {
+        val fake = FakeUserAdminGateway()
+        application { userAdminTestModule(fake) }
+        val created = client.post("/api/v1/admin/oposibots/usuarios") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"email":"new@example.com","nombre":"Grace","apellidos":"Hopper","especialidadRegistro":"Celador"}""")
+        }
+        val createdId = testJson.decodeFromString<OposiBotsUserAdminSingleResponse>(created.bodyAsText()).data.id
+
+        val byAdmin = client.delete("/api/v1/admin/oposibots/usuarios/$createdId") { header(HttpHeaders.Authorization, "Bearer $plainAdmin") }
+        assertEquals(HttpStatusCode.Forbidden, byAdmin.status)
+        assertTrue(byAdmin.bodyAsText().contains("SUPERADMIN_REQUIRED"))
+        val staticToken = client.delete("/api/v1/admin/oposibots/usuarios/$createdId") { header(HttpHeaders.Authorization, "Bearer $STATIC_TOKEN_PRINCIPAL") }
+        assertEquals(HttpStatusCode.Forbidden, staticToken.status)
+        assertEquals(HttpStatusCode.Forbidden, client.delete("/api/v1/admin/oposibots/usuarios/$createdId").status)
+        assertTrue(fake.users.containsKey(createdId), "la cuenta sigue ahi")
+
+        val bySuper = client.delete("/api/v1/admin/oposibots/usuarios/$createdId") { header(HttpHeaders.Authorization, "Bearer $superadmin") }
+        assertEquals(HttpStatusCode.NoContent, bySuper.status)
     }
 }
 
