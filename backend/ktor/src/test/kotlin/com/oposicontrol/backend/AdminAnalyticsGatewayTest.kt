@@ -264,19 +264,30 @@ class AdminAnalyticsGatewayTest {
     }
 
     @Test
-    fun activeUsersAreCountedOnTheOneRowPerUserTableSoNoDistinctIsNeeded() {
+    fun streakAndActiveUserMetricsAreNotInstrumentedBecauseRachasUsuarioHasNoWriter() {
         val requests = mutableListOf<HttpRequest>()
-        val gateway = gatewayWith(record = requests::add) { uri ->
-            if (uri.contains("ultima_actividad_fecha")) countResponse("0-0/9") else countResponse("*/0")
-        }
+        val gateway = gatewayWith(record = requests::add) { countResponse("0-0/9") }
 
         val retencion = gateway.retencion()
 
-        assertEquals(9, retencion.activeUsers7d)
-        val activeQueries = requests.map { it.uri().toString() }.filter { it.contains("ultima_actividad_fecha") }
-        assertEquals(3, activeQueries.size, "Una consulta por ventana: 1d, 7d y 30d.")
-        activeQueries.forEach {
-            assertTrue(it.contains("rachas_usuario"), "El activo se cuenta sobre rachas_usuario (PK por usuario): $it")
+        // `rachas_usuario` no tiene escritor: contarla daría un 0 permanente pintado como dato.
+        assertNull(retencion.activeUsers1d)
+        assertNull(retencion.activeUsers7d)
+        assertNull(retencion.activeUsers30d)
+        assertNull(retencion.usersWithStreak)
+        assertTrue(requests.none { it.uri().toString().contains("rachas_usuario") }, "No se lee rachas_usuario.")
+        val gapKeys = retencion.notInstrumented.map { it.key }
+        listOf(
+            AnalyticsMetricKey.USERS_WITH_STREAK,
+            AnalyticsMetricKey.USERS_WITH_ACTIVE_STREAK,
+            AnalyticsMetricKey.USERS_STREAK_7_PLUS,
+            AnalyticsMetricKey.USERS_STREAK_30_PLUS,
+            AnalyticsMetricKey.ACTIVE_USERS_1D,
+            AnalyticsMetricKey.ACTIVE_USERS_7D,
+            AnalyticsMetricKey.ACTIVE_USERS_30D,
+        ).forEach { key ->
+            assertTrue(key in gapKeys, "$key debe declararse NOT_INSTRUMENTED")
+            assertTrue(key in retencion.unavailableMetrics, "$key no debe pintarse como número")
         }
     }
 
