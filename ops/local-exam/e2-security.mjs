@@ -278,8 +278,8 @@ if (CONTENT) {
 update public.intentos_examen set estado = 'abandonado' where examen_id = '${EXV}' and estado = 'en_progreso';
 delete from public.recursos_pregunta where id in ('${R_OLD}', '${R_NEW}');
 delete from public.preguntas_examen where examen_id = '${EXV}';
-insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas)
-values ('${EXV}', 'E2-VERSION', 'e5000000-0000-4000-8000-000000000001', 'E2 version', 'inmersivo', 'gratuito', true, now() - interval '1 day', 1)
+insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas, comunidad_id)
+values ('${EXV}', 'E2-VERSION', 'e5000000-0000-4000-8000-000000000001', 'E2 version', 'inmersivo', 'gratuito', true, now() - interval '1 day', 1, (select id from public.comunidades_autonomas order by codigo limit 1))
 on conflict (id) do update set activo = true;
 insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values
   ('${Q1}', 'E2-Q1', 'inmersiva', 'E2 enunciado X', true), ('${Q2}', 'E2-Q2', 'inmersiva', 'E2 pregunta nueva Y', true)
