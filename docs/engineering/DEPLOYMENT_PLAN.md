@@ -117,7 +117,11 @@ Steps 1 to 4 do not touch the running backend or the edge. Step 5 onwards is the
   override): the system status panel needs `node_*` metrics for CPU and RAM.
 - The closed content branch (`preview/todo`) was merged and redeployed the same day with a health-gated rolling script
   (`~/redeploy-rolling.sh <image>` on the server: bot-1, bot-2, control, automatic return to the previous image). The script
-  also sets `SENTRY_RELEASE` to the image tag. `main` of both repositories is the single baseline.
+  also sets `SENTRY_RELEASE` to the image tag. `main` of both repositories was then the single baseline.
+- Branch model since 2026-10-15 (OposiControl): only `main` and `develop`. `main` stays at the reference
+  `cfa2e14` and is not merged into without a release gate; all Alpha work lands in `develop` through short-lived
+  `tmp/*` branches that are deleted after merging. Every former branch head is preserved under the tag
+  `archive/2026-10-14/<branch>` (see `docs/engineering/BRANCH_CONSOLIDATION_2026-10-14.md`).
 - Authenticated admin use by the owner: login and list screens answered 200.
 - Sentry SDK: one INFO event per profile from one-off containers of the deployed image through the application own
   initialisation: environment `production`, tag `profile` = `bot` / `control`, envelope reported as sent. Reception in the

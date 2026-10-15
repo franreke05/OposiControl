@@ -1,5 +1,38 @@
 # Current State
 
+## Alpha close — 2026-10-15 (rama `develop`)
+
+`develop` es la Alpha y la base de trabajo: `main` (`cfa2e14`: Sistema rehecho, Usuarios, Catálogo,
+OposiMarket, Noticias) + solicitudes de acceso con verificación de email (`feature/oposibot-consumer-backend`)
++ revisión funcional de controles visibles (bloques E1–E5). Modelo de ramas y destino de cada rama antigua:
+`../engineering/BRANCH_CONSOLIDATION_2026-10-14.md`. Nada desplegado; MAIN no se ha tocado.
+
+| Módulo | Estado Alpha | Nota |
+|---|---|---|
+| Usuarios (lista, ficha, roles, estado de cuenta) | CONNECTED / TEST_VERIFIED | Diálogo muerto de conceder tickets quitado; filtros en cliente sobre el censo completo (DEBT-135) |
+| OposiTickets / cartera | CONNECTED / TEST_VERIFIED | Único sitio para ajustar saldo, con clave de idempotencia |
+| Accesos | CONNECTED / TEST_VERIFIED | Selector de personas sobre `GET /usuarios?q` |
+| Catálogo / OposiMarket | CONNECTED / TEST_VERIFIED | Vaciar opcionales persiste (DEBT-089); Market solo muestra; ruta de packs inalcanzable eliminada |
+| Noticias / Tipos | CONNECTED / TEST_VERIFIED | Tipos por ruta canónica; relectura y capas ilegibles avisan; media huérfana = DEBT-091 |
+| OposiRed | EXPLICIT_ALPHA_BLOCKER (solo lectura) | No existe acción de moderar hilos; filtro de categoría limitado (DEBT-136) |
+| Moderación | CONNECTED (solo «Advertencia») | Otras medidas PRODUCT_BLOCKED (DEBT-130) |
+| Soporte | CONNECTED / TEST_VERIFIED | «Asignado a» y filtro de estado inexistentes quitados |
+| Informes / OposiTester | CONNECTED / TEST_VERIFIED | Paginación real, notas y recompensa; errores con reintento |
+| Analytics | CONNECTED / honesto | Rachas y activos de Retención «Sin instrumentar» (`rachas_usuario` sin escritor) |
+| Solicitudes de acceso | CONNECTED / TEST_VERIFIED | Verificación de email antes de aprobar (migración 20261020100000 pendiente de despliegue) |
+| Sistema (Estado, Administradores, Auditoría) | CONNECTED / TEST_VERIFIED | `auditoria_log` append-only (20261021100000 pendiente de despliegue) |
+| Comunidades / Etiquetas | CONNECTED | Ahora alcanzables desde Contenido |
+
+Gate 2026-10-15 en `develop`: 4306 tests JVM (panel + `:backend:ktor:test` + `:backend:dbtest:test`), 0 fallos;
+`verify-ci-jvmtest-coverage`, `verify-no-direct-supabase`, `verify-migrations-manifest`, `verify-ops-config`,
+`verify-android-flavor-config` y `git diff --check` en verde. NOT_VERIFIED: E2E contra base real (el stack local
+vive en las ramas `feature/december-*`, excluidas por el owner), recorrido en ejecución con sesión real, gitleaks
+(no instalado; escaneo heurístico del diff limpio).
+
+Bloqueantes de release (no de Alpha): DEBT-151 (sin límite de mutaciones en el plano admin), DEBT-095 a/b (JWT
+`aud`/`exp`, token de `/metrics`), DEBT-156 (puerta PG17 sin las migraciones `security_*` en `PENDING_MIGRATIONS.txt`).
+Despliegue conjunto obligatorio: el backend devuelve 410 a escritores legacy que un panel antiguo aún usa.
+
 Database Redesign V1 closure: controlled MAIN migrations 012, 013 and 014
 are applied. The duplicate attempt index was removed; anonymous mutation
 grants and mutation grants on public derived views were revoked. No table,
