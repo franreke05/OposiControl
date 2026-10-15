@@ -45,6 +45,7 @@ El despliegue lo ejecuta un humano con el gate de produccion; CI solo VERIFICA (
    Slice 7 (migracion `20261008100500`, indice keyset `idx_transacciones_cartera_usuario_creado_id` sobre `transacciones_cartera (usuario_id, creado_en desc, id desc)` para D6-02 `GET /api/v1/app/wallet/movimientos`; manifiesto
    `supabase/SLICE7_MIGRATIONS.txt`): solo crea ese indice (SHARE lock breve: el libro es pequeno); ni columnas, ni politicas, ni filas. Es independiente del orden de despliegue del Ktor (la lectura funciona sin el indice, mas lenta). Su prechequeo `WALLET_LEDGER_KEYSET_INDEX_PREFLIGHT`
    se detiene si el indice existe con otra definicion. Rollback: su bloque ROLLBACK (borra el indice), antes que los de Slice 2.
+   V1 (alcance del propietario 2026-10-15; manifiesto `supabase/V1_MIGRATIONS.txt`; PENDIENTES, ninguna aplicada a MAIN; ver `E1-V1-*` en los handoffs de Fase B): `20261018100000` (comunidad obligatoria en examenes: trigger de insercion/edicion/publicacion + FK `ON DELETE RESTRICT`; sin default, sin relleno, sin borrados; las filas heredadas sin comunidad siguen editables pero no se publican). Antes del `SET NOT NULL` posterior: auditoria AGREGADA `scripts/db-exam-community-audit.sql`, que lee filas de MAIN y exige la aprobacion explicita del propietario. Rollback: su bloque ROLLBACK.
 
 ## Construir
 

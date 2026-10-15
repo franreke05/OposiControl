@@ -98,6 +98,9 @@ psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261017100000_securit
 psql(fs.readFileSync(path.join(here, 'sql/93_phase_b_scheduled_exam.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/94_e2e_users.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/95_v1_specialties.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(here, 'sql/96_v1_communities.sql'), 'utf8'));
+// V1 STEP 2: comunidad obligatoria (NOT NULL + trigger + FK RESTRICT; despues de 96, que asigna comunidad a los examenes locales previos). Tambien sobre stacks creados antes de ella.
+psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261018100000_v1_exam_community_required.sql'), 'utf8'));
 psql('notify pgrst, \'reload schema\';');
 
 compose('up', '-d', 'rest', 'storage', 'gateway');

@@ -4,16 +4,24 @@
 -- Idempotente (on conflict do nothing). Sin precios, sin comunidad inventada: el examen EX_ING usa la misma comunidad que los demas (ninguna).
 set session_replication_role = replica;
 
+insert into public.comunidades_autonomas (id, codigo, nombre, slug, activa, posicion) values
+  ('c1000000-0000-4000-8000-000000000001', 'ES-MD', 'Comunidad de Madrid', 'comunidad-de-madrid', true, 13),
+  ('c1000000-0000-4000-8000-000000000002', 'ES-AN', 'Andalucía', 'andalucia', true, 1)
+on conflict (id) do nothing;
+
 insert into public.especialidades (id, codigo, nombre, slug, activa, posicion) values
   ('e1000000-0000-4000-8000-000000000002', 'ING', 'Ingles (local)', 'ingles-local', true, 20),
   ('e1000000-0000-4000-8000-000000000003', 'OBS', 'Obsoleta (local)', 'obsoleta-local', false, 30)
 on conflict (id) do nothing;
 
-insert into public.capacidades_especialidad (especialidad_id) values ('e1000000-0000-4000-8000-000000000002')
-on conflict do nothing;
+-- El overlay local creo la tabla con el default antiguo (razonados/inmersivos = false); MAIN tiene todos los modos abiertos (20260917084358).
+alter table public.capacidades_especialidad alter column permite_razonados set default true;
+alter table public.capacidades_especialidad alter column permite_inmersivos set default true;
+insert into public.capacidades_especialidad (especialidad_id, permite_rafagas, permite_razonados, permite_inmersivos, permite_demos)
+values ('e1000000-0000-4000-8000-000000000002', true, true, true, true) on conflict (especialidad_id) do nothing;
 
-insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas) values
-  ('e1000000-0000-4000-8000-0000000000e2', 'LOC-ING', 'e1000000-0000-4000-8000-000000000002', 'Ingles', 'rafaga', 'gratuito', true, now() - interval '1 day', 1)
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas) values
+  ('e1000000-0000-4000-8000-0000000000e2', 'LOC-ING', 'e1000000-0000-4000-8000-000000000002', 'c1000000-0000-4000-8000-000000000002', 'Ingles', 'rafaga', 'gratuito', true, now() - interval '1 day', 1)
 on conflict (id) do nothing;
 
 insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)

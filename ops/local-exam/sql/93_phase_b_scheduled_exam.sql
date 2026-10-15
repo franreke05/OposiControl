@@ -5,8 +5,8 @@
 
 set session_replication_role = replica;
 
-insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas)
-values ('e0000000-0000-4000-8000-000000000009', 'LOC-PROGRAMADO', 'e5000000-0000-4000-8000-000000000001', 'Programado',
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas)
+values ('e0000000-0000-4000-8000-000000000009', 'LOC-PROGRAMADO', 'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'Programado',
         'rafaga', 'gratuito', true, now() + interval '7 days', 1)
 on conflict (id) do nothing;
 
