@@ -96,7 +96,6 @@ if (psql("select to_regclass('public.solicitudes_acceso_admin') is not null") !=
 }
 psql(fs.readFileSync(path.join(here, 'sql/01_overlay_wallet_entitlement.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/02_overlay_idempotency_finalize.sql'), 'utf8'));
-psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), 'utf8'));
 // E2-P03: la migracion pendiente 20261017100000 solo reescribe cuatro politicas (ALTER POLICY, idempotente): tambien se
 // aplica sobre un stack creado antes de ella. En un stack nuevo ya la aplico el bucle de pendientes.
 psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261017100000_security_exam_publication_time.sql'), 'utf8'));
@@ -113,6 +112,8 @@ for (const v of ['20261018100100_v1_wallet_ledger_hardening', '20261018100200_v1
   psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));
 }
 psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
+// Libro de A y compra: ledger-first, asi que SOLO despues de las migraciones del libro (el libro asigna seq y la cadena).
+psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), 'utf8'));
 psql('notify pgrst, \'reload schema\';');
 
 compose('up', '-d', 'rest', 'storage', 'gateway');

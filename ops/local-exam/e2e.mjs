@@ -310,8 +310,8 @@ await scenario('WALLET', async () => {
   check('WALLET.D6_01_A_balance_and_recent', wa.status === 200 && wa.json.saldo === 35 && wa.json.recientes?.length === 5
     && wa.json.recientes[0].saldoResultante === 35, `${wa.status} saldo=${wa.json?.saldo} recientes=${wa.json?.recientes?.length}`);
   const tipos = new Set((ma.json?.items ?? []).map((m) => m.tipo));
-  check('WALLET.D6_02_A_movements_several_categories', ma.status === 200 && ma.json.items.length === 5 && tipos.size === 5
-    && ma.json.items.every((m, i, all) => i === 0 || m.saldoResultante === all[i - 1].saldoAnterior), `${ma.status} tipos=${[...tipos].join(',')}`);
+  check('WALLET.D6_02_A_movements_several_categories', ma.status === 200 && ma.json.items.length === 6 && tipos.size === 6 && ma.json.items[0].tipo === 'ajuste' && ma.json.items[0].saldoResultante === 35
+    && ma.json.items.slice(1).every((m, i, all) => i === 0 || m.saldoResultante === all[i - 1].saldoAnterior), `${ma.status} tipos=${[...tipos].join(',')}`);
   check('WALLET.D6_01_A_consumable_active', (wa.json?.consumibles ?? []).some((c) => c.servicioCodigo === 'potenciador'), JSON.stringify(wa.json?.consumibles ?? null).slice(0, 120));
   check('WALLET.D6_01_B_empty', wb.status === 200 && wb.json.saldo === 0 && wb.json.recientes.length === 0 && wb.json.consumibles.length === 0, `${wb.status}`);
   check('WALLET.D6_02_B_empty', mb.status === 200 && mb.json.items.length === 0, `${mb.status}`);
@@ -320,8 +320,11 @@ await scenario('WALLET', async () => {
   const [pa, pb] = await Promise.all(['RA', 'RB'].map((u) => call(u, 'GET', '/api/v1/app/me/billing-history?kind=purchase')));
   check('WALLET.D7_05_purchases_own_only', pa.status === 200 && pa.json.items?.length === 1 && pa.json.items[0].id === '7d100000-0000-4000-8000-000000000001'
     && pa.json.items[0].estado === 'pagada' && pb.status === 200 && pb.json.items.length === 0, `A=${pa.status}/${pa.json?.items?.length} B=${pb.status}/${pb.json?.items?.length}`);
-  const fk = sql("select count(*) from pg_constraint where conname in ('transacciones_cartera_compra_id_fkey', 'compras_usuario_usuario_id_fkey', 'transacciones_cartera_idempotency_key_key')");
-  check('WALLET.ledger_schema_matches_main_capture', fk === '3', `constraints=${fk}`);
+  const fk = sql("select count(*) from pg_constraint where conname in ('transacciones_cartera_compra_id_fkey', 'compras_usuario_usuario_id_fkey', 'transacciones_cartera_usuario_idempotency_key', 'transacciones_cartera_usuario_seq_key')");
+  check('WALLET.ledger_schema_matches_main_capture', fk === '4', `constraints=${fk}`);
+  // V1: reconciliation is clean on the live local stack (ledger == snapshot, seq 1..n per wallet, chain closed)
+  const rec = sql('select count(*) from public.app_wallet_reconcile(null)');
+  check('WALLET.reconcile_is_clean', rec === '0', `rows=${rec}`);
   // Decision 4: B tiene una fila REAL de cartera con saldo 0 (el 0 lo confirma el servidor, no la ausencia de fila).
   const bRow = sql("select count(*) || ':' || coalesce(max(saldo_tickets), -1) from public.carteras_usuario where usuario_id = '0b000000-0000-4000-8000-00000000000b'");
   check('WALLET.B_real_zero_row_server_confirmed', bRow === '1:0' && wb.json?.saldo === 0, `row=${bRow} saldo=${wb.json?.saldo}`);

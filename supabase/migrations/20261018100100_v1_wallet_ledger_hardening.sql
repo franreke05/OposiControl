@@ -148,7 +148,7 @@ alter table public.transacciones_cartera add column if not exists seq bigint;
 -- 2. Opening row for every wallet that already holds a balance and has no chain yet (legacy rows keep seq NULL, untouched).
 --    Done BEFORE the triggers exist, so it does not move the snapshot (the snapshot already equals this amount).
 insert into public.transacciones_cartera (usuario_id, tipo, cantidad, saldo_anterior, saldo_resultante, descripcion, referencia_tipo, seq, metadatos)
-select c.usuario_id, 'ajuste', c.saldo_tickets, 0, c.saldo_tickets, 'Saldo inicial (migracion V1)', 'legacy_opening', 1,
+select c.usuario_id, 'ajuste', c.saldo_tickets, 0, c.saldo_tickets, 'Saldo inicial', 'legacy_opening', 1,
        jsonb_build_object('op', 'legacy_opening')
 from public.carteras_usuario c
 where c.saldo_tickets > 0
