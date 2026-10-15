@@ -1,10 +1,17 @@
 package com.oposicontrol.admin.domain.model
 
+/**
+ * Tipo de noticia (`public.tipo_noticia`, D4-10/D4-11). [id] es el uuid que usan las noticias (`tipoNoticiaId`); [code] es
+ * la clave natural con la que se crea o actualiza (`PUT /api/v1/admin/tipos-noticia/{codigo}`). Vacío = tipo nuevo.
+ */
 data class NewsType(
     val id: String,
     val name: String,
     val slug: String,
     val isActive: Boolean,
+    val code: String = "",
+    val description: String? = null,
+    val position: Int = 1,
 )
 
 data class ExamAccess(

@@ -11,9 +11,9 @@ private fun Env.repo() = KtorAdminOperationsRepositoryImpl(client, appConfig, se
 
 /** Filas del registrador (R4-REC-B): KtorAdminOperationsRepositoryImpl (13 sitios, una fila por metodo). */
 internal val ROWS_B_ADMIN_OPERATIONS_REPO: List<CallRow> = listOf(
-    CallRow(FILE, "getNewsTypes", get("/admin/news-types")) { repo().getNewsTypes() },
-    CallRow(FILE, "upsertNewsType", post("/admin/news-types")) {
-        repo().upsertNewsType(NewsType(id = "ID0", name = "n", slug = "n", isActive = true))
+    CallRow(FILE, "getNewsTypes", get("/api/v1/admin/tipos-noticia?includeInactive&limit&offset")) { repo().getNewsTypes() },
+    CallRow(FILE, "upsertNewsType", put("/api/v1/admin/tipos-noticia/{}")) {
+        repo().upsertNewsType(NewsType(id = "ID9", name = "n", slug = "n", isActive = true, code = "ID0"))
     },
     CallRow(FILE, "getExamAccesses", get("/api/v1/admin/accesos")) { repo().getExamAccesses() },
     CallRow(FILE, "upsertExamAccess", post("/api/v1/admin/accesos")) {
@@ -32,7 +32,7 @@ internal val ROWS_B_ADMIN_OPERATIONS_REPO: List<CallRow> = listOf(
         repo().sendSupportMessage("ID0", "a", "t", false)
     },
     CallRow(FILE, "getModerationActions", get("/api/v1/admin/moderacion/actions")) { repo().getModerationActions() },
-    CallRow(FILE, "appendModerationAction", post("/admin/moderation/actions")) {
+    CallRow(FILE, "appendModerationAction", post("/api/v1/admin/moderacion/actions")) {
         repo().appendModerationAction(ModerationAction(id = "ID0", actionType = "t", targetUser = "u", executor = "e", reason = "r", createdAt = "c"))
     },
 )

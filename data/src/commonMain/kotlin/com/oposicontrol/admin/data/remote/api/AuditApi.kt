@@ -9,6 +9,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
+import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.isSuccess
 
 /**
  * Lecturas de la pestaña «Auditoría».
@@ -32,13 +35,19 @@ class AuditApi(
             filter.from?.takeIf { it.isNotBlank() }?.let { parameter("desde", it) }
             filter.until?.takeIf { it.isNotBlank() }?.let { parameter("hasta", it) }
             cursor?.takeIf { it.isNotBlank() }?.let { parameter("cursor", it) }
-        }.body()
+        }.checkedBody(BackendRoutes.ADMIN_V1_AUDITORIA_MOVIMIENTOS)
     }
 
     suspend fun getMovementDetail(id: String): AuditMovementDetailDto {
         return client.get(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.adminV1AuditoriaMovimiento(id))) {
             adminAuthHeaders(appConfig, sessionLocalDataSource)
-        }.body()
+        }.checkedBody(BackendRoutes.adminV1AuditoriaMovimiento(id))
+    }
+
+    /** Un 4xx/5xx es un fallo con su código, nunca un cuerpo de error deserializado como si fueran datos. */
+    private suspend inline fun <reified T> HttpResponse.checkedBody(endpoint: String): T {
+        if (!status.isSuccess()) error("backend ${status.value} $endpoint: ${bodyAsText().take(240)}")
+        return body()
     }
 
     private companion object {

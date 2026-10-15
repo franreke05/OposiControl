@@ -32,13 +32,27 @@ interface AdminOperationsRepository {
 
     suspend fun getSupportConversations(): AppResult<List<SupportConversationSummary>>
     suspend fun getSupportMessages(conversationId: String): AppResult<List<SupportMessage>>
+    /**
+     * Responde en una conversación de soporte.
+     *
+     * [assignee] está OBSOLETO y no viaja: el backend (`POST /api/v1/admin/soporte/conversaciones/{id}/mensajes`) nunca
+     * aplicó la asignación. Se conserva, con valor por defecto, solo para no romper a los llamadores mientras la UI de
+     * soporte deja de pedirlo; los nuevos llamadores lo omiten con argumentos con nombre.
+     */
     suspend fun sendSupportMessage(
         conversationId: String,
-        assignee: String,
+        assignee: String = "",
         text: String,
         internal: Boolean,
     ): AppResult<SupportMessage>
 
     suspend fun getModerationActions(): AppResult<List<ModerationAction>>
+
+    /**
+     * Registra una medida de moderación sobre un usuario (`POST /api/v1/admin/moderacion/actions`). El backend solo aplica
+     * la advertencia (`advertencia`): cualquier otro tipo es un 422/400, nunca un éxito. [ModerationAction.targetUser] debe
+     * ser el uuid del usuario; el ejecutor lo pone el servidor desde la sesión. El éxito no devuelve fila: el resultado es
+     * la acción enviada, sin id, y quien llama debe releer el historial del servidor en vez de pintarla.
+     */
     suspend fun appendModerationAction(action: ModerationAction): AppResult<ModerationAction>
 }
