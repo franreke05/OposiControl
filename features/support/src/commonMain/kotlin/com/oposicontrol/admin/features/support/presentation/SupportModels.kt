@@ -5,7 +5,6 @@ data class SupportConversation(
     val userName: String,
     val subject: String,
     val status: String,
-    val assignedTo: String,
     val lastMessage: String,
 )
 
