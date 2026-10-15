@@ -15,11 +15,13 @@ requireStackLock('e2e.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const local = path.join(here, '.local');
 const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+// V1: segundo Ktor con el perfil `control` (node ops/local-exam/run-ktor.mjs --admin) para la superficie de administracion.
+const ADMIN_KTOR = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
 // E5-B03: el e2e usa SUS PROPIOS usuarios para todo lo que escribe (intentos, cubos de limite): XA/XB (sql/94). A, B y P son
 // de los recorridos de la app: solo se LEEN (cartera, derechos, premium) y nunca se tocan sus intentos.
 const rawTokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
 if (!rawTokens.XA || !rawTokens.XB) { console.error('tokens.json sin XA/XB: ejecuta up.mjs'); process.exit(2); }
-const tokens = { A: rawTokens.XA, B: rawTokens.XB, RA: rawTokens.A, RB: rawTokens.B, P: rawTokens.P, Q1: rawTokens.Q1, Q2: rawTokens.Q2, Q2Z: rawTokens.Q2Z, Q3: rawTokens.Q3, Q4: rawTokens.Q4 };
+const tokens = { A: rawTokens.XA, B: rawTokens.XB, RA: rawTokens.A, RB: rawTokens.B, P: rawTokens.P, Q1: rawTokens.Q1, Q2: rawTokens.Q2, Q2Z: rawTokens.Q2Z, Q3: rawTokens.Q3, Q4: rawTokens.Q4, ADMIN: rawTokens.ADMIN };
 const XA = '1a000000-0000-4000-8000-00000000001a', XB = '1b000000-0000-4000-8000-00000000001b';
 const secrets = JSON.parse(fs.readFileSync(path.join(local, 'secrets.json'), 'utf8'));
 const ktorEnv = Object.fromEntries(fs.readFileSync(path.join(local, 'ktor.env'), 'utf8').split(/\r?\n/).filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
@@ -676,6 +678,40 @@ await scenario('ECONOMY', async () => {
   // el secreto del proveedor jamas llega a los registros
   const log = fs.existsSync(path.join(local, 'ktor.log')) ? fs.readFileSync(path.join(local, 'ktor.log'), 'utf8') : '';
   check('ECONOMY.sandbox_secret_never_in_ktor_log', secret.length >= 32 && !log.includes(secret), 'log bytes=' + log.length);
+});
+
+// ---------- V1 COMUNIDAD OBLIGATORIA por HTTP real contra la superficie de administracion (Ktor perfil control, JWT de un admin local) ----------
+await scenario('ADMIN_COMMUNITY', async () => {
+  const admin = async (method, p, body) => {
+    const r = await fetch(ADMIN_KTOR + p, { method, headers: { Authorization: 'Bearer ' + tokens.ADMIN, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch { /* vacio */ }
+    return { status: r.status, json, text };
+  };
+  const noAuth = await fetch(ADMIN_KTOR + '/api/v1/admin/examenes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  check('ADMIN.no_token_401', noAuth.status === 401, String(noAuth.status));
+  const appUser = await fetch(ADMIN_KTOR + '/api/v1/admin/examenes', { method: 'POST', headers: { Authorization: 'Bearer ' + tokens.Q1, 'Content-Type': 'application/json' }, body: '{}' });
+  check('ADMIN.non_admin_user_403', appUser.status === 403, String(appUser.status));
+  const before = Number(sql("select count(*) from public.examenes where codigo_examen like 'E2E-COM-%'"));
+  const base = { especialidadId: 'e5000000-0000-4000-8000-000000000001', titulo: 'E2E comunidad', tipoExamen: 'rafaga', tipoAcceso: 'gratuito' };
+  const missing = await admin('POST', '/api/v1/admin/examenes', { codigoExamen: 'E2E-COM-1', ...base });
+  check('ADMIN.exam_without_community_rejected_422', missing.status === 422 && /exam_community_required/i.test(missing.text), missing.status + ' ' + missing.text.slice(0, 160));
+  const empty = await admin('POST', '/api/v1/admin/examenes', { codigoExamen: 'E2E-COM-2', comunidadId: null, ...base });
+  check('ADMIN.exam_with_null_community_rejected_422', empty.status === 422 && /exam_community_required/i.test(empty.text), empty.status + ' ' + empty.text.slice(0, 160));
+  const unknown = await admin('POST', '/api/v1/admin/examenes', { codigoExamen: 'E2E-COM-3', comunidadId: 'c1999999-0000-4000-8000-000000000999', ...base });
+  check('ADMIN.exam_with_unknown_community_rejected_422', unknown.status === 422 && /unknown_community/i.test(unknown.text), unknown.status + ' ' + unknown.text.slice(0, 160));
+  check('ADMIN.nothing_written_by_the_rejections', Number(sql("select count(*) from public.examenes where codigo_examen like 'E2E-COM-%'")) === before);
+  const ok = await admin('POST', '/api/v1/admin/examenes', { codigoExamen: 'E2E-COM-OK-' + Date.now(), comunidadId: 'c1000000-0000-4000-8000-000000000001', ...base });
+  const created = ok.json?.id ?? ok.json?.examen?.id ?? ok.json?.data?.id;
+  check('ADMIN.exam_with_active_community_created_201', ok.status === 201 && !!created, ok.status + ' ' + ok.text.slice(0, 160));
+  if (created) {
+    const clear = await admin('PATCH', '/api/v1/admin/examenes/' + created, { comunidadId: null });
+    check('ADMIN.community_cannot_be_cleared_422', clear.status === 422 && /exam_community_required/i.test(clear.text)
+      && sql("select comunidad_id is not null from public.examenes where id = '" + created + "'") === 't', clear.status + ' ' + clear.text.slice(0, 160));
+    sql("delete from public.examenes where id = '" + created + "'");
+  }
+  // el trigger de la base es la ultima defensa (aunque alguien se salte Ktor): sin comunidad no se inserta ni se publica
+  const direct = (() => { try { sql("insert into public.examenes (codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso) values ('E2E-COM-DB', 'e5000000-0000-4000-8000-000000000001', 'x', 'rafaga', 'gratuito')"); return 'inserted'; } catch (e) { return 'rejected'; } })();
+  check('ADMIN.database_rejects_exam_without_community_too', direct === 'rejected');
 });
 
 await scenario('RATE', async () => {
