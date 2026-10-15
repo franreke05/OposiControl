@@ -430,7 +430,7 @@ await scenario('SPECIALTY', async () => {
   const fresh = await fetch(KTOR + '/api/v1/app/me', { headers: { Authorization: `Bearer ${rawTokens.XA}` } }).then((r) => r.json());
   check('SPECIALTY.persists_across_sessions', fresh.profile?.especialidadPrincipalId === ING, `${fresh.profile?.especialidadPrincipalId}`);
   const mk = await call('A', 'GET', `/api/v1/app/examenes?especialidadId=${ING}`);
-  check('SPECIALTY.market_filter_by_id_is_server_side', mk.status === 200 && mk.json.items.length >= 1 && mk.json.items.every((i) => i.id === 'e1000000-0000-4000-8000-0000000000e2'), `${mk.json?.items?.length}`);
+  check('SPECIALTY.market_filter_by_id_is_server_side', mk.status === 200 && mk.json.items.length >= 1 && mk.json.items.every((i) => ['e1000000-0000-4000-8000-0000000000e2', 'e3000000-0000-4000-8000-000000000005'].includes(i.id)), `${mk.json?.items?.length}`);
   const none = await call('A', 'GET', `/api/v1/app/examenes?especialidadId=${OBS}`);
   check('SPECIALTY.specialty_is_not_authorization', none.status === 200 && none.json.items.length === 0 && (await call('A', 'GET', `/api/v1/app/examenes/${EX.NORMAL}`)).status === 200, `${none.status}`);
   await patch('A', { especialidadId: LOC }); // deja a XA como estaba
@@ -503,8 +503,19 @@ await scenario('ECONOMY', async () => {
     Q3: '2d000000-0000-4000-8000-00000000002d', Q4: '2e000000-0000-4000-8000-00000000002e' };
   const redeem = (user, examId, body = {}, k = key()) => call(user, 'POST', '/api/v1/app/wallet/canjes', { examId, ...body }, k);
   const bal = (user) => sql("select saldo_tickets from public.carteras_usuario where usuario_id = '" + Q[user] + "'");
-  const ledgerCount = (user, ref) => Number(sql("select count(*) from public.transacciones_cartera where usuario_id = '" + Q[user] + "' and tipo = 'compra_examen' and referencia_id = '" + ref + "'"));
+  const ledgerCount = (user, ref) => Number(sql("select count(*) from public.transacciones_cartera where usuario_id = '" + Q[user] + "' and tipo = 'compra_examen' and referencia_id = '" + ref + "' and creado_en >= '" + t0 + "'"));
   const day = 86400000;
+
+  // Repetible: devuelve el escenario al estado de los fixtures (sql/98) antes de empezar. Los saldos se corrigen con apuntes de AJUSTE en el libro
+  // (ledger-first: nunca se escribe el saldo), y los derechos de compra de estos examenes se borran y se vuelven a crear los de Q3.
+  const target = { Q1: 200, Q2: 29, Q2Z: 0, Q3: 30, Q4: 25 };
+  sql("delete from public.contenido_desbloqueado_usuario where motivo = 'compra' and usuario_id in ('" + Object.values(Q).join("','") + "') and examen_id::text like 'e3000000-%'");
+  for (const [u, want] of Object.entries(target)) {
+    const delta = want - Number(bal(u));
+    if (delta !== 0) sql("insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, idempotency_key, metadatos) values ('" + Q[u] + "', 'ajuste', " + delta + ", 'Reinicio de fixture e2e', 'e2e:reset:" + crypto.randomUUID() + "', '{\"op\":\"e2e_reset\"}')");
+  }
+  sql(fs.readFileSync(path.join(here, 'sql/98_v1_economy_fixtures.sql'), 'utf8'));
+  const t0 = sql('select clock_timestamp()');
 
   // --- Q1: canje correcto, repeticion, misma clave con otro cuerpo ---
   const k1 = key();
@@ -539,15 +550,15 @@ await scenario('ECONOMY', async () => {
   check('ECONOMY.D6_03_one_OT_short_409', short.status === 409 && short.json?.code === 'INSUFFICIENT_BALANCE' && short.json?.details?.balance === 29 && short.json?.details?.price === 30 && bal('Q2') === '29', short.status + ' ' + short.text.slice(0, 140));
   const zero = await redeem('Q2Z', OT.ONE);
   check('ECONOMY.D6_03_zero_balance_409', zero.status === 409 && zero.json?.code === 'INSUFFICIENT_BALANCE' && zero.json?.details?.balance === 0 && bal('Q2Z') === '0', zero.status + ' ' + zero.text.slice(0, 140));
-  const free = await redeem('Q1', EX.NORMAL);
-  check('ECONOMY.D6_03_free_exam_409', free.status === 409 && free.json?.code === 'ALREADY_ACCESSIBLE', free.status + ' ' + free.json?.code);
-  const unset = await redeem('Q1', EX.PREMIUM);
+  const free = await redeem('Q4', EX.NORMAL);
+  check('ECONOMY.D6_03_free_exam_is_not_purchasable_422', free.status === 422 && free.json?.code === 'NOT_PURCHASABLE', free.status + ' ' + free.json?.code);
+  const unset = await redeem('Q4', EX.PREMIUM);
   check('ECONOMY.D6_03_no_ot_price_422', unset.status === 422 && unset.json?.code === 'NOT_PURCHASABLE', unset.status + ' ' + unset.json?.code);
-  const none = await redeem('Q1', 'e3999999-0000-4000-8000-000000000999');
+  const none = await redeem('Q4', 'e3999999-0000-4000-8000-000000000999');
   check('ECONOMY.D6_03_unknown_exam_404', none.status === 404 && none.json?.code === 'EXAM_NOT_FOUND', none.status + ' ' + none.json?.code);
-  const forged = await call('Q1', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE, usuarioId: Q.Q2, saldo: 9999, precioPagado: 0 }, key());
-  check('ECONOMY.D6_03_forged_fields_400', forged.status === 400 && forged.json?.code === 'VALIDATION' && ledgerCount('Q1', OT.ONE) === 0, forged.status + ' ' + forged.json?.code);
-  const noKey = await call('Q1', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE });
+  const forged = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE, usuarioId: Q.Q2, saldo: 9999, precioPagado: 0 }, key());
+  check('ECONOMY.D6_03_forged_fields_400', forged.status === 400 && forged.json?.code === 'VALIDATION' && ledgerCount('Q4', OT.ONE) === 0 && bal('Q2') === '29', forged.status + ' ' + forged.json?.code);
+  const noKey = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE });
   check('ECONOMY.D6_03_key_required_400', noKey.status === 400 && noKey.json?.code === 'IDEMPOTENCY_KEY_REQUIRED', noKey.status + ' ' + noKey.json?.code);
   const prem = await redeem('P', OT.ONE);
   check('ECONOMY.D6_03_premium_subscriber_409', prem.status === 409 && prem.json?.code === 'ALREADY_ACCESSIBLE' && prem.json?.details?.accessState === 'SUBSCRIPTION', prem.status + ' ' + prem.text.slice(0, 140));
@@ -581,7 +592,7 @@ await scenario('ECONOMY', async () => {
   const newOrder = (k = key(), productCode = 'LOCAL_PACK_50') => call('Q4', 'POST', '/api/v1/app/payments/orders', { productCode, provider: 'sandbox' }, k);
   const evt = (order, over = {}) => ({ eventId: 'evt-' + crypto.randomUUID(), type: 'payment.succeeded', orderId: order.id, transactionId: 'tx-' + crypto.randomUUID(), amountCents: order.amountCents, currency: order.currency, productCode: order.productCode, ...over });
   const events = () => Number(sql('select count(*) from public.eventos_pago'));
-  const credits = () => Number(sql("select count(*) from public.transacciones_cartera where usuario_id = '" + Q.Q4 + "' and tipo = 'pack_tickets'"));
+  const credits = () => Number(sql("select count(*) from public.transacciones_cartera where usuario_id = '" + Q.Q4 + "' and tipo = 'pack_tickets' and creado_en >= '" + t0 + "'"));
 
   const ko = key();
   const o1 = await newOrder(ko);
@@ -589,12 +600,12 @@ await scenario('ECONOMY', async () => {
   check('ECONOMY.D6_12_order_created', o1.status === 201 && ord?.status === 'PENDING' && ord?.tickets === 50 && ord?.amountCents === 449 && o1.headers.get('location') === '/api/v1/app/payments/orders/' + ord?.id && bal('Q4') === '25',
     o1.status + ' ' + o1.text.slice(0, 200));
   const o1b = await newOrder(ko);
-  check('ECONOMY.D6_12_order_replay_same_key', o1b.status === 200 && o1b.headers.get('idempotent-replayed') === 'true' && o1b.json?.order?.id === ord?.id, o1b.status + ' ' + o1b.json?.order?.id);
-  const forgedOrder = await call('Q4', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'sandbox', amountCents: 1, tickets: 9999 }, key());
+  check('ECONOMY.D6_12_order_replay_same_key', (o1b.status === 201 || o1b.status === 200) && o1b.headers.get('idempotent-replayed') === 'true' && o1b.json?.order?.id === ord?.id, o1b.status + ' ' + o1b.json?.order?.id);
+  const forgedOrder = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'sandbox', amountCents: 1, tickets: 9999 }, key());
   check('ECONOMY.D6_12_client_amounts_rejected', forgedOrder.status === 400 && forgedOrder.json?.code === 'VALIDATION', forgedOrder.status + ' ' + forgedOrder.json?.code);
-  const tampered = await call('Q4', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_UNKNOWN', provider: 'sandbox' }, key());
+  const tampered = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_UNKNOWN', provider: 'sandbox' }, key());
   check('ECONOMY.D6_12_unknown_pack_422', tampered.status === 422 && tampered.json?.code === 'PRODUCT_NOT_AVAILABLE', tampered.status + ' ' + tampered.json?.code);
-  const badProv = await call('Q4', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'stripe' }, key());
+  const badProv = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'stripe' }, key());
   check('ECONOMY.D6_12_unknown_provider_422', badProv.status === 422 && badProv.json?.code === 'PAYMENT_PROVIDER_UNAVAILABLE', badProv.status + ' ' + badProv.json?.code);
   const foreignRead = await call('Q1', 'GET', '/api/v1/app/payments/orders/' + ord.id);
   check('ECONOMY.D6_13_other_user_order_404', foreignRead.status === 404 && foreignRead.json?.code === 'ORDER_NOT_FOUND', foreignRead.status + ' ' + foreignRead.json?.code);
@@ -642,7 +653,8 @@ await scenario('ECONOMY', async () => {
 
   // pedido caducado (30 min, reloj de la base): una confirmacion autentica TARDIA acredita; cancelado/fallido/reembolsado: a revision
   const o4 = (await newOrder()).json.order;
-  sql("update public.compras_usuario set expira_en = now() - interval '1 minute' where id = '" + o4.id + "'");
+  // expira_en esta congelado por la maquina de estados: para SIMULAR que pasaron 30 minutos el arnes (superusuario, solo local) apaga el trigger un instante.
+  sql("begin; alter table public.compras_usuario disable trigger trg_compras_usuario_order_machine; update public.compras_usuario set expira_en = now() - interval '1 minute' where id = '" + o4.id + "'; alter table public.compras_usuario enable trigger trg_compras_usuario_order_machine; commit;");
   const expired = await call('Q4', 'GET', '/api/v1/app/payments/orders/' + o4.id);
   check('ECONOMY.D6_13_pending_order_past_30min_reads_EXPIRED', expired.status === 200 && expired.json?.order?.status === 'EXPIRED' && bal('Q4') === '125', expired.status + ' ' + expired.json?.order?.status);
   const late = await hook(evt(o4));

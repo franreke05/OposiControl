@@ -8,7 +8,7 @@
 --   Q1 2a..2a  balance 200            -> above every price (redeem succeeds)
 --   Q2 2b..2b  balance 29             -> ONE OT short for the 30 OT exam (INSUFFICIENT_BALANCE details.balance=29, price=30)
 --   Q2Z 2c..2c balance 0 (real row)   -> the zero variant
---   Q3 2d..2d  balance 50             -> an EXPIRED entitlement (LOC-OT-EXPIRED) and one that expires in about 1 hour (LOC-OT-EXPIRING; refreshed on every run)
+--   Q3 2d..2d  balance 30 (50 - 2x10) -> an EXPIRED entitlement (LOC-OT-EXPIRED) and one that expires in about 1 hour (LOC-OT-EXPIRING; refreshed on every run)
 --   Q4 2e..2e  balance 25             -> known balance for the payment journeys
 --   Q5         created by the app through register (no fixture)
 --
@@ -89,9 +89,12 @@ values ('7b300000-0000-4000-8000-000000000010', 'LOCAL_PACK_10', 'pack_tickets',
 on conflict (id) do nothing;
 
 -- ---------- Q3 entitlements: ledger debit first, then the entitlement that points at it ----------
+-- One statement per ledger row of the SAME wallet: the snapshot trigger runs after the statement, so two rows of one wallet in one INSERT fail closed (WALLET_INCONSISTENT).
 insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
-values ('7d300000-0000-4000-8000-000000000010', '2d000000-0000-4000-8000-00000000002d', 'compra_examen', -10, 'Acceso a examen', 'examen', 'e3000000-0000-4000-8000-000000000010', 'fixture:q3:expired', '{"op":"fixture"}'),
-       ('7d300000-0000-4000-8000-000000000011', '2d000000-0000-4000-8000-00000000002d', 'compra_examen', -10, 'Acceso a examen', 'examen', 'e3000000-0000-4000-8000-000000000011', 'fixture:q3:expiring', '{"op":"fixture"}')
+values ('7d300000-0000-4000-8000-000000000010', '2d000000-0000-4000-8000-00000000002d', 'compra_examen', -10, 'Acceso a examen', 'examen', 'e3000000-0000-4000-8000-000000000010', 'fixture:q3:expired', '{"op":"fixture"}')
+on conflict (usuario_id, idempotency_key) do nothing;
+insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
+values ('7d300000-0000-4000-8000-000000000011', '2d000000-0000-4000-8000-00000000002d', 'compra_examen', -10, 'Acceso a examen', 'examen', 'e3000000-0000-4000-8000-000000000011', 'fixture:q3:expiring', '{"op":"fixture"}')
 on conflict (usuario_id, idempotency_key) do nothing;
 
 insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta, precio_pagado, moneda, transaccion_id, comprado_en)
