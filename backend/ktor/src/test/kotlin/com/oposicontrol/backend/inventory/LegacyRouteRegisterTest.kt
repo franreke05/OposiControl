@@ -53,7 +53,8 @@ class LegacyRouteRegisterTest {
     }
 
     private val knownEndpointIds: Set<String> = (
-        LegacyEndpoints.SLICE_0 + LegacyEndpoints.SLICE_1 + LegacyEndpoints.SLICE_1_APP + LegacyEndpoints.RETIRED_ADMIN_WRITERS + listOf(
+        LegacyEndpoints.SLICE_0 + LegacyEndpoints.SLICE_1 + LegacyEndpoints.SLICE_1_APP + LegacyEndpoints.RETIRED_ADMIN_WRITERS +
+            LegacyEndpoints.RETIRED_LEGACY_WRITERS + listOf(
             OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_001, OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_001_POST,
             OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_002, OposiBotsUserAdminLegacyEndpoints.BOT_ADMIN_002_DELETE,
         )

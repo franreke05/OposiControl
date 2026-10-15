@@ -1,6 +1,7 @@
 package com.oposicontrol.backend
 
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.PartData
 import io.ktor.serialization.kotlinx.json.json
@@ -801,185 +802,71 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
             // INTERNAL (dev-only): reinicio del proceso. Solo en `combined`; `bot`/`control` no lo montan.
             if (includeInternal) installDevRestartRoutes()
             route("/content") {
+                // Auditoria de controles (E1): las ESCRITURAS legacy de `/content/*` (salvo noticias, FA11) no tienen llamador
+                // vivo (el panel usa `/api/v1/admin/*`; OposiBot no las llama) y escribian sin las guardas ni la auditoria de sus
+                // sucesoras. 410 ADMIN_LEGACY_ROUTE_DISABLED sin leer el cuerpo ni tocar upstream; montadas y contadas
+                // (RETIRED_LEGACY_WRITERS) hasta cero trafico. Las LECTURAS siguen servidas.
+                fun Route.retired(method: HttpMethod, path: String, legacyPath: String) =
+                    retiredLegacyWriter(method, path, LegacyEndpoints.retiredWriter(method.value, legacyPath))
                 route("/especialidades") {
                     get { call.respond(gateway.listEspecialidades()) }
-                    post {
-                        val saved = gateway.saveEspecialidad(call.receive())
-                        tagSearchGateway.indexEspecialidad(saved)
-                        call.respond(HttpStatusCode.Created, saved)
-                    }
-                    put {
-                        val saved = gateway.saveEspecialidad(call.receive())
-                        tagSearchGateway.indexEspecialidad(saved)
-                        call.respond(saved)
-                    }
-                    delete("/{especialidadId}") {
-                        val id = call.requiredPath("especialidadId")
-                        gateway.deleteEspecialidad(id)
-                        tagSearchGateway.remove("especialidad", id)
-                        call.respond(HttpStatusCode.NoContent)
-                    }
+                    retired(HttpMethod.Post, "", "/content/especialidades")
+                    retired(HttpMethod.Put, "", "/content/especialidades")
+                    retired(HttpMethod.Delete, "/{especialidadId}", "/content/especialidades/{especialidadId}")
                 }
                 route("/etiquetas") {
                     get { call.respond(gateway.listEtiquetas()) }
-                    post { call.respond(HttpStatusCode.Created, gateway.saveEtiqueta(call.receive())) }
-                    put { call.respond(gateway.saveEtiqueta(call.receive())) }
-                    delete("/{etiquetaId}") {
-                        gateway.deleteEtiqueta(call.requiredPath("etiquetaId"))
-                        call.respond(HttpStatusCode.NoContent)
-                    }
+                    retired(HttpMethod.Post, "", "/content/etiquetas")
+                    retired(HttpMethod.Put, "", "/content/etiquetas")
+                    retired(HttpMethod.Delete, "/{etiquetaId}", "/content/etiquetas/{etiquetaId}")
                 }
                 route("/comunidades") {
                     get { call.respond(gateway.listComunidades()) }
-                    post { call.respond(HttpStatusCode.Created, gateway.saveComunidad(call.receive())) }
-                    put { call.respond(gateway.saveComunidad(call.receive())) }
-                    delete("/{comunidadId}") {
-                        gateway.deleteComunidad(call.requiredPath("comunidadId"))
-                        call.respond(HttpStatusCode.NoContent)
-                    }
+                    retired(HttpMethod.Post, "", "/content/comunidades")
+                    retired(HttpMethod.Put, "", "/content/comunidades")
+                    retired(HttpMethod.Delete, "/{comunidadId}", "/content/comunidades/{comunidadId}")
                 }
                 route("/solucionarios") {
                     get { call.respond(gateway.listSolucionarios()) }
-                    post {
-                        val saved = gateway.saveSolucionario(call.receive())
-                        tagSearchGateway.indexSolucionario(saved)
-                        call.respond(HttpStatusCode.Created, saved)
-                    }
-                    put {
-                        val saved = gateway.saveSolucionario(call.receive())
-                        tagSearchGateway.indexSolucionario(saved)
-                        call.respond(saved)
-                    }
-                    delete("/{solucionarioId}") {
-                        val id = call.requiredPath("solucionarioId")
-                        gateway.deleteSolucionario(id)
-                        tagSearchGateway.remove("examen", id)
-                        call.respond(HttpStatusCode.NoContent)
-                    }
-                    post("/{solucionarioId}/portada") {
-                        call.respondBackendSupabaseResult("/content/solucionarios/{id}/portada") {
-                            val saved = gateway.uploadPortada(
-                                solucionarioId = call.requiredPath("solucionarioId"),
-                                file = call.receiveSingleFile(
-                                    maxBytes = COVER_MAX_BYTES,
-                                    requiredMimePrefix = "image/",
-                                    defaultFileName = "cover",
-                                ),
-                            )
-                            runCatching { tagSearchGateway.indexSolucionario(saved) }
-                                .onFailure { error ->
-                                    System.err.println("[ktor] optional tag index skipped on cover upload: ${error.safeBackendMessage("index error", 160)}")
-                                }
-                            saved
-                        }
-                    }
-                    delete("/{solucionarioId}/portada") {
-                        call.respondBackendSupabaseResult("/content/solucionarios/{id}/portada") {
-                            val saved = gateway.clearPortada(call.requiredPath("solucionarioId"))
-                            runCatching { tagSearchGateway.indexSolucionario(saved) }
-                                .onFailure { error ->
-                                    System.err.println("[ktor] optional tag index skipped on cover clear: ${error.safeBackendMessage("index error", 160)}")
-                                }
-                            saved
-                        }
-                    }
+                    retired(HttpMethod.Post, "", "/content/solucionarios")
+                    retired(HttpMethod.Put, "", "/content/solucionarios")
+                    retired(HttpMethod.Delete, "/{solucionarioId}", "/content/solucionarios/{solucionarioId}")
+                    retired(HttpMethod.Post, "/{solucionarioId}/portada", "/content/solucionarios/{solucionarioId}/portada")
+                    retired(HttpMethod.Delete, "/{solucionarioId}/portada", "/content/solucionarios/{solucionarioId}/portada")
                     get("/{solucionarioId}/preguntas") {
                         call.respond(gateway.listPreguntas(call.requiredPath("solucionarioId")))
                     }
-                    post("/{solucionarioId}/preguntas") {
-                        val saved = gateway.savePregunta(call.requiredPath("solucionarioId"), call.receive())
-                        tagSearchGateway.indexPregunta(saved)
-                        call.respond(
-                            HttpStatusCode.Created,
-                            saved,
-                        )
-                    }
-                    put("/{solucionarioId}/preguntas") {
-                        val saved = gateway.savePregunta(call.requiredPath("solucionarioId"), call.receive())
-                        tagSearchGateway.indexPregunta(saved)
-                        call.respond(saved)
-                    }
-                    delete("/{solucionarioId}/preguntas/{preguntaId}") {
-                        val id = call.requiredPath("preguntaId")
-                        gateway.deletePregunta(call.requiredPath("solucionarioId"), id)
-                        tagSearchGateway.remove("pregunta", id)
-                        call.respond(HttpStatusCode.NoContent)
-                    }
-                    put("/{solucionarioId}/preguntas/order") {
-                        call.respond(gateway.reorderPreguntas(call.requiredPath("solucionarioId"), call.receive()))
-                    }
+                    retired(HttpMethod.Post, "/{solucionarioId}/preguntas", "/content/solucionarios/{solucionarioId}/preguntas")
+                    retired(HttpMethod.Put, "/{solucionarioId}/preguntas", "/content/solucionarios/{solucionarioId}/preguntas")
+                    retired(
+                        HttpMethod.Delete,
+                        "/{solucionarioId}/preguntas/{preguntaId}",
+                        "/content/solucionarios/{solucionarioId}/preguntas/{preguntaId}",
+                    )
+                    retired(HttpMethod.Put, "/{solucionarioId}/preguntas/order", "/content/solucionarios/{solucionarioId}/preguntas/order")
                 }
                 route("/rafaga") {
                     get { call.respond(gateway.listRafagas()) }
-                    post {
-                        call.respond(HttpStatusCode.Created, gateway.saveRafaga(call.receive()))
-                    }
-                    put {
-                        call.respond(gateway.saveRafaga(call.receive()))
-                    }
-                    delete("/{rafagaId}") {
-                        gateway.deleteRafaga(call.requiredPath("rafagaId"))
-                        call.respond(HttpStatusCode.NoContent)
-                    }
+                    retired(HttpMethod.Post, "", "/content/rafaga")
+                    retired(HttpMethod.Put, "", "/content/rafaga")
+                    retired(HttpMethod.Delete, "/{rafagaId}", "/content/rafaga/{rafagaId}")
                     get("/{rafagaId}/preguntas") {
                         call.respond(gateway.listRafagaPreguntas(call.requiredPath("rafagaId")))
                     }
-                    post("/{rafagaId}/preguntas") {
-                        call.respond(
-                            HttpStatusCode.Created,
-                            gateway.saveRafagaPregunta(call.requiredPath("rafagaId"), call.receive()),
-                        )
-                    }
-                    put("/{rafagaId}/preguntas") {
-                        call.respond(gateway.saveRafagaPregunta(call.requiredPath("rafagaId"), call.receive()))
-                    }
-                    delete("/{rafagaId}/preguntas/{preguntaId}") {
-                        gateway.deleteRafagaPregunta(call.requiredPath("rafagaId"), call.requiredPath("preguntaId"))
-                        call.respond(HttpStatusCode.NoContent)
-                    }
-                    put("/{rafagaId}/preguntas/order") {
-                        call.respond(gateway.reorderRafagaPreguntas(call.requiredPath("rafagaId"), call.receive()))
-                    }
+                    retired(HttpMethod.Post, "/{rafagaId}/preguntas", "/content/rafaga/{rafagaId}/preguntas")
+                    retired(HttpMethod.Put, "/{rafagaId}/preguntas", "/content/rafaga/{rafagaId}/preguntas")
+                    retired(HttpMethod.Delete, "/{rafagaId}/preguntas/{preguntaId}", "/content/rafaga/{rafagaId}/preguntas/{preguntaId}")
+                    retired(HttpMethod.Put, "/{rafagaId}/preguntas/order", "/content/rafaga/{rafagaId}/preguntas/order")
                 }
                 route("/preguntas") {
-                    post("/{preguntaId}/recursos/{resourceId}/upload") {
-                        call.respondBackendSupabaseResult("/content/preguntas/{id}/recursos/{id}/upload") {
-                            val saved = gateway.uploadRecurso(
-                                preguntaId = call.requiredPath("preguntaId"),
-                                resourceId = call.requiredPath("resourceId"),
-                                tipoRecurso = call.request.queryParameters["tipoRecurso"].orEmpty(),
-                                titulo = call.request.queryParameters["titulo"].orEmpty(),
-                                orden = call.request.queryParameters["orden"]?.toIntOrNull() ?: 0,
-                                file = call.receiveSingleFile(
-                                    maxBytes = RESOURCE_MAX_BYTES,
-                                    requiredMimePrefix = null,
-                                    defaultFileName = "resource",
-                                ),
-                            )
-                            tagSearchGateway.indexRecurso(saved)
-                            saved
-                        }
-                    }
-                    post("/{preguntaId}/recursos") {
-                        val saved = gateway.saveRecurso(call.requiredPath("preguntaId"), call.receive())
-                        tagSearchGateway.indexRecurso(saved)
-                        call.respond(
-                            HttpStatusCode.Created,
-                            saved,
-                        )
-                    }
-                    delete("/{preguntaId}/recursos/{resourceId}") {
-                        val id = call.requiredPath("resourceId")
-                        gateway.deleteRecurso(
-                            preguntaId = call.requiredPath("preguntaId"),
-                            resourceId = id,
-                        )
-                        tagSearchGateway.remove("recurso_pregunta", id)
-                        call.respond(HttpStatusCode.NoContent)
-                    }
-                    put("/{preguntaId}/recursos/order") {
-                        call.respond(gateway.reorderRecursos(call.requiredPath("preguntaId"), call.receive()))
-                    }
+                    retired(
+                        HttpMethod.Post,
+                        "/{preguntaId}/recursos/{resourceId}/upload",
+                        "/content/preguntas/{preguntaId}/recursos/{resourceId}/upload",
+                    )
+                    retired(HttpMethod.Post, "/{preguntaId}/recursos", "/content/preguntas/{preguntaId}/recursos")
+                    retired(HttpMethod.Delete, "/{preguntaId}/recursos/{resourceId}", "/content/preguntas/{preguntaId}/recursos/{resourceId}")
+                    retired(HttpMethod.Put, "/{preguntaId}/recursos/order", "/content/preguntas/{preguntaId}/recursos/order")
                 }
                 newsContentRoutes(
                     newsGateway = newsGateway,

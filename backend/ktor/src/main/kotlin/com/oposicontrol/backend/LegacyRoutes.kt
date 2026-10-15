@@ -122,6 +122,64 @@ object LegacyEndpoints {
 
     val RETIRED_ADMIN_WRITERS: List<LegacyEndpoint> = listOf(EP_152, EP_153, EP_224, EP_001, EP_147, EP_148, EP_222)
 
+    /** Fecha de la auditoria de controles del panel (E1): entran en la ventana de deprecacion los escritores de abajo. */
+    val CONTROLS_AUDIT_DEPRECATED_AT: Instant = Instant.parse("2026-10-14T00:00:00Z")
+
+    private fun retiredWriter(id: String, method: String, path: String) =
+        LegacyEndpoint(id, method, path, null, CONTROLS_AUDIT_DEPRECATED_AT)
+
+    /**
+     * Escritores legacy `/admin/...` y `/content/...` SIN llamador vivo (cliente OC migrado a `/api/v1/admin/...`; OposiBot no los
+     * llama) con efectos peligrosos o falsos: `POST /admin/audit` dejaba a cualquier admin insertar filas de auditoria a mano,
+     * `/admin/settings` respondia el eco sin persistir nada, y el resto escribia tablas sin las guardas ni la auditoria de sus
+     * sucesoras canonicas. Mismo trato que [RETIRED_ADMIN_WRITERS]: 410 ADMIN_LEGACY_ROUTE_DISABLED ANTES de leer el cuerpo o
+     * tocar upstream, montados y contados hasta tener cero trafico. `/content/noticias*` queda fuera (FA11, adaptador vivo).
+     * EP-145 (`POST /admin/news-types`) tambien responde 410, pero sigue en [SLICE_0] con su sucesora registrada.
+     */
+    val RETIRED_LEGACY_WRITERS: List<LegacyEndpoint> = listOf(
+        retiredWriter("EP-139", "POST", "/admin/audit"),
+        retiredWriter("EP-149", "POST", "/admin/settings"),
+        retiredWriter("EP-223", "PUT", "/admin/settings"),
+        retiredWriter("EP-142", "POST", "/admin/exam-access"),
+        retiredWriter("EP-143", "POST", "/admin/exam-access/{accessId}"),
+        retiredWriter("EP-220", "PUT", "/admin/exam-access/{accessId}"),
+        retiredWriter("EP-146", "POST", "/admin/news-types/{newsTypeId}"),
+        retiredWriter("EP-221", "PUT", "/admin/news-types/{newsTypeId}"),
+        retiredWriter("EP-197", "POST", "/content/especialidades"),
+        retiredWriter("EP-227", "PUT", "/content/especialidades"),
+        retiredWriter("EP-013", "DELETE", "/content/especialidades/{especialidadId}"),
+        retiredWriter("EP-198", "POST", "/content/etiquetas"),
+        retiredWriter("EP-228", "PUT", "/content/etiquetas"),
+        retiredWriter("EP-014", "DELETE", "/content/etiquetas/{etiquetaId}"),
+        retiredWriter("EP-196", "POST", "/content/comunidades"),
+        retiredWriter("EP-226", "PUT", "/content/comunidades"),
+        retiredWriter("EP-012", "DELETE", "/content/comunidades/{comunidadId}"),
+        retiredWriter("EP-205", "POST", "/content/solucionarios"),
+        retiredWriter("EP-234", "PUT", "/content/solucionarios"),
+        retiredWriter("EP-019", "DELETE", "/content/solucionarios/{solucionarioId}"),
+        retiredWriter("EP-206", "POST", "/content/solucionarios/{solucionarioId}/portada"),
+        retiredWriter("EP-020", "DELETE", "/content/solucionarios/{solucionarioId}/portada"),
+        retiredWriter("EP-207", "POST", "/content/solucionarios/{solucionarioId}/preguntas"),
+        retiredWriter("EP-235", "PUT", "/content/solucionarios/{solucionarioId}/preguntas"),
+        retiredWriter("EP-021", "DELETE", "/content/solucionarios/{solucionarioId}/preguntas/{preguntaId}"),
+        retiredWriter("EP-236", "PUT", "/content/solucionarios/{solucionarioId}/preguntas/order"),
+        retiredWriter("EP-203", "POST", "/content/rafaga"),
+        retiredWriter("EP-231", "PUT", "/content/rafaga"),
+        retiredWriter("EP-017", "DELETE", "/content/rafaga/{rafagaId}"),
+        retiredWriter("EP-204", "POST", "/content/rafaga/{rafagaId}/preguntas"),
+        retiredWriter("EP-232", "PUT", "/content/rafaga/{rafagaId}/preguntas"),
+        retiredWriter("EP-018", "DELETE", "/content/rafaga/{rafagaId}/preguntas/{preguntaId}"),
+        retiredWriter("EP-233", "PUT", "/content/rafaga/{rafagaId}/preguntas/order"),
+        retiredWriter("EP-202", "POST", "/content/preguntas/{preguntaId}/recursos/{resourceId}/upload"),
+        retiredWriter("EP-201", "POST", "/content/preguntas/{preguntaId}/recursos"),
+        retiredWriter("EP-016", "DELETE", "/content/preguntas/{preguntaId}/recursos/{resourceId}"),
+        retiredWriter("EP-230", "PUT", "/content/preguntas/{preguntaId}/recursos/order"),
+    )
+
+    /** El [RETIRED_LEGACY_WRITERS] de un METODO + ruta legacy (plantilla con nombres). Falla al arrancar si no existe. */
+    fun retiredWriter(method: String, path: String): LegacyEndpoint =
+        RETIRED_LEGACY_WRITERS.single { it.method == method && it.legacyPath == path }
+
     val SLICE_1_APP: List<LegacyEndpoint> = listOf(
         APP_HOME, APP_ESTADISTICAS, APP_COMMERCIAL_CATALOG, APP_COMMERCIAL_PURCHASES, APP_COMMERCIAL_SUBSCRIPTIONS,
         APP_EVENTOS, APP_FEEDBACK_PREGUNTA, APP_INICIAR, APP_RESPONDER,

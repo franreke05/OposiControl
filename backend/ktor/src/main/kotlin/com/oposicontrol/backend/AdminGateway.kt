@@ -1,5 +1,6 @@
 package com.oposicontrol.backend
 
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
 import io.ktor.server.request.receive
@@ -39,23 +40,21 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway, moderation: AdminV1Gateway)
         post("/roles/{roleId}") { rejectLegacyAdminWriter() }.legacyRoute(LegacyEndpoints.EP_148)
         put("/roles/{roleId}") { rejectLegacyAdminWriter() }.legacyRoute(LegacyEndpoints.EP_222)
         get("/settings") { call.respond(gateway.settings()) }
-        post("/settings") { call.respond(call.receive<AdminSettingsDto>()) }
-        put("/settings") { call.respond(call.receive<AdminSettingsDto>()) }
+        // Auditoria de controles (E1): escritores sin llamador vivo, retirados con 410 y contados (RETIRED_LEGACY_WRITERS).
+        // `/settings` respondia el eco sin persistir nada; `/audit` dejaba fabricar filas de auditoria a mano.
+        retiredLegacyWriter(HttpMethod.Post, "/settings", LegacyEndpoints.retiredWriter("POST", "/admin/settings"))
+        retiredLegacyWriter(HttpMethod.Put, "/settings", LegacyEndpoints.retiredWriter("PUT", "/admin/settings"))
         get("/audit") { call.respond(gateway.listAudit()) }
-        post("/audit") {
-            gateway.appendAudit(call.receive())
-            call.respond(HttpStatusCode.Created, mapOf("status" to "created"))
-        }
+        retiredLegacyWriter(HttpMethod.Post, "/audit", LegacyEndpoints.retiredWriter("POST", "/admin/audit"))
         get("/news-types") { call.respond(gateway.listNewsTypes()) }.legacyRoute(LegacyEndpoints.EP_025)
-        post("/news-types") {
-            call.respond(HttpStatusCode.Created, gateway.saveNewsType(call.receive()))
-        }.legacyRoute(LegacyEndpoints.EP_145)
-        post("/news-types/{newsTypeId}") { call.respond(HttpStatusCode.Created, gateway.saveNewsType(call.receive())) }
-        put("/news-types/{newsTypeId}") { call.respond(gateway.saveNewsType(call.receive())) }
+        // EP-145: el panel escribe ya por `PUT /api/v1/admin/tipos-noticia/{codigo}` (D4-11). Sigue en SLICE_0 con su sucesora.
+        post("/news-types") { rejectLegacyAdminWriter(NEWS_TYPE_WRITER_RETIRED) }.legacyRoute(LegacyEndpoints.EP_145)
+        retiredLegacyWriter(HttpMethod.Post, "/news-types/{newsTypeId}", LegacyEndpoints.retiredWriter("POST", "/admin/news-types/{newsTypeId}"))
+        retiredLegacyWriter(HttpMethod.Put, "/news-types/{newsTypeId}", LegacyEndpoints.retiredWriter("PUT", "/admin/news-types/{newsTypeId}"))
         get("/exam-access") { call.respond(gateway.listExamAccess()) }
-        post("/exam-access") { call.respond(HttpStatusCode.Created, gateway.saveExamAccess(call.receive())) }
-        post("/exam-access/{accessId}") { call.respond(HttpStatusCode.Created, gateway.saveExamAccess(call.receive())) }
-        put("/exam-access/{accessId}") { call.respond(gateway.saveExamAccess(call.receive())) }
+        retiredLegacyWriter(HttpMethod.Post, "/exam-access", LegacyEndpoints.retiredWriter("POST", "/admin/exam-access"))
+        retiredLegacyWriter(HttpMethod.Post, "/exam-access/{accessId}", LegacyEndpoints.retiredWriter("POST", "/admin/exam-access/{accessId}"))
+        retiredLegacyWriter(HttpMethod.Put, "/exam-access/{accessId}", LegacyEndpoints.retiredWriter("PUT", "/admin/exam-access/{accessId}"))
         get("/ticket-wallets") { call.respond(gateway.listTicketWallets()) }
         get("/ticket-wallets/{userId}/transactions") {
             call.respond(gateway.listTicketTransactions(call.requiredPath("userId")))
@@ -107,13 +106,30 @@ fun Route.adminRoutes(gateway: SupabaseAdminGateway, moderation: AdminV1Gateway)
  * RC-10: rechazo de los escritores legacy de usuarios/roles. No recibe el gateway: por construccion no puede hacer I/O
  * upstream. Las sucesoras auditadas y con la guarda MASTER-AUTH-001 son las rutas `/api/v1/admin/usuarios/...`.
  */
-internal fun rejectLegacyAdminWriter(): Nothing {
-    throw BackendDomainException(
-        "ADMIN_LEGACY_ROUTE_DISABLED",
-        HttpStatusCode.Gone,
-        "La escritura legacy de usuarios/roles esta deshabilitada (sin guarda de cuentas administrativas ni auditoria). " +
-            "Usa las rutas /api/v1/admin/usuarios/{id} (PATCH) y /api/v1/admin/usuarios/{id}/roles (POST), que la aplican.",
-    )
+internal fun rejectLegacyAdminWriter(
+    message: String = "La escritura legacy de usuarios/roles esta deshabilitada (sin guarda de cuentas administrativas ni auditoria). " +
+        "Usa las rutas /api/v1/admin/usuarios/{id} (PATCH) y /api/v1/admin/usuarios/{id}/roles (POST), que la aplican.",
+): Nothing {
+    throw BackendDomainException("ADMIN_LEGACY_ROUTE_DISABLED", HttpStatusCode.Gone, message)
+}
+
+private const val NEWS_TYPE_WRITER_RETIRED =
+    "La escritura legacy de tipos de noticia esta retirada. Usa PUT /api/v1/admin/tipos-noticia/{codigo} (D4-11)."
+
+/**
+ * [LegacyEndpoints.RETIRED_LEGACY_WRITERS]: mismo rechazo (410 ADMIN_LEGACY_ROUTE_DISABLED, sin leer el cuerpo ni I/O
+ * upstream) y la ruta sigue contada por `legacyRoute`. Monta la hoja ya marcada.
+ */
+internal fun Route.retiredLegacyWriter(method: HttpMethod, path: String, endpoint: LegacyEndpoint): Route {
+    val message = "Esta escritura legacy (${endpoint.endpointId}) esta retirada: no tiene llamador vivo y escribia sin las " +
+        "guardas ni la auditoria de su sucesora. Usa la ruta canonica /api/v1/admin/... equivalente."
+    val leaf = when (method) {
+        HttpMethod.Post -> post(path) { rejectLegacyAdminWriter(message) }
+        HttpMethod.Put -> put(path) { rejectLegacyAdminWriter(message) }
+        HttpMethod.Delete -> delete(path) { rejectLegacyAdminWriter(message) }
+        else -> error("Solo se retiran escritores: $method $path")
+    }
+    return leaf.legacyRoute(endpoint)
 }
 
 class SupabaseAdminGateway internal constructor(
