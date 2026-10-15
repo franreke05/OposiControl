@@ -21,9 +21,11 @@ import com.oposicontrol.admin.core.ui.components.AppIcon
  * menú sin quedar accesible por ningún otro camino, así que la única pantalla
  * que da de alta especialidades y edita sus capacidades se quedó sin puerta.
  *
- * Las 16 que siguen fuera (Recursos, Rankings, Accesos, Planes,
- * Consumibles, Promociones, Pop-ups, Reportes, OposiTester, Estudio, Eventos,
- * Tipos de noticia, Assets, Roles, Configuración, Estado) NO se borraron: su
+ * Eventos y Assets SÍ se borraron el 2026-10-15: no tenían pantalla propia y
+ * abrían otra con su nombre (Producto y Noticias). Comunidades y Etiquetas
+ * ganaron fila el mismo día. Las que siguen fuera (Recursos, Rankings,
+ * Accesos, Planes, Consumibles, Promociones, Pop-ups, Reportes, OposiTester,
+ * Estudio, Tipos de noticia, Roles, Configuración, Estado) NO se borraron: su
  * `AppRoute` sigue existiendo, sigue registrada aquí (con `showInSidebar =
  * false`) para que `AppRoute.metadata()` no reviente, y sigue resolviendo a
  * contenido real — bien porque ya vivía en la pantalla que la absorbe (Recursos
@@ -115,7 +117,12 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
             // ningún otro camino: ni pestaña de hub, ni atajo del dashboard, ni
             // la búsqueda global —que además necesita la tabla `search_index`,
             // ausente en el proyecto Supabase apuntado—.
-            item(AppRoute.Content.Taxonomy, "content.taxonomy", "Especialidades", "Especialidades, comunidades, etiquetas y modos disponibles.", NavigationGroupId.CONTENT, AppIcon.LAYERS.key),
+            item(AppRoute.Content.Taxonomy, "content.taxonomy", "Especialidades", "Especialidades y modos de examen disponibles.", NavigationGroupId.CONTENT, AppIcon.LAYERS.key),
+            // Comunidades y Etiquetas (2026-10-15): pantallas CRUD completas sobre rutas canónicas
+            // (`/api/v1/admin/comunidades-autonomas`, `/api/v1/admin/etiquetas`) que llevaban compiladas sin ninguna puerta:
+            // `toLegacySection` nunca devolvía su sección. Sólo escritorio: en la vista estrecha no hay menú lateral.
+            item(AppRoute.Content.Communities, "content.communities", "Comunidades", "Comunidades autónomas que acotan exámenes por territorio.", NavigationGroupId.CONTENT, AppIcon.LOCATION.key, NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Content.Tags, "content.tags", "Etiquetas", "Etiquetas que clasifican preguntas y contenido.", NavigationGroupId.CONTENT, AppIcon.FILTER.key, NavigationVisibility.DESKTOP_ONLY),
             item(AppRoute.Content.Questions, "content.questions", "Preguntas", "Revisión y edición de preguntas y sus recursos.", NavigationGroupId.CONTENT, AppIcon.QUESTIONS.key),
             item(AppRoute.Content.Imports, "content.imports", "Importación", "Importa preguntas desde PDF, revisa el resultado y publícalo cuando esté listo.", NavigationGroupId.CONTENT, AppIcon.IMPORT.key),
             // Recursos ya vivía dentro de la misma pantalla que Preguntas
@@ -145,9 +152,9 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         NavigationGroupId.ECONOMY,
         "Monetización",
         listOf(
-            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catálogo", "Productos, planes, servicios, promociones y avisos.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key),
+            item(AppRoute.Commercial.Catalog, "commercial.catalog", "Catálogo", "Productos, planes, servicios, promociones y avisos.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key, NavigationVisibility.DESKTOP_ONLY),
             item(AppRoute.Commercial.Market, "commercial.market", "OposiMarket", "Lo que está publicado en la tienda. Solo consulta.", NavigationGroupId.ECONOMY, AppIcon.MARKET.key, NavigationVisibility.DESKTOP_ONLY),
-            item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes de suscripción y beneficios.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key, showInSidebar = false),
+            item(AppRoute.Commercial.Plans, "commercial.plans", "Planes", "Planes de suscripción y beneficios.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
             item(AppRoute.Commercial.Consumables, "commercial.consumables", "Consumibles", "Potenciadores y protectores que se compran con OT.", NavigationGroupId.ECONOMY, AppIcon.CATALOG.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
             item(AppRoute.Commercial.Promotions, "commercial.promotions", "Promociones", "Cupones y descuentos con ventana de validez.", NavigationGroupId.ECONOMY, AppIcon.PLANS.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
             item(AppRoute.Commercial.PopupRules, "commercial.popups", "Pop-ups", "Cuándo y a quién se muestra cada oferta.", NavigationGroupId.ECONOMY, AppIcon.INFO.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
@@ -174,9 +181,8 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         NavigationGroupId.ANALYTICS,
         "Analítica",
         listOf(
-            item(AppRoute.Analytics.Home, "analytics", "Analytics", "Producto, estudio, retención, comunidad, economía y marketing.", NavigationGroupId.ANALYTICS, AppIcon.ANALYTICS.key),
-            item(AppRoute.Analytics.Performance, "analytics.performance", "Estudio", "Rendimiento, dificultad y debilidades.", NavigationGroupId.ANALYTICS, AppIcon.PERFORMANCE.key, showInSidebar = false),
-            item(AppRoute.Analytics.Events, "analytics.events", "Eventos", "Eventos y calidad de datos.", NavigationGroupId.ANALYTICS, AppIcon.EVENTS.key, showInSidebar = false),
+            item(AppRoute.Analytics.Home, "analytics", "Analytics", "Producto, estudio, retención, comunidad, economía y marketing.", NavigationGroupId.ANALYTICS, AppIcon.ANALYTICS.key, NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Analytics.Performance, "analytics.performance", "Estudio", "Rendimiento, dificultad y debilidades.", NavigationGroupId.ANALYTICS, AppIcon.PERFORMANCE.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
         ),
     ),
     // El enum sigue llamándose OPERATIONS (es el id interno del grupo, no texto
@@ -186,9 +192,8 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
         NavigationGroupId.OPERATIONS,
         "Publicación",
         listOf(
-            item(AppRoute.Publication.News, "publication.news", "Noticias", "Gestiona, prepara y publica las noticias que aparecen en OposiBot.", NavigationGroupId.OPERATIONS, AppIcon.NEWS.key),
-            item(AppRoute.Publication.NewsTypes, "publication.news-types", "Tipos de noticia", "Catálogo editorial.", NavigationGroupId.OPERATIONS, AppIcon.NEWS_TYPES.key, showInSidebar = false),
-            item(AppRoute.Publication.Assets, "publication.assets", "Assets", "Recursos visuales de publicación.", NavigationGroupId.OPERATIONS, AppIcon.ASSETS.key, showInSidebar = false),
+            item(AppRoute.Publication.News, "publication.news", "Noticias", "Gestiona, prepara y publica las noticias que aparecen en OposiBot.", NavigationGroupId.OPERATIONS, AppIcon.NEWS.key, NavigationVisibility.DESKTOP_ONLY),
+            item(AppRoute.Publication.NewsTypes, "publication.news-types", "Tipos de noticia", "Catálogo editorial.", NavigationGroupId.OPERATIONS, AppIcon.NEWS_TYPES.key, NavigationVisibility.DESKTOP_ONLY, showInSidebar = false),
         ),
     ),
     AppRouteMenuGroup(
@@ -275,9 +280,10 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     AppRoute.Content.Questions, AppRoute.Content.Resources -> AdminSection.QUESTIONS_RESOURCES
     AppRoute.Content.Imports -> null
     AppRoute.Content.Taxonomy -> AdminSection.SPECIALTIES
+    AppRoute.Content.Communities -> AdminSection.COMMUNITIES
+    AppRoute.Content.Tags -> AdminSection.TAGS
     AppRoute.Publication.News -> null
     AppRoute.Publication.NewsTypes -> null
-    AppRoute.Publication.Assets -> null
     AppRoute.Users.List, is AppRoute.Users.Detail -> AdminSection.USERS
     // Pantalla propia de escritorio: no cae al adaptador legacy.
     AppRoute.Rankings -> null
@@ -298,9 +304,9 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     AppRoute.Moderation.Queue -> AdminSection.MODERATION
     // Analitica de producto tiene pantalla propia de escritorio; no cae al legacy.
     AppRoute.Analytics.Home -> null
-    // Estudio y Eventos ahora abren ProductAnalyticsScreen en su sección real
-    // (ver analyticsSectionFor en AppRoot.kt) en vez de caer al Dashboard.
-    AppRoute.Analytics.Events, AppRoute.Analytics.Performance -> null
+    // Estudio abre ProductAnalyticsScreen en su sección real (ver
+    // analyticsSectionFor en AppRoot.kt) en vez de caer al Dashboard.
+    AppRoute.Analytics.Performance -> null
     // Sistema (Estado/Administradores/Auditoría) ahora abre el hub propio
     // de Sistema (ver systemTabFor en AppRoot.kt), no el adaptador legacy.
     AppRoute.System.Roles -> null

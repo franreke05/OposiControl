@@ -41,7 +41,6 @@ import com.oposicontrol.admin.features.auth.presentation.AuthScreen
 import com.oposicontrol.admin.features.auth.presentation.AuthViewModel
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardIntent
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardQuickAction
-import com.oposicontrol.admin.features.dashboard.presentation.DashboardScreen
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardV2Destination
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardV2Intent
@@ -54,7 +53,6 @@ import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessScreen
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessViewModel
 import com.oposicontrol.admin.features.exams.presentation.ExamsIntent
 import com.oposicontrol.admin.features.exams.presentation.ExamWorkspaceScreen
-import com.oposicontrol.admin.features.exams.presentation.ExamsScreen
 import com.oposicontrol.admin.features.exams.presentation.ExamsViewModel
 import com.oposicontrol.admin.features.exams.presentation.ContentUploadScreen
 import com.oposicontrol.admin.features.exams.presentation.MobileContentView
@@ -98,9 +96,6 @@ import com.oposicontrol.admin.domain.model.AnalyticsSection
 import com.oposicontrol.admin.features.store.presentation.MarketScreen
 import com.oposicontrol.admin.features.store.presentation.MarketSection
 import com.oposicontrol.admin.features.store.presentation.MarketViewModel
-import com.oposicontrol.admin.features.store.presentation.StoreIntent
-import com.oposicontrol.admin.features.store.presentation.StoreScreen
-import com.oposicontrol.admin.features.store.presentation.StoreViewModel
 import com.oposicontrol.admin.features.support.presentation.SupportScreen
 import com.oposicontrol.admin.features.support.presentation.SupportViewModel
 import com.oposicontrol.admin.features.tickets.presentation.TicketsIntent
@@ -109,7 +104,6 @@ import com.oposicontrol.admin.features.tickets.presentation.TicketsViewModel
 import com.oposicontrol.admin.features.users.presentation.UsersIntent
 import com.oposicontrol.admin.features.users.presentation.UsersScreen
 import com.oposicontrol.admin.features.users.presentation.UsersViewModel
-import com.oposicontrol.admin.domain.repository.TagSearchRepository
 import org.koin.compose.getKoin
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
@@ -235,15 +229,11 @@ internal fun resolveContentTarget(
     // `marketSectionFor`. Son entradas de menú distintas sobre una sola
     // pantalla, no cuatro pantallas.
     route == AppRoute.Commercial.Market && !compactLayout -> AppContentTarget.MARKET
-    // Analitica de producto: secciones con tablas densas, escritorio. Estudio y
-    // Eventos (antes caían al adaptador legacy de Dashboard, que no tenía nada
-    // que ver) ahora abren esta misma pantalla en su sección real — con cuál lo
-    // decide `analyticsSectionFor`.
-    (
-        route == AppRoute.Analytics.Home ||
-            route == AppRoute.Analytics.Performance ||
-            route == AppRoute.Analytics.Events
-        ) && !compactLayout -> AppContentTarget.PRODUCT_ANALYTICS
+    // Analitica de producto: secciones con tablas densas, escritorio. Estudio
+    // (antes caía al adaptador legacy de Dashboard, que no tenía nada que ver)
+    // abre esta misma pantalla en su sección real — ver `analyticsSectionFor`.
+    (route == AppRoute.Analytics.Home || route == AppRoute.Analytics.Performance) &&
+        !compactLayout -> AppContentTarget.PRODUCT_ANALYTICS
     // Usuarios: hub con Competición (antes Rankings, pantalla propia) y Accesos
     // (antes Commercial.Subscriptions) añadidos como pestañas — con cuál lo
     // decide `usersTabFor`.
@@ -267,15 +257,14 @@ internal fun resolveContentTarget(
             route == AppRoute.System.Audit
         ) && !compactLayout -> AppContentTarget.SYSTEM_HUB
     // Noticias: hub con Tipos añadido como pestaña — con cuál lo decide
-    // `newsTabFor`. Assets ya abría la misma pantalla que Noticias antes de
-    // esta consolidación (mismo AdminSection.NEWS legacy), así que aterriza en
-    // la pestaña Noticias por defecto: mismo comportamiento que ya tenía.
-    (
-        route == AppRoute.Publication.News ||
-            route == AppRoute.Publication.NewsTypes ||
-            route == AppRoute.Publication.Assets
-        ) && !compactLayout -> AppContentTarget.NEWS_HUB
-    compactLayout && route is AppRoute.Content -> AppContentTarget.MOBILE_CONTENT_ROOT
+    // `newsTabFor`.
+    (route == AppRoute.Publication.News || route == AppRoute.Publication.NewsTypes) &&
+        !compactLayout -> AppContentTarget.NEWS_HUB
+    // Comunidades y Etiquetas no tienen vista dentro del contenido móvil: caen a su
+    // propia pantalla CRUD (adaptador legacy), igual que en escritorio.
+    compactLayout && route is AppRoute.Content &&
+        route != AppRoute.Content.Communities &&
+        route != AppRoute.Content.Tags -> AppContentTarget.MOBILE_CONTENT_ROOT
     hasLegacyRoute -> AppContentTarget.LEGACY_SECTION
     else -> AppContentTarget.LEGACY_PLACEHOLDER
 }
@@ -312,51 +301,6 @@ internal fun DashboardV2Destination.toAppRoute(): AppRoute = when (this) {
     DashboardV2Destination.SUBSCRIPTIONS -> AppRoute.Commercial.Subscriptions
     DashboardV2Destination.AUDIT -> AppRoute.System.Audit
 }
-
-/**
- * Si esta pantalla dibuja el panel de búsqueda global.
- *
- * Tres condiciones, y la tercera es la que se añade: el panel de escritorio no lo
- * dibuja **nunca**.
- *
- * `GlobalTagSearch` no tiene backend: `KtorTagSearchRepositoryImpl.isAvailable` es false y sus
- * operaciones fallan, así que fuera del escritorio el componente sólo muestra «no disponible» y nunca llama al
- * repositorio. En Inicio —la primera pantalla que se
- * ve— eso hace dos daños a la vez: promete una capacidad que la aplicación no
- * tiene, y se come la franja vertical que le corresponde a «Estado del sistema»,
- * que sí trae un dato real.
- *
- * No se retira de las demás secciones: allí el componente y su repositorio siguen
- * montados igual, listos para el día que el repositorio devuelva filas.
- */
-internal fun showsGlobalSearch(
-    target: AppContentTarget,
-    compactLayout: Boolean,
-    hasLegacySection: Boolean,
-    /**
-     * Si la sección trae su propio buscador que SÍ encuentra cosas.
-     *
-     * Mismo criterio que el workspace de Exámenes, aplicado por sección en vez de
-     * por `target`: Preguntas cae en `LEGACY_SECTION` como otras quince pantallas,
-     * así que no se puede distinguir por ahí. Su banco tiene búsqueda real sobre
-     * código y enunciado; dejar encima la global —que contesta «Sin resultados»
-     * siempre— ponía dos cajas equivalentes una sobre otra.
-     */
-    sectionHasOwnSearch: Boolean = false,
-): Boolean = !compactLayout &&
-    hasLegacySection &&
-    !sectionHasOwnSearch &&
-    target != AppContentTarget.DESKTOP_DASHBOARD &&
-    // Y tampoco en el workspace de Exámenes, por el mismo motivo y con un
-    // agravante: esa pantalla tiene su propio buscador local —«Buscar
-    // examen…»— que SÍ encuentra cosas. Dos campos de búsqueda uno encima de
-    // otro, y el de arriba contestando siempre «Sin resultados», enseñaría a
-    // desconfiar del que funciona.
-    target != AppContentTarget.EXAM_WORKSPACE &&
-    // Usuarios, igual: su catálogo busca de verdad por nombre y email sobre la
-    // lista cargada. La global quedaba justo encima contestando «Sin
-    // resultados» a cualquier cosa que se escribiera.
-    target != AppContentTarget.USERS_HUB
 
 /**
  * Etiqueta de la acción primaria de la cabecera.
@@ -427,7 +371,6 @@ fun AppRoot(
     val authViewModel: AuthViewModel = koinInject()
     // Formulario «Solicitar acceso» de la pantalla de acceso (publico: no necesita sesion).
     val accessRequestViewModel: AccessRequestViewModel = koinInject()
-    val tagSearchRepository: TagSearchRepository = koinInject()
 
     val authState by authViewModel.state.collectAsState()
     val route by navigator.currentRoute.collectAsState()
@@ -477,38 +420,40 @@ fun AppRoot(
                 enabled = navigator.canNavigateBack(),
                 onBack = { navigator.handleSystemBack() },
             )
-            WarmUpPrimaryTabs(authState.isAuthenticated)
             BoxWithConstraints(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
             val breakpoint = appBreakpointFor(maxWidth)
             val compactLayout = breakpoint != AppBreakpoint.EXPANDED
+            // Sólo en la vista estrecha (DEBT-016/E5, 2026-10-15): las pestañas que precarga son las de la barra
+            // inferior móvil. En escritorio Inicio es Dashboard V2 (1 petición) y la precarga lanzaba además, sin que
+            // nada lo pintara, dos veces el agregado heredado de Home (≈10 + nº de exámenes peticiones cada vez).
+            if (compactLayout) WarmUpPrimaryTabs(authState.isAuthenticated)
             val metadata = route.metadata()
             val legacySection = route.toLegacySection()
-            val legacyRoute = legacySection?.let {
-                adminSectionRoute(
-                    section = it,
-                    environmentLabel = environmentLabel,
-                    openSection = navigator::openSection,
-                    mobileExperience = compactLayout,
-                    onOpenContentUpload = { navigator.push(AppRoute.Content.Imports) },
-                )
-            }
             // Swipe-between-tabs only applies while sitting at the root of one of
             // the 5 primary destinations (not inside a pushed detail/content route,
             // where a horizontal drag has no well-defined target).
             val primaryTabRoutes = remember { mobilePrimaryNavigation.map { it.route } }
             val currentPrimaryTabIndex = primaryTabRoutes.indexOf(route)
             val showTabPager = compactLayout && currentPrimaryTabIndex >= 0
-            // Se calcula aquí, no dentro del slot de contenido, porque la
-            // cabecera (acción primaria) también lo necesita: antes de los hubs
-            // nuevos, `legacySection` era una señal fiable de "esta ruta cae al
-            // adaptador legacy". Ahora una ruta puede tener `legacySection` no
-            // nulo (Usuarios/Sistema/Moderación/Noticias lo siguen necesitando
-            // para su versión móvil) y aun así resolver a un hub propio en
-            // escritorio — sin este cálculo compartido, la cabecera seguiría
-            // ofreciendo la acción primaria del adaptador legacy (dispatch-eada
-            // contra un ViewModel cuya pantalla ya ni se pinta) encima de un hub
-            // que no tiene una única acción que la represente.
-            val contentTarget = resolveContentTarget(route, compactLayout, showTabPager, legacyRoute != null)
+            val hasLegacyScreen = legacySection?.hasLegacyScreen() == true
+            // `contentTarget` se calcula aquí y no dentro del slot de contenido porque la cabecera (acción primaria)
+            // también lo necesita: una ruta puede tener `legacySection` (por su versión móvil) y aun así resolver a un
+            // hub propio en escritorio, donde la acción del adaptador legacy dispararía sobre una pantalla que no se ve.
+            //
+            // El adaptador legacy sólo se compone si de verdad se va a pintar (su sección o la pestaña móvil actual):
+            // componerlo inyecta su ViewModel, y varios cargan datos en `init`. Antes Inicio de escritorio creaba así
+            // el `DashboardViewModel` heredado —y su agregado de ~10 + N peticiones— para no enseñarlo nunca.
+            val contentTarget = resolveContentTarget(route, compactLayout, showTabPager, hasLegacyScreen)
+            val legacyRoute = legacySection
+                ?.takeIf { contentTarget == AppContentTarget.LEGACY_SECTION || contentTarget == AppContentTarget.TAB_PAGER }
+                ?.let {
+                    adminSectionRoute(
+                        section = it,
+                        environmentLabel = environmentLabel,
+                        openSection = navigator::openSection,
+                        onOpenContentUpload = { navigator.push(AppRoute.Content.Imports) },
+                    )
+                }
             // Se resuelve aquí y no dentro del slot de contenido porque la
             // cabecera también lo necesita: el panel de escritorio es la única
             // pantalla cuya acción primaria no viene del adaptador legacy.
@@ -528,7 +473,7 @@ fun AppRoot(
                 // El mismo cierre de sesion que Ajustes en la vista estrecha; la app vuelve al acceso al quedarse sin sesion.
                 onLogout = { logoutScope.launch { authRepository.logout() } },
                 currentRouteId = sidebarRouteIdFor(route, compactLayout),
-                groups = appNavigationGroups.toShellGroups(includeMobileOnly = compactLayout),
+                groups = appNavigationGroups.toShellGroups(compactLayout = compactLayout),
                 mobileDestinations = mobilePrimaryNavigation.map { it.toShellItem() },
                 onRouteSelected = { id ->
                     appNavigationGroups
@@ -594,25 +539,9 @@ fun AppRoot(
                 },
                 canGoBack = backStack.size > 1,
                 onBack = { navigator.pop() },
-                // Ver [showsGlobalSearch]: el panel de escritorio no lo dibuja, y
-                // al no emitir nada tampoco deja el hueco vertical — el `Column`
-                // de `DesktopShell` usa `spacedBy`, que sólo separa hijos que se
-                // han medido. Así «Estado del sistema» queda pegado a la cabecera.
-                globalSearch = {
-                    if (showsGlobalSearch(
-                            target = contentTarget,
-                            compactLayout = compactLayout,
-                            hasLegacySection = legacySection != null,
-                            sectionHasOwnSearch = legacySection == AdminSection.QUESTIONS_RESOURCES,
-                        )
-                    ) {
-                        GlobalTagSearch(
-                            currentSection = requireNotNull(legacySection),
-                            repository = tagSearchRepository,
-                            onOpenSection = navigator::openSection,
-                        )
-                    }
-                },
+                // Sin `globalSearch` (2026-10-15): la búsqueda global por etiquetas no tiene ruta admin canónica
+                // —los endpoints legacy `/search` leen `search_index`, ausente en MAIN— y el componente sólo decía
+                // «no disponible». Cada pantalla conserva su propio buscador (Preguntas, Exámenes, Usuarios…).
             ) {
                 when (contentTarget) {
                     AppContentTarget.DESKTOP_DASHBOARD -> {
@@ -871,30 +800,49 @@ private fun MobilePrimaryTabContent(
     environmentLabel: String,
     openSection: (AdminSection) -> Unit,
 ) {
-    val legacySection = route.toLegacySection()
-    if (legacySection != null) {
+    val legacyRoute = route.toLegacySection()?.let { section ->
         adminSectionRoute(
-            section = legacySection,
+            section = section,
             environmentLabel = environmentLabel,
             openSection = openSection,
-            mobileExperience = true,
-        ).content()
+        )
+    }
+    if (legacyRoute != null) {
+        legacyRoute.content()
     } else {
         val metadata = route.metadata()
         LegacyRouteAdapter(metadata.title, metadata.description)
     }
 }
 
+/**
+ * Lo que se ve en la vista estrecha al llegar a una sección que sólo existe en escritorio (Catálogo, OposiMarket,
+ * Analytics, Noticias, Competición…). Ninguna tiene entrada de menú en móvil —la barra inferior sólo ofrece los cinco
+ * destinos de [mobilePrimaryNavigation]—, así que sólo se llega aquí estrechando la ventana de escritorio con la sección
+ * abierta. Antes decía «preparada para la migración», que prometía una pantalla que nadie está construyendo.
+ */
 @Composable
 private fun LegacyRouteAdapter(title: String, description: String) {
     com.oposicontrol.admin.core.ui.components.EmptyStateCard(
         title = title,
-        message = "$description Esta ruta esta preparada para la migracion de su vertical.",
+        message = desktopOnlyMessage(description),
     )
 }
 
-private fun List<AppRouteMenuGroup>.toShellGroups(includeMobileOnly: Boolean): List<ShellNavigationGroup> = mapNotNull { group ->
-    val items = group.sidebarItems.filter { includeMobileOnly || it.metadata.visibility != com.oposicontrol.admin.app.navigation.NavigationVisibility.MOBILE_ONLY }
+internal fun desktopOnlyMessage(description: String): String =
+    "$description Esta sección solo está disponible en la vista de escritorio: amplía la ventana para abrirla."
+
+/**
+ * Grupos del menú lateral. La vista estrecha no pinta menú lateral (sólo la barra inferior), pero el filtro se respeta
+ * igual: una entrada DESKTOP_ONLY no se ofrece en compacto y una MOBILE_ONLY no se ofrece en escritorio.
+ */
+internal fun List<AppRouteMenuGroup>.toShellGroups(compactLayout: Boolean): List<ShellNavigationGroup> = mapNotNull { group ->
+    val hidden = if (compactLayout) {
+        com.oposicontrol.admin.app.navigation.NavigationVisibility.DESKTOP_ONLY
+    } else {
+        com.oposicontrol.admin.app.navigation.NavigationVisibility.MOBILE_ONLY
+    }
+    val items = group.sidebarItems.filter { it.metadata.visibility != hidden }
     items.takeIf { it.isNotEmpty() }?.let {
         ShellNavigationGroup(
             id = group.id.name,
@@ -950,36 +898,41 @@ private class AdminSectionRoute(
     val content: @Composable () -> Unit,
 )
 
+/** Si [adminSectionRoute] tiene pantalla para esta sección. Tiene que coincidir con sus ramas `null`. */
+internal fun AdminSection.hasLegacyScreen(): Boolean = this !in SECTIONS_WITHOUT_SCREEN
+
+private val SECTIONS_WITHOUT_SCREEN = setOf(AdminSection.ROLES, AdminSection.SETTINGS, AdminSection.STORE, AdminSection.EXAMS)
+
+/**
+ * Adaptador de una sección legacy, o `null` si la sección no tiene pantalla propia.
+ *
+ * `null` (2026-10-15) para las cuatro que sólo sobreviven como DESTINO de navegación y nunca se pintan aquí:
+ * `ROLES` y `SETTINGS` (pintaban un cuerpo vacío; abren el hub de Sistema o el `SettingsScreen` del paginador),
+ * `STORE` (abre Catálogo; la tienda heredada se retiró) y `EXAMS` (Exámenes abre el workspace en escritorio y el
+ * contenido móvil en compacto; la pantalla antigua no la alcanzaba ninguna ruta).
+ */
 @Composable
 private fun adminSectionRoute(
     section: AdminSection,
     environmentLabel: String,
     openSection: (AdminSection) -> Unit,
-    mobileExperience: Boolean,
     onOpenContentUpload: () -> Unit = {},
-): AdminSectionRoute {
+): AdminSectionRoute? {
     return when (section) {
+        // Sólo la vista estrecha llega aquí: Inicio en escritorio es `DESKTOP_DASHBOARD` (Dashboard V2).
         AdminSection.DASHBOARD -> {
             val viewModel: DashboardViewModel = koinInject()
             AdminSectionRoute(
                 onPrimaryAction = { viewModel.dispatch(DashboardIntent.Refresh) },
                 content = {
-                    if (mobileExperience) {
-                        MobileDashboardScreen(
-                            viewModel = viewModel,
-                            environmentLabel = environmentLabel,
-                            onQuickAction = { action ->
-                                if (action == DashboardQuickAction.IMPORT_QUESTIONS) onOpenContentUpload()
-                                else handleDashboardAction(action, openSection)
-                            },
-                        )
-                    } else {
-                        DashboardScreen(
-                            viewModel = viewModel,
-                            environmentLabel = environmentLabel,
-                            onQuickAction = { action -> handleDashboardAction(action, openSection) },
-                        )
-                    }
+                    MobileDashboardScreen(
+                        viewModel = viewModel,
+                        environmentLabel = environmentLabel,
+                        onQuickAction = { action ->
+                            if (action == DashboardQuickAction.IMPORT_QUESTIONS) onOpenContentUpload()
+                            else handleDashboardAction(action, openSection)
+                        },
+                    )
                 },
             )
         }
@@ -1001,9 +954,11 @@ private fun adminSectionRoute(
             )
         }
 
-        // Ninguna ruta cae ya en esta sección (`toLegacySection` no la devuelve): la pantalla de roles se retiró y
-        // `AdminSection.ROLES` solo sobrevive como destino de navegación hacia Sistema > Administradores.
-        AdminSection.ROLES -> AdminSectionRoute(onPrimaryAction = null, content = {})
+        AdminSection.ROLES,
+        AdminSection.SETTINGS,
+        AdminSection.STORE,
+        AdminSection.EXAMS,
+        -> null
 
         AdminSection.SPECIALTIES -> {
             val viewModel: SpecialtiesViewModel = koinInject()
@@ -1045,14 +1000,6 @@ private fun adminSectionRoute(
             )
         }
 
-        AdminSection.EXAMS -> {
-            val viewModel: ExamsViewModel = koinInject()
-            AdminSectionRoute(
-                onPrimaryAction = { viewModel.dispatch(ExamsIntent.CreateNew) },
-                content = { ExamsScreen(viewModel) },
-            )
-        }
-
         AdminSection.QUESTIONS_RESOURCES -> {
             // Preguntas (banco global) tiene su propio módulo/ViewModel desde
             // aquí en adelante — ver diseño aprobado. ExamsViewModel y
@@ -1078,14 +1025,6 @@ private fun adminSectionRoute(
             AdminSectionRoute(
                 onPrimaryAction = { viewModel.dispatch(ExamAccessIntent.CreateNew) },
                 content = { ExamAccessScreen(viewModel) },
-            )
-        }
-
-        AdminSection.STORE -> {
-            val viewModel: StoreViewModel = koinInject()
-            AdminSectionRoute(
-                onPrimaryAction = { viewModel.dispatch(StoreIntent.CreateNew) },
-                content = { StoreScreen(viewModel) },
             )
         }
 
@@ -1124,10 +1063,6 @@ private fun adminSectionRoute(
             )
         }
 
-        // Igual que ROLES: `toLegacySection` no devuelve esta sección. En escritorio `System.Settings` es el hub de
-        // Sistema y en la vista estrecha la pinta la rama propia del paginador de pestañas (`SettingsScreen`).
-        AdminSection.SETTINGS -> AdminSectionRoute(onPrimaryAction = null, content = {})
-
         AdminSection.AUDIT -> {
             val viewModel: AuditViewModel = koinInject()
             AdminSectionRoute(
@@ -1143,17 +1078,11 @@ private fun handleDashboardAction(
     openSection: (AdminSection) -> Unit,
 ) {
     val target = when (action) {
-        DashboardQuickAction.REVIEW_PENDING -> AdminSection.QUESTIONS_RESOURCES
         DashboardQuickAction.REVIEW_FORUM_REPORTS -> AdminSection.MODERATION
         DashboardQuickAction.IMPORT_QUESTIONS -> AdminSection.QUESTIONS_RESOURCES
-        DashboardQuickAction.AUDIT_RESOURCES -> AdminSection.QUESTIONS_RESOURCES
-        DashboardQuickAction.CREATE_NEWS -> AdminSection.NEWS
         DashboardQuickAction.CREATE_EXAM -> AdminSection.EXAMS
         DashboardQuickAction.OPEN_USERS -> AdminSection.USERS
         DashboardQuickAction.OPEN_SUPPORT -> AdminSection.SUPPORT
-        DashboardQuickAction.ACTIVATE_OFFER -> AdminSection.STORE
-        DashboardQuickAction.REVIEW_TICKETS -> AdminSection.TICKETS
-        DashboardQuickAction.OPEN_AUDIT -> AdminSection.AUDIT
     }
     openSection(target)
 }
@@ -1178,7 +1107,6 @@ internal fun catalogRouteForMarketSection(section: MarketSection): AppRoute = wh
 /** Sección de Analytics con la que abrir según la entrada de menú usada. */
 internal fun analyticsSectionFor(route: AppRoute): AnalyticsSection? = when (route) {
     AppRoute.Analytics.Performance -> AnalyticsSection.ESTUDIO
-    AppRoute.Analytics.Events -> AnalyticsSection.PRODUCTO
     else -> null
 }
 
@@ -1192,7 +1120,7 @@ internal fun sidebarRouteIdFor(route: AppRoute, compactLayout: Boolean): String 
     val own = route.metadata()
     if (own.showInSidebar) return own.id
     fun targetOf(candidate: AppRoute) =
-        resolveContentTarget(candidate, compactLayout, showTabPager = false, hasLegacyRoute = candidate.toLegacySection() != null)
+        resolveContentTarget(candidate, compactLayout, showTabPager = false, hasLegacyRoute = candidate.toLegacySection()?.hasLegacyScreen() == true)
     val target = targetOf(route)
     return appNavigationGroups.asSequence()
         .filter { it.id == own.group }

@@ -97,6 +97,32 @@ class KtorCommerceRepositoryImplTest {
     }
 
     @Test
+    fun aFailingSubListFailsTheRefreshInsteadOfPublishingAnEmptyList() = runTest {
+        // Antes ofertas/recursos/rafagas se tragaban su error y el refresco era un exito con listas vacias: Inicio
+        // contaba 0 ofertas sin haber podido preguntarlo.
+        val client = HttpClient(MockEngine { request ->
+            if (request.url.encodedPath == "/api/v1/admin/tienda/ofertas") {
+                respond(content = ByteReadChannel("boom"), status = HttpStatusCode.InternalServerError)
+            } else {
+                respond(
+                    content = ByteReadChannel("{\"data\":[{\"id\":1,\"nombre\":\"Escudo\",\"tipo_articulo\":\"protector\",\"precio_tickets\":50}]}"),
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            }
+        }) {
+            install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
+        }
+        val repository = KtorCommerceRepositoryImpl(client, appConfig(), sessionLocalDataSource(), NetworkResultAdapter(NoOpLogger))
+
+        val result = repository.refreshCommerce()
+
+        assertTrue(result is com.oposicontrol.admin.core.common.result.AppResult.Failure, "El fallo de ofertas tiene que llegar")
+        // Nada a medias: ni siquiera los articulos que si llegaron se publican.
+        assertTrue(repository.observeStoreItems().first().isEmpty())
+    }
+
+    @Test
     fun refreshCommerceToleratesBackendOmittedDefaultedFields() = runTest {
         // Mirrors a realistic backend response for /articulos: the server's
         // response Json does not set encodeDefaults, so a field whose value

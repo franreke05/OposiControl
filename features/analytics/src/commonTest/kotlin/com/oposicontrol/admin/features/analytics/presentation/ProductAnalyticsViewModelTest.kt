@@ -184,6 +184,9 @@ class ProductAnalyticsViewModelTest {
 
         assertEquals(NO_DATA_LABEL, unreadable.displayValue())
         assertEquals(NOT_INSTRUMENTED_LABEL, missingAggregate.displayValue())
+        // Texto en castellano, nunca la constante técnica ni un cero.
+        assertEquals("No disponible", unreadable.displayValue())
+        assertEquals("Sin instrumentar", missingAggregate.displayValue())
         assertTrue(
             unreadable.displayValue() != missingAggregate.displayValue(),
             "Reintentar sirve en un caso y no en el otro: la pantalla no puede igualarlos.",

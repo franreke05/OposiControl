@@ -33,6 +33,37 @@ class AppNavigationCatalogTest {
     }
 
     @Test
+    fun communitiesAndTagsHaveTheirOwnRouteAndSidebarEntry() {
+        // Antes `toLegacySection` nunca devolvía estas secciones y `openSection` las mandaba a Especialidades.
+        assertEquals(AdminSection.COMMUNITIES, AppRoute.Content.Communities.toLegacySection())
+        assertEquals(AdminSection.TAGS, AppRoute.Content.Tags.toLegacySection())
+        assertEquals(AppRoute.Content.Communities, AdminSection.COMMUNITIES.toAppRoute())
+        assertEquals(AppRoute.Content.Tags, AdminSection.TAGS.toAppRoute())
+        listOf(AppRoute.Content.Communities, AppRoute.Content.Tags).forEach { route ->
+            val item = itemFor(route)
+            assertEquals(NavigationGroupId.CONTENT, item.metadata.group)
+            assertEquals(true, item.metadata.showInSidebar)
+            assertEquals(NavigationVisibility.DESKTOP_ONLY, item.metadata.visibility)
+        }
+    }
+
+    @Test
+    fun desktopOnlyScreensAreMarkedSoTheNarrowViewNeverOffersThem() {
+        listOf(
+            AppRoute.Commercial.Catalog,
+            AppRoute.Commercial.Plans,
+            AppRoute.Commercial.Market,
+            AppRoute.Analytics.Home,
+            AppRoute.Analytics.Performance,
+            AppRoute.Publication.News,
+            AppRoute.Publication.NewsTypes,
+            AppRoute.Rankings,
+        ).forEach { route ->
+            assertEquals(NavigationVisibility.DESKTOP_ONLY, itemFor(route).metadata.visibility, "$route")
+        }
+    }
+
+    @Test
     fun contentQuestionsAndResourcesStillMapToTheLegacyEditor() {
         assertEquals(AdminSection.QUESTIONS_RESOURCES, AppRoute.Content.Questions.toLegacySection())
         assertEquals(AdminSection.QUESTIONS_RESOURCES, AppRoute.Content.Resources.toLegacySection())

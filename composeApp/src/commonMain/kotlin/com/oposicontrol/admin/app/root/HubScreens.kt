@@ -335,10 +335,6 @@ internal fun NewsHubScreen(initialTab: NewsHubTab?) {
         )
         when (selectedTab) {
             NewsHubTab.TYPES.id -> NewsTypesScreen(viewModel = koinInject())
-            // Assets no tiene pantalla propia todavía — ya abría Noticias antes
-            // de esta consolidación (misma AdminSection.NEWS legacy), así que
-            // aterrizar aquí en la pestaña Noticias no es un cambio de
-            // comportamiento, es preservar el que ya había.
             else -> NewsScreen(viewModel = koinInject())
         }
     }

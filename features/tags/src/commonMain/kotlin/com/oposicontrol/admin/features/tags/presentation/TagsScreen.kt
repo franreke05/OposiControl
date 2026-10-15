@@ -50,10 +50,11 @@ fun TagsScreen(
                 )
                 AsyncStatePane(state.items, emptyMessage = "No hay etiquetas para este filtro.") { items ->
                     AdminTable(
+                        // Sin columna «Origen»: `/api/v1/admin/etiquetas` no la devuelve y el cliente la rellenaba
+                        // con «manual» en todas las filas.
                         columns = listOf(
                             AdminTableColumn("Nombre", 1.2f),
                             AdminTableColumn("Slug", 1f),
-                            AdminTableColumn("Origen", 0.6f),
                         ),
                         rows = items.map { item ->
                             AdminTableRow(
@@ -61,10 +62,8 @@ fun TagsScreen(
                                 cells = listOf(
                                     item.name,
                                     item.slug.ifBlank { "-" },
-                                    item.origin,
                                 ),
                                 selected = item.id == state.selectedId,
-                                supporting = "Etiqueta ${item.origin}",
                             )
                         },
                         onRowClick = { viewModel.dispatch(TagsIntent.Select(it)) },
@@ -75,7 +74,7 @@ fun TagsScreen(
         detailPane = {
             FormSection(
                 title = if (state.selectedId == null) "Nueva etiqueta" else "Detalle de etiqueta",
-                description = "Las etiquetas alimentan la busqueda global y la clasificación de contenido.",
+                description = "Las etiquetas clasifican preguntas y contenido.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     FieldLabel("Nombre")

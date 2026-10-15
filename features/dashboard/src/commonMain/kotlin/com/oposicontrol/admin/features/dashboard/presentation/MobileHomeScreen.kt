@@ -231,7 +231,16 @@ private fun MobileAttentionSection(
 ) {
     HomeSectionCard {
         HomeSectionTitle("Necesita tu atención")
-        if (metrics.pendingForumReports == 0) {
+        if (!metrics.isAvailable(DashboardMetricKey.FORUM_REPORTS)) {
+            // Sin esta rama, un fallo al leer los reportes llegaba como `0` y se leía «Sin informes pendientes».
+            Text("Informes de OposiRed no disponibles", style = MaterialTheme.typography.titleMedium, color = GlassTheme.tokens.textSecondary, fontWeight = FontWeight.SemiBold)
+            HomeAttentionItem(
+                title = "No se pudieron consultar los informes",
+                detail = "Abre el foro para revisarlos directamente.",
+                actionLabel = "Abrir foro",
+                onClick = { onQuickAction(DashboardQuickAction.REVIEW_FORUM_REPORTS) },
+            )
+        } else if (metrics.pendingForumReports == 0) {
             Text("Sin informes de OposiRed pendientes", style = MaterialTheme.typography.titleMedium, color = GlassTheme.tokens.success, fontWeight = FontWeight.SemiBold)
             Text("No se han recibido informes de moderación pendientes.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {

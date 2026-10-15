@@ -88,10 +88,9 @@ fun AdminSection.toAppRoute(): AppRoute = when (this) {
     AdminSection.DASHBOARD -> AppRoute.Home
     AdminSection.USERS -> AppRoute.Users.List
     AdminSection.ROLES -> AppRoute.System.Roles
-    AdminSection.SPECIALTIES,
-    AdminSection.COMMUNITIES,
-    AdminSection.TAGS,
-    -> AppRoute.Content.Taxonomy
+    AdminSection.SPECIALTIES -> AppRoute.Content.Taxonomy
+    AdminSection.COMMUNITIES -> AppRoute.Content.Communities
+    AdminSection.TAGS -> AppRoute.Content.Tags
     AdminSection.NEWS_TYPES -> AppRoute.Publication.NewsTypes
     AdminSection.NEWS -> AppRoute.Publication.News
     AdminSection.EXAMS -> AppRoute.Content.Exams

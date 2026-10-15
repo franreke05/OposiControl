@@ -25,6 +25,8 @@ class NavigationInformationArchitectureTest {
         val expected = listOf(
             AppRoute.Home,
             AppRoute.Content.Taxonomy,
+            AppRoute.Content.Communities,
+            AppRoute.Content.Tags,
             AppRoute.Content.Exams,
             AppRoute.Content.Questions,
             AppRoute.Content.Resources,
@@ -42,10 +44,8 @@ class NavigationInformationArchitectureTest {
             AppRoute.OposiTester.List,
             AppRoute.Analytics.Home,
             AppRoute.Analytics.Performance,
-            AppRoute.Analytics.Events,
             AppRoute.Publication.News,
             AppRoute.Publication.NewsTypes,
-            AppRoute.Publication.Assets,
             AppRoute.Support.Inbox,
             AppRoute.System.Audit,
             AppRoute.System.Roles,
@@ -171,17 +171,18 @@ class NavigationInformationArchitectureTest {
     // funcionalidad" significa.
 
     @Test
-    fun theSidebarHasExactlyTheFourteenTargetEntries() {
+    fun theSidebarHasExactlyTheSixteenTargetEntries() {
+        // 14 + Comunidades y Etiquetas (2026-10-15): sus pantallas CRUD existían pero ninguna ruta las abría.
         val sidebarTitles = appNavigationGroups.flatMap { it.sidebarItems }.map { it.metadata.title }
 
-        assertEquals(14, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 14: $sidebarTitles")
+        assertEquals(16, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 16: $sidebarTitles")
         assertEquals(
             listOf(
                 "Dashboard",
                 // Especialidades va justo debajo de Exámenes: es su configuración
                 // previa —qué modos admite la oposición— y el editor de exámenes
                 // no puede ofrecer un tipo que la especialidad no tenga abierto.
-                "Exámenes", "Especialidades", "Preguntas", "Importación",
+                "Exámenes", "Especialidades", "Comunidades", "Etiquetas", "Preguntas", "Importación",
                 "Usuarios",
                 "Catálogo", "OposiMarket",
                 "OposiRed", "Moderación", "Soporte",
@@ -204,7 +205,7 @@ class NavigationInformationArchitectureTest {
         val content = appNavigationGroups.single { it.id == NavigationGroupId.CONTENT }
         val titles = content.sidebarItems.map { it.metadata.title }
 
-        assertEquals(listOf("Exámenes", "Especialidades", "Preguntas", "Importación"), titles)
+        assertEquals(listOf("Exámenes", "Especialidades", "Comunidades", "Etiquetas", "Preguntas", "Importación"), titles)
     }
 
     @Test
@@ -237,9 +238,7 @@ class NavigationInformationArchitectureTest {
             AppRoute.Reports.List,
             AppRoute.OposiTester.List,
             AppRoute.Analytics.Performance,
-            AppRoute.Analytics.Events,
             AppRoute.Publication.NewsTypes,
-            AppRoute.Publication.Assets,
             AppRoute.System.Roles,
             AppRoute.System.Diagnostics,
             AppRoute.System.Audit,

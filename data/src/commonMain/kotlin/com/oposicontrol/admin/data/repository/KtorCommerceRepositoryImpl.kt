@@ -56,29 +56,34 @@ class KtorCommerceRepositoryImpl(
     override fun observeLimitedResources(): Flow<List<LimitedResourceWindow>> = limited.asStateFlow()
     override fun observeBurstCampaigns(): Flow<List<BurstCampaign>> = bursts.asStateFlow()
 
+    /**
+     * Las cuatro lecturas o ninguna. Antes ofertas, recursos temporales y ráfagas se tragaban su error
+     * (`runCatching { … }.getOrElse { emptyList() }`) y el refresco devolvía éxito con listas vacías: Inicio contaba
+     * «0 ofertas activas» y «Sin ráfagas activas» sin haber podido preguntarlo. Ahora cualquier fallo es un
+     * [AppResult.Failure] y quien lo consume lo marca como no disponible ([DashboardMetricKey.COMMERCE]).
+     * Los flujos sólo se publican cuando han llegado las cuatro, para no mezclar listas nuevas con viejas.
+     */
     override suspend fun refreshCommerce(): AppResult<Unit> = adapter.safeCall {
         val itemsResponse = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_ARTICULOS)) { backendHeaders() }
         itemsResponse.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_ARTICULOS)
-        items.value = itemsResponse.body<KtorStoreItemsResponse>().data.map { it.toDomain() }
+        val newItems = itemsResponse.body<KtorStoreItemsResponse>().data.map { it.toDomain() }
 
-        offers.value = runCatching {
-            val r = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_OFERTAS)) { backendHeaders() }
-            r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_OFERTAS)
-            r.body<KtorStoreOffersResponse>().data.map { it.toDomain() }
-        }.getOrElse { emptyList() }
+        val offersResponse = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_OFERTAS)) { backendHeaders() }
+        offersResponse.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_OFERTAS)
+        val newOffers = offersResponse.body<KtorStoreOffersResponse>().data.map { it.toDomain() }
 
-        limited.value = runCatching {
-            val r = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_RECURSOS_TEMPORALES)) { backendHeaders() }
-            r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_RECURSOS_TEMPORALES)
-            r.body<KtorLimitedResourcesResponse>().data.map { it.toDomain() }
-        }.getOrElse { emptyList() }
+        val limitedResponse = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_RECURSOS_TEMPORALES)) { backendHeaders() }
+        limitedResponse.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_RECURSOS_TEMPORALES)
+        val newLimited = limitedResponse.body<KtorLimitedResourcesResponse>().data.map { it.toDomain() }
 
-        bursts.value = runCatching {
-            val r = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_RAFAGAS)) { backendHeaders() }
-            r.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_RAFAGAS)
-            r.body<KtorBurstCampaignsResponse>().data.map { it.toDomain() }
-        }.getOrElse { emptyList() }
-        Unit
+        val burstsResponse = client.get(url(BackendRoutes.ADMIN_V1_TIENDA_RAFAGAS)) { backendHeaders() }
+        burstsResponse.requireSuccess(BackendRoutes.ADMIN_V1_TIENDA_RAFAGAS)
+        val newBursts = burstsResponse.body<KtorBurstCampaignsResponse>().data.map { it.toDomain() }
+
+        items.value = newItems
+        offers.value = newOffers
+        limited.value = newLimited
+        bursts.value = newBursts
     }
 
     override suspend fun upsertStoreItem(item: StoreItem): AppResult<StoreItem> {

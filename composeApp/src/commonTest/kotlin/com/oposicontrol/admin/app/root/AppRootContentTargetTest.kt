@@ -1,6 +1,7 @@
 package com.oposicontrol.admin.app.root
 
 import com.oposicontrol.admin.app.navigation.AppRoute
+import com.oposicontrol.admin.app.navigation.toLegacySection
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardV2Destination
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -358,16 +359,17 @@ class AppRootContentTargetTest {
     }
 
     @Test
-    fun compactLayoutKeepsTheLegacyStoreInsteadOfTheDesktopCatalog() {
-        // El catálogo es una vista densa de escritorio (tabla + formulario). En
-        // compacto se prefiere lo que ya existía a servir media pantalla.
+    fun compactLayoutShowsTheDesktopOnlyNoticeInsteadOfTheCatalog() {
+        // El catálogo es una vista densa de escritorio (tabla + formulario) y no tiene sección legacy: en compacto
+        // cae al aviso «solo disponible en escritorio». La versión anterior de esta prueba pasaba
+        // `hasLegacyRoute = true`, que la ruta nunca tuvo.
         assertEquals(
-            AppContentTarget.LEGACY_SECTION,
+            AppContentTarget.LEGACY_PLACEHOLDER,
             resolveContentTarget(
                 AppRoute.Commercial.Catalog,
                 compactLayout = true,
                 showTabPager = false,
-                hasLegacyRoute = true,
+                hasLegacyRoute = AppRoute.Commercial.Catalog.toLegacySection() != null,
             ),
         )
     }
@@ -393,30 +395,86 @@ class AppRootContentTargetTest {
             AppContentTarget.NEWS_HUB,
             resolveContentTarget(AppRoute.Publication.News, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
         )
-        // Tipos de noticia y Assets abren el mismo hub — antes eran pantallas
-        // sueltas sin destino de contenido propio.
+        // Tipos de noticia abre el mismo hub, en su pestaña.
         assertEquals(
             AppContentTarget.NEWS_HUB,
             resolveContentTarget(AppRoute.Publication.NewsTypes, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
         )
-        assertEquals(
-            AppContentTarget.NEWS_HUB,
-            resolveContentTarget(AppRoute.Publication.Assets, compactLayout = false, showTabPager = false, hasLegacyRoute = false),
-        )
     }
 
     @Test
-    fun analyticsPerformanceAndEventsOpenProductAnalyticsInsteadOfFallingToDashboard() {
-        // Antes Estudio y Eventos caían al adaptador legacy de
-        // AdminSection.DASHBOARD, que no tenía nada que ver con analítica.
+    fun analyticsPerformanceOpensProductAnalyticsInsteadOfFallingToDashboard() {
+        // Antes Estudio caía al adaptador legacy de AdminSection.DASHBOARD, que no tenía nada que ver con analítica.
         assertEquals(
             AppContentTarget.PRODUCT_ANALYTICS,
             resolveContentTarget(AppRoute.Analytics.Performance, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
         )
+    }
+
+    // --- Comunidades y Etiquetas: pantallas CRUD que ninguna ruta abría (2026-10-15) ---
+
+    @Test
+    fun communitiesAndTagsOpenTheirOwnCrudScreenOnDesktopAndCompact() {
+        listOf(AppRoute.Content.Communities, AppRoute.Content.Tags).forEach { route ->
+            val hasScreen = route.toLegacySection()?.hasLegacyScreen() == true
+            assertTrue(hasScreen, "$route tiene que tener pantalla")
+            listOf(false, true).forEach { compact ->
+                assertEquals(
+                    AppContentTarget.LEGACY_SECTION,
+                    resolveContentTarget(route, compactLayout = compact, showTabPager = false, hasLegacyRoute = hasScreen),
+                    "$route (compacto=$compact) no puede caer al contenido móvil ni al marcador",
+                )
+            }
+        }
+        assertEquals("content.communities", sidebarRouteIdFor(AppRoute.Content.Communities, compactLayout = false))
+        assertEquals("content.tags", sidebarRouteIdFor(AppRoute.Content.Tags, compactLayout = false))
+    }
+
+    @Test
+    fun sectionsWithoutAScreenNeverRenderAnEmptyBody() {
+        // ROLES y SETTINGS pintaban `content = {}`; STORE y EXAMS, pantallas que ninguna ruta mostraba. Las cuatro
+        // siguen siendo destinos de navegación (`openSection`), pero ya no tienen adaptador.
+        val withoutScreen = com.oposicontrol.admin.app.navigation.AdminSection.entries.filterNot { it.hasLegacyScreen() }
         assertEquals(
-            AppContentTarget.PRODUCT_ANALYTICS,
-            resolveContentTarget(AppRoute.Analytics.Events, compactLayout = false, showTabPager = false, hasLegacyRoute = true),
+            setOf(
+                com.oposicontrol.admin.app.navigation.AdminSection.ROLES,
+                com.oposicontrol.admin.app.navigation.AdminSection.SETTINGS,
+                com.oposicontrol.admin.app.navigation.AdminSection.STORE,
+                com.oposicontrol.admin.app.navigation.AdminSection.EXAMS,
+            ),
+            withoutScreen.toSet(),
         )
+        // Ninguna ruta del catálogo cae en una de ellas como adaptador.
+        com.oposicontrol.admin.app.navigation.appNavigationGroups.flatMap { it.items }.forEach { item ->
+            val section = item.route.toLegacySection() ?: return@forEach
+            if (!section.hasLegacyScreen()) {
+                listOf(false, true).forEach { compact ->
+                    assertNotEquals(
+                        AppContentTarget.LEGACY_SECTION,
+                        resolveContentTarget(item.route, compact, showTabPager = false, hasLegacyRoute = false),
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
+    fun theNarrowViewSaysASectionIsDesktopOnlyInsteadOfPromisingAMigration() {
+        val message = desktopOnlyMessage("Lo que está publicado en la tienda.")
+        assertTrue(message.contains("solo está disponible en la vista de escritorio"))
+        assertFalse(message.contains("migracion", ignoreCase = true))
+    }
+
+    @Test
+    fun theNarrowShellOffersNoDesktopOnlyEntry() {
+        val compactIds = com.oposicontrol.admin.app.navigation.appNavigationGroups
+            .toShellGroups(compactLayout = true).flatMap { it.items }.map { it.id }
+        listOf("commercial.catalog", "commercial.market", "analytics", "publication.news", "content.communities", "content.tags")
+            .forEach { id -> assertTrue(id !in compactIds, "$id no debe ofrecerse en la vista estrecha") }
+        val desktopIds = com.oposicontrol.admin.app.navigation.appNavigationGroups
+            .toShellGroups(compactLayout = false).flatMap { it.items }.map { it.id }
+        assertTrue("commercial.catalog" in desktopIds)
+        assertTrue("content.communities" in desktopIds)
     }
 
     @Test
@@ -538,92 +596,12 @@ class AppRootContentTargetTest {
     }
 
     @Test
-    fun assetsLeavesTheNewsHubOnItsDefaultNewsTab() {
-        // No tiene pantalla propia: aterriza en Noticias, igual que antes.
-        assertEquals(null, newsTabFor(AppRoute.Publication.Assets))
-    }
-
-    @Test
     fun performanceMapsToTheEstudioAnalyticsSection() {
         assertEquals(com.oposicontrol.admin.domain.model.AnalyticsSection.ESTUDIO, analyticsSectionFor(AppRoute.Analytics.Performance))
-    }
-
-    @Test
-    fun eventsMapsToTheProductoAnalyticsSection() {
-        assertEquals(com.oposicontrol.admin.domain.model.AnalyticsSection.PRODUCTO, analyticsSectionFor(AppRoute.Analytics.Events))
+        assertEquals(null, analyticsSectionFor(AppRoute.Analytics.Home))
     }
 
     // --- Cabecera del panel de escritorio ------------------------------------
-
-    @Test
-    fun elPanelDeEscritorioNoDibujaLaBusquedaGlobal() {
-        // El defecto que cierra: `globalSearch` se pasaba a `AppShell` con la
-        // única condición de que la ruta tuviera sección legacy, e Inicio la
-        // tiene. Como el repositorio de búsqueda devuelve `emptyList()` de forma
-        // incondicional, el panel arrancaba con un buscador que jamás encuentra
-        // nada por encima de «Estado del sistema».
-        assertFalse(
-            showsGlobalSearch(
-                target = AppContentTarget.DESKTOP_DASHBOARD,
-                compactLayout = false,
-                hasLegacySection = true,
-            ),
-        )
-    }
-
-    @Test
-    fun elRestoDeSeccionesDeEscritorioLaConservan() {
-        // La retirada es quirúrgica: si se hubiera borrado el componente o el
-        // repositorio, esto también daría false y nadie se enteraría hasta que
-        // alguien arreglase la búsqueda y no apareciera por ningún lado.
-        assertTrue(
-            showsGlobalSearch(
-                target = AppContentTarget.LEGACY_SECTION,
-                compactLayout = false,
-                hasLegacySection = true,
-            ),
-        )
-    }
-
-    @Test
-    fun usuariosNoDibujaLaBusquedaGlobalPorqueTieneLaSuya() {
-        // Mismo criterio que el panel de escritorio y el workspace de Exámenes: el
-        // catálogo de Usuarios busca de verdad por nombre y email, y encima
-        // quedaba la global contestando siempre «Sin resultados».
-        assertFalse(
-            showsGlobalSearch(
-                target = AppContentTarget.USERS_HUB,
-                compactLayout = false,
-                hasLegacySection = true,
-            ),
-        )
-    }
-
-    @Test
-    fun preguntasNoDibujaLaBusquedaGlobalPorqueTieneLaSuya() {
-        // Mismo criterio que el workspace de Exámenes, que ya estaba excluido: el
-        // banco de Preguntas busca de verdad sobre código y enunciado, y encima
-        // quedaba la global contestando siempre «Sin resultados». Dos cajas
-        // equivalentes, y la de arriba enseñando a desconfiar de la que funciona.
-        assertFalse(
-            showsGlobalSearch(
-                target = AppContentTarget.LEGACY_SECTION,
-                compactLayout = false,
-                hasLegacySection = true,
-                sectionHasOwnSearch = true,
-            ),
-        )
-    }
-
-    @Test
-    fun enCompactoNoHayBusquedaGlobalEnNingunaPantalla() {
-        AppContentTarget.entries.forEach { target ->
-            assertFalse(
-                showsGlobalSearch(target = target, compactLayout = true, hasLegacySection = true),
-                "«$target» dibujaría la búsqueda global en móvil.",
-            )
-        }
-    }
 
     @Test
     fun elPanelDeEscritorioTieneSuPropiaAccionPrimaria() {
@@ -726,20 +704,6 @@ class AppRootContentTargetTest {
                 compactLayout = false,
                 showTabPager = false,
                 hasLegacyRoute = true,
-            ),
-        )
-    }
-
-    @Test
-    fun elWorkspaceDeExamenesNoDibujaLaBusquedaGlobal() {
-        // Tiene buscador local propio —y ése sí encuentra—. Dos campos de
-        // búsqueda uno sobre otro, con el de arriba contestando siempre «Sin
-        // resultados», enseñan a desconfiar del que funciona.
-        assertFalse(
-            showsGlobalSearch(
-                target = AppContentTarget.EXAM_WORKSPACE,
-                compactLayout = false,
-                hasLegacySection = true,
             ),
         )
     }
