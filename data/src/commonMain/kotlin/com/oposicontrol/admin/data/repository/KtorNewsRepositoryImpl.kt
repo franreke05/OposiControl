@@ -346,7 +346,12 @@ private fun NoticiaResumenDto.toDomain() = NewsSummary(
 
 private fun NoticiaAssetDto.toDomain() = NewsAssetUpload(path = path, publicUrl = publicUrl, mimeType = mime, bytes = bytes)
 
-private fun NoticiaAdminDto.toDomain() = NewsArticle(
+private fun NoticiaAdminDto.toDomain(): NewsArticle {
+    val layers = capas.decodeLayers()
+    return toDomain(layers, droppedLayerCount = capas.size - layers.size)
+}
+
+private fun NoticiaAdminDto.toDomain(layers: List<NewsLayer>, droppedLayerCount: Int) = NewsArticle(
     id = id,
     title = titulo,
     specialty = especialidadId,
@@ -357,7 +362,8 @@ private fun NoticiaAdminDto.toDomain() = NewsArticle(
     publishFrom = publicarDesde.orEmpty(),
     text = texto.orEmpty(),
     imagePath = imagenPath,
-    layers = capas.decodeLayers(),
+    layers = layers,
+    droppedLayerCount = droppedLayerCount,
     version = version,
     publishedAt = publishedAt,
     backgroundUrl = resolveAssetUrl(backgroundPath, backgroundUrl),
@@ -437,7 +443,7 @@ private fun List<NewsLayer>.toJsonArray(): JsonArray = JsonArray(
     sortedBy { it.sortOrder }.mapIndexed { index, layer -> layerJson.encodeToJsonElement(layer.toDto(index)) },
 )
 
-/** Lectura tolerante por capa: una capa que no encaja se omite; las demas se conservan. */
+/** Lectura tolerante por capa: una capa que no encaja se omite (y se cuenta en `droppedLayerCount`); las demas se conservan. */
 private fun JsonArray.decodeLayers(): List<NewsLayer> =
     mapNotNull { element -> runCatching { layerJson.decodeFromJsonElement<NoticiaLayerDto>(element).toDomain() }.getOrNull() }
         .sortedBy { it.sortOrder }

@@ -38,7 +38,6 @@ import com.oposicontrol.admin.domain.model.MarketPopupRule
 import com.oposicontrol.admin.domain.model.MarketPromotion
 import com.oposicontrol.admin.domain.model.MarketPromotionUsesPage
 import com.oposicontrol.admin.domain.model.MarketService
-import com.oposicontrol.admin.domain.model.MarketTicketPack
 
 /**
  * OposiMarket: escaparate de exámenes publicados, packs de OposiTickets, servicios, promociones y reglas de pop-up.
@@ -86,7 +85,7 @@ internal fun MarketContent(
     onEditInCatalog: ((MarketSection) -> Unit)? = null,
     today: String = todayIsoDate(),
 ) {
-    // Una pestaña que ya no se ofrece (Packs) se enseña como la primera, en vez de dejar la pantalla sin contenido.
+    // Una sección sin pestaña aquí se enseña como la primera, en vez de dejar la pantalla sin contenido.
     val section = state.section.takeIf { it in SHOWCASE_SECTIONS } ?: MarketSection.EXAMS
     Column(modifier = modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
@@ -166,8 +165,8 @@ internal fun MarketCatalogEditorContent(
             onRefresh = { onIntent(MarketIntent.Refresh) },
             modifier = modifier,
         ) { draft, isNew, _, update -> PopupForm(draft, isNew, update) }
-        // Exámenes y productos tienen su propia pantalla; packs ya no se edita desde el panel.
-        MarketSection.EXAMS, MarketSection.PRODUCTS, MarketSection.PACKS -> Unit
+        // Exámenes y productos tienen su propia pantalla.
+        MarketSection.EXAMS, MarketSection.PRODUCTS -> Unit
     }
 }
 
@@ -693,7 +692,6 @@ private fun ActiveSection(description: String, toggleDescription: String, active
 internal fun MarketSection.label(): String = when (this) {
     MarketSection.EXAMS -> "Exámenes"
     MarketSection.PRODUCTS -> "Productos y packs"
-    MarketSection.PACKS -> "Packs OT"
     MarketSection.SERVICES -> "Servicios"
     MarketSection.PROMOTIONS -> "Promociones"
     MarketSection.POPUPS -> "Avisos"
@@ -702,7 +700,6 @@ internal fun MarketSection.label(): String = when (this) {
 private fun MarketSection.icon(): AppIcon = when (this) {
     MarketSection.EXAMS -> AppIcon.EXAMS
     MarketSection.PRODUCTS -> AppIcon.CATALOG
-    MarketSection.PACKS -> AppIcon.TICKETS
     MarketSection.SERVICES -> AppIcon.MARKET
     MarketSection.PROMOTIONS -> AppIcon.PLANS
     MarketSection.POPUPS -> AppIcon.EVENTS

@@ -51,7 +51,6 @@ sealed interface NewsIntent {
     data class UpdateSpecialty(val value: String) : NewsIntent
     data class UpdateType(val value: String) : NewsIntent
     data class UpdateText(val value: String) : NewsIntent
-    data class UpdateStatus(val value: String) : NewsIntent
     data class UpdateBackgroundType(val value: String) : NewsIntent
 
     /** Ruta del fondo escrita a mano (vacia = quitar). Las imagenes locales van por [UploadBackground]. */

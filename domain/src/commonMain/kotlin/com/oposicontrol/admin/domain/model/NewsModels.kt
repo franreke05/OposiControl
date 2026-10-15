@@ -52,6 +52,8 @@ data class NewsArticle(
     /** URL publica del fondo en `news-assets`, resuelta por el backend. `null` sin fondo. */
     val backgroundUrl: String? = null,
     val imageUrl: String? = null,
+    /** Capas del servidor que no se pudieron leer y se omitieron de [layers]: el editor debe avisar. */
+    val droppedLayerCount: Int = 0,
 )
 
 data class NewsAssetUpload(

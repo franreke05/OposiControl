@@ -75,4 +75,8 @@ data class NewsState(
     val confirmIntent: NewsIntent? = null,
     /** La ficha abierta lleva cambios recuperados del borrador local de este equipo. */
     val recoveredDraft: Boolean = false,
+    /** La relectura silenciosa de la ficha abierta tras un refresco fallo: lo que se ve puede no ser lo ultimo. */
+    val recordReloadFailed: Boolean = false,
+    /** Capas que el servidor devolvio y no se pudieron leer: no se pintan y se perderian al guardar. */
+    val editorDroppedLayers: Int = 0,
 )

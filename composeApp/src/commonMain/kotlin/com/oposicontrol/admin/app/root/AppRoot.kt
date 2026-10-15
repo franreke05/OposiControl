@@ -1101,7 +1101,7 @@ internal fun catalogRouteForMarketSection(section: MarketSection): AppRoute = wh
     MarketSection.SERVICES -> AppRoute.Commercial.Consumables
     MarketSection.PROMOTIONS -> AppRoute.Commercial.Promotions
     MarketSection.POPUPS -> AppRoute.Commercial.PopupRules
-    MarketSection.EXAMS, MarketSection.PRODUCTS, MarketSection.PACKS -> AppRoute.Commercial.Catalog
+    MarketSection.EXAMS, MarketSection.PRODUCTS -> AppRoute.Commercial.Catalog
 }
 
 /** Sección de Analytics con la que abrir según la entrada de menú usada. */

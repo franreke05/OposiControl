@@ -29,7 +29,6 @@ import kotlin.test.assertTrue
 class MarketViewModelEditorsTest {
 
     private class FakeMarket : MarketCatalogRepository {
-        var packs = listOf(MarketTicketPack("p1", "pack_500", "500 OposiTickets", ticketAmount = 500, priceCents = 499))
         var promotions = listOf(
             MarketPromotion("pr1", "OTONO25", "Otoño", "porcentaje", 15.0, uses = 3),
             MarketPromotion("pr2", "INVIERNO", "Invierno", "tickets_extra", 50.0, uses = 0),
@@ -46,11 +45,9 @@ class MarketViewModelEditorsTest {
             return AppResult.Success(withId(entity))
         }
 
-        override suspend fun getTicketPacks(): AppResult<List<MarketTicketPack>> {
-            reads += "packs"
-            return AppResult.Success(packs)
-        }
-        override suspend fun saveTicketPack(pack: MarketTicketPack) = write(pack) { it.copy(id = it.id.ifBlank { "p-new" }) }
+        // Sin pantalla que los pida (DEBT-100): leerlos o escribirlos aquí es un fallo del ViewModel.
+        override suspend fun getTicketPacks(): AppResult<List<MarketTicketPack>> = error("packs no se leen desde el panel")
+        override suspend fun saveTicketPack(pack: MarketTicketPack): AppResult<MarketTicketPack> = error("packs no se escriben desde el panel")
 
         override suspend fun getServices(): AppResult<List<MarketService>> {
             reads += "services"
@@ -100,56 +97,56 @@ class MarketViewModelEditorsTest {
         advanceUntilIdle()
         assertTrue(repository.reads.isEmpty())
 
-        vm.dispatch(MarketIntent.SelectSection(MarketSection.PACKS))
+        vm.dispatch(MarketIntent.SelectSection(MarketSection.PROMOTIONS))
         vm.dispatch(MarketIntent.SelectSection(MarketSection.SERVICES))
-        vm.dispatch(MarketIntent.SelectSection(MarketSection.PACKS))
+        vm.dispatch(MarketIntent.SelectSection(MarketSection.PROMOTIONS))
         advanceUntilIdle()
 
-        assertEquals(listOf("packs", "services"), repository.reads)
-        assertEquals("p1", vm.state.value.packs.selectedId)
+        assertEquals(listOf("promotions", "services"), repository.reads)
+        assertEquals("pr1", vm.state.value.promotions.selectedId)
         assertIs<UiAsync.Empty>(vm.state.value.services.items)
 
         vm.dispatch(MarketIntent.Refresh)
         advanceUntilIdle()
-        assertEquals(listOf("packs", "services", "packs"), repository.reads)
+        assertEquals(listOf("promotions", "services", "promotions"), repository.reads)
     }
 
     @Test
     fun `a draft survives a visit to another section`() = runTest {
         val vm = viewModel(FakeMarket())
-        vm.dispatch(MarketIntent.SelectSection(MarketSection.PACKS))
+        vm.dispatch(MarketIntent.SelectSection(MarketSection.PROMOTIONS))
         advanceUntilIdle()
-        val draft = vm.state.value.packs.draft.copy(name = "A medias")
-        vm.dispatch(MarketIntent.Packs(EditorAction.UpdateDraft(draft)))
+        val draft = vm.state.value.promotions.draft.copy(name = "A medias")
+        vm.dispatch(MarketIntent.Promotions(EditorAction.UpdateDraft(draft)))
         vm.dispatch(MarketIntent.SelectSection(MarketSection.POPUPS))
-        vm.dispatch(MarketIntent.SelectSection(MarketSection.PACKS))
+        vm.dispatch(MarketIntent.SelectSection(MarketSection.PROMOTIONS))
         advanceUntilIdle()
 
-        assertEquals("A medias", vm.state.value.packs.draft.name)
+        assertEquals("A medias", vm.state.value.promotions.draft.name)
     }
 
     @Test
-    fun `saving a pack sends it by id and an invalid one is not sent`() = runTest {
+    fun `saving a promotion sends it by id and an invalid one is not sent`() = runTest {
         val repository = FakeMarket()
         val vm = viewModel(repository)
-        vm.dispatch(MarketIntent.SelectSection(MarketSection.PACKS))
+        vm.dispatch(MarketIntent.SelectSection(MarketSection.PROMOTIONS))
         advanceUntilIdle()
 
-        vm.dispatch(MarketIntent.Packs(EditorAction.UpdateDraft(vm.state.value.packs.draft.copy(ticketAmount = "0"))))
-        vm.dispatch(MarketIntent.Packs(EditorAction.Save))
+        vm.dispatch(MarketIntent.Promotions(EditorAction.UpdateDraft(vm.state.value.promotions.draft.copy(value = "no"))))
+        vm.dispatch(MarketIntent.Promotions(EditorAction.Save))
         advanceUntilIdle()
         assertTrue(repository.saved.isEmpty())
-        assertIs<AppError.Validation>(assertIs<UiAsync.Error>(vm.state.value.packs.actionState).error)
+        assertIs<AppError.Validation>(assertIs<UiAsync.Error>(vm.state.value.promotions.actionState).error)
 
-        vm.dispatch(MarketIntent.Packs(EditorAction.UpdateDraft(vm.state.value.packs.draft.copy(ticketAmount = "600", price = "5,49"))))
-        vm.dispatch(MarketIntent.Packs(EditorAction.Save))
+        vm.dispatch(MarketIntent.Promotions(EditorAction.UpdateDraft(vm.state.value.promotions.draft.copy(value = "20"))))
+        vm.dispatch(MarketIntent.Promotions(EditorAction.Save))
         advanceUntilIdle()
 
-        val sent = repository.saved.single() as MarketTicketPack
-        assertEquals("p1", sent.id)
-        assertEquals(600 to 549, sent.ticketAmount to sent.priceCents)
-        assertIs<UiAsync.Success<*>>(vm.state.value.packs.actionState)
-        assertFalse(vm.state.value.packs.dirty(PackSpec))
+        val sent = repository.saved.single() as MarketPromotion
+        assertEquals("pr1", sent.id)
+        assertEquals(20.0, sent.value)
+        assertIs<UiAsync.Success<*>>(vm.state.value.promotions.actionState)
+        assertFalse(vm.state.value.promotions.dirty(PromotionSpec))
     }
 
     @Test
@@ -175,15 +172,15 @@ class MarketViewModelEditorsTest {
     fun `a failed save keeps what was typed`() = runTest {
         val repository = FakeMarket().apply { saveFailure = AppError.Network("sin red") }
         val vm = viewModel(repository)
-        vm.dispatch(MarketIntent.SelectSection(MarketSection.PACKS))
+        vm.dispatch(MarketIntent.SelectSection(MarketSection.PROMOTIONS))
         advanceUntilIdle()
-        vm.dispatch(MarketIntent.Packs(EditorAction.UpdateDraft(vm.state.value.packs.draft.copy(name = "Otro nombre"))))
-        vm.dispatch(MarketIntent.Packs(EditorAction.Save))
+        vm.dispatch(MarketIntent.Promotions(EditorAction.UpdateDraft(vm.state.value.promotions.draft.copy(name = "Otro nombre"))))
+        vm.dispatch(MarketIntent.Promotions(EditorAction.Save))
         advanceUntilIdle()
 
-        assertIs<UiAsync.Error>(vm.state.value.packs.actionState)
-        assertEquals("Otro nombre", vm.state.value.packs.draft.name)
-        assertTrue(vm.state.value.packs.dirty(PackSpec))
+        assertIs<UiAsync.Error>(vm.state.value.promotions.actionState)
+        assertEquals("Otro nombre", vm.state.value.promotions.draft.name)
+        assertTrue(vm.state.value.promotions.dirty(PromotionSpec))
     }
 
     @Test

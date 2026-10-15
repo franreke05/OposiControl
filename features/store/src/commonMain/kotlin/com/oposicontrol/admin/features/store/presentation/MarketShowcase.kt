@@ -126,8 +126,8 @@ internal fun showcaseOf(section: MarketSection, state: MarketState, today: Strin
 /**
  * Una pestaña de la tienda: filas de consulta, sin selección ni edición.
  *
- * Reutiliza [WorkspaceCatalogRow] con un `onClick` vacío a propósito: la fila es la misma que en Catálogo para que se
- * reconozca, pero aquí no abre nada. Quien quiera cambiarla tiene «Editar en Catálogo» en la cabecera de la pantalla.
+ * Reutiliza [WorkspaceCatalogRow] sin `onClick`: la fila es la misma que en Catálogo para que se reconozca, pero aquí no
+ * es pulsable (ni mano ni hover). Quien quiera cambiarla tiene «Editar en Catálogo» en la cabecera de la pantalla.
  */
 @Composable
 internal fun MarketShowcaseSection(showcase: MarketShowcase, onRetry: () -> Unit, modifier: Modifier = Modifier) {
@@ -173,7 +173,7 @@ internal fun MarketShowcaseSection(showcase: MarketShowcase, onRetry: () -> Unit
                             WorkspaceCatalogRow(
                                 title = row.title,
                                 selected = false,
-                                onClick = {},
+                                onClick = null,
                                 icon = showcase.icon,
                                 eyebrow = row.eyebrow,
                                 description = row.description,

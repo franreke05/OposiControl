@@ -183,6 +183,7 @@ class KtorNewsRepositoryImplTest {
         assertNull(news.publishedAt)
         // La capa mal formada se omite; las otras dos sobreviven ordenadas por `orden` y con la rotacion normalizada.
         assertEquals(listOf("l0", "l1"), news.layers.map { it.id })
+        assertEquals(1, news.droppedLayerCount, "la capa omitida se cuenta para que el editor avise")
         assertEquals(270, news.layers[0].rotationDegrees)
         // Un background_path que ya es una URL (filas del panel anterior) se usa tal cual; el imagenUrl del servidor manda.
         assertEquals("https://example.supabase.co/storage/v1/object/public/news-assets/news/legacy/f.png", news.backgroundUrl)

@@ -585,8 +585,7 @@ class AppRootContentTargetTest {
             assertEquals(catalogTabForMarketSection(section), catalogTabFor(catalogRouteForMarketSection(section)), section.name)
         }
         assertEquals(CatalogHubTab.PRODUCTS, catalogTabForMarketSection(MarketSection.PRODUCTS))
-        // Un pack es un producto: no tiene pestaña propia, ni en Catálogo ni en el escaparate.
-        assertEquals(CatalogHubTab.PRODUCTS, catalogTabForMarketSection(MarketSection.PACKS))
+        // Un pack es un producto: no tiene pestaña propia ni sección de Market (DEBT-100).
         assertEquals(listOf("Productos", "Planes", "Servicios", "Promociones", "Avisos"), CatalogHubTab.entries.map { it.label })
     }
 

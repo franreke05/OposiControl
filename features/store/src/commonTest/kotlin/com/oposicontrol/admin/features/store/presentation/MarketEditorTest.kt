@@ -7,7 +7,6 @@ import com.oposicontrol.admin.domain.model.MarketPopupRule
 import com.oposicontrol.admin.domain.model.MarketPromotion
 import com.oposicontrol.admin.domain.model.MarketPromotionUse
 import com.oposicontrol.admin.domain.model.MarketService
-import com.oposicontrol.admin.domain.model.MarketTicketPack
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -17,15 +16,15 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * El motor de los catálogos editables de OposiMarket y las reglas de sus cuatro entidades, sin Compose ni red. El motor es
- * uno para las cuatro: probarlo con packs lo prueba para todas.
+ * El motor de los catálogos editables de OposiMarket y las reglas de sus tres entidades, sin Compose ni red. El motor es
+ * uno para las tres: probarlo con servicios lo prueba para todas.
  */
 class MarketEditorTest {
-    private val small = MarketTicketPack("p1", "pack_500", "500 OposiTickets", ticketAmount = 500, priceCents = 499, position = 1)
-    private val big = MarketTicketPack("p2", "pack_2600", "2.600 OposiTickets", "El que más compensa", 2600, 1999, position = 2, active = false)
+    private val small = MarketService("p1", "pack_500", "500 OposiTickets", serviceType = "potenciador", priceCents = 499)
+    private val big = MarketService("p2", "pack_2600", "2.600 OposiTickets", "El que más compensa", "potenciador", priceCents = 1999, active = false)
 
-    private fun loaded(vararg packs: MarketTicketPack) =
-        MarketEditor<MarketTicketPack, PackDraft>(draft = PackDraft()).loaded(PackSpec, AppResult.Success(packs.toList()))
+    private fun loaded(vararg items: MarketService) =
+        MarketEditor<MarketService, ServiceDraft>(draft = ServiceDraft()).loaded(ServiceSpec, AppResult.Success(items.toList()))
 
     // ---------- motor ----------
 
@@ -34,41 +33,41 @@ class MarketEditorTest {
         val editor = loaded(small, big)
         assertEquals("p1", editor.selectedId)
         assertEquals("4,99", editor.draft.price)
-        assertFalse(editor.dirty(PackSpec))
+        assertFalse(editor.dirty(ServiceSpec))
 
         assertIs<UiAsync.Empty>(loaded().items)
         assertFalse(loaded().isOpen)
 
-        val failed = MarketEditor<MarketTicketPack, PackDraft>(draft = PackDraft())
-            .loaded(PackSpec, AppResult.Failure(AppError.Network("sin red")))
+        val failed = MarketEditor<MarketService, ServiceDraft>(draft = ServiceDraft())
+            .loaded(ServiceSpec, AppResult.Failure(AppError.Network("sin red")))
         assertIs<UiAsync.Error>(failed.items)
     }
 
     @Test
     fun `a refresh keeps the list on screen and never throws away a draft`() {
-        val editing = loaded(small, big).reduce(PackSpec, EditorAction.UpdateDraft(PackSpec.toDraft(small).copy(name = "A medias")))
+        val editing = loaded(small, big).reduce(ServiceSpec, EditorAction.UpdateDraft(ServiceSpec.toDraft(small).copy(name = "A medias")))
         val refreshing = editing.loading()
         // Lo ya leído se sigue viendo mientras se relee: la ficha no se vacía.
         assertIs<UiAsync.Success<*>>(refreshing.items)
         assertTrue(refreshing.refreshing)
-        assertTrue(refreshing.dirty(PackSpec))
+        assertTrue(refreshing.dirty(ServiceSpec))
 
-        val after = refreshing.loaded(PackSpec, AppResult.Success(listOf(small.copy(priceCents = 599), big)))
+        val after = refreshing.loaded(ServiceSpec, AppResult.Success(listOf(small.copy(priceCents = 599), big)))
         assertFalse(after.refreshing)
         assertEquals("A medias", after.draft.name)
-        assertEquals(599, after.selected(PackSpec)?.priceCents)
+        assertEquals(599, after.selected(ServiceSpec)?.priceCents)
     }
 
     @Test
     fun `a refresh without changes rereads the open record from the server`() {
-        val after = loaded(small, big).loading().loaded(PackSpec, AppResult.Success(listOf(small.copy(priceCents = 599), big)))
+        val after = loaded(small, big).loading().loaded(ServiceSpec, AppResult.Success(listOf(small.copy(priceCents = 599), big)))
         assertEquals("5,99", after.draft.price)
-        assertFalse(after.dirty(PackSpec))
+        assertFalse(after.dirty(ServiceSpec))
     }
 
     @Test
     fun `a failed refresh keeps what was read and says so, instead of blanking the screen`() {
-        val after = loaded(small, big).loading().loaded(PackSpec, AppResult.Failure(AppError.Network("sin red")))
+        val after = loaded(small, big).loading().loaded(ServiceSpec, AppResult.Failure(AppError.Network("sin red")))
         assertIs<UiAsync.Success<*>>(after.items)
         assertTrue(after.refreshFailed)
         assertFalse(after.refreshing)
@@ -77,109 +76,81 @@ class MarketEditorTest {
 
     @Test
     fun `when the open record disappears the first one is opened`() {
-        val opened = loaded(small, big).reduce(PackSpec, EditorAction.Open("p2"))
+        val opened = loaded(small, big).reduce(ServiceSpec, EditorAction.Open("p2"))
         assertEquals("p2", opened.selectedId)
-        val after = opened.loading().loaded(PackSpec, AppResult.Success(listOf(small)))
+        val after = opened.loading().loaded(ServiceSpec, AppResult.Success(listOf(small)))
         assertEquals("p1", after.selectedId)
 
-        val gone = opened.loading().loaded(PackSpec, AppResult.Success(emptyList()))
+        val gone = opened.loading().loaded(ServiceSpec, AppResult.Success(emptyList()))
         assertNull(gone.selectedId)
-        assertEquals(PackDraft(), gone.draft)
+        assertEquals(ServiceDraft(), gone.draft)
     }
 
     @Test
     fun `leaving a record with unsaved changes asks first`() {
-        val editing = loaded(small, big).reduce(PackSpec, EditorAction.UpdateDraft(PackSpec.toDraft(small).copy(price = "5,49")))
-        val asked = editing.reduce(PackSpec, EditorAction.Open("p2"))
+        val editing = loaded(small, big).reduce(ServiceSpec, EditorAction.UpdateDraft(ServiceSpec.toDraft(small).copy(price = "5,49")))
+        val asked = editing.reduce(ServiceSpec, EditorAction.Open("p2"))
         assertEquals("p1", asked.selectedId)
         assertEquals(PendingEditorOpen("p2"), asked.pendingOpen)
 
-        val stayed = asked.reduce(PackSpec, EditorAction.DismissOpen)
+        val stayed = asked.reduce(ServiceSpec, EditorAction.DismissOpen)
         assertNull(stayed.pendingOpen)
         assertEquals("5,49", stayed.draft.price)
 
-        val left = asked.reduce(PackSpec, EditorAction.ConfirmOpen)
+        val left = asked.reduce(ServiceSpec, EditorAction.ConfirmOpen)
         assertEquals("p2", left.selectedId)
-        assertFalse(left.dirty(PackSpec))
+        assertFalse(left.dirty(ServiceSpec))
 
         // «Nuevo» con cambios pendientes también pregunta.
-        assertEquals(PendingEditorOpen(null), editing.reduce(PackSpec, EditorAction.Open(null)).pendingOpen)
+        assertEquals(PendingEditorOpen(null), editing.reduce(ServiceSpec, EditorAction.Open(null)).pendingOpen)
     }
 
     @Test
     fun `search and filter narrow the downloaded list and return to the first page`() {
-        val editor = loaded(small, big).reduce(PackSpec, EditorAction.SetPage(2))
-        val inactive = editor.reduce(PackSpec, EditorAction.UpdateFilter(FILTER_INACTIVE))
-        assertEquals(listOf("p2"), inactive.visible(PackSpec).map { it.id })
+        val editor = loaded(small, big).reduce(ServiceSpec, EditorAction.SetPage(2))
+        val inactive = editor.reduce(ServiceSpec, EditorAction.UpdateFilter(FILTER_INACTIVE))
+        assertEquals(listOf("p2"), inactive.visible(ServiceSpec).map { it.id })
         assertEquals(0, inactive.pageIndex)
-        assertEquals(listOf("p1"), editor.reduce(PackSpec, EditorAction.UpdateSearch("PACK_500")).visible(PackSpec).map { it.id })
+        assertEquals(listOf("p1"), editor.reduce(ServiceSpec, EditorAction.UpdateSearch("PACK_500")).visible(ServiceSpec).map { it.id })
     }
 
     @Test
     fun `discard returns to what the server has`() {
-        val editing = loaded(small).reduce(PackSpec, EditorAction.UpdateDraft(PackSpec.toDraft(small).copy(name = "Otro")))
-        assertEquals("500 OposiTickets", editing.reduce(PackSpec, EditorAction.Discard).draft.name)
+        val editing = loaded(small).reduce(ServiceSpec, EditorAction.UpdateDraft(ServiceSpec.toDraft(small).copy(name = "Otro")))
+        assertEquals("500 OposiTickets", editing.reduce(ServiceSpec, EditorAction.Discard).draft.name)
 
-        val creating = loaded(small).reduce(PackSpec, EditorAction.Open(null)).reduce(PackSpec, EditorAction.UpdateDraft(PackDraft(name = "x")))
-        assertEquals(PackDraft(), creating.reduce(PackSpec, EditorAction.Discard).draft)
+        val creating = loaded(small).reduce(ServiceSpec, EditorAction.Open(null)).reduce(ServiceSpec, EditorAction.UpdateDraft(ServiceDraft(name = "x")))
+        assertEquals(ServiceDraft(), creating.reduce(ServiceSpec, EditorAction.Discard).draft)
     }
 
     @Test
     fun `a saved record replaces its row, a new one joins the list, and the record stays open`() {
-        val edited = loaded(small, big).saved(PackSpec, sent = small.copy(priceCents = 599), saved = small.copy(priceCents = 599))
+        val edited = loaded(small, big).saved(ServiceSpec, sent = small.copy(priceCents = 599), saved = small.copy(priceCents = 599))
         assertEquals(listOf(599, 1999), edited.all.map { it.priceCents })
         assertIs<UiAsync.Success<*>>(edited.actionState)
         assertNull(edited.notice)
 
-        val created = loaded(small).reduce(PackSpec, EditorAction.Open(null))
-            .saved(PackSpec, sent = big.copy(id = ""), saved = big)
+        val created = loaded(small).reduce(ServiceSpec, EditorAction.Open(null))
+            .saved(ServiceSpec, sent = big.copy(id = ""), saved = big)
         assertEquals(listOf("p1", "p2"), created.all.map { it.id })
         assertEquals("p2", created.selectedId)
         assertFalse(created.creatingNew)
 
         // Guardar el primero de una lista vacía.
-        val first = loaded().reduce(PackSpec, EditorAction.Open(null)).saved(PackSpec, small.copy(id = ""), small)
+        val first = loaded().reduce(ServiceSpec, EditorAction.Open(null)).saved(ServiceSpec, small.copy(id = ""), small)
         assertEquals(listOf("p1"), first.all.map { it.id })
     }
 
     @Test
     fun `a field the server kept is reported instead of calling it saved`() {
         val cleared = big.copy(description = null)
-        val editor = loaded(small, big).reduce(PackSpec, EditorAction.Open("p2")).saved(PackSpec, sent = cleared, saved = big)
+        val editor = loaded(small, big).reduce(ServiceSpec, EditorAction.Open("p2")).saved(ServiceSpec, sent = cleared, saved = big)
         assertEquals("El servidor conservó el valor anterior de la descripción: vaciar ese campo todavía no se guarda.", editor.notice)
         // La ficha enseña lo que de verdad hay en el servidor.
         assertEquals("El que más compensa", editor.draft.description)
 
         assertNull(keptByServerNotice(emptyList()))
         assertTrue(keptByServerNotice(listOf("la pantalla", "el momento", "el plan mínimo"))!!.contains("la pantalla, el momento y el plan mínimo"))
-    }
-
-    // ---------- packs ----------
-
-    @Test
-    fun `a pack needs a code when new, a name, tickets and a price`() {
-        val valid = PackDraft(code = "pack_900", name = "900 OT", ticketAmount = "900", price = "7,99")
-        assertNull(PackSpec.problem(valid, isNew = true, others = listOf(small)))
-        assertEquals("El pack necesita un código.", PackSpec.problem(valid.copy(code = ""), true, emptyList()))
-        assertEquals("Ya existe un pack con ese código.", PackSpec.problem(valid.copy(code = "pack_500"), true, listOf(small)))
-        assertEquals("El pack necesita un nombre.", PackSpec.problem(valid.copy(name = " "), false, emptyList()))
-        assertEquals("Un pack debe entregar al menos un OposiTicket.", PackSpec.problem(valid.copy(ticketAmount = "0"), false, emptyList()))
-        assertNotNull(PackSpec.problem(valid.copy(price = ""), false, emptyList()))
-        assertNotNull(PackSpec.problem(valid.copy(price = "7,999"), false, emptyList()))
-        // Gratis es un precio válido; negativo no.
-        assertNull(PackSpec.problem(valid.copy(price = "0"), false, emptyList()))
-    }
-
-    @Test
-    fun `the pack that is sent keeps its id, code and currency`() {
-        val sent = assertNotNull(PackSpec.toEntity(PackSpec.toDraft(big).copy(code = "otro", name = " Grande ", description = " "), big.copy(currency = "USD")))
-        assertEquals("p2", sent.id)
-        assertEquals("pack_2600", sent.code)
-        assertEquals("Grande", sent.name)
-        assertNull(sent.description)
-        assertEquals("USD", sent.currency)
-        assertEquals("", assertNotNull(PackSpec.toEntity(PackDraft(code = " c ", name = "n", ticketAmount = "1", price = "1"), null)).id)
-        assertEquals(listOf("500 OT", "4,99 EUR"), packRowSpec(small).meta)
     }
 
     // ---------- servicios ----------
@@ -319,20 +290,20 @@ class MarketEditorTest {
     @Test
     fun `the form enters when another record is opened, never when it is saved or refreshed`() {
         val first = loaded(small, big)
-        val other = first.reduce(PackSpec, EditorAction.Open("p2"))
+        val other = first.reduce(ServiceSpec, EditorAction.Open("p2"))
         assertEquals(first.openSeq + 1, other.openSeq, "abrir otro registro es una entrada")
-        assertEquals(other.openSeq, other.reduce(PackSpec, EditorAction.Open("p2")).openSeq, "volver a pulsar el mismo no")
+        assertEquals(other.openSeq, other.reduce(ServiceSpec, EditorAction.Open("p2")).openSeq, "volver a pulsar el mismo no")
 
-        val creating = other.reduce(PackSpec, EditorAction.Open(null))
+        val creating = other.reduce(ServiceSpec, EditorAction.Open(null))
         assertEquals(other.openSeq + 1, creating.openSeq, "empezar uno nuevo es una entrada")
 
         // Guardar el nuevo lo convierte en registro: el formulario que ya se ve no vuelve a entrar.
-        val created = creating.saved(PackSpec, sent = big.copy(id = ""), saved = big.copy(id = "p3"))
+        val created = creating.saved(ServiceSpec, sent = big.copy(id = ""), saved = big.copy(id = "p3"))
         assertEquals("p3", created.selectedId)
         assertEquals(creating.openSeq, created.openSeq)
 
         // Releer la lista con el mismo registro abierto tampoco.
-        val refreshed = created.loading().loaded(PackSpec, AppResult.Success(listOf(small, big, big.copy(id = "p3"))))
+        val refreshed = created.loading().loaded(ServiceSpec, AppResult.Success(listOf(small, big, big.copy(id = "p3"))))
         assertEquals(created.openSeq, refreshed.openSeq)
     }
 

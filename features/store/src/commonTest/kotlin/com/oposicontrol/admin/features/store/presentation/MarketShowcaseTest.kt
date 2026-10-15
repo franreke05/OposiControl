@@ -93,7 +93,7 @@ class MarketShowcaseTest {
             listOf(MarketSection.EXAMS, MarketSection.PRODUCTS, MarketSection.SERVICES, MarketSection.PROMOTIONS, MarketSection.POPUPS),
             SHOWCASE_SECTIONS,
         )
-        assertFalse(MarketSection.PACKS in SHOWCASE_SECTIONS)
+        assertEquals(MarketSection.entries.toList(), SHOWCASE_SECTIONS, "no queda ninguna sección sin pestaña")
         assertEquals("Productos y packs", MarketSection.PRODUCTS.label())
     }
 

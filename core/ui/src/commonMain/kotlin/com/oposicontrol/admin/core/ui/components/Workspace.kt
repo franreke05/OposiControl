@@ -338,7 +338,8 @@ internal fun workspaceCatalogRowColors(selected: Boolean, hovered: Boolean, toke
 fun WorkspaceCatalogRow(
     title: String,
     selected: Boolean,
-    onClick: () -> Unit,
+    /** `null` = fila de solo consulta: sin mano, sin hover y sin clic. */
+    onClick: (() -> Unit)?,
     icon: AppIcon,
     modifier: Modifier = Modifier,
     eyebrow: String? = null,
@@ -363,10 +364,17 @@ fun WorkspaceCatalogRow(
             // Cuando [changeKey] cambia (la fila se acaba de guardar o de actualizar) un velo de acento se enciende y se apaga.
             .motionHighlight(trigger = changeKey, color = tokens.accent)
             .border(1.dp, colors.border, Radius.card)
-            .hoverable(interactionSource)
-            .pointerHoverIcon(PointerIcon.Hand)
             .semantics { this.selected = selected }
-            .clickable(interactionSource = interactionSource, indication = null, onClick = onClick),
+            .then(
+                if (onClick == null) {
+                    Modifier
+                } else {
+                    Modifier
+                        .hoverable(interactionSource)
+                        .pointerHoverIcon(PointerIcon.Hand)
+                        .clickable(interactionSource = interactionSource, indication = null, onClick = onClick)
+                },
+            ),
     ) {
         Box(modifier = Modifier.width(3.dp).fillMaxHeight().background(colors.bar))
         Row(

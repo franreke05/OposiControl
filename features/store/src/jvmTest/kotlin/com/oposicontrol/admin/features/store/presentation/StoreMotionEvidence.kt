@@ -71,9 +71,9 @@ class StoreMotionEvidence {
 
     @Test
     fun marketCargaYSeccion() {
-        // Cargando -> datos: la cara entra una vez. Los cuatro editores comparten ficha y, con ella, movimiento.
-        val states = listOf(market.cargando(), market.packs())
-        motionFilmstrip("market-cargando-a-packs") { step ->
+        // Cargando -> datos: la cara entra una vez. Los editores comparten ficha y, con ella, movimiento.
+        val states = listOf(market.cargando(), market.servicios())
+        motionFilmstrip("market-cargando-a-servicios") { step ->
             DesktopShell(
                 currentRouteId = "commercial.market",
                 groups = EVIDENCE_SIDEBAR,
@@ -90,8 +90,8 @@ class StoreMotionEvidence {
 
     @Test
     fun marketOtraSeccion() {
-        val states = listOf(market.packs(), market.servicios())
-        motionFilmstrip("market-packs-a-servicios") { step ->
+        val states = listOf(market.servicios(), market.promociones())
+        motionFilmstrip("market-servicios-a-promociones") { step ->
             DesktopShell(
                 currentRouteId = "commercial.market",
                 groups = EVIDENCE_SIDEBAR,
@@ -137,8 +137,8 @@ class StoreMotionEvidence {
     }
 
     @Test
-    fun rendimientoLosCuatroEditoresDeMarket() {
-        val states = listOf(market.packs(), market.servicios(), market.promociones(), market.popups(), market.packNuevo(), market.cargando())
+    fun rendimientoLosEditoresDeMarket() {
+        val states = listOf(market.servicios(), market.promociones(), market.popups(), market.servicioSinPrecio(), market.cargando())
         motionPerformance("oposimarket", states = states.size, cycles = 40) { step ->
             DesktopShell(currentRouteId = "commercial.market", groups = EVIDENCE_SIDEBAR, onRouteSelected = {}, environmentLabel = "Entorno production", title = "OposiMarket", description = "Rendimiento.", globalSearch = {}) {
                 MarketCatalogEditorContent(state = states[step], section = states[step].section, onIntent = {}, onOpenUser = {})
