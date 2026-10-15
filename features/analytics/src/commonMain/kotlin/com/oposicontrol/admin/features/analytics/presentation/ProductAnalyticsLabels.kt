@@ -51,8 +51,8 @@ internal fun AnalyticsMetric.statusLabel(): String = when (status) {
     AnalyticsMetricStatus.NOT_INSTRUMENTED -> "sin instrumentar"
 }
 
-internal const val NO_DATA_LABEL = "NO_DATA"
-internal const val NOT_INSTRUMENTED_LABEL = "NOT_INSTRUMENTED"
+internal const val NO_DATA_LABEL = "No disponible"
+internal const val NOT_INSTRUMENTED_LABEL = "Sin instrumentar"
 
 /**
  * Nombre legible de cada métrica.

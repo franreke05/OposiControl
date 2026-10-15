@@ -52,9 +52,9 @@ import com.oposicontrol.admin.domain.model.AnalyticsTable
 fun ProductAnalyticsScreen(
     viewModel: ProductAnalyticsViewModel,
     /**
-     * Sección con la que abrir. La fijan las entradas de menú antiguas de
-     * Estudio y Eventos, que ahora apuntan a esta misma pantalla — antes caían
-     * al adaptador legacy de Dashboard, que no tenía nada que ver.
+     * Sección con la que abrir. La fija la ruta antigua de Estudio, que ahora
+     * apunta a esta misma pantalla — antes caía al adaptador legacy de
+     * Dashboard, que no tenía nada que ver.
      */
     initialSection: AnalyticsSection? = null,
 ) {

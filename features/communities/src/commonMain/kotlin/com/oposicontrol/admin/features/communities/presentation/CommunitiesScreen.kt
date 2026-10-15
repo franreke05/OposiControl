@@ -51,7 +51,7 @@ fun CommunitiesScreen(
                     modifier = Modifier.width(152.dp),
                     onClick = { viewModel.dispatch(CommunitiesIntent.CreateNew) },
                 )
-                AsyncStatePane(state.items, emptyMessage = "No hay comunidades. Aplica la migracion comunidad_autonoma.") { items ->
+                AsyncStatePane(state.items, emptyMessage = "Todavía no hay comunidades. Crea la primera con «Nueva comunidad».") { items ->
                     AdminTable(
                         columns = listOf(
                             AdminTableColumn("Nombre", 1.2f),
@@ -65,7 +65,7 @@ fun CommunitiesScreen(
                                 cells = listOf(
                                     item.name,
                                     item.code.ifBlank { "-" },
-                                    if (item.isActive) "active" else "inactive",
+                                    if (item.isActive) "Activa" else "Inactiva",
                                     item.sortOrder.toString(),
                                 ),
                                 selected = item.id == state.selectedId,
@@ -80,7 +80,7 @@ fun CommunitiesScreen(
         detailPane = {
             FormSection(
                 title = if (state.selectedId == null) "Nueva comunidad" else "Detalle de comunidad",
-                description = "Catálogo territorial para acotar exámenes por comunidad autonoma.",
+                description = "Catálogo territorial para acotar exámenes por comunidad autónoma.",
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     StatusChip(if (state.editorIsActive) "active" else "inactive")
@@ -131,7 +131,7 @@ fun CommunitiesScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Activa para el catálogo")
                             Text(
-                                "Solo las activas deberian quedar visibles para contenido nuevo.",
+                                "Solo las activas deberían quedar visibles para contenido nuevo.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

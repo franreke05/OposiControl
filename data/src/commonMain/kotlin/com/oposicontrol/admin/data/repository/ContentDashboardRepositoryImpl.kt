@@ -111,7 +111,9 @@ class ContentDashboardRepositoryImpl(
                                 unlinkedResources = unlinkedResources,
                                 draftNews = news.count { it.status.equals("draft", ignoreCase = true) || it.status.equals("borrador", ignoreCase = true) },
                                 scheduledOffers = scheduledOffers,
-                                activeBursts = activeBursts,
+                                // Con el catálogo comercial caído no hay ráfagas que contar: «Sin ráfagas activas» sería un
+                                // cero inventado. `null` = no se sabe, y no genera aviso.
+                                activeBursts = activeBursts.takeIf { commerce is AppResult.Success },
                             ),
                             recentEvents = buildRecentEvents(
                                 latestExamTitle = exams.value.maxByOrNull { it.updatedAt }?.title,
@@ -150,7 +152,7 @@ class ContentDashboardRepositoryImpl(
         unlinkedResources: Int,
         draftNews: Int,
         scheduledOffers: Int,
-        activeBursts: Int,
+        activeBursts: Int?,
     ): List<DashboardAlert> {
         return listOfNotNull(
             if (questionsWithoutResources > 0) {

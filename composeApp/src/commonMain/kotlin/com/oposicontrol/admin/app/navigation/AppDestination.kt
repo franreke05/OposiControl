@@ -46,7 +46,7 @@ enum class AdminSection(
     ),
     TAGS(
         label = "Etiquetas",
-        description = "Taxonomia que alimenta la busqueda global y la clasificación de contenido.",
+        description = "Etiquetas que clasifican preguntas y contenido.",
         primaryActionLabel = "Nueva etiqueta",
     ),
     NEWS_TYPES(

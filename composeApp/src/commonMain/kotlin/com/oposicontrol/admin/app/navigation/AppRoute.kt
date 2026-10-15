@@ -15,12 +15,17 @@ sealed interface AppRoute {
         data object Resources : Content
         data object Imports : Content
         data object Taxonomy : Content
+
+        /** Comunidades autónomas (`/api/v1/admin/comunidades-autonomas`). */
+        data object Communities : Content
+
+        /** Etiquetas de clasificación (`/api/v1/admin/etiquetas`). */
+        data object Tags : Content
     }
 
     sealed interface Publication : AppRoute {
         data object News : Publication
         data object NewsTypes : Publication
-        data object Assets : Publication
     }
 
     /** Clasificacion, ligas y posicion por opositor. Solo consulta. */
@@ -77,7 +82,6 @@ sealed interface AppRoute {
 
     sealed interface Analytics : AppRoute {
         data object Home : Analytics
-        data object Events : Analytics
         data object Performance : Analytics
     }
 
