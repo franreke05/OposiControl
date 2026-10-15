@@ -14,11 +14,11 @@ class UsersRepositoryImpl(
 
     override fun observeUsersWithRole(roleCode: String): Flow<AppResult<List<User>>> = remote.observeUsersWithRole(roleCode)
 
+    override suspend fun searchUsers(query: String, limit: Int): AppResult<List<User>> = remote.searchUsers(query, limit)
+
     override suspend fun getUser(userId: String) = remote.getUser(userId)
 
     override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = remote.upsertUser(user, previous)
-
-    override suspend fun deleteUser(userId: String): AppResult<Unit> = remote.deleteUser(userId)
 
     override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = remote.getUserDetail(userId)
 }

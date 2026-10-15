@@ -138,6 +138,18 @@ class UsersApi(
         }.checkedBody<AdminUsersV1Response>(BackendRoutes.ADMIN_V1_USUARIOS)
     }
 
+    /**
+     * Busqueda en el servidor (D1-22 `q`: prefijo de username o nombre, sin distinguir mayusculas): UNA pagina de [limit]
+     * filas, no el censo. Para selectores de persona; quien la usa sabe que puede haber mas coincidencias.
+     */
+    suspend fun searchUsers(query: String, limit: Int): List<UserDto> =
+        client.get(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.ADMIN_V1_USUARIOS)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            parameter("q", query)
+            parameter("limit", limit)
+            parameter("offset", 0)
+        }.checkedBody<AdminUsersV1Response>(BackendRoutes.ADMIN_V1_USUARIOS).toUserDtos()
+
     suspend fun getUser(userId: String): UserDto =
         client.get(BackendRoutes.url(appConfig.baseUrl, BackendRoutes.adminV1Usuario(userId))) {
             adminAuthHeaders(appConfig, sessionLocalDataSource)
@@ -174,11 +186,6 @@ class UsersApi(
             }.checkedBody<kotlinx.serialization.json.JsonObject>("${BackendRoutes.adminV1Usuario(user.id)}/roles")
         }
         return getUser(user.id)
-    }
-
-    suspend fun deleteUser(userId: String) {
-        // ponytail: eliminar usuarios requiere Supabase Auth admin — no disponible desde KMP
-        error("Eliminar usuarios no está disponible. Usa el dashboard de Supabase.")
     }
 
     private suspend inline fun <reified T> HttpResponse.checkedBody(endpoint: String): T {

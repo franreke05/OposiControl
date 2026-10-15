@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.domain.repository
 
+import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.User
 import com.oposicontrol.admin.domain.model.UserDetail
@@ -22,6 +23,14 @@ interface UsersRepository {
      * que todas las filas tienen el rol.
      */
     fun observeUsersWithRole(roleCode: String): Flow<AppResult<List<User>>> = observeUsers()
+
+    /**
+     * Busqueda de personas en el servidor (`q` de D1-22: prefijo de username o nombre), UNA pagina de [limit] filas. Por
+     * defecto dice que no puede: un doble de prueba no busca.
+     */
+    suspend fun searchUsers(query: String, limit: Int): AppResult<List<User>> =
+        AppResult.Failure(AppError.Validation("Este entorno no puede buscar usuarios."))
+
     suspend fun getUser(userId: String): AppResult<User>
     /**
      * [previous] es la fila tal y como la vio el editor antes de tocarla. Con ella el guardado solo escribe lo que cambio
@@ -29,7 +38,6 @@ interface UsersRepository {
      * desconocido: se escribe todo.
      */
     suspend fun upsertUser(user: User, previous: User? = null): AppResult<User>
-    suspend fun deleteUser(userId: String): AppResult<Unit>
 
     /** Ficha completa: perfil, rendimiento, competitivo, economía y comunidad. */
     suspend fun getUserDetail(userId: String): AppResult<UserDetail>

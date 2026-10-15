@@ -164,15 +164,6 @@ internal fun UsersContent(
         )
     }
 
-    if (state.ticketsDialogOpen) {
-        TicketsDialog(
-            input = state.ticketsInput,
-            onInputChange = { onIntent(UsersIntent.UpdateTicketsInput(it)) },
-            onConfirm = { onIntent(UsersIntent.ConfirmTickets) },
-            onDismiss = { onIntent(UsersIntent.DismissTicketsDialog) },
-        )
-    }
-
     if (state.warningDialogOpen) {
         WarningDialog(
             input = state.warningInput,
@@ -191,67 +182,6 @@ internal fun UsersContent(
             onConfirm = { onIntent(UsersIntent.ConfirmAccountStatus) },
             onDismiss = { onIntent(UsersIntent.DismissAccountStatusDialog) },
         )
-    }
-}
-
-@Composable
-private fun TicketsDialog(
-    input: String,
-    onInputChange: (String) -> Unit,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val tokens = GlassTheme.tokens
-    val amount = input.toIntOrNull()
-    Dialog(onDismissRequest = onDismiss, properties = overlayDialogProperties()) {
-        GlassSurface(
-            modifier = Modifier.widthIn(min = 280.dp, max = 400.dp).motionOverlayEntrance(),
-            shape = RoundedCornerShape(24.dp),
-            tint = tokens.glassFillStrong,
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(Spacing.xl),
-                verticalArrangement = Arrangement.spacedBy(Spacing.sm),
-            ) {
-                Text(
-                    text = "Conceder OposiTickets",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = tokens.textPrimary,
-                )
-                Text(
-                    text = "Número positivo para dar tickets, negativo para quitar. " +
-                        "El movimiento queda registrado en el histórico del usuario.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = tokens.textSecondary,
-                )
-                GlassTextField(
-                    value = input,
-                    onValueChange = onInputChange,
-                    placeholder = "Ej. 10 o -5",
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                if (amount != null && amount < -100) {
-                    Text(
-                        text = "Vas a retirar más de 100 OposiTickets. Confirma que es correcto.",
-                        color = tokens.dangerInk,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = Spacing.xxs),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm, Alignment.End),
-                ) {
-                    SecondaryButton(text = "Cancelar", onClick = onDismiss, size = ButtonSize.COMPACT)
-                    PrimaryButton(
-                        text = "Conceder",
-                        onClick = onConfirm,
-                        enabled = amount != null && amount != 0,
-                        size = ButtonSize.COMPACT,
-                    )
-                }
-            }
-        }
     }
 }
 

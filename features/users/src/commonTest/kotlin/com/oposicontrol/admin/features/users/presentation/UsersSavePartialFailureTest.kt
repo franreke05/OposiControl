@@ -39,7 +39,6 @@ class UsersSavePartialFailureTest {
             server = server.copy(fullName = user.fullName)
             return AppResult.Failure(AppError.Network("roles 500"))
         }
-        override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = AppResult.Failure(AppError.Network("unused"))
     }
 

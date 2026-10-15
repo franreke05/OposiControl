@@ -44,7 +44,6 @@ class UsersAccountStatusTest {
         override fun observeUsers(): Flow<AppResult<List<User>>> = flowOf(AppResult.Success(listOf(row)))
         override suspend fun getUser(userId: String): AppResult<User> = AppResult.Success(row)
         override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = error("unused")
-        override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> =
             AppResult.Success(UserDetail(UserProfile(userId = userId, accountStatus = row.accountStatus)))
     }

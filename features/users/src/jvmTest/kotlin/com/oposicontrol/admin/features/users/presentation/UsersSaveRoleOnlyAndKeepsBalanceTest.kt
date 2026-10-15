@@ -40,7 +40,6 @@ class UsersSaveRoleOnlyAndKeepsBalanceTest {
             upserts += user
             return AppResult.Success(user.copy(ticketsBalance = null))
         }
-        override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = AppResult.Failure(AppError.Network("unused"))
     }
 

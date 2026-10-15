@@ -557,8 +557,6 @@ private fun UsersEditorCard(
     state: com.oposicontrol.admin.features.users.presentation.UsersState,
     onIntent: (UsersIntent) -> Unit,
 ) {
-    var manualTickets by rememberSaveable { mutableStateOf("") }
-
     GlassSurface(modifier = Modifier.fillMaxWidth(), shape = AdminUserPanelShape) {
         Column(
             modifier = Modifier
@@ -607,46 +605,12 @@ private fun UsersEditorCard(
             // sólo escribe `nombre_mostrar`, así que moverlo devolvía éxito sin
             // cambiar nada. No existe bloqueo en el sistema.
             if (state.selectedUserId != null) {
-                Text("Dar opositickets", style = MaterialTheme.typography.labelMedium, color = GlassTheme.tokens.textSecondary)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    listOf(5, 10, 25).forEach { amount ->
-                        AdminTicketPresetButton(
-                            amount = amount,
-                            enabled = state.actionState !is UiAsync.Loading,
-                            onClick = { onIntent(UsersIntent.GrantTickets(amount)) },
-                        )
-                    }
-                }
-                val manualAmount = manualTickets.toIntOrNull()?.takeIf { it > 0 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    GlassTextField(
-                        value = manualTickets,
-                        onValueChange = { value -> manualTickets = value.filter(Char::isDigit).take(5) },
-                        placeholder = "Cantidad",
-                        modifier = Modifier.width(172.dp),
-                    )
-                    AdminUserActionButton(
-                        icon = MobileIcon.Check,
-                        label = "Enviar",
-                        modifier = Modifier.width(104.dp),
-                        enabled = manualAmount != null && state.actionState !is UiAsync.Loading,
-                        tint = GlassTheme.tokens.accent,
-                        strokeColor = GlassTheme.tokens.accent.copy(alpha = 0.44f),
-                        contentColor = Color.White,
-                        onClick = {
-                            val amount = manualAmount ?: return@AdminUserActionButton
-                            onIntent(UsersIntent.GrantTickets(amount))
-                            manualTickets = ""
-                        },
-                    )
-                }
+                // Los OposiTickets se ajustan en la seccion Tickets (con motivo e historico): aqui no hay concesion rapida.
+                Text(
+                    text = "Para ajustar OposiTickets usa la sección Tickets.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = GlassTheme.tokens.textSecondary,
+                )
             }
             AdminUsersActionRow(
                 actionState = state.actionState,
@@ -724,42 +688,6 @@ private fun AdminUserRoleChip(
 // en móvil. Se retira con su único punto de llamada: el `PATCH` de usuario sólo
 // escribe `nombre_mostrar`, así que moverlo devolvía éxito sin cambiar nada, y
 // `isActive` no significa acceso sino invitado/registrado.
-
-@Composable
-private fun AdminTicketPresetButton(
-    amount: Int,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    val tokens = GlassTheme.tokens
-    val foreground = if (enabled) tokens.accent else tokens.textSecondary
-    GlassSurface(
-        modifier = Modifier
-            .width(if (amount == 5) 58.dp else 64.dp)
-            .height(44.dp)
-            .clickable(enabled = enabled, onClick = onClick),
-        shape = AdminUserControlShape,
-        tint = tokens.glassFillStrong.copy(alpha = if (enabled) 0.70f else 0.45f),
-        strokeColor = tokens.accent.copy(alpha = if (enabled) 0.28f else 0.12f),
-        shadowElevation = 0.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(44.dp)
-                .padding(horizontal = 10.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "+$amount",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = foreground,
-            )
-        }
-    }
-}
 
 @Composable
 private fun AdminUsersActionRow(
@@ -1136,10 +1064,6 @@ private fun AdminSupportSection(
             onValueChange = { onIntent(SupportIntent.UpdateSearch(it)) },
             modifier = Modifier.fillMaxWidth(),
         )
-        SupportStatusFilter(
-            current = supportState.statusFilter,
-            onSelected = { onIntent(SupportIntent.UpdateStatusFilter(it)) },
-        )
 
         if (supportState.selectedConversationId != null) {
             SupportReplyCard(state = supportState, onIntent = onIntent)
@@ -1200,51 +1124,13 @@ private fun AdminSupportSection(
                                 horizontalAlignment = Alignment.End,
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
-                                StatusChip(status = conv.status)
-                                Text(
-                                    text = conv.assignedTo.ifBlank { "Sin asignar" },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
+                                StatusChip(status = conv.status.ifBlank { "Sin estado" })
                             }
                         }
                     }
                 }
             }
             is UiAsync.Idle -> Unit
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun SupportStatusFilter(current: String, onSelected: (String) -> Unit) {
-    val options = listOf("all" to "Todos", "open" to "Abiertos", "resolved" to "Resueltos", "closed" to "Cerrados")
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        options.forEach { (value, label) ->
-            val selected = current == value
-            val bg = if (selected) GlassTheme.tokens.accent.copy(alpha = 0.16f)
-            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-            val fg = if (selected) GlassTheme.tokens.accent else MaterialTheme.colorScheme.onSurfaceVariant
-            Text(
-                text = label,
-                modifier = Modifier
-                    .height(36.dp)
-                    .background(bg, AdminUserControlShape)
-                    .clickable { onSelected(value) }
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = fg,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }
@@ -1310,12 +1196,6 @@ private fun SupportReplyCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Responder", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            GlassTextField(
-                value = state.assignee,
-                onValueChange = { onIntent(SupportIntent.UpdateAssignee(it)) },
-                placeholder = "Asignado a",
-                modifier = Modifier.fillMaxWidth(),
-            )
             GlassTextField(
                 value = state.replyText,
                 onValueChange = { onIntent(SupportIntent.UpdateReplyText(it)) },

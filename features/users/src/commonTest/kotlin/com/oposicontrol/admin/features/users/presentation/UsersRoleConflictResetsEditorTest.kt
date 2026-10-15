@@ -37,7 +37,6 @@ class UsersRoleConflictResetsEditorTest {
             upserts += user
             return AppResult.Failure(AppError.Validation("Los roles cambiaron.", code = "VERSION_CONFLICT"))
         }
-        override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = AppResult.Failure(AppError.Network("unused"))
     }
 

@@ -77,7 +77,6 @@ class AdminsViewModelTest {
         }
         override suspend fun getUser(userId: String): AppResult<User> = error("unused")
         override suspend fun upsertUser(user: User, previous: User?): AppResult<User> = error("unused")
-        override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> = error("unused")
     }
 

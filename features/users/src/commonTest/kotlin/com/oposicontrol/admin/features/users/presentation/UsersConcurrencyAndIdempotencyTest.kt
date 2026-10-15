@@ -61,7 +61,6 @@ class UsersConcurrencyAndIdempotencyTest {
             saveGate?.await()
             return AppResult.Success(user)
         }
-        override suspend fun deleteUser(userId: String): AppResult<Unit> = error("unused")
         override suspend fun getUserDetail(userId: String): AppResult<UserDetail> {
             detailCalls++
             val gate = detailGates[userId] ?: return AppResult.Success(UserDetail(UserProfile(userId = userId), economy = UserEconomy(ticketBalance = walletBalance)))
@@ -100,69 +99,7 @@ class UsersConcurrencyAndIdempotencyTest {
         }
     }
 
-    // --- IDEM-001 -----------------------------------------------------------
-
-    @Test fun retryAfterAnAmbiguousFailureReusesTheSameKey() = runTest {
-        val moderation = Moderation(ArrayDeque(listOf(AppResult.Failure(AppError.Network("timeout")), AppResult.Success(15))))
-        val repo = Repo(listOf(user("a", "Ana")))
-        val vm = vm(repo, moderation)
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"), UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        assertIs<UiAsync.Error>(vm.state.value.actionState)
-        assertEquals(1, moderation.keys.size)
-
-        // El admin reabre el dialogo: llega con el importe pendiente y confirma lo mismo.
-        repo.walletBalance = 15 // el servidor aplico la concesion; la ficha se relee tras el exito (MASTER6-IDEM-001)
-        send(vm, UsersIntent.OpenTicketsDialog)
-        assertEquals("5", vm.state.value.ticketsInput)
-        send(vm, UsersIntent.ConfirmTickets)
-
-        assertEquals(2, moderation.keys.size)
-        assertEquals(moderation.keys[0], moderation.keys[1], "el reintento reutiliza la clave: el backend no concede dos veces")
-        assertNull(vm.state.value.pendingGrant, "el exito resuelve la operacion pendiente")
-        assertEquals(15, vm.state.value.loadedUsers.single().ticketsBalance)
-    }
-
-    @Test fun aDifferentAmountAfterAFailureIsANewOperationWithANewKey() = runTest {
-        val moderation = Moderation(ArrayDeque(listOf(AppResult.Failure(AppError.Network("timeout")), AppResult.Success(17))))
-        val vm = vm(Repo(listOf(user("a", "Ana"))), moderation)
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"), UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("7"), UsersIntent.ConfirmTickets)
-        assertEquals(listOf(5, 7), moderation.amounts)
-        assertNotEquals(moderation.keys[0], moderation.keys[1])
-    }
-
-    @Test fun dismissingTheDialogDoesNotForgetAnAmbiguousGrant() = runTest {
-        val moderation = Moderation(ArrayDeque(listOf(AppResult.Failure(AppError.Network("timeout")), AppResult.Success(15))))
-        val vm = vm(Repo(listOf(user("a", "Ana"))), moderation)
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"), UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.DismissTicketsDialog, UsersIntent.OpenTicketsDialog, UsersIntent.ConfirmTickets)
-        assertEquals(moderation.keys[0], moderation.keys[1])
-    }
-
-    @Test fun aSecondIndependentGrantAfterSuccessGetsAFreshKey() = runTest {
-        val moderation = Moderation(ArrayDeque(listOf(AppResult.Success(15), AppResult.Success(20))))
-        val vm = vm(Repo(listOf(user("a", "Ana"))), moderation)
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"), UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        assertNotEquals(moderation.keys[0], moderation.keys[1])
-    }
-
     // --- OC-003 -------------------------------------------------------------
-
-    @Test fun aSuccessfulGrantUpdatesTheDossierBalance() = runTest {
-        val repo = Repo(listOf(user("a", "Ana")))
-        val vm = vm(repo, Moderation(ArrayDeque(listOf(AppResult.Success(15)))))
-        testScheduler.advanceUntilIdle()
-        send(vm, UsersIntent.SelectUser("a"))
-        repo.walletBalance = 15 // el servidor aplica la concesion (MASTER6-IDEM-001: la ficha se relee tras conceder)
-        assertEquals(10, (vm.state.value.detail as UiAsync.Success).value.economy?.ticketBalance)
-        send(vm, UsersIntent.OpenTicketsDialog, UsersIntent.UpdateTicketsInput("5"), UsersIntent.ConfirmTickets)
-        assertEquals(15, (vm.state.value.detail as UiAsync.Success).value.economy?.ticketBalance)
-    }
 
     @Test fun aSuccessfulSaveReloadsTheDossier() = runTest {
         val repo = Repo(listOf(user("a", "Ana")))
