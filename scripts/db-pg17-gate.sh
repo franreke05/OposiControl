@@ -87,6 +87,9 @@ apply_all() {
 }
 
 psqlc -1 < "$boot" >/dev/null 2>"$err" || { cat "$err"; fail "$boot no carga con ON_ERROR_STOP=1"; }
+# V1: objetos de MAIN que el bootstrap generado no arrastra y sobre los que construyen las migraciones V1 (compras_usuario, transacciones_cartera).
+extra=supabase/baseline/main_shape_subset_extra.sql
+[ -s "$extra" ] && { psqlc < "$extra" >/dev/null 2>"$err" || { cat "$err"; fail "$extra no carga con ON_ERROR_STOP=1"; }; }
 fingerprint "$tmp/f0"
 apply_all
 fingerprint "$tmp/f1"

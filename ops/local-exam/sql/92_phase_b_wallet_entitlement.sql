@@ -47,17 +47,18 @@ values ('7d100000-0000-4000-8000-000000000001', '0a000000-0000-4000-8000-0000000
 on conflict (id) do nothing;
 
 -- ---------- cartera y libro (A) ----------
+-- Ledger-first (V1): el saldo de A lo escribe SOLO el libro (trigger); aqui no hay ni snapshot ni cadena a mano. El libro asigna seq,
+-- saldo_anterior y saldo_resultante. B tiene una fila REAL de cartera con saldo 0 (una cartera vacia si se puede crear; con valor, no).
 insert into public.carteras_usuario (usuario_id, saldo_tickets)
-values ('0a000000-0000-4000-8000-00000000000a', 35),
-       ('0b000000-0000-4000-8000-00000000000b', 0)
+values ('0b000000-0000-4000-8000-00000000000b', 0)
 on conflict (usuario_id) do nothing;
 
-insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, saldo_anterior, saldo_resultante, descripcion, creado_en)
-values ('7d000000-0000-4000-8000-000000000001', '0a000000-0000-4000-8000-00000000000a', 'recarga',        50,  0, 50, 'Recarga local',        now() - interval '5 days'),
-       ('7d000000-0000-4000-8000-000000000002', '0a000000-0000-4000-8000-00000000000a', 'reto_diario',     5, 50, 55, 'Reto diario',          now() - interval '4 days'),
-       ('7d000000-0000-4000-8000-000000000003', '0a000000-0000-4000-8000-00000000000a', 'regalo',         10, 55, 65, 'Regalo de bienvenida', now() - interval '3 days'),
-       ('7d000000-0000-4000-8000-000000000004', '0a000000-0000-4000-8000-00000000000a', 'compra_examen', -20, 65, 45, 'Compra de examen',     now() - interval '2 days'),
-       ('7d000000-0000-4000-8000-000000000005', '0a000000-0000-4000-8000-00000000000a', 'potenciador',   -10, 45, 35, 'Potenciador',          now() - interval '1 day')
+insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en)
+values ('7d000000-0000-4000-8000-000000000001', '0a000000-0000-4000-8000-00000000000a', 'recarga',        50, 'Recarga local',        now() - interval '5 days'),
+       ('7d000000-0000-4000-8000-000000000002', '0a000000-0000-4000-8000-00000000000a', 'reto_diario',     5, 'Reto diario',          now() - interval '4 days'),
+       ('7d000000-0000-4000-8000-000000000003', '0a000000-0000-4000-8000-00000000000a', 'regalo',         10, 'Regalo de bienvenida', now() - interval '3 days'),
+       ('7d000000-0000-4000-8000-000000000004', '0a000000-0000-4000-8000-00000000000a', 'compra_examen', -20, 'Compra de examen',     now() - interval '2 days'),
+       ('7d000000-0000-4000-8000-000000000005', '0a000000-0000-4000-8000-00000000000a', 'potenciador',   -10, 'Potenciador',          now() - interval '1 day')
 on conflict (id) do nothing;
 
 insert into public.activaciones_servicio_usuario (id, usuario_id, servicio_id, estado, activa_desde, activa_hasta, usos_disponibles, usos_consumidos)
