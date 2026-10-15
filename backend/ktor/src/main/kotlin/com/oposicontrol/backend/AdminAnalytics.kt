@@ -14,8 +14,6 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 
 /**
@@ -820,42 +818,30 @@ class AdminAnalyticsGateway internal constructor(
 
     fun retencion(): AdminAnalyticsRetencionDto {
         val availability = AnalyticsAvailability()
-        val today = LocalDate.now(ZoneOffset.UTC)
-
-        val usersWithStreak = availability.reading(
+        // `rachas_usuario` NO TIENE ESCRITOR (ninguna función ni trigger la rellena;
+        // ver 20260917084214_dashboard_v2_economy_and_active_users_rpcs.sql): contarla
+        // daba un 0 estructural que nunca podía cambiar, pintado como dato real.
+        // Rachas y usuarios activos quedan NOT_INSTRUMENTED hasta que exista un
+        // escritor (los activos a 30 d ya los da el Dashboard por
+        // `admin_dashboard_active_users`).
+        val usersWithStreak: Int? = null
+        val activeStreak: Int? = null
+        val streak7: Int? = null
+        val streak30: Int? = null
+        val active1d: Int? = null
+        val active7d: Int? = null
+        val active30d: Int? = null
+        listOf(
             AnalyticsMetricKey.USERS_WITH_STREAK,
-            countOrNull("rachas_usuario", "usuario_id"),
-        )
-        val activeStreak = availability.reading(
             AnalyticsMetricKey.USERS_WITH_ACTIVE_STREAK,
-            countOrNull("rachas_usuario", "usuario_id", "racha_actual_dias=gt.0"),
-        )
-        val streak7 = availability.reading(
             AnalyticsMetricKey.USERS_STREAK_7_PLUS,
-            countOrNull("rachas_usuario", "usuario_id", "racha_actual_dias=gte.7"),
-        )
-        val streak30 = availability.reading(
             AnalyticsMetricKey.USERS_STREAK_30_PLUS,
-            countOrNull("rachas_usuario", "usuario_id", "racha_actual_dias=gte.30"),
-        )
-
-        // Usuarios activos SIN DISTINCT: `rachas_usuario.usuario_id` es la clave
-        // primaria, así que hay exactamente una fila por usuario y contar filas ya
-        // es contar usuarios. Por eso estas tres sí son reales, mientras que el
-        // mismo cálculo sobre eventos_app (varias filas por usuario) exigiría
-        // COUNT(DISTINCT) y no se ofrece.
-        val active1d = availability.reading(
             AnalyticsMetricKey.ACTIVE_USERS_1D,
-            countOrNull("rachas_usuario", "usuario_id", "ultima_actividad_fecha=gte.$today"),
-        )
-        val active7d = availability.reading(
             AnalyticsMetricKey.ACTIVE_USERS_7D,
-            countOrNull("rachas_usuario", "usuario_id", "ultima_actividad_fecha=gte.${today.minusDays(6)}"),
-        )
-        val active30d = availability.reading(
             AnalyticsMetricKey.ACTIVE_USERS_30D,
-            countOrNull("rachas_usuario", "usuario_id", "ultima_actividad_fecha=gte.${today.minusDays(29)}"),
-        )
+        ).forEach { key ->
+            availability.gap(key, "rachas_usuario no tiene escritor: el conteo sería siempre 0.")
+        }
 
         val competitive = availability.reading(
             AnalyticsMetricKey.USERS_WITH_COMPETITIVE_STATE,
