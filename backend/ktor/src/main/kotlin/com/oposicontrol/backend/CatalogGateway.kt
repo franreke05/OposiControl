@@ -91,6 +91,10 @@ internal data class CatalogExamRow(
     @SerialName("publicado_en") val publicadoEn: String? = null,
     @SerialName("demo_disponible") val demoDisponible: Boolean = false,
     @SerialName("comunidades_autonomas") val comunidad: CommunityRef? = null,
+    /** V1: el precio en OposiTickets SALE de la base (nunca se inventa). Sin valor fijado, el examen no es comprable. */
+    @SerialName("comprable_con_tickets") val comprableConTickets: Boolean = false,
+    @SerialName("precio_tickets") val precioTickets: Int? = null,
+    @SerialName("dias_acceso_compra") val diasAccesoCompra: Int? = null,
 )
 
 @Serializable
@@ -464,7 +468,7 @@ internal class CatalogGateway(
         /** Solo metadatos de examen. NUNCA preguntas, opciones ni soluciones (SEC-004). */
         internal const val EXAM_COLUMNS =
             "id,codigo_examen,titulo,descripcion,tipo_examen,tipo_acceso,especialidad_id,total_preguntas,duracion_minutos,anio," +
-                "portada_storage_path,publicado_en,demo_disponible,comunidades_autonomas(codigo)"
+                "portada_storage_path,publicado_en,demo_disponible,comprable_con_tickets,precio_tickets,dias_acceso_compra,comunidades_autonomas(codigo)"
         internal const val LATEST_ATTEMPTS_FETCH_LIMIT = 500
 
         /** `supabase/migrations/20261008100300_slice2_my_exams_read_rpc.sql` (STABLE, EXECUTE solo `service_role`). */

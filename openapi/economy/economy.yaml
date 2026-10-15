@@ -1,0 +1,506 @@
+# ECONOMY commands (FA21, V1): D6-03 redeem, D6-11 packs, D6-12/D6-13/D6-14 payment orders, W-01 provider webhook.
+# Design: E1-V1-MINIDESIGN (co-signed by E2). Everything economic is decided by the database inside ONE transaction (ledger first,
+# one lock per wallet, DB clock). The client sends only what the user chose: an exam, a pack code, a provider id, an opaque receipt.
+# It NEVER sends a user, a balance, a price paid, an OT quantity or an amount; prices, quantities and currency come from the catalogue.
+# expectedPrice on D6-03 is a GUARD ("this is the price I showed"), never the price: a mismatch is 409 PRICE_CHANGED.
+# Values that the owner has not set (exam OT prices, pack sizes and money prices, Premium plan) are NOT invented: an unset exam is
+# 422 NOT_PURCHASABLE and an incomplete pack is simply absent from D6-11 (BLOCKED_BY_PRODUCT_DECISION until the owner sets them).
+components:
+  pathItems:
+    WalletRedeem:
+      post:
+        operationId: redeemExamWithTickets
+        summary: 'Redeem an exam with OposiTickets'
+        tags: [wallet]
+        x-contract-id: D6-03
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, EXAM_NOT_FOUND, INSUFFICIENT_BALANCE, PRICE_CHANGED, ALREADY_ACCESSIBLE, IDEMPOTENCY_KEY_IN_PROGRESS, NOT_PURCHASABLE, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'One database transaction: wallet lock, replay check, access check, balance check, ledger debit (FIFO traceability), entitlement row. Buying an exam the user already holds EXTENDS the access from max(now, current end) by the exam days. The same key and the same body replay the stored result (Idempotent-Replayed: true; the database also replays if the stored response was lost). The same key with a different body is 422 IDEMPOTENCY_KEY_REUSED. Never partial: a refusal changes nothing.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExamRedeemRequest'
+        responses:
+          '200':
+            description: 'Replay of an earlier redeem with the same key and body.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ExamRedeemResponse'
+          '201':
+            description: 'Redeemed.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ExamRedeemResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, IDEMPOTENCY_KEY_REQUIRED or IDEMPOTENCY_KEY_INVALID.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND (also draft, archived or not yet published).'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'INSUFFICIENT_BALANCE (details.balance, details.price), PRICE_CHANGED (details.price), ALREADY_ACCESSIBLE (details.accessState: the exam is free, or the user has Premium or an unlimited grant) or IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'NOT_PURCHASABLE (no OT price or no access days set) or IDEMPOTENCY_KEY_REUSED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    WalletPacks:
+      get:
+        operationId: listTicketPacks
+        summary: 'List the OposiTicket packs on sale'
+        tags: [wallet]
+        x-contract-id: D6-11
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Read-only. Only active, visible packs with BOTH a ticket quantity and a money price set. Ordered by position. An empty list is a valid answer while the owner has not set the packs.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Packs on sale.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/TicketPacksResponse'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    PaymentOrders:
+      post:
+        operationId: createPaymentOrder
+        summary: 'Create a payment order for an OposiTicket pack'
+        tags: [payments]
+        x-contract-id: D6-12
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, IDEMPOTENCY_KEY_IN_PROGRESS, PRODUCT_NOT_AVAILABLE, PAYMENT_PROVIDER_UNAVAILABLE, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Freezes the quantity, money amount and currency from the catalogue into a pending order that expires after 30 minutes (database clock). Idempotent by (user, key). Creating an order credits nothing: only a verified provider confirmation does.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentOrderRequest'
+        responses:
+          '200':
+            description: 'Replay of an earlier order with the same key and body.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PaymentOrderResponse'
+          '201':
+            description: 'Order created.'
+            headers:
+              Location:
+                description: '/api/v1/app/payments/orders/{orderId}'
+                required: true
+                schema:
+                  type: string
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PaymentOrderResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION, IDEMPOTENCY_KEY_REQUIRED or IDEMPOTENCY_KEY_INVALID.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'PRODUCT_NOT_AVAILABLE (unknown, inactive, hidden or incomplete pack), PAYMENT_PROVIDER_UNAVAILABLE (provider not enabled on this server) or IDEMPOTENCY_KEY_REUSED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    PaymentOrder:
+      get:
+        operationId: getPaymentOrder
+        summary: 'Get one of my payment orders'
+        tags: [payments]
+        x-contract-id: D6-13
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, ORDER_NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'An order of another user is 404 ORDER_NOT_FOUND, never 403. A pending order past its expiry reads as EXPIRED (database clock). Poll this after paying: status becomes PAID when the provider confirmation credits the wallet (balance is the current balance).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/OrderIdPath'
+        responses:
+          '200':
+            description: 'The order.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PaymentOrderResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ORDER_NOT_FOUND.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    PaymentOrderVerify:
+      post:
+        operationId: verifyPaymentOrder
+        summary: 'Confirm a payment with the provider receipt'
+        tags: [payments]
+        x-contract-id: D6-14
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: OPTIONAL
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, ORDER_NOT_FOUND, PAYMENT_RECEIPT_INVALID, PAYMENT_PROVIDER_UNAVAILABLE, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'The receipt is opaque and provider specific; the server verifies it, bound to the caller and this order, and the database credits the OT exactly once per provider event and per order (natural idempotency: repeating returns the same order). A receipt of another user or another order is 422 PAYMENT_RECEIPT_INVALID. A payment whose amount, currency or product does not match the frozen order credits nothing and the order moves to IN_REVIEW.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/OrderIdPath'
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyOptional'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentVerifyRequest'
+        responses:
+          '200':
+            description: 'The order after the confirmation.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PaymentOrderResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ORDER_NOT_FOUND.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'PAYMENT_RECEIPT_INVALID or PAYMENT_PROVIDER_UNAVAILABLE.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    PaymentWebhook:
+      post:
+        operationId: receivePaymentWebhook
+        summary: 'Provider payment notification'
+        tags: [payments]
+        x-contract-id: W-01
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [ANON]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [MALFORMED_BODY, VALIDATION, WEBHOOK_SIGNATURE_INVALID, NOT_FOUND, PAYLOAD_TOO_LARGE, ORDER_NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Called by the payment provider, not by the app. No JWT: the request is authenticated by the provider signature over the RAW body (HMAC with timestamp, 5 minute tolerance, constant-time compare). Order of checks: per-IP rate limit, body cap 64 KiB (before any HMAC), provider whitelist (unknown provider is 404), signature (401 with ZERO writes), then the database. Natural idempotency by (provider, event id): a repeated event answers REPLAY and credits nothing again, even if the first response was lost. A late but authentic payment for an EXPIRED order credits (CREDITED_LATE); a payment for a CANCELLED, FAILED or REFUNDED order, or with a mismatching amount, credits nothing and the order moves to IN_REVIEW. A refund reverses only the unspent part of that credit and opens a refund case for the rest; it never silently revokes.'
+        security: []
+        parameters:
+          - name: provider
+            in: path
+            required: true
+            schema:
+              type: string
+              pattern: '^[a-z][a-z0-9_]{0,31}$'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentWebhookEvent'
+        responses:
+          '200':
+            description: 'Processed (or ignored). result is CREDITED, CREDITED_LATE, REPLAY, EN_REVISION, REFUNDED, REFUNDED_CASE_OPEN, NOOP or IGNORED.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/WebhookAck'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+            description: 'WEBHOOK_SIGNATURE_INVALID (bad, missing or stale signature).'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'Provider not enabled on this server, or ORDER_NOT_FOUND.'
+          '413':
+            $ref: '../common/errors.yaml#/components/responses/PayloadTooLarge'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  parameters:
+    OrderIdPath:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    ExamRedeemRequest:
+      type: object
+      required: [examId]
+      additionalProperties: false
+      properties:
+        examId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        expectedPrice:
+          type: integer
+          minimum: 1
+          description: 'GUARD only: the OT price the user was shown. If the current price differs the redeem is refused with 409 PRICE_CHANGED (details.price = the current price). Omit to accept whatever the current price is.'
+    ExamRedeem:
+      type: object
+      required: [transactionId, examId, pricePaid, currency, purchasedAt, validFrom, validUntil, saldo]
+      properties:
+        transactionId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          description: 'The ledger movement of the debit.'
+        examId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        pricePaid:
+          type: integer
+          minimum: 1
+          description: 'OT debited, as the database priced it at that moment.'
+        currency:
+          type: string
+          enum: [OPOSITICKETS]
+        purchasedAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        validFrom:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        validUntil:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+          description: 'The access ends here (server decided). A re-purchase of a still-active exam extends from max(now, current end).'
+        saldo:
+          type: integer
+          minimum: 0
+          description: 'The wallet balance after this redeem.'
+    ExamRedeemResponse:
+      type: object
+      required: [canje]
+      properties:
+        canje:
+          $ref: '#/components/schemas/ExamRedeem'
+    TicketPack:
+      type: object
+      required: [code, name, tickets, priceCents, currency, featured]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type: [string, 'null']
+        tickets:
+          type: integer
+          minimum: 1
+        priceCents:
+          type: integer
+          minimum: 1
+        currency:
+          type: string
+          description: 'ISO 4217 code of the money price.'
+        featured:
+          type: boolean
+        promoLabel:
+          type: [string, 'null']
+    TicketPacksResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TicketPack'
+    PaymentOrderRequest:
+      type: object
+      required: [productCode, provider]
+      additionalProperties: false
+      properties:
+        productCode:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 'A code from D6-11. Quantity, amount and currency come from the catalogue, never from the client.'
+        provider:
+          type: string
+          description: 'Payment provider id enabled on this server (case-insensitive). Unknown or disabled: 422 PAYMENT_PROVIDER_UNAVAILABLE.'
+    PaymentOrderStatus:
+      type: string
+      enum: [PENDING, PAID, FAILED, CANCELLED, EXPIRED, REFUNDED, IN_REVIEW]
+    PaymentOrder:
+      type: object
+      required: [id, status, productCode, tickets, amountCents, currency, provider, expiresAt, paidAt, balance]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        status:
+          $ref: '#/components/schemas/PaymentOrderStatus'
+        productCode:
+          type: string
+        tickets:
+          type: integer
+          minimum: 1
+          description: 'OT this order credits, frozen at creation.'
+        amountCents:
+          type: integer
+          minimum: 1
+          description: 'Money amount, frozen at creation.'
+        currency:
+          type: string
+        provider:
+          type: string
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+        paidAt:
+          type: [string, 'null']
+          format: date-time
+        balance:
+          type: integer
+          minimum: 0
+          description: 'The current wallet balance of the caller.'
+    PaymentOrderResponse:
+      type: object
+      required: [order]
+      properties:
+        order:
+          $ref: '#/components/schemas/PaymentOrder'
+    PaymentVerifyRequest:
+      type: object
+      required: [receipt]
+      additionalProperties: false
+      properties:
+        receipt:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: 'Opaque provider receipt, bound by the server to the caller and the order.'
+    PaymentWebhookEvent:
+      type: object
+      description: 'Neutral provider event as emitted by the sandbox provider (local and test only). A real provider adapter verifies its own signed payload and maps it to these facts; the facts are always compared with the frozen order by the database.'
+      required: [eventId, type, orderId, transactionId, amountCents, currency, productCode]
+      additionalProperties: false
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: 'Unique per provider; the dedup key of the notification.'
+        type:
+          type: string
+          description: 'payment.succeeded credits, payment.refunded refunds; any other type is acknowledged and ignored.'
+        orderId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        transactionId:
+          type: string
+          minLength: 1
+        amountCents:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+        productCode:
+          type: string
+    WebhookAck:
+      type: object
+      required: [result]
+      properties:
+        result:
+          type: string
+          enum: [CREDITED, CREDITED_LATE, REPLAY, EN_REVISION, REFUNDED, REFUNDED_CASE_OPEN, NOOP, IGNORED]

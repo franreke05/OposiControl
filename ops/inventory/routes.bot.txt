@@ -20,9 +20,11 @@ GET /api/v1/app/me/entitlement
 GET /api/v1/app/me/examenes
 GET /api/v1/app/oposired/categorias
 GET /api/v1/app/opositester/me
+GET /api/v1/app/payments/orders/{}
 GET /api/v1/app/reto-diario
 GET /api/v1/app/wallet
 GET /api/v1/app/wallet/movimientos
+GET /api/v1/app/wallet/paquetes
 GET /api/v1/public/especialidades
 GET /health
 GET /health/live
@@ -43,6 +45,10 @@ POST /api/v1/app/intentos/{}/finalizar
 POST /api/v1/app/intentos/{}/responder
 POST /api/v1/app/me/legal-acceptances
 POST /api/v1/app/me/onboarding
+POST /api/v1/app/payments/orders
+POST /api/v1/app/payments/orders/{}/verify
+POST /api/v1/app/wallet/canjes
+POST /api/v1/webhooks/payments/{}
 POST /v1/auth/admin-access-requests
 POST /v1/auth/email/exchange
 POST /v1/auth/email/resend

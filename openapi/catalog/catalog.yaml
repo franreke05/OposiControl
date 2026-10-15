@@ -85,7 +85,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [VALIDATION, UNAUTHENTICATED, EXAM_NOT_FOUND, INTERNAL, UPSTREAM_ERROR]
-        description: 'No question bodies. precio values are pending DEC-035 (nullable). Cache private, no-store for accessState. intentoAbiertoId and ultimoIntentoFinalizadoId (FA18) come from one bounded read of the caller attempts on this exam (command-created only).'
+        description: 'No question bodies. precio is the OT price stored in the database (FA21, null when not purchasable) and accesoValidoHasta the server-decided end of the caller access. Cache private, no-store for accessState. intentoAbiertoId and ultimoIntentoFinalizadoId (FA18) come from one bounded read of the caller attempts on this exam (command-created only).'
         security:
           - bearerAuth: []
         parameters:
@@ -2050,7 +2050,7 @@ components:
             $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
     ExamPrice:
       type: [object, 'null']
-      description: 'Values pending DEC-035; null until decided.'
+      description: 'FA21 (V1): the OposiTickets price and access days exactly as stored in the database, only when the exam is paid, purchasable with tickets and BOTH values are set; null otherwise (a price is never invented). The wallet redeem D6-03 charges this value.'
       required: [tickets, diasAcceso]
       properties:
         tickets:
@@ -2104,6 +2104,10 @@ components:
           description: 'FA18 (2026-10-14, PERF01): the most recent FINISHED attempt of the caller on this exam (result D2-12 / review D2-65), so a cover never pages D2-13. One bounded read on (usuario_id, examen_id); null when there is none.'
         precio:
           $ref: '#/components/schemas/ExamPrice'
+        accesoValidoHasta:
+          type: [string, 'null']
+          format: date-time
+          description: 'FA21 (V1): when the caller current access ends, decided by the server (database clock), when accessState is GRANTED with an end date; null when there is no grant or it does not expire. A re-purchase extends it from max(now, this end).'
     MyExamItem:
       type: object
       required: [examen, accessState]
@@ -2128,6 +2132,10 @@ components:
               format: uri
         accessState:
           $ref: '../common/identifiers.yaml#/components/schemas/AccessState'
+        accesoValidoHasta:
+          type: [string, 'null']
+          format: date-time
+          description: 'FA21 (V1): end of the caller current access (server decided) when accessState is GRANTED with an end date; null otherwise.'
         intentoId:
           type: [string, 'null']
           format: uuid

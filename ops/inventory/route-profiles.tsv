@@ -139,9 +139,11 @@ GET	/api/v1/app/me/entitlement	BOT	user-jwt	Consumer app API: me/entitlement (D7
 GET	/api/v1/app/me/examenes	BOT	user-jwt	Consumer app API: me/examenes (D2-13)	OposiBot
 GET	/api/v1/app/oposired/categorias	BOT	user-jwt	Consumer app API: oposired/categorias (D5-01)	OposiBot
 GET	/api/v1/app/opositester/me	BOT	user-jwt	Consumer app API: opositester/me (D5-16)	OposiBot
+GET	/api/v1/app/payments/orders/{}	BOT	user-jwt	Consumer economy: payment order status (D6-13)	OposiBot
 GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
 GET	/api/v1/app/wallet	BOT	user-jwt	Consumer wallet balance	OposiBot
 GET	/api/v1/app/wallet/movimientos	BOT	user-jwt	Consumer wallet movements	OposiBot
+GET	/api/v1/app/wallet/paquetes	BOT	user-jwt	Consumer economy: OposiTicket packs on sale (D6-11)	OposiBot
 GET	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 GET	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
 GET	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl
@@ -246,6 +248,10 @@ POST	/api/v1/app/intentos/{}/finalizar	BOT	user-jwt	Consumer app API: intentos/{
 POST	/api/v1/app/intentos/{}/responder	BOT	user-jwt	Consumer app API: intentos/{}/responder	OposiBot
 POST	/api/v1/app/me/legal-acceptances	AUTH	user-jwt	Canonical profile/account: POST me/legal-acceptances	OposiBot
 POST	/api/v1/app/me/onboarding	AUTH	user-jwt	Canonical profile/account: POST me/onboarding	OposiBot
+POST	/api/v1/app/payments/orders	BOT	user-jwt	Consumer economy: create payment order (D6-12)	OposiBot
+POST	/api/v1/app/payments/orders/{}/verify	BOT	user-jwt	Consumer economy: confirm payment with receipt (D6-14)	OposiBot
+POST	/api/v1/app/wallet/canjes	BOT	user-jwt	Consumer economy: redeem exam with OposiTickets (D6-03)	OposiBot
+POST	/api/v1/webhooks/payments/{}	BOT	none	Payment provider notification (W-01); authenticated by provider signature, not JWT	none
 POST	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 POST	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
 POST	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl

@@ -50,6 +50,8 @@ if (!secrets) {
   };
   fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2));
 }
+// V1 economia: secreto HMAC del proveedor de pago SANDBOX (solo local; nunca se imprime ni se registra). Se anade a secrets.json existentes.
+if (!secrets.paymentsSandboxSecret) { secrets.paymentsSandboxSecret = crypto.randomBytes(32).toString('hex'); fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2)); }
 fs.writeFileSync(path.join(local, 'jwks.json'), JSON.stringify({ keys: [{ ...secrets.publicJwk, kid: secrets.kid, alg: 'ES256', use: 'sig' }] }));
 fs.writeFileSync(path.join(local, 'compose.env'),
   `LOCAL_JWT_SECRET=${secrets.jwtSecret}\nLOCAL_ANON_KEY=${secrets.anonKey}\nLOCAL_SERVICE_KEY=${secrets.serviceKey}\n`);
@@ -114,6 +116,8 @@ for (const v of ['20261018100100_v1_wallet_ledger_hardening', '20261018100200_v1
 psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
 // Libro de A y compra: ledger-first, asi que SOLO despues de las migraciones del libro (el libro asigna seq y la cadena).
 psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), 'utf8'));
+// V1 economia: usuarios Q1..Q4, examenes con precio de PRUEBA y paquetes de PRUEBA para E5 (valores locales, ninguna decision de producto).
+psql(fs.readFileSync(path.join(here, 'sql/98_v1_economy_fixtures.sql'), 'utf8'));
 psql('notify pgrst, \'reload schema\';');
 
 compose('up', '-d', 'rest', 'storage', 'gateway');
@@ -149,14 +153,17 @@ const es256 = (sub, email) => {
 };
 const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a', 'a@exam.local'), B: es256('0b000000-0000-4000-8000-00000000000b', 'b@exam.local'),
   P: es256('0f000000-0000-4000-8000-00000000000f', 'p@exam.local'),
-  XA: es256('1a000000-0000-4000-8000-00000000001a', 'xa@exam.local'), XB: es256('1b000000-0000-4000-8000-00000000001b', 'xb@exam.local') };
+  XA: es256('1a000000-0000-4000-8000-00000000001a', 'xa@exam.local'), XB: es256('1b000000-0000-4000-8000-00000000001b', 'xb@exam.local'),
+  Q1: es256('2a000000-0000-4000-8000-00000000002a', 'q1@exam.local'), Q2: es256('2b000000-0000-4000-8000-00000000002b', 'q2@exam.local'),
+  Q2Z: es256('2c000000-0000-4000-8000-00000000002c', 'q2z@exam.local'), Q3: es256('2d000000-0000-4000-8000-00000000002d', 'q3@exam.local'),
+  Q4: es256('2e000000-0000-4000-8000-00000000002e', 'q4@exam.local') };
 fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
 
 fs.writeFileSync(path.join(local, 'ktor.env'), [
   'APP_ENV=local', 'SERVER_PROFILE=bot', 'HOST=127.0.0.1', 'PORT=8089', 'LOG_LEVEL=INFO',
   `SUPABASE_URL=${GATEWAY}`, `SUPABASE_SERVICE_ROLE_KEY=${secrets.serviceKey}`, `SUPABASE_ANON_KEY=${secrets.anonKey}`,
   'OPOSIBOTS_AUTH_ENABLED=true', 'AUTH_RATE_LIMIT_MODE=memory', `AUTH_RATE_LIMIT_HMAC_SECRET=${secrets.rateLimitSecret}`,
-  'AUTH_CAPTCHA_REQUIRED=false', 'METRICS_ENABLED=true', `METRICS_SCRAPE_TOKEN=${secrets.metricsToken}`, '',
+  'AUTH_CAPTCHA_REQUIRED=false', `PAYMENTS_SANDBOX_SECRET=${secrets.paymentsSandboxSecret}`, 'METRICS_ENABLED=true', `METRICS_SCRAPE_TOKEN=${secrets.metricsToken}`, '',
 ].join('\n'));
 
 // ---------- recursos inmersivos por la INGESTA REAL (AdminV1Gateway.addRecursoArchivo, autorizada 2026-10-14) ----------

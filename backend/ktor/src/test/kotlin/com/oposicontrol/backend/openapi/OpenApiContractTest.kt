@@ -158,11 +158,18 @@ class OpenApiContractTest {
         "D5-16" to "GET /api/v1/app/opositester/me",
         // FA15: alta o cambio de un producto comercial por codigo (admin), TARGET.
         "D7-18" to "PUT /api/v1/admin/comercial/productos/{codigo}",
+        // FA21 (V1 economia): canje de examen, paquetes, pedidos de pago y aviso del proveedor, TARGET.
+        "D6-03" to "POST /api/v1/app/wallet/canjes",
+        "D6-11" to "GET /api/v1/app/wallet/paquetes",
+        "D6-12" to "POST /api/v1/app/payments/orders",
+        "D6-13" to "GET /api/v1/app/payments/orders/{orderId}",
+        "D6-14" to "POST /api/v1/app/payments/orders/{orderId}/verify",
+        "W-01" to "POST /api/v1/webhooks/payments/{provider}",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
-    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D4-03", "D4-09")
-    private val idempotencyOptional = setOf("D2-06", "D2-10")
+    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D4-03", "D4-09", "D6-03", "D6-12")
+    private val idempotencyOptional = setOf("D2-06", "D2-10", "D6-14")
 
     /** contractId -> (max, default) del limit de las listas paginadas. */
     private val cursorLists = mapOf(
