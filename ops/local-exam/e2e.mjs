@@ -347,6 +347,41 @@ await scenario('ENTITLEMENT', async () => {
     `P=${pd.status} A=${ad.status}`);
 });
 
+// ---------- V1 STEP 1: SPECIALTY P0 (server half). Usuarios XA/XB; sql/95 (ING activa, OBS inactiva) ----------
+await scenario('SPECIALTY', async () => {
+  const LOC = 'e5000000-0000-4000-8000-000000000001', ING = 'e1000000-0000-4000-8000-000000000002', OBS = 'e1000000-0000-4000-8000-000000000003';
+  const patch = (u, body, headers = {}) => fetch(KTOR + '/api/v1/app/me/profile', { method: 'PATCH', headers: { Authorization: `Bearer ${tokens[u]}`, 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })
+    .then(async (r) => ({ status: r.status, json: await r.json().catch(() => null) }));
+  const me = async (u) => (await call(u, 'GET', '/api/v1/app/me')).json?.profile?.especialidadPrincipalId ?? null;
+  const d217 = await fetch(KTOR + '/api/v1/public/especialidades').then((r) => r.json());
+  const ids = d217.items.map((i) => i.id);
+  check('SPECIALTY.d2_17_is_the_canonical_source_active_only', ids.includes(LOC) && ids.includes(ING) && !ids.includes(OBS), `${ids.length} items`);
+  const ok = await patch('A', { especialidadId: LOC });
+  check('SPECIALTY.patch_valid_then_get_me_returns_it', ok.status === 200 && ok.json?.profile?.especialidadPrincipalId === LOC && (await me('A')) === LOC, `${ok.status}`);
+  const bad = { nil: '00000000-0000-0000-0000-000000000000', random: crypto.randomUUID(), inactive: OBS };
+  const r422 = await Promise.all(Object.values(bad).map((id) => patch('A', { especialidadId: id })));
+  check('SPECIALTY.unknown_or_inactive_id_is_422_not_silent', r422.every((r) => r.status === 422 && r.json?.code === 'UNKNOWN_SPECIALTY'), r422.map((r) => `${r.status}/${r.json?.code}`).join(','));
+  const malformed = await Promise.all(['not-a-uuid', '', 'x'.repeat(10000), "' or 1=1 --", '../', '‮', null, 5, [LOC], { id: LOC }].map((v) => patch('A', { especialidadId: v })));
+  check('SPECIALTY.malformed_values_are_400_never_written', malformed.every((r) => r.status === 400), malformed.map((r) => r.status).join(','));
+  const unknownField = await patch('A', { especialidadId: LOC, usuarioId: '0b000000-0000-4000-8000-00000000000b' });
+  check('SPECIALTY.unknown_field_is_400', unknownField.status === 400, `${unknownField.status}`);
+  check('SPECIALTY.nothing_written_by_the_rejected_requests', (await me('A')) === LOC, `${await me('A')}`);
+  const ch = await patch('A', { especialidadId: ING });
+  check('SPECIALTY.change_replaces_the_single_specialty', ch.status === 200 && (await me('A')) === ING, `${ch.status}`);
+  const forged = await patch('B', { especialidadId: LOC }, { 'X-Usuario-Id': '1a000000-0000-4000-8000-00000000001a', 'X-User-Id': '1a000000-0000-4000-8000-00000000001a' });
+  check('SPECIALTY.forged_user_headers_are_ignored', forged.status === 200 && (await me('B')) === LOC && (await me('A')) === ING, `${forged.status}`);
+  const stale = await patch('A', { especialidadId: LOC }, { 'If-Match': '"1999-01-01T00:00:00Z"' });
+  check('SPECIALTY.stale_if_match_is_412_nothing_written', stale.status === 412 && (await me('A')) === ING, `${stale.status}`);
+  // relogin: un token nuevo del mismo usuario (otra sesion) lee la misma especialidad persistida
+  const fresh = await fetch(KTOR + '/api/v1/app/me', { headers: { Authorization: `Bearer ${rawTokens.XA}` } }).then((r) => r.json());
+  check('SPECIALTY.persists_across_sessions', fresh.profile?.especialidadPrincipalId === ING, `${fresh.profile?.especialidadPrincipalId}`);
+  const mk = await call('A', 'GET', `/api/v1/app/examenes?especialidadId=${ING}`);
+  check('SPECIALTY.market_filter_by_id_is_server_side', mk.status === 200 && mk.json.items.length >= 1 && mk.json.items.every((i) => i.id === 'e1000000-0000-4000-8000-0000000000e2'), `${mk.json?.items?.length}`);
+  const none = await call('A', 'GET', `/api/v1/app/examenes?especialidadId=${OBS}`);
+  check('SPECIALTY.specialty_is_not_authorization', none.status === 200 && none.json.items.length === 0 && (await call('A', 'GET', `/api/v1/app/examenes/${EX.NORMAL}`)).status === 200, `${none.status}`);
+  await patch('A', { especialidadId: LOC }); // deja a XA como estaba
+});
+
 // ---------- DB CALLS / LATENCY (EX12 / EX13) from /metrics ----------
 resetAttempts();
 await scenario('METRICS', async () => {

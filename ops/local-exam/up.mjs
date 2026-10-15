@@ -97,6 +97,7 @@ psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), '
 psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261017100000_security_exam_publication_time.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/93_phase_b_scheduled_exam.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/94_e2e_users.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(here, 'sql/95_v1_specialties.sql'), 'utf8'));
 psql('notify pgrst, \'reload schema\';');
 
 compose('up', '-d', 'rest', 'storage', 'gateway');
