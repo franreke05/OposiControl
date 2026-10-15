@@ -45,6 +45,7 @@ class LegacyUserAdminOutcomeAuditCancellationTest {
         val continuedAfter = AtomicBoolean()
         val policy = OposiBotsUserAdminPolicy(
             isAdministrative = { false },
+            isSuperadmin = { true },
             // Suspende de verdad (cambio de dispatcher): sin NonCancellable lanzaria CancellationException aqui.
             audit = { accion, _, _ -> withContext(Dispatchers.IO) { written += accion } },
         )
@@ -63,6 +64,7 @@ class LegacyUserAdminOutcomeAuditCancellationTest {
     fun aCancellationRaisedByTheAuditWriterItselfOnAnActiveCallIsLoggedLikeAnyOtherWriteFailure() = runBlocking {
         val policy = OposiBotsUserAdminPolicy(
             isAdministrative = { false },
+            isSuperadmin = { true },
             audit = { _, _, _ -> throw CancellationException("timeout interno del escritor") },
         )
         // No lanza: una operacion completada no se convierte en error por su fila de resultado.
@@ -99,6 +101,7 @@ class LegacyUserAdminOutcomeAuditCancellationTest {
                         gateway,
                         OposiBotsUserAdminPolicy(
                             isAdministrative = { false },
+                            isSuperadmin = { true },
                             audit = { accion, _, _ -> withContext(Dispatchers.IO) { audits += accion } },
                         ),
                     )

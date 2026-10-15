@@ -557,7 +557,7 @@ class Master6AdminL2Loop6Test {
     @Test
     fun everyAdminGatewayCallRunsInsideWithUpstreamIo() {
         val source = File("src/main/kotlin/com/oposicontrol/backend/AdminV1Routes.kt").readText()
-        val start = source.indexOf("fun Route.adminV1Routes(gateway: AdminV1Gateway) {")
+        val start = source.indexOf("fun Route.adminV1Routes(gateway: AdminV1Gateway")
         assertTrue(start >= 0)
         val offenders = unwrappedGatewayCalls(source.substring(start))
         assertEquals(emptyList(), offenders, "llamadas bloqueantes en el hilo de Netty")

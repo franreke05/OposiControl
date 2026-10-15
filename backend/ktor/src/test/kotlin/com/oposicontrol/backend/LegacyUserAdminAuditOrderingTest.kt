@@ -63,6 +63,7 @@ class LegacyUserAdminAuditOrderingTest {
                     fake,
                     OposiBotsUserAdminPolicy(
                         isAdministrative = { false },
+                        isSuperadmin = { true },
                         audit = { accion, authUserId, detalle ->
                             fake.events += "audit:$accion"
                             if (failing(accion)) error("audit down")
