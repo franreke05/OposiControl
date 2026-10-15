@@ -13,3 +13,6 @@ update public.examenes set comunidad_id = 'c1000000-0000-4000-8000-000000000001'
  where comunidad_id is null and id::text like 'e0000000-%';
 update public.examenes set comunidad_id = 'c1000000-0000-4000-8000-000000000002'
  where comunidad_id is null and id = 'e1000000-0000-4000-8000-0000000000e2';
+-- Fixtures del harness de E2 (e2b00000-...): tambien sin comunidad antes de la regla; comunidad de PRUEBA.
+update public.examenes set comunidad_id = 'c1000000-0000-4000-8000-000000000002'
+ where comunidad_id is null and id::text like 'e2b00000-%';

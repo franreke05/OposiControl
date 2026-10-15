@@ -55,6 +55,8 @@ services:
 
   gateway:
     image: nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 # 1.27-alpine
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # V1 (J6): llega al stub de GoTrue del host (127.0.0.1:9999)
     depends_on:
       - rest
       - storage

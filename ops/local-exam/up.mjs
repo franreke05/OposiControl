@@ -89,6 +89,11 @@ if (!fixtures) {
 }
 // PHASE B (E5-B01): cartera y derechos. Ambos ficheros son idempotentes y aditivos: se aplican siempre, tambien sobre un
 // stack ya creado, sin reset.
+// V1 (J6): el registro lee `solicitudes_acceso_admin` (AccessRequestMailGuard falla cerrado -> 503 sin ella). Existe en MAIN (migracion
+// 20261013100000, historial de MAIN) pero queda fuera del subconjunto del bootstrap: se aplica tal cual SOLO si falta (la migracion no es idempotente).
+if (psql("select to_regclass('public.solicitudes_acceso_admin') is not null") !== 't') {
+  psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261013100000_security_admin_access_requests.sql'), 'utf8'));
+}
 psql(fs.readFileSync(path.join(here, 'sql/01_overlay_wallet_entitlement.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/02_overlay_idempotency_finalize.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), 'utf8'));

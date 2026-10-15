@@ -116,7 +116,9 @@ await scenario('AUTH_STUB', async () => {
   check('AUTH_STUB.invalid_tokens_401', denied.every((r) => r.status === 401), denied.map((r) => r.status).join(','));
   const others = await Promise.all([get(tokens.A, '/auth/v1/user', 'PUT'), get(null, '/auth/v1/token?grant_type=password', 'POST'),
     get(null, '/auth/v1/signup', 'POST'), get(tokens.A, '/auth/v1/admin/users')]);
-  check('AUTH_STUB.no_other_auth_routes', others[0].status === 405 && others.slice(1).every((r) => r.status === 404), others.map((r) => r.status).join(','));
+  // V1 (J6): /auth/v1/token and /signup are served by the LOCAL gotrue-stub (or 502 when it is not running); the admin routes stay unavailable.
+  // What must hold: PUT user is still 405, no route answers 2xx without valid credentials, and /admin/* is not served.
+  check('AUTH_STUB.no_session_without_credentials', others[0].status === 405 && others[1].status >= 400 && others[2].status >= 400 && [404, 502].includes(others[3].status), others.map((r) => r.status).join(','));
   const me = await call('A', 'GET', '/api/v1/app/me');
   const authMe = await call('A', 'GET', '/v1/auth/me');
   check('AUTH_STUB.app_me_and_auth_me_200', me.status === 200 && authMe.status === 200, `${me.status}/${authMe.status}`);
@@ -345,6 +347,47 @@ await scenario('ENTITLEMENT', async () => {
   check('ENTITLEMENT.D2_02_premium_exam_SUBSCRIPTION_for_P_LOCKED_for_A',
     pd.status === 200 && JSON.stringify(pd.json).includes('SUBSCRIPTION') && ad.status === 200 && !JSON.stringify(ad.json).includes('SUBSCRIPTION'),
     `P=${pd.status} A=${ad.status}`);
+});
+
+// ---------- V1 J6 (server half): REGISTER -> VERIFY E-MAIL -> LOGIN -> SPECIALTY -> /me, through the LOCAL GoTrue stub ----------
+await scenario('REGISTER_J6', async () => {
+  const MAIL = 'j6@exam.local', PASS = 'Local-Pass-0123456789';
+  const ING = 'e1000000-0000-4000-8000-000000000002';
+  const stub = 'http://127.0.0.1:9999';
+  if (!(await fetch(stub + '/__local/health').then((r) => r.ok).catch(() => false))) { check('REGISTER_J6.gotrue_stub_running', false, 'start ops/local-exam/run-gotrue-stub.mjs --detach'); return; }
+  sql(`delete from auth.users where lower(email) = '${MAIL}'`); // el usuario del e2e; el perfil cae en cascada
+  const post = (p, body, token) => fetch(KTOR + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) })
+    .then(async (r) => ({ status: r.status, json: await r.json().catch(() => null) }));
+  const reg = await post('/v1/auth/register', { email: MAIL, password: PASS });
+  check('REGISTER_J6.register_202', reg.status === 202 || reg.status === 200, `${reg.status}`);
+  const dup = await post('/v1/auth/register', { email: MAIL, password: PASS });
+  check('REGISTER_J6.duplicate_is_indistinguishable', dup.status === reg.status, `${dup.status}`);
+  const early = await post('/v1/auth/login', { email: MAIL, password: PASS });
+  check('REGISTER_J6.login_before_verification_refused', early.status >= 400 && !early.json?.accessToken, `${early.status}`);
+  const mail = await fetch(stub + '/__local/mailbox?email=' + encodeURIComponent(MAIL)).then((r) => r.json());
+  const bad = await post('/v1/auth/email/exchange', { code: '0'.repeat(32) });
+  check('REGISTER_J6.wrong_code_refused', bad.status >= 400 && !bad.json?.accessToken, `${bad.status}`);
+  const ex = await post('/v1/auth/email/exchange', { code: mail.code });
+  const token = ex.json?.accessToken;
+  check('REGISTER_J6.verify_email_gives_a_session', ex.status === 200 && !!token && ex.json.user?.email === MAIL, `${ex.status}`);
+  const replay = await post('/v1/auth/email/exchange', { code: mail.code });
+  check('REGISTER_J6.code_is_single_use', replay.status >= 400, `${replay.status}`);
+  const prof = await fetch(KTOR + '/api/v1/app/me', { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
+  check('REGISTER_J6.profile_row_created_like_production', !!prof?.profile && prof.profile.especialidadPrincipalId == null, JSON.stringify(prof?.profile ?? null).slice(0, 120));
+  const save = await post('/v1/auth/register/profile', { firstName: 'Jay', lastName: 'Seis', username: 'j6_local', especialidadId: ING }, token);
+  check('REGISTER_J6.register_profile_with_especialidadId', save.status === 204, `${save.status} ${JSON.stringify(save.json)?.slice(0, 100)}`);
+  const after = await fetch(KTOR + '/api/v1/app/me', { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
+  check('REGISTER_J6.get_me_returns_the_specialty', after.profile?.especialidadPrincipalId === ING && after.profile?.onboardingCompleted === true, `${after.profile?.especialidadPrincipalId}`);
+  const login = await post('/v1/auth/login', { email: MAIL, password: PASS });
+  check('REGISTER_J6.login_after_verification', login.status === 200 && !!login.json?.accessToken, `${login.status}`);
+  const wrongPass = await post('/v1/auth/login', { email: MAIL, password: PASS + 'x' });
+  check('REGISTER_J6.wrong_password_refused', wrongPass.status >= 400 && !wrongPass.json?.accessToken, `${wrongPass.status}`);
+  const refreshed = await post('/v1/auth/refresh', { refreshToken: login.json?.refreshToken });
+  check('REGISTER_J6.refresh_rotates', refreshed.status === 200 && !!refreshed.json?.accessToken, `${refreshed.status}`);
+  const again = await post('/v1/auth/refresh', { refreshToken: login.json?.refreshToken });
+  check('REGISTER_J6.old_refresh_token_is_dead', again.status >= 400, `${again.status}`);
+  const relogin = await fetch(KTOR + '/api/v1/app/me', { headers: { Authorization: `Bearer ${login.json?.accessToken}` } }).then((r) => r.json());
+  check('REGISTER_J6.specialty_survives_relogin', relogin.profile?.especialidadPrincipalId === ING, `${relogin.profile?.especialidadPrincipalId}`);
 });
 
 // ---------- V1 STEP 1: SPECIALTY P0 (server half). Usuarios XA/XB; sql/95 (ING activa, OBS inactiva) ----------
