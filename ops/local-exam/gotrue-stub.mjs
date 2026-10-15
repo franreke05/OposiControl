@@ -34,6 +34,11 @@ const local = path.join(here, '.local');
 const PORT = Number(process.env.GOTRUE_STUB_PORT ?? 9999);
 const GATEWAY = process.env.GOTRUE_STUB_GATEWAY ?? 'http://localhost:54321';
 const DB_CONTAINER = process.env.GOTRUE_STUB_DB_CONTAINER ?? 'oposi-exam-local-db-1';
+// Belt and braces (E2-V1-R-REGISTER INFO-1): the stub writes only into the local stack's own database container.
+if (!DB_CONTAINER.startsWith('oposi-exam-local-')) {
+  console.error('gotrue-stub: the database container must be a local-stack container (oposi-exam-local-*).');
+  process.exit(4);
+}
 const secrets = JSON.parse(fs.readFileSync(path.join(local, 'secrets.json'), 'utf8'));
 const key = crypto.createPrivateKey({ key: secrets.privateJwk, format: 'jwk' });
 const mailboxFile = path.join(local, 'mailbox.jsonl');
@@ -105,6 +110,11 @@ async function findUser(email) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    // DNS rebinding / a web page posting to localhost must not be able to create local users: only loopback-style Host headers.
+    if (!/^(127\.0\.0\.1|localhost|host\.docker\.internal)(:\d{1,5})?$/.test(String(req.headers.host ?? ''))) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ code: 403, error_code: 'forbidden_host', msg: 'host not allowed' }));
+    }
     const url = new URL(req.url, 'http://127.0.0.1');
     const p = url.pathname;
     // one line per request: method, path (no query string, so no value), final status. Never a body, a header or a value.

@@ -291,6 +291,29 @@ class OposiBotsAuthRoutesTest {
         assertEquals(listOf("BLANK_IDENTIFIER"), body["issues"]!!.jsonArray.map { it.jsonPrimitive.content })
     }
 
+    /** E2-V1-S02: un caracter de control en el correo (BEL, NUL, DEL) es un 400 en register, login, resend y recover; antes llegaba a la guarda (503) o enviaba correo. */
+    @Test
+    fun controlCharactersInTheEmailAreAnHttp400OnEveryEmailEntryPoint() = testApplication {
+        val fake = FakeGateway()
+        application { authTestModule(fake) }
+        val bad = listOf("a\\u0007b@example.com", "\\u0000@example.com", "ab\\u007f@example.com", "a@exam\\u001bple.com")
+        for (email in bad) {
+            for ((path, body) in listOf(
+                "/v1/auth/register" to """{"email":"$email","password":"safe-password-12"}""",
+                "/v1/auth/login" to """{"email":"$email","password":"safe-password-12"}""",
+                "/v1/auth/email/resend" to """{"email":"$email"}""",
+                "/v1/auth/recover" to """{"email":"$email"}""",
+            )) {
+                val response = client.post(path) { contentType(ContentType.Application.Json); setBody(body) }
+                assertEquals(HttpStatusCode.BadRequest, response.status, "$path $email -> ${response.bodyAsText()}")
+            }
+        }
+        assertEquals(null, fake.registerRequest, "ninguna peticion de registro llego al gateway")
+        // un correo normal sigue valiendo
+        val ok = client.post("/v1/auth/register") { contentType(ContentType.Application.Json); setBody("""{"email":"ok@example.com","password":"safe-password-12"}""") }
+        assertEquals(HttpStatusCode.Accepted, ok.status)
+    }
+
     @Test
     fun loginAndRecoverAcceptBothWiresAndTolerateLegacyExtras() = testApplication {
         val fake = FakeGateway()

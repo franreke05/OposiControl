@@ -89,6 +89,7 @@ internal fun Route.catalogRoutes(runtime: CatalogRuntime?) {
             get("/entitlement") {
                 val rt = runtime.orMisconfigured()
                 val identity = rt.resolver.activeIdentity(call, rt.limit)
+                requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
                 val entitlement = rt.entitlement.entitlement(identity.userId)
                 call.cache("private, no-store")
                 // Objeto DESNUDO (sin envoltorio `data`): OAS `Entitlement`.

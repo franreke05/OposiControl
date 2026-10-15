@@ -155,8 +155,10 @@ where c.saldo_tickets > 0
   and not exists (select 1 from public.transacciones_cartera t where t.usuario_id = c.usuario_id and t.seq is not null);
 
 alter table public.transacciones_cartera drop constraint if exists transacciones_cartera_idempotency_key_key;
+alter table public.transacciones_cartera drop constraint if exists transacciones_cartera_usuario_idempotency_key;
 alter table public.transacciones_cartera
   add constraint transacciones_cartera_usuario_idempotency_key unique (usuario_id, idempotency_key);
+alter table public.transacciones_cartera drop constraint if exists transacciones_cartera_usuario_seq_key;
 alter table public.transacciones_cartera
   add constraint transacciones_cartera_usuario_seq_key unique (usuario_id, seq);
 -- A credit is created exactly once per order, a refund reversal exactly once per order (both reference the order through compra_id).

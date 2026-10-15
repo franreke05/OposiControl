@@ -362,6 +362,9 @@ await scenario('REGISTER_J6', async () => {
   check('REGISTER_J6.register_202', reg.status === 202 || reg.status === 200, `${reg.status}`);
   const dup = await post('/v1/auth/register', { email: MAIL, password: PASS });
   check('REGISTER_J6.duplicate_is_indistinguishable', dup.status === reg.status, `${dup.status}`);
+  // E2-V1-S02: a control character in the e-mail is a 400 (never a 202 with a mail, never a 503)
+  const ctl = await Promise.all(['a\u0007b@exam.local', '\u0000@exam.local'].map((email) => post('/v1/auth/register', { email, password: PASS })));
+  check('REGISTER_J6.control_characters_in_email_are_a_400', ctl.every((r) => r.status === 400), ctl.map((r) => r.status).join(','));
   const early = await post('/v1/auth/login', { email: MAIL, password: PASS });
   check('REGISTER_J6.login_before_verification_refused', early.status >= 400 && !early.json?.accessToken, `${early.status}`);
   const mail = await fetch(stub + '/__local/mailbox?email=' + encodeURIComponent(MAIL)).then((r) => r.json());
@@ -372,6 +375,11 @@ await scenario('REGISTER_J6', async () => {
   check('REGISTER_J6.verify_email_gives_a_session', ex.status === 200 && !!token && ex.json.user?.email === MAIL, `${ex.status}`);
   const replay = await post('/v1/auth/email/exchange', { code: mail.code });
   check('REGISTER_J6.code_is_single_use', replay.status >= 400, `${replay.status}`);
+  // The new user has a REAL wallet row (balance 0, no movement) created with the profile, and D6-01 answers a real 0.
+  const walletRow = sql(`select count(*) || ':' || coalesce(max(c.saldo_tickets), -1) from public.carteras_usuario c join auth.users u on u.id = c.usuario_id where lower(u.email) = '${MAIL}'`);
+  const walletNew = await fetch(KTOR + '/api/v1/app/wallet', { headers: { Authorization: `Bearer ${token}` } });
+  const walletNewBody = await walletNew.json().catch(() => null);
+  check('REGISTER_J6.new_user_has_a_real_wallet_row_with_balance_0', walletRow === '1:0' && walletNew.status === 200 && walletNewBody?.saldo === 0 && walletNewBody?.recientes?.length === 0, `row=${walletRow} d6_01=${walletNew.status}/${walletNewBody?.saldo}`);
   const prof = await fetch(KTOR + '/api/v1/app/me', { headers: { Authorization: `Bearer ${token}` } }).then((r) => r.json());
   check('REGISTER_J6.profile_row_created_like_production', !!prof?.profile && prof.profile.especialidadPrincipalId == null, JSON.stringify(prof?.profile ?? null).slice(0, 120));
   const save = await post('/v1/auth/register/profile', { firstName: 'Jay', lastName: 'Seis', username: 'j6_local', especialidadId: ING }, token);

@@ -174,6 +174,13 @@ private fun catalogFilterOf(params: Parameters, issues: MutableList<ErrorIssue>)
 
 private val YEAR_RANGE = 1900..2200
 
+/** Politica uniforme (V1): un parametro de consulta desconocido es 400 UNKNOWN_FIELD en TODAS las lecturas del consumidor. */
+internal fun requireOnlyKnownQueryParams(params: Parameters, allowed: Set<String>) {
+    val issues = mutableListOf<ErrorIssue>()
+    rejectUnknownParams(params, allowed, issues)
+    if (issues.isNotEmpty()) throw validationError(*issues.toTypedArray())
+}
+
 private val EXAM_LIST_PARAMS = setOf("tipoExamen", "especialidadId", "comunidadId", "anio", "includeFacets", "cursor", "limit")
 private val MY_EXAMS_PARAMS = setOf("vista", "tipoExamen", "especialidadId", "comunidadId", "anio", "cursor", "limit")
 

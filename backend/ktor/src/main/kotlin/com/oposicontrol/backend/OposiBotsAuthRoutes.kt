@@ -452,6 +452,8 @@ private fun String.isValidEmail(): Boolean {
     // otro, decidido aqui solo por la forma del correo (no revela nada).
     return normalized.length in 3..320 &&
         normalized.none(Char::isWhitespace) &&
+        // E2-V1-S02: un caracter de control (BEL, NUL...) tambien es un correo invalido: llegaba a la guarda como 503 o se enviaba correo.
+        normalized.none(Char::isISOControl) &&
         EMAIL_REGEX.matches(normalized)
 }
 
