@@ -98,6 +98,37 @@ class NewsViewModelTest {
     }
 
     @Test
+    fun `a failed quiet reload of the open article is said, and a later good read clears it`() = runTest {
+        val repository = FakeNewsRepository()
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        assertFalse(viewModel.state.value.recordReloadFailed)
+
+        repository.failGet = AppError.Network("sin red")
+        viewModel.dispatch(NewsIntent.Refresh)
+        advanceUntilIdle()
+        assertTrue(viewModel.state.value.recordReloadFailed)
+        assertEquals("Convocatoria TCAE", viewModel.state.value.editorTitle, "la ficha se queda en pantalla")
+
+        repository.failGet = null
+        viewModel.dispatch(NewsIntent.Refresh)
+        advanceUntilIdle()
+        assertFalse(viewModel.state.value.recordReloadFailed)
+    }
+
+    @Test
+    fun `layers the server sent but could not be read are counted for the editor warning`() = runTest {
+        val repository = FakeNewsRepository(initial = listOf(article("news-1", "Convocatoria TCAE").copy(droppedLayerCount = 2)))
+        val viewModel = createViewModel(repository)
+        advanceUntilIdle()
+        assertEquals(2, viewModel.state.value.editorDroppedLayers)
+
+        viewModel.dispatch(NewsIntent.CreateNew)
+        advanceUntilIdle()
+        assertEquals(0, viewModel.state.value.editorDroppedLayers)
+    }
+
+    @Test
     fun `an empty library is EMPTY and a failed first read is ERROR`() = runTest {
         val empty = createViewModel(FakeNewsRepository(initial = emptyList()))
         advanceUntilIdle()

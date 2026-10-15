@@ -246,8 +246,6 @@ class NewsViewModel(
             is NewsIntent.UpdateSpecialty -> commit(NewsEditGroup("specialty")) { it.copy(editorSpecialty = intent.value) }
             is NewsIntent.UpdateType -> commit(NewsEditGroup("type")) { it.copy(editorType = intent.value) }
             is NewsIntent.UpdateText -> commit(NewsEditGroup("text")) { it.copy(editorText = intent.value) }
-            // El estado editorial es del servidor: el intent se conserva por el editor movil y no cambia nada aqui.
-            is NewsIntent.UpdateStatus -> Unit
             is NewsIntent.UpdateBackgroundType -> commit(NewsEditGroup("backgroundType")) {
                 it.copy(editorBackgroundType = intent.value.toNewsBackgroundStyle())
             }
@@ -428,7 +426,7 @@ class NewsViewModel(
     // =================================================================================================================
 
     private suspend fun open(id: String) {
-        updateState { it.copy(selectedId = id, recordState = UiAsync.Loading, pendingIntent = null, confirmIntent = null, actionState = UiAsync.Idle, actionKind = null, actionConflict = false, recoveredDraft = false, uploads = emptyMap()) }
+        updateState { it.copy(selectedId = id, recordState = UiAsync.Loading, pendingIntent = null, confirmIntent = null, actionState = UiAsync.Idle, actionKind = null, actionConflict = false, recoveredDraft = false, recordReloadFailed = false, editorDroppedLayers = 0, uploads = emptyMap()) }
         when (val result = loadNewsUseCase(id)) {
             is AppResult.Failure -> {
                 updateState { it.copy(recordState = UiAsync.Error(result.error)) }
@@ -452,7 +450,8 @@ class NewsViewModel(
     /** Relectura tras un refresco: solo si la ficha no tiene cambios. Un fallo aqui no quita nada de la pantalla. */
     private suspend fun reloadQuietly(id: String) {
         when (val result = loadNewsUseCase(id)) {
-            is AppResult.Failure -> Unit
+            // La ficha se queda en pantalla, pero ya no se sabe si es la ultima: se avisa en vez de callarlo.
+            is AppResult.Failure -> if (currentState().selectedId == id) updateState { it.copy(recordReloadFailed = true) }
             is AppResult.Success -> if (currentState().selectedId == id && !currentState().isDirty) applyArticle(result.value, resetSelection = false)
         }
     }
@@ -486,6 +485,8 @@ class NewsViewModel(
                 editorBackgroundAssetStatus = if (article.backgroundPath.isNullOrBlank()) "linked" else "uploaded",
                 editorImageAssetStatus = if (article.imagePath.isNullOrBlank()) "linked" else "uploaded",
                 editorLayers = layers,
+                editorDroppedLayers = article.droppedLayerCount,
+                recordReloadFailed = false,
                 selectedTarget = if (resetSelection) NewsEditorSelection.ARTICLE else state.selectedTarget,
                 selectedLayerId = if (resetSelection) null else state.selectedLayerId?.takeIf { id -> layers.any { it.id == id } },
                 isDirty = false,
@@ -524,6 +525,8 @@ class NewsViewModel(
                 editorBackgroundAssetStatus = "linked",
                 editorImageAssetStatus = "linked",
                 editorLayers = defaultLayers(title = ""),
+                editorDroppedLayers = 0,
+                recordReloadFailed = false,
                 editorTab = NewsEditorTab.CONTENT,
                 selectedTarget = NewsEditorSelection.ARTICLE,
                 selectedLayerId = null,

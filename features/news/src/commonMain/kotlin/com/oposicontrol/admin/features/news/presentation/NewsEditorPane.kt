@@ -108,6 +108,20 @@ internal fun NewsEditorPane(
                         detail = "El contrato no admite cambiar el contenido de una noticia publicada o archivada. Para cambiarla, archívala y crea una nueva.",
                     )
                 }
+                if (state.editorDroppedLayers > 0) {
+                    WorkspaceNotice(
+                        tone = WorkspaceNoticeTone.WARNING,
+                        title = "${state.editorDroppedLayers} capa(s) ilegible(s)",
+                        detail = "El servidor devolvió capas que este panel no sabe leer y no se muestran. Si guardas esta noticia, esas capas se perderán.",
+                    )
+                }
+                if (state.recordReloadFailed) {
+                    WorkspaceNotice(
+                        tone = WorkspaceNoticeTone.WARNING,
+                        title = "No se pudo releer la noticia",
+                        detail = "Se enseña la última versión leída; puede no ser la actual. Vuelve a intentarlo con el botón de actualizar.",
+                    )
+                }
                 if (state.recoveredDraft && state.isDirty) {
                     WorkspaceNotice(
                         tone = WorkspaceNoticeTone.WARNING,
