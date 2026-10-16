@@ -259,3 +259,43 @@ grant select on public.ligas_nivel, public.estadisticas_usuario, public.estadist
 grant select on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario to authenticated;
 grant select, insert, update, delete on public.lotes_actualizacion_ranking to authenticated;
 grant all on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario, public.lotes_actualizacion_ranking to service_role;
+
+-- W5b FORO: MAIN shapes of the forum tables (E1-V1-MAIN-FACTS-FORO-REFERRAL.md, structure read), WITH MAIN's client policies and grants, so the gate proves that 20261022101900 closes them.
+create table if not exists public.categorias_oposired (id uuid primary key default gen_random_uuid(), nombre text not null, slug text not null unique, descripcion text, activa boolean not null default true, posicion integer not null default 1, creado_en timestamptz not null default now());
+create table if not exists public.publicaciones_oposired (
+  id uuid primary key default gen_random_uuid(), usuario_id uuid references auth.users(id) on delete set null, categoria_id uuid references public.categorias_oposired(id) on delete set null,
+  titulo text, contenido text not null, estado text not null default 'publicada' check (estado in ('borrador', 'publicada', 'oculta', 'eliminada')), fijada boolean not null default false,
+  metadatos jsonb not null default '{}'::jsonb, creado_en timestamptz not null default now(), actualizado_en timestamptz not null default now());
+create table if not exists public.comentarios_oposired (
+  id uuid primary key default gen_random_uuid(), publicacion_id uuid not null references public.publicaciones_oposired(id) on delete cascade, usuario_id uuid references auth.users(id) on delete set null,
+  comentario_padre_id uuid references public.comentarios_oposired(id) on delete cascade, contenido text not null, estado text not null default 'publicado' check (estado in ('publicado', 'oculto', 'eliminado')),
+  creado_en timestamptz not null default now(), actualizado_en timestamptz not null default now());
+create table if not exists public.reacciones_oposired (
+  id uuid primary key default gen_random_uuid(), usuario_id uuid not null references auth.users(id) on delete cascade, publicacion_id uuid references public.publicaciones_oposired(id) on delete cascade,
+  comentario_id uuid references public.comentarios_oposired(id) on delete cascade, tipo_reaccion text not null check (tipo_reaccion in ('me_gusta', 'util', 'apoyo')), creado_en timestamptz not null default now(),
+  constraint reacciones_objetivo_chk check ((publicacion_id is not null)::int + (comentario_id is not null)::int = 1),
+  constraint reacciones_oposired_pub_uq unique (usuario_id, publicacion_id, tipo_reaccion), constraint reacciones_oposired_com_uq unique (usuario_id, comentario_id, tipo_reaccion));
+alter table public.categorias_oposired enable row level security;
+alter table public.publicaciones_oposired enable row level security;
+alter table public.comentarios_oposired enable row level security;
+alter table public.reacciones_oposired enable row level security;
+do $foro$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'categorias_oposired') then
+    create policy categorias_oposired_select_publico on public.categorias_oposired for select to anon, authenticated using (activa = true or public.es_admin());
+    create policy publicaciones_oposired_select_publico on public.publicaciones_oposired for select to anon, authenticated using (estado = 'publicada' or public.es_moderador_o_admin());
+    create policy publicaciones_oposired_insert_auth on public.publicaciones_oposired for insert to authenticated with check (usuario_id = auth.uid());
+    create policy publicaciones_oposired_update_propias on public.publicaciones_oposired for update to authenticated using (usuario_id = auth.uid() or public.es_moderador_o_admin()) with check (usuario_id = auth.uid() or public.es_moderador_o_admin());
+    create policy comentarios_oposired_select_publico on public.comentarios_oposired for select to anon, authenticated using (estado = 'publicado' or public.es_moderador_o_admin());
+    create policy comentarios_oposired_insert_auth on public.comentarios_oposired for insert to authenticated with check (usuario_id = auth.uid());
+    create policy comentarios_oposired_update_propios on public.comentarios_oposired for update to authenticated using (usuario_id = auth.uid() or public.es_moderador_o_admin()) with check (usuario_id = auth.uid() or public.es_moderador_o_admin());
+    create policy reacciones_oposired_todo_propias on public.reacciones_oposired for all to authenticated using (usuario_id = auth.uid() or public.es_moderador_o_admin()) with check (usuario_id = auth.uid() or public.es_moderador_o_admin());
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'acciones_moderacion') then
+    alter table public.acciones_moderacion enable row level security;
+    create policy acciones_moderacion_staff_all on public.acciones_moderacion for all to authenticated using (public.es_moderador_o_admin()) with check (public.es_moderador_o_admin());
+  end if;
+end
+$foro$;
+-- (anon / authenticated keep the default privileges of a new table in this image, as MAIN's tables do in the bootstrap)
+grant all on public.categorias_oposired, public.publicaciones_oposired, public.comentarios_oposired, public.reacciones_oposired to service_role;

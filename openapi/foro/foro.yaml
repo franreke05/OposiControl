@@ -1,0 +1,810 @@
+# FORO / RED (FA35, V1 wave 5b, text part). Contract: E1-V1-W5-FORO-CONTRACT.md; design E4-V1-FORO-DESIGN v3.1 + E1-V1-FORO-MIGRATION-NOTES (M-F1..M-F10).
+# The user is always the JWT sub. THE GATE: a user reads and writes only channels whose especialidad_id is null or equal to the caller's specialty; a user with NO specialty has no forum. Every id-based call re-evaluates the gate and answers the
+# SAME 404 for: another specialty, hidden / deleted content, a post still in pre-moderation that is not the caller's, comments / votes / reports / deletes on anything the caller cannot read.
+# Author = {handle} only (the username chosen at onboarding; null = deleted account tombstone). Plain text only: links are refused (422 CONTENT_REJECTED), ZWJ sequences are refused, bidi / zero-width characters are stripped.
+# New posts of an account (the first N approved by Control) and identical texts posted by another user within an hour are created in pre-moderation: returned only to their author with enRevision = true.
+# Limits are database-authoritative and Control-configurable (posts 5/h 20/day, comments 30/h, reports 20/day, votes 60/min 500/day); 429 carries Retry-After. D5-01 (existing) lists only the channels open to every specialty; D5-02 is the gated list the app uses.
+components:
+  pathItems:
+    ForoChannels:
+      get:
+        operationId: listForumChannels
+        summary: 'Forum channels open to the caller (specialty gate)'
+        tags: [community]
+        x-contract-id: D5-02
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Active channels whose especialidad_id is null or equal to the caller specialty, ordered by posicion then name. A user without specialty gets an empty list. soloLectura = no composer.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Channels.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoCanalList'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoPosts:
+      get:
+        operationId: listForumPosts
+        summary: 'Forum feed of a channel (or all the caller channels)'
+        tags: [community]
+        x-contract-id: D5-03
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'orden recientes (default) or votadas (valid votes first; votes of young accounts are ignored). Keyset cursor. The caller own posts in pre-moderation appear with enRevision = true; nobody else sees them. 404 FORO_NOT_FOUND for a channel outside the gate.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: categoriaId
+            in: query
+            required: false
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - name: orden
+            in: query
+            required: false
+            schema:
+              type: string
+              enum: [recientes, votadas]
+              default: recientes
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'One page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 50
+                          items:
+                            $ref: '#/components/schemas/ForoPublicacionItem'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+      post:
+        operationId: createForumPost
+        summary: 'Create a forum post'
+        tags: [community]
+        x-contract-id: D5-06
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: OPTIONAL
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_INVALID, NOT_FOUND, POSTING_RESTRICTED, DUPLICATE_POST, CONTENT_REJECTED, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Needs a verified e-mail and an account older than the Control limit (403 POSTING_RESTRICTED otherwise, also while muted, never saying why). Plain text only: links, ZWJ sequences and empty text are 422 CONTENT_REJECTED. Same user + same text in the channel within 10 minutes is 409 DUPLICATE_POST unless it is a replay of the same Idempotency-Key (200 + Idempotent-Replayed). enRevision = true when the post is in pre-moderation.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyOptional'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForoPostRequest'
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoPublicacion'
+          '200':
+            description: 'Replay of the same Idempotency-Key.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoPublicacion'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoPost:
+      get:
+        operationId: getForumPost
+        summary: 'Forum post detail'
+        tags: [community]
+        x-contract-id: D5-04
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [NOT_FOUND, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Full body. 404 when the post is not readable by the caller (any reason, same body).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'The post.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoPublicacion'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+      delete:
+        operationId: deleteOwnForumPost
+        summary: 'Delete the caller own post'
+        tags: [community]
+        x-contract-id: D5-08
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [NOT_FOUND, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Soft delete; the author comes from the JWT. 404 for anything that is not the caller own readable post.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'Deleted.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoEliminado'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoComments:
+      get:
+        operationId: listForumComments
+        summary: 'Flat comments of a post'
+        tags: [community]
+        x-contract-id: D5-05
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, NOT_FOUND, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Oldest first, keyset cursor, flat (no threads). 404 when the post is not readable.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'One page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 50
+                          items:
+                            $ref: '#/components/schemas/ForoComentario'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+      post:
+        operationId: createForumComment
+        summary: 'Comment on a forum post'
+        tags: [community]
+        x-contract-id: D5-07
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: OPTIONAL
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_INVALID, NOT_FOUND, POSTING_RESTRICTED, DUPLICATE_POST, CONTENT_REJECTED, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Same rules as D5-06. 404 when the post is not readable, is in pre-moderation, or its channel is read-only.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyOptional'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForoCommentRequest'
+        responses:
+          '201':
+            description: 'Created.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoComentarioCreado'
+          '200':
+            description: 'Replay of the same Idempotency-Key.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoComentarioCreado'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoCommentDelete:
+      delete:
+        operationId: deleteOwnForumComment
+        summary: 'Delete the caller own comment'
+        tags: [community]
+        x-contract-id: D5-09
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [NOT_FOUND, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Soft delete; the counter of the post follows.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'Deleted.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoEliminado'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoPostVote:
+      put:
+        operationId: putForumPostVote
+        summary: 'Vote a forum post'
+        tags: [community]
+        x-contract-id: D5-10
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [NOT_FOUND, POSTING_RESTRICTED, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Up-only "me gusta", idempotent both ways. 404 on own content and on anything not readable or not published. Votes of accounts younger than the Control age limit are stored but ignored in counters and ordering. 403 POSTING_RESTRICTED while muted.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'Vote state.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoVoto'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+      delete:
+        operationId: removeForumPostVote
+        summary: 'Remove the vote on a forum post'
+        tags: [community]
+        x-contract-id: D5-11
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [NOT_FOUND, POSTING_RESTRICTED, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Up-only "me gusta", idempotent both ways. 404 on own content and on anything not readable or not published. Votes of accounts younger than the Control age limit are stored but ignored in counters and ordering. 403 POSTING_RESTRICTED while muted.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'Vote state.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoVoto'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoCommentVote:
+      put:
+        operationId: putForumCommentVote
+        summary: 'Vote a forum comment'
+        tags: [community]
+        x-contract-id: D5-12
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [NOT_FOUND, POSTING_RESTRICTED, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Up-only "me gusta", idempotent both ways. 404 on own content and on anything not readable or not published. Votes of accounts younger than the Control age limit are stored but ignored in counters and ordering. 403 POSTING_RESTRICTED while muted.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'Vote state.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoVoto'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+      delete:
+        operationId: removeForumCommentVote
+        summary: 'Remove the vote on a forum comment'
+        tags: [community]
+        x-contract-id: D5-13
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [NOT_FOUND, POSTING_RESTRICTED, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Up-only "me gusta", idempotent both ways. 404 on own content and on anything not readable or not published. Votes of accounts younger than the Control age limit are stored but ignored in counters and ordering. 403 POSTING_RESTRICTED while muted.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'Vote state.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoVoto'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoReport:
+      post:
+        operationId: reportForumContent
+        summary: 'Report a forum post or comment'
+        tags: [community]
+        x-contract-id: D5-14
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, NOT_FOUND, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Four reasons: spam, ofensivo, incorrecto, otro. One report per reporter and entity (a second one is a silent no-op). The reporter is never exposed to the author. 404 on own content or anything not readable. Users cannot be reported in V1.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForoReportRequest'
+        responses:
+          '202':
+            description: 'Received.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoReporteRecibido'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    ForoAutor:
+      type: object
+      required: [handle]
+      properties:
+        handle:
+          type: [string, 'null']
+          description: 'Public username; null = deleted account (tombstone).'
+    ForoCanal:
+      type: object
+      required: [id, nombre, slug, posicion, soloLectura]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        nombre:
+          type: string
+        slug:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        posicion:
+          type: integer
+        soloLectura:
+          type: boolean
+    ForoCanalList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/ForoCanal'
+    ForoPublicacionItem:
+      type: object
+      required: [id, categoriaId, titulo, extracto, autor, meGusta, comentarios, creadoEn, miVoto, enRevision, tieneImagen]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        categoriaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: [string, 'null']
+        extracto:
+          type: string
+        autor:
+          $ref: '#/components/schemas/ForoAutor'
+        meGusta:
+          type: integer
+          minimum: 0
+        comentarios:
+          type: integer
+          minimum: 0
+        creadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        miVoto:
+          type: boolean
+        enRevision:
+          type: boolean
+        tieneImagen:
+          type: boolean
+    ForoPublicacion:
+      type: object
+      required: [id, categoriaId, titulo, cuerpo, autor, meGusta, comentarios, creadoEn, miVoto, enRevision, esMio, soloLectura]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        categoriaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: [string, 'null']
+        cuerpo:
+          type: string
+        autor:
+          $ref: '#/components/schemas/ForoAutor'
+        meGusta:
+          type: integer
+          minimum: 0
+        comentarios:
+          type: integer
+          minimum: 0
+        creadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        miVoto:
+          type: boolean
+        enRevision:
+          type: boolean
+        esMio:
+          type: boolean
+        soloLectura:
+          type: boolean
+        imagenId:
+          type: [string, 'null']
+        repetida:
+          type: boolean
+    ForoComentario:
+      type: object
+      required: [id, publicacionId, cuerpo, autor, meGusta, creadoEn, miVoto, enRevision, esMio]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        publicacionId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        cuerpo:
+          type: string
+        autor:
+          $ref: '#/components/schemas/ForoAutor'
+        meGusta:
+          type: integer
+          minimum: 0
+        creadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        miVoto:
+          type: boolean
+        enRevision:
+          type: boolean
+        esMio:
+          type: boolean
+    ForoComentarioCreado:
+      type: object
+      required: [id]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        publicacionId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        cuerpo:
+          type: string
+        creadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        repetido:
+          type: boolean
+    ForoEliminado:
+      type: object
+      required: [eliminado]
+      properties:
+        eliminado:
+          type: boolean
+    ForoVoto:
+      type: object
+      required: [miVoto, meGusta]
+      properties:
+        miVoto:
+          type: boolean
+        meGusta:
+          type: integer
+          minimum: 0
+    ForoReporteRecibido:
+      type: object
+      required: [recibido]
+      properties:
+        recibido:
+          type: boolean
+    ForoPostRequest:
+      type: object
+      additionalProperties: false
+      required: [categoriaId, titulo, cuerpo]
+      properties:
+        categoriaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: string
+          minLength: 1
+          maxLength: 300
+        cuerpo:
+          type: string
+          minLength: 1
+          maxLength: 20000
+    ForoCommentRequest:
+      type: object
+      additionalProperties: false
+      required: [cuerpo]
+      properties:
+        cuerpo:
+          type: string
+          minLength: 1
+          maxLength: 5000
+    ForoReportRequest:
+      type: object
+      additionalProperties: false
+      required: [entidadTipo, entidadId, motivo]
+      properties:
+        entidadTipo:
+          type: string
+          enum: [publicacion, comentario]
+        entidadId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        motivo:
+          type: string
+          enum: [spam, ofensivo, incorrecto, otro]
+        descripcion:
+          type: [string, 'null']
+          maxLength: 500

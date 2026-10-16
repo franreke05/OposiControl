@@ -48,7 +48,7 @@ components:
         x-roles: [USER]
         x-pagination: CURSOR
         x-idempotency: NONE
-        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
         description: 'Only invitations already rewarded, newest first, keyset cursor (opaque). handle is the invitee public username (null prints as a neutral "a friend"). Pending invitees are never disclosed.'
         security:
           - bearerAuth: []

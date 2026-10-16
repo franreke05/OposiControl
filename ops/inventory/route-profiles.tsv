@@ -319,3 +319,16 @@ PUT	/content/rafaga/{}/preguntas/order	CONTROL	admin	Legacy content: rafaga/{}/p
 PUT	/content/solucionarios	CONTROL	admin	Legacy content: solucionarios	OposiControl
 PUT	/content/solucionarios/{}/preguntas	CONTROL	admin	Legacy content: solucionarios/{}/preguntas	OposiControl
 PUT	/content/solucionarios/{}/preguntas/order	CONTROL	admin	Legacy content: solucionarios/{}/preguntas/order	OposiControl
+GET	/api/v1/app/oposired/canales	BOT	user-jwt	Forum: channels open to the caller specialty (D5-02)	OposiBot
+GET	/api/v1/app/oposired/publicaciones	BOT	user-jwt	Forum: feed (D5-03)	OposiBot
+GET	/api/v1/app/oposired/publicaciones/{}	BOT	user-jwt	Forum: post detail (D5-04)	OposiBot
+GET	/api/v1/app/oposired/publicaciones/{}/comentarios	BOT	user-jwt	Forum: comments (D5-05)	OposiBot
+POST	/api/v1/app/oposired/publicaciones	BOT	user-jwt	Forum: create post (D5-06)	OposiBot
+POST	/api/v1/app/oposired/publicaciones/{}/comentarios	BOT	user-jwt	Forum: create comment (D5-07)	OposiBot
+DELETE	/api/v1/app/oposired/publicaciones/{}	BOT	user-jwt	Forum: delete own post (D5-08)	OposiBot
+DELETE	/api/v1/app/oposired/comentarios/{}	BOT	user-jwt	Forum: delete own comment (D5-09)	OposiBot
+PUT	/api/v1/app/oposired/publicaciones/{}/voto	BOT	user-jwt	Forum: vote post (D5-10)	OposiBot
+DELETE	/api/v1/app/oposired/publicaciones/{}/voto	BOT	user-jwt	Forum: remove vote on post (D5-11)	OposiBot
+PUT	/api/v1/app/oposired/comentarios/{}/voto	BOT	user-jwt	Forum: vote comment (D5-12)	OposiBot
+DELETE	/api/v1/app/oposired/comentarios/{}/voto	BOT	user-jwt	Forum: remove vote on comment (D5-13)	OposiBot
+POST	/api/v1/app/oposired/reportes	BOT	user-jwt	Forum: report content (D5-14)	OposiBot

@@ -61,7 +61,7 @@ internal class ReferralService(
     suspend fun mine(userId: CanonicalUserId): JsonElement = rpc("app_referral_get", buildJsonObject { put("p_usuario", userId.value) }.toString())
 
     suspend fun list(userId: CanonicalUserId, cursor: String?, limit: Int): JsonElement {
-        if (cursor != null && (cursor.length > 200 || !cursor.matches(CURSOR_PATTERN))) throw validationError(ErrorIssue("cursor", CanonicalIssue.INVALID_FORMAT))
+        if (cursor != null && (cursor.length > 200 || !cursor.matches(CURSOR_PATTERN))) throw CanonicalErrorCode.INVALID_CURSOR.exception()
         return rpc(
             "app_referral_list",
             buildJsonObject {

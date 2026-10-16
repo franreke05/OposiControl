@@ -264,6 +264,22 @@ paths:
     $ref: 'referral/referral.yaml#/components/pathItems/MeInvitation'
   /api/v1/app/me/invitaciones:
     $ref: 'referral/referral.yaml#/components/pathItems/MeInvitations'
+  /api/v1/app/oposired/canales:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoChannels'
+  /api/v1/app/oposired/publicaciones:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoPosts'
+  /api/v1/app/oposired/publicaciones/{id}:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoPost'
+  /api/v1/app/oposired/publicaciones/{id}/comentarios:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoComments'
+  /api/v1/app/oposired/comentarios/{id}:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoCommentDelete'
+  /api/v1/app/oposired/publicaciones/{id}/voto:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoPostVote'
+  /api/v1/app/oposired/comentarios/{id}/voto:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoCommentVote'
+  /api/v1/app/oposired/reportes:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoReport'
   /api/v1/admin/estadisticas/recalcular:
     $ref: 'stats/stats.yaml#/components/pathItems/AdminStatsRecompute'
   /api/v1/app/plan/cupo:

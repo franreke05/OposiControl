@@ -146,6 +146,9 @@ components:
         - OFFICIAL_RULES_INVALID
         - STATS_SCOPE_INVALID
         - USERNAME_REQUIRED
+        - POSTING_RESTRICTED
+        - DUPLICATE_POST
+        - CONTENT_REJECTED
         - STATS_RECOMPUTE_COOLDOWN
   headers:
     XRequestId:
