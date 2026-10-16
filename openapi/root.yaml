@@ -270,6 +270,8 @@ paths:
     $ref: 'billing/billing.yaml#/components/pathItems/BillingHistory'
   /api/v1/app/oposired/categorias:
     $ref: 'community/community.yaml#/components/pathItems/OposiRedCategories'
+  /api/v1/app/feedback/pregunta:
+    $ref: 'community/community.yaml#/components/pathItems/QuestionFeedback'
   /api/v1/app/opositester/me:
     $ref: 'community/community.yaml#/components/pathItems/OposiTesterMe'
 components:

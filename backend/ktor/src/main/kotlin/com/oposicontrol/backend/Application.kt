@@ -726,6 +726,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
         jwtVerifier,
         allowDevUser,
         identityResolver = identityResolver,
+        idempotency = attemptRuntime?.idempotency,
+        limiter = authRuntime?.rateLimiter,
     )
     // SLICE 2: catalogo y derechos del consumidor (D2-01, D2-02, D2-13, D7-02).
     catalogRoutes(catalogRuntime)
