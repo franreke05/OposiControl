@@ -266,7 +266,7 @@ Tras el despliegue el refresco ya se deniega para esas cuentas; un token de acce
 4. Plantillas de Supabase (sección 3).
 5. Entorno (sección 2).
 6. Fusión autorizada de `feature/oposibot-consumer-backend` en `main`.
-7. Imagen con el script oficial: `bash scripts/build-backend-image.sh`, desde el árbol limpio en `origin/main` (lo hace `publicar-oposicontrol.sh`).
+7. Imagen con el script oficial: `bash scripts/build-backend-image.sh`, desde el árbol limpio en `origin/develop` (desde 2026-10-15; `main` queda como referencia) (lo hace `publicar-oposicontrol.sh`).
 8. `redeploy-rolling.sh`: bot-1 → sano → bot-2 → sano → control.
 8b. **OBLIGATORIO, con GO expreso y solo cuando TODAS las réplicas (bot-1, bot-2 y control) ya corren la imagen nueva**: limpieza de las solicitudes del flujo ANTERIOR (revisión de seguridad #3). Ver el detalle debajo de esta lista.
 9. Pruebas mínimas contra producción, una de cada (sección 7).
