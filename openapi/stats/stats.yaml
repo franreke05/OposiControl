@@ -143,7 +143,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, STATS_SCOPE_INVALID, STATS_RECOMPUTE_COOLDOWN, UPSTREAM_UNAVAILABLE]
-        description: 'C-S4: the ONLY way to force a recompute; no user endpoint can. Audited (the actor is written in the same transaction), serialised by a database lock and rate-limited by a cooldown (Control recalculo_admin_cooldown_min, default 10 minutes; a second call inside it is 429 STATS_RECOMPUTE_COOLDOWN). alcance is dificultad (the only scope in W3); anything else is 422 STATS_SCOPE_INVALID. The periodic job already refreshes the difficulty on its own (dificultad_job_minutos).'
+        description: 'C-S4: the ONLY way to force a recompute; no user endpoint can. Audited (the actor is written in the same transaction), serialised by a database lock and rate-limited by a cooldown (Control recalculo_admin_cooldown_min, default 10 minutes; a second call inside it is 429 STATS_RECOMPUTE_COOLDOWN). alcance is dificultad (question difficulty) or ranking (leagues, positions, top 3, place probability: W4); anything else is 422 STATS_SCOPE_INVALID. The periodic job already refreshes the difficulty on its own (dificultad_job_minutos).'
         security:
           - bearerAuth: []
         requestBody:
@@ -157,7 +157,7 @@ components:
                 properties:
                   alcance:
                     type: string
-                    enum: [dificultad]
+                    enum: [dificultad, ranking]
         responses:
           '200':
             description: 'Recomputed.'
