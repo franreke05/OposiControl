@@ -92,10 +92,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/NotFound'
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
-            description: 'ANSWER_LOCKED.'
-          '422':
-            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
-            description: 'RETO_OUT_OF_WINDOW.'
+            description: 'ANSWER_LOCKED or RETO_OUT_OF_WINDOW (a state conflict, like RETO_NOT_PASSED; E2-V1-W01 aligned the contract to the code).'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':

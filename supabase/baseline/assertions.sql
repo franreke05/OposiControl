@@ -292,7 +292,9 @@ begin
   assert r ->> 'estado' = 'ANSWERED' and (r ->> 'revision')::int = 2 and r ->> 'es_primera_respuesta' = 'true' and (r ->> 'respondidas')::int = 2, 'skip then answer: ' || r;
   assert (select primera_opcion_id is null and primera_es_correcta is null and opcion_seleccionada_id = ko2 and es_correcta = false and cambio_respuesta
           from public.respuestas_intento where intento_id = a and pregunta_id = p2), 'the first submission (a skip) is immutable';
-  -- annulled between start and finish: nothing stored, not evaluable.
+  -- annulled between start and finish: nothing stored, not evaluable. (An attempt that predates OFFICIAL_RULES: no snapshot, no roles = the live M10 rule; new attempts freeze the annulment at start, see the official-rules block.)
+  update public.preguntas_intento set rol = null, anulada_al_inicio = null, sustituye_a_posicion = null where intento_id = a;
+  update public.intentos_examen set regla_anuladas = null, penalizacion_num = null, penalizacion_den = null, reservas_usadas = null, total_anuladas = null, anuladas_sin_reserva = null where id = a;
   update public.preguntas_examen set anulada = true, motivo_anulacion = 'tribunal' where examen_id = ex and pregunta_id = p3;
   r := public.app_record_attempt_answer(ua, a, p3, ok3, 0, 0, null);
   assert r ->> 'estado' = 'ANNULLED' and (r ->> 'revision')::int = 0 and (r ->> 'respondidas')::int = 2, 'annulled question: ' || r;
@@ -2132,5 +2134,229 @@ begin
      and (select e -> 'tarifas' -> 1 ->> 'productoCodigo' from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-inmersivo') = 'pc-inm-a', 'monthly and annual are separate rows with their store product code';
   assert not has_function_privilege('authenticated', 'public.app_plan_catalog()', 'execute') and has_function_privilege('service_role', 'public.app_plan_catalog()', 'execute'), 'service only';
   raise notice 'OK V1 plan catalog';
+end $$;
+rollback;
+
+-- 20261022101300: official exams (annulled + reserve questions, OFFICIAL_RULES C-O1..C-O6).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.q(n int, p int) returns uuid language sql as $$ select ('f9000000-0000-0000-' || lpad(n::text, 4, '0') || '-' || lpad(p::text, 12, '0'))::uuid $$;
+create function pg_temp.ex(n int) returns uuid language sql as $$ select ('e9000000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid $$;
+create function pg_temp.good(q uuid) returns uuid language sql as $$ select opcion_correcta_id from public.soluciones_pregunta where pregunta_id = q $$;
+create function pg_temp.bad(q uuid) returns uuid language sql as $$ select id from public.opciones_pregunta where pregunta_id = q and id <> pg_temp.good(q) limit 1 $$;
+create function pg_temp.ans(u uuid, a uuid, q uuid, ok boolean) returns jsonb language sql as $$
+  select public.app_record_attempt_answer(u, a, q, case when ok then pg_temp.good(q) else pg_temp.bad(q) end, 0, 0, null) $$;
+
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000f1', 'or-a@test.local', 'authenticated', 'authenticated'), ('a0000000-0000-0000-0000-0000000000f2', 'or-b@test.local', 'authenticated', 'authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000f1', 'OR', 'OR', 'or', true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000f1', 'ORC', 'Com OR', 'com-or');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values
+  ('a0000000-0000-0000-0000-0000000000f1', 'oa', 'ora', true, 'activa', 'e1000000-0000-0000-0000-0000000000f1'),
+  ('a0000000-0000-0000-0000-0000000000f2', 'ob', 'orb', true, 'activa', 'e1000000-0000-0000-0000-0000000000f1')
+on conflict (usuario_id) do nothing;
+set local session_replication_role = replica;
+create temp table ox(n int, regla text, num int, den int, mains int, annulled int[], reserves int);
+insert into ox values
+  (0, 'NO_PUNTUA', 0, 1, 6, '{}', 0), (1, 'REEMPLAZO_POR_RESERVA', 0, 1, 6, '{}', 2), (2, 'REEMPLAZO_POR_RESERVA', 0, 1, 6, '{2}', 3),
+  (3, 'REEMPLAZO_POR_RESERVA', 0, 1, 6, '{2,4,5}', 2), (4, 'NO_PUNTUA', 0, 1, 6, '{3}', 2), (5, 'NO_PUNTUA', 1, 3, 6, '{3,4}', 1),
+  (6, 'REEMPLAZO_POR_RESERVA', 1, 3, 6, '{1}', 2), (7, 'NO_PUNTUA', 0, 1, 0, '{}', 2), (8, 'REEMPLAZO_POR_RESERVA', 0, 1, 6, '{2}', 3),
+  (9, null, 0, 1, 6, '{2}', 3), (10, null, 0, 1, 6, '{}', 0), (11, null, 0, 1, 6, '{2,7}', 3);
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, regla_anuladas, penalizacion_num, penalizacion_den)
+select pg_temp.ex(n), 'OR-' || n, 'e1000000-0000-0000-0000-0000000000f1', 'c1000000-0000-0000-0000-0000000000f1', 'Oficial ' || n, 'rafaga', 'gratuito', true, now() - interval '1 day', regla, num, den from ox;
+create temp table oq as select o.n, p, (p > o.mains) as es_reserva, p = any (o.annulled) as anul, p - o.mains as r from ox o, generate_series(1, o.mains + o.reserves) p;
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) select pg_temp.q(n, p), 'OR-' || n || '-' || p, 'rafaga', 'Pregunta ' || n || '-' || p, true from oq;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+select ('0a000000-0000-0000-' || lpad(n::text, 4, '0') || '-' || lpad((p * 10 + o)::text, 12, '0'))::uuid, pg_temp.q(n, p), chr(64 + o), 'Opcion', o from oq, generate_series(1, 2) o;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento)
+select pg_temp.q(n, p), ('0a000000-0000-0000-' || lpad(n::text, 4, '0') || '-' || lpad((p * 10 + 1)::text, 12, '0'))::uuid, 'x' from oq;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, anulada, motivo_anulacion, es_reserva, orden_reserva)
+select pg_temp.ex(n), pg_temp.q(n, p), p, p, anul, case when anul then 'tribunal' end, es_reserva, case when es_reserva then r end from oq;
+set local session_replication_role = origin;
+
+do $$
+declare
+  ua constant uuid := 'a0000000-0000-0000-0000-0000000000f1';
+  ub constant uuid := 'a0000000-0000-0000-0000-0000000000f2';
+  r jsonb; a uuid; b uuid; i int; j int;
+begin
+  -- ---- scoring function: exact half-up integer arithmetic (the Kotlin twin is pinned by the same matrix)
+  assert private.official_nota(4, 1, 6, 0, 1) = 6.67 and private.official_nota(4, 1, 6, 1, 3) = 6.11 and private.official_nota(1, 5, 6, 1, 3) = 0.00 and private.official_nota(2, 4, 6, 1, 3) = 1.11, 'nota examples incl. 1/3';
+  assert private.official_nota(5, 0, 10, 0, 1) = 5.00 and private.official_nota(1, 0, 3, 0, 1) = 3.33 and private.official_nota(1, 0, 8, 0, 1) = 1.25 and private.official_nota(1, 0, 16, 0, 1) = 0.63, 'half-up at the tie (0.625 -> 0.63)';
+  assert private.official_nota(0, 0, 0, 0, 1) is null and private.official_nota(3, 1, null, 0, 1) is null, 'evaluables 0 = NULL, no division by zero';
+  assert (select md5(string_agg(coalesce(private.official_nota(c, f, e, nu, de)::text, 'null'), ',' order by c, f, e, nu, de))
+            from generate_series(0, 12) c, generate_series(0, 12) f, generate_series(1, 14) e, (values (0, 1), (1, 3), (1, 4), (1, 2), (2, 5)) pen(nu, de)
+           where c + f <= e) = '450f6571dec69b16f142e60c29033415', 'the nota matrix equals the Kotlin matrix (OfficialScoringParityTest)';
+  -- ---- M10 default unchanged: no reserves, NO_PUNTUA, no penalty
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(0));
+  a := (r ->> 'intento_id')::uuid;
+  assert r ->> 'outcome' = 'CREATED' and (select count(*) = 6 and count(*) filter (where rol = 'PRINCIPAL') = 6 and not bool_or(anulada_al_inicio) from public.preguntas_intento where intento_id = a), 'default exam: 6 PRINCIPAL';
+  assert (select regla_anuladas = 'NO_PUNTUA' and penalizacion_num = 0 and penalizacion_den = 1 and reservas_usadas = 0 and total_anuladas = 0 and total_preguntas = 6 from public.intentos_examen where id = a), 'snapshot at start';
+  for i in 1..4 loop perform pg_temp.ans(ua, a, pg_temp.q(0, i), true); end loop;
+  perform pg_temp.ans(ua, a, pg_temp.q(0, 5), false);
+  perform public.app_finish_exam_attempt(ua, a);
+  assert (select nota = 6.67 and total_evaluables = 6 and total_correctas = 4 and total_falladas = 1 and total_sin_responder = 1 and total_respondidas = 5 from public.intentos_examen where id = a), 'default exam nota = DEC-013 (4/6 x 10)';
+
+  -- ---- reserves of an exam with NO annulment are kept but unused (C-O1)
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(1));
+  a := (r ->> 'intento_id')::uuid;
+  assert (select count(*) = 8 and count(*) filter (where rol = 'RESERVA_NO_USADA') = 2 and (select total_preguntas from public.intentos_examen where id = a) = 6 from public.preguntas_intento where intento_id = a), 'REEMPLAZO without annulled: 2 reserves frozen as unused, 6 evaluable';
+  assert public.app_record_attempt_answer(ua, a, pg_temp.q(1, 7), pg_temp.good(pg_temp.q(1, 7)), 0, 0, null) ->> 'outcome' = 'QUESTION_NOT_IN_ATTEMPT', 'an unused reserve cannot be answered while open';
+  assert public.app_reveal_attempt_questions(ua, a, array[pg_temp.q(1, 1), pg_temp.q(1, 8)]) ->> 'outcome' = 'QUESTION_NOT_IN_ATTEMPT', 'an unused reserve is never revealed';
+  assert not exists (select 1 from public.respuestas_intento where intento_id = a and pregunta_id in (pg_temp.q(1, 7), pg_temp.q(1, 8))), 'nothing stored for it';
+  for i in 1..6 loop perform pg_temp.ans(ua, a, pg_temp.q(1, i), true); end loop;
+  perform public.app_finish_exam_attempt(ua, a);
+  assert (select count(*) filter (where estado_final = 'RESERVA_NO_UTILIZADA') = 2 from public.preguntas_intento where intento_id = a)
+     and (select nota = 10.00 and total_evaluables = 6 from public.intentos_examen where id = a), 'finish: unused reserves labelled, nota 10';
+  assert not exists (select 1 from public.resumen_intento_etiqueta where intento_id = a and total_preguntas > 6), 'unused reserves are not in the tag summary';
+
+  -- ---- REEMPLAZO: 1 annulled, 3 reserves -> the first reserve is activated and replaces position 2
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(2));
+  a := (r ->> 'intento_id')::uuid;
+  assert (select rol from public.preguntas_intento where intento_id = a and pregunta_id = pg_temp.q(2, 7)) = 'RESERVA_ACTIVA'
+     and (select sustituye_a_posicion from public.preguntas_intento where intento_id = a and pregunta_id = pg_temp.q(2, 7)) = 2
+     and (select count(*) from public.preguntas_intento where intento_id = a and rol = 'RESERVA_NO_USADA') = 2
+     and (select total_preguntas = 6 and reservas_usadas = 1 and total_anuladas = 1 and anuladas_sin_reserva = 0 from public.intentos_examen where id = a), 'reserve 1 replaces the annulled position 2; evaluables 5 + 1';
+  assert pg_temp.ans(ua, a, pg_temp.q(2, 2), true) ->> 'estado' = 'ANNULLED', 'the annulled main question stores nothing';
+  assert pg_temp.ans(ua, a, pg_temp.q(2, 7), true) ->> 'estado' = 'ANSWERED' and public.app_record_attempt_answer(ua, a, pg_temp.q(2, 8), pg_temp.good(pg_temp.q(2, 8)), 0, 0, null) ->> 'outcome' = 'QUESTION_NOT_IN_ATTEMPT', 'the activated reserve is answerable, the next one is not';
+  -- the annulment is FROZEN at start: annulling another question later does not change this attempt
+  update public.preguntas_examen set anulada = true, motivo_anulacion = 'tribunal' where examen_id = pg_temp.ex(2) and pregunta_id = pg_temp.q(2, 5);
+  assert pg_temp.ans(ua, a, pg_temp.q(2, 5), true) ->> 'estado' = 'ANSWERED', 'a later annulment does not alter an attempt in progress';
+  update public.preguntas_examen set anulada = false, motivo_anulacion = null where examen_id = pg_temp.ex(2) and pregunta_id = pg_temp.q(2, 5);
+  perform pg_temp.ans(ua, a, pg_temp.q(2, 1), true); perform pg_temp.ans(ua, a, pg_temp.q(2, 3), true); perform pg_temp.ans(ua, a, pg_temp.q(2, 4), false);
+  perform public.app_finish_exam_attempt(ua, a);
+  -- answered: 7(res) ok, 5 ok, 1 ok, 3 ok, 4 wrong, 6 unanswered -> c=4 f=1 s=1 e=6
+  assert (select total_correctas = 4 and total_falladas = 1 and total_sin_responder = 1 and total_evaluables = 6 and nota = 6.67 from public.intentos_examen where id = a), 'REEMPLAZO score over 5 main + 1 reserve';
+  assert (select estado_final from public.preguntas_intento where intento_id = a and pregunta_id = pg_temp.q(2, 2)) = 'ANNULLED', 'annulled labelled';
+
+  -- ---- REEMPLAZO with FEWER reserves than annulled (data that predates the validation): deterministic degrade
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(3));
+  a := (r ->> 'intento_id')::uuid;
+  assert (select total_preguntas = 5 and reservas_usadas = 2 and total_anuladas = 3 and anuladas_sin_reserva = 1 from public.intentos_examen where id = a)
+     and (select array_agg(sustituye_a_posicion order by posicion) filter (where rol = 'RESERVA_ACTIVA') from public.preguntas_intento where intento_id = a) = array[2, 4], 'degrade: 2 reserves replace the first two annulled; one annulled has no reserve';
+  perform public.app_abandon_exam_attempt(ua, a, 1, 'salida_usuario');
+
+  -- ---- NO_PUNTUA with reserves: the reserves stay unused; annulled not evaluable
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(4));
+  a := (r ->> 'intento_id')::uuid;
+  assert (select total_preguntas = 5 and reservas_usadas = 0 from public.intentos_examen where id = a) and (select count(*) = 2 from public.preguntas_intento where intento_id = a and rol = 'RESERVA_NO_USADA'), 'NO_PUNTUA: reserves unused';
+  perform public.app_abandon_exam_attempt(ua, a, 1, 'salida_usuario');
+
+  -- ---- NO_PUNTUA + penalty 1/3 (PUNTUA_ACIERTO was dropped by the client answer of 2026-10-16 (c))
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(5));
+  a := (r ->> 'intento_id')::uuid;
+  perform pg_temp.ans(ua, a, pg_temp.q(5, 1), true); perform pg_temp.ans(ua, a, pg_temp.q(5, 2), true); perform pg_temp.ans(ua, a, pg_temp.q(5, 5), false);
+  perform public.app_finish_exam_attempt(ua, a);
+  -- 4 evaluable main questions: 2 correct, 1 wrong, 1 unanswered -> max(0, 2*3 - 1*1) = 5 -> 50/12 = 4.17
+  assert (select total_correctas = 2 and total_falladas = 1 and total_sin_responder = 1 and total_respondidas = 3 and total_evaluables = 4 and nota = 4.17 and total_anuladas = 2 and reservas_usadas = 0 from public.intentos_examen where id = a), 'NO_PUNTUA with 1/3: nota 4.17';
+  assert (select count(*) from public.respuestas_intento where intento_id = a) = 3 and not exists (select 1 from public.respuestas_intento where intento_id = a and pregunta_id in (pg_temp.q(5, 3), pg_temp.q(5, 4))), 'annulled questions store nothing';
+  -- zero real answers: the grade is shown (0.00), nothing was answered
+  r := public.app_start_exam_attempt(ub, pg_temp.ex(5));
+  b := (r ->> 'intento_id')::uuid;
+  perform public.app_finish_exam_attempt(ub, b);
+  assert (select nota = 0.00 and total_respondidas = 0 and total_evaluables = 4 from public.intentos_examen where id = b) and not exists (select 1 from public.respuestas_intento where intento_id = b), 'no real answer: grade 0.00, nothing stored';
+  -- ---- the rule is DERIVED when the exam does not set one (client answer (c)): reserves -> REEMPLAZO; none -> the annulled just do not count
+  r := public.app_start_exam_attempt(ub, pg_temp.ex(9));
+  assert (select regla_anuladas = 'REEMPLAZO_POR_RESERVA' and reservas_usadas = 1 and total_preguntas = 6 from public.intentos_examen where id = (r ->> 'intento_id')::uuid), 'derived REEMPLAZO for an exam with reserves';
+  perform public.app_abandon_exam_attempt(ub, (r ->> 'intento_id')::uuid, 1, 'salida_usuario');
+  r := public.app_start_exam_attempt(ub, pg_temp.ex(10));
+  assert (select regla_anuladas = 'NO_PUNTUA' and reservas_usadas = 0 from public.intentos_examen where id = (r ->> 'intento_id')::uuid), 'derived NO_PUNTUA for an exam without reserves';
+  perform public.app_abandon_exam_attempt(ub, (r ->> 'intento_id')::uuid, 1, 'salida_usuario');
+  -- an annulled reserve is SKIPPED: the next one is taken (documented default, to be confirmed)
+  r := public.app_start_exam_attempt(ub, pg_temp.ex(11));
+  a := (r ->> 'intento_id')::uuid;
+  assert (select rol from public.preguntas_intento where intento_id = a and pregunta_id = pg_temp.q(11, 7)) = 'RESERVA_NO_USADA'
+     and (select rol from public.preguntas_intento where intento_id = a and pregunta_id = pg_temp.q(11, 8)) = 'RESERVA_ACTIVA'
+     and (select sustituye_a_posicion from public.preguntas_intento where intento_id = a and pregunta_id = pg_temp.q(11, 8)) = 2, 'the annulled reserve is skipped, reserve 2 replaces position 2';
+  assert private.official_rules_warnings(pg_temp.ex(11)) = array['ANNULLED_RESERVE_SKIPPED'] and private.official_rules_problem(pg_temp.ex(11)) is null, 'an annulled reserve is a warning, not an error';
+  perform public.app_abandon_exam_attempt(ub, a, 1, 'salida_usuario');
+
+  -- ---- REEMPLAZO + 1/3, penalty floors at 0
+  r := public.app_start_exam_attempt(ub, pg_temp.ex(6));
+  b := (r ->> 'intento_id')::uuid;
+  assert (select total_preguntas = 6 and reservas_usadas = 1 from public.intentos_examen where id = b), 'exam 6: 5 main + 1 active reserve';
+  perform pg_temp.ans(ub, b, pg_temp.q(6, 2), true);
+  for i in 3..6 loop perform pg_temp.ans(ub, b, pg_temp.q(6, i), false); end loop;
+  perform pg_temp.ans(ub, b, pg_temp.q(6, 7), false);
+  perform public.app_finish_exam_attempt(ub, b);
+  -- c 1 f 5 s 0 e 6 -> max(0, 1*3 - 5) = 0
+  assert (select nota = 0.00 and total_correctas = 1 and total_falladas = 5 from public.intentos_examen where id = b), 'penalty never below 0';
+
+  -- ---- publication / edit validation (C-O3, C-O4); the deferred check is forced to run now
+  set constraints trg_preguntas_examen_official_rules, trg_examenes_official_rules immediate;
+  assert private.official_rules_problem(pg_temp.ex(2)) is null and private.official_rules_problem(pg_temp.ex(3)) = 'REEMPLAZO_NOT_ENOUGH_RESERVES' and private.official_rules_problem(pg_temp.ex(7)) = 'RESERVE_WITHOUT_MAIN', 'validation function';
+  perform pg_temp.expect_e(format($q$update public.preguntas_examen set anulada = true, motivo_anulacion = 'x' where examen_id = %L and pregunta_id = any (%L::uuid[])$q$, pg_temp.ex(8), array[pg_temp.q(8, 1), pg_temp.q(8, 3), pg_temp.q(8, 4)]), 'OFFICIAL_RULES_INVALID');
+  update public.preguntas_examen set anulada = true, motivo_anulacion = 'x' where examen_id = pg_temp.ex(8) and pregunta_id = pg_temp.q(8, 8);   -- an annulled reserve is accepted (skipped) with a warning
+  assert 'ANNULLED_RESERVE_SKIPPED' = any (private.official_rules_warnings(pg_temp.ex(8))) and private.official_rules_problem(pg_temp.ex(8)) is null and public.admin_official_rules_check(pg_temp.ex(8)) ->> 'regla' = 'REEMPLAZO_POR_RESERVA', 'warning, not a block';
+  update public.configuracion_v1 set valor_integer = 2 where clave = 'max_reservas_oficiales';
+  assert 'MORE_RESERVES_THAN_MAX' = any (private.official_rules_warnings(pg_temp.ex(8))) and private.official_rules_problem(pg_temp.ex(8)) is null, 'more reserves than the maximum is a warning at publish, never an error';
+  update public.configuracion_v1 set valor_integer = 3 where clave = 'max_reservas_oficiales';
+  perform pg_temp.expect_e(format($q$update public.preguntas_examen set orden_reserva = 9 where examen_id = %L and pregunta_id = %L$q$, pg_temp.ex(8), pg_temp.q(8, 8)), 'OFFICIAL_RULES_INVALID');                 -- gaps
+  update public.preguntas_examen set anulada = true, motivo_anulacion = 'x' where examen_id = pg_temp.ex(8) and pregunta_id = pg_temp.q(8, 3);   -- 2 annulled <= 3 reserves: accepted
+  assert (select anulada from public.preguntas_examen where examen_id = pg_temp.ex(8) and pregunta_id = pg_temp.q(8, 3)), 'a valid annulment after publication is accepted';
+  update public.examenes set publicado_en = null where id = pg_temp.ex(3);
+  perform pg_temp.expect_e(format($q$update public.examenes set publicado_en = now() where id = %L$q$, pg_temp.ex(3)), 'OFFICIAL_RULES_INVALID');   -- publishing an invalid exam
+  perform pg_temp.expect_e(format($q$update public.examenes set penalizacion_num = 4, penalizacion_den = 3 where id = %L$q$, pg_temp.ex(0)), 'new row for relation "examenes" violates check constraint "examenes_penalizacion_chk"');
+  perform pg_temp.expect_e(format($q$update public.examenes set regla_anuladas = 'OTRA' where id = %L$q$, pg_temp.ex(0)), 'new row for relation "examenes" violates check constraint "examenes_penalizacion_chk"');
+  perform pg_temp.expect_e(format($q$insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, es_reserva, orden_reserva) values (%L, %L, 150, 150, true, null)$q$, pg_temp.ex(0), pg_temp.q(1, 1)),
+    'new row for relation "preguntas_examen" violates check constraint "preguntas_examen_reserva_chk"');
+  -- demo cross-check on EVERY edit (draft or published)
+  update public.preguntas_examen set es_demo = true where examen_id = pg_temp.ex(0) and pregunta_id = pg_temp.q(0, 1);
+  perform pg_temp.expect_e(format($q$update public.preguntas_examen set anulada = true, motivo_anulacion = 'x' where examen_id = %L and pregunta_id = %L$q$, pg_temp.ex(0), pg_temp.q(0, 1)), 'DEMO_CONFLICT');
+  perform pg_temp.expect_e(format($q$update public.preguntas_examen set posicion = 120 where examen_id = %L and pregunta_id = %L$q$, pg_temp.ex(0), pg_temp.q(0, 1)), 'DEMO_CONFLICT');
+  perform pg_temp.expect_e(format($q$update public.preguntas_examen set es_demo = true where examen_id = %L and pregunta_id = %L$q$, pg_temp.ex(2), pg_temp.q(2, 2)), 'DEMO_CONFLICT');   -- flagging an annulled question
+  perform pg_temp.expect_e(format($q$update public.preguntas_examen set es_demo = true where examen_id = %L and pregunta_id = %L$q$, pg_temp.ex(2), pg_temp.q(2, 8)), 'DEMO_CONFLICT');   -- flagging a reserve
+  update public.preguntas_examen set anulada = true, motivo_anulacion = 'x' where examen_id = pg_temp.ex(0) and pregunta_id = pg_temp.q(0, 6);   -- a NON-demo question is free
+  assert true;
+
+  -- ---- the daily challenge never takes a reserve
+  assert not exists (select 1 from private.reto_pool('e1000000-0000-0000-0000-0000000000f1', null, 'rafaga') p where p in (pg_temp.q(1, 7), pg_temp.q(1, 8), pg_temp.q(2, 7))), 'a reserve is not in the challenge pool';
+  raise notice 'OK V1 official rules';
+end $$;
+rollback;
+
+-- 20261022101500: configuracion_v1 bounds + audit (E2-V1-P02); a `premium` gift can never be quota (E2-V1-A01).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-0000000000f9', 'cfg@test.local', 'authenticated', 'authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000f9', 'CF', 'CF', 'cf', true);
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values ('a0000000-0000-0000-0000-0000000000f9', 'cf', 'cfu', true, 'activa', 'e1000000-0000-0000-0000-0000000000f9') on conflict (usuario_id) do nothing;
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000f9', 'CFC', 'Com CF', 'com-cf');
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo)
+  values ('e9300000-0000-0000-0000-000000000001', 'CF-1', 'e1000000-0000-0000-0000-0000000000f9', 'c1000000-0000-0000-0000-0000000000f9', 'Cfg', 'inmersivo', 'premium', true);
+do $$
+declare n integer;
+begin
+  -- bounds: negative, absurd, unknown key, bad time zone, flag outside 0..1
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = -1 where clave = 'tope_ot_gratis_dia'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = 2147483647 where clave = 'tope_ot_comprados_dia'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = 1000 where clave = 'max_inmersivos_incluidos'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = 2 where clave = 'reto_exige_email_verificado'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  perform pg_temp.expect_e($q$insert into public.configuracion_v1 (clave, valor_integer) values ('clave_inventada', 1)$q$, 'CONFIG_KEY_UNKNOWN');
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_text = 'Mars/Olympus' where clave = 'zona_horaria'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = null where clave = 'demo_preguntas'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  select count(*) into n from public.auditoria_log where accion = 'configuracion_v1_editada';
+  assert (select count(*) from public.auditoria_log where accion = 'configuracion_v1_editada') = n, 'denied writes leave no audit row';
+  -- an accepted change is audited with the old and the new value
+  update public.configuracion_v1 set valor_integer = 120 where clave = 'tope_ot_gratis_dia';
+  assert exists (select 1 from public.auditoria_log where accion = 'configuracion_v1_editada' and (despues ->> 'valor_integer')::int = 120 and (antes ->> 'valor_integer')::int = 100 and despues ->> 'clave' = 'tope_ot_gratis_dia'), 'audit row with old and new value';
+  update public.configuracion_v1 set valor_text = 'UTC' where clave = 'zona_horaria';
+  -- a premium gift is a plain grant: it can neither carry a quota start nor be written as quota
+  insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000f9', 'e9300000-0000-0000-0000-000000000001', 'premium', now() - interval '1 day', now() + interval '30 days');
+  perform pg_temp.expect_e($q$update public.contenido_desbloqueado_usuario set cupo_suscripcion_inicio = now() where usuario_id = 'a0000000-0000-0000-0000-0000000000f9'$q$,
+    'new row for relation "contenido_desbloqueado_usuario" violates check constraint "contenido_desbloqueado_usuario_plan_cupo_check"');
+  perform pg_temp.expect_e($q$update public.contenido_desbloqueado_usuario set motivo = 'plan_cupo', cupo_suscripcion_inicio = now() where usuario_id = 'a0000000-0000-0000-0000-0000000000f9'$q$, 'PLAN_CUPO_WRITER_ONLY');
+  assert (public.app_plan_quota('a0000000-0000-0000-0000-0000000000f9') ->> 'cupoUsado')::int = 0, 'a premium gift never counts as quota';
+  raise notice 'OK V1 config bounds';
 end $$;
 rollback;

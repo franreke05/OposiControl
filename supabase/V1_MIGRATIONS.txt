@@ -11,3 +11,5 @@
 20261022101100_v1_attempt_limiter
 20261022101150_v1_plan_catalog
 20261022101200_v1_daily_challenge
+20261022101300_v1_official_rules
+20261022101500_v1_config_bounds
