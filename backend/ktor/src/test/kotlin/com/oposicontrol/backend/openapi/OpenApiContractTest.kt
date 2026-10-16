@@ -172,6 +172,9 @@ class OpenApiContractTest {
         "D4-21" to "DELETE /api/v1/app/opositeca/guardados/{tipo}/{targetId}",
         "D4-24" to "GET /api/v1/app/opositeca",
         "D4-26" to "GET /api/v1/app/opositeca/guardados/{tipo}",
+        // FA27: cupo de inmersivos del plan (Access v2).
+        "D7-31" to "GET /api/v1/app/plan/cupo",
+        "D7-32" to "PUT /api/v1/app/plan/cupo/{examenId}",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */

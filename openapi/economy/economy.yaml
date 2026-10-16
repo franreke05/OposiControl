@@ -400,6 +400,12 @@ components:
           type: boolean
         promoLabel:
           type: [string, 'null']
+        recargaBase:
+          type: boolean
+          description: 'FA28: true for the small 1 EUR base blocks (100 OT = 1 EUR) the client composes a free recharge from. Absent = false.'
+        otPorEuro:
+          type: [number, 'null']
+          description: 'FA28: tickets per euro of this pack (informational, to steer the user to bigger packs).'
     TicketPacksResponse:
       type: object
       required: [items]

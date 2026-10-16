@@ -133,6 +133,10 @@ components:
         - ORDER_PENDING_LIMIT
         - SPECIALTY_ALREADY_SET
         - SAVED_LIMIT_REACHED
+        - PLAN_QUOTA_NONE
+        - PLAN_QUOTA_FULL
+        - EXAM_NOT_IMMERSIVE
+        - DAILY_LIMIT_REACHED
   headers:
     XRequestId:
       description: 'Request correlation id; equals ErrorEnvelope.requestId.'
