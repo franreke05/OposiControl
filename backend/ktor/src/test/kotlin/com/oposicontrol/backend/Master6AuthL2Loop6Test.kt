@@ -263,7 +263,7 @@ class Master6AuthL2Loop6Test {
     }
 
     private fun tokenFor(kid: String, kp: KeyPair): String =
-        JWT.create().withKeyId(kid).withIssuer("$baseUrl/auth/v1").withSubject(uid)
+        JWT.create().withKeyId(kid).withIssuer("$baseUrl/auth/v1").withSubject(uid).withAudience("authenticated").withExpiresAt(java.util.Date(System.currentTimeMillis() + 3_600_000))
             .sign(Algorithm.ECDSA256(kp.public as ECPublicKey, kp.private as ECPrivateKey))
 
     private fun verifier() = SupabaseJwtVerifier(baseUrl, Json { ignoreUnknownKeys = true }, java.net.http.HttpClient.newHttpClient(), fetchTimeout = Duration.ofSeconds(3))

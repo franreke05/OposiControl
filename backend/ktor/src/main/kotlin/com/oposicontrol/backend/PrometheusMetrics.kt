@@ -127,6 +127,11 @@ internal fun Route.prometheusMetricsRoute(
             return@get
         }
         val token = environment("METRICS_SCRAPE_TOKEN")?.trim().orEmpty()
+        // DEBT-095(b): sin token solo se sirve con APP_ENV explicito de desarrollo; en produccion (o vacio) 404.
+        if (token.isBlank() && !AppEnvironment.isDevelopment(environment("APP_ENV"))) {
+            call.respondText("Not Found", ContentType.Text.Plain, HttpStatusCode.NotFound)
+            return@get
+        }
         if (token.isNotBlank()) {
             val provided = call.request.headers[HttpHeaders.Authorization].orEmpty()
             // Token de scrape ENTRANTE (no firma peticiones a Supabase): concatenado para no

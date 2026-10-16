@@ -35,7 +35,7 @@ class PrometheusMetricsTest {
         application {
             installBackendPrometheusMetrics(registry)
             routing {
-                prometheusMetricsRoute(registry)
+                prometheusMetricsRoute(registry) { if (it == "APP_ENV") "dev" else null }
                 get("/probe") { call.respondText("ok") }
             }
         }
@@ -314,7 +314,7 @@ class PrometheusMetricsTest {
 
     @Test
     fun metricsReturns200WithoutConfiguredTokenAndWithCorrectBearer() {
-        metricsApp(emptyMap()) {
+        metricsApp(mapOf("APP_ENV" to "dev")) {
             assertEquals(HttpStatusCode.OK, client.get("/metrics").status)
         }
         metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
@@ -333,6 +333,22 @@ class PrometheusMetricsTest {
         }
     }
 
+    /** DEBT-095(b): sin token de scrape, produccion (o APP_ENV ausente) NO sirve /metrics. */
+    @Test
+    fun metricsIs404WithoutScrapeTokenOutsideDevelopment() {
+        listOf(emptyMap(), mapOf("APP_ENV" to "production"), mapOf("APP_ENV" to "staging")).forEach { env ->
+            metricsApp(env) {
+                val response = client.get("/metrics")
+                assertEquals(HttpStatusCode.NotFound, response.status, "$env")
+                assertFalse(response.bodyAsText().contains("jvm_"))
+            }
+        }
+        metricsApp(mapOf("APP_ENV" to "production", "METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
+            val ok = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer scrape-secret") }
+            assertEquals(HttpStatusCode.OK, ok.status)
+        }
+    }
+
     @Test
     fun metricsReturns404WhenDisabled() {
         metricsApp(mapOf("METRICS_ENABLED" to "false", "METRICS_SCRAPE_TOKEN" to "scrape-secret")) {
@@ -345,12 +361,12 @@ class PrometheusMetricsTest {
     @Test
     fun metricsEnabledFlagIsTrimmedAndCaseInsensitive() {
         listOf(" false ", "FALSE", "False\t").forEach { value ->
-            metricsApp(mapOf("METRICS_ENABLED" to value)) {
+            metricsApp(mapOf("APP_ENV" to "dev", "METRICS_ENABLED" to value)) {
                 assertEquals(HttpStatusCode.NotFound, client.get("/metrics").status, "'$value'")
             }
         }
         listOf("true", "", "0", "no").forEach { value ->
-            metricsApp(mapOf("METRICS_ENABLED" to value)) {
+            metricsApp(mapOf("APP_ENV" to "dev", "METRICS_ENABLED" to value)) {
                 assertEquals(HttpStatusCode.OK, client.get("/metrics").status, "'$value'")
             }
         }
@@ -366,7 +382,7 @@ class PrometheusMetricsTest {
             val untrimmed = client.get("/metrics") { header(HttpHeaders.Authorization, "Bearer   scrape-secret  ") }
             assertEquals(HttpStatusCode.Unauthorized, untrimmed.status)
         }
-        metricsApp(mapOf("METRICS_SCRAPE_TOKEN" to "   ")) {
+        metricsApp(mapOf("APP_ENV" to "dev", "METRICS_SCRAPE_TOKEN" to "   ")) {
             assertEquals(HttpStatusCode.OK, client.get("/metrics").status, "token en blanco = sin token (bind interno)")
         }
     }

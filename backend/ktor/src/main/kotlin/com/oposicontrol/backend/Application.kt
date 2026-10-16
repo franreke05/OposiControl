@@ -772,6 +772,11 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
                 // MASTER-AUTH-002: rol admin Y cuenta `activa` (deny-by-default).
                 this.hasAdminRole = { appV1Gateway.hasActiveAdminRole(it) }
             }
+            // DEBT-151: limite de mutaciones por administrador (despues de autorizar; las lecturas no cuentan).
+            install(AdminMutationRateLimitPlugin) {
+                limiter = deps.authRuntime?.rateLimiter
+                limit = adminMutationRateLimit(System.getenv(ADMIN_MUTATION_RATE_LIMIT_ENV))
+            }
             // MASTER-OBS-002: el `sub` del JWT como actor de toda auditoría administrativa.
             installAdminAuditActor()
             adminRoutes(adminGateway, adminV1Gateway)

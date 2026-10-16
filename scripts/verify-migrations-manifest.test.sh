@@ -6,7 +6,7 @@ bash scripts/verify-migrations-manifest.sh >/dev/null || { echo "TEST FAIL: el r
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 n=0
 fresh() { n=$((n + 1)); w="$tmp/w$n"; mkdir -p "$w/supabase/migrations" "$w/scripts"; cp supabase/SLICE1_MIGRATIONS.txt supabase/SLICE2_MIGRATIONS.txt supabase/SLICE3_MIGRATIONS.txt supabase/SLICE7_MIGRATIONS.txt "$w/supabase/"; cp scripts/verify-migrations-manifest.sh "$w/scripts/"; mkdir -p "$w/docs/engineering"; cp docs/engineering/DEPLOYMENT.md "$w/docs/engineering/"
-  while IFS= read -r s; do [ -n "$s" ] && : > "$w/supabase/migrations/$s.sql"; done < <(cat supabase/SLICE1_MIGRATIONS.txt supabase/SLICE2_MIGRATIONS.txt supabase/SLICE3_MIGRATIONS.txt supabase/SLICE7_MIGRATIONS.txt); }
+  while IFS= read -r s; do [ -n "$s" ] && : > "$w/supabase/migrations/$s.sql"; done < <(cat supabase/SLICE1_MIGRATIONS.txt supabase/SLICE2_MIGRATIONS.txt supabase/SLICE3_MIGRATIONS.txt supabase/SLICE7_MIGRATIONS.txt | tr -d '\015'); }
 expect_fail() { MIG_ROOT="$w" bash "$w/scripts/verify-migrations-manifest.sh" >"$tmp/out" 2>&1 && { echo "TEST FAIL: $1 paso"; exit 1; }; grep -q '^FAIL:' "$tmp/out" || { echo "TEST FAIL: $1 sin FAIL"; exit 1; }; }
 fresh; MIG_ROOT="$w" bash "$w/scripts/verify-migrations-manifest.sh" >/dev/null || { echo "TEST FAIL: copia coincidente deberia pasar"; exit 1; }
 fresh; : > "$w/supabase/migrations/20260930109999_extra.sql"; expect_fail "migracion de mas"

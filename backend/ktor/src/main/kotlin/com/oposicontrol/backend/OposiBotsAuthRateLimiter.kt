@@ -84,6 +84,9 @@ internal enum class OposiBotsAuthOperation(
      * intentos ilimitados contra el codigo de una cuenta. Solo se usa como limite por sujeto (el de IP no se consulta).
      */
     ADMIN_ACCESS_VERIFY_DAILY(10, 20, 86_400),
+
+    /** DEBT-151: mutaciones de /api/v1/admin por administrador (limite real configurable: ADMIN_MUTATION_RATE_LIMIT_PER_MINUTE). */
+    ADMIN_MUTATION(120, 120, 60),
 }
 
 internal data class OposiBotsRateLimitDecision(
@@ -94,6 +97,10 @@ internal data class OposiBotsRateLimitDecision(
 internal interface OposiBotsAuthRateLimiter : AutoCloseable {
     suspend fun checkIp(operation: OposiBotsAuthOperation, clientIp: String): OposiBotsRateLimitDecision
     suspend fun checkSubject(operation: OposiBotsAuthOperation, subject: String): OposiBotsRateLimitDecision
+
+    /** Como [checkSubject] pero con tope explicito (configurable). Por defecto ignora [limit] y usa el de la operacion. */
+    suspend fun checkSubject(operation: OposiBotsAuthOperation, subject: String, limit: Int): OposiBotsRateLimitDecision =
+        checkSubject(operation, subject)
     override fun close() = Unit
 }
 
@@ -123,6 +130,12 @@ internal class InMemoryOposiBotsAuthRateLimiter(
         operation: OposiBotsAuthOperation,
         subject: String,
     ) = consume("subject", operation, subject, operation.subjectLimit)
+
+    override suspend fun checkSubject(
+        operation: OposiBotsAuthOperation,
+        subject: String,
+        limit: Int,
+    ) = consume("subject", operation, subject, limit)
 
     private fun consume(
         scope: String,
@@ -186,6 +199,12 @@ internal class ValkeyOposiBotsAuthRateLimiter(
         operation: OposiBotsAuthOperation,
         subject: String,
     ) = consume("subject", operation, subject, operation.subjectLimit)
+
+    override suspend fun checkSubject(
+        operation: OposiBotsAuthOperation,
+        subject: String,
+        limit: Int,
+    ) = consume("subject", operation, subject, limit)
 
     private suspend fun consume(
         scope: String,
