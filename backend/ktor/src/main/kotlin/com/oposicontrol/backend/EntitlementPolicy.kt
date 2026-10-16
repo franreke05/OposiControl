@@ -27,7 +27,7 @@ internal enum class AccessDecision { ALLOW_FREE, ALLOW_PREMIUM, ALLOW_CREDIT, AL
 internal enum class AccessState { FREE, GRANTED, SUBSCRIPTION, DEMO, LOCKED }
 
 /** Por que se deniega (no sale por el cable: para logs y para SLICE 3, `details.accessState`). */
-internal enum class AccessDenyReason { CAPABILITY_DISABLED, DEMO_ONLY, NOT_ENTITLED }
+internal enum class AccessDenyReason { CAPABILITY_DISABLED, DEMO_ONLY, NOT_ENTITLED, SPECIALTY_MISMATCH }
 
 internal data class AccessVerdict(
     val decision: AccessDecision,
@@ -61,6 +61,8 @@ internal data class ExamAccessSubject(
     val kind: ExamKind,
     val free: Boolean,
     val demoAvailable: Boolean,
+    /** V1 (owner 2026-10-16): la especialidad del examen. `null` = no se conoce (no se aplica la puerta). */
+    val specialtyId: String? = null,
 )
 
 /** `capacidades_especialidad` de la especialidad del examen. Sin fila = todo abierto (default de la tabla). */
@@ -114,6 +116,8 @@ internal data class PremiumFact(val esPremium: Boolean, val status: String, val 
 internal data class UserAccessFacts(
     val premium: PremiumFact? = null,
     val grants: List<ExamGrantFact> = emptyList(),
+    /** V1: la especialidad del usuario (se fija una vez). `null` = aun no elegida: sin puerta. */
+    val specialtyId: String? = null,
 )
 
 internal object EntitlementPolicy {
@@ -123,6 +127,10 @@ internal object EntitlementPolicy {
         user: UserAccessFacts,
         now: Instant,
     ): AccessVerdict {
+        // Regla 0 (V1, el propietario 2026-10-16): la especialidad es una PUERTA de acceso. Un examen de otra especialidad ni se ve ni se abre, tenga el usuario lo que tenga.
+        if (user.specialtyId != null && exam.specialtyId != null && user.specialtyId != exam.specialtyId) {
+            return AccessVerdict(AccessDecision.DENY, AccessState.LOCKED, AccessDenyReason.SPECIALTY_MISMATCH)
+        }
         if (!capabilities.allows(exam.kind)) {
             return AccessVerdict(AccessDecision.DENY, AccessState.LOCKED, AccessDenyReason.CAPABILITY_DISABLED)
         }

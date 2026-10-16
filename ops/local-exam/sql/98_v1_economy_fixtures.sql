@@ -31,12 +31,12 @@ on conflict (id) do nothing;
 set session_replication_role = origin;
 
 -- Triggers on: the profile creates the empty wallet row, exactly like production.
-insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta)
-values ('2a000000-0000-4000-8000-00000000002a', 'Q1 saldo alto', 'q1_saldo_alto', true, 'activa'),
-       ('2b000000-0000-4000-8000-00000000002b', 'Q2 falta un OT', 'q2_falta_un_ot', true, 'activa'),
-       ('2c000000-0000-4000-8000-00000000002c', 'Q2Z saldo cero', 'q2z_saldo_cero', true, 'activa'),
-       ('2d000000-0000-4000-8000-00000000002d', 'Q3 derechos', 'q3_derechos', true, 'activa'),
-       ('2e000000-0000-4000-8000-00000000002e', 'Q4 pagos', 'q4_pagos', true, 'activa')
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+values ('2a000000-0000-4000-8000-00000000002a', 'Q1 saldo alto', 'q1_saldo_alto', true, 'activa', 'e5000000-0000-4000-8000-000000000001'),
+       ('2b000000-0000-4000-8000-00000000002b', 'Q2 falta un OT', 'q2_falta_un_ot', true, 'activa', 'e5000000-0000-4000-8000-000000000001'),
+       ('2c000000-0000-4000-8000-00000000002c', 'Q2Z saldo cero', 'q2z_saldo_cero', true, 'activa', 'e5000000-0000-4000-8000-000000000001'),
+       ('2d000000-0000-4000-8000-00000000002d', 'Q3 derechos', 'q3_derechos', true, 'activa', 'e5000000-0000-4000-8000-000000000001'),
+       ('2e000000-0000-4000-8000-00000000002e', 'Q4 pagos', 'q4_pagos', true, 'activa', 'e5000000-0000-4000-8000-000000000001')
 on conflict (usuario_id) do nothing;
 
 insert into public.carteras_usuario (usuario_id, saldo_tickets)
@@ -102,3 +102,8 @@ values ('2d000000-0000-4000-8000-00000000002d', 'e3000000-0000-4000-8000-0000000
        ('2d000000-0000-4000-8000-00000000002d', 'e3000000-0000-4000-8000-000000000011', 'compra', now() - interval '29 days', now() + interval '1 hour', 10, 'OPOSITICKETS', '7d300000-0000-4000-8000-000000000011', now() - interval '29 days')
 on conflict (usuario_id, examen_id) where motivo = 'compra'
 do update set valido_desde = excluded.valido_desde, valido_hasta = excluded.valido_hasta;
+
+-- Specialty is an access gate and is set ONCE (owner 2026-10-16): the Q users hold the default local specialty (profiles created by an earlier run have none yet; NULL -> value is allowed).
+update public.perfiles_usuario set especialidad_principal_id = 'e5000000-0000-4000-8000-000000000001'
+ where usuario_id in ('2a000000-0000-4000-8000-00000000002a', '2b000000-0000-4000-8000-00000000002b', '2c000000-0000-4000-8000-00000000002c',
+                      '2d000000-0000-4000-8000-00000000002d', '2e000000-0000-4000-8000-00000000002e') and especialidad_principal_id is null;

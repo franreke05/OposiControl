@@ -948,6 +948,7 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     USERNAME_TAKEN(HttpStatusCode.Conflict, "Ese nombre de usuario ya esta en uso."),
     ALREADY_ONBOARDED_CONFLICT(HttpStatusCode.Conflict, "Tu perfil ya estaba completado con otros datos."),
     UNKNOWN_SPECIALTY(HttpStatusCode.UnprocessableEntity, "La especialidad elegida no existe o no esta activa."),
+    SPECIALTY_ALREADY_SET(HttpStatusCode.Conflict, "Tu especialidad ya esta elegida y no se puede cambiar desde la app."),
     UNKNOWN_COMMUNITY(HttpStatusCode.UnprocessableEntity, "La comunidad elegida no existe."),
     LEGAL_VERSION_NOT_ACTIVE(HttpStatusCode.UnprocessableEntity, "La version del documento legal ya no esta vigente."),
     DOCUMENT_NOT_ACTIVE(HttpStatusCode.UnprocessableEntity, "Alguno de los documentos legales no existe o no esta vigente."),
@@ -1007,6 +1008,7 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     PRODUCT_NOT_AVAILABLE(HttpStatusCode.UnprocessableEntity, "El paquete no esta disponible."),
     PAYMENT_PROVIDER_UNAVAILABLE(HttpStatusCode.UnprocessableEntity, "El metodo de pago no esta disponible."),
     ORDER_NOT_FOUND(HttpStatusCode.NotFound, "El pedido no existe."),
+    ORDER_PENDING_LIMIT(HttpStatusCode.Conflict, "Ya tienes varios pedidos abiertos. Termina o espera a que caduquen antes de crear otro."),
     PAYMENT_RECEIPT_INVALID(HttpStatusCode.UnprocessableEntity, "El justificante de pago no es valido para este pedido."),
     WEBHOOK_SIGNATURE_INVALID(HttpStatusCode.Unauthorized, "La firma del aviso de pago no es valida."),
     ;

@@ -205,6 +205,24 @@ class EconomyRoutesTest {
     private val other = "99999999-9999-4999-8999-999999999999"
 
     @Test
+    fun aJsonStringWhereANumberIsExpectedIsRejectedNotCoerced() = testApplication {
+        application { economyModule() }
+        val response = createClient { }.postJson("/api/v1/app/wallet/canjes", """{"examId":"$exam","expectedPrice":"30"}""")
+        assertEquals(HttpStatusCode.BadRequest, response.status, response.bodyAsText())
+        assertEquals("VALIDATION", code(response.bodyAsText()))
+        assertTrue(upstream.rpcs.isEmpty())
+    }
+
+    @Test
+    fun theOpenOrderCapIs409WithItsOwnCode() = testApplication {
+        application { economyModule() }
+        upstream.rpcHandler = { _, _ -> rpcError("ORDER_PENDING_LIMIT") }
+        val response = createClient { }.postJson("/api/v1/app/payments/orders", """{"productCode":"PACK_S","provider":"sandbox"}""")
+        assertEquals(HttpStatusCode.Conflict, response.status)
+        assertEquals("ORDER_PENDING_LIMIT", code(response.bodyAsText()))
+    }
+
+    @Test
     fun redeemRequiresAuthenticationAKeyAndAWellFormedExam() = testApplication {
         application { economyModule() }
         val client = createClient { }

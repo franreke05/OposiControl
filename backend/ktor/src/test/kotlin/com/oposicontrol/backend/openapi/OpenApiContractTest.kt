@@ -627,8 +627,8 @@ class OpenApiContractTest {
             assertEquals(false, body["additionalProperties"], "$id is strict: a specialties array would be rejected")
         }
         assertTrue(
-            (operations.single { it.contractId == "D1-13" }.op["description"] as String).contains("REPLACES the single active specialty"),
-            "D1-13 is the change-specialty operation and says it replaces the single specialty",
+            (operations.single { it.contractId == "D1-13" }.op["description"] as String).let { it.contains("SET ONCE") && it.contains("SPECIALTY_ALREADY_SET") },
+            "D1-13 (FA22, owner 2026-10-16): the specialty is set once and another id is 409 SPECIALTY_ALREADY_SET",
         )
 
         // No specialty list anywhere: no array-typed property or parameter named after a specialty.

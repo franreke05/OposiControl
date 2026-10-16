@@ -324,6 +324,7 @@ internal class AttemptService(
         if (!access.verdict.allowed) {
             throw when (access.verdict.denyReason) {
                 AccessDenyReason.CAPABILITY_DISABLED -> CanonicalErrorCode.SPECIALTY_TYPE_NOT_ALLOWED.exception()
+                AccessDenyReason.SPECIALTY_MISMATCH -> CanonicalErrorCode.EXAM_NOT_FOUND.exception()
                 else -> CanonicalErrorCode.EXAM_LOCKED.exception(details = ErrorDetails(accessState = access.verdict.state.name))
             }
         }

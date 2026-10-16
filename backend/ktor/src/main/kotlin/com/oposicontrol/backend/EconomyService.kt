@@ -175,6 +175,7 @@ internal object EconomyRpcErrors {
             "IDEMPOTENCY_KEY_REQUIRED" -> CanonicalErrorCode.IDEMPOTENCY_KEY_REQUIRED.exception()
             "PRODUCT_NOT_AVAILABLE" -> CanonicalErrorCode.PRODUCT_NOT_AVAILABLE.exception()
             "ORDER_NOT_FOUND" -> CanonicalErrorCode.ORDER_NOT_FOUND.exception()
+            "ORDER_PENDING_LIMIT" -> CanonicalErrorCode.ORDER_PENDING_LIMIT.exception()
             "ORDER_REQUEST_INVALID", "EVENT_INVALID" -> CanonicalErrorCode.VALIDATION.exception()
             // Perfil inexistente: el resolver de identidad ya lo habria cortado; aqui es una carrera con el borrado de cuenta.
             "WALLET_INVALID_USER" -> CanonicalErrorCode.PROFILE_MISSING.exception()

@@ -14,6 +14,8 @@
 --         newValidUntil = max(db_now, latest valido_hasta of the user's ACTIVE grants of that exam) + dias_acceso_compra days   (DB clock, never shortened)
 --     Price, days and purchasability are read INSIDE from `examenes` (precio_tickets, dias_acceso_compra, comprable_con_tickets). Nothing is invented: unset
 --     price or comprable_con_tickets = false -> NOT_PURCHASABLE. The request fingerprint is stored in the ledger row so a replay returns the same result.
+--   * SPECIALTY GATE (owner 2026-10-16): the verdict has a rule 0, SPECIALTY_MISMATCH (LOCKED) when the user's specialty is set and differs from the exam's; the redeem answers
+--     EXAM_NOT_FOUND for such an exam. Mirrored in Kotlin (EntitlementPolicy) and covered by the generated-matrix parity test.
 --   * public.app_server_now(): the database clock for Ktor. Ktor decides 'until when does this access last' for D2-02 / D2-13 with the SAME clock that wrote
 --     `valido_hasta` here (ServerClock reads it, then advances monotonically); a JVM-clock skew can never show an expired exam as valid.
 --   * Domain errors (SQLSTATE P0001, message = code, numbers in DETAIL as JSON): EXAM_NOT_FOUND, NOT_PURCHASABLE, PRICE_CHANGED {"price"},
@@ -117,11 +119,20 @@ declare
   e record;
   caps record;
   v_allows boolean;
+  v_uspec uuid;
   v_grant boolean;
   v_unlimited boolean;
 begin
   select x.tipo_examen, x.tipo_acceso, x.demo_disponible, x.especialidad_id into e from public.examenes x where x.id = p_examen;
   if not found then
+    return;
+  end if;
+  -- SPECIALTY IS AN ACCESS GATE (owner 2026-10-16): an exam outside the user's specialty is not visible and not usable, whatever else the user holds (a stored
+  -- purchase stays stored). A user without a specialty yet is not gated. Rule 0 of the single access rule.
+  select pf.especialidad_principal_id into v_uspec from public.perfiles_usuario pf where pf.usuario_id = p_usuario;
+  if v_uspec is not null and v_uspec <> e.especialidad_id then
+    state := 'LOCKED'; reason := 'SPECIALTY_MISMATCH'; unlimited_grant := false;
+    return next;
     return;
   end if;
   select c.permite_rafagas, c.permite_razonados, c.permite_inmersivos, c.permite_demos into caps
@@ -166,7 +177,7 @@ as $$
 declare
   v_key text := btrim(p_idem_key);
   v_fp text;
-  v_now timestamptz := now();
+  v_now timestamptz;
   v_exam public.examenes%rowtype;
   v_ledger public.transacciones_cartera%rowtype;
   v_verdict record;
@@ -186,6 +197,9 @@ begin
 
   -- ONE lock per wallet; every economic function takes it first.
   perform pg_advisory_xact_lock(hashtextextended('wallet:' || p_usuario::text, 0));
+  -- E2-V1-E03: the clock is read AFTER the lock. now() is the transaction START: a redeem that waited on the lock would use a stale instant, miss the
+  -- row the other purchase just committed and overwrite its end date with an earlier one (two debits, 30 days instead of 60).
+  v_now := clock_timestamp();
 
   -- Replay (authoritative: it works even if the Ktor idempotency store lost the response after the commit).
   select t.* into v_ledger from public.transacciones_cartera t where t.usuario_id = p_usuario and t.idempotency_key = v_key;
@@ -203,6 +217,11 @@ begin
   select x.* into v_exam from public.examenes x
    where x.id = p_examen and x.activo and x.publicado_en is not null and x.publicado_en <= v_now;
   if not found then
+    raise exception using errcode = 'P0001', message = 'EXAM_NOT_FOUND';
+  end if;
+  -- out of the user's specialty = the exam does not exist for this user (same answer as D2-02 / D2-03)
+  select v.* into v_verdict from private.exam_access_verdict(p_usuario, p_examen, v_now) v;
+  if v_verdict.reason = 'SPECIALTY_MISMATCH' then
     raise exception using errcode = 'P0001', message = 'EXAM_NOT_FOUND';
   end if;
   if not v_exam.comprable_con_tickets or v_exam.precio_tickets is null or v_exam.precio_tickets <= 0 or v_exam.dias_acceso_compra is null or v_exam.dias_acceso_compra <= 0 then
@@ -225,7 +244,7 @@ begin
 
   -- Entitlement window: extend from the latest ACTIVE end, never shorten; DB clock.
   select max(g.valido_hasta) into v_active_until from public.contenido_desbloqueado_usuario g
-   where g.usuario_id = p_usuario and g.examen_id = p_examen and g.valido_desde <= v_now and g.valido_hasta > v_now;
+   where g.usuario_id = p_usuario and g.examen_id = p_examen and g.valido_hasta > v_now;  -- regardless of valido_desde: a row committed an instant ago still counts
   v_until := greatest(v_now, coalesce(v_active_until, v_now)) + make_interval(days => v_exam.dias_acceso_compra);
   select g.valido_desde into v_existing_from from public.contenido_desbloqueado_usuario g
    where g.usuario_id = p_usuario and g.examen_id = p_examen and g.motivo = 'compra' and g.valido_hasta > v_now;
@@ -239,7 +258,9 @@ begin
   insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta, precio_pagado, moneda, transaccion_id, comprado_en)
   values (p_usuario, p_examen, 'compra', v_from, v_until, v_exam.precio_tickets, 'OPOSITICKETS', v_ledger.id, v_now)
   on conflict (usuario_id, examen_id) where motivo = 'compra'
-  do update set valido_desde = excluded.valido_desde, valido_hasta = excluded.valido_hasta, precio_pagado = excluded.precio_pagado,
+  do update set valido_desde = case when public.contenido_desbloqueado_usuario.valido_hasta >= excluded.valido_desde
+                                    then least(public.contenido_desbloqueado_usuario.valido_desde, excluded.valido_desde) else excluded.valido_desde end,
+                valido_hasta = greatest(public.contenido_desbloqueado_usuario.valido_hasta, excluded.valido_hasta), precio_pagado = excluded.precio_pagado,
                 moneda = excluded.moneda, transaccion_id = excluded.transaccion_id, comprado_en = excluded.comprado_en;
 
   insert into public.auditoria_log (usuario_id, accion, tabla_afectada, registro_id, despues)

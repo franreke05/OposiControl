@@ -296,7 +296,8 @@ internal class CatalogService(
     suspend fun listExams(userId: CanonicalUserId, query: ExamListQuery): AppExamPage = withUpstreamIo {
         val now = clock()
         val after = KeysetPosition.fromCursorKeys(query.page.after)
-        val rows = gateway.listPublished(query.filter, after, query.page.fetchLimit, now)
+        val filter = specialtyScoped(userId.value, query.filter) ?: return@withUpstreamIo AppExamPage(items = emptyList(), nextCursor = null, facets = null)
+        val rows = gateway.listPublished(filter, after, query.page.fetchLimit, now)
         val page = query.page.page(rows) { KeysetPosition(it.publicadoEnOrFail(), it.id).toKeys() }
         val verdicts = accessFor(userId.value, page.items, now)
         val covers = signedCovers(page.items)
@@ -317,7 +318,7 @@ internal class CatalogService(
                 accessState = verdicts.getValue(row.id).state,
             )
         }
-        AppExamPage(items = items, nextCursor = page.nextCursor, facets = if (query.includeFacets) facets(query.filter, now) else null)
+        AppExamPage(items = items, nextCursor = page.nextCursor, facets = if (query.includeFacets) facets(filter, now) else null)
     }
 
     /** Facetas sobre el catalogo publicado (acotadas por `especialidadId` si viene). Desbordadas = `null` (nunca truncadas en silencio). */
@@ -334,6 +335,16 @@ internal class CatalogService(
         )
     }
 
+    /**
+     * V1 (owner 2026-10-16): la especialidad es una PUERTA. Con especialidad elegida, las listas se acotan a ella (aunque el cliente pida otra o ninguna);
+     * pedir OTRA especialidad devuelve `null` = lista vacia. Sin especialidad elegida no se acota. Un derecho comprado de otra especialidad sigue guardado, pero no sale.
+     */
+    private fun specialtyScoped(userId: String, filter: CatalogFilter): CatalogFilter? {
+        val own = gateway.userSpecialty(userId) ?: return filter
+        if (filter.specialtyId != null && filter.specialtyId != own) return null
+        return filter.copy(specialtyId = own)
+    }
+
     // ----- D2-02 -----
     suspend fun getExam(userId: CanonicalUserId, examId: String): AppExamResponse = withUpstreamIo {
         val now = clock()
@@ -341,6 +352,7 @@ internal class CatalogService(
         val row = gateway.getPublished(examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
         val info = accessInfoFor(userId.value, listOf(row), now).getValue(row.id)
         val verdict = info.verdict
+        if (verdict.denyReason == AccessDenyReason.SPECIALTY_MISMATCH) throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
         val covers = signedCovers(listOf(row))
         val names = communityNames()
         val attempts = gateway.attemptRefs(userId.value, row.id)
@@ -373,9 +385,10 @@ internal class CatalogService(
         val now = clock()
         val after = KeysetPosition.fromCursorKeys(query.page.after)
         val uid = userId.value
+        val filter = specialtyScoped(uid, query.filter) ?: return@withUpstreamIo MyExamsPage(items = emptyList())
         when (query.view) {
             MyExamsView.EN_CURSO -> {
-                val rows = gateway.myOpenAttempts(uid, query.filter, after, query.page.fetchLimit, now)
+                val rows = gateway.myOpenAttempts(uid, filter, after, query.page.fetchLimit, now)
                 val page = query.page.page(rows) { KeysetPosition(it.actualizadoEn, it.id).toKeys() }
                 val exams = page.items.map { it.examenes }
                 val verdicts = accessInfoFor(uid, exams, now)
@@ -388,7 +401,7 @@ internal class CatalogService(
                 )
             }
             MyExamsView.ADQUIRIDOS -> {
-                val rows = gateway.myActiveGrants(uid, query.filter, after, query.page.fetchLimit, now)
+                val rows = gateway.myActiveGrants(uid, filter, after, query.page.fetchLimit, now)
                 val page = query.page.page(rows) { KeysetPosition(it.validoDesde, it.id).toKeys() }
                 val exams = page.items.map { it.examenes }
                 val verdicts = accessInfoFor(uid, exams, now)
@@ -407,7 +420,7 @@ internal class CatalogService(
             // de lectura; aqui solo se anade lo que es de Ktor: la MISMA politica de acceso y la firma de portadas. Los grupos
             // se piden con la primera pagina (sin cursor); en las siguientes van a `null`, que el contrato admite.
             MyExamsView.COLECCION -> {
-                val collection = gateway.myCollection(uid, query.filter, after, query.page.fetchLimit, withGroups = after == null)
+                val collection = gateway.myCollection(uid, filter, after, query.page.fetchLimit, withGroups = after == null)
                 val page = query.page.page(collection.items) { KeysetPosition(it.ordenEn, it.examenes.id).toKeys() }
                 val exams = page.items.map { it.examenes }
                 val verdicts = accessInfoFor(uid, exams, now)
@@ -471,12 +484,13 @@ internal class CatalogService(
         val premium = gateway.premiumRow(userId)?.toFact()
         val grants = gateway.grantsFor(userId, examIds)
         val capabilities = gateway.capabilitiesFor(exams.map { it.especialidadId }.distinct())
+        val userSpecialty = gateway.userSpecialty(userId)
         return exams.associate { exam ->
             val examGrants = grants[exam.id].orEmpty()
             val verdict = EntitlementPolicy.check(
-                exam = ExamAccessSubject(exam.id, exam.kind(), free = exam.accessType() == "gratuito", demoAvailable = exam.demoDisponible),
+                exam = ExamAccessSubject(exam.id, exam.kind(), free = exam.accessType() == "gratuito", demoAvailable = exam.demoDisponible, specialtyId = exam.especialidadId),
                 capabilities = capabilities[exam.especialidadId] ?: SpecialtyAccessCapabilities.OPEN,
-                user = UserAccessFacts(premium = premium, grants = examGrants),
+                user = UserAccessFacts(premium = premium, grants = examGrants, specialtyId = userSpecialty),
                 now = now,
             )
             exam.id to AccessInfo(verdict, if (verdict.state == AccessState.GRANTED) grantedUntil(examGrants, now) else null)

@@ -57,10 +57,13 @@ class AccessVerdictParityTest {
         for (premium in premiums) for (grants in grantSets) add(UserCombo(premium, grants))
     }
 
-    private fun verdict(exam: ExamCombo, user: UserCombo): AccessState = EntitlementPolicy.check(
-        exam = ExamAccessSubject("exam", exam.kind, free = exam.free, demoAvailable = exam.demo),
+    /** Relacion especialidad usuario/examen (puerta de especialidad, propietario 2026-10-16): 0 = sin especialidad elegida, 1 = la del examen, 2 = otra. */
+    private val modes = listOf(0, 1, 2)
+
+    private fun verdict(exam: ExamCombo, user: UserCombo, mode: Int): AccessState = EntitlementPolicy.check(
+        exam = ExamAccessSubject("exam", exam.kind, free = exam.free, demoAvailable = exam.demo, specialtyId = "E"),
         capabilities = exam.caps ?: SpecialtyAccessCapabilities.OPEN,
-        user = UserAccessFacts(premium = user.premium, grants = user.grants),
+        user = UserAccessFacts(premium = user.premium, grants = user.grants, specialtyId = when (mode) { 0 -> null; 1 -> "E"; else -> "X" }),
         now = now,
     ).state
 
@@ -76,11 +79,11 @@ class AccessVerdictParityTest {
     fun theMatrixIsBigAndReachesEveryStateOfTheContract() {
         val seen = mutableSetOf<AccessState>()
         var cases = 0
-        for (user in users) for (exam in exams) {
-            seen += verdict(exam, user)
+        for (user in users) for (exam in exams) for (mode in modes) {
+            seen += verdict(exam, user, mode)
             cases++
         }
-        assertEquals(204 * 140, cases)
+        assertEquals(204 * 140 * 3, cases)
         assertEquals(AccessState.entries.toSet(), seen, "la matriz tiene que producir los cinco estados")
     }
 
@@ -119,8 +122,8 @@ class AccessVerdictParityTest {
                         )
                     },
                 ),
-                // una cadena por usuario con una letra por examen: F GRANTED=G SUBSCRIPTION=S DEMO=D LOCKED=L
-                "expected" to JsonArray(users.map { u -> JsonPrimitive(exams.map { e -> code(verdict(e, u)) }.joinToString("")) }),
+                // una cadena por usuario con una letra por (examen, modo de especialidad 0/1/2, en ese orden): F GRANTED=G SUBSCRIPTION=S DEMO=D LOCKED=L
+                "expected" to JsonArray(users.map { u -> JsonPrimitive(exams.flatMap { e -> modes.map { m -> code(verdict(e, u, m)) } }.joinToString("")) }),
             ),
         )
         File(out).also { it.parentFile?.mkdirs() }.writeText(json.toString())

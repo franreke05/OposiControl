@@ -312,8 +312,8 @@ await scenario('WALLET', async () => {
   check('WALLET.D6_01_A_balance_and_recent', wa.status === 200 && wa.json.saldo === 35 && wa.json.recientes?.length === 5
     && wa.json.recientes[0].saldoResultante === 35, `${wa.status} saldo=${wa.json?.saldo} recientes=${wa.json?.recientes?.length}`);
   const tipos = new Set((ma.json?.items ?? []).map((m) => m.tipo));
-  check('WALLET.D6_02_A_movements_several_categories', ma.status === 200 && ma.json.items.length === 6 && tipos.size === 6 && ma.json.items[0].tipo === 'ajuste' && ma.json.items[0].saldoResultante === 35
-    && ma.json.items.slice(1).every((m, i, all) => i === 0 || m.saldoResultante === all[i - 1].saldoAnterior), `${ma.status} tipos=${[...tipos].join(',')}`);
+  check('WALLET.D6_02_A_movements_several_categories', ma.status === 200 && ma.json.items.length === 5 && tipos.size === 5 && ma.json.items[0].saldoResultante === 35 && !ma.json.items.some((m) => m.referencia?.tipo === 'legacy_opening')
+    && ma.json.items.every((m, i, all) => i === 0 || m.saldoResultante === all[i - 1].saldoAnterior), `${ma.status} tipos=${[...tipos].join(',')}`);
   check('WALLET.D6_01_A_consumable_active', (wa.json?.consumibles ?? []).some((c) => c.servicioCodigo === 'potenciador'), JSON.stringify(wa.json?.consumibles ?? null).slice(0, 120));
   check('WALLET.D6_01_B_empty', wb.status === 200 && wb.json.saldo === 0 && wb.json.recientes.length === 0 && wb.json.consumibles.length === 0, `${wb.status}`);
   check('WALLET.D6_02_B_empty', mb.status === 200 && mb.json.items.length === 0, `${mb.status}`);
@@ -422,20 +422,28 @@ await scenario('SPECIALTY', async () => {
   const unknownField = await patch('A', { especialidadId: LOC, usuarioId: '0b000000-0000-4000-8000-00000000000b' });
   check('SPECIALTY.unknown_field_is_400', unknownField.status === 400, `${unknownField.status}`);
   check('SPECIALTY.nothing_written_by_the_rejected_requests', (await me('A')) === LOC, `${await me('A')}`);
+  // V1 (owner 2026-10-16): the specialty is SET ONCE; another id is 409 SPECIALTY_ALREADY_SET and nothing changes; the same id is a no-op
   const ch = await patch('A', { especialidadId: ING });
-  check('SPECIALTY.change_replaces_the_single_specialty', ch.status === 200 && (await me('A')) === ING, `${ch.status}`);
+  check('SPECIALTY.change_is_409_specialty_already_set', ch.status === 409 && ch.json?.code === 'SPECIALTY_ALREADY_SET' && (await me('A')) === LOC, `${ch.status}/${ch.json?.code}`);
+  const same = await patch('A', { especialidadId: LOC });
+  check('SPECIALTY.same_id_is_a_no_op_200', same.status === 200 && (await me('A')) === LOC, `${same.status}`);
   const forged = await patch('B', { especialidadId: LOC }, { 'X-Usuario-Id': '1a000000-0000-4000-8000-00000000001a', 'X-User-Id': '1a000000-0000-4000-8000-00000000001a' });
-  check('SPECIALTY.forged_user_headers_are_ignored', forged.status === 200 && (await me('B')) === LOC && (await me('A')) === ING, `${forged.status}`);
+  check('SPECIALTY.forged_user_headers_are_ignored', forged.status === 200 && (await me('B')) === LOC && (await me('A')) === LOC, `${forged.status}`);
   const stale = await patch('A', { especialidadId: LOC }, { 'If-Match': '"1999-01-01T00:00:00Z"' });
-  check('SPECIALTY.stale_if_match_is_412_nothing_written', stale.status === 412 && (await me('A')) === ING, `${stale.status}`);
+  check('SPECIALTY.stale_if_match_is_412_nothing_written', stale.status === 412 && (await me('A')) === LOC, `${stale.status}`);
   // relogin: un token nuevo del mismo usuario (otra sesion) lee la misma especialidad persistida
   const fresh = await fetch(KTOR + '/api/v1/app/me', { headers: { Authorization: `Bearer ${rawTokens.XA}` } }).then((r) => r.json());
-  check('SPECIALTY.persists_across_sessions', fresh.profile?.especialidadPrincipalId === ING, `${fresh.profile?.especialidadPrincipalId}`);
+  check('SPECIALTY.persists_across_sessions', fresh.profile?.especialidadPrincipalId === LOC, `${fresh.profile?.especialidadPrincipalId}`);
+  // the specialty is an ACCESS GATE: lists are scoped to it, another specialty is empty, an exam of another specialty does not exist for the user
+  const mine = await call('A', 'GET', '/api/v1/app/examenes');
+  check('SPECIALTY.list_is_scoped_to_the_own_specialty', mine.status === 200 && mine.json.items.length >= 1 && mine.json.items.every((i) => i.especialidadId === LOC || !i.especialidadId), `${mine.json?.items?.length}`);
   const mk = await call('A', 'GET', `/api/v1/app/examenes?especialidadId=${ING}`);
-  check('SPECIALTY.market_filter_by_id_is_server_side', mk.status === 200 && mk.json.items.length >= 1 && mk.json.items.every((i) => ['e1000000-0000-4000-8000-0000000000e2', 'e3000000-0000-4000-8000-000000000005'].includes(i.id)), `${mk.json?.items?.length}`);
+  check('SPECIALTY.other_specialty_filter_is_empty', mk.status === 200 && mk.json.items.length === 0, `${mk.json?.items?.length}`);
+  const gateDetail = await call('A', 'GET', '/api/v1/app/examenes/e1000000-0000-4000-8000-0000000000e2');
+  const gateStart = await call('A', 'POST', '/api/v1/app/examenes/e1000000-0000-4000-8000-0000000000e2/intentos', {}, key());
+  check('SPECIALTY.exam_of_another_specialty_is_404_on_detail_and_start', gateDetail.status === 404 && gateDetail.json?.code === 'EXAM_NOT_FOUND' && gateStart.status === 404, `${gateDetail.status}/${gateStart.status}`);
   const none = await call('A', 'GET', `/api/v1/app/examenes?especialidadId=${OBS}`);
-  check('SPECIALTY.specialty_is_not_authorization', none.status === 200 && none.json.items.length === 0 && (await call('A', 'GET', `/api/v1/app/examenes/${EX.NORMAL}`)).status === 200, `${none.status}`);
-  await patch('A', { especialidadId: LOC }); // deja a XA como estaba
+  check('SPECIALTY.own_specialty_exam_still_opens', none.status === 200 && none.json.items.length === 0 && (await call('A', 'GET', `/api/v1/app/examenes/${EX.NORMAL}`)).status === 200, `${none.status}`);
 });
 
 // ---------- DB CALLS / LATENCY (EX12 / EX13) from /metrics ----------
@@ -540,12 +548,16 @@ await scenario('ECONOMY', async () => {
 
   // --- 5 peticiones simultaneas con la MISMA clave: un solo debito ---
   const kp = key();
-  const par = await Promise.all(Array.from({ length: 5 }, () => redeem('Q1', OT.ING, {}, kp)));
+  const par = await Promise.all(Array.from({ length: 5 }, () => redeem('Q1', OT.EXPIRED, {}, kp)));
   const okPar = par.filter((r) => r.status === 201 || r.status === 200);
-  check('ECONOMY.D6_03_parallel_same_key_one_debit', ledgerCount('Q1', OT.ING) === 1 && bal('Q1') === '165' && new Set(okPar.map((r) => r.json?.canje?.transactionId)).size === 1,
+  check('ECONOMY.D6_03_parallel_same_key_one_debit', ledgerCount('Q1', OT.EXPIRED) === 1 && bal('Q1') === '160' && new Set(okPar.map((r) => r.json?.canje?.transactionId)).size === 1,
     'ok=' + okPar.length + ' codes=' + par.map((r) => r.status + (r.json?.code ? ':' + r.json.code : '')).join(',') + ' bal=' + bal('Q1'));
 
   // --- guardas: precio esperado, saldo, gratis, sin precio, inexistente, premium ---
+  // specialty gate: Q1 holds the LOC specialty, so the priced ING exam does not exist for Q1 (redeem 404, nothing written, detail 404)
+  const ing = await redeem('Q1', OT.ING);
+  const ingDetail = await call('Q1', 'GET', '/api/v1/app/examenes/' + OT.ING);
+  check('ECONOMY.specialty_gate_redeem_and_detail_of_another_specialty_404', ing.status === 404 && ing.json?.code === 'EXAM_NOT_FOUND' && ledgerCount('Q1', OT.ING) === 0 && ingDetail.status === 404 && bal('Q1') === '160', ing.status + ' ' + ingDetail.status);
   const pc = await redeem('Q1', OT.ONE, { expectedPrice: 5 });
   check('ECONOMY.D6_03_price_changed_409', pc.status === 409 && pc.json?.code === 'PRICE_CHANGED' && pc.json?.details?.price === 1 && ledgerCount('Q1', OT.ONE) === 0, pc.status + ' ' + pc.text.slice(0, 120));
   const short = await redeem('Q2', OT.IMM30);
@@ -574,6 +586,21 @@ await scenario('ECONOMY', async () => {
   const epUntil = ep.json?.canje ? Date.parse(ep.json.canje.validUntil) : 0;
   check('ECONOMY.D6_03_active_entitlement_extends_from_its_end', ep.status === 201 && Math.abs((epUntil - Date.now()) / day - (30 + 1 / 24)) < 0.01, ep.status + ' days=' + ((epUntil - Date.now()) / day));
   check('ECONOMY.D6_03_one_entitlement_row_per_user_exam', sql("select count(*) from public.contenido_desbloqueado_usuario where usuario_id = '" + Q.Q3 + "' and examen_id = '" + OT.EXPIRING + "' and motivo = 'compra'") === '1');
+
+  // --- E2-V1-E03 regression: two paid purchases ALWAYS add up (sequential and parallel), never 30 days for two debits ---
+  const base0 = bal('Q3');
+  const s1 = await redeem('Q3', OT.ONE);
+  const s2 = await redeem('Q3', OT.ONE);
+  const seqDays = s2.json?.canje ? (Date.parse(s2.json.canje.validUntil) - Date.now()) / day : 0;
+  check('ECONOMY.E03_two_sequential_purchases_give_60_days', s1.status === 201 && s2.status === 201 && Math.abs(seqDays - 60) < 0.01 && ledgerCount('Q3', OT.ONE) === 2, 'days=' + seqDays);
+  const par4 = await Promise.all(Array.from({ length: 4 }, () => redeem('Q3', OT.ONE)));
+  const okc = par4.filter((r) => r.status === 201).length;
+  const finalUntil = sql("select extract(epoch from valido_hasta) from public.contenido_desbloqueado_usuario where usuario_id = '" + Q.Q3 + "' and examen_id = '" + OT.ONE + "' and motivo = 'compra'");
+  const parDays = (Number(finalUntil) * 1000 - Date.now()) / day;
+  check('ECONOMY.E03_parallel_purchases_add_up_one_30_day_block_per_debit', okc === 4 && ledgerCount('Q3', OT.ONE) === 6 && Math.abs(parDays - 180) < 0.05 && Number(bal('Q3')) === Number(base0) - 6, 'ok=' + okc + ' debits=' + ledgerCount('Q3', OT.ONE) + ' days=' + parDays);
+  // E2-V1-E04: a JSON string is not a number
+  const strBody = await fetch(KTOR + '/api/v1/app/wallet/canjes', { method: 'POST', headers: { Authorization: 'Bearer ' + tokens.Q4, 'Content-Type': 'application/json', 'Idempotency-Key': key() }, body: '{"examId":"' + OT.ONE + '","expectedPrice":"1"}' });
+  check('ECONOMY.E04_string_expectedPrice_is_400', strBody.status === 400, String(strBody.status));
 
   // --- D6-11 paquetes ---
   const packs = await call('Q4', 'GET', '/api/v1/app/wallet/paquetes');

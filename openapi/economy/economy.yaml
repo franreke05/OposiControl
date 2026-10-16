@@ -62,7 +62,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
-            description: 'EXAM_NOT_FOUND (also draft, archived or not yet published).'
+            description: 'EXAM_NOT_FOUND (also draft, archived, not yet published, or an exam of a specialty other than the caller one: the specialty is an access gate, FA22).'
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
             description: 'INSUFFICIENT_BALANCE (details.balance, details.price), PRICE_CHANGED (details.price), ALREADY_ACCESSIBLE (details.accessState: the exam is free, or the user has Premium or an unlimited grant) or IDEMPOTENCY_KEY_IN_PROGRESS.'
