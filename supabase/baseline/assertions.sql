@@ -1699,3 +1699,90 @@ begin
   raise notice 'OK V1 access v2';
 end $$;
 rollback;
+
+-- 20261022101000: V1 demo mode (the 5 flagged questions only, never the first answer, never ranking, limits).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000c1','dm1@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000c2','dm2@test.local','authenticated','authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000c1','DA','DA','da',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000c1','CDA','Com DA','com-da');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+  select u, 'dm' || right(u::text, 1), 'dm' || right(u::text, 1), true, 'activa', 'e1000000-0000-0000-0000-0000000000c1'
+  from (values ('a0000000-0000-0000-0000-0000000000c1'::uuid), ('a0000000-0000-0000-0000-0000000000c2'::uuid)) v(u)
+  on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, demo_disponible) values
+  ('e5000000-0000-0000-0000-0000000000c1','DM-IMM','e1000000-0000-0000-0000-0000000000c1','c1000000-0000-0000-0000-0000000000c1','Inmersivo con demo','inmersivo','premium',true, now() - interval '1 day', false),
+  ('e5000000-0000-0000-0000-0000000000c2','DM-NODEMO','e1000000-0000-0000-0000-0000000000c1','c1000000-0000-0000-0000-0000000000c1','Inmersivo sin demo','inmersivo','premium',true, now() - interval '1 day', false);
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+select ('f6000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, 'DM-' || n, 'inmersiva', 'Pregunta demo ' || n, true from generate_series(1, 8) n;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+select ('0c600000-0000-0000-0000-000000000' || lpad(n::text, 2, '0') || o)::uuid, ('f6000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, chr(64 + o), 'Opcion', o
+from generate_series(1, 8) n, generate_series(1, 2) o;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento)
+select ('f6000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, ('0c600000-0000-0000-0000-000000000' || lpad(n::text, 2, '0') || '1')::uuid, 'porque si' from generate_series(1, 8) n;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen)
+select 'e5000000-0000-0000-0000-0000000000c1', ('f6000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, n, n from generate_series(1, 8) n;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) values ('e5000000-0000-0000-0000-0000000000c2', 'f6000000-0000-0000-0000-000000000001', 1, 1);
+set local session_replication_role = origin;
+
+do $$
+declare
+  u1 uuid := 'a0000000-0000-0000-0000-0000000000c1'; u2 uuid := 'a0000000-0000-0000-0000-0000000000c2';
+  ex uuid := 'e5000000-0000-0000-0000-0000000000c1'; nodemo uuid := 'e5000000-0000-0000-0000-0000000000c2';
+  r jsonb; a uuid; a2 uuid; n int;
+  q1 uuid := 'f6000000-0000-0000-0000-000000000001'; q6 uuid := 'f6000000-0000-0000-0000-000000000006';
+  ok1 uuid := '0c600000-0000-0000-0000-000000000011'; ok6 uuid := '0c600000-0000-0000-0000-000000000061';
+begin
+  -- the demo can only be switched on with a complete set, and the set cannot exceed the configured size
+  perform pg_temp.expect_e(format($q$update public.examenes set demo_disponible = true where id = %L$q$, ex), 'DEMO_SET_INCOMPLETE');
+  update public.preguntas_examen set es_demo = true where examen_id = ex and posicion <= 5;
+  perform pg_temp.expect_e(format($q$update public.preguntas_examen set es_demo = true where examen_id = %L and posicion = 6$q$, ex), 'DEMO_SET_FULL');
+  update public.examenes set demo_disponible = true where id = ex;
+  -- start a DEMO: no access, so the attempt holds ONLY the 5 flagged questions
+  r := public.app_start_exam_attempt(u1, ex, 'DEMO');
+  assert r ->> 'outcome' = 'CREATED' and (r ->> 'es_demo')::boolean, 'demo attempt created: ' || r::text;
+  a := (r ->> 'intento_id')::uuid;
+  assert (select count(*) from public.preguntas_intento where intento_id = a) = 5, 'exactly 5 questions frozen';
+  assert not exists (select 1 from public.preguntas_intento pi join public.preguntas_examen pe on pe.pregunta_id = pi.pregunta_id and pe.examen_id = ex where pi.intento_id = a and not pe.es_demo), 'only flagged questions';
+  assert (select es_demo and acceso_estado = 'DEMO' and not cuenta_para_ranking and not es_primer_intento_examen and total_preguntas = 5 from public.intentos_examen where id = a), 'demo attempt flags';
+  assert (public.app_start_exam_attempt(u1, ex, 'DEMO')) ->> 'outcome' = 'RESUMED', 'a second demo start resumes it';
+  -- nothing beyond the 5
+  assert (public.app_record_attempt_answer(u1, a, q6, '0c600000-0000-0000-0000-000000000061', 0, 0, null)) ->> 'outcome' = 'QUESTION_NOT_IN_ATTEMPT', 'a sixth question cannot be answered';
+  r := public.app_record_attempt_answer(u1, a, q1, ok1, 0, 0, null);
+  assert r ->> 'outcome' = 'OK' and not (r ->> 'es_primera_respuesta')::boolean, 'a demo answer is never the first answer';
+  assert (select not es_primer_intento_pregunta and not cuenta_para_ranking from public.respuestas_intento where intento_id = a and pregunta_id = q1), 'demo answer row: not first, not ranking';
+  -- a user WITHOUT demo availability / set is simply locked
+  assert (public.app_start_exam_attempt(u1, nodemo, 'DEMO')) ->> 'outcome' = 'EXAM_LOCKED', 'no demo on that exam';
+  -- per-user start limit (config)
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'demo_inicios_usuario_dia';
+  perform public.app_abandon_exam_attempt(u1, a, 1, 'salida_usuario');
+  assert (public.app_start_exam_attempt(u1, ex, 'DEMO')) ->> 'outcome' = 'DEMO_LIMIT', 'the per-user demo start limit';
+  update public.configuracion_v1 set valor_integer = 20 where clave = 'demo_inicios_usuario_dia';
+  -- a user WITH access that sends DEMO gets a normal attempt; the open demo of the other kind is closed, never resumed
+  r := public.app_start_exam_attempt(u1, ex, 'DEMO');
+  a2 := (r ->> 'intento_id')::uuid;
+  insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values (u1, ex, 'admin', now() - interval '1 hour', now() + interval '5 days');
+  r := public.app_start_exam_attempt(u1, ex, 'DEMO');
+  assert r ->> 'outcome' = 'CREATED' and not (r ->> 'es_demo')::boolean and (r ->> 'intento_id')::uuid <> a2, 'with access, DEMO is a normal attempt: ' || r::text;
+  assert (select estado from public.intentos_examen where id = a2) = 'abandonado', 'the open demo was closed';
+  a := (r ->> 'intento_id')::uuid;
+  assert (select intento_numero_usuario = 1 and es_primer_intento_examen and not es_demo and acceso_estado = 'GRANTED' from public.intentos_examen where id = a), 'a demo does not shift the numbering: the real attempt is the first';
+  assert (select count(*) from public.preguntas_intento where intento_id = a) = 8, 'the real attempt holds all 8 questions';
+  -- the first real answer to a question already seen in a demo: first answer, NOT ranking; to a question never seen: first answer and ranking
+  r := public.app_record_attempt_answer(u1, a, q1, ok1, 0, 0, null);
+  assert (r ->> 'es_primera_respuesta')::boolean, 'the real answer is the first answer (the demo did not consume it)';
+  assert (select es_primer_intento_pregunta and not cuenta_para_ranking from public.respuestas_intento where intento_id = a and pregunta_id = q1), 'seen in a demo: first answer, but no ranking (note: the start RPC never sets cuenta_para_ranking, the column default false shadows the trigger coalesce: stats use es_primer_intento_pregunta)';
+  r := public.app_record_attempt_answer(u1, a, q6, ok6, 0, 0, null);
+  assert (select es_primer_intento_pregunta from public.respuestas_intento where intento_id = a and pregunta_id = q6), 'never seen: first answer';
+  select count(*) into n from public.respuestas_intento where usuario_id = u1 and es_primer_intento_pregunta;
+  assert n = 2, 'only the two real answers are first answers';
+  raise notice 'OK V1 demo mode';
+end $$;
+rollback;
