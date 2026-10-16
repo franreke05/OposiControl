@@ -131,7 +131,7 @@ psql(`do $$ begin
 end $$;`);
 // E5-V1-F01: quita la fila de apertura DUPLICADA que dejo un borrador anterior de la migracion (solo local; no hace nada en una cartera limpia).
 if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
-for (const v of ['20261022100300_v1_wallet_ledger_hardening', '20261022100400_v1_payment_orders', '20261022100500_v1_exam_redeem', '20261022100600_v1_specialty_immutable', '20261022100700_v1_admin_grant']) {
+for (const v of ['20261022100300_v1_wallet_ledger_hardening', '20261022100400_v1_payment_orders', '20261022100500_v1_exam_redeem', '20261022100600_v1_specialty_immutable', '20261022100700_v1_admin_grant', '20261022100800_v1_saved_items']) {
   psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));
 }
 psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));

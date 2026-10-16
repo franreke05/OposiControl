@@ -1016,6 +1016,7 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     PRODUCT_NOT_AVAILABLE(HttpStatusCode.UnprocessableEntity, "El paquete no esta disponible."),
     PAYMENT_PROVIDER_UNAVAILABLE(HttpStatusCode.UnprocessableEntity, "El metodo de pago no esta disponible."),
     ORDER_NOT_FOUND(HttpStatusCode.NotFound, "El pedido no existe."),
+    SAVED_LIMIT_REACHED(HttpStatusCode.UnprocessableEntity, "Has llegado al maximo de preguntas guardadas. Quita alguna para guardar otra."),
     ORDER_PENDING_LIMIT(HttpStatusCode.Conflict, "Ya tienes varios pedidos abiertos. Termina o espera a que caduquen antes de crear otro."),
     PAYMENT_RECEIPT_INVALID(HttpStatusCode.UnprocessableEntity, "El justificante de pago no es valido para este pedido."),
     WEBHOOK_SIGNATURE_INVALID(HttpStatusCode.Unauthorized, "La firma del aviso de pago no es valida."),

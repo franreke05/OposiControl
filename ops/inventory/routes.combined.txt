@@ -17,6 +17,7 @@ DELETE /api/v1/admin/preguntas/{}
 DELETE /api/v1/admin/preguntas/{}/examenes/{}
 DELETE /api/v1/admin/preguntas/{}/recursos/{}
 DELETE /api/v1/app/me
+DELETE /api/v1/app/opositeca/guardados/{}/{}
 DELETE /content/comunidades/{}
 DELETE /content/especialidades/{}
 DELETE /content/etiquetas/{}
@@ -132,6 +133,8 @@ GET /api/v1/app/me/billing-history
 GET /api/v1/app/me/entitlement
 GET /api/v1/app/me/examenes
 GET /api/v1/app/oposired/categorias
+GET /api/v1/app/opositeca
+GET /api/v1/app/opositeca/guardados/{}
 GET /api/v1/app/opositester/me
 GET /api/v1/app/payments/orders/{}
 GET /api/v1/app/reto-diario
@@ -282,6 +285,7 @@ PUT /api/v1/admin/especialidades/{}/capacidades
 PUT /api/v1/admin/planes/{}
 PUT /api/v1/admin/tipos-noticia/{}
 PUT /api/v1/app/intentos/{}/respuestas/{}
+PUT /api/v1/app/opositeca/guardados/{}/{}
 PUT /content/comunidades
 PUT /content/especialidades
 PUT /content/etiquetas

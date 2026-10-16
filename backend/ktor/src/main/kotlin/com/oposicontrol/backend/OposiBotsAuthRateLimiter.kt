@@ -86,6 +86,9 @@ internal enum class OposiBotsAuthOperation(
     /** E2-P02 / FA20: lecturas de cartera (D6-01, D6-02). 60 por minuto: la Home y la pantalla de cartera piden 1-2 por carga. */
     WALLET_READ(120, 60, 60),
 
+    /** V1 (Guardar, FA26): guardar y quitar de la OposiTeca (D4-20, D4-21): 60 por minuto y usuario. */
+    SAVED_WRITE(120, 60, 60),
+
     /** V1 (E2-V1-R01): reportar una pregunta (D5-15): 10 por minuto y usuario, para que nadie inunde la bandeja de Control. */
     FEEDBACK_REPORT(60, 10, 60),
 

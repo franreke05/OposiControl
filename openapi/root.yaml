@@ -33,6 +33,8 @@ tags:
     description: 'News articles, news types and news assets administration.'
   - name: wallet
     description: 'OposiTickets wallet of the current user (reads).'
+  - name: opositeca
+    description: 'The saved questions of the current user (OposiTeca, V1).'
   - name: payments
     description: 'Payment orders of the current user and the provider notification (V1 economy).'
   - name: moderation-admin
@@ -228,6 +230,12 @@ paths:
     $ref: 'economy/economy.yaml#/components/pathItems/PaymentOrder'
   /api/v1/app/payments/orders/{orderId}/verify:
     $ref: 'economy/economy.yaml#/components/pathItems/PaymentOrderVerify'
+  /api/v1/app/opositeca:
+    $ref: 'opositeca/opositeca.yaml#/components/pathItems/Opositeca'
+  /api/v1/app/opositeca/guardados/{tipo}:
+    $ref: 'opositeca/opositeca.yaml#/components/pathItems/SavedState'
+  /api/v1/app/opositeca/guardados/{tipo}/{targetId}:
+    $ref: 'opositeca/opositeca.yaml#/components/pathItems/SavedItem'
   /api/v1/webhooks/payments/{provider}:
     $ref: 'economy/economy.yaml#/components/pathItems/PaymentWebhook'
   /api/v1/admin/moderacion/hilos:

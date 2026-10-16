@@ -132,6 +132,7 @@ components:
         - WEBHOOK_SIGNATURE_INVALID
         - ORDER_PENDING_LIMIT
         - SPECIALTY_ALREADY_SET
+        - SAVED_LIMIT_REACHED
   headers:
     XRequestId:
       description: 'Request correlation id; equals ErrorEnvelope.requestId.'

@@ -610,6 +610,7 @@ fun Application.module() {
         accessRequestGateway = SupabaseAdminAccessRequestGateway.fromEnvironment(json),
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
         economyRuntime = canonicalIdentityResolver?.let { EconomyRuntime.fromEnvironment(it, authRuntime) },
+        savedItemsRuntime = canonicalIdentityResolver?.let { SavedItemsRuntime.fromEnvironment(it, authRuntime) },
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
             catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter) }
         },
@@ -676,6 +677,8 @@ internal class CombinedRoutingDeps(
     internal val attemptRuntime: AttemptRuntime? = null,
     /** V1 economia: canje, paquetes, pedidos de pago y avisos del proveedor. */
     internal val economyRuntime: EconomyRuntime? = null,
+    /** V1 Guardar + OposiTeca (D4-20, D4-21, D4-24, D4-26). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val savedItemsRuntime: SavedItemsRuntime? = null,
     /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
     internal val newsRuntime: NewsRuntime? = null,
     /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
@@ -739,6 +742,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     attemptRoutes(attemptRuntime)
     // V1 economia (OposiTickets): canje D6-03, paquetes D6-11, pedidos D6-12..D6-14 y aviso del proveedor.
     economyRoutes(economyRuntime)
+    // V1 Guardar + OposiTeca: preguntas guardadas del usuario (D4-20, D4-21, D4-24, D4-26).
+    savedItemsRoutes(savedItemsRuntime)
     authRuntime?.let {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).

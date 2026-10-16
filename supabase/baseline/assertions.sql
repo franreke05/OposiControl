@@ -1389,3 +1389,130 @@ select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a000000
 select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000ee', 'e5000000-0000-0000-0000-0000000000c1', 'admin')$q$, 'GIFT_USER_NOT_FOUND');
 do $$ begin raise notice 'OK V1 admin gift'; end $$;
 rollback;
+
+-- 20261022100800: V1 saved questions (Guardar + OposiTeca): idempotent save/unsave, per-user scope, specialty gate + access verdict, cap, keyset list.
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000b1','sv1@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000b2','sv2@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000b3','sv3@test.local','authenticated','authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000b1','SA','SA','sa',true), ('e1000000-0000-0000-0000-0000000000b2','SB','SB','sb',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000b1','CB','Com B','com-b');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values
+  ('a0000000-0000-0000-0000-0000000000b1','sv1','sv1',true,'activa','e1000000-0000-0000-0000-0000000000b1'),
+  ('a0000000-0000-0000-0000-0000000000b2','sv2','sv2',true,'activa','e1000000-0000-0000-0000-0000000000b2')
+  on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+set local session_replication_role = replica;  -- the code trigger overwrites codigo_pregunta from a private sequence the gate bootstrap does not carry
+-- b2 free (SA), b1 premium (SA), b3 free (SB)
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, demo_disponible) values
+  ('e5000000-0000-0000-0000-0000000000b1','S-PREM','e1000000-0000-0000-0000-0000000000b1','c1000000-0000-0000-0000-0000000000b1','Premium SA','rafaga','premium',true, now() - interval '1 day', false),
+  ('e5000000-0000-0000-0000-0000000000b2','S-FREE','e1000000-0000-0000-0000-0000000000b1','c1000000-0000-0000-0000-0000000000b1','Gratis SA','rafaga','gratuito',true, now() - interval '2 days', false),
+  ('e5000000-0000-0000-0000-0000000000b3','S-OTHER','e1000000-0000-0000-0000-0000000000b2','c1000000-0000-0000-0000-0000000000b1','Gratis SB','rafaga','gratuito',true, now() - interval '1 day', false);
+-- q01..q09 (q05 inactive), q10 only in the SB exam, q11 only in the premium SA exam
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+select ('f5000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, 'SV-' || n, 'rafaga', 'Pregunta guardable ' || n, n <> 5
+  from generate_series(1, 9) n;
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values
+  ('f5000000-0000-0000-0000-000000000010', 'SV-10', 'rafaga', 'Pregunta de SB', true),
+  ('f5000000-0000-0000-0000-000000000011', 'SV-11', 'rafaga', 'Solo premium', true);
+-- the free SA exam holds q01..q09 (q04 annulled there); the premium one holds q02 (also free elsewhere) and q11
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, anulada)
+select 'e5000000-0000-0000-0000-0000000000b2', ('f5000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, n, n, n = 4 from generate_series(1, 9) n;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) values
+  ('e5000000-0000-0000-0000-0000000000b1','f5000000-0000-0000-0000-000000000002', 1, 1),
+  ('e5000000-0000-0000-0000-0000000000b1','f5000000-0000-0000-0000-000000000011', 2, 2),
+  ('e5000000-0000-0000-0000-0000000000b3','f5000000-0000-0000-0000-000000000010', 1, 1);
+set local session_replication_role = origin;
+
+do $$
+declare
+  u1 uuid := 'a0000000-0000-0000-0000-0000000000b1'; u2 uuid := 'a0000000-0000-0000-0000-0000000000b2';
+  first_ts timestamptz; r record; n int; ids uuid[];
+  v_last_ts timestamptz; v_last_id uuid; v_seen uuid[] := '{}'; v_page int := 0; v_rows int; rr record;
+begin
+  -- save, idempotent
+  select guardado_en into first_ts from public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000001');
+  assert first_ts is not null, 'saved';
+  assert (select guardado_en from public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000001')) = first_ts, 'saving twice returns the ORIGINAL guardado_en';
+  assert (select count(*) from public.recursos_guardados_usuario where usuario_id = u1) = 1, 'no duplicate row';
+  -- gates: premium-only question without access, another specialty, annulled, inactive, unknown
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000011')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000010')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000004')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000005')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-0000000000ff')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','recurso','f5000000-0000-0000-0000-000000000001')$q$, 'SAVED_INVALID');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b9','pregunta','f5000000-0000-0000-0000-000000000001')$q$, 'WALLET_INVALID_USER');
+  assert (select count(*) from public.recursos_guardados_usuario where usuario_id = u1) = 1, 'refusals wrote nothing';
+  -- q02 is in the premium exam AND in a free exam of the user's specialty: saveable through the free one
+  perform public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000002');
+  -- the other specialty saves its own, and cannot save u1's content
+  perform public.app_save_item(u2, 'pregunta', 'f5000000-0000-0000-0000-000000000010');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b2','pregunta','f5000000-0000-0000-0000-000000000001')$q$, 'NOT_FOUND');
+  assert (select count(*) from public.app_saved_state(u2, 'pregunta', array['f5000000-0000-0000-0000-000000000001'::uuid, 'f5000000-0000-0000-0000-000000000010'::uuid])) = 1, 'state is per user';
+  -- premium question after a grant
+  insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta)
+    values (u1, 'e5000000-0000-0000-0000-0000000000b1', 'admin', now() - interval '1 day', now() + interval '10 days');
+  perform public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000011');
+  select * into r from public.app_list_saved(u1, 'pregunta', null, null, 10) l where l.target_id = 'f5000000-0000-0000-0000-000000000011';
+  assert r.accesible and r.titulo = 'Solo premium' and r.examen_titulo = 'Premium SA', 'accessible item carries the title and the exam';
+  -- access lost later: row stays, content hidden, a re-save still answers
+  update public.contenido_desbloqueado_usuario set valido_desde = now() - interval '2 days', valido_hasta = now() - interval '1 second' where usuario_id = u1 and examen_id = 'e5000000-0000-0000-0000-0000000000b1';
+  select * into r from public.app_list_saved(u1, 'pregunta', null, null, 10) l where l.target_id = 'f5000000-0000-0000-0000-000000000011';
+  assert not r.accesible and r.titulo is null and r.examen_id is null, 'lost access: item stays, content hidden';
+  perform public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000011');
+  -- state
+  select array_agg(s.pregunta_id) into ids from public.app_saved_state(u1, 'pregunta', array['f5000000-0000-0000-0000-000000000001'::uuid, 'f5000000-0000-0000-0000-000000000003'::uuid, 'f5000000-0000-0000-0000-000000000002'::uuid]) s;
+  assert cardinality(ids) = 2, 'state returns only saved ids';
+  perform pg_temp.expect_e($q$select * from public.app_saved_state('a0000000-0000-0000-0000-0000000000b1','pregunta', (select array_agg(gen_random_uuid()) from generate_series(1, 51)))$q$, 'SAVED_INVALID');
+  -- keyset paging: u1 has q01, q02, q11 saved; add q06..q09 -> 7 rows, pages of 3
+  for n in 6..9 loop perform public.app_save_item(u1, 'pregunta', ('f5000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid); end loop;
+  loop
+    v_rows := 0;
+    for rr in select * from public.app_list_saved(u1, 'pregunta', v_last_ts, v_last_id, 3) loop
+      v_rows := v_rows + 1; v_seen := v_seen || rr.target_id; v_last_ts := rr.guardado_en; v_last_id := rr.id;
+    end loop;
+    exit when v_rows = 0;
+    v_page := v_page + 1;
+    assert v_page < 10, 'paging terminates';
+  end loop;
+  assert cardinality(v_seen) = 7 and (select count(distinct x) from unnest(v_seen) x) = 7, 'keyset pages cover every saved row exactly once';
+  assert v_seen[1] = 'f5000000-0000-0000-0000-000000000009', 'newest first';
+  -- unsave: scoped, idempotent
+  assert public.app_unsave_item(u2, 'pregunta', 'f5000000-0000-0000-0000-000000000001') = 0, 'another user cannot remove my row';
+  assert public.app_unsave_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000001') = 1, 'removed';
+  assert public.app_unsave_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000001') = 0, 'unsave twice is a no-op';
+end $$;
+-- cap (500 per user): fixture rows under replica (the code trigger would overwrite codigo_pregunta)
+set local session_replication_role = replica;
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+  select gen_random_uuid(), 'CAP-' || g, 'rafaga', 'cap ' || g, true from generate_series(1, 600) g;
+insert into public.recursos_guardados_usuario (usuario_id, tipo, pregunta_id)
+  select 'a0000000-0000-0000-0000-0000000000b1', 'pregunta', p.id from public.preguntas p where p.codigo_pregunta like 'CAP-%' order by p.codigo_pregunta
+   limit (500 - (select count(*) from public.recursos_guardados_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000b1'))::int;
+set local session_replication_role = origin;
+do $$
+declare u1 uuid := 'a0000000-0000-0000-0000-0000000000b1';
+begin
+  assert (select count(*) from public.recursos_guardados_usuario where usuario_id = u1) = 500, 'at the cap';
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000001')$q$, 'SAVED_LIMIT_REACHED');
+  assert (select guardado_en from public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000002')) is not null, 'an already saved item still answers at the cap';
+  -- no client path
+  assert not has_table_privilege('anon', 'public.recursos_guardados_usuario', 'select') and not has_table_privilege('authenticated', 'public.recursos_guardados_usuario', 'select')
+     and not has_table_privilege('service_role', 'public.recursos_guardados_usuario', 'insert') and not has_table_privilege('service_role', 'public.recursos_guardados_usuario', 'delete'), 'table is RPC-only';
+  assert not has_function_privilege('authenticated', 'public.app_save_item(uuid,text,uuid)', 'execute') and has_function_privilege('service_role', 'public.app_save_item(uuid,text,uuid)', 'execute'), 'function grants';
+end $$;
+-- deleting a question removes the saved rows
+delete from public.preguntas_examen where pregunta_id = 'f5000000-0000-0000-0000-000000000010';
+delete from public.preguntas where id = 'f5000000-0000-0000-0000-000000000010';
+do $$ begin
+  assert not exists (select 1 from public.recursos_guardados_usuario where pregunta_id = 'f5000000-0000-0000-0000-000000000010'), 'on delete cascade from the question';
+  raise notice 'OK V1 saved items';
+end $$;
+rollback;
