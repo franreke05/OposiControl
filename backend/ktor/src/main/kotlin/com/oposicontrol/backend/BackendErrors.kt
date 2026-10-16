@@ -40,6 +40,11 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     "EVENT_IDEMPOTENCY_CONFLICT" to DomainErrorDefinition(HttpStatusCode.Conflict, "La clave de idempotencia ya fue utilizada con otro evento."),
     "EVENT_VERSION_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La versión del evento no es válida."),
     "EVENT_IDEMPOTENCY_KEY_REQUIRED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La clave de idempotencia es obligatoria."),
+    // V1: regalo de un examen (admin_grant_exam_access, un mes, puertas de especialidad y capacidad).
+    "GIFT_REASON_NOT_ALLOWED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Ese tipo de acceso no se puede conceder a mano."),
+    "GIFT_USER_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "El usuario no existe."),
+    "GIFT_EXAM_NOT_AVAILABLE" to DomainErrorDefinition(HttpStatusCode.NotFound, "El examen no existe o no esta publicado."),
+    "GIFT_NOT_USABLE" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "El usuario no podria usar ese examen: es de otra especialidad o su especialidad no admite ese tipo."),
     "WALLET_INVALID_USER" to DomainErrorDefinition(HttpStatusCode.NotFound, "El usuario de la cartera no existe."),
     "WALLET_AMOUNT_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La cantidad de tickets no puede ser cero."),
     "WALLET_TYPE_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "El tipo de operación de cartera no es válido."),

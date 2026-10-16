@@ -3651,6 +3651,21 @@ private data class EstadoPremiumRow(
 
 
 @Serializable
+private data class AdminGrantExamRpc(
+    @SerialName("p_usuario") val usuario: String,
+    @SerialName("p_examen") val examen: String,
+    @SerialName("p_motivo") val motivo: String,
+)
+
+@Serializable
+private data class AdminGrantExamResult(
+    val outcome: String,
+    @SerialName("grant_id") val grantId: String,
+    @SerialName("valido_desde") val validoDesde: String? = null,
+    @SerialName("valido_hasta") val validoHasta: String? = null,
+)
+
+@Serializable
 private data class AdminGrantTicketsRpc(
     @SerialName("p_usuario_id") val usuarioId: String,
     @SerialName("p_cantidad") val cantidad: Int,
@@ -7193,60 +7208,40 @@ class AdminV1Gateway private constructor(
         }
         val user = findPerfil(input.userId, input.userName)
         val exam = findExamen(input.examId, input.examTitle)
-        // Un acceso vigente del mismo usuario sobre el mismo examen ya es el resultado pedido: se devuelve tal cual, sin
-        // escribir una segunda fila (la tabla no tiene unicidad y dos filas vigentes hacian imposible retirar el acceso).
-        grantsOf(user.usuarioId, exam.id).firstOrNull { it.vigente(Instant.now()) }?.let { existing ->
-            return AdminExamAccessDto(
-                id = existing.id,
-                userName = user.displayName(user.usuarioId),
-                examTitle = exam.titulo,
-                accessType = existing.motivo.orEmpty().ifBlank { "manual" },
-                isActive = true,
-                userId = user.usuarioId,
-                examId = exam.id,
-                grantedAt = existing.creadoEn,
-                validUntil = existing.validoHasta,
-            )
-        }
-        // Siempre una fila NUEVA: el `id` que mande el cliente se ignora. Antes se reutilizaba con `on_conflict=id`, y
-        // guardar la fila de una persona con el nombre de otra le traspasaba el acceso sin dejar rastro.
-        val row = ContenidoDesbloqueadoInsertRow(
-            id = UUID.randomUUID().toString(),
-            usuarioId = user.usuarioId,
-            examenId = exam.id,
-            motivo = motivo,
-            validoHasta = null,
-        )
-        return request(
+        // V1 (propietario 2026-10-16): un regalo da UN MES (el plazo de la politica, como una compra), fijado por el SERVIDOR, nunca libre ni ilimitado. Todo en
+        // una RPC atomica (misma cerradura de cartera que el canje): examen publicado, usuario existente, las puertas de especialidad y capacidad como en
+        // cualquier acceso, apilado max(ahora_db, fin vigente) + plazo sin acortar nunca, y ninguna fila con valido_hasta nulo. No toca la cartera.
+        val grant = request(
             "POST",
-            "/rest/v1/contenido_desbloqueado_usuario",
-            sbJson.encodeToString(listOf(row)),
-            prefer = "return=representation",
-        ).decodeList<ContenidoDesbloqueadoRow>().first().let {
-            // Conceder acceso a un examen de pago es una accion economica: queda en auditoria con quien la hizo.
+            "/rest/v1/rpc/admin_grant_exam_access",
+            sbJson.encodeToString(AdminGrantExamRpc(user.usuarioId, exam.id, motivo)),
+        ).decodeList<AdminGrantExamResult>().firstOrNull() ?: error("La concesion de acceso no devolvio resultado.")
+        if (grant.outcome == "CREATED") {
+            // Conceder acceso a un examen de pago es una accion economica: queda en auditoria (append-only) con quien la hizo.
             registrarAuditoriaResultado(
                 "acceso_examen_concedido",
                 "contenido_desbloqueado_usuario",
-                it.id,
+                grant.grantId,
                 antes = null,
                 despues = buildJsonObject {
                     put("usuario_id", JsonPrimitive(user.usuarioId))
                     put("examen_id", JsonPrimitive(exam.id))
                     put("motivo", JsonPrimitive(motivo))
+                    put("valido_hasta", JsonPrimitive(grant.validoHasta.orEmpty()))
                 },
             )
-            AdminExamAccessDto(
-                id = it.id,
-                userName = user.displayName(user.usuarioId),
-                examTitle = exam.titulo,
-                accessType = it.motivo.orEmpty().ifBlank { "manual" },
-                isActive = true,
-                userId = user.usuarioId,
-                examId = exam.id,
-                grantedAt = it.creadoEn,
-                validUntil = it.validoHasta,
-            )
         }
+        return AdminExamAccessDto(
+            id = grant.grantId,
+            userName = user.displayName(user.usuarioId),
+            examTitle = exam.titulo,
+            accessType = motivo,
+            isActive = true,
+            userId = user.usuarioId,
+            examId = exam.id,
+            grantedAt = grant.validoDesde,
+            validUntil = grant.validoHasta,
+        )
     }
 
     /**
