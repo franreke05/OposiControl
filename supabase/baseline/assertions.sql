@@ -2490,3 +2490,82 @@ begin
   raise notice 'OK V1 wave 3 stats';
 end $$;
 rollback;
+
+-- 20261022101700: W4 ranking (cohort positions, place probability, top 3 with opt-in handles, minimum cohort, own data only).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.u(n int) returns uuid language sql as $$ select ('a0000000-0000-0000-0000-' || lpad((200 + n)::text, 12, '0'))::uuid $$;
+insert into auth.users (id, email, aud, role) select pg_temp.u(n), 'rk' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 10) n;
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000b1', 'RK', 'RK', 'rk', true), ('e1000000-0000-0000-0000-0000000000b2', 'RK2', 'RK2', 'rk2', true);
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+select pg_temp.u(n), 'rk' || n, case when n = 10 then null else 'rk_user' || n end, true, 'activa', case when n = 7 then 'e1000000-0000-0000-0000-0000000000b2'::uuid else 'e1000000-0000-0000-0000-0000000000b1'::uuid end from generate_series(1, 10) n
+on conflict (usuario_id) do update set username = excluded.username, especialidad_principal_id = excluded.especialidad_principal_id;
+insert into public.ligas_nivel (id, codigo, nombre, preguntas_minimas, ventana_calculo, posicion) values ('1e910000-0000-0000-0000-000000000001', 'rk-1', 'Liga RK', 0, 3, 1);
+-- six ranked users (full window) in specialty 1, one in specialty 2, one without league, one with an incomplete window
+insert into public.estado_competitivo_usuario (usuario_id, liga_nivel_id, preguntas_validas_ranking, ventana_calculo, nota_media_actual)
+select pg_temp.u(n), case when n = 8 then null else '1e910000-0000-0000-0000-000000000001'::uuid end, case when n = 9 then 1 else 3 end, 3, (array[9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 9.5, null, 2.0])[n] from generate_series(1, 9) n;
+update public.estado_competitivo_usuario set liga_nivel_id = null where usuario_id = pg_temp.u(8);
+update public.perfiles_usuario set ranking_publico = true where usuario_id in (pg_temp.u(1), pg_temp.u(3), pg_temp.u(7));
+
+do $$
+declare
+  r jsonb; s jsonb; i int;
+begin
+  update public.configuracion_v1 set valor_integer = 5 where clave = 'cohorte_minima_comparativa';
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = 0 where clave = 'ranking_job_minutos'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  -- before the job nothing is ranked
+  r := public.app_ranking_me(pg_temp.u(4));
+  assert not (r ? 'posicion') and r -> 'liga' ->> 'codigo' = 'rk-1' and (r -> 'visibilidad' ->> 'publico')::boolean is false, 'not ranked before the job: ' || r::text;
+  s := public.app_job_ranking(true);
+  assert s ->> 'estado' = 'OK', 'the job runs: ' || s::text;
+  -- positions inside tier x specialty ordered by Nota media (specialty 2, the no-league user and the incomplete-window user are not in the cohort)
+  assert (select array_agg(ranking_liga_posicion order by ranking_liga_posicion) from public.estado_competitivo_usuario where usuario_id in (select pg_temp.u(n) from generate_series(1, 6) n)) = array[1, 2, 3, 4, 5, 6], 'positions 1..6';
+  assert (select ranking_liga_posicion from public.estado_competitivo_usuario where usuario_id = pg_temp.u(7)) = 1 and (select ranking_cohorte from public.estado_competitivo_usuario where usuario_id = pg_temp.u(7)) = 1, 'another specialty is another cohort';
+  -- place probability: worse / (comparable - 1) x 100 over full windows of the same specialty and window: u1 100, u3 60, u4 40, u6 0
+  assert (select probabilidad_plaza from public.estado_competitivo_usuario where usuario_id = pg_temp.u(1)) = 100.00 and (select probabilidad_plaza from public.estado_competitivo_usuario where usuario_id = pg_temp.u(3)) = 60.00
+     and (select probabilidad_plaza from public.estado_competitivo_usuario where usuario_id = pg_temp.u(4)) = 40.00 and (select probabilidad_plaza from public.estado_competitivo_usuario where usuario_id = pg_temp.u(6)) = 0.00, 'place probability';
+  -- own view at or above the minimum cohort (6 >= 5): own position, bucket, public top 3 of the OWN cohort only
+  r := public.app_ranking_me(pg_temp.u(4));
+  assert (r ->> 'posicion')::int = 4 and (r -> 'cohorte' ->> 'tramo')::int = 5 and (r -> 'probabilidadPlaza' ->> 'disponible')::boolean and (r -> 'probabilidadPlaza' ->> 'porcentaje')::numeric = 40.00 and (r -> 'probabilidadPlaza' ->> 'tramoCohorte')::int = 5, 'own view: ' || r::text;
+  assert jsonb_array_length(r -> 'top3') = 2 and r -> 'top3' -> 0 ->> 'handle' = 'rk_user1' and (r -> 'top3' -> 0 ->> 'posicion')::int = 1 and r -> 'top3' -> 1 ->> 'handle' = 'rk_user3' and (r -> 'top3' -> 1 ->> 'posicion')::int = 3, 'only opted-in users with their real positions: ' || (r -> 'top3')::text;
+  assert not (r::text like '%rk_user2%') and not (r::text like '%rk1@test%'), 'no other identifier leaks';
+  r := public.app_ranking_me(pg_temp.u(7));
+  assert (r ->> 'posicion')::int = 1 and r -> 'top3' = '[]'::jsonb and not (r ? 'cohorte') and r -> 'probabilidadPlaza' ->> 'motivo' = 'cohorte_insuficiente', 'a user of another specialty sees only its own cohort: ' || r::text;
+  r := public.app_ranking_me(pg_temp.u(8));
+  assert r -> 'liga' = 'null'::jsonb and r -> 'probabilidadPlaza' ->> 'motivo' = 'sin_liga' and r -> 'top3' = '[]'::jsonb, 'no league';
+  r := public.app_ranking_me(pg_temp.u(9));
+  assert r -> 'probabilidadPlaza' ->> 'motivo' = 'ventana_incompleta', 'incomplete window';
+  -- below the minimum cohort: only the own position
+  update public.configuracion_v1 set valor_integer = 7 where clave = 'cohorte_minima_comparativa';
+  r := public.app_ranking_me(pg_temp.u(4));
+  assert (r ->> 'posicion')::int = 4 and not (r ? 'cohorte') and r -> 'top3' = '[]'::jsonb and not (r -> 'probabilidadPlaza' ->> 'disponible')::boolean and r -> 'probabilidadPlaza' ->> 'motivo' = 'cohorte_insuficiente', 'minimum cohort enforced in the database: ' || r::text;
+  update public.configuracion_v1 set valor_integer = 5 where clave = 'cohorte_minima_comparativa';
+  -- opt-in / opt-out
+  assert (public.app_set_ranking_visibility(pg_temp.u(2), true) ->> 'publico')::boolean, 'opt in';
+  perform public.app_job_ranking(true);
+  r := public.app_ranking_me(pg_temp.u(4));
+  assert jsonb_array_length(r -> 'top3') = 3 and r -> 'top3' -> 1 ->> 'handle' = 'rk_user2', 'the new public user is listed at the real position';
+  perform public.app_set_ranking_visibility(pg_temp.u(1), false);
+  assert not exists (select 1 from public.ranking_top where usuario_id = pg_temp.u(1)), 'opting out removes the listing immediately';
+  perform pg_temp.expect_e(format($q$select public.app_set_ranking_visibility(%L, true)$q$, pg_temp.u(10)), 'USERNAME_REQUIRED');
+  -- job: throttled, watermarked, admin recompute with audit and cooldown
+  assert public.app_job_ranking(false) ->> 'estado' = 'RECIENTE', 'throttled by Control';
+  update public.estado_competitivo_usuario set nota_media_actual = 9.9, actualizado_en = now() where usuario_id = pg_temp.u(6);
+  update public.lotes_actualizacion_ranking set iniciado_en = now() - interval '1 hour' where tipo = 'ranking';
+  s := public.app_job_ranking(false);
+  assert s ->> 'estado' = 'OK' and (select ranking_liga_posicion from public.estado_competitivo_usuario where usuario_id = pg_temp.u(6)) = 1, 'a changed user is re-ranked by the incremental run';
+  s := public.admin_recompute_stats(pg_temp.u(1), 'ranking');
+  assert s ->> 'estado' = 'OK' and exists (select 1 from public.auditoria_log where accion = 'estadisticas_recalculo' and despues ->> 'alcance' = 'ranking'), 'audited admin recompute of the ranking';
+  perform pg_temp.expect_e(format($q$select public.admin_recompute_stats(%L, 'ranking')$q$, pg_temp.u(1)), 'STATS_RECOMPUTE_COOLDOWN');
+  perform pg_temp.expect_e($q$select public.admin_recompute_stats(null, 'todo')$q$, 'STATS_SCOPE_INVALID');
+  -- grants
+  assert not has_table_privilege('authenticated', 'public.ranking_top', 'select') and not has_table_privilege('anon', 'public.ranking_top', 'select') and not has_table_privilege('service_role', 'public.ranking_top', 'select'), 'top table closed';
+  assert not has_function_privilege('authenticated', 'public.app_ranking_me(uuid)', 'execute') and not has_function_privilege('anon', 'public.app_job_ranking(boolean)', 'execute') and has_function_privilege('service_role', 'public.app_set_ranking_visibility(uuid,boolean)', 'execute'), 'functions service-only';
+  raise notice 'OK V1 wave 4 ranking';
+end $$;
+rollback;

@@ -1020,6 +1020,7 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     PRODUCT_NOT_AVAILABLE(HttpStatusCode.UnprocessableEntity, "El paquete no esta disponible."),
     PAYMENT_PROVIDER_UNAVAILABLE(HttpStatusCode.UnprocessableEntity, "El metodo de pago no esta disponible."),
     ORDER_NOT_FOUND(HttpStatusCode.NotFound, "El pedido no existe."),
+    USERNAME_REQUIRED(HttpStatusCode.UnprocessableEntity, "Necesitas un nombre de usuario para aparecer en el ranking."),
     PLAN_QUOTA_NONE(HttpStatusCode.UnprocessableEntity, "Tu plan no incluye examenes inmersivos o no tienes una suscripcion activa."),
     PLAN_QUOTA_FULL(HttpStatusCode.UnprocessableEntity, "Ya has elegido todos los inmersivos que incluye tu plan."),
     EXAM_NOT_IMMERSIVE(HttpStatusCode.UnprocessableEntity, "Solo los examenes inmersivos se eligen con el cupo del plan."),

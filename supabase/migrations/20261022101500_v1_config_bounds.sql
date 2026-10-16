@@ -59,7 +59,7 @@ as $$
     when p_clave in ('dominio_medio_pct', 'dominio_alto_pct') then array[0, 100]
     when p_clave = 'ventana_nota_defecto' then array[1, 1000]
     when p_clave = 'cohorte_minima_comparativa' then array[1, 100000]
-    when p_clave in ('dificultad_job_minutos', 'recalculo_admin_cooldown_min') then array[1, 1440]
+    when p_clave in ('dificultad_job_minutos', 'recalculo_admin_cooldown_min', 'ranking_job_minutos') then array[1, 1440]
     when p_clave = 'reto_hora_desbloqueo' then array[0, 23]
     when p_clave in ('bonus_racha_desde_dia', 'bonus_racha_max_dias') then array[1, 365]
     when p_clave = 'reto_reclamar_dias' then array[0, 30]

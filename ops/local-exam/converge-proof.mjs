@@ -73,7 +73,12 @@ try {
   // OFFICIAL RULES: data from before the migration keeps the legacy path (no rule snapshot, no stored nota, no reserve) and the defaults reproduce today
   assert(psql("select count(*) from public.intentos_examen where regla_anuladas is not null or nota is not null") === '0', 'attempts that predate the official rules carry no snapshot');
   assert(psql("select count(*) from public.preguntas_examen where es_reserva or orden_reserva is not null") === '0' && psql("select count(*) from public.examenes where regla_anuladas is not null or penalizacion_num <> 0") === '0', 'existing exams: no reserve, derived rule, no penalty');
-  assert(psql('select count(*) from private.v1_applied_migrations') === '14', 'fourteen stamps recorded (20261022100300..101600)');
+  assert(psql('select count(*) from private.v1_applied_migrations') === '15', 'fifteen stamps recorded (20261022100300..101700)');
+  // W4 RANKING: nothing is ranked or published by the converge; every pre-existing user stays private (opt-in default false); the top table is closed; the job runs on the old data without error
+  assert(psql('select count(*) from public.ranking_top') === '0' && psql('select count(*) from public.estado_competitivo_usuario where ranking_liga_posicion is not null or probabilidad_plaza is not null') === '0', 'no ranking invented by the converge');
+  assert(psql('select count(*) from public.perfiles_usuario where ranking_publico') === '0', 'every pre-existing user is private (ranking_publico default false)');
+  assert(psql("select (not has_table_privilege('authenticated', 'public.ranking_top', 'select') and not has_table_privilege('anon', 'public.ranking_top', 'select'))::text") === 'true', 'ranking_top is closed to clients after the converge');
+  assert(psql("select public.app_job_ranking(true) ->> 'estado'") === 'OK' && psql("select (public.app_ranking_me('a0000000-0000-0000-0000-0000000000d1') -> 'probabilidadPlaza' ->> 'disponible')") === 'false', 'the ranking job and read run on pre-existing data (no league: not available)');
   assert(psql("select (public.app_plan_quota('a0000000-0000-0000-0000-0000000000d1') ->> 'nivel')") === '0', 'the plan summary RPC answers for a pre-existing user (no subscription: nivel 0)');
   assert(psql("select count(*) from pg_proc where proname = 'app_choose_plan_exam'") === '1', 'the quota function exists after the converge');
   assert(psql("select count(*) from pg_proc where proname = 'app_save_item'") === '1', 'saved-items functions exist now');

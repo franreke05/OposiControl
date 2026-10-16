@@ -38,8 +38,10 @@ const results = [];
 const check = (id, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${detail ? '  ' + detail : ''}`); };
 
 // ---- fixtures + reset (idempotent)
-let fx = `set session_replication_role = replica;
+// the attempt deletes run with the NORMAL role so their answers/summaries cascade (orphaned answers would make a later run's answers non-first)
+let fx = `delete from public.respuestas_intento where usuario_id = '${Q1}' and pregunta_id::text like 'fb000000-%';
 delete from public.intentos_examen where usuario_id = '${Q1}' and examen_id = '${EX}';
+set session_replication_role = replica;
 delete from public.primeras_respuestas_usuario where usuario_id = '${Q1}';
 delete from public.estadisticas_usuario where usuario_id = '${Q1}';
 delete from public.estadisticas_usuario_etiqueta where usuario_id = '${Q1}';
@@ -68,7 +70,7 @@ sql(fx);
 
 try {
   const empty = await http('GET', '/api/v1/app/estadisticas/resumen');
-  check('J19.summary_of_a_new_user_is_empty', empty.status === 200 && empty.json?.preguntasValidas === 0 && empty.json?.notaMedia?.provisional === true && empty.json?.notaMedia?.valor === undefined
+  check('J19.summary_of_a_new_user_is_empty', empty.status === 200 && empty.json?.preguntasValidas === 0 && empty.json?.notaMedia?.provisional === true && empty.json?.notaMedia?.valor == null
     && empty.headers.get('cache-control') === 'no-store', `${empty.status} ${empty.text.slice(0, 160)}`);
 
   const st = await http('POST', `/api/v1/app/examenes/${EX}/intentos`, {});
@@ -82,15 +84,15 @@ try {
   const s = (await http('GET', '/api/v1/app/estadisticas/resumen')).json;
   check('J19.replay_never_counts_twice', replay.status === 200 && s?.preguntasValidas === 6 && s?.totales?.aciertos === 4 && s?.totales?.fallos === 2, JSON.stringify(s?.totales));
   check('J19.nota_media_is_provisional_over_the_default_window', s?.notaMedia?.valor === 6.67 && s?.notaMedia?.ventana === 50 && s?.notaMedia?.respondidas === 6 && s?.notaMedia?.provisional === true, JSON.stringify(s?.notaMedia));
-  check('J19.evolution_reference_after_the_first_step', s?.evolucion?.cada === 4 && s?.evolucion?.referencia === 7.5 && s?.evolucion?.progreso === 2 && s?.evolucion?.valor === undefined, JSON.stringify(s?.evolucion));
+  check('J19.evolution_reference_after_the_first_step', s?.evolucion?.cada === 4 && s?.evolucion?.referencia === 7.5 && s?.evolucion?.progreso === 2 && s?.evolucion?.valor == null, JSON.stringify(s?.evolucion));
   check('J19.streak_is_part_of_the_summary', typeof s?.racha?.actual === 'number' && typeof s?.racha?.maxima === 'number');
 
   const weak = (await http('GET', '/api/v1/app/estadisticas/debilidades')).json;
-  check('J19.weaknesses_total_weakest_first', weak?.alcance === 'TOTAL' && weak?.items?.[0]?.nombre === 'Stats A' && weak?.items?.[0]?.porcentajeAcierto === 50 && weak?.items?.[0]?.nivelDominio === 'medio' && weak?.items?.length === 2, JSON.stringify(weak));
+  check('J19.weaknesses_total_weakest_first', weak?.alcance === 'TOTAL' && weak?.items?.[0]?.nombre === 'Stats B' && weak?.items?.[0]?.porcentajeAcierto === 50 && weak?.items?.[0]?.nivelDominio === 'medio' && weak?.items?.[1]?.nombre === 'Stats A' && weak?.items?.[1]?.porcentajeAcierto === 75 && weak?.items?.[1]?.nivelDominio === 'alto' && weak?.items?.length === 2, JSON.stringify(weak));
   const fin = await http('POST', `/api/v1/app/intentos/${att}/finalizar`);
   const perExam = (await http('GET', `/api/v1/app/estadisticas/debilidades?examenId=${EX}&top=5`)).json;
   const sinB = perExam?.items?.find((i) => i.nombre === 'Stats B')?.sinResponder;
-  check('J19.weaknesses_per_exam_from_the_finished_attempt', fin.status === 200 && perExam?.alcance === 'EXAMEN' && sinB === 2 && perExam?.items?.find((i) => i.nombre === 'Stats A')?.correctas === 2, JSON.stringify(perExam));
+  check('J19.weaknesses_per_exam_from_the_finished_attempt', fin.status === 200 && perExam?.alcance === 'EXAMEN' && sinB === 2 && perExam?.items?.find((i) => i.nombre === 'Stats A')?.correctas === 3, JSON.stringify(perExam));
   const after = (await http('GET', '/api/v1/app/estadisticas/resumen')).json;
   check('J19.unanswered_questions_are_counted_after_finishing', after?.totales?.noContestadas >= 2, JSON.stringify(after?.totales));
   const bad = await http('GET', '/api/v1/app/estadisticas/debilidades?top=0');
@@ -101,7 +103,7 @@ try {
   const unanswered = await http('GET', `/api/v1/app/estadisticas/dificultad/${qid(7)}`);
   check('J19.difficulty_of_an_unanswered_question_is_404', unanswered.status === 404, `${unanswered.status}`);
   const noData = await http('GET', `/api/v1/app/estadisticas/dificultad/${qid(1)}`);
-  check('J19.difficulty_below_the_minimum_is_null', noData.status === 200 && noData.json?.dificultad === undefined, noData.text);
+  check('J19.difficulty_below_the_minimum_is_null', noData.status === 200 && noData.json?.dificultad == null, noData.text);
   sql(`insert into public.estadisticas_globales_pregunta (pregunta_id) values ('${qid(1)}') on conflict do nothing;
 insert into auth.users (id, email, aud, role, created_at, updated_at) select ('3c000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid, 'stats-s' || n || '@exam.local', 'authenticated', 'authenticated', now(), now() from generate_series(1, 4) n on conflict do nothing;
 insert into public.primeras_respuestas_usuario (usuario_id, pregunta_id, correcta, tiempo_ms)

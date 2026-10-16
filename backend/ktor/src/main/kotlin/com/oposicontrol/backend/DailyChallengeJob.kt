@@ -18,7 +18,7 @@ internal object DailyChallengeJob {
         return scope.launch(kotlinx.coroutines.Dispatchers.IO) {
             delay(5_000)  // deja arrancar el servidor
             while (isActive) {
-                for (function in listOf("app_generate_daily_challenges", "app_retry_deferred_free_ot", "app_job_dificultad")) {
+                for (function in listOf("app_generate_daily_challenges", "app_retry_deferred_free_ot", "app_job_dificultad", "app_job_ranking")) {
                     runCatching { upstream.rpc(function, "{}") }
                         .onSuccess { if (!it.ok) log("daily challenge job $function: HTTP ${it.status}") }
                         .onFailure { log("daily challenge job $function failed: ${it::class.simpleName}") }

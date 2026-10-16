@@ -185,6 +185,7 @@ internal object EconomyRpcErrors {
             // Guardar (FA26): NOT_FOUND = pregunta inexistente o sin ningun examen abrible (misma respuesta, sin sondeo).
             "NOT_FOUND" -> CanonicalErrorCode.NOT_FOUND.exception()
             "SAVED_LIMIT_REACHED" -> CanonicalErrorCode.SAVED_LIMIT_REACHED.exception()
+            "USERNAME_REQUIRED" -> CanonicalErrorCode.USERNAME_REQUIRED.exception()
             "PLAN_QUOTA_NONE" -> CanonicalErrorCode.PLAN_QUOTA_NONE.exception()
             "PLAN_QUOTA_FULL" -> CanonicalErrorCode.PLAN_QUOTA_FULL.exception()
             "EXAM_NOT_IMMERSIVE" -> CanonicalErrorCode.EXAM_NOT_IMMERSIVE.exception()

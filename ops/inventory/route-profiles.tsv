@@ -149,6 +149,8 @@ GET	/api/v1/app/racha	BOT	user-jwt	Consumer challenge: current and best streak (
 GET	/api/v1/app/estadisticas/resumen	BOT	user-jwt	Consumer stats: nota media, evolution, streak, league, totals (D3-20)	OposiBot
 GET	/api/v1/app/estadisticas/debilidades	BOT	user-jwt	Consumer stats: weak tags, aggregated or per exam (D3-21)	OposiBot
 GET	/api/v1/app/estadisticas/dificultad/{}	BOT	user-jwt	Consumer stats: difficulty 1-5 of an answered question (D3-22)	OposiBot
+GET	/api/v1/app/ranking	BOT	user-jwt	Consumer ranking: league, own position, top 3 (opt-in handles), place probability (D3-24)	OposiBot
+PUT	/api/v1/app/ranking/visibilidad	BOT	user-jwt	Consumer ranking: opt-in/out of the public handle (D3-25)	OposiBot
 GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
 GET	/api/v1/app/retos/hoy	BOT	user-jwt	Consumer challenge: today (D3-16)	OposiBot
 GET	/api/v1/app/retos/{}/preguntas/{}/recursos/{}	BOT	user-jwt	Consumer challenge: signed media of a challenge question (D3-19)	OposiBot
