@@ -57,13 +57,14 @@ function finding(id, ok, detail, fid) { results.push({ id, status: ok ? 'PASS' :
 async function scenario(name, fn) { if (!wanted(name)) return; try { await fn(); } catch (e) { check(`${name}.exception`, false, String(e.message).slice(0, 300)); } }
 const run = crypto.randomBytes(3).toString('hex');
 const allUsers = [];
-function mkUser(label) {
+const SPEC_LOC = 'e5000000-0000-4000-8000-000000000001';
+function mkUser(label, spec = SPEC_LOC) {
   const id = crypto.randomUUID();
   const clean = label.replace(/W/g, '').slice(0, 10);
   sql(`set session_replication_role = replica;
 insert into auth.users (id, email, aud, role, raw_user_meta_data, created_at, updated_at) values ('${id}', 'e2v1-${run}-${clean}@e2.local', 'authenticated', 'authenticated', '{}'::jsonb, now(), now());
 set session_replication_role = origin;
-insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta) values ('${id}', 'E2V1 ${clean}', 'e2v1_${run}_${clean}', true, 'activa') on conflict (usuario_id) do nothing;`);
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values ('${id}', 'E2V1 ${clean}', 'e2v1_${run}_${clean}', true, 'activa', ${spec ? `'${spec}'` : 'null'}) on conflict (usuario_id) do nothing;`);
   allUsers.push(id);
   return { id, label, t: token(id) };
 }
@@ -238,9 +239,9 @@ await scenario('S_SPECIALTY_GATE', async () => {
   const LOC = 'e5000000-0000-4000-8000-000000000001', OTH = 'e2b50000-0000-4000-8000-000000000001', EXO = 'e2c00000-0000-4000-8000-000000000040';
   sql("set session_replication_role = replica; insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas, comunidad_id, comprable_con_tickets, precio_tickets, dias_acceso_compra) values ('" + EXO + "', 'E2C-OTHER', '" + OTH + "', 'E2C otra especialidad', 'inmersivo', 'premium', true, now() - interval '1 day', 1, (select id from public.comunidades_autonomas order by codigo limit 1), true, 10, 30) on conflict (id) do update set precio_tickets = 10, comprable_con_tickets = true, activo = true, publicado_en = now() - interval '1 day'; insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select '" + EXO + "', 'f2c00000-0000-4000-8000-000000000001', 1, 1 where not exists (select 1 from public.preguntas_examen where examen_id = '" + EXO + "'); set session_replication_role = origin;");
   const setSpec = (u, sp) => sql("update public.perfiles_usuario set especialidad_principal_id = '" + sp + "' where usuario_id = '" + u.id + "';");
-  const gu = mkUser('sgL'); grant(gu, 100); setSpec(gu, LOC);
-  const nu = mkUser('sgN'); grant(nu, 100);
-  const ou = mkUser('sgO'); grant(ou, 100); setSpec(ou, OTH);
+  const gu = mkUser('sgL', LOC); grant(gu, 100);
+  const nu = mkUser('sgN', null); grant(nu, 100);
+  const ou = mkUser('sgO', OTH); grant(ou, 100);
   const NF = (r) => r.status === 404 && r.json?.code === 'EXAM_NOT_FOUND';
   const ghost = await call(gu, 'GET', '/api/v1/app/examenes/' + uuid());
   const d02 = await call(gu, 'GET', '/api/v1/app/examenes/' + EXO); const d02own = await call(gu, 'GET', '/api/v1/app/examenes/' + EX.CHEAP);
@@ -262,24 +263,26 @@ await scenario('S_SPECIALTY_GATE', async () => {
   const coll2 = await call(gu, 'GET', '/api/v1/app/me/examenes?vista=ADQUIRIDOS');
   sql("set session_replication_role = replica; delete from public.contenido_desbloqueado_usuario where usuario_id = '" + gu.id + "' and examen_id = '" + EXO + "'; set session_replication_role = origin;");
   check('SG.stored_grant_on_other_specialty_D2-02_and_D2-03_are_404', NF(stored) && NF(att2), 'detail=' + stored.status + ' attempt=' + att2.status);
-  finding('SG.D2-13_hides_a_stored_grant_of_another_specialty', coll.status === 200 && !coll.text.includes(EXO) && !coll2.text.includes(EXO), 'COLECCION=' + (coll.text.includes(EXO) ? 'LISTED(title+type+community, LOCKED)' : 'hidden') + ' ADQUIRIDOS=' + (coll2.text.includes(EXO) ? 'LISTED' : 'hidden') + ' while D2-02 answers 404', 'E2-V1-E05');
+  check('SG.E05_D2-13_hides_a_stored_grant_of_another_specialty', coll.status === 200 && !coll.text.includes(EXO) && !coll2.text.includes(EXO), 'COLECCION=' + (coll.text.includes(EXO) ? 'LISTED(title+type+community, LOCKED)' : 'hidden') + ' ADQUIRIDOS=' + (coll2.text.includes(EXO) ? 'LISTED' : 'hidden') + ' while D2-02 answers 404');
   const ownerBuy = await redeem(ou, EXO); const ownerSeesLocal = await call(ou, 'GET', '/api/v1/app/examenes/' + EX.CHEAP);
   check('SG.user_of_that_specialty_can_buy_it_and_not_the_local_one', ownerBuy.status === 201 && NF(ownerSeesLocal), 'buy=' + ownerBuy.status + ' sees-local=' + ownerSeesLocal.status);
+  const noSpopList = (r) => r.text.includes(EXO) || r.text.includes(EX.CHEAP);
   const noSpecSees = await call(nu, 'GET', '/api/v1/app/examenes/' + EXO); const noSpecList = await call(nu, 'GET', '/api/v1/app/examenes?limit=100');
   const noSpecBuy = await redeem(nu, EXO);
-  finding('SG.user_with_NO_specialty_cannot_reach_exams_of_any_specialty', NF(noSpecSees) && NF(noSpecBuy), 'detail=' + noSpecSees.status + ' purchase=' + noSpecBuy.status + ' list-includes-both=' + (noSpecList.text.includes(EXO) && noSpecList.text.includes(EX.CHEAP)) + ' (onboarding accepts especialidadId=null: CanonicalProfileService:120-160)', 'E2-V1-E06');
+  const noSpecOwn = await call(nu, 'GET', '/api/v1/app/examenes/' + EX.CHEAP); const noSpecOwnBuy = await redeem(nu, EX.CHEAP); const noSpecColl = await call(nu, 'GET', '/api/v1/app/me/examenes?vista=COLECCION');
+  check('SG.E06_user_with_NO_specialty_is_denied_everywhere_D2-01_02_13_D6-03', NF(noSpecSees) && NF(noSpecBuy) && NF(noSpecOwn) && NF(noSpecOwnBuy) && !noSpopList(noSpecList) && !noSpecColl.text.includes(EX.CHEAP) && balance(nu) === 100, 'detail=' + noSpecSees.status + ' purchase=' + noSpecBuy.status + ' list-includes-both=' + (noSpecList.text.includes(EXO) && noSpecList.text.includes(EX.CHEAP)) + ' (E06 closed by E1 8ea7dc5)');
   invariants('S_SPECIALTY_GATE', [gu, nu, ou]);
-  const su = mkUser('sgS'); const sp1 = await call(su, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC });
+  const su = mkUser('sgS', null); const sp1 = await call(su, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC });
   const sp2 = await call(su, 'PATCH', '/api/v1/app/me/profile', { especialidadId: OTH }); const sp3 = await call(su, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC });
   const spN = await call(su, 'PATCH', '/api/v1/app/me/profile', { especialidadId: null });
   const cur = () => sql("select especialidad_principal_id from public.perfiles_usuario where usuario_id = '" + su.id + "';").trim();
   check('SG.set_once_first_ok_different_409_SPECIALTY_ALREADY_SET_same_noop', sp1.status === 200 && sp2.status === 409 && sp2.json?.code === 'SPECIALTY_ALREADY_SET' && sp3.status === 200 && [400, 409, 422].includes(spN.status) && cur() === LOC, [sp1, sp2, sp3, spN].map((r) => r.status + '/' + (r.json?.code ?? '')).join(' ') + ' cur=' + cur());
   const sql1 = sqlTry("update public.perfiles_usuario set especialidad_principal_id = '" + OTH + "' where usuario_id = '" + su.id + "';"); const sql2 = sqlTry("update public.perfiles_usuario set especialidad_principal_id = null where usuario_id = '" + su.id + "';"); const sql3 = sqlTry("delete from public.especialidades where id = '" + LOC + "';");
   check('SG.set_once_enforced_in_db_even_for_raw_sql_and_specialty_delete', !sql1.ok && /SPECIALTY_ALREADY_SET/.test(sql1.out) && !sql2.ok && !sql3.ok && cur() === LOC, 'other=' + sql1.ok + ' null=' + sql2.ok + ' deleteSpecialty=' + sql3.ok);
-  const ru = mkUser('sgR'); const race = await Promise.all([call(ru, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC }), call(ru, 'PATCH', '/api/v1/app/me/profile', { especialidadId: OTH })]);
+  const ru = mkUser('sgR', null); const race = await Promise.all([call(ru, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC }), call(ru, 'PATCH', '/api/v1/app/me/profile', { especialidadId: OTH })]);
   const fin = sql("select especialidad_principal_id from public.perfiles_usuario where usuario_id = '" + ru.id + "';").trim();
   check('SG.set_once_race_exactly_one_value_wins', race.filter((r) => r.status === 200).length === 1 && race.filter((r) => r.status === 409).length === 1 && [LOC, OTH].includes(fin), race.map((r) => r.status).join(',') + ' final=' + fin);
-  const fu = mkUser('sgF'); const fp = await call(fu, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC }, { 'X-Usuario-Id': su.id });
+  const fu = mkUser('sgF', null); const fp = await call(fu, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC }, { 'X-Usuario-Id': su.id });
   check('SG.forged_user_header_cannot_change_another_users_specialty', fp.status === 200 && cur() === LOC && sql("select especialidad_principal_id from public.perfiles_usuario where usuario_id = '" + fu.id + "';").trim() === LOC, fp.status + '');
 });
 
