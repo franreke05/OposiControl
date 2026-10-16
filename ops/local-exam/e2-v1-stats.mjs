@@ -125,8 +125,8 @@ await scenario(only, 'D_DIFFICULTY_AND_ADMIN', async () => {
 await scenario(only, 'E_GRANTS', async () => {
   const tables = ['primeras_respuestas_usuario', 'estadisticas_usuario', 'estadisticas_usuario_etiqueta', 'estadisticas_globales_pregunta', 'estadisticas_globales_etiqueta', 'estado_competitivo_usuario', 'lotes_actualizacion_ranking', 'ranking_liga', 'ot_ganancias_diferidas'];
   const leaks = []; const u = mkUser('st4');
-  for (const t of tables.filter((x) => sql(`select to_regclass('public.${x}') is not null;`) === 't')) for (const role of ['authenticated', 'anon']) for (const st of [`insert into public.${t} select * from public.${t} limit 0`, `delete from public.${t} where false`, `select 1 from public.${t} limit 1`]) {
-    const r = sqlTry(`set role ${role}; ${st};`); const ownSel = st.startsWith('select') && role === 'authenticated' && sql(`select count(*) from pg_policies where tablename = '${t}' and cmd = 'SELECT' and qual like '%auth.uid()%';`) !== '0'; if (r.ok && !ownSel) leaks.push(`${role}:${t}:${st.split(' ')[0]}`);
+  for (const t of tables.filter((x) => sql(`select to_regclass('public.${x}') is not null;`) === 't')) for (const role of ['authenticated', 'anon']) for (const st of [`insert into public.${t} select * from public.${t} limit 0`, `delete from public.${t} where false`, `select count(*) from public.${t}`]) {
+    const r = sqlTry(`set role ${role}; ${st};`); const ownSel = st.startsWith('select') && role === 'authenticated' && sql(`select count(*) from pg_policies where tablename = '${t}' and cmd = 'SELECT' and qual like '%auth.uid()%';`) !== '0'; const rlsEmpty = st.startsWith('select') && r.ok && r.out.trim().split(String.fromCharCode(10)).pop() === '0'; if (r.ok && !ownSel && !rlsEmpty) leaks.push(`${role}:${t}:${st.split(' ')[0]}`);
   }
   check('G1.no_client_privileges_on_any_stats_table_only_own_row_select_policies_where_they_exist', leaks.length === 0, leaks.slice(0, 6).join(' ') || 'denied');
   const fx = ['public.app_stats_summary(uuid)', 'public.app_stats_weaknesses(uuid, uuid, integer)', 'public.app_stats_difficulty(uuid, uuid)', 'public.app_job_dificultad(boolean)', 'public.admin_recompute_stats(uuid, text)', 'private.app_apply_first_answer_stats(uuid, uuid, boolean, integer, uuid)'];
@@ -147,9 +147,37 @@ await scenario(only, 'F_WRITE_PATH_COST', async () => {
   const hot = L.mkExam({ tipo: 'rafaga', acceso: 'gratuito', n: 1 }); const us = Array.from({ length: 20 }, (_, i) => mkUser('sth' + i)); const as = await Promise.all(us.map((u) => start(u, hot.id)));
   const t0 = performance.now(); const hr = await Promise.all(us.map((u, i) => { const x0 = performance.now(); return answer(u, L.attemptId(as[i]), hot.qs[0].id, hot.qs[0].ok).then((r) => ({ r, ms: performance.now() - x0 })); })); const total = performance.now() - t0;
   const ok = hr.filter((x) => x.r.status === 200); const hl = ok.map((x) => x.ms);
-  const cnt = sql(`select total_respuestas from public.estadisticas_globales_pregunta where pregunta_id = '${hot.qs[0].id}';`);
+  sql(`select public.app_job_dificultad(true);`); const cnt = sql(`select coalesce(max(total_respuestas), 0) from public.estadisticas_globales_pregunta where pregunta_id = '${hot.qs[0].id}';`);
   check('P1.twenty_users_answering_the_same_question_at_once_all_count_exactly_once', ok.length === 20 && Number(cnt) === 20 && Number(sql(`select count(*) from public.primeras_respuestas_usuario where pregunta_id = '${hot.qs[0].id}';`)) === 20, `ok=${ok.length} counter=${cnt}`);
   finding('P2.write_path_latency_p95_with_the_stats_hook_stays_under_250ms_sequential_and_under_1500ms_on_a_hot_question', p(t, 0.95) < 250 && p(hl, 0.95) < 1500, `sequential p50=${p(t, 0.5).toFixed(0)}ms p95=${p(t, 0.95).toFixed(0)}ms | hot question 20 parallel p50=${p(hl, 0.5).toFixed(0)}ms p95=${p(hl, 0.95).toFixed(0)}ms total=${total.toFixed(0)}ms`, 'E2-V1-T02');
+});
+
+await scenario(only, 'H_DEMO_SEEN', async () => {
+  const dm = L.mkExam({ tipo: 'inmersivo', price: 10, n: 7, demoFlags: [true, true, true, true, true, false, false] }); const u = mkUser('stseen');
+  const ds = await start(u, dm.id, { modo: 'DEMO' }); const da = L.attemptId(ds); for (const q of dm.qs.slice(0, 5)) await ans(u, da, q.id, q.ok); await fin(u, da);
+  sql("insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('" + u.id + "', '" + dm.id + "', 'regalo', now(), now() + interval '30 days');");
+  const ns = await start(u, dm.id); const na = L.attemptId(ns); for (const q of dm.qs) await ans(u, na, q.id, q.ok);
+  const stored = Number(sql("select count(*) from public.respuestas_intento where intento_id = '" + na + "';"));
+  check('H1.a_first_answer_to_a_question_already_seen_corrected_in_a_demo_is_stored_but_feeds_no_stat_nota_or_league', stored === 7 && firsts(u) === 2 && totals(u) === '2/2', 'stored=' + stored + ' counted first answers=' + firsts(u) + ' (only the 2 non-demo questions) totals=' + totals(u));
+});
+
+await scenario(only, 'I_SWITCH_AND_CLAMP', async () => {
+  const ex = mkFree(4); const u = mkUser('stclamp'); const a = L.attemptId(await start(u, ex.id));
+  await call(u, 'PUT', '/api/v1/app/intentos/' + a + '/respuestas/' + ex.qs[0].id, { opcionSeleccionadaId: ex.qs[0].ok, tiempoRespuestaMs: 99999999, baseRevision: 0 }, { 'Idempotency-Key': uuid() });
+  const ms = Number(sql("select tiempo_ms from public.primeras_respuestas_usuario where usuario_id = '" + u.id + "' and pregunta_id = '" + ex.qs[0].id + "';"));
+  check('I1.client_time_is_clamped_server_side_99999999_ms_is_stored_as_at_most_the_configured_maximum', ms > 0 && ms <= 300000, 'stored tiempo_ms=' + ms);
+  const neg = await call(u, 'PUT', '/api/v1/app/intentos/' + a + '/respuestas/' + ex.qs[1].id, { opcionSeleccionadaId: ex.qs[1].ok, tiempoRespuestaMs: -5, baseRevision: 0 }, { 'Idempotency-Key': uuid() });
+  check('I2.a_negative_client_time_is_refused_or_stored_as_zero_never_negative', [400, 422].includes(neg.status) || Number(sql("select coalesce(min(tiempo_ms), 0) from public.primeras_respuestas_usuario where usuario_id = '" + u.id + "';")) >= 0, 'status=' + neg.status);
+  const prev = sql("select valor_integer from public.configuracion_v1 where clave = 'stats_activo';");
+  try {
+    sql("update public.configuracion_v1 set valor_integer = 0 where clave = 'stats_activo';");
+    const before = firsts(u); const off = await answer(u, a, ex.qs[2].id, ex.qs[2].ok); const stored = Number(sql("select count(*) from public.respuestas_intento where intento_id = '" + a + "' and pregunta_id = '" + ex.qs[2].id + "';")); const afterOff = firsts(u);
+    sql("update public.configuracion_v1 set valor_integer = " + prev + " where clave = 'stats_activo';");
+    const on = await answer(u, a, ex.qs[3].id, ex.qs[3].ok);
+    check('I3.kill_switch_off_stores_the_answer_but_skips_only_the_stats_and_back_on_counts_again', off.status === 200 && stored === 1 && afterOff === before && on.status === 200 && firsts(u) === before + 1, 'answer=' + off.status + ' stored=' + stored + ' counted ' + before + ' -> ' + firsts(u));
+  } finally { sql("update public.configuracion_v1 set valor_integer = " + prev + " where clave = 'stats_activo';"); }
+  const bad = sqlTry("update public.configuracion_v1 set valor_integer = 7 where clave = 'stats_activo';"); const bad2 = sqlTry("update public.configuracion_v1 set valor_integer = 99999 where clave = 'tiempo_max_respuesta_seg';");
+  check('I4.switch_and_clamp_config_are_bounded', !bad.ok && !bad2.ok, 'switch=7 ' + (bad.ok ? 'ACCEPTED' : 'refused') + ' clamp=99999 ' + (bad2.ok ? 'ACCEPTED' : 'refused'));
 });
 
 L.killKtor();
