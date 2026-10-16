@@ -1409,7 +1409,14 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
             get { call.respond(withUpstreamIo { gateway.listExamAccesses() }) }
             post {
                 val body = call.receive<AdminExamAccessDto>()
-                call.respond(HttpStatusCode.Created, withUpstreamIo { gateway.upsertExamAccess(body) })
+                val (access, outcome) = withUpstreamIo { gateway.upsertExamAccessResult(body) }
+                // 201 solo si se creo una concesion; una repeticion o un acceso ilimitado heredado ya existente es 200 con la cabecera de repeticion (el panel acepta cualquier 2xx).
+                if (outcome == "CREATED") {
+                    call.respond(HttpStatusCode.Created, access)
+                } else {
+                    call.response.header(IdempotencyHeaders.REPLAYED, "true")
+                    call.respond(HttpStatusCode.OK, access)
+                }
             }
             // D2-63: retirar un acceso. Idempotente: retirar uno ya retirado responde 200 con el mismo acceso.
             post("/{id}/revocar") {
@@ -3655,6 +3662,24 @@ private data class AdminGrantExamRpc(
     @SerialName("p_usuario") val usuario: String,
     @SerialName("p_examen") val examen: String,
     @SerialName("p_motivo") val motivo: String,
+    @SerialName("p_actor") val actor: String? = null,
+)
+
+@Serializable
+private data class AdminRevokeExamRpc(
+    @SerialName("p_grant") val grant: String,
+    @SerialName("p_actor") val actor: String? = null,
+)
+
+@Serializable
+private data class AdminRevokeExamResult(
+    val outcome: String,
+    @SerialName("grant_id") val grantId: String,
+    @SerialName("usuario_id") val usuarioId: String,
+    @SerialName("examen_id") val examenId: String,
+    val motivo: String? = null,
+    @SerialName("valido_hasta") val validoHasta: String? = null,
+    val concesiones: Int = 0,
 )
 
 @Serializable
@@ -7187,7 +7212,10 @@ class AdminV1Gateway private constructor(
      * filtros `eq` (sin la ventana de los 1000 perfiles mas nuevos): mas de una coincidencia = 409 y no se escribe nada
      * (nunca la primera), ninguna = 404. Un `userName`/`examTitle` con forma de uuid se trata como id (compatible).
      */
-    fun upsertExamAccess(input: AdminExamAccessDto): AdminExamAccessDto {
+    fun upsertExamAccess(input: AdminExamAccessDto): AdminExamAccessDto = upsertExamAccessResult(input).first
+
+    /** El acceso y el resultado de la base (CREATED, REPLAY, UNLIMITED_EXISTS): la ruta responde 201 solo si se creo. */
+    fun upsertExamAccessResult(input: AdminExamAccessDto): Pair<AdminExamAccessDto, String> {
         val motivo = canonicalUnlockReasonOrReject(input.accessType)
         // D2-62: una compra solo nace de una compra. Etiquetar a mano una concesion como «compra» falsearia su origen.
         if (motivo == PURCHASE_UNLOCK_REASON) {
@@ -7214,23 +7242,9 @@ class AdminV1Gateway private constructor(
         val grant = request(
             "POST",
             "/rest/v1/rpc/admin_grant_exam_access",
-            sbJson.encodeToString(AdminGrantExamRpc(user.usuarioId, exam.id, motivo)),
+            sbJson.encodeToString(AdminGrantExamRpc(user.usuarioId, exam.id, motivo, AdminAuditActor.current())),
         ).decodeList<AdminGrantExamResult>().firstOrNull() ?: error("La concesion de acceso no devolvio resultado.")
-        if (grant.outcome == "CREATED") {
-            // Conceder acceso a un examen de pago es una accion economica: queda en auditoria (append-only) con quien la hizo.
-            registrarAuditoriaResultado(
-                "acceso_examen_concedido",
-                "contenido_desbloqueado_usuario",
-                grant.grantId,
-                antes = null,
-                despues = buildJsonObject {
-                    put("usuario_id", JsonPrimitive(user.usuarioId))
-                    put("examen_id", JsonPrimitive(exam.id))
-                    put("motivo", JsonPrimitive(motivo))
-                    put("valido_hasta", JsonPrimitive(grant.validoHasta.orEmpty()))
-                },
-            )
-        }
+        // La auditoria (append-only, con el actor) se escribe DENTRO de la RPC, en la misma transaccion: no hay concesion sin su fila de auditoria.
         return AdminExamAccessDto(
             id = grant.grantId,
             userName = user.displayName(user.usuarioId),
@@ -7241,7 +7255,7 @@ class AdminV1Gateway private constructor(
             examId = exam.id,
             grantedAt = grant.validoDesde,
             validUntil = grant.validoHasta,
-        )
+        ) to grant.outcome
     }
 
     /**
@@ -7256,57 +7270,28 @@ class AdminV1Gateway private constructor(
      */
     fun revokeExamAccess(grantId: String): AdminExamAccessDto {
         val id = grantId.validatedUuid("id")
-        val target = request("GET", "/rest/v1/contenido_desbloqueado_usuario?select=*&id=eq.$id&limit=1", null)
-            .decodeList<ContenidoDesbloqueadoRow>()
-            .firstOrNull()
-            ?: throw BackendDomainException("GRANT_NOT_FOUND", HttpStatusCode.NotFound, "No existe el acceso indicado.")
-        val examenId = target.examenId
-            ?: throw BackendDomainException("GRANT_NOT_FOUND", HttpStatusCode.NotFound, "No existe el acceso indicado.")
-        if (target.motivo == PURCHASE_UNLOCK_REASON) {
-            throw BackendDomainException(
-                "GRANT_IS_PURCHASE",
-                HttpStatusCode.UnprocessableEntity,
-                "Un acceso comprado no se retira desde aquí.",
-            )
-        }
-        val now = Instant.now()
-        val vigentes = grantsOf(target.usuarioId, examenId).filter { it.vigente(now) && it.motivo != PURCHASE_UNLOCK_REASON }
-        val closedAt = now.toString()
-        if (vigentes.isNotEmpty()) {
-            request(
-                "PATCH",
-                "/rest/v1/contenido_desbloqueado_usuario?id=in.(${vigentes.joinToString(",") { it.id }})",
-                sbJson.encodeToString(ContenidoDesbloqueadoCierre(closedAt)),
-                prefer = "return=minimal",
-            )
-            registrarAuditoriaResultado(
-                "acceso_examen_retirado",
-                "contenido_desbloqueado_usuario",
-                target.id,
-                antes = buildJsonObject {
-                    put("usuario_id", JsonPrimitive(target.usuarioId))
-                    put("examen_id", JsonPrimitive(examenId))
-                    put("motivos", JsonPrimitive(vigentes.mapNotNull { it.motivo }.distinct().joinToString(",")))
-                    put("concesiones", JsonPrimitive(vigentes.size))
-                },
-                despues = buildJsonObject { put("valido_hasta", JsonPrimitive(closedAt)) },
-            )
-        }
-        val user = perfilesByIds(listOf(target.usuarioId))[target.usuarioId]
-        val examTitle = request("GET", "/rest/v1/examenes?select=id,titulo&id=eq.$examenId&limit=1", null)
+        // UNA RPC atomica bajo la misma cerradura de cartera que el regalo y el canje, con el reloj de la base: un regalo confirmado entre una lectura
+        // y el cierre no puede quedar vigente mientras esto responde 200. Auditoria dentro de la misma transaccion.
+        val r = request(
+            "POST",
+            "/rest/v1/rpc/admin_revoke_exam_access",
+            sbJson.encodeToString(AdminRevokeExamRpc(id, AdminAuditActor.current())),
+        ).decodeList<AdminRevokeExamResult>().firstOrNull() ?: error("La retirada de acceso no devolvio resultado.")
+        val user = perfilesByIds(listOf(r.usuarioId))[r.usuarioId]
+        val examTitle = request("GET", "/rest/v1/examenes?select=id,titulo&id=eq.${r.examenId}&limit=1", null)
             .decodeList<ExamenTituloRow>()
             .firstOrNull()
             ?.titulo
         return AdminExamAccessDto(
-            id = target.id,
-            userName = user.displayName(target.usuarioId),
-            examTitle = examTitle.orEmpty().ifBlank { "Examen $examenId" },
-            accessType = target.motivo.orEmpty().ifBlank { "manual" },
+            id = r.grantId,
+            userName = user.displayName(r.usuarioId),
+            examTitle = examTitle.orEmpty().ifBlank { "Examen ${r.examenId}" },
+            accessType = r.motivo.orEmpty().ifBlank { "manual" },
             isActive = false,
-            userId = target.usuarioId,
-            examId = examenId,
-            grantedAt = target.creadoEn,
-            validUntil = if (target.vigente(now)) closedAt else target.validoHasta,
+            userId = r.usuarioId,
+            examId = r.examenId,
+            grantedAt = null,
+            validUntil = r.validoHasta,
         )
     }
 

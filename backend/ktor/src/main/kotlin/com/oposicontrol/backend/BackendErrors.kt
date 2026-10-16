@@ -41,6 +41,9 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     "EVENT_VERSION_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La versión del evento no es válida."),
     "EVENT_IDEMPOTENCY_KEY_REQUIRED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La clave de idempotencia es obligatoria."),
     // V1: regalo de un examen (admin_grant_exam_access, un mes, puertas de especialidad y capacidad).
+    "GRANT_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "No existe el acceso indicado."),
+    "GRANT_IS_PURCHASE" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Un acceso comprado no se retira desde aqui."),
+    "GIFT_UNLIMITED_FORBIDDEN" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Un regalo no puede ser ilimitado: lleva siempre un mes."),
     "GIFT_REASON_NOT_ALLOWED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Ese tipo de acceso no se puede conceder a mano."),
     "GIFT_USER_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "El usuario no existe."),
     "GIFT_EXAM_NOT_AVAILABLE" to DomainErrorDefinition(HttpStatusCode.NotFound, "El examen no existe o no esta publicado."),
