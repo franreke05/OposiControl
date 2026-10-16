@@ -42,7 +42,7 @@ internal class EconomyRuntime(
             val limiter = auth?.rateLimiter
             return EconomyRuntime(
                 resolver = resolver,
-                economy = EconomyService(upstream, PaymentProviders.fromEnvironment(environment)),
+                economy = EconomyService(upstream, PaymentProviders.fromEnvironment(environment), refundsEnabled = refundsEnabledFrom(environment)),
                 idempotency = store,
                 limit = { operation, userId ->
                     if (limiter != null) {

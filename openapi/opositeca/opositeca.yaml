@@ -1,0 +1,255 @@
+# OPOSITECA / GUARDAR (FA26, V1): the user's saved questions. Design: E1-V1-SAVED-CONTRACT.md.
+# V1 scope: tipo = pregunta ONLY. Saving resources or whole exams, other sort and filter fields and community grouping are
+# NEEDS_OWNER_DECISION and are NOT in this contract (adding a tipo value later is additive).
+# Everything is owner-scoped by the JWT sub (never a user id in the path or body). The access check (specialty gate first, then the single access
+# verdict) and the cap are decided by the database inside ONE function per command under a per-user lock.
+components:
+  pathItems:
+    SavedItem:
+      put:
+        operationId: saveItem
+        summary: 'Save a question in the OposiTeca'
+        tags: [opositeca]
+        x-contract-id: D4-20
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, SAVED_LIMIT_REACHED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Naturally idempotent (no Idempotency-Key): saving an already saved question answers 200 with the ORIGINAL guardadoEn and writes nothing, even if the access was lost since. A NEW save needs the question to be active and to belong to at least one exam that is active, published and not LOCKED for the caller (the specialty gate is rule 0 of that verdict): a missing question and a question the user cannot open are the SAME 404 NOT_FOUND (no probing of other specialties). Cap: 500 saved questions per user (technical default, NEEDS_OWNER_DECISION) = 422 SAVED_LIMIT_REACHED. Limit: 60 per minute per user (429 RATE_LIMITED).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/SavedTipo'
+          - $ref: '#/components/parameters/SavedTargetId'
+        responses:
+          '200':
+            description: 'Saved (or already saved).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/SavedItem'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NOT_FOUND: the question does not exist, is inactive, or the caller can open none of its exams.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'SAVED_LIMIT_REACHED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+      delete:
+        operationId: unsaveItem
+        summary: 'Remove a question from the OposiTeca'
+        tags: [opositeca]
+        x-contract-id: D4-21
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Idempotent: 204 whether the question was saved or not. Scoped to the caller: it can never touch another user row.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/SavedTipo'
+          - $ref: '#/components/parameters/SavedTargetId'
+        responses:
+          '204':
+            description: 'Not saved any more (it may never have been).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    SavedState:
+      get:
+        operationId: savedItemsState
+        summary: 'Which of these questions are saved (toggle state)'
+        tags: [opositeca]
+        x-contract-id: D4-26
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Initial state of the Guardar toggle: pass the visible question ids (1 to 50, comma separated) and get back ONLY the ones the caller has saved. Unknown ids and ids saved by other users are simply absent. One call per screen; the client does not list the whole OposiTeca to render a heart.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/SavedTipo'
+          - name: ids
+            in: query
+            required: true
+            description: 'Comma separated question uuids, 1 to 50.'
+            schema:
+              type: string
+              minLength: 36
+        responses:
+          '200':
+            description: 'The saved subset.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/SavedState'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    Opositeca:
+      get:
+        operationId: listOpositeca
+        summary: 'The user OposiTeca (saved questions)'
+        tags: [opositeca]
+        x-contract-id: D4-24
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Keyset page ordered by guardadoEn descending then id descending (the only order in V1). Filter: tipo (only pregunta exists). The access is recomputed at read time: while the caller can open an exam of the question, accesible is true and pregunta carries the title and the exam (the accessible exam with the latest publication); when it cannot, the item STAYS (so it can be removed) with accesible false and pregunta null: the content of an exam the user can no longer open is not served. No explanation and no resources are returned (DEC-025 is open).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: tipo
+            in: query
+            required: false
+            schema:
+              type: string
+              enum: [pregunta]
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'A page of saved items.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/SavedEntry'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  parameters:
+    SavedTipo:
+      name: tipo
+      in: path
+      required: true
+      description: 'Kind of saved thing. V1: pregunta only (closed enum).'
+      schema:
+        type: string
+        enum: [pregunta]
+    SavedTargetId:
+      name: targetId
+      in: path
+      required: true
+      description: 'Question id.'
+      schema:
+        type: string
+        format: uuid
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    SavedItem:
+      type: object
+      required: [tipo, targetId, guardadoEn]
+      properties:
+        tipo:
+          type: string
+          enum: [pregunta]
+        targetId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        guardadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    SavedQuestion:
+      type: object
+      required: [titulo, examenId, examenTitulo]
+      properties:
+        titulo:
+          type: string
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        examenTitulo:
+          type: string
+    SavedEntry:
+      type: object
+      required: [tipo, targetId, guardadoEn, accesible]
+      properties:
+        tipo:
+          type: string
+          enum: [pregunta]
+        targetId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        guardadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        accesible:
+          type: boolean
+        pregunta:
+          description: 'Present only when accesible is true.'
+          oneOf:
+            - $ref: '#/components/schemas/SavedQuestion'
+            - type: 'null'
+    SavedState:
+      type: object
+      required: [tipo, guardados]
+      properties:
+        tipo:
+          type: string
+          enum: [pregunta]
+        guardados:
+          type: array
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'

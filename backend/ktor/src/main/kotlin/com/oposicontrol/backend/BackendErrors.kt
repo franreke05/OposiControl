@@ -41,6 +41,9 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     "EVENT_VERSION_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La versión del evento no es válida."),
     "EVENT_IDEMPOTENCY_KEY_REQUIRED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La clave de idempotencia es obligatoria."),
     // V1: regalo de un examen (admin_grant_exam_access, un mes, puertas de especialidad y capacidad).
+    "GRANT_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "No existe el acceso indicado."),
+    "GRANT_IS_PURCHASE" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Un acceso comprado no se retira desde aqui."),
+    "GIFT_UNLIMITED_FORBIDDEN" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Un regalo no puede ser ilimitado: lleva siempre un mes."),
     "GIFT_REASON_NOT_ALLOWED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Ese tipo de acceso no se puede conceder a mano."),
     "GIFT_USER_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "El usuario no existe."),
     "GIFT_EXAM_NOT_AVAILABLE" to DomainErrorDefinition(HttpStatusCode.NotFound, "El examen no existe o no esta publicado."),
@@ -1013,6 +1016,7 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     PRODUCT_NOT_AVAILABLE(HttpStatusCode.UnprocessableEntity, "El paquete no esta disponible."),
     PAYMENT_PROVIDER_UNAVAILABLE(HttpStatusCode.UnprocessableEntity, "El metodo de pago no esta disponible."),
     ORDER_NOT_FOUND(HttpStatusCode.NotFound, "El pedido no existe."),
+    SAVED_LIMIT_REACHED(HttpStatusCode.UnprocessableEntity, "Has llegado al maximo de preguntas guardadas. Quita alguna para guardar otra."),
     ORDER_PENDING_LIMIT(HttpStatusCode.Conflict, "Ya tienes varios pedidos abiertos. Termina o espera a que caduquen antes de crear otro."),
     PAYMENT_RECEIPT_INVALID(HttpStatusCode.UnprocessableEntity, "El justificante de pago no es valido para este pedido."),
     WEBHOOK_SIGNATURE_INVALID(HttpStatusCode.Unauthorized, "La firma del aviso de pago no es valida."),

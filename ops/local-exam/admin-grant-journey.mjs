@@ -56,7 +56,7 @@ check('J15.gift_never_creates_an_unlimited_row', sql(`select count(*) from publi
 
 // 2. duplicate click: same gift again = same row, not a second month
 const g2 = await gift(Q.Q2Z, OT.IMM30);
-check('J15.duplicate_gift_is_the_same_row', g2.status === 201 && g2.json?.id === g1.json?.id && sql(`select count(*) from public.contenido_desbloqueado_usuario where usuario_id = '${Q.Q2Z}' and examen_id = '${OT.IMM30}'`) === '1', `${g2.status}`);
+check('J15.duplicate_gift_is_the_same_row_200_replay', g2.status === 200 && g2.json?.id === g1.json?.id && sql(`select count(*) from public.contenido_desbloqueado_usuario where usuario_id = '${Q.Q2Z}' and examen_id = '${OT.IMM30}'`) === '1', `${g2.status}`);
 
 // 3. gift on top of a purchase: stacks from the purchase end (+30), never shortens
 const buy = await app('Q1', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE }, crypto.randomUUID());

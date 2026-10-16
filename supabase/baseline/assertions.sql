@@ -414,6 +414,7 @@ insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, t
   ('52000000-0000-0000-0000-000000000007','S2-X7','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000002','X7 other user','rafaga','premium',true,now() - interval '9 day',2024),
   ('52000000-0000-0000-0000-000000000008','S2-X8','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X8 scheduled','rafaga','premium',true,now() + interval '1 day',2024),
   ('52000000-0000-0000-0000-000000000009','S2-X9','e1000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','X9 archived','rafaga','premium',false,now() - interval '9 day',2024);
+set local session_replication_role = replica; -- legacy unlimited gift rows (the table guard refuses new ones)
 insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values
   ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000001','compra',now() - interval '3 day',null),
   ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000001','regalo',now() - interval '8 day',now() + interval '1 day'),
@@ -424,6 +425,7 @@ insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo
   ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000008','compra',now() - interval '1 hour',null),
   ('a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000009','compra',now() - interval '1 hour',null),
   ('a0000000-0000-0000-0000-00000000000d','52000000-0000-0000-0000-000000000007','compra',now() - interval '1 hour',null);
+set local session_replication_role = origin;
 insert into public.intentos_examen (id, usuario_id, examen_id, estado, origen_intento, creado_por_comando, total_preguntas, total_respondidas, actualizado_en) values
   ('52a00000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000002','abandonado','examen','app_start_exam_attempt',10,2,now() - interval '6 day'),
   ('52a00000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-00000000000c','52000000-0000-0000-0000-000000000002','finalizado','examen','app_start_exam_attempt',10,10,now() - interval '1 day'),
@@ -875,9 +877,9 @@ begin
   -- the earlier 100 OT are consumed FIRST (FIFO), then 700 of the 1000: the refunded credit has 300 unspent
   assert private.ot_credit_remaining(credit_id) = 300, 'FIFO: the older credit is consumed first';
   select * into r from public.app_refund_payment_order('google_play', 'ev-r1-refund', o.orden_id);
-  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.estado = 'reembolsada', 'refund with spent OT opens a case';
+  assert r.outcome = 'REFUNDED_P2' and r.estado = 'reembolsada', 'refund with spent OT closes under P2';
   select * into c from public.refund_case where compra_id = o.orden_id;
-  assert c.ot_revertidos = 300 and c.ot_gastados = 700 and c.estado = 'abierto', 'U = 300 reverted, S = 700 case';
+  assert c.ot_revertidos = 300 and c.ot_gastados = 700 and c.estado = 'resuelto' and c.politica = 'P2', 'U = 300 reverted, S = 700 recorded, case closed under P2 (B: spent on ajuste, no access to shorten)';
   assert (select cantidad from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'devolucion') = -300, 'only the unspent part is reversed';
   assert (select referencia_id from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'devolucion') = credit_id, 'the reversal names the credit it reverses';
   assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e1') = 0, 'balance never negative';
@@ -897,7 +899,7 @@ begin
   perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000e3', -800, 'immersive exam', 'x-sp', 'ajuste');
   assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e3') = 200, '200 left';
   select * into r from public.app_refund_payment_order('app_store', 'ev-x1-refund', o.orden_id);
-  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.estado = 'reembolsada' and r.saldo = 0, 'refund: balance 0, never negative';
+  assert r.outcome = 'REFUNDED_P2' and r.estado = 'reembolsada' and r.saldo = 0, 'refund: balance 0, never negative';
   assert (select cantidad from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'devolucion') = -200, 'exactly the unspent 200 are reversed';
   assert (select ot_revertidos from public.refund_case where compra_id = o.orden_id) = 200 and (select ot_gastados from public.refund_case where compra_id = o.orden_id) = 800, 'case: 800 spent, nothing revoked';
   assert (select detalle -> 0 ->> 'ot_desde_este_credito' from public.refund_case where compra_id = o.orden_id) = '800', 'the case traces the debit funded by this credit';
@@ -926,12 +928,86 @@ begin
   perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000e2', -170, 'spend', 'sp-f', 'ajuste');
   assert private.ot_credit_remaining(c1) = 0 and private.ot_credit_remaining(c2) = 30, 'FIFO across mixed purchases';
   select * into r from public.app_refund_payment_order('google_play', 'ev-f2-refund', o1.orden_id);
-  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.saldo = 30, 'fully spent credit: no reversal, case S = 100, the other purchase is untouched';
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 30, 'fully spent credit: no reversal, case S = 100, the other purchase is untouched';
   assert (select ot_gastados from public.refund_case where compra_id = o1.orden_id) = 100 and (select ot_revertidos from public.refund_case where compra_id = o1.orden_id) = 0, 'case values';
   select * into r from public.app_refund_payment_order('google_play', 'ev-f3-refund', o2.orden_id);
-  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.saldo = 0, 'second purchase: 30 reversed, 20 case';
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 0, 'second purchase: 30 reversed, 20 case';
   assert (select ot_gastados from public.refund_case where compra_id = o2.orden_id) = 20 and (select ot_revertidos from public.refund_case where compra_id = o2.orden_id) = 30, 'second case values';
   assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'reconcile is clean after credits, debits and refunds';
+end $$;
+
+-- ---- P2 (E5-V1-F02): the refund shortens the access the refunded credit financed, reverses only the unspent part, never goes negative
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000d1','p21@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000d2','p22@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000d3','p23@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000d4','p24@test.local','authenticated','authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000d1','PX','PX','px',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000d1','CD','Com D','com-d');
+insert into public.capacidades_especialidad (especialidad_id, permite_rafagas, permite_razonados, permite_inmersivos, permite_demos) values ('e1000000-0000-0000-0000-0000000000d1', true, true, true, true);
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, comprable_con_tickets, precio_tickets, dias_acceso_compra, demo_disponible) values
+  ('e5000000-0000-0000-0000-0000000000d1','P2-30','e1000000-0000-0000-0000-0000000000d1','c1000000-0000-0000-0000-0000000000d1','P2 treinta','inmersivo','premium',true, now() - interval '1 day', true, 30, 30, false),
+  ('e5000000-0000-0000-0000-0000000000d2','P2-150','e1000000-0000-0000-0000-0000000000d1','c1000000-0000-0000-0000-0000000000d1','P2 ciento cincuenta','inmersivo','premium',true, now() - interval '1 day', true, 150, 30, false);
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+  select u, 'p2' || right(u::text, 1), 'p2' || right(u::text, 1), true, 'activa', 'e1000000-0000-0000-0000-0000000000d1'
+  from (values ('a0000000-0000-0000-0000-0000000000d1'::uuid), ('a0000000-0000-0000-0000-0000000000d2'::uuid), ('a0000000-0000-0000-0000-0000000000d3'::uuid), ('a0000000-0000-0000-0000-0000000000d4'::uuid)) v(u) on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+create function pg_temp.buy(p_user uuid, p_pack text, p_tag text) returns uuid language plpgsql as $$
+declare o record; r record; amount int;
+begin
+  select * into o from public.app_create_payment_order(p_user, p_pack, 'google_play', 'o-' || p_tag);
+  select * into r from public.app_credit_payment_order('google_play', 'ev-' || p_tag, o.orden_id, 'tx-' || p_tag, o.importe_centimos, 'EUR', p_pack);
+  return o.orden_id;
+end $$;
+do $$
+declare u1 uuid := 'a0000000-0000-0000-0000-0000000000d1'; u2 uuid := 'a0000000-0000-0000-0000-0000000000d2'; u3 uuid := 'a0000000-0000-0000-0000-0000000000d3'; u4 uuid := 'a0000000-0000-0000-0000-0000000000d4';
+        e30 uuid := 'e5000000-0000-0000-0000-0000000000d1'; e150 uuid := 'e5000000-0000-0000-0000-0000000000d2';
+        o1 uuid; oa uuid; ob uuid; r record; c record; v timestamptz;
+begin
+  -- C: 100 OT bought, 30 spent on the 30-OT exam (30 days), the other 70 spent elsewhere: the whole access was financed by the refunded credit
+  o1 := pg_temp.buy(u1, 'pack-100', 'p1');
+  perform * from public.app_redeem_exam_access(u1, e30, 'k-p1', 30);
+  perform public.admin_grant_tickets(u1, -70, 'spend', 'sp-p1', 'ajuste');
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p1-refund', o1);
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 0, 'C: fully spent credit: nothing to reverse, balance stays 0 (never negative)';
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u1 and examen_id = e30 and motivo = 'compra';
+  assert v between now() - interval '1 minute' and clock_timestamp() + interval '1 second', 'C: the access is shortened to now, not revoked by deletion';
+  assert exists (select 1 from public.contenido_desbloqueado_usuario where usuario_id = u1 and examen_id = e30), 'C: the entitlement row still exists';
+  select * into c from public.refund_case where compra_id = o1;
+  assert c.politica = 'P2' and c.estado = 'resuelto' and c.resuelto_en is not null and c.ot_gastados = 100 and c.ot_revertidos = 0, 'C: case closed under P2';
+  assert c.detalle @> '[{"acceso_acortado":"e5000000-0000-0000-0000-0000000000d1"}]'::jsonb, 'C: the case records which access was shortened';
+  assert (select count(*) from public.app_wallet_reconcile(u1)) = 0, 'C: reconcile clean';
+
+  -- D + F: two 100 credits, one 150-OT exam: 100 from the first credit, 50 from the second; 50 OT left over
+  oa := pg_temp.buy(u2, 'pack-100', 'p2a');
+  ob := pg_temp.buy(u2, 'pack-100', 'p2b');
+  perform * from public.app_redeem_exam_access(u2, e150, 'k-p2', 150);
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p2a-refund', oa);
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 50, 'D: refund of the first credit: nothing unspent, the other purchase untouched, balance 50';
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u2 and examen_id = e150 and motivo = 'compra';
+  assert v between now() + interval '9 days 23 hours' and now() + interval '10 days 1 hour', 'D: 100 of 150 OT financed = 20 of 30 days cut: about 10 days left (' || v || ')';
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p2b-refund', ob);
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 0, 'F: second credit: 50 unspent reversed, 50 spent recorded, balance 0';
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u2 and examen_id = e150 and motivo = 'compra';
+  assert v between now() - interval '1 minute' and clock_timestamp() + interval '1 second', 'F: the remaining 50 OT cut the last 10 days: shortened to now';
+  assert (select ot_revertidos from public.refund_case where compra_id = ob) = 50 and (select ot_gastados from public.refund_case where compra_id = ob) = 50, 'F: case values';
+  assert (select count(*) from public.app_wallet_reconcile(u2)) = 0, 'F: reconcile clean';
+
+  -- E: the access already expired: nothing to shorten, nothing lengthened, still no negative balance
+  o1 := pg_temp.buy(u3, 'pack-100', 'p3');
+  perform * from public.app_redeem_exam_access(u3, e30, 'k-p3', 30);
+  update public.contenido_desbloqueado_usuario set valido_hasta = now() - interval '1 day', valido_desde = now() - interval '31 days' where usuario_id = u3 and examen_id = e30;
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p3-refund', o1);
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 0, 'E: 70 unspent reversed, 30 recorded';
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u3 and examen_id = e30;
+  assert v < now() - interval '23 hours', 'E: an expired access is untouched (never lengthened, never moved)';
+  assert (select detalle @> '[{"acceso_expirado_o_ausente":"e5000000-0000-0000-0000-0000000000d1"}]'::jsonb from public.refund_case where compra_id = o1), 'E: the case says there was no live access to shorten';
+
+  -- A/B regressions on a wallet with a live access that this credit did NOT finance: untouched
+  o1 := pg_temp.buy(u4, 'pack-100', 'p4a');
+  perform * from public.app_redeem_exam_access(u4, e30, 'k-p4', 30);
+  oa := pg_temp.buy(u4, 'pack-50', 'p4b');
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u4 and examen_id = e30;
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p4b-refund', oa);
+  assert r.outcome = 'REFUNDED' and r.saldo = 70, 'A: the unspent 50 credit is reversed in full, no case';
+  assert (select valido_hasta from public.contenido_desbloqueado_usuario where usuario_id = u4 and examen_id = e30) = v, 'A: the access financed by ANOTHER credit is untouched';
 end $$;
 
 -- ---- no client path
@@ -1143,7 +1219,9 @@ end $$;
 do $$
 declare own jsonb; other jsonb;
 begin
+  set local session_replication_role = replica;
   insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a8','regalo', now() - interval '1 day', null);
+  set local session_replication_role = origin;
   own := public.app_my_exams_collection('a0000000-0000-0000-0000-0000000000f1', null, null, null, null, null, 50, false, 'e1000000-0000-0000-0000-0000000000f1');
   other := public.app_my_exams_collection('a0000000-0000-0000-0000-0000000000f1', null, null, null, null, null, 50, false, 'e1000000-0000-0000-0000-0000000000f2');
   assert jsonb_array_length(own -> 'items') >= 1, 'own specialty lists the stored grant';
@@ -1202,7 +1280,9 @@ end $$;
 insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, fin_en) values ('a0000000-0000-0000-0000-0000000000f2', true, 'activa', now() + interval '10 days');
 select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f2', 300, 'seed', 'seed-2', 'ajuste');
 select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a1','k-sub')$q$, 'ALREADY_ACCESSIBLE');
+set local session_replication_role = replica; -- legacy unlimited gift rows (the table guard refuses new ones)
 insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000f3', 'e5000000-0000-0000-0000-0000000000a1', 'admin', now() - interval '1 day', null);
+set local session_replication_role = origin;
 select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f3', 200, 'seed', 'seed-4', 'ajuste');
 select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f3','e5000000-0000-0000-0000-0000000000a1','k-unl')$q$, 'ALREADY_ACCESSIBLE');
 -- a purchased row cannot be written incomplete
@@ -1260,10 +1340,13 @@ update public.perfiles_usuario set especialidad_principal_id = 'e1000000-0000-00
 do $$
 declare r record; r2 record; first_until timestamptz;
 begin
-  select * into r from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'admin');
+  select * into r from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'admin', 'a0000000-0000-0000-0000-0000000000c2');
   assert r.outcome = 'CREATED' and r.valido_hasta between now() + interval '29 days 23 hours' and now() + interval '30 days 1 hour', 'a gift is ONE month set by the server: ' || r.valido_hasta;
   first_until := r.valido_hasta;
-  select * into r2 from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'admin');
+  assert (select count(*) from public.auditoria_log where accion = 'acceso_examen_concedido' and registro_id = r.grant_id and usuario_id = 'a0000000-0000-0000-0000-0000000000c2' and (despues ->> 'valido_hasta') is not null) = 1, 'the audit row commits WITH the grant, with the actor';
+  select * into r2 from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'admin', 'a0000000-0000-0000-0000-0000000000c2');
+  assert r2.outcome = 'REPLAY' and (select count(*) from public.auditoria_log where accion = 'acceso_examen_concedido' and registro_id = r.grant_id) = 1, 'a replay writes no second audit row';
+  select * into r2 from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'admin', 'a0000000-0000-0000-0000-0000000000c2');
   assert r2.outcome = 'REPLAY' and r2.grant_id = r.grant_id and r2.valido_hasta = first_until, 'a double click is a replay, not a second month';
   -- stacking (another reason so it is not the double click): max(now, current end) + 30 days, never shortened
   select * into r2 from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'regalo');
@@ -1272,10 +1355,31 @@ begin
   assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', clock_timestamp())) = 'GRANTED', 'the verdict sees the gift';
   assert not exists (select 1 from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000c1'), 'a gift is not an OT debit: the wallet is untouched';
   -- a legacy unlimited grant has nothing to extend
+  set local session_replication_role = replica;
   insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000c4', 'e5000000-0000-0000-0000-0000000000c1', 'regalo', now() - interval '1 day', null);
+  set local session_replication_role = origin;
   select * into r2 from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c4', 'e5000000-0000-0000-0000-0000000000c1', 'admin');
   assert r2.outcome = 'UNLIMITED_EXISTS' and (select count(*) from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000c4') = 1, 'an active unlimited grant is returned as is';
+  -- table guard: a NEW unlimited gift row is refused; a legacy unlimited row stays valid and an update that keeps NULL is allowed
+  begin insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'promocion', now(), null); assert false, 'must refuse';
+  exception when others then assert sqlerrm = 'GIFT_UNLIMITED_FORBIDDEN', 'table guard: ' || sqlerrm; end;
+  update public.contenido_desbloqueado_usuario set valido_hasta = null where usuario_id = 'a0000000-0000-0000-0000-0000000000c4' and examen_id = 'e5000000-0000-0000-0000-0000000000c1';
+  begin update public.contenido_desbloqueado_usuario set valido_hasta = null where usuario_id = 'a0000000-0000-0000-0000-0000000000c1' and examen_id = 'e5000000-0000-0000-0000-0000000000c1' and motivo = 'admin'; assert false, 'must refuse';
+  exception when others then assert sqlerrm = 'GIFT_UNLIMITED_FORBIDDEN', 'a limited gift cannot be made unlimited: ' || sqlerrm; end;
+  -- revoke: ONE atomic function; closes every active manual grant of that user and exam (admin + regalo), audited once, idempotent, never a purchase
+  select * into r2 from public.admin_revoke_exam_access(r.grant_id, 'a0000000-0000-0000-0000-0000000000c2');
+  assert r2.outcome = 'REVOKED' and r2.concesiones = 2, 'revoke closes both active gifts: ' || r2.outcome || '/' || r2.concesiones;
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', clock_timestamp() + interval '1 second')) = 'LOCKED', 'after the revoke nothing is active';
+  assert (select count(*) from public.auditoria_log where accion = 'acceso_examen_retirado' and registro_id = r.grant_id and usuario_id = 'a0000000-0000-0000-0000-0000000000c2') = 1, 'the revoke audit commits with it';
+  select * into r2 from public.admin_revoke_exam_access(r.grant_id, 'a0000000-0000-0000-0000-0000000000c2');
+  assert r2.outcome = 'ALREADY_INACTIVE' and (select count(*) from public.auditoria_log where accion = 'acceso_examen_retirado' and registro_id = r.grant_id) = 1, 'a second revoke is a no-op: no second audit row';
+  assert not exists (select 1 from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000c1'), 'revoke does not touch the wallet either';
+  set local session_replication_role = replica;
+  insert into public.contenido_desbloqueado_usuario (id, usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000b9', 'a0000000-0000-0000-0000-0000000000c3', 'e5000000-0000-0000-0000-0000000000c1', 'compra', now() - interval '1 day', now() + interval '10 days');
+  set local session_replication_role = origin;
 end $$;
+select pg_temp.expect_e($q$select * from public.admin_revoke_exam_access('a0000000-0000-0000-0000-0000000000b9')$q$, 'GRANT_IS_PURCHASE');
+select pg_temp.expect_e($q$select * from public.admin_revoke_exam_access('a0000000-0000-0000-0000-0000000000ba')$q$, 'GRANT_NOT_FOUND');
 select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c2', 'admin')$q$, 'GIFT_NOT_USABLE');
 select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c3', 'admin')$q$, 'GIFT_NOT_USABLE');
 select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c2', 'e5000000-0000-0000-0000-0000000000c1', 'admin')$q$, 'GIFT_NOT_USABLE');
@@ -1284,4 +1388,131 @@ select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a000000
 select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'compra')$q$, 'GIFT_REASON_NOT_ALLOWED');
 select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000ee', 'e5000000-0000-0000-0000-0000000000c1', 'admin')$q$, 'GIFT_USER_NOT_FOUND');
 do $$ begin raise notice 'OK V1 admin gift'; end $$;
+rollback;
+
+-- 20261022100800: V1 saved questions (Guardar + OposiTeca): idempotent save/unsave, per-user scope, specialty gate + access verdict, cap, keyset list.
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000b1','sv1@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000b2','sv2@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000b3','sv3@test.local','authenticated','authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000b1','SA','SA','sa',true), ('e1000000-0000-0000-0000-0000000000b2','SB','SB','sb',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000b1','CB','Com B','com-b');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values
+  ('a0000000-0000-0000-0000-0000000000b1','sv1','sv1',true,'activa','e1000000-0000-0000-0000-0000000000b1'),
+  ('a0000000-0000-0000-0000-0000000000b2','sv2','sv2',true,'activa','e1000000-0000-0000-0000-0000000000b2')
+  on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+set local session_replication_role = replica;  -- the code trigger overwrites codigo_pregunta from a private sequence the gate bootstrap does not carry
+-- b2 free (SA), b1 premium (SA), b3 free (SB)
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, demo_disponible) values
+  ('e5000000-0000-0000-0000-0000000000b1','S-PREM','e1000000-0000-0000-0000-0000000000b1','c1000000-0000-0000-0000-0000000000b1','Premium SA','rafaga','premium',true, now() - interval '1 day', false),
+  ('e5000000-0000-0000-0000-0000000000b2','S-FREE','e1000000-0000-0000-0000-0000000000b1','c1000000-0000-0000-0000-0000000000b1','Gratis SA','rafaga','gratuito',true, now() - interval '2 days', false),
+  ('e5000000-0000-0000-0000-0000000000b3','S-OTHER','e1000000-0000-0000-0000-0000000000b2','c1000000-0000-0000-0000-0000000000b1','Gratis SB','rafaga','gratuito',true, now() - interval '1 day', false);
+-- q01..q09 (q05 inactive), q10 only in the SB exam, q11 only in the premium SA exam
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+select ('f5000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, 'SV-' || n, 'rafaga', 'Pregunta guardable ' || n, n <> 5
+  from generate_series(1, 9) n;
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values
+  ('f5000000-0000-0000-0000-000000000010', 'SV-10', 'rafaga', 'Pregunta de SB', true),
+  ('f5000000-0000-0000-0000-000000000011', 'SV-11', 'rafaga', 'Solo premium', true);
+-- the free SA exam holds q01..q09 (q04 annulled there); the premium one holds q02 (also free elsewhere) and q11
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, anulada)
+select 'e5000000-0000-0000-0000-0000000000b2', ('f5000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, n, n, n = 4 from generate_series(1, 9) n;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) values
+  ('e5000000-0000-0000-0000-0000000000b1','f5000000-0000-0000-0000-000000000002', 1, 1),
+  ('e5000000-0000-0000-0000-0000000000b1','f5000000-0000-0000-0000-000000000011', 2, 2),
+  ('e5000000-0000-0000-0000-0000000000b3','f5000000-0000-0000-0000-000000000010', 1, 1);
+set local session_replication_role = origin;
+
+do $$
+declare
+  u1 uuid := 'a0000000-0000-0000-0000-0000000000b1'; u2 uuid := 'a0000000-0000-0000-0000-0000000000b2';
+  first_ts timestamptz; r record; n int; ids uuid[];
+  v_last_ts timestamptz; v_last_id uuid; v_seen uuid[] := '{}'; v_page int := 0; v_rows int; rr record;
+begin
+  -- save, idempotent
+  select guardado_en into first_ts from public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000001');
+  assert first_ts is not null, 'saved';
+  assert (select guardado_en from public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000001')) = first_ts, 'saving twice returns the ORIGINAL guardado_en';
+  assert (select count(*) from public.recursos_guardados_usuario where usuario_id = u1) = 1, 'no duplicate row';
+  -- gates: premium-only question without access, another specialty, annulled, inactive, unknown
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000011')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000010')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000004')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000005')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-0000000000ff')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','recurso','f5000000-0000-0000-0000-000000000001')$q$, 'SAVED_INVALID');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b9','pregunta','f5000000-0000-0000-0000-000000000001')$q$, 'WALLET_INVALID_USER');
+  assert (select count(*) from public.recursos_guardados_usuario where usuario_id = u1) = 1, 'refusals wrote nothing';
+  -- q02 is in the premium exam AND in a free exam of the user's specialty: saveable through the free one
+  perform public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000002');
+  -- the other specialty saves its own, and cannot save u1's content
+  perform public.app_save_item(u2, 'pregunta', 'f5000000-0000-0000-0000-000000000010');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b2','pregunta','f5000000-0000-0000-0000-000000000001')$q$, 'NOT_FOUND');
+  assert (select count(*) from public.app_saved_state(u2, 'pregunta', array['f5000000-0000-0000-0000-000000000001'::uuid, 'f5000000-0000-0000-0000-000000000010'::uuid])) = 1, 'state is per user';
+  -- premium question after a grant
+  insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta)
+    values (u1, 'e5000000-0000-0000-0000-0000000000b1', 'admin', now() - interval '1 day', now() + interval '10 days');
+  perform public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000011');
+  select * into r from public.app_list_saved(u1, 'pregunta', null, null, 10) l where l.target_id = 'f5000000-0000-0000-0000-000000000011';
+  assert r.accesible and r.titulo = 'Solo premium' and r.examen_titulo = 'Premium SA', 'accessible item carries the title and the exam';
+  -- access lost later: row stays, content hidden, a re-save still answers
+  update public.contenido_desbloqueado_usuario set valido_desde = now() - interval '2 days', valido_hasta = now() - interval '1 second' where usuario_id = u1 and examen_id = 'e5000000-0000-0000-0000-0000000000b1';
+  select * into r from public.app_list_saved(u1, 'pregunta', null, null, 10) l where l.target_id = 'f5000000-0000-0000-0000-000000000011';
+  assert not r.accesible and r.titulo is null and r.examen_id is null, 'lost access: item stays, content hidden';
+  perform public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000011');
+  -- state
+  select array_agg(s.pregunta_id) into ids from public.app_saved_state(u1, 'pregunta', array['f5000000-0000-0000-0000-000000000001'::uuid, 'f5000000-0000-0000-0000-000000000003'::uuid, 'f5000000-0000-0000-0000-000000000002'::uuid]) s;
+  assert cardinality(ids) = 2, 'state returns only saved ids';
+  perform pg_temp.expect_e($q$select * from public.app_saved_state('a0000000-0000-0000-0000-0000000000b1','pregunta', (select array_agg(gen_random_uuid()) from generate_series(1, 51)))$q$, 'SAVED_INVALID');
+  -- keyset paging: u1 has q01, q02, q11 saved; add q06..q09 -> 7 rows, pages of 3
+  for n in 6..9 loop perform public.app_save_item(u1, 'pregunta', ('f5000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid); end loop;
+  loop
+    v_rows := 0;
+    for rr in select * from public.app_list_saved(u1, 'pregunta', v_last_ts, v_last_id, 3) loop
+      v_rows := v_rows + 1; v_seen := v_seen || rr.target_id; v_last_ts := rr.guardado_en; v_last_id := rr.id;
+    end loop;
+    exit when v_rows = 0;
+    v_page := v_page + 1;
+    assert v_page < 10, 'paging terminates';
+  end loop;
+  assert cardinality(v_seen) = 7 and (select count(distinct x) from unnest(v_seen) x) = 7, 'keyset pages cover every saved row exactly once';
+  assert v_seen[1] = 'f5000000-0000-0000-0000-000000000009', 'newest first';
+  -- unsave: scoped, idempotent
+  assert public.app_unsave_item(u2, 'pregunta', 'f5000000-0000-0000-0000-000000000001') = 0, 'another user cannot remove my row';
+  assert public.app_unsave_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000001') = 1, 'removed';
+  assert public.app_unsave_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000001') = 0, 'unsave twice is a no-op';
+end $$;
+-- cap (500 per user): fixture rows under replica (the code trigger would overwrite codigo_pregunta)
+set local session_replication_role = replica;
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+  select gen_random_uuid(), 'CAP-' || g, 'rafaga', 'cap ' || g, true from generate_series(1, 600) g;
+insert into public.recursos_guardados_usuario (usuario_id, tipo, pregunta_id)
+  select 'a0000000-0000-0000-0000-0000000000b1', 'pregunta', p.id from public.preguntas p where p.codigo_pregunta like 'CAP-%' order by p.codigo_pregunta
+   limit (500 - (select count(*) from public.recursos_guardados_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000b1'))::int;
+set local session_replication_role = origin;
+do $$
+declare u1 uuid := 'a0000000-0000-0000-0000-0000000000b1';
+begin
+  assert (select count(*) from public.recursos_guardados_usuario where usuario_id = u1) = 500, 'at the cap';
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000001')$q$, 'SAVED_LIMIT_REACHED');
+  assert (select guardado_en from public.app_save_item(u1, 'pregunta', 'f5000000-0000-0000-0000-000000000002')) is not null, 'an already saved item still answers at the cap';
+  -- no client path
+  assert not has_table_privilege('anon', 'public.recursos_guardados_usuario', 'select') and not has_table_privilege('authenticated', 'public.recursos_guardados_usuario', 'select')
+     and not has_table_privilege('service_role', 'public.recursos_guardados_usuario', 'insert') and not has_table_privilege('service_role', 'public.recursos_guardados_usuario', 'delete'), 'table is RPC-only';
+  assert not has_function_privilege('authenticated', 'public.app_save_item(uuid,text,uuid)', 'execute') and has_function_privilege('service_role', 'public.app_save_item(uuid,text,uuid)', 'execute'), 'function grants';
+end $$;
+-- deleting a question removes the saved rows
+delete from public.preguntas_examen where pregunta_id = 'f5000000-0000-0000-0000-000000000010';
+delete from public.preguntas where id = 'f5000000-0000-0000-0000-000000000010';
+do $$ begin
+  assert not exists (select 1 from public.recursos_guardados_usuario where pregunta_id = 'f5000000-0000-0000-0000-000000000010'), 'on delete cascade from the question';
+  raise notice 'OK V1 saved items';
+end $$;
 rollback;

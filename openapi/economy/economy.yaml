@@ -295,7 +295,7 @@ components:
                 $ref: '#/components/schemas/PaymentWebhookEvent'
         responses:
           '200':
-            description: 'Processed (or ignored). result is CREDITED, CREDITED_LATE, REPLAY, EN_REVISION, REFUNDED, REFUNDED_CASE_OPEN, NOOP or IGNORED.'
+            description: 'Processed (or ignored). result is CREDITED, CREDITED_LATE, REPLAY, EN_REVISION, REFUNDED, REFUNDED_P2 (refund policy P2: unspent OT reversed, the access that the refunded credit financed is shortened in proportion, case closed), NOOP or IGNORED.'
             headers:
               Cache-Control:
                 $ref: '#/components/headers/NoStore'
@@ -317,6 +317,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+            description: 'Upstream unavailable, OR a payment.refunded event while the refund path is switched off on this server (PAYMENTS_REFUNDS_ENABLED; off by default outside local/test). Nothing is written, so the provider retries.'
   parameters:
     OrderIdPath:
       name: orderId
@@ -503,4 +504,4 @@ components:
       properties:
         result:
           type: string
-          enum: [CREDITED, CREDITED_LATE, REPLAY, EN_REVISION, REFUNDED, REFUNDED_CASE_OPEN, NOOP, IGNORED]
+          enum: [CREDITED, CREDITED_LATE, REPLAY, EN_REVISION, REFUNDED, REFUNDED_P2, NOOP, IGNORED]

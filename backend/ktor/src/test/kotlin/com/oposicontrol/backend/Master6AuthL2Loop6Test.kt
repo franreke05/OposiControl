@@ -453,7 +453,12 @@ class Master6AuthL2Loop6Test {
         serviceRoleKey = "stub-key",
         json = Json { ignoreUnknownKeys = true },
         client = V1StubHttpClient({ sent += it.method() + " " + it.uri() }) { uri ->
-            if ("feedback_pregunta" in uri) V1StubResponse(201, """[{"id":"7b7b7b7b-0000-4000-8000-000000000001"}]""") else V1StubResponse(200, "[]")
+            when {
+                "feedback_pregunta" in uri -> V1StubResponse(201, """[{"id":"7b7b7b7b-0000-4000-8000-000000000001"}]""")
+                "/rest/v1/intentos_examen" in uri -> V1StubResponse(200, """[{"examen_id":"99999999-9999-4999-8999-999999999999"}]""")
+                "/rest/v1/preguntas_examen" in uri -> V1StubResponse(200, """[{"pregunta_id":"$pregunta"}]""")
+                else -> V1StubResponse(200, "[]")
+            }
         },
     )
 
@@ -471,9 +476,12 @@ class Master6AuthL2Loop6Test {
         }
         assertEquals("VALIDATION", badType.errorCode)
         assertTrue(sent.isEmpty(), "nada sale: $sent")
+        // E2-V1-R02: sin intentoId tampoco (y sin ninguna peticion)
+        assertEquals("VALIDATION", assertFailsWith<BackendDomainException> { g.crearFeedback(uid, AppFeedbackRequest(preguntaId = pregunta)) }.errorCode)
+        assertTrue(sent.isEmpty(), "nada sale sin intentoId: $sent")
         // Limites exactos aceptados (puntos de codigo: 2000 emojis son 4000 unidades UTF-16).
-        g.crearFeedback(uid, AppFeedbackRequest(preguntaId = pregunta, tipoFeedback = "respuesta_incorrecta", descripcion = "😀".repeat(FEEDBACK_DESCRIPTION_MAX)))
-        g.crearFeedback(uid, AppFeedbackRequest(preguntaId = pregunta, tipoFeedback = "", descripcion = ""))
+        g.crearFeedback(uid, AppFeedbackRequest(preguntaId = pregunta, tipoFeedback = "respuesta_incorrecta", descripcion = "😀".repeat(FEEDBACK_DESCRIPTION_MAX), intentoId = "44444444-4444-4444-8444-444444444444"))
+        g.crearFeedback(uid, AppFeedbackRequest(preguntaId = pregunta, tipoFeedback = "", descripcion = "", intentoId = "44444444-4444-4444-8444-444444444444"))
         assertEquals(2, sent.count { "feedback_pregunta" in it })
     }
 

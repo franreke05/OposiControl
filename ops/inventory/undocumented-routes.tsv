@@ -1,4 +1,4 @@
-# max: 168
+# max: 167
 # REVIEWED EXCEPTIONS REGISTER: routes served by Ktor that the frozen openapi/ does not declare. NOT a spec: no semantics are invented here.
 # The list can only shrink: a row that is no longer routed or is now documented fails RouteInventoryTest; a new undocumented route fails until it is
 # reviewed and added here (and then `# max:` goes up on purpose). Legacy routes are enrolled, never deleted (no published-client telemetry yet).
@@ -116,7 +116,6 @@ GET	/api/v1/app/commercial/subscriptions	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDI
 GET	/api/v1/app/estadisticas	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	APP-ESTADISTICAS	NONE	counter legacy_route_requests_total{endpoint="APP-ESTADISTICAS"}; no live caller in OC/OB (only a dead BackendRoutes constant; route matrix audit 2026-10-01); retire only after zero telemetry
 POST	/api/v1/app/eventos	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	APP-EVENTOS	NONE	counter legacy_route_requests_total{endpoint="APP-EVENTOS"}; no live caller in OC/OB (route matrix audit 2026-10-01); retire only after zero telemetry
 POST	/api/v1/app/examenes/{}/iniciar	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	APP-EXAMEN-INICIAR -> D2-03	NONE	counter legacy_route_requests_total{endpoint="APP-EXAMEN-INICIAR"}; no live caller in OC/OB (only a dead BackendRoutes constant; route matrix audit 2026-10-01); Slice 3 gate F-01: answers 410 LEGACY_ATTEMPT_ROUTE_RETIRED before auth, any body read or upstream I/O (it opened attempts without EntitlementPolicy); retire only after zero telemetry
-POST	/api/v1/app/feedback/pregunta	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	APP-FEEDBACK-PREGUNTA	NONE	counter legacy_route_requests_total{endpoint="APP-FEEDBACK-PREGUNTA"}; no live caller in OC/OB (route matrix audit 2026-10-01); retire only after zero telemetry
 GET	/api/v1/app/home	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	APP-HOME	NONE	counter legacy_route_requests_total{endpoint="APP-HOME"}; no live caller in OC/OB (only a dead BackendRoutes constant; route matrix audit 2026-10-01); retire only after zero telemetry
 POST	/api/v1/app/intentos/{}/responder	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	APP-INTENTO-RESPONDER -> D2-09	NONE	counter legacy_route_requests_total{endpoint="APP-INTENTO-RESPONDER"}; no live caller in OC/OB (only a dead BackendRoutes constant; route matrix audit 2026-10-01); Slice 3 gate F-02: answers 410 LEGACY_ATTEMPT_ROUTE_RETIRED before auth, any body read or upstream I/O (it returned esCorrecta/opcionCorrectaId mid-attempt against the live exam); retire only after zero telemetry
 GET	/content/comunidades	ADMIN_CONTRACT_GAP	EP-108	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending

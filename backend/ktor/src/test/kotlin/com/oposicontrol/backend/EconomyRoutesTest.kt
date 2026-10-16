@@ -465,6 +465,33 @@ class EconomyRoutesTest {
     }
 
     @Test
+    fun withTheRefundPathOffARefundEventWritesNothingAndIs503SoTheProviderRetries() = testApplication {
+        application {
+            install(ContentNegotiation) { json(testJson) }
+            installRequestCorrelation()
+            installBackendStatusPages()
+            routing { economyRoutes(EconomyRuntime(resolver, EconomyService(upstream, providers, clock = { now }, refundsEnabled = false), InMemoryIdempotencyStore { now })) }
+        }
+        val client = createClient { }
+        upstream.rpcHandler = { _, _ -> SupabaseRawResponse(200, orderRow("reembolsada", "REFUNDED", 0)) }
+        val refund = client.webhook(webhookBody(eventId = "evt-off", type = "payment.refunded"))
+        assertEquals(HttpStatusCode.ServiceUnavailable, refund.status, refund.bodyAsText())
+        assertTrue(upstream.rpcs.isEmpty(), "apagada: ni una llamada a la base")
+    }
+
+    @Test
+    fun theRefundPathIsOnlyOnByDefaultInLocalAndTestAndAnExplicitValueWins() {
+        fun on(vararg kv: Pair<String, String>) = refundsEnabledFrom(mapOf(*kv)::get)
+        assertTrue(on("APP_ENV" to "local"))
+        assertTrue(on("APP_ENV" to "test"))
+        assertEquals(false, on("APP_ENV" to "production"))
+        assertEquals(false, on("APP_ENV" to "Local"))
+        assertEquals(false, on())
+        assertEquals(false, on("APP_ENV" to "local", "PAYMENTS_REFUNDS_ENABLED" to "false"))
+        assertTrue(on("APP_ENV" to "production", "PAYMENTS_REFUNDS_ENABLED" to "true"))
+    }
+
+    @Test
     fun badSignatureStaleTimestampAndTamperedBodyAre401WithZeroWrites() = testApplication {
         application { economyModule() }
         val client = createClient { }
