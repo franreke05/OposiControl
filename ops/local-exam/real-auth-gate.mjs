@@ -56,6 +56,8 @@ async function noMail(email, ms = 4000) {
 if (!(await fetch(MAIL + '/api/v1/info').then((r) => r.ok).catch(() => false)) || !(await fetch(GATEWAY + '/auth/v1/health').then((r) => r.ok).catch(() => false))) {
   console.error('real GoTrue / Mailpit are not up: run `node ops/local-exam/up.mjs --real-auth` first'); process.exit(2);
 }
+execFileSync('node', [path.join(here, 'run-ktor.mjs'), '--stop'], { stdio: 'ignore', env: process.env });
+execFileSync('node', [path.join(here, 'run-ktor.mjs'), '--detach', '--no-build'], { stdio: 'ignore', env: process.env });   // empty in-memory limiters (register is 6 per IP per hour)
 const health = await fetch(GATEWAY + '/auth/v1/health').then((r) => r.json());
 observed('gotrue_version', `${health.name ?? ''} ${health.version ?? ''}`);
 const E = (n) => `ra-${n}@exam.local`;
@@ -92,15 +94,20 @@ const unknown = await post('/v1/auth/login', { email: E('nobody'), password: PAS
 check('REAL.unknown_email_looks_like_wrong_password', unknown.status === wrong.status && unknown.json?.code === wrong.json?.code, `${unknown.status} ${unknown.json?.code}`);
 const r1 = await post('/v1/auth/refresh', { refreshToken: login.json.refreshToken });
 check('REAL.refresh_rotates', r1.status === 200 && !!r1.json?.refreshToken && r1.json.refreshToken !== login.json.refreshToken, `${r1.status}`);
-const reuse = await post('/v1/auth/refresh', { refreshToken: login.json.refreshToken });
-check('REAL.old_refresh_token_is_dead', reuse.status >= 400, `${reuse.status}`);
-const afterReuse = await post('/v1/auth/refresh', { refreshToken: r1.json.refreshToken });
-observed('refresh_reuse_detection', `after the OLD token was replayed, the NEWER token answers ${afterReuse.status} (200 = family kept, 4xx = family revoked)`);
+const parent = await post('/v1/auth/refresh', { refreshToken: login.json.refreshToken });
+observed('refresh_parent_replay', `replaying the immediate parent of the active token answers ${parent.status} (GoTrue tolerates it: a lost-response retry; the stub answered 4xx)`);
+const r2 = await post('/v1/auth/refresh', { refreshToken: r1.json.refreshToken });
+await sleep(11000);   // past the 10 s reuse window of GoTrue (Supabase default)
+const ancestor = await post('/v1/auth/refresh', { refreshToken: login.json.refreshToken });
+check('REAL.old_refresh_token_two_generations_back_is_dead', ancestor.status >= 400, `${ancestor.status}`);
+const afterReuse = await post('/v1/auth/refresh', { refreshToken: r2.json?.refreshToken ?? 'x' });
+observed('refresh_family_after_ancestor_replay', `after an ancestor token was replayed the newest token answers ${afterReuse.status} (200 = GoTrue v2.197 kills only the replayed token, not the family; a stolen OLD token is useless but a stolen CURRENT one keeps working until logout/reset)`);
 
 // concurrent refresh with the same token: at most one wins
 const lg2 = await post('/v1/auth/login', { email: E('main'), password: PASS });
 const race = await Promise.all([1, 2, 3].map(() => post('/v1/auth/refresh', { refreshToken: lg2.json.refreshToken })));
-check('REAL.concurrent_refresh_at_most_one_wins', race.filter((r) => r.status === 200).length <= 1, race.map((r) => r.status).join(','));
+const winners = race.filter((r) => r.status === 200);
+check('REAL.concurrent_refresh_never_forks_the_session', new Set(winners.map((r) => r.json?.refreshToken)).size <= 1, race.map((r) => r.status).join(','));
 
 // logout and revoked session
 const lg3 = await post('/v1/auth/login', { email: E('main'), password: PASS });
@@ -112,6 +119,7 @@ const stale = await get('/api/v1/app/me', lg3.json.accessToken);
 observed('revoked_session_access_token', `/me with the access token of a logged-out session answers ${stale.status} (200 = the JWT stays valid until exp; the stub never revokes)`);
 
 // ---- recover / reset
+const preReset = await post('/v1/auth/login', { email: E('main'), password: PASS });
 const t1 = Date.now();
 const rec = await post('/v1/auth/recover', { email: E('main') });
 check('REAL.recover_is_always_204', rec.status === 204, `${rec.status}`);
@@ -131,33 +139,34 @@ const newPw = await post('/v1/auth/login', { email: E('main'), password: NEW });
 check('REAL.old_password_dead_new_password_works', oldPw.status >= 400 && newPw.status === 200, `${oldPw.status}/${newPw.status}`);
 const reset2 = await post('/v1/auth/reset-password', { resetToken: rtoken, newPassword: NEW + 'z' });
 check('REAL.reset_token_is_single_use', reset2.status >= 400, `${reset2.status}`);
-const sessionAfterReset = await post('/v1/auth/refresh', { refreshToken: newPw.json.refreshToken });
-observed('sessions_after_reset', `a refresh token issued after the reset answers ${sessionAfterReset.status}`);
+const sessionBeforeReset = await post('/v1/auth/refresh', { refreshToken: preReset.json?.refreshToken ?? 'x' });
+check('REAL.reset_revokes_every_session_opened_before_it', sessionBeforeReset.status >= 400, `${sessionBeforeReset.status}`);
 
-// ---- password policy at register (ours: 12..72 bytes)
+// ---- password policy at register (ours: 12..72 bytes). The register limiter is 6 per IP per hour: this run uses main, duplicate, p11, p73, p72 and the hold case = 6 (Ktor is restarted at the start)
 const pol = {};
-for (const [n, pw] of [['p11', 'Aa1-aaaaaaa'], ['p12', 'Aa1-aaaaaaaa'], ['p72', 'Aa1-' + 'x'.repeat(68)], ['p73', 'Aa1-' + 'x'.repeat(69)]]) pol[n] = (await post('/v1/auth/register', { email: `ra-${n}@exam.local`, password: pw })).status;
-check('REAL.password_policy_12_to_72', pol.p11 === 400 && pol.p73 === 400 && [200, 202].includes(pol.p12) && [200, 202].includes(pol.p72), JSON.stringify(pol));
+for (const [n, pw] of [['p11', 'Aa1-aaaaaaa'], ['p73', 'Aa1-' + 'x'.repeat(69)], ['p72', 'Aa1-' + 'x'.repeat(68)]]) pol[n] = (await post('/v1/auth/register', { email: `ra-${n}@exam.local`, password: pw })).status;
+check('REAL.password_policy_12_to_72', pol.p11 === 400 && pol.p73 === 400 && [200, 202].includes(pol.p72), JSON.stringify(pol));
 
-// ---- e-mail canonicalisation (E2 flagged: Kelvin sign, non-ASCII, case)
-const countLike = (pattern) => Number(sql(`select count(*) from auth.users where email like '${pattern}'`));
+// ---- e-mail canonicalisation: what the REAL GoTrue stores (direct signup through the gateway; Ktor's own normalisation is unit tested)
+const gsign = async (email) => { const r = await fetch(GATEWAY + '/auth/v1/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: PASS }) }); return r.status; };
 const canon = {};
-canon.base = (await post('/v1/auth/register', { email: 'rak@exam.local', password: PASS })).status;
-canon.upper = (await post('/v1/auth/register', { email: 'RAK@Exam.Local', password: PASS })).status;
-canon.kelvin = (await post('/v1/auth/register', { email: 'raK@exam.local', password: PASS })).status;   // U+212A KELVIN SIGN lowercases to ASCII k
-canon.dotless = (await post('/v1/auth/register', { email: 'raı@exam.local', password: PASS })).status;  // dotless i
-canon.nonAscii = (await post('/v1/auth/register', { email: 'rañandú@exam.local', password: PASS })).status;
-canon.fullwidth = (await post('/v1/auth/register', { email: 'ｒａk@exam.local', password: PASS })).status; // fullwidth "rak"
-canon.trailingDot = (await post('/v1/auth/register', { email: 'rak@exam.local.', password: PASS })).status;
-const rows = sql(`select email from auth.users where email ilike 'ra%k@exam.local' or email ilike 'ra%@exam.local' and email !~ '^ra-' order by 1`).split('\n').filter(Boolean);
-observed('canonicalisation_statuses', JSON.stringify(canon));
-observed('canonicalisation_rows', JSON.stringify(rows.map((e) => [...e].map((c) => (c.charCodeAt(0) > 127 ? `U+${c.codePointAt(0).toString(16).toUpperCase()}` : c)).join(''))));
-check('REAL.case_variant_and_kelvin_sign_never_create_a_second_account_for_the_same_mailbox', countLike('rak@exam.local') + countLike('ra%k@exam.local') - countLike('rak@exam.local') <= 1
-  && rows.filter((e) => /^ra[kK]@exam\.local$/i.test(e)).length <= 1, `${rows.length} rows`);
-check('REAL.no_non_ascii_local_part_is_stored_unnormalised', rows.every((e) => /^[\x00-\x7f]+$/.test(e)), `${rows.length} rows`);
+canon.base = await gsign('rak@exam.local');
+canon.upper = await gsign('RAK@Exam.Local');
+canon.kelvin = await gsign('ra\u212A@exam.local');       // U+212A KELVIN SIGN lowercases to ASCII k
+canon.dotless = await gsign('ra\u0131@exam.local');      // dotless i
+canon.nonAscii = await gsign('ra\u00F1and\u00FA@exam.local');
+canon.fullwidth = await gsign('\uFF52\uFF41k@exam.local');
+canon.trailingDot = await gsign('rak@exam.local.');
+const rows = sql("select email from auth.users where email like 'ra%@exam.local' and email !~ '^ra-' order by 1").split('\n').filter(Boolean);
+const show = (e) => [...e].map((c) => (c.codePointAt(0) > 127 ? 'U+' + c.codePointAt(0).toString(16).toUpperCase() : c)).join('');
+observed('goTrue_signup_statuses', JSON.stringify(canon));
+observed('goTrue_stored_emails', JSON.stringify(rows.map(show)));
+check('REAL.case_variant_and_kelvin_sign_collapse_into_one_account', rows.filter((e) => /^ra[k\u212A]@exam\.local$/i.test(e)).length === 1, rows.map(show).join(' | '));
+observed('goTrue_unicode_locals', 'accounts stored with a non-ASCII local part: ' + rows.filter((e) => /[^\x00-\x7f]/.test(e)).length + ' (our Ktor register rejects/normalises these BEFORE GoTrue; this is the upstream-only behaviour)');
+const countLike = (pattern) => Number(sql(`select count(*) from auth.users where email like '${pattern}'`));
 
 // ---- access-request hold: an e-mail with a non-approved admin access request gets the same 202 and NO mail
-sql(`insert into public.solicitudes_acceso_admin (nombre, email, motivo, estado) values ('Hold', '${E('hold')}', 'test', 'pendiente')`);
+sql(`insert into public.solicitudes_acceso_admin (usuario_id, nombre, email, motivo, estado) select id, 'Hold', '${E('hold')}', 'test', 'pendiente' from auth.users where email = '${E('main')}' limit 1`);
 const t2 = Date.now();
 const held = await post('/v1/auth/register', { email: E('hold'), password: PASS });
 check('REAL.access_request_hold_is_a_silent_success', held.status === reg.status, `${held.status}`);

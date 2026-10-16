@@ -90,6 +90,7 @@ services:
       GOTRUE_JWT_SECRET: ${LOCAL_JWT_SECRET:?run up.mjs}
       GOTRUE_JWT_KEYS: ${GOTRUE_JWT_KEYS:-}
       GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_ISSUER: http://localhost:54321/auth/v1   # Supabase puts iss = <project url>/auth/v1 in every token; Ktor requires it
       GOTRUE_JWT_AUD: authenticated
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
       GOTRUE_DISABLE_SIGNUP: "false"
@@ -105,8 +106,8 @@ services:
       GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: /auth/v1/verify
       GOTRUE_PASSWORD_MIN_LENGTH: "12"
       GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "true"
-      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "0"
-      GOTRUE_RATE_LIMIT_EMAIL_SENT: "30"
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "10"   # the Supabase default
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: "1000"   # hourly mail budget raised so the gate itself does not exhaust it (production default is 30/h on the built-in SMTP)
       GOTRUE_RATE_LIMIT_OTP: "30"
       GOTRUE_LOG_LEVEL: info
     restart: on-failure
