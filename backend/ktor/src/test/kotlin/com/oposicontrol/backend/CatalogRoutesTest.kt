@@ -86,7 +86,7 @@ class CatalogRoutesTest {
         var credits = "[]"
         var signed = "[]"
         var communities = """[{"codigo":"MAD","nombre":"Comunidad de Madrid"},{"codigo":"AND","nombre":"Andalucía"}]"""
-        var profileSpecialty = "[]"
+        var profileSpecialty = """[{"especialidad_principal_id":"11111111-1111-4111-8111-111111111111"}]"""
         var failOn: String? = null
 
         fun respond(rawUri: String): V1StubResponse {
@@ -410,8 +410,8 @@ class CatalogRoutesTest {
         assertEquals("EXAM_NOT_FOUND", code(response.bodyAsText()))
         upstream.profileSpecialty = """[{"especialidad_principal_id":"$esp"}]"""
         assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/examenes/$e1").status)
-        upstream.profileSpecialty = "[]" // no specialty chosen yet: no gate
-        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/examenes/$e1").status)
+        upstream.profileSpecialty = "[]" // no specialty chosen yet: denied too (E2-V1-E06)
+        assertEquals(HttpStatusCode.NotFound, client.getAs("/api/v1/app/examenes/$e1").status)
     }
 
     @Test
@@ -500,7 +500,7 @@ class CatalogRoutesTest {
         assertNull(item["comunidadNombre"], "sin nombre el cliente no muestra cabecera: nunca el codigo crudo")
     }
 
-    // =================================================================== E2-P02 / FA19
+    // =================================================================== E2-P02 / FA20
 
     @Test
     fun catalogAndEntitlementReadsShareOnePerUserBucketAnd429WithRetryAfter() = testApplication {
@@ -719,7 +719,7 @@ class CatalogRoutesTest {
         // UNA llamada a la funcion, con el `sub` del JWT y sin filtros; ninguna lectura directa "parcial" de concesiones o intentos.
         val call = upstream.collectionCalls.single()
         assertEquals(
-            setOf("p_usuario_id", "p_tipo_examen", "p_comunidad_id", "p_anio", "p_despues_en", "p_despues_id", "p_limite", "p_con_grupos"),
+            setOf("p_usuario_id", "p_tipo_examen", "p_comunidad_id", "p_anio", "p_despues_en", "p_despues_id", "p_limite", "p_con_grupos", "p_especialidad_id"),
             call.keys,
         )
         assertEquals(TEST_UID, call["p_usuario_id"]!!.jsonPrimitive.content)

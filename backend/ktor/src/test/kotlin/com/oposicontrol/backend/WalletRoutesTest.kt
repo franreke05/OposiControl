@@ -170,7 +170,7 @@ class WalletRoutesTest {
         assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/wallet/movimientos?limit=5&tipo=recarga&origen=compras").status)
     }
 
-    // E2-P02 / FA19: limite por usuario WALLET_READ (60 / 60 s), un solo cubo para D6-01 y D6-02, ANTES de leer nada.
+    // E2-P02 / FA20: limite por usuario WALLET_READ (60 / 60 s), un solo cubo para D6-01 y D6-02, ANTES de leer nada.
     @Test
     fun walletReadsShareOnePerUserBucketAnd429WithRetryAfterBeforeAnyUpstreamRead() = testApplication {
         val limiter = InMemoryOposiBotsAuthRateLimiter()

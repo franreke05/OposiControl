@@ -12,7 +12,7 @@ import io.ktor.server.routing.route
 internal class WalletRuntime(
     val resolver: CanonicalIdentityResolver,
     val wallet: WalletService,
-    /** E2-P02 / FA19: limite por usuario (WALLET_READ) antes de leer el perfil. Por defecto no limita (pruebas). */
+    /** E2-P02 / FA20: limite por usuario (WALLET_READ) antes de leer el perfil. Por defecto no limita (pruebas). */
     val limit: suspend (CanonicalUserId) -> Unit = {},
 ) {
     companion object {

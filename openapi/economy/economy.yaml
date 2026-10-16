@@ -1,4 +1,4 @@
-# ECONOMY commands (FA21, V1): D6-03 redeem, D6-11 packs, D6-12/D6-13/D6-14 payment orders, W-01 provider webhook.
+# ECONOMY commands (FA22, V1): D6-03 redeem, D6-11 packs, D6-12/D6-13/D6-14 payment orders, W-01 provider webhook.
 # Design: E1-V1-MINIDESIGN (co-signed by E2). Everything economic is decided by the database inside ONE transaction (ledger first,
 # one lock per wallet, DB clock). The client sends only what the user chose: an exam, a pack code, a provider id, an opaque receipt.
 # It NEVER sends a user, a balance, a price paid, an OT quantity or an amount; prices, quantities and currency come from the catalogue.
@@ -62,7 +62,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
-            description: 'EXAM_NOT_FOUND (also draft, archived, not yet published, or an exam of a specialty other than the caller one: the specialty is an access gate, FA22).'
+            description: 'EXAM_NOT_FOUND (also draft, archived, not yet published, or an exam of a specialty other than the caller one: the specialty is an access gate, FA23).'
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
             description: 'INSUFFICIENT_BALANCE (details.balance, details.price), PRICE_CHANGED (details.price), ALREADY_ACCESSIBLE (details.accessState: the exam is free, or the user has Premium or an unlimited grant) or IDEMPOTENCY_KEY_IN_PROGRESS.'

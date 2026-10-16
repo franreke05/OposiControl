@@ -91,11 +91,11 @@ on conflict (id) do nothing;
 -- ---------- Q3 entitlements: ledger debit first, then the entitlement that points at it ----------
 -- One statement per ledger row of the SAME wallet: the snapshot trigger runs after the statement, so two rows of one wallet in one INSERT fail closed (WALLET_INCONSISTENT).
 insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
-values ('7d300000-0000-4000-8000-000000000010', '2d000000-0000-4000-8000-00000000002d', 'compra_examen', -10, 'Acceso a examen', 'examen', 'e3000000-0000-4000-8000-000000000010', 'fixture:q3:expired', '{"op":"fixture"}')
-on conflict (usuario_id, idempotency_key) do nothing;
+select id::uuid, usuario_id::uuid, tipo, cantidad::int, descripcion, referencia_tipo, referencia_id::uuid, idempotency_key, metadatos::jsonb from (values ('7d300000-0000-4000-8000-000000000010', '2d000000-0000-4000-8000-00000000002d', 'compra_examen', -10, 'Acceso a examen', 'examen', 'e3000000-0000-4000-8000-000000000010', 'fixture:q3:expired', '{"op":"fixture"}')) v(id, usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
+ where not exists (select 1 from public.transacciones_cartera t where t.usuario_id = '2d000000-0000-4000-8000-00000000002d' and t.idempotency_key = 'fixture:q3:expired');
 insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
-values ('7d300000-0000-4000-8000-000000000011', '2d000000-0000-4000-8000-00000000002d', 'compra_examen', -10, 'Acceso a examen', 'examen', 'e3000000-0000-4000-8000-000000000011', 'fixture:q3:expiring', '{"op":"fixture"}')
-on conflict (usuario_id, idempotency_key) do nothing;
+select id::uuid, usuario_id::uuid, tipo, cantidad::int, descripcion, referencia_tipo, referencia_id::uuid, idempotency_key, metadatos::jsonb from (values ('7d300000-0000-4000-8000-000000000011', '2d000000-0000-4000-8000-00000000002d', 'compra_examen', -10, 'Acceso a examen', 'examen', 'e3000000-0000-4000-8000-000000000011', 'fixture:q3:expiring', '{"op":"fixture"}')) v(id, usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
+ where not exists (select 1 from public.transacciones_cartera t where t.usuario_id = '2d000000-0000-4000-8000-00000000002d' and t.idempotency_key = 'fixture:q3:expiring');
 
 insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta, precio_pagado, moneda, transaccion_id, comprado_en)
 values ('2d000000-0000-4000-8000-00000000002d', 'e3000000-0000-4000-8000-000000000010', 'compra', now() - interval '40 days', now() - interval '10 days', 10, 'OPOSITICKETS', '7d300000-0000-4000-8000-000000000010', now() - interval '40 days'),
@@ -107,3 +107,7 @@ do update set valido_desde = excluded.valido_desde, valido_hasta = excluded.vali
 update public.perfiles_usuario set especialidad_principal_id = 'e5000000-0000-4000-8000-000000000001'
  where usuario_id in ('2a000000-0000-4000-8000-00000000002a', '2b000000-0000-4000-8000-00000000002b', '2c000000-0000-4000-8000-00000000002c',
                       '2d000000-0000-4000-8000-00000000002d', '2e000000-0000-4000-8000-00000000002e') and especialidad_principal_id is null;
+
+-- A user without a specialty is denied everything (owner 2026-10-16, E2-V1-E06). Local fixture profiles that predate the rule (A, B, P, X*, E2 harness users...) get the default local
+-- specialty; NULL -> value is allowed by the set-once trigger. Users created through register carry the specialty they chose.
+update public.perfiles_usuario set especialidad_principal_id = 'e5000000-0000-4000-8000-000000000001' where especialidad_principal_id is null;

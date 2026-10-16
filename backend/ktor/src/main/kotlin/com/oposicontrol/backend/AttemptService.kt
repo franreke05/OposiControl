@@ -29,7 +29,7 @@ import java.time.OffsetDateTime
 //            se emiten: si la duracion del examen corta el intento es una pregunta abierta del motor).
 //   DEC-004/016/019  `comparativa`, `probabilidadPlaza`, `pctAciertoGlobal` = null.
 //   DEC-025          D2-65 `explanation` = null; D2-12 `razonamiento` = null (no se leen de la base; politica unica sin cambios).
-//   VERSIONADO P0    (dueno 2026-10-14, 20261016100000) el intento queda ligado a una revision INMUTABLE de cada pregunta:
+//   VERSIONADO P0    (dueno 2026-10-14, 20261022100000) el intento queda ligado a una revision INMUTABLE de cada pregunta:
 //                    D2-08 / D2-12 / D2-65 leen la revision; la correccion de D2-09 sale de ella. Intento legacy sin
 //                    revision: contenido vivo.
 //   RECURSOS V1      (dueno 2026-10-14) imagen / audio (video extensible): metadatos en D2-08 `recursos` y D2-65
@@ -432,7 +432,7 @@ internal class AttemptService(
                 val estado = outcome.estado?.takeIf { it in ANSWER_STATES } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
                 val respondidas = outcome.respondidas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
                 // DEC-015: solo una respuesta (primera vez o la misma opcion reenviada, que la RPC devuelve como no-op) revela;
-                // un salto y una anulada, nada. Desde 20261016100000 la RPC devuelve la correccion de la fila que acaba de
+                // un salto y una anulada, nada. Desde 20261022100000 la RPC devuelve la correccion de la fila que acaba de
                 // escribir (corregida con la REVISION del intento): una sola llamada. Una base sin esa migracion no la
                 // devuelve y se lee la fila (segunda llamada); si esa lectura falla, falla la llamada (el reintento con la
                 // misma clave cae en el no-op de la RPC y revela).
@@ -650,7 +650,7 @@ internal class AttemptService(
     }
 
     /**
-     * El contenido de una pregunta del intento: el de SU revision inmutable (20261016100000) o, en un intento congelado
+     * El contenido de una pregunta del intento: el de SU revision inmutable (20261022100000) o, en un intento congelado
      * antes de la migracion, el vivo. [QuestionView.correctId] solo existe si la lectura pidio la solucion (D2-12 / D2-65).
      */
     private fun FrozenQuestionRow.view(): QuestionView {

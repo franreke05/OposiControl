@@ -4994,7 +4994,7 @@ class AdminV1Gateway private constructor(
                         buildJsonObject {
                             put("mime", JsonPrimitive(mime))
                             put("bytes", JsonPrimitive(bytes.size))
-                            // EX14 (dueno 2026-10-14, contrato FA17): solo AUDIO, calculado UNA vez aqui. Si no se
+                            // EX14 (dueno 2026-10-14, contrato FA18): solo AUDIO, calculado UNA vez aqui. Si no se
                             // puede decodificar, el recurso se guarda igual, sin `durationMs` ni `envelope`.
                             if (tipo == "audio") AudioEnvelope.ingestMetadata(bytes, mime)?.forEach { (key, value) -> put(key, value) }
                         },

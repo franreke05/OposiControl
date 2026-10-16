@@ -146,6 +146,15 @@ internal class SupabaseCanonicalProfileService(
         }
         if (issues.isNotEmpty()) throw validationError(*issues.take(MAX_VALIDATION_ISSUES).toTypedArray())
 
+        // V1 (E2-V1-E06): la especialidad es OBLIGATORIA al terminar el alta; si el perfil aun no la tiene hay que enviarla ahora.
+        if (request.especialidadId == null) {
+            val current = canonicalUpstreamIo {
+                upstream.get("/rest/v1/perfiles_usuario?select=especialidad_principal_id&usuario_id=eq.${identity.userId.value}&limit=1")
+            }
+            val has = json.parseToJsonElement(current).let { (it as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject }
+                ?.get("especialidad_principal_id")?.let { it !is kotlinx.serialization.json.JsonNull } == true
+            if (!has) throw validationError(ErrorIssue("especialidadId", CanonicalIssue.REQUIRED))
+        }
         val args = buildJsonObject {
             put("p_usuario_id", identity.userId.value)
             put("p_username", request.username)

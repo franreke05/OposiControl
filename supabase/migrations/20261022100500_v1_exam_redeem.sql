@@ -14,7 +14,7 @@
 --         newValidUntil = max(db_now, latest valido_hasta of the user's ACTIVE grants of that exam) + dias_acceso_compra days   (DB clock, never shortened)
 --     Price, days and purchasability are read INSIDE from `examenes` (precio_tickets, dias_acceso_compra, comprable_con_tickets). Nothing is invented: unset
 --     price or comprable_con_tickets = false -> NOT_PURCHASABLE. The request fingerprint is stored in the ledger row so a replay returns the same result.
---   * SPECIALTY GATE (owner 2026-10-16): the verdict has a rule 0, SPECIALTY_MISMATCH (LOCKED) when the user's specialty is set and differs from the exam's; the redeem answers
+--   * SPECIALTY GATE (owner 2026-10-16): the verdict has a rule 0, SPECIALTY_MISMATCH (LOCKED) when the user's specialty is missing or differs from the exam's; the redeem answers
 --     EXAM_NOT_FOUND for such an exam. Mirrored in Kotlin (EntitlementPolicy) and covered by the generated-matrix parity test.
 --   * public.app_server_now(): the database clock for Ktor. Ktor decides 'until when does this access last' for D2-02 / D2-13 with the SAME clock that wrote
 --     `valido_hasta` here (ServerClock reads it, then advances monotonically); a JVM-clock skew can never show an expired exam as valid.
@@ -128,9 +128,9 @@ begin
     return;
   end if;
   -- SPECIALTY IS AN ACCESS GATE (owner 2026-10-16): an exam outside the user's specialty is not visible and not usable, whatever else the user holds (a stored
-  -- purchase stays stored). A user without a specialty yet is not gated. Rule 0 of the single access rule.
+  -- purchase stays stored). A user WITHOUT a specialty is denied too (owner/E2-V1-E06): until the specialty is chosen nothing is visible or usable. Rule 0 of the single access rule.
   select pf.especialidad_principal_id into v_uspec from public.perfiles_usuario pf where pf.usuario_id = p_usuario;
-  if v_uspec is not null and v_uspec <> e.especialidad_id then
+  if v_uspec is null or v_uspec <> e.especialidad_id then
     state := 'LOCKED'; reason := 'SPECIALTY_MISMATCH'; unlimited_grant := false;
     return next;
     return;

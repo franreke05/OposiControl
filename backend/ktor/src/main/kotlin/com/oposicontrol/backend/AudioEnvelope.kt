@@ -23,7 +23,7 @@ private val EnvelopeLogger = LoggerFactory.getLogger("OC-KTOR-MEDIA")
  * 2 000 caracteres base64; la misma serie como lista JSON de decimales ocupa varias veces mas (medido en el test).
  *
  * Donde se guarda: `recursos_pregunta.metadatos.envelope = {stepMs, samples}` (y `metadatos.durationMs`), que la revision
- * del intento ya copia (20261016100000). Lo escribe la INGESTA ([ingestMetadata] desde `AdminV1Gateway.addRecursoArchivo`,
+ * del intento ya copia (20261022100000). Lo escribe la INGESTA ([ingestMetadata] desde `AdminV1Gateway.addRecursoArchivo`,
  * autorizado por el dueno 2026-10-14); un audio subido antes, o que no se pudo decodificar, sale con `envelope = null`.
  */
 internal object AudioEnvelope {

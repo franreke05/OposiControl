@@ -24,7 +24,7 @@ import kotlinx.serialization.serializer
 // - SEC-004: la solucion (`revisiones_pregunta.solucion`, o `soluciones_pregunta` en un intento legacy sin revision) solo
 //   se lee en [reviewPage] y [resultQuestions], que el servicio llama UNICAMENTE con el intento ya `finalizado`, y solo su
 //   `opcion_correcta_id`. [questionPage] (D2-08) pide `contenido` y nada mas; `razonamiento` no se lee en ningun sitio.
-// - VERSIONADO P0 (20261016100000): las lecturas de contenido van a la revision INMUTABLE ligada al empezar; las rutas y
+// - VERSIONADO P0 (20261022100000): las lecturas de contenido van a la revision INMUTABLE ligada al empezar; las rutas y
 //   buckets de los recursos que guarda son internos y solo [AttemptService.resourceAccess] los usa (para firmar).
 // - DEC-015 (decidida 2026-10-13): la correccion que se ensena con el intento ABIERTO sale SOLO de la fila propia del
 //   usuario en `respuestas_intento` (`es_correcta`, `opcion_correcta_id`, que `app_record_attempt_answer` escribe al
@@ -124,13 +124,13 @@ internal data class FrozenQuestionRow(
     val posicion: Int,
     @SerialName("pregunta_id") val preguntaId: String,
     @SerialName("estado_final") val estadoFinal: String? = null,
-    /** 20261016100000: la revision INMUTABLE a la que el intento quedo ligado al empezar. `null` = intento anterior (legacy, contenido vivo). */
+    /** 20261022100000: la revision INMUTABLE a la que el intento quedo ligado al empezar. `null` = intento anterior (legacy, contenido vivo). */
     @SerialName("revision_pregunta_id") val revisionId: String? = null,
     @SerialName("revisiones_pregunta") val revision: RevisionRef? = null,
     val preguntas: QuestionRef? = null,
 )
 
-// ---------- revision inmutable (public.revisiones_pregunta, 20261016100000) ----------
+// ---------- revision inmutable (public.revisiones_pregunta, 20261022100000) ----------
 
 @Serializable
 internal data class RevisionOption(val id: String, val letra: String, val texto: String, val posicion: Int = 0)
@@ -203,7 +203,7 @@ internal data class AttemptCommandOutcome(
     @SerialName("es_primera_respuesta") val esPrimeraRespuesta: Boolean? = null,
     val respondidas: Int? = null,
     val already: Boolean? = null,
-    /** 20261016100000: la revelacion DEC-015 sale de la propia RPC (una sola llamada por respuesta). */
+    /** 20261022100000: la revelacion DEC-015 sale de la propia RPC (una sola llamada por respuesta). */
     @SerialName("es_correcta") val esCorrecta: Boolean? = null,
     @SerialName("opcion_correcta_id") val opcionCorrectaId: String? = null,
 )
@@ -307,7 +307,7 @@ internal class AttemptGateway(
     }
 
     /**
-     * D2-08: una pagina del conjunto congelado con el contenido de SU revision (20261016100000). NUNCA la solucion (la
+     * D2-08: una pagina del conjunto congelado con el contenido de SU revision (20261022100000). NUNCA la solucion (la
      * correccion de lo ya respondido sale de [answers]). Las filas sin revision (intento congelado antes de la migracion)
      * se completan con [legacyContent]: una segunda lectura SOLO si hace falta.
      */
@@ -389,7 +389,7 @@ internal class AttemptGateway(
         ).toString()
     }
 
-    /** Filas sin revision (intento congelado antes de 20261016100000): su contenido VIVO, en una segunda lectura acotada. */
+    /** Filas sin revision (intento congelado antes de 20261022100000): su contenido VIVO, en una segunda lectura acotada. */
     private fun legacyContent(attemptId: String, rows: List<FrozenQuestionRow>, embed: String): List<FrozenQuestionRow> {
         val missing = rows.filter { it.revisionId == null || it.revision == null }.mapTo(LinkedHashSet()) { it.posicion }
         if (missing.isEmpty()) return rows

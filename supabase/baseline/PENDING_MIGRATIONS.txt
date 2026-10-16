@@ -1,9 +1,9 @@
 # Migraciones del repo que MAIN AUN NO tiene (historial real: supabase/baseline/MAIN_MIGRATION_HISTORY.txt, 2026-10-14).
 # Divergencias conocidas que NO son pendientes: ver supabase/baseline/README.md.
-20261016100000_slice3_attempt_content_revisions
-20261017100000_security_exam_publication_time
-20261018100000_v1_exam_community_required
-20261018100100_v1_wallet_ledger_hardening
-20261018100200_v1_payment_orders
-20261018100300_v1_exam_redeem
-20261018100400_v1_specialty_immutable
+20261022100000_slice3_attempt_content_revisions
+20261022100100_security_exam_publication_time
+20261022100200_v1_exam_community_required
+20261022100300_v1_wallet_ledger_hardening
+20261022100400_v1_payment_orders
+20261022100500_v1_exam_redeem
+20261022100600_v1_specialty_immutable

@@ -504,7 +504,7 @@ await scenario('SCHEDULED', async () => {
   check('SCHEDULED.postgrest_user_still_reads_published_free', pub.includes(EX.NORMAL), pub);
 });
 
-// ---------- E2-P02 / FA19: limites de lectura por usuario. LO ULTIMO: agota los cubos de B ----------
+// ---------- E2-P02 / FA20: limites de lectura por usuario. LO ULTIMO: agota los cubos de B ----------
 // ---------- V1 ECONOMIA (STEP 3/4): canje, paquetes, pedidos de pago, aviso firmado, reembolso, reconciliacion ----------
 await scenario('ECONOMY', async () => {
   const OT = { IMM30: 'e3000000-0000-4000-8000-000000000030', ONE: 'e3000000-0000-4000-8000-000000000001', EXPIRED: 'e3000000-0000-4000-8000-000000000010',

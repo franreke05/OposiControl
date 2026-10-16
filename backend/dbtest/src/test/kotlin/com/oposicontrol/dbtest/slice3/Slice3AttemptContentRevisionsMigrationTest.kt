@@ -20,14 +20,14 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 /**
- * Migracion 20261016100000 (decision del propietario 2026-10-14, versionado P0): un intento queda ligado a una revision
+ * Migracion 20261022100000 (decision del propietario 2026-10-14, versionado P0): un intento queda ligado a una revision
  * INMUTABLE y REUTILIZABLE de cada pregunta. Prueba obligatoria del dueno a nivel de base:
  * publish X -> start X -> modify/publish Y -> continuar -> preguntas X -> finish -> review X.
  */
 class Slice3AttemptContentRevisionsMigrationTest {
     private companion object {
         const val FREEZE = "supabase/migrations/20261010100000_slice3_attempt_freeze_keeps_annulled.sql"
-        const val MIGRACION = "supabase/migrations/20261016100000_slice3_attempt_content_revisions.sql"
+        const val MIGRACION = "supabase/migrations/20261022100000_slice3_attempt_content_revisions.sql"
         const val TAG2 = "7a300000-0000-0000-0000-000000000002"
         const val REC_IMG = "5e300000-0000-0000-0000-000000000001"
         const val REC_AUD = "5e300000-0000-0000-0000-000000000002"

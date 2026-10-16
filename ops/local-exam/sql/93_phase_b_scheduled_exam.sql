@@ -1,6 +1,6 @@
 -- E2-P03 / PHASE B (LOCAL ONLY). Examen PROGRAMADO: gratuito, activo, publicado_en dentro de 7 dias, 1 pregunta con 4
 -- opciones. No debe salir antes de su hora ni por el catalogo canonico (D2-01/D2-02, ya filtrado), ni por las rutas
--- publicas /v1 (Ktor, publishedByNow), ni por PostgREST directo (20261017100000_security_exam_publication_time).
+-- publicas /v1 (Ktor, publishedByNow), ni por PostgREST directo (20261022100100_security_exam_publication_time).
 -- Idempotente (on conflict do nothing). EX_PROGRAMADO e0000000-…-09, pregunta f9000000-…-01.
 
 set session_replication_role = replica;

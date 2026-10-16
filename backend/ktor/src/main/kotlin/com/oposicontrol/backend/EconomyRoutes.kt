@@ -65,7 +65,7 @@ internal class EconomyRuntime(
 internal const val WEBHOOK_BODY_MAX_BYTES: Long = 64L * 1024
 
 /**
- * Economia V1 (`openapi/wallet/wallet.yaml`, enmienda FA21):
+ * Economia V1 (`openapi/wallet/wallet.yaml`, enmienda FA22):
  *
  *  - D6-03 `POST /api/v1/app/wallet/canjes`                          canjear un examen con OT (`Idempotency-Key` obligatoria)
  *  - D6-11 `GET  /api/v1/app/wallet/paquetes`                        paquetes de OT en venta (solo completos: cantidad y precio fijados)

@@ -77,13 +77,13 @@ internal enum class OposiBotsAuthOperation(
     ATTEMPT_READ(240, 120, 60),
 
     /**
-     * E2-P02 / FA19: lecturas de catalogo y derechos con identidad (D2-01, D2-02, D2-13, D7-02), un solo cubo por usuario.
+     * E2-P02 / FA20: lecturas de catalogo y derechos con identidad (D2-01, D2-02, D2-13, D7-02), un solo cubo por usuario.
      * La Home V1 pide 2-3 en paralelo y el Market pagina de 20 en 20: 120 por minuto son decenas de cargas completas y
      * frenan un bucle o un raspado.
      */
     CATALOG_READ(240, 120, 60),
 
-    /** E2-P02 / FA19: lecturas de cartera (D6-01, D6-02). 60 por minuto: la Home y la pantalla de cartera piden 1-2 por carga. */
+    /** E2-P02 / FA20: lecturas de cartera (D6-01, D6-02). 60 por minuto: la Home y la pantalla de cartera piden 1-2 por carga. */
     WALLET_READ(120, 60, 60),
 
     /** V1 economia: canje de un examen con OposiTickets (D6-03). Escritura economica: 10 por minuto y usuario. */

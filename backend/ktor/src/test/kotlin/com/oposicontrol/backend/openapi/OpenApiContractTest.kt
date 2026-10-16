@@ -158,7 +158,7 @@ class OpenApiContractTest {
         "D5-16" to "GET /api/v1/app/opositester/me",
         // FA15: alta o cambio de un producto comercial por codigo (admin), TARGET.
         "D7-18" to "PUT /api/v1/admin/comercial/productos/{codigo}",
-        // FA21 (V1 economia): canje de examen, paquetes, pedidos de pago y aviso del proveedor, TARGET.
+        // FA22 (V1 economia): canje de examen, paquetes, pedidos de pago y aviso del proveedor, TARGET.
         "D6-03" to "POST /api/v1/app/wallet/canjes",
         "D6-11" to "GET /api/v1/app/wallet/paquetes",
         "D6-12" to "POST /api/v1/app/payments/orders",
@@ -628,7 +628,7 @@ class OpenApiContractTest {
         }
         assertTrue(
             (operations.single { it.contractId == "D1-13" }.op["description"] as String).let { it.contains("SET ONCE") && it.contains("SPECIALTY_ALREADY_SET") },
-            "D1-13 (FA22, owner 2026-10-16): the specialty is set once and another id is 409 SPECIALTY_ALREADY_SET",
+            "D1-13 (FA23, owner 2026-10-16): the specialty is set once and another id is 409 SPECIALTY_ALREADY_SET",
         )
 
         // No specialty list anywhere: no array-typed property or parameter named after a specialty.

@@ -68,7 +68,7 @@ internal data class AppExamDetail(
     val portadaUrl: String? = null,
     val accessState: AccessState,
     val intentoAbiertoId: String? = null,
-    /** FA18 (PERF01): el ultimo intento FINALIZADO del usuario en este examen (resultado / revision sin recorrer D2-13). */
+    /** FA19 (PERF01): el ultimo intento FINALIZADO del usuario en este examen (resultado / revision sin recorrer D2-13). */
     val ultimoIntentoFinalizadoId: String? = null,
     /** V1: el precio en OposiTickets y los dias de acceso, TAL COMO estan en la base; `null` si el examen no es comprable con OT (nada se inventa). */
     val precio: ExamPrice? = null,
@@ -337,10 +337,10 @@ internal class CatalogService(
 
     /**
      * V1 (owner 2026-10-16): la especialidad es una PUERTA. Con especialidad elegida, las listas se acotan a ella (aunque el cliente pida otra o ninguna);
-     * pedir OTRA especialidad devuelve `null` = lista vacia. Sin especialidad elegida no se acota. Un derecho comprado de otra especialidad sigue guardado, pero no sale.
+     * pedir OTRA especialidad devuelve `null` = lista vacia. Sin especialidad elegida: lista vacia. Un derecho comprado de otra especialidad sigue guardado, pero no sale.
      */
     private fun specialtyScoped(userId: String, filter: CatalogFilter): CatalogFilter? {
-        val own = gateway.userSpecialty(userId) ?: return filter
+        val own = gateway.userSpecialty(userId) ?: return null // sin especialidad: lista vacia (E2-V1-E06)
         if (filter.specialtyId != null && filter.specialtyId != own) return null
         return filter.copy(specialtyId = own)
     }

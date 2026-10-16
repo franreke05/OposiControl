@@ -250,7 +250,7 @@ declare
   r jsonb; a uuid; a2 uuid;
 begin
   -- D2-03 start: published only, non-empty only, one open attempt. Frozen set: every ACTIVE question, annulled ones included
-  -- (20261010100000; never evaluable), each bound to its immutable revision (20261016100000). Archived ones stay out.
+  -- (20261010100000; never evaluable), each bound to its immutable revision (20261022100000). Archived ones stay out.
   assert public.app_start_exam_attempt(ua, 'e3000000-0000-0000-0000-000000000002') ->> 'outcome' = 'EXAM_NOT_FOUND', 'draft exam is not startable';
   assert public.app_start_exam_attempt(ua, gen_random_uuid()) ->> 'outcome' = 'EXAM_NOT_FOUND', 'unknown exam';
   assert public.app_start_exam_attempt(ua, 'e3000000-0000-0000-0000-000000000003') ->> 'outcome' = 'EXAM_EMPTY', 'exam without questions';
@@ -611,7 +611,7 @@ begin
 end;
 $$;
 
--- 20261018100000: V1, un examen lleva comunidad (INSERT, poner NULL y publicar sin ella se rechazan; los heredados siguen editables).
+-- 20261022100200: V1, un examen lleva comunidad (INSERT, poner NULL y publicar sin ella se rechazan; los heredados siguen editables).
 begin;
 create function pg_temp.expect_c(p_sql text, p_msg text) returns void language plpgsql as $$
 declare v_state text; v_msg text;
@@ -646,7 +646,7 @@ update public.examenes set publicado_en = now() where id = 'e4000000-0000-0000-0
 do $$ begin raise notice 'OK exam community required'; end $$;
 rollback;
 
--- 20261018100100: V1 wallet ledger hardening (per-wallet seq, append-only, snapshot only by the ledger, reconcile, per-user idempotency).
+-- 20261022100300: V1 wallet ledger hardening (per-wallet seq, append-only, snapshot only by the ledger, reconcile, per-user idempotency).
 begin;
 create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
 declare v_msg text;
@@ -732,7 +732,7 @@ do $$ begin
 end $$;
 rollback;
 
--- 20261018100200: V1 payment orders (frozen amounts, credit exactly once, late payment, refund chain, state machine).
+-- 20261022100400: V1 payment orders (frozen amounts, credit exactly once, late payment, refund chain, state machine).
 begin;
 create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
 declare v_msg text;
@@ -1027,7 +1027,7 @@ end $$;
 select pg_temp.expect_e($q$select private.v1_ledger_backfill('a0000000-0000-0000-0000-0000000000b5')$q$, 'V1_LEDGER_BACKFILL_MIXED');
 rollback;
 
--- 20261018100300: V1 redeem an exam with OT in ONE transaction (atomic, idempotent, extension, expiry, accessibility, no price from the client).
+-- 20261022100500: V1 redeem an exam with OT in ONE transaction (atomic, idempotent, extension, expiry, accessibility, no price from the client).
 begin;
 create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
 declare v_msg text;
@@ -1058,6 +1058,10 @@ insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, t
   ('e5000000-0000-0000-0000-0000000000a6','R-CAPOFF','e1000000-0000-0000-0000-0000000000f2','c1000000-0000-0000-0000-0000000000f1','Modo apagado','inmersivo','premium',true, now() - interval '1 day', true, 100, 30, false),
   ('e5000000-0000-0000-0000-0000000000a7','R-DEMO','e1000000-0000-0000-0000-0000000000f1','c1000000-0000-0000-0000-0000000000f1','Demo','rafaga','premium',true, now() - interval '1 day', true, 100, 30, true),
   ('e5000000-0000-0000-0000-0000000000a8','R-ONE','e1000000-0000-0000-0000-0000000000f1','c1000000-0000-0000-0000-0000000000f1','Un OT','inmersivo','premium',true, now() - interval '1 day', true, 1, 30, false);
+-- The specialty is an access gate and a user WITHOUT one is denied (owner 2026-10-16, E2-V1-E06): the redeem users hold the specialty of the exams they buy (RX).
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values ('a0000000-0000-0000-0000-0000000000f1', 'rd1', 'rd1', true, 'activa', 'e1000000-0000-0000-0000-0000000000f1') on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values ('a0000000-0000-0000-0000-0000000000f2', 'rd2', 'rd2', true, 'activa', 'e1000000-0000-0000-0000-0000000000f1') on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values ('a0000000-0000-0000-0000-0000000000f3', 'rd3', 'rd3', true, 'activa', 'e1000000-0000-0000-0000-0000000000f1') on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
 select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f1', 500, 'seed', 'seed-1', 'ajuste');
 
 -- ---- refusals write NOTHING
@@ -1122,6 +1126,7 @@ end $$;
 -- E2-V1-E03: the base of an extension is max(valido_hasta) of the exam grants regardless of valido_desde, and the clock is read after the lock.
 -- A grant that starts a second AFTER this transaction began (what a concurrent purchase committed just before us looks like) must still be extended, not ignored.
 insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-0000000000f6','rd6@test.local','authenticated','authenticated');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values ('a0000000-0000-0000-0000-0000000000f6', 'rd6', 'rd6', true, 'activa', 'e1000000-0000-0000-0000-0000000000f1') on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
 do $$
 declare r record; seed_until timestamptz;
 begin
@@ -1133,6 +1138,17 @@ begin
   select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f6','e5000000-0000-0000-0000-0000000000a1','k-e03-2');
   assert r.valido_hasta >= seed_until + interval '59 days 23 hours', 'two purchases give 60 days from the base, never 30: ' || r.valido_hasta;
   assert (select count(*) from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000f6' and tipo = 'compra_examen') = 2, 'both purchases were debited';
+end $$;
+-- E2-V1-E05: the COLECCION union (grants and attempts) takes the specialty predicate: a stored grant of another specialty is not listed
+do $$
+declare own jsonb; other jsonb;
+begin
+  insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a8','regalo', now() - interval '1 day', null);
+  own := public.app_my_exams_collection('a0000000-0000-0000-0000-0000000000f1', null, null, null, null, null, 50, false, 'e1000000-0000-0000-0000-0000000000f1');
+  other := public.app_my_exams_collection('a0000000-0000-0000-0000-0000000000f1', null, null, null, null, null, 50, false, 'e1000000-0000-0000-0000-0000000000f2');
+  assert jsonb_array_length(own -> 'items') >= 1, 'own specialty lists the stored grant';
+  assert jsonb_array_length(other -> 'items') = 0, 'another specialty lists nothing';
+  delete from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and examen_id = 'e5000000-0000-0000-0000-0000000000a8' and motivo = 'regalo';
 end $$;
 -- SPECIALTY GATE: the user's specialty is set (RX = e1..f1); an exam of another specialty (RY = e1..f2) is invisible: verdict LOCKED/SPECIALTY_MISMATCH, redeem = EXAM_NOT_FOUND, nothing written.
 do $$
@@ -1165,13 +1181,22 @@ begin
   assert r.saldo = 0 and r.precio_pagado = 1, 'balance == price buys and leaves exactly 0';
   assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'reconcile clean';
 end $$;
--- the specialty switch does NOT block a purchase (no C3) and the policy as it is TODAY still reports LOCKED for it
+-- the CAPABILITY switch of the user's own specialty does not block a purchase (no C3); the policy still reports LOCKED/CAPABILITY_DISABLED. User f8 holds RY (inmersivos off), exam a6 is RY.
+insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-0000000000f8','rd8@test.local','authenticated','authenticated');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values ('a0000000-0000-0000-0000-0000000000f8', 'rd8', 'rd8', true, 'activa', 'e1000000-0000-0000-0000-0000000000f2') on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f8', 300, 'seed', 'seed-8', 'ajuste');
 do $$
 declare r record;
 begin
-  select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a6','k-cap');
-  assert r.outcome = 'CREATED', 'purchase is not refused because of the specialty switch (owner decision, C3 withdrawn)';
-  assert (select reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a6', clock_timestamp())) = 'CAPABILITY_DISABLED', 'rule 0 is unchanged until the owner decides';
+  select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f8','e5000000-0000-0000-0000-0000000000a6','k-cap');
+  assert r.outcome = 'CREATED', 'purchase is not refused because of the capability switch (owner decision, C3 withdrawn)';
+  assert (select reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f8','e5000000-0000-0000-0000-0000000000a6', clock_timestamp())) = 'CAPABILITY_DISABLED', 'rule 0 capability is unchanged';
+  -- a user with NO specialty (f9: profile without one) is denied (E2-V1-E06): verdict and redeem
+  insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-0000000000f9','rd9@test.local','authenticated','authenticated');
+  perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f9', 300, 'seed', 'seed-9', 'ajuste');
+  assert (select reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f9','e5000000-0000-0000-0000-0000000000a6', clock_timestamp())) = 'SPECIALTY_MISMATCH', 'no specialty = denied';
+  begin perform * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f9','e5000000-0000-0000-0000-0000000000a6','k-cap-null'); assert false, 'must refuse';
+  exception when others then assert sqlerrm = 'EXAM_NOT_FOUND', 'no specialty redeem: ' || sqlerrm; end;
 end $$;
 -- subscription and unlimited grants make a purchase pointless
 insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, fin_en) values ('a0000000-0000-0000-0000-0000000000f2', true, 'activa', now() + interval '10 days');
