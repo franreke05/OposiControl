@@ -23,7 +23,7 @@ export function startDisposable(name) {
     return r.stdout;
   };
   must(read('supabase/baseline/main_shape_subset.sql'), ['-v', 'ON_ERROR_STOP=1', '-1']);
-  for (const f of ['main_shape_subset_extra.sql', 'main_shape_subset_extra_plans.sql']) must(read('supabase/baseline/' + f));
+  for (const f of ['main_shape_subset_extra.sql', 'main_shape_subset_extra_plans.sql', 'main_shape_subset_extra_engagement.sql']) must(read('supabase/baseline/' + f));
   for (const v of read('supabase/baseline/PENDING_MIGRATIONS.txt').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))) must(read(`supabase/migrations/${v}.sql`));
   return {
     name,

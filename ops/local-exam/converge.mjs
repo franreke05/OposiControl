@@ -64,6 +64,7 @@ export function converge({ psql, root = repo }) {
   if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
   // MAIN objects the bootstrap subset lacks (idempotent): beneficios_plan, suscripciones
   psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_plans.sql'), 'utf8'));
+  psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_engagement.sql'), 'utf8'));
   for (const f of files) {
     process.stdout.write(`  apply ${f.v}\n`);
     psql(f.text);

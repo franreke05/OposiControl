@@ -24,7 +24,7 @@ try {
   }
   const read = (p) => fs.readFileSync(path.join(repo, p), 'utf8');
   psql(read('supabase/baseline/main_shape_subset.sql'), true);
-  for (const f of ['main_shape_subset_extra.sql', 'main_shape_subset_extra_plans.sql']) psql(read('supabase/baseline/' + f));
+  for (const f of ['main_shape_subset_extra.sql', 'main_shape_subset_extra_plans.sql', 'main_shape_subset_extra_engagement.sql']) psql(read('supabase/baseline/' + f));
   const pending = read('supabase/baseline/PENDING_MIGRATIONS.txt').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
   for (const v of pending) psql(read(`supabase/migrations/${v}.sql`));
   const r = spawnSync('node', [path.join(here, 'verdict-parity.mjs')], { stdio: 'inherit', env: { ...process.env, PARITY_CONTAINER: ctr } });
