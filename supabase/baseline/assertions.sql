@@ -1236,3 +1236,52 @@ begin
   raise notice 'OK V1 redeem';
 end $$;
 rollback;
+
+-- 20261022100700: admin gift of an exam = ONE month set by the server, never unlimited, gates like any access, no wallet effect.
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000c1','gf1@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000c2','gf2@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000c3','gf3@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000c4','gf4@test.local','authenticated','authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000c1','GA','GA','ga',true), ('e1000000-0000-0000-0000-0000000000c2','GB','GB','gb',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000c1','CG','Com G','com-g');
+insert into public.capacidades_especialidad (especialidad_id, permite_rafagas, permite_razonados, permite_inmersivos, permite_demos) values ('e1000000-0000-0000-0000-0000000000c1', true, true, false, true);
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, dias_acceso_compra) values
+  ('e5000000-0000-0000-0000-0000000000c1','G-OK','e1000000-0000-0000-0000-0000000000c1','c1000000-0000-0000-0000-0000000000c1','ok','rafaga','premium',true, now() - interval '1 day', 30),
+  ('e5000000-0000-0000-0000-0000000000c2','G-OTHER','e1000000-0000-0000-0000-0000000000c2','c1000000-0000-0000-0000-0000000000c1','otra especialidad','rafaga','premium',true, now() - interval '1 day', 30),
+  ('e5000000-0000-0000-0000-0000000000c3','G-CAP','e1000000-0000-0000-0000-0000000000c1','c1000000-0000-0000-0000-0000000000c1','capacidad apagada','inmersivo','premium',true, now() - interval '1 day', 30),
+  ('e5000000-0000-0000-0000-0000000000c4','G-DRAFT','e1000000-0000-0000-0000-0000000000c1','c1000000-0000-0000-0000-0000000000c1','borrador','rafaga','premium',false, null, 30);
+update public.perfiles_usuario set especialidad_principal_id = 'e1000000-0000-0000-0000-0000000000c1' where usuario_id in ('a0000000-0000-0000-0000-0000000000c1', 'a0000000-0000-0000-0000-0000000000c4');
+do $$
+declare r record; r2 record; first_until timestamptz;
+begin
+  select * into r from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'admin');
+  assert r.outcome = 'CREATED' and r.valido_hasta between now() + interval '29 days 23 hours' and now() + interval '30 days 1 hour', 'a gift is ONE month set by the server: ' || r.valido_hasta;
+  first_until := r.valido_hasta;
+  select * into r2 from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'admin');
+  assert r2.outcome = 'REPLAY' and r2.grant_id = r.grant_id and r2.valido_hasta = first_until, 'a double click is a replay, not a second month';
+  -- stacking (another reason so it is not the double click): max(now, current end) + 30 days, never shortened
+  select * into r2 from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'regalo');
+  assert r2.outcome = 'CREATED' and r2.valido_hasta >= first_until + interval '29 days 23 hours' and r2.valido_hasta > first_until, 'stacking extends from the current end: ' || r2.valido_hasta;
+  assert not exists (select 1 from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000c1' and valido_hasta is null), 'a gift never creates an unlimited row';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', clock_timestamp())) = 'GRANTED', 'the verdict sees the gift';
+  assert not exists (select 1 from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000c1'), 'a gift is not an OT debit: the wallet is untouched';
+  -- a legacy unlimited grant has nothing to extend
+  insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000c4', 'e5000000-0000-0000-0000-0000000000c1', 'regalo', now() - interval '1 day', null);
+  select * into r2 from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c4', 'e5000000-0000-0000-0000-0000000000c1', 'admin');
+  assert r2.outcome = 'UNLIMITED_EXISTS' and (select count(*) from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000c4') = 1, 'an active unlimited grant is returned as is';
+end $$;
+select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c2', 'admin')$q$, 'GIFT_NOT_USABLE');
+select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c3', 'admin')$q$, 'GIFT_NOT_USABLE');
+select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c2', 'e5000000-0000-0000-0000-0000000000c1', 'admin')$q$, 'GIFT_NOT_USABLE');
+select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c4', 'admin')$q$, 'GIFT_EXAM_NOT_AVAILABLE');
+select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000ff', 'admin')$q$, 'GIFT_EXAM_NOT_AVAILABLE');
+select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'compra')$q$, 'GIFT_REASON_NOT_ALLOWED');
+select pg_temp.expect_e($q$select * from public.admin_grant_exam_access('a0000000-0000-0000-0000-0000000000ee', 'e5000000-0000-0000-0000-0000000000c1', 'admin')$q$, 'GIFT_USER_NOT_FOUND');
+do $$ begin raise notice 'OK V1 admin gift'; end $$;
+rollback;

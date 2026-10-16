@@ -1,5 +1,5 @@
 # Forma esperada de las tablas de cartera/compras/derechos del stack local: captura de catalogo de MAIN de solo lectura (2026-10-14) + migraciones V1
-# 20261018100100/200/300 + el ensanchamiento SOLO LOCAL del CHECK de proveedor con 'sandbox' (sql/97). La genera sql/wallet_shape.sql; la compara e2e WALLET.local_schema_matches_main.
+# 20261022100300/400/500 + el ensanchamiento SOLO LOCAL del CHECK de proveedor con 'sandbox' (sql/97). La genera sql/wallet_shape.sql; la compara e2e WALLET.local_schema_matches_main.
 # Unica diferencia deliberada con MAIN: sin FK usado_en_reto_id -> retos_diarios (no existe en local).
 INDEX CREATE INDEX idx_activaciones_servicio_usuario_compra_id ON public.activaciones_servicio_usuario USING btree (compra_id)
 INDEX CREATE INDEX idx_activaciones_servicio_usuario_servicio_id ON public.activaciones_servicio_usuario USING btree (servicio_id)

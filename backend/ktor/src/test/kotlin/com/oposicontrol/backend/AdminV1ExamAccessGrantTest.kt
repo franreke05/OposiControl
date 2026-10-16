@@ -42,12 +42,19 @@ class AdminV1ExamAccessGrantTest {
     private val accesoId = "33333333-3333-4333-8333-333333333333"
 
     /** [existing] = filas de la tabla tal como las devolveria PostgREST al LEER (por usuario+examen o por id). */
+    private var rpcOutcome = "CREATED"
+
     private fun gatewayWith(existing: String = "[]", record: (HttpRequest) -> Unit): AdminV1Gateway = AdminV1Gateway.forTesting(
         supabaseUrl = "https://stub.supabase.test",
         serviceRoleKey = "stub-key",
         json = Json { ignoreUnknownKeys = true },
         client = V1StubHttpClient(record) { uri ->
             when {
+                // V1: el regalo es UNA RPC atomica (un mes fijado por el servidor, puertas de especialidad y capacidad).
+                uri.contains("/rest/v1/rpc/admin_grant_exam_access") -> V1StubResponse(
+                    200,
+                    """[{"outcome":"$rpcOutcome","grant_id":"$accesoId","valido_desde":"2026-10-16T10:00:00+00:00","valido_hasta":"2026-11-15T10:00:00+00:00"}]""",
+                )
                 uri.contains("/rest/v1/perfiles_usuario") -> V1StubResponse(
                     200,
                     """[{"usuario_id":"$userId","username":"ana","nombre_mostrar":"Ana"}]""",
@@ -73,8 +80,8 @@ class AdminV1ExamAccessGrantTest {
     )
 
     private fun motivoWritten(upstream: List<HttpRequest>): String {
-        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("contenido_desbloqueado_usuario") }
-        return Json.parseToJsonElement(readRequestBody(post)).jsonArray.single().jsonObject.getValue("motivo").jsonPrimitive.content
+        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("admin_grant_exam_access") }
+        return Json.parseToJsonElement(readRequestBody(post)).jsonObject.getValue("p_motivo").jsonPrimitive.content
     }
 
     @Test fun theLegacyManualAliasIsWrittenAsAdmin() {
@@ -121,29 +128,28 @@ class AdminV1ExamAccessGrantTest {
         assertTrue(upstream.isEmpty(), "antes concedía en silencio")
     }
 
-    @Test fun aGrantIsAlwaysANewRowAndNeverReusesTheIdTheClientSent() {
+    @Test fun theGiftGoesToOneAtomicRpcWithOnlyUserExamAndReasonSoTheClientCanNeitherSetAnIdNorATerm() {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
-        gatewayWith(record = upstream::add).upsertExamAccess(input("admin"))
-        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("contenido_desbloqueado_usuario") }
-        assertFalse(post.uri().toString().contains("on_conflict"), "un upsert por id podía traspasar el acceso a otra persona")
-        val written = Json.parseToJsonElement(readRequestBody(post)).jsonArray.single().jsonObject
-        assertTrue(written.getValue("id").jsonPrimitive.content != accesoId, "el id del cliente se ignora")
-    }
-
-    @Test fun grantingWhatIsAlreadyGrantedWritesNothing() {
-        val upstream = CopyOnWriteArrayList<HttpRequest>()
-        val active = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"regalo"}]"""
-        val result = gatewayWith(active, upstream::add).upsertExamAccess(input("admin"))
+        rpcOutcome = "CREATED"
+        val result = gatewayWith(record = upstream::add).upsertExamAccess(input("admin").copy(validUntil = "2099-01-01T00:00:00Z"))
+        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("admin_grant_exam_access") }
+        val body = Json.parseToJsonElement(readRequestBody(post)).jsonObject
+        assertEquals(setOf("p_usuario", "p_examen", "p_motivo"), body.keys, "ni el id ni el plazo del cliente viajan: el mes lo fija el servidor")
+        assertTrue(upstream.none { it.method() == "POST" && it.uri().rawPath.endsWith("/contenido_desbloqueado_usuario") }, "ninguna escritura directa a la tabla (podia crear un acceso ilimitado)")
         assertEquals(accesoId, result.id)
-        assertEquals("regalo", result.accessType)
-        assertTrue(upstream.none { it.method() == "POST" }, "ya tenía acceso: no se duplica la fila")
+        assertEquals("2026-11-15T10:00:00+00:00", result.validUntil, "se devuelve el fin de vigencia que fijo la base")
+        assertTrue(upstream.any { it.uri().rawPath.contains("auditoria_log") && it.method() == "POST" }, "conceder queda en auditoria")
     }
 
-    @Test fun anExpiredGrantDoesNotCountAndANewOneIsWritten() {
-        val upstream = CopyOnWriteArrayList<HttpRequest>()
-        val expired = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin","valido_hasta":"2020-01-01T00:00:00+00:00"}]"""
-        gatewayWith(expired, upstream::add).upsertExamAccess(input("admin"))
-        assertEquals("admin", motivoWritten(upstream))
+    @Test fun anAlreadyUnlimitedGrantOrAReplayWritesNoSecondAuditEntry() {
+        for (outcome in listOf("UNLIMITED_EXISTS", "REPLAY")) {
+            val upstream = CopyOnWriteArrayList<HttpRequest>()
+            rpcOutcome = outcome
+            val result = gatewayWith(record = upstream::add).upsertExamAccess(input("admin"))
+            assertEquals(accesoId, result.id)
+            assertTrue(upstream.none { it.uri().rawPath.contains("auditoria_log") }, "$outcome no audita otra concesion")
+        }
+        rpcOutcome = "CREATED"
     }
 
     @Test fun revokingClosesEveryActiveManualGrantOfThatUserAndExamAndAuditsIt() {
