@@ -193,6 +193,8 @@ internal class EconomyService(
     private val providers: PaymentProviders,
     private val clock: () -> Instant = Instant::now,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    /** E5-V1-F02: la ruta de reembolso (politica P2) esta APAGADA salvo local/test o activacion explicita; ver [refundsEnabledFrom]. */
+    private val refundsEnabled: Boolean = true,
 ) {
     /** D6-03. Atomico e idempotente en la base: debito + derecho en UNA transaccion; la misma clave y el mismo cuerpo repiten el resultado. */
     suspend fun redeem(userId: CanonicalUserId, request: ExamRedeemRequest, key: IdempotencyKey): ExamRedeemResult {
@@ -302,7 +304,10 @@ internal class EconomyService(
                     put("p_producto", receipt.productCode)
                 }.toString(),
             )
-            PaymentEventKind.REFUNDED -> rpc<OrderRow>(
+            PaymentEventKind.REFUNDED -> if (!refundsEnabled) {
+                // Apagada: NO se escribe nada y se responde 503 para que el proveedor reintente cuando se active (no se pierde el aviso).
+                throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
+            } else rpc<OrderRow>(
                 "app_refund_payment_order",
                 buildJsonObject {
                     put("p_proveedor", receipt.provider)
@@ -364,3 +369,13 @@ internal class EconomyService(
         const val MAX_EVENT_ID_LENGTH = 128
     }
 }
+
+/** Variable que activa la ruta de reembolso (politica P2). Explicita `true`/`false` manda; sin ella solo `APP_ENV` exactamente `local` o `test` la enciende. */
+internal const val REFUNDS_ENABLED_ENV = "PAYMENTS_REFUNDS_ENABLED"
+
+internal fun refundsEnabledFrom(environment: (String) -> String?): Boolean =
+    when (environment(REFUNDS_ENABLED_ENV)?.trim()?.lowercase()) {
+        "true" -> true
+        "false" -> false
+        else -> environment("APP_ENV").let { it == "local" || it == "test" }
+    }

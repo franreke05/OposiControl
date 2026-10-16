@@ -877,9 +877,9 @@ begin
   -- the earlier 100 OT are consumed FIRST (FIFO), then 700 of the 1000: the refunded credit has 300 unspent
   assert private.ot_credit_remaining(credit_id) = 300, 'FIFO: the older credit is consumed first';
   select * into r from public.app_refund_payment_order('google_play', 'ev-r1-refund', o.orden_id);
-  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.estado = 'reembolsada', 'refund with spent OT opens a case';
+  assert r.outcome = 'REFUNDED_P2' and r.estado = 'reembolsada', 'refund with spent OT closes under P2';
   select * into c from public.refund_case where compra_id = o.orden_id;
-  assert c.ot_revertidos = 300 and c.ot_gastados = 700 and c.estado = 'abierto', 'U = 300 reverted, S = 700 case';
+  assert c.ot_revertidos = 300 and c.ot_gastados = 700 and c.estado = 'resuelto' and c.politica = 'P2', 'U = 300 reverted, S = 700 recorded, case closed under P2 (B: spent on ajuste, no access to shorten)';
   assert (select cantidad from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'devolucion') = -300, 'only the unspent part is reversed';
   assert (select referencia_id from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'devolucion') = credit_id, 'the reversal names the credit it reverses';
   assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e1') = 0, 'balance never negative';
@@ -899,7 +899,7 @@ begin
   perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000e3', -800, 'immersive exam', 'x-sp', 'ajuste');
   assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e3') = 200, '200 left';
   select * into r from public.app_refund_payment_order('app_store', 'ev-x1-refund', o.orden_id);
-  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.estado = 'reembolsada' and r.saldo = 0, 'refund: balance 0, never negative';
+  assert r.outcome = 'REFUNDED_P2' and r.estado = 'reembolsada' and r.saldo = 0, 'refund: balance 0, never negative';
   assert (select cantidad from public.transacciones_cartera where compra_id = o.orden_id and tipo = 'devolucion') = -200, 'exactly the unspent 200 are reversed';
   assert (select ot_revertidos from public.refund_case where compra_id = o.orden_id) = 200 and (select ot_gastados from public.refund_case where compra_id = o.orden_id) = 800, 'case: 800 spent, nothing revoked';
   assert (select detalle -> 0 ->> 'ot_desde_este_credito' from public.refund_case where compra_id = o.orden_id) = '800', 'the case traces the debit funded by this credit';
@@ -928,12 +928,86 @@ begin
   perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000e2', -170, 'spend', 'sp-f', 'ajuste');
   assert private.ot_credit_remaining(c1) = 0 and private.ot_credit_remaining(c2) = 30, 'FIFO across mixed purchases';
   select * into r from public.app_refund_payment_order('google_play', 'ev-f2-refund', o1.orden_id);
-  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.saldo = 30, 'fully spent credit: no reversal, case S = 100, the other purchase is untouched';
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 30, 'fully spent credit: no reversal, case S = 100, the other purchase is untouched';
   assert (select ot_gastados from public.refund_case where compra_id = o1.orden_id) = 100 and (select ot_revertidos from public.refund_case where compra_id = o1.orden_id) = 0, 'case values';
   select * into r from public.app_refund_payment_order('google_play', 'ev-f3-refund', o2.orden_id);
-  assert r.outcome = 'REFUNDED_CASE_OPEN' and r.saldo = 0, 'second purchase: 30 reversed, 20 case';
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 0, 'second purchase: 30 reversed, 20 case';
   assert (select ot_gastados from public.refund_case where compra_id = o2.orden_id) = 20 and (select ot_revertidos from public.refund_case where compra_id = o2.orden_id) = 30, 'second case values';
   assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'reconcile is clean after credits, debits and refunds';
+end $$;
+
+-- ---- P2 (E5-V1-F02): the refund shortens the access the refunded credit financed, reverses only the unspent part, never goes negative
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000d1','p21@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000d2','p22@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000d3','p23@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000d4','p24@test.local','authenticated','authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000d1','PX','PX','px',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000d1','CD','Com D','com-d');
+insert into public.capacidades_especialidad (especialidad_id, permite_rafagas, permite_razonados, permite_inmersivos, permite_demos) values ('e1000000-0000-0000-0000-0000000000d1', true, true, true, true);
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, comprable_con_tickets, precio_tickets, dias_acceso_compra, demo_disponible) values
+  ('e5000000-0000-0000-0000-0000000000d1','P2-30','e1000000-0000-0000-0000-0000000000d1','c1000000-0000-0000-0000-0000000000d1','P2 treinta','inmersivo','premium',true, now() - interval '1 day', true, 30, 30, false),
+  ('e5000000-0000-0000-0000-0000000000d2','P2-150','e1000000-0000-0000-0000-0000000000d1','c1000000-0000-0000-0000-0000000000d1','P2 ciento cincuenta','inmersivo','premium',true, now() - interval '1 day', true, 150, 30, false);
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+  select u, 'p2' || right(u::text, 1), 'p2' || right(u::text, 1), true, 'activa', 'e1000000-0000-0000-0000-0000000000d1'
+  from (values ('a0000000-0000-0000-0000-0000000000d1'::uuid), ('a0000000-0000-0000-0000-0000000000d2'::uuid), ('a0000000-0000-0000-0000-0000000000d3'::uuid), ('a0000000-0000-0000-0000-0000000000d4'::uuid)) v(u) on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+create function pg_temp.buy(p_user uuid, p_pack text, p_tag text) returns uuid language plpgsql as $$
+declare o record; r record; amount int;
+begin
+  select * into o from public.app_create_payment_order(p_user, p_pack, 'google_play', 'o-' || p_tag);
+  select * into r from public.app_credit_payment_order('google_play', 'ev-' || p_tag, o.orden_id, 'tx-' || p_tag, o.importe_centimos, 'EUR', p_pack);
+  return o.orden_id;
+end $$;
+do $$
+declare u1 uuid := 'a0000000-0000-0000-0000-0000000000d1'; u2 uuid := 'a0000000-0000-0000-0000-0000000000d2'; u3 uuid := 'a0000000-0000-0000-0000-0000000000d3'; u4 uuid := 'a0000000-0000-0000-0000-0000000000d4';
+        e30 uuid := 'e5000000-0000-0000-0000-0000000000d1'; e150 uuid := 'e5000000-0000-0000-0000-0000000000d2';
+        o1 uuid; oa uuid; ob uuid; r record; c record; v timestamptz;
+begin
+  -- C: 100 OT bought, 30 spent on the 30-OT exam (30 days), the other 70 spent elsewhere: the whole access was financed by the refunded credit
+  o1 := pg_temp.buy(u1, 'pack-100', 'p1');
+  perform * from public.app_redeem_exam_access(u1, e30, 'k-p1', 30);
+  perform public.admin_grant_tickets(u1, -70, 'spend', 'sp-p1', 'ajuste');
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p1-refund', o1);
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 0, 'C: fully spent credit: nothing to reverse, balance stays 0 (never negative)';
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u1 and examen_id = e30 and motivo = 'compra';
+  assert v between now() - interval '1 minute' and clock_timestamp() + interval '1 second', 'C: the access is shortened to now, not revoked by deletion';
+  assert exists (select 1 from public.contenido_desbloqueado_usuario where usuario_id = u1 and examen_id = e30), 'C: the entitlement row still exists';
+  select * into c from public.refund_case where compra_id = o1;
+  assert c.politica = 'P2' and c.estado = 'resuelto' and c.resuelto_en is not null and c.ot_gastados = 100 and c.ot_revertidos = 0, 'C: case closed under P2';
+  assert c.detalle @> '[{"acceso_acortado":"e5000000-0000-0000-0000-0000000000d1"}]'::jsonb, 'C: the case records which access was shortened';
+  assert (select count(*) from public.app_wallet_reconcile(u1)) = 0, 'C: reconcile clean';
+
+  -- D + F: two 100 credits, one 150-OT exam: 100 from the first credit, 50 from the second; 50 OT left over
+  oa := pg_temp.buy(u2, 'pack-100', 'p2a');
+  ob := pg_temp.buy(u2, 'pack-100', 'p2b');
+  perform * from public.app_redeem_exam_access(u2, e150, 'k-p2', 150);
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p2a-refund', oa);
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 50, 'D: refund of the first credit: nothing unspent, the other purchase untouched, balance 50';
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u2 and examen_id = e150 and motivo = 'compra';
+  assert v between now() + interval '9 days 23 hours' and now() + interval '10 days 1 hour', 'D: 100 of 150 OT financed = 20 of 30 days cut: about 10 days left (' || v || ')';
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p2b-refund', ob);
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 0, 'F: second credit: 50 unspent reversed, 50 spent recorded, balance 0';
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u2 and examen_id = e150 and motivo = 'compra';
+  assert v between now() - interval '1 minute' and clock_timestamp() + interval '1 second', 'F: the remaining 50 OT cut the last 10 days: shortened to now';
+  assert (select ot_revertidos from public.refund_case where compra_id = ob) = 50 and (select ot_gastados from public.refund_case where compra_id = ob) = 50, 'F: case values';
+  assert (select count(*) from public.app_wallet_reconcile(u2)) = 0, 'F: reconcile clean';
+
+  -- E: the access already expired: nothing to shorten, nothing lengthened, still no negative balance
+  o1 := pg_temp.buy(u3, 'pack-100', 'p3');
+  perform * from public.app_redeem_exam_access(u3, e30, 'k-p3', 30);
+  update public.contenido_desbloqueado_usuario set valido_hasta = now() - interval '1 day', valido_desde = now() - interval '31 days' where usuario_id = u3 and examen_id = e30;
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p3-refund', o1);
+  assert r.outcome = 'REFUNDED_P2' and r.saldo = 0, 'E: 70 unspent reversed, 30 recorded';
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u3 and examen_id = e30;
+  assert v < now() - interval '23 hours', 'E: an expired access is untouched (never lengthened, never moved)';
+  assert (select detalle @> '[{"acceso_expirado_o_ausente":"e5000000-0000-0000-0000-0000000000d1"}]'::jsonb from public.refund_case where compra_id = o1), 'E: the case says there was no live access to shorten';
+
+  -- A/B regressions on a wallet with a live access that this credit did NOT finance: untouched
+  o1 := pg_temp.buy(u4, 'pack-100', 'p4a');
+  perform * from public.app_redeem_exam_access(u4, e30, 'k-p4', 30);
+  oa := pg_temp.buy(u4, 'pack-50', 'p4b');
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = u4 and examen_id = e30;
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p4b-refund', oa);
+  assert r.outcome = 'REFUNDED' and r.saldo = 70, 'A: the unspent 50 credit is reversed in full, no case';
+  assert (select valido_hasta from public.contenido_desbloqueado_usuario where usuario_id = u4 and examen_id = e30) = v, 'A: the access financed by ANOTHER credit is untouched';
 end $$;
 
 -- ---- no client path

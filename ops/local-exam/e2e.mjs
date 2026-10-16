@@ -695,7 +695,7 @@ await scenario('ECONOMY', async () => {
 
   // reembolso: se revierte SOLO lo no gastado de ESE credito
   const refund = await hook({ eventId: 'evt-' + crypto.randomUUID(), type: 'payment.refunded', orderId: o2.id, transactionId: 'tx-r', amountCents: o2.amountCents, currency: o2.currency, productCode: o2.productCode });
-  check('ECONOMY.W01_refund_reverses_unspent_credit', refund.status === 200 && ['REFUNDED', 'REFUNDED_CASE_OPEN'].includes(refund.json?.result) && Number(bal('Q4')) <= 175, refund.text + ' bal=' + bal('Q4'));
+  check('ECONOMY.W01_refund_reverses_unspent_credit', refund.status === 200 && ['REFUNDED', 'REFUNDED_P2'].includes(refund.json?.result) && Number(bal('Q4')) <= 175, refund.text + ' bal=' + bal('Q4'));
   const refundAgain = await hook({ eventId: 'evt-' + crypto.randomUUID(), type: 'payment.refunded', orderId: o2.id, transactionId: 'tx-r', amountCents: o2.amountCents, currency: o2.currency, productCode: o2.productCode });
   check('ECONOMY.W01_second_refund_does_nothing', refundAgain.json?.result === 'REPLAY', refundAgain.text);
 

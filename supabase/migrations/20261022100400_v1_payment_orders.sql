@@ -345,7 +345,10 @@ begin
 end;
 $$;
 
--- 7. Refund of a credited order: reverse ONLY the unspent part of THIS credit, open a case for the spent part. Never revokes access.
+-- 7. Refund of a credited order, POLICY P2 (owner decision 2026-10-16): reverse ONLY the unspent part of THIS credit; for the part that was SPENT on
+--    exam access (compra_examen debits traced to this credit by ot_consumos) shorten the still-valid access in proportion (consumed/price of the
+--    purchase x dias_acceso_compra); never below now, never lengthen, expired access untouched, no silent negative balance, no revocation.
+--    Spent OT on anything else (ajuste, regalo...) has no access to shorten: it stays spent and is recorded in the closed case.
 create or replace function public.app_refund_payment_order(p_proveedor text, p_evento_id text, p_orden uuid)
 returns table(outcome text, orden_id uuid, estado text, producto_codigo text, cantidad_tickets integer, importe_centimos integer,
               moneda text, proveedor text, expira_en timestamptz, pagada_en timestamptz, transaccion_id uuid, saldo integer)
@@ -363,6 +366,11 @@ declare
   v_unspent integer;
   v_spent integer;
   v_outcome text;
+  v_now timestamptz;
+  v_cut record;
+  v_access jsonb := '[]'::jsonb;
+  v_before timestamptz;
+  v_after timestamptz;
 begin
   if p_proveedor is null or p_evento_id is null or length(btrim(p_evento_id)) = 0 or p_orden is null then
     raise exception using errcode = 'P0001', message = 'EVENT_INVALID';
@@ -392,6 +400,28 @@ begin
     select t.* into v_credit from public.transacciones_cartera t where t.compra_id = v_o.id and t.tipo = 'pack_tickets';
     v_unspent := private.ot_credit_remaining(v_credit.id);
     v_spent := v_credit.cantidad - v_unspent;
+    v_now := clock_timestamp();  -- DB clock, after the wallet lock
+    -- P2: shorten the still-valid purchase access financed by this credit (one pass per traced exam debit, FIFO already decided by ot_consumos).
+    for v_cut in
+      select d.id as debit_id, d.referencia_id as examen_id, k.cantidad as consumed, -d.cantidad as price, e.dias_acceso_compra as dias
+        from public.ot_consumos k
+        join public.transacciones_cartera d on d.id = k.debit_tx_id
+        join public.examenes e on e.id = d.referencia_id
+       where k.credit_tx_id = v_credit.id and d.tipo = 'compra_examen' and d.cantidad < 0 and e.dias_acceso_compra > 0
+       order by d.seq
+    loop
+      select g.valido_hasta into v_before from public.contenido_desbloqueado_usuario g
+       where g.usuario_id = v_o.usuario_id and g.examen_id = v_cut.examen_id and g.motivo = 'compra' and g.valido_hasta > v_now for update;
+      if found then
+        v_after := greatest(v_now, v_before - ((v_cut.dias::numeric * v_cut.consumed::numeric / v_cut.price::numeric) * interval '1 day'));
+        update public.contenido_desbloqueado_usuario g set valido_hasta = v_after
+         where g.usuario_id = v_o.usuario_id and g.examen_id = v_cut.examen_id and g.motivo = 'compra' and v_after < g.valido_hasta;
+        v_access := v_access || jsonb_build_array(jsonb_build_object('acceso_acortado', v_cut.examen_id, 'debito', v_cut.debit_id,
+                      'ot_financiados', v_cut.consumed, 'precio', v_cut.price, 'dias_compra', v_cut.dias, 'valido_hasta_antes', v_before, 'valido_hasta_despues', v_after));
+      else
+        v_access := v_access || jsonb_build_array(jsonb_build_object('acceso_expirado_o_ausente', v_cut.examen_id, 'debito', v_cut.debit_id, 'ot_financiados', v_cut.consumed));
+      end if;
+    end loop;
     if v_unspent > 0 then
       insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, compra_id, idempotency_key, metadatos)
       values (v_o.usuario_id, 'devolucion', -v_unspent, 'Reembolso de OposiTickets', 'orden', v_credit.id, v_o.id, 'reembolso:' || v_o.id::text,
@@ -399,18 +429,18 @@ begin
     end if;
     update public.compras_usuario c set estado = 'reembolsada' where c.id = v_o.id;
     if v_spent > 0 then
-      insert into public.refund_case (compra_id, usuario_id, ot_revertidos, ot_gastados, detalle)
+      insert into public.refund_case (compra_id, usuario_id, ot_revertidos, ot_gastados, detalle, estado, politica, resuelto_en)
       select v_o.id, v_o.usuario_id, v_unspent, v_spent,
-             coalesce((select jsonb_agg(jsonb_build_object('debito', d.id, 'ot_desde_este_credito', k.cantidad, 'importe_debito', -d.cantidad,
+             v_access || coalesce((select jsonb_agg(jsonb_build_object('debito', d.id, 'ot_desde_este_credito', k.cantidad, 'importe_debito', -d.cantidad,
                                                           'tipo', d.tipo, 'referencia_tipo', d.referencia_tipo, 'referencia_id', d.referencia_id,
                                                           'creado_en', d.creado_en) order by d.seq)
                          from public.ot_consumos k join public.transacciones_cartera d on d.id = k.debit_tx_id
-                        where k.credit_tx_id = v_credit.id and d.tipo <> 'devolucion'), '[]'::jsonb);
+                        where k.credit_tx_id = v_credit.id and d.tipo <> 'devolucion'), '[]'::jsonb), 'resuelto', 'P2', v_now;
     end if;
     insert into public.auditoria_log (usuario_id, accion, tabla_afectada, registro_id, despues)
     values (v_o.usuario_id, 'pago_reembolsado', 'compras_usuario', v_o.id,
             jsonb_build_object('proveedor', p_proveedor, 'revertidos', v_unspent, 'gastados', v_spent));
-    v_outcome := case when v_spent > 0 then 'REFUNDED_CASE_OPEN' else 'REFUNDED' end;
+    v_outcome := case when v_spent > 0 then 'REFUNDED_P2' else 'REFUNDED' end;
   end if;
 
   update public.eventos_pago e set resultado = v_outcome where e.proveedor = p_proveedor and e.evento_id = p_evento_id;
