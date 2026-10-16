@@ -5,6 +5,7 @@
 //   node ops/local-exam/up.mjs            crea o reutiliza el stack (los datos persisten en el volumen del contenedor)
 //   node ops/local-exam/up.mjs --reset    lo destruye (docker compose down -v) y lo vuelve a crear desde cero
 //   node ops/local-exam/up.mjs --converge   deja una base viva en las definiciones de los ficheros V1 (migraciones editadas + nuevas) SIN reset y verifica checksums
+//   node ops/local-exam/up.mjs --clean-test-exams [--legacy-harness-prefixes]   borra/oculta SOLO los examenes que un harness marco (nunca LOC-* ni sin marca)
 //   node ops/local-exam/up.mjs --restore-fixtures   (E5-V1-F03) deja Q1..Q4 y Q2Z en su saldo y derechos base SIN reset (stack ya levantado; exige STACK_LOCK)
 //
 // Salida: .local/compose.env (compose), .local/ktor.env (Ktor), .local/tokens.json (JWT de A, B y P), .local/jwks.json.
@@ -70,9 +71,41 @@ const psql = (sql, vars = {}, user = 'postgres') => execFileSync('docker', ['com
   ...Object.entries(vars).flatMap(([k, v]) => ['-v', `${k}=${v}`]), '-f', '-'], { input: sql, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'] }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function mintTokens() {
+  // ---------- JWT ES256 de los usuarios de prueba (el JWKS lo sirve la pasarela en /auth/v1) ----------
+  const key = crypto.createPrivateKey({ key: secrets.privateJwk, format: 'jwk' });
+  // Mismos claims que un access token de GoTrue (email + app_metadata): el stub de /auth/v1/user (auth-stub.js) responde solo con ellos.
+  const es256 = (sub, email) => {
+    const now = Math.floor(Date.now() / 1000);
+    const head = b64url(JSON.stringify({ alg: 'ES256', typ: 'JWT', kid: secrets.kid }));
+    const body = b64url(JSON.stringify({ sub, email, app_metadata: { provider: 'email', providers: ['email'] }, role: 'authenticated', aud: 'authenticated', iss: `${GATEWAY}/auth/v1`, iat: now, exp: now + 12 * 3600 }));
+    const sig = crypto.sign('sha256', Buffer.from(`${head}.${body}`), { key, dsaEncoding: 'ieee-p1363' });
+    return `${head}.${body}.${b64url(sig)}`;
+  };
+  const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a', 'a@exam.local'), B: es256('0b000000-0000-4000-8000-00000000000b', 'b@exam.local'),
+    P: es256('0f000000-0000-4000-8000-00000000000f', 'p@exam.local'),
+    XA: es256('1a000000-0000-4000-8000-00000000001a', 'xa@exam.local'), XB: es256('1b000000-0000-4000-8000-00000000001b', 'xb@exam.local'),
+    Q1: es256('2a000000-0000-4000-8000-00000000002a', 'q1@exam.local'), Q2: es256('2b000000-0000-4000-8000-00000000002b', 'q2@exam.local'),
+    Q2Z: es256('2c000000-0000-4000-8000-00000000002c', 'q2z@exam.local'), Q3: es256('2d000000-0000-4000-8000-00000000002d', 'q3@exam.local'),
+    Q4: es256('2e000000-0000-4000-8000-00000000002e', 'q4@exam.local'),
+    Q6: es256('2f000000-0000-4000-8000-00000000002f', 'q6@exam.local'), Q7: es256('3b000000-0000-4000-8000-00000000003b', 'q7@exam.local'),
+    ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local') };
+  fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
+}
+if (process.argv.includes('--clean-test-exams')) {
+  // deletes (or hides, when still referenced) ONLY exams a harness marked; --legacy-harness-prefixes first marks the enumerated pre-marker harness prefixes (explicit one-off opt-in)
+  psql(fs.readFileSync(path.join(here, 'sql/88_harness_exams_local.sql'), 'utf8'));
+  console.log('clean-test-exams (deleted|hidden): ' + psql(`select borrados || '|' || ocultados from public.local_clean_harness_exams(${process.argv.includes('--legacy-harness-prefixes')})`));
+  process.exit(0);
+}
 if (process.argv.includes('--restore-fixtures')) {
   if (reset) { console.error('--restore-fixtures no se combina con --reset'); process.exit(2); }
   psql(fs.readFileSync(path.join(here, 'sql/96_restore_fixtures.sql'), 'utf8'));
+  // plan subscribers Q6 (Razonados) / Q7 (Inmersivo + quota) and fresh tokens (12 h JWTs). 98b is idempotent and never touches the ledger guard.
+  psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
+  mintTokens();
+  psql(fs.readFileSync(path.join(here, 'sql/88_harness_exams_local.sql'), 'utf8'));
+  console.log('harness exams (deleted|hidden): ' + psql("select borrados || '|' || ocultados from public.local_clean_harness_exams(false)"));
   const rows = psql("select u.email || ' ' || c.saldo_tickets || ' ' || (select count(*) from public.contenido_desbloqueado_usuario g where g.usuario_id = u.id) from auth.users u join public.carteras_usuario c on c.usuario_id = u.id where u.email in ('q1@exam.local','q2@exam.local','q2z@exam.local','q3@exam.local','q4@exam.local') order by u.email");
   console.log('fixtures restored (email balance entitlements):' + String.fromCharCode(10) + rows);
   process.exit(0);
@@ -118,6 +151,7 @@ psql(fs.readFileSync(path.join(here, 'sql/02_overlay_idempotency_finalize.sql'),
 psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261022100100_security_exam_publication_time.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/93_phase_b_scheduled_exam.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/94_e2e_users.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(here, 'sql/88_harness_exams_local.sql'), 'utf8'));
 // E5-V1-S10: feedback_pregunta existe en MAIN y no en el subconjunto del bootstrap local (Reportar daba 502).
 psql(fs.readFileSync(path.join(here, 'sql/91_feedback_pregunta_local.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/95_v1_specialties.sql'), 'utf8'));
@@ -143,7 +177,9 @@ psql(`do $$ begin
 end $$;`);
 // E5-V1-F01: quita la fila de apertura DUPLICADA que dejo un borrador anterior de la migracion (solo local; no hace nada en una cartera limpia).
 if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
-for (const v of ['20261022100300_v1_wallet_ledger_hardening', '20261022100400_v1_payment_orders', '20261022100500_v1_exam_redeem', '20261022100600_v1_specialty_immutable', '20261022100700_v1_admin_grant', '20261022100800_v1_saved_items']) {
+// the list is V1_MIGRATIONS.txt (single source, same as --converge): a hard-coded list went stale and a plain up.mjs re-applied OLD definitions (e.g. the pre-v2 access verdict of 20261022100500) over the current ones
+const { v1Migrations } = await import('./converge.mjs');
+for (const v of v1Migrations(repo)) {
   psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));
 }
 psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
@@ -177,25 +213,7 @@ await fetch(`${GATEWAY}/storage/v1/bucket`, {
 // intentos anteriores la conservan; las nuevas ya no la ven).
 psql("update public.recursos_pregunta set activo = false where id = '5e000000-0000-4000-8000-000000000001' and activo");
 
-// ---------- JWT ES256 de los usuarios de prueba (el JWKS lo sirve la pasarela en /auth/v1) ----------
-const key = crypto.createPrivateKey({ key: secrets.privateJwk, format: 'jwk' });
-// Mismos claims que un access token de GoTrue (email + app_metadata): el stub de /auth/v1/user (auth-stub.js) responde solo con ellos.
-const es256 = (sub, email) => {
-  const now = Math.floor(Date.now() / 1000);
-  const head = b64url(JSON.stringify({ alg: 'ES256', typ: 'JWT', kid: secrets.kid }));
-  const body = b64url(JSON.stringify({ sub, email, app_metadata: { provider: 'email', providers: ['email'] }, role: 'authenticated', aud: 'authenticated', iss: `${GATEWAY}/auth/v1`, iat: now, exp: now + 12 * 3600 }));
-  const sig = crypto.sign('sha256', Buffer.from(`${head}.${body}`), { key, dsaEncoding: 'ieee-p1363' });
-  return `${head}.${body}.${b64url(sig)}`;
-};
-const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a', 'a@exam.local'), B: es256('0b000000-0000-4000-8000-00000000000b', 'b@exam.local'),
-  P: es256('0f000000-0000-4000-8000-00000000000f', 'p@exam.local'),
-  XA: es256('1a000000-0000-4000-8000-00000000001a', 'xa@exam.local'), XB: es256('1b000000-0000-4000-8000-00000000001b', 'xb@exam.local'),
-  Q1: es256('2a000000-0000-4000-8000-00000000002a', 'q1@exam.local'), Q2: es256('2b000000-0000-4000-8000-00000000002b', 'q2@exam.local'),
-  Q2Z: es256('2c000000-0000-4000-8000-00000000002c', 'q2z@exam.local'), Q3: es256('2d000000-0000-4000-8000-00000000002d', 'q3@exam.local'),
-  Q4: es256('2e000000-0000-4000-8000-00000000002e', 'q4@exam.local'),
-  Q6: es256('2f000000-0000-4000-8000-00000000002f', 'q6@exam.local'), Q7: es256('3b000000-0000-4000-8000-00000000003b', 'q7@exam.local'),
-  ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local') };
-fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
+mintTokens();
 
 fs.writeFileSync(path.join(local, 'ktor.env'), [
   'APP_ENV=local', 'SERVER_PROFILE=bot', 'HOST=127.0.0.1', 'PORT=8089', 'LOG_LEVEL=INFO',

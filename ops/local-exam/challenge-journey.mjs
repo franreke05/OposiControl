@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
+import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('challenge-journey');
 
 requireStackLock('challenge-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));

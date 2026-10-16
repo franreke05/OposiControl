@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
+import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('admin-grant-journey');
 
 requireStackLock('admin-grant-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -67,9 +68,9 @@ check('J15.D2_02_end_is_the_stacked_one', Math.abs(days(d3.json?.examen?.accesoV
 const g3b = await gift(Q.Q1, OT.ONE, 'admin');
 check('J15.another_gift_reason_stacks_again_to_90_days', g3b.status === 201 && Math.abs(days(g3b.json?.validUntil) - 90) < 0.05, `${days(g3b.json?.validUntil)}`);
 
-// 4. a purchase on a gifted exam extends (a limited gift does not block buying); an unlimited one would answer ALREADY_ACCESSIBLE (legacy rows only)
+// 4. owner GO 2026-10-16: a purchase on an exam open through a GIFT (non-purchase grant) answers ALREADY_ACCESSIBLE (only a purchase extends a purchase); nothing is debited
 const buy2 = await app('Q1', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE }, crypto.randomUUID());
-check('J15.purchase_on_a_gifted_exam_extends_never_shortens', buy2.status === 201 && days(buy2.json?.canje?.validUntil) > 90, `${buy2.status} ${days(buy2.json?.canje?.validUntil)}`);
+check('J15.purchase_on_a_gifted_exam_is_ALREADY_ACCESSIBLE', buy2.status === 409 && buy2.json?.code === 'ALREADY_ACCESSIBLE', `${buy2.status} ${buy2.json?.code}`);
 
 // 5. gates: another specialty, unknown exam, bad reason
 const other = await gift(Q.Q1, OT.ING);

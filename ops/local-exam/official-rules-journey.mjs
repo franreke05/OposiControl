@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { requireStackLock } from './stack-lock.mjs';
+import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('official-rules-journey');
 
 requireStackLock('official-rules-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));

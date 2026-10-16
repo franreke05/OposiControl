@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { requireStackLock } from './stack-lock.mjs';
+import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('e2-phaseb');
 
 // Escribe en el stack compartido (usuarios/fixtures de E2): falla (exit 3) si STACK_LOCK es de otro.
 requireStackLock('e2-phaseb.mjs');

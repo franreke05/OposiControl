@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { requireStackLock } from './stack-lock.mjs';
+import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('stats-journey');
 
 requireStackLock('stats-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));

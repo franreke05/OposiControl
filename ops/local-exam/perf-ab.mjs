@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
+import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('perf-ab');
 
 // Arranca Ktor y escribe intentos de XA en el stack compartido: falla (exit 3) ANTES de nada si STACK_LOCK es de otro.
 requireStackLock('perf-ab.mjs');

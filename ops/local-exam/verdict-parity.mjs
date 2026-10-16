@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
+import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('verdict-parity');
 
 // PARITY_CONTAINER=<name>: run against a DISPOSABLE PG17 container (no live stack, no lock). See parity-disposable.mjs.
 const container = process.env.PARITY_CONTAINER;

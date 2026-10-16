@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
+import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('e2-security');
 
 // Escribe en el stack compartido (usuarios/fixtures de E2): falla (exit 3) si STACK_LOCK es de otro.
 requireStackLock('e2-security.mjs');

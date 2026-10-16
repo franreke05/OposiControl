@@ -1596,7 +1596,8 @@ insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, t
   ('e5000000-0000-0000-0000-0000000000e5','PL-IM3','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Inmersivo 3','inmersivo','premium',true, now() - interval '1 day', true, 50, 30, false),
   ('e5000000-0000-0000-0000-0000000000e6','PL-OTHER','e1000000-0000-0000-0000-0000000000a2','c1000000-0000-0000-0000-0000000000a1','Inmersivo otra especialidad','inmersivo','premium',true, now() - interval '1 day', true, 50, 30, false),
   ('e5000000-0000-0000-0000-0000000000e7','PL-DRAFT','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Inmersivo borrador','inmersivo','premium',false, null, true, 50, 30, false),
-  ('e5000000-0000-0000-0000-0000000000e8','PL-FREE','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Rafaga gratis','rafaga','gratuito',true, now() - interval '1 day', false, null, 30, false);
+  ('e5000000-0000-0000-0000-0000000000e8','PL-FREE','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Rafaga gratis','rafaga','gratuito',true, now() - interval '1 day', false, null, 30, false),
+  ('e5000000-0000-0000-0000-0000000000e9','PL-RAFB','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Rafaga comprable','rafaga','premium',true, now() - interval '1 day', true, 10, 30, false);
 set local session_replication_role = origin;
 insert into public.planes_suscripcion (id, codigo, nombre, nivel) values
   ('b1000000-0000-0000-0000-0000000000a0','plan-gratuito','Gratuito',0), ('b1000000-0000-0000-0000-0000000000a1','plan-rafagas','Rafagas',1),
@@ -1662,6 +1663,17 @@ begin
   -- a purchase of a quota-held exam is refused (nothing to buy)
   perform public.admin_grant_tickets(u3, 200, 'seed', 'seed-pl3', 'ajuste');
   perform pg_temp.expect_e(format($q$select * from public.app_redeem_exam_access(%L, %L, 'k-pl-quota')$q$, u3, im1), 'ALREADY_ACCESSIBLE');
+  -- ---- ALREADY_ACCESSIBLE comes from the SAME v2 verdict (E5-V1-QA-INT06 F1): only FREE / GRANTED(unlimited or non-purchase) / SUBSCRIPTION (plan coverage); never when LOCKED
+  perform public.admin_grant_tickets(u1, 100, 'seed', 'seed-pl-u1', 'ajuste');
+  perform public.admin_grant_tickets(u2, 100, 'seed', 'seed-pl-u2', 'ajuste');
+  assert pg_temp.vs(u1, 'e5000000-0000-0000-0000-0000000000e9') = 'SUBSCRIPTION' and pg_temp.vs(u1, im1) = 'LOCKED', 'precondition: rafagas plan covers the rafaga, not the immersive';
+  perform pg_temp.expect_e(format($q$select * from public.app_redeem_exam_access(%L, %L, 'k-pl-u1-raf')$q$, u1, 'e5000000-0000-0000-0000-0000000000e9'), 'ALREADY_ACCESSIBLE');   -- plan coverage of a rafaga: not bought again
+  select * into r from public.app_redeem_exam_access(u1, im1, 'k-pl-u1-im1');
+  assert r.outcome = 'CREATED' and pg_temp.vs(u1, im1) = 'GRANTED', 'a Rafagas subscriber buys an immersive with OT (LOCKED verdict is never ALREADY_ACCESSIBLE)';
+  select * into r from public.app_redeem_exam_access(u2, im1, 'k-pl-u2-im1');
+  assert r.outcome = 'CREATED', 'a Razonados subscriber buys an immersive with OT';
+  perform pg_temp.expect_e(format($q$select * from public.app_redeem_exam_access(%L, %L, 'k-pl-u2-raf')$q$, u2, 'e5000000-0000-0000-0000-0000000000e9'), 'ALREADY_ACCESSIBLE');
+  delete from public.contenido_desbloqueado_usuario where usuario_id in (u1, u2) and motivo = 'compra';
   -- an exam already owned by a gift / purchase is not spent from the quota
   insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values (u3, im3, 'admin', now() - interval '1 hour', now() + interval '5 days');
   perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u3, im3), 'ALREADY_ACCESSIBLE');
