@@ -69,6 +69,8 @@ export function converge({ psql, root = repo }) {
           on conflict (version) do update set file_sha256 = excluded.file_sha256, applied_at = clock_timestamp();`);
   }
   psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
+  // E5-V1-S10: feedback_pregunta (MAIN has it, the local bootstrap subset does not)
+  psql(fs.readFileSync(path.join(here, 'sql/91_feedback_pregunta_local.sql'), 'utf8'));
   psql("notify pgrst, 'reload schema';");
   return verify({ psql, root, files });
 }

@@ -78,6 +78,8 @@ try {
   assert(psql("select (select count(*) from public.app_wallet_reconcile(null))") === '0', 'reconcile is clean after the refund');
   const saved = psql("select count(*) from public.app_save_item('a0000000-0000-0000-0000-0000000000d1', 'pregunta', 'f5000000-0000-0000-0000-0000000000d1')");
   assert(saved === '1', 'a question of a free exam can be saved after the converge');
+  assert(psql("select to_regclass('public.feedback_pregunta') is not null") === 't', 'feedback_pregunta exists after the converge (E5-V1-S10)');
+  assert(psql("insert into public.feedback_pregunta (usuario_id, pregunta_id, tipo_feedback, descripcion) values ('a0000000-0000-0000-0000-0000000000d1', 'f5000000-0000-0000-0000-0000000000d1', 'otro', 'prueba') returning estado") === 'pendiente', 'a report can be inserted (estado pendiente)');
   console.log('PROOF OK (old ref ' + OLD + ')');
 } finally {
   cleanup();
