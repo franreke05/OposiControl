@@ -196,6 +196,93 @@ await scenario('B_IDEMPOTENCY', async () => {
   invariants('B_IDEMPOTENCY', [u, d, u3, u4]);
 });
 
+await scenario('L_F01_BACKFILL', async () => {
+  // Crafts LEGACY shapes (seqless rows) with triggers off (replica role) for OWN users, then runs private.v1_ledger_backfill(user) and the reconcile.
+  const legacy = (u, rows, snap) => sql("set session_replication_role = replica;\n" +
+    (snap === null ? '' : "insert into public.carteras_usuario (usuario_id, saldo_tickets) values ('" + u.id + "', " + snap + ") on conflict (usuario_id) do update set saldo_tickets = excluded.saldo_tickets;\n") +
+    rows.map((c, i) => "insert into public.transacciones_cartera (usuario_id, tipo, cantidad, saldo_resultante, descripcion, creado_en) values ('" + u.id + "', 'ajuste', " + c + ", " + Math.max(0, rows.slice(0, i + 1).reduce((a, b) => a + b, 0)) + ", 'legacy', now() - interval '" + (rows.length - i) + " minutes');\n").join('') +
+    "set session_replication_role = origin;");
+  const state = (u) => sql("select coalesce((select saldo_tickets from public.carteras_usuario where usuario_id = '" + u.id + "'), 0) || '|' || count(*) || '|' || coalesce(sum(cantidad), 0) || '|' || count(*) filter (where seq is null) || '|' || coalesce(min(seq), 0) || '-' || coalesce(max(seq), 0) || '|' || count(*) filter (where referencia_tipo = 'legacy_opening') from public.transacciones_cartera where usuario_id = '" + u.id + "';").trim();
+  const recon = (u) => sql("select count(*) from public.app_wallet_reconcile('" + u.id + "');").trim();
+  const chainOk = (u) => sql("select coalesce(bool_and(t.saldo_anterior = coalesce(p.saldo_resultante, 0) and t.saldo_resultante = t.saldo_anterior + t.cantidad and t.seq = p.rn + 1), true) from (select *, row_number() over (order by seq) as n from public.transacciones_cartera where usuario_id = '" + u.id + "') t left join (select seq, saldo_resultante, row_number() over (order by seq) as rn from public.transacciones_cartera where usuario_id = '" + u.id + "') p on p.rn = t.n - 1;").trim() === 't';
+  const bf = (u) => sqlTry("select private.v1_ledger_backfill('" + u.id + "');");
+  const cases = [
+    ['A_shape_rows_equal_snapshot_no_new_row', [10, -3], 7, '7|2|7|0|1-2|0'],
+    ['no_rows_snapshot_5_one_opening_row', [], 5, '5|1|5|0|1-1|1'],
+    ['rows_30_vs_snapshot_35_opening_5', [30], 35, '35|2|35|0|1-2|1'],
+    ['rows_40_vs_snapshot_35_opening_minus5', [40], 35, '35|2|35|0|1-2|1'],
+    ['empty_wallet_nothing', [], 0, '0|0|0|0|0-0|0'],
+  ];
+  const users = [];
+  for (const [name, rows, snap, want] of cases) {
+    const u = mkUser('f01' + users.length); users.push(u);
+    sql("set session_replication_role = replica; delete from public.carteras_usuario where usuario_id = '" + u.id + "'; set session_replication_role = origin;");
+    legacy(u, rows, snap);
+    const pre = recon(u); const r = bf(u); const got = state(u); const r2 = bf(u); const again = state(u);
+    check('F01.' + name, r.ok && got === want && chainOk(u) && recon(u) === '0' && again === got, 'pre-reconcile rows=' + pre + ' state=' + got + ' want=' + want + ' rerun-same=' + (again === got) + ' reconcile=' + recon(u));
+  }
+  // mixed state: some rows with seq, some without -> fails closed, nothing changes
+  const m = mkUser('f01mix'); users.push(m);
+  legacy(m, [10, 5], 15);
+  sql("set session_replication_role = replica; update public.transacciones_cartera set seq = 1, saldo_anterior = 0 where id = (select id from public.transacciones_cartera where usuario_id = '" + m.id + "' order by creado_en limit 1); set session_replication_role = origin;");
+  const before = state(m); const mr = bf(m); const after = state(m);
+  check('F01.mixed_state_fails_closed_nothing_changes', !mr.ok && /V1_LEDGER_BACKFILL_MIXED/.test(mr.out) && before === after, mr.out.split('\n')[0].slice(0, 80) + ' state=' + after);
+  const seqless = recon(m);
+  check('F01.reconcile_reports_seqless_rows', Number(seqless) >= 1 && /SEQLESS_ROWS/.test(sql("select string_agg(kind, ',') from public.app_wallet_reconcile('" + m.id + "');")), 'reconcile rows=' + seqless);
+  // clean up the mixed fixture so the whole-DB reconcile stays empty
+  sql("set session_replication_role = replica; delete from public.transacciones_cartera where usuario_id = '" + m.id + "'; delete from public.carteras_usuario where usuario_id = '" + m.id + "'; set session_replication_role = origin;");
+  check('F01.whole_db_reconcile_empty_after_backfill_tests', sql("select count(*) from public.v_wallet_reconcile;").trim() === '0');
+});
+
+await scenario('S_SPECIALTY_GATE', async () => {
+  const LOC = 'e5000000-0000-4000-8000-000000000001', OTH = 'e2b50000-0000-4000-8000-000000000001', EXO = 'e2c00000-0000-4000-8000-000000000040';
+  sql("set session_replication_role = replica; insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas, comunidad_id, comprable_con_tickets, precio_tickets, dias_acceso_compra) values ('" + EXO + "', 'E2C-OTHER', '" + OTH + "', 'E2C otra especialidad', 'inmersivo', 'premium', true, now() - interval '1 day', 1, (select id from public.comunidades_autonomas order by codigo limit 1), true, 10, 30) on conflict (id) do update set precio_tickets = 10, comprable_con_tickets = true, activo = true, publicado_en = now() - interval '1 day'; insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select '" + EXO + "', 'f2c00000-0000-4000-8000-000000000001', 1, 1 where not exists (select 1 from public.preguntas_examen where examen_id = '" + EXO + "'); set session_replication_role = origin;");
+  const setSpec = (u, sp) => sql("update public.perfiles_usuario set especialidad_principal_id = '" + sp + "' where usuario_id = '" + u.id + "';");
+  const gu = mkUser('sgL'); grant(gu, 100); setSpec(gu, LOC);
+  const nu = mkUser('sgN'); grant(nu, 100);
+  const ou = mkUser('sgO'); grant(ou, 100); setSpec(ou, OTH);
+  const NF = (r) => r.status === 404 && r.json?.code === 'EXAM_NOT_FOUND';
+  const ghost = await call(gu, 'GET', '/api/v1/app/examenes/' + uuid());
+  const d02 = await call(gu, 'GET', '/api/v1/app/examenes/' + EXO); const d02own = await call(gu, 'GET', '/api/v1/app/examenes/' + EX.CHEAP);
+  check('SG.D2-02_other_specialty_404_EXAM_NOT_FOUND_same_as_nonexistent', NF(d02) && NF(ghost) && d02own.status === 200, 'other=' + d02.status + '/' + d02.json?.code + ' ghost=' + ghost.status + '/' + ghost.json?.code + ' own=' + d02own.status);
+  const shape = (r) => JSON.stringify(Object.keys(r.json ?? {}).sort());
+  check('SG.not_found_response_does_not_distinguish_other_specialty_from_nonexistent', shape(d02) === shape(ghost), shape(d02) + ' vs ' + shape(ghost));
+  const list = await call(gu, 'GET', '/api/v1/app/examenes?limit=100'); const listForged = await call(gu, 'GET', '/api/v1/app/examenes?limit=100&especialidadId=' + OTH);
+  check('SG.D2-01_scoped_to_own_specialty_and_forged_filter_never_widens', list.status === 200 && !list.text.includes(EXO) && list.text.includes(EX.CHEAP) && (listForged.status === 400 || (listForged.status === 200 && !listForged.text.includes(EXO))), 'list=' + list.status + ' forged=' + listForged.status + '/' + (listForged.json?.code ?? ''));
+  const att = await call(gu, 'POST', '/api/v1/app/examenes/' + EXO + '/intentos', {}, { 'Idempotency-Key': uuid() });
+  check('SG.D2-03_attempt_on_other_specialty_404_EXAM_NOT_FOUND', NF(att), att.status + '/' + att.json?.code);
+  const b0 = balance(gu); const k = uuid();
+  const buy = await redeem(gu, EXO, {}, k); const replay = await redeem(gu, EXO, {}, k); const buy2 = await redeem(gu, EXO);
+  check('SG.D6-03_purchase_on_other_specialty_404_no_debit_replay_same', NF(buy) && NF(replay) && NF(buy2) && balance(gu) === b0 && ledgerRows(gu, 'compra_examen') === 0 && Number(sql("select count(*) from public.contenido_desbloqueado_usuario where usuario_id = '" + gu.id + "' and examen_id = '" + EXO + "';")) === 0, buy.status + '/' + replay.status + '/' + buy2.status + ' balance=' + balance(gu));
+  const par = await Promise.all(Array.from({ length: 5 }, () => redeem(gu, EXO)));
+  check('SG.D6-03_parallel_forged_purchases_all_404_no_debit', par.every(NF) && balance(gu) === b0, par.map((r) => r.status).join(','));
+  sql("set session_replication_role = replica; insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('" + gu.id + "', '" + EXO + "', 'compra', now() - interval '1 day', now() + interval '20 days') on conflict do nothing; set session_replication_role = origin;");
+  const stored = await call(gu, 'GET', '/api/v1/app/examenes/' + EXO); const coll = await call(gu, 'GET', '/api/v1/app/me/examenes?vista=COLECCION');
+  const att2 = await call(gu, 'POST', '/api/v1/app/examenes/' + EXO + '/intentos', {}, { 'Idempotency-Key': uuid() });
+  const coll2 = await call(gu, 'GET', '/api/v1/app/me/examenes?vista=ADQUIRIDOS');
+  sql("set session_replication_role = replica; delete from public.contenido_desbloqueado_usuario where usuario_id = '" + gu.id + "' and examen_id = '" + EXO + "'; set session_replication_role = origin;");
+  check('SG.stored_grant_on_other_specialty_D2-02_and_D2-03_are_404', NF(stored) && NF(att2), 'detail=' + stored.status + ' attempt=' + att2.status);
+  finding('SG.D2-13_hides_a_stored_grant_of_another_specialty', coll.status === 200 && !coll.text.includes(EXO) && !coll2.text.includes(EXO), 'COLECCION=' + (coll.text.includes(EXO) ? 'LISTED(title+type+community, LOCKED)' : 'hidden') + ' ADQUIRIDOS=' + (coll2.text.includes(EXO) ? 'LISTED' : 'hidden') + ' while D2-02 answers 404', 'E2-V1-E05');
+  const ownerBuy = await redeem(ou, EXO); const ownerSeesLocal = await call(ou, 'GET', '/api/v1/app/examenes/' + EX.CHEAP);
+  check('SG.user_of_that_specialty_can_buy_it_and_not_the_local_one', ownerBuy.status === 201 && NF(ownerSeesLocal), 'buy=' + ownerBuy.status + ' sees-local=' + ownerSeesLocal.status);
+  const noSpecSees = await call(nu, 'GET', '/api/v1/app/examenes/' + EXO); const noSpecList = await call(nu, 'GET', '/api/v1/app/examenes?limit=100');
+  const noSpecBuy = await redeem(nu, EXO);
+  finding('SG.user_with_NO_specialty_cannot_reach_exams_of_any_specialty', NF(noSpecSees) && NF(noSpecBuy), 'detail=' + noSpecSees.status + ' purchase=' + noSpecBuy.status + ' list-includes-both=' + (noSpecList.text.includes(EXO) && noSpecList.text.includes(EX.CHEAP)) + ' (onboarding accepts especialidadId=null: CanonicalProfileService:120-160)', 'E2-V1-E06');
+  invariants('S_SPECIALTY_GATE', [gu, nu, ou]);
+  const su = mkUser('sgS'); const sp1 = await call(su, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC });
+  const sp2 = await call(su, 'PATCH', '/api/v1/app/me/profile', { especialidadId: OTH }); const sp3 = await call(su, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC });
+  const spN = await call(su, 'PATCH', '/api/v1/app/me/profile', { especialidadId: null });
+  const cur = () => sql("select especialidad_principal_id from public.perfiles_usuario where usuario_id = '" + su.id + "';").trim();
+  check('SG.set_once_first_ok_different_409_SPECIALTY_ALREADY_SET_same_noop', sp1.status === 200 && sp2.status === 409 && sp2.json?.code === 'SPECIALTY_ALREADY_SET' && sp3.status === 200 && [400, 409, 422].includes(spN.status) && cur() === LOC, [sp1, sp2, sp3, spN].map((r) => r.status + '/' + (r.json?.code ?? '')).join(' ') + ' cur=' + cur());
+  const sql1 = sqlTry("update public.perfiles_usuario set especialidad_principal_id = '" + OTH + "' where usuario_id = '" + su.id + "';"); const sql2 = sqlTry("update public.perfiles_usuario set especialidad_principal_id = null where usuario_id = '" + su.id + "';"); const sql3 = sqlTry("delete from public.especialidades where id = '" + LOC + "';");
+  check('SG.set_once_enforced_in_db_even_for_raw_sql_and_specialty_delete', !sql1.ok && /SPECIALTY_ALREADY_SET/.test(sql1.out) && !sql2.ok && !sql3.ok && cur() === LOC, 'other=' + sql1.ok + ' null=' + sql2.ok + ' deleteSpecialty=' + sql3.ok);
+  const ru = mkUser('sgR'); const race = await Promise.all([call(ru, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC }), call(ru, 'PATCH', '/api/v1/app/me/profile', { especialidadId: OTH })]);
+  const fin = sql("select especialidad_principal_id from public.perfiles_usuario where usuario_id = '" + ru.id + "';").trim();
+  check('SG.set_once_race_exactly_one_value_wins', race.filter((r) => r.status === 200).length === 1 && race.filter((r) => r.status === 409).length === 1 && [LOC, OTH].includes(fin), race.map((r) => r.status).join(',') + ' final=' + fin);
+  const fu = mkUser('sgF'); const fp = await call(fu, 'PATCH', '/api/v1/app/me/profile', { especialidadId: LOC }, { 'X-Usuario-Id': su.id });
+  check('SG.forged_user_header_cannot_change_another_users_specialty', fp.status === 200 && cur() === LOC && sql("select especialidad_principal_id from public.perfiles_usuario where usuario_id = '" + fu.id + "';").trim() === LOC, fp.status + '');
+});
+
 await scenario('M_EXTENSION_RACE', async () => {
   const users = []; const rows = [];
   for (let trial = 0; trial < 6; trial++) {
@@ -364,9 +451,10 @@ await scenario('F_LATE_AND_STATES', async () => {
   check('D2.order_amount_quantity_owner_expiry_are_frozen_by_trigger', tamper.length === 0, tamper.join(',') || '6 mutations rejected (ORDER_FROZEN)');
   const back = sqlTry(`update public.compras_usuario set estado = 'pendiente' where id = '${late.id}';`); const refundedBack = sqlTry(`update public.compras_usuario set estado = 'pendiente' where id = '${frozen.id}' and false;`);
   check('D8.paid_order_cannot_go_back_to_pending', !back.ok && /ORDER_STATE_TRANSITION_FORBIDDEN/.test(back.out), back.out.split('\n')[0].slice(0, 100));
-  const pending = await mk(); const cap = []; for (let i = 0; i < 8; i++) { const r = await createOrder(u); cap.push(r.status); }
-  const open = Number(sql(`select count(*) from public.compras_usuario where usuario_id = '${u.id}' and estado = 'pendiente' and cantidad_tickets is not null;`));
-  finding('C9.open_pending_orders_per_user_are_capped', open <= 5, `open pending orders=${open}, statuses=${[...new Set(cap)]} (only the 10/min rate limit applies)`, 'E2-V1-E02');
+  const capU = mkUser('fcap'); const cap = []; let capCode = null; for (let i = 0; i < 8; i++) { const r = await createOrder(capU); cap.push(r.status); if (r.status === 409) capCode = r.json?.code; }
+  const open = Number(sql(`select count(*) from public.compras_usuario where usuario_id = '${capU.id}' and estado = 'pendiente';`));
+  check('C9.open_pending_orders_capped_at_5_409_ORDER_PENDING_LIMIT', open === 5 && cap.slice(0, 5).every((x) => x === 201) && cap.slice(5).every((x) => x === 409) && capCode === 'ORDER_PENDING_LIMIT', `open=${open} statuses=${cap} code=${capCode}`);
+  invariants('F_CAP', [capU]);
   invariants('F_LATE_AND_STATES', [u]);
 });
 
