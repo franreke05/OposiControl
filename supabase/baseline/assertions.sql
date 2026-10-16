@@ -1786,3 +1786,90 @@ begin
   raise notice 'OK V1 demo mode';
 end $$;
 rollback;
+
+-- 20261022101100: V1 daily limiter L1 (questions revealed), plan summary, daily cap on OT bought.
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000d7','lm1@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000d8','lm2@test.local','authenticated','authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000d7','LA','LA','la',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000d7','CLA','Com LA','com-la');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+  select u, 'lm' || right(u::text, 1), 'lm' || right(u::text, 1), true, 'activa', 'e1000000-0000-0000-0000-0000000000d7'
+  from (values ('a0000000-0000-0000-0000-0000000000d7'::uuid), ('a0000000-0000-0000-0000-0000000000d8'::uuid)) v(u)
+  on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en) values
+  ('e5000000-0000-0000-0000-0000000000d7','LM-FREE','e1000000-0000-0000-0000-0000000000d7','c1000000-0000-0000-0000-0000000000d7','Rafaga gratis','rafaga','gratuito',true, now() - interval '1 day');
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+select ('f7000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, 'LM-' || n, 'rafaga', 'Pregunta limite ' || n, true from generate_series(1, 6) n;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+select ('0d700000-0000-0000-0000-000000000' || lpad(n::text, 2, '0') || o)::uuid, ('f7000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, chr(64 + o), 'Opcion', o from generate_series(1, 6) n, generate_series(1, 2) o;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento)
+select ('f7000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, ('0d700000-0000-0000-0000-000000000' || lpad(n::text, 2, '0') || '1')::uuid, 'porque si' from generate_series(1, 6) n;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen)
+select 'e5000000-0000-0000-0000-0000000000d7', ('f7000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, n, n from generate_series(1, 6) n;
+set local session_replication_role = origin;
+insert into public.planes_suscripcion (id, codigo, nombre, nivel) values ('b1000000-0000-0000-0000-0000000000d7', 'gratuito-l', 'Gratuito', 0), ('b1000000-0000-0000-0000-0000000000d8', 'razonados-l', 'Razonados', 2);
+insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, activo, visible, plan_id) values
+  ('b2000000-0000-0000-0000-0000000000d8', 'sub-razonados-l', 'suscripcion', 'Sub', 699, 'EUR', true, true, 'b1000000-0000-0000-0000-0000000000d8');
+insert into public.beneficios_plan (plan_id, codigo_beneficio, valor_integer) values ('b1000000-0000-0000-0000-0000000000d7', 'limite_preguntas_24h', 3);
+
+do $$
+declare
+  u1 uuid := 'a0000000-0000-0000-0000-0000000000d7'; u2 uuid := 'a0000000-0000-0000-0000-0000000000d8'; ex uuid := 'e5000000-0000-0000-0000-0000000000d7';
+  q uuid[] := array(select ('f7000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid from generate_series(1, 6) n);
+  a uuid; r jsonb; j jsonb;
+begin
+  -- free user, FREE-state attempt: limit 3 per rolling 24 h (benefit of the Gratuito plan)
+  a := (public.app_start_exam_attempt(u1, ex, 'NORMAL') ->> 'intento_id')::uuid;
+  assert (select acceso_estado from public.intentos_examen where id = a) = 'FREE', 'the access state is stored at start';
+  assert (public.app_reveal_attempt_questions(u1, a, q[1:2])) ->> 'outcome' = 'OK', 'two questions fit';
+  assert (public.app_reveal_attempt_questions(u1, a, q[1:2])) ->> 'outcome' = 'OK', 'serving the same questions again is free (resume)';
+  r := public.app_reveal_attempt_questions(u1, a, q[1:4]);
+  assert r ->> 'outcome' = 'DAILY_LIMIT_REACHED' and (r ->> 'retry_after_seconds')::int between 1 and 86400, 'the page that would reveal 2 NEW questions beyond 3 is refused all or nothing: ' || r::text;
+  assert (select count(*) from public.preguntas_reveladas_usuario where usuario_id = u1) = 2, 'a refused page writes nothing';
+  assert (public.app_reveal_attempt_questions(u1, a, q[1:3])) ->> 'outcome' = 'OK', 'one new question still fits (the 3rd)';
+  r := public.app_reveal_attempt_questions(u1, a, q[4:4]);
+  assert r ->> 'outcome' = 'DAILY_LIMIT_REACHED', 'the 4th new question is refused';
+  -- the window slides: a question revealed more than 24 h ago stops counting
+  update public.preguntas_reveladas_usuario set revelada_en = now() - interval '25 hours' where usuario_id = u1 and pregunta_id = q[1];
+  assert (public.app_reveal_attempt_questions(u1, a, q[4:4])) ->> 'outcome' = 'OK', 'after the window frees a slot the next question fits';
+  assert (public.app_reveal_attempt_questions(u1, gen_random_uuid(), q[1:1])) ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'another attempt / user';
+  assert (public.app_reveal_attempt_questions(u2, a, q[1:1])) ->> 'outcome' = 'ATTEMPT_NOT_FOUND', 'attempts are per user';
+  -- exempt: GRANTED (purchase, gift, quota) and DEMO are decided at start and stored; an unknown state is NOT exempt
+  update public.intentos_examen set acceso_estado = 'GRANTED' where id = a;
+  assert (public.app_reveal_attempt_questions(u1, a, q[5:6])) ->> 'outcome' = 'OK' and (select count(*) from public.preguntas_reveladas_usuario where usuario_id = u1) = 4, 'GRANTED attempts are exempt and write nothing';
+  update public.intentos_examen set acceso_estado = null where id = a;
+  assert (public.app_reveal_attempt_questions(u1, a, q[5:6])) ->> 'outcome' = 'DAILY_LIMIT_REACHED', 'unknown access state: not exempt (fail closed)';
+  -- a plan without the benefit is unlimited: no lock, no write
+  insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, producto_codigo, inicio_en, fin_en) values (u2, true, 'activa', 'sub-razonados-l', now() - interval '1 day', now() + interval '20 days');
+  a := (public.app_start_exam_attempt(u2, ex, 'NORMAL') ->> 'intento_id')::uuid;
+  assert (public.app_reveal_attempt_questions(u2, a, q)) ->> 'outcome' = 'OK' and not exists (select 1 from public.preguntas_reveladas_usuario where usuario_id = u2), 'no limit: nothing written';
+  -- a malformed / out-of-range limit never turns the limiter off: the configured fallback applies (fail closed)
+  update public.beneficios_plan set valor_integer = 99999 where plan_id = 'b1000000-0000-0000-0000-0000000000d7';
+  assert private.plan_daily_limit(u1, clock_timestamp()) = 30, 'an out-of-range limit falls back to the configured value, not to unlimited';
+  update public.beneficios_plan set valor_integer = 3 where plan_id = 'b1000000-0000-0000-0000-0000000000d7';
+  -- plan summary payload (D7-31)
+  j := public.app_plan_quota(u2);
+  assert j ->> 'planCodigo' = 'razonados-l' and (j ->> 'nivel')::int = 2 and (j ->> 'cupoTotal')::int = 0 and (j ->> 'cupoLibre')::int = 0 and jsonb_array_length(j -> 'elegidos') = 0, 'plan summary of a razonados subscriber';
+  j := public.app_plan_quota(u1);
+  assert j ->> 'planCodigo' is null and (j ->> 'nivel')::int = 0 and (j ->> 'limitePreguntas24h')::int = 3 and (j ->> 'reveladas24h')::int = 3, 'plan summary of a free user: limit and meter: ' || j::text;
+  -- ---- daily cap on OT bought (C-P2)
+  insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, cantidad_tickets, activo, visible) values
+    ('b2000000-0000-0000-0000-0000000000d9', 'pack-cap-100', 'pack_tickets', 'Pack cap', 99, 'EUR', 100, true, true);
+  update public.configuracion_v1 set valor_integer = 150 where clave = 'tope_ot_comprados_dia';
+  perform public.app_create_payment_order(u1, 'pack-cap-100', 'google_play', 'cap-1');
+  perform pg_temp.expect_e(format($q$select * from public.app_create_payment_order(%L, 'pack-cap-100', 'google_play', 'cap-2')$q$, u1), 'PURCHASE_CAP_REACHED');
+  assert (public.app_create_payment_order(u1, 'pack-cap-100', 'google_play', 'cap-1')).outcome = 'REPLAY', 'a replay of an accepted order is not blocked by the cap';
+  update public.compras_usuario set estado = 'cancelada' where usuario_id = u1 and idempotency_key = 'cap-1';
+  assert (public.app_create_payment_order(u1, 'pack-cap-100', 'google_play', 'cap-2')).outcome = 'CREATED', 'a cancelled order does not count';
+  update public.configuracion_v1 set valor_integer = 5200 where clave = 'tope_ot_comprados_dia';
+  raise notice 'OK V1 limiter';
+end $$;
+rollback;

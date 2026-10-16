@@ -136,7 +136,7 @@ end;
 $$;
 revoke all on function private.tg_configuracion_v1_audit() from public, anon, authenticated;
 drop trigger if exists trg_configuracion_v1_audit on public.configuracion_v1;
-create trigger trg_configuracion_v1_audit before insert or update on public.configuracion_v1 for each row execute function private.tg_configuracion_v1_audit();
+create trigger trg_configuracion_v1_audit before update on public.configuracion_v1 for each row execute function private.tg_configuracion_v1_audit();
 
 create or replace function private.config_int(p_clave text, p_default integer)
 returns integer
