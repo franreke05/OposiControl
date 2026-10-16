@@ -307,7 +307,7 @@ $$;
 insert into public.configuracion_v1 (clave, valor_integer) values
   ('evolucion_cada_preguntas', 20), ('debilidad_min_respuestas', 10), ('dificultad_min_respuestas', 20), ('dificultad_muestra', 100),
   ('dominio_medio_pct', 50), ('dominio_alto_pct', 75), ('ventana_nota_defecto', 50), ('cohorte_minima_comparativa', 50),
-  ('dificultad_job_minutos', 15), ('recalculo_admin_cooldown_min', 10)
+  ('dificultad_job_minutos', 15), ('recalculo_admin_cooldown_min', 10), ('stats_activo', 1), ('tiempo_max_respuesta_seg', 300)
 on conflict (clave) do nothing;
 
 -- ---- 2. the ledger of first answers: the exactly-once guard of the stats hook (C-S1) and the window source of the Nota media
@@ -357,9 +357,15 @@ declare
   v_evol numeric;
   v_rev uuid;
   c integer := case when p_correcta then 1 else 0 end;
+  v_t integer := least(greatest(coalesce(p_tiempo_ms, 0), 0), private.config_int('tiempo_max_respuesta_seg', 300) * 1000);
 begin
+  -- C-W3-1 kill switch (Control, audited by the configuracion_v1 trigger): 0 skips ONLY the statistics part; the answer itself is never blocked. Answers made while it is off are not counted (no backfill: the guard row is the count).
+  if private.config_int('stats_activo', 1) = 0 then
+    return;
+  end if;
+  -- C-W3-2 the time is clamped here (the caller already passes the server-measured gap since the last event, never the raw client value)
   insert into public.primeras_respuestas_usuario (usuario_id, pregunta_id, correcta, tiempo_ms)
-  values (p_usuario, p_pregunta, p_correcta, greatest(coalesce(p_tiempo_ms, 0), 0))
+  values (p_usuario, p_pregunta, p_correcta, v_t)
   on conflict on constraint ux_primeras_respuestas_usuario_pregunta do nothing
   returning seq into v_seq;
   if v_seq is null then
@@ -389,18 +395,7 @@ begin
          ultima_practica_en = now(),
          actualizado_en = now();
 
-  insert into public.estadisticas_globales_pregunta as g (pregunta_id, total_respuestas, total_aciertos, total_fallos, total_respuestas_ranking, total_aciertos_ranking, total_fallos_ranking, porcentaje_acierto, porcentaje_fallo)
-  values (p_pregunta, 1, c, 1 - c, 1, c, 1 - c, c * 100, (1 - c) * 100)
-  on conflict (pregunta_id) do update
-     set total_respuestas = g.total_respuestas + 1,
-         total_aciertos = g.total_aciertos + c,
-         total_fallos = g.total_fallos + (1 - c),
-         total_respuestas_ranking = g.total_respuestas_ranking + 1,
-         total_aciertos_ranking = g.total_aciertos_ranking + c,
-         total_fallos_ranking = g.total_fallos_ranking + (1 - c),
-         porcentaje_acierto = round((g.total_aciertos + c) * 100.0 / (g.total_respuestas + 1), 2),
-         porcentaje_fallo = round((g.total_fallos + 1 - c) * 100.0 / (g.total_respuestas + 1), 2),
-         actualizado_en = now();
+  -- C-W3-4/7: the per-question global counters are NOT written here (a hot row at exam peaks); app_job_dificultad derives them from the guard table.
 
   insert into public.estado_competitivo_usuario (usuario_id) values (p_usuario) on conflict (usuario_id) do nothing;
   select * into est from public.estado_competitivo_usuario x where x.usuario_id = p_usuario for update;
@@ -549,14 +544,15 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_hasta timestamptz;
+  v_hasta bigint;
   v_lote uuid;
   v_min integer := private.config_int('dificultad_min_respuestas', 20);
   v_m integer := private.config_int('dificultad_muestra', 100);
-  v_lim integer := case when p_forzar then 20000 else 2000 end;
-  v_nuevo timestamptz;
+  v_lim integer := 2000;  -- C-W3-6: forced or not, ONE page per call; a forced run restarts the watermark and the periodic job finishes the rest
+  v_max bigint;
+  v_nuevo bigint;
   v_filas integer := 0;
-  v_n integer;
+  v_pagina integer := 0;
 begin
   if not pg_try_advisory_xact_lock(hashtextextended('job:dificultad', 0)) then
     return jsonb_build_object('estado', 'OCUPADO');
@@ -566,30 +562,43 @@ begin
                                and l.iniciado_en > clock_timestamp() - make_interval(mins => private.config_int('dificultad_job_minutos', 15))) then
     return jsonb_build_object('estado', 'RECIENTE');
   end if;
-  select coalesce((l.detalle ->> 'hasta')::timestamptz, '-infinity'::timestamptz) into v_hasta
+  -- C-W3-5: the watermark is the guard-table seq (monotonic), minus a safety margin for transactions that commit out of order
+  select coalesce((l.detalle ->> 'hasta_seq')::bigint, 0) into v_hasta
     from public.lotes_actualizacion_ranking l where l.tipo = 'dificultad' and l.estado = 'ok' order by l.iniciado_en desc limit 1;
-  v_hasta := case when p_forzar then '-infinity'::timestamptz else coalesce(v_hasta, '-infinity'::timestamptz) end;
+  v_hasta := case when p_forzar then 0 else coalesce(v_hasta, 0) end;
+  select coalesce(max(p.seq), 0) into v_max from public.primeras_respuestas_usuario p;
   insert into public.lotes_actualizacion_ranking (tipo) values ('dificultad') returning id into v_lote;
-  with sucias as (
-    select p.pregunta_id, min(p.respondida_en) as m from public.primeras_respuestas_usuario p where p.respondida_en > v_hasta group by p.pregunta_id order by m limit v_lim
+  drop table if exists pg_temp.dj_sucias;
+  create temp table dj_sucias on commit drop as
+    select p.pregunta_id, min(p.seq) as m from public.primeras_respuestas_usuario p where p.seq > v_hasta group by p.pregunta_id order by m limit v_lim;
+  select count(*)::integer, max(m) into v_pagina, v_nuevo from dj_sucias;
+  -- (C-W3-4/7) the counters and the difficulty live in rows only THIS job writes (the answer hook never touches them), in one bounded page
+  with agg_all as (
+    select p.pregunta_id, count(*)::integer as total, count(*) filter (where p.correcta)::integer as aciertos
+      from public.primeras_respuestas_usuario p join dj_sucias s on s.pregunta_id = p.pregunta_id group by p.pregunta_id
   ), muestra as (
     select p.pregunta_id, p.correcta, p.tiempo_ms, row_number() over (partition by p.pregunta_id order by p.seq desc) as rn
-      from public.primeras_respuestas_usuario p join sucias s on s.pregunta_id = p.pregunta_id
+      from public.primeras_respuestas_usuario p join dj_sucias s on s.pregunta_id = p.pregunta_id
   ), agg as (
     select pregunta_id, count(*)::integer as n, count(*) filter (where not correcta)::integer as fallos,
            (percentile_cont(0.5) within group (order by tiempo_ms)) / 1000.0 as med
       from muestra where rn <= v_m group by pregunta_id
   ), upd as (
-    update public.estadisticas_globales_pregunta g
-       set muestra_ultimos_usuarios = agg.n,
-           mediana_tiempo_respuesta_segundos = round(agg.med::numeric, 2),
-           puntos_fallo_1_5 = case when agg.n >= v_min then least(5, 1 + floor(agg.fallos * 100.0 / agg.n / 20))::integer end,
-           actualizado_en = clock_timestamp()
-      from agg where g.pregunta_id = agg.pregunta_id
+    insert into public.estadisticas_globales_pregunta as g (pregunta_id, total_respuestas, total_aciertos, total_fallos, total_respuestas_ranking, total_aciertos_ranking, total_fallos_ranking,
+                                                            porcentaje_acierto, porcentaje_fallo, muestra_ultimos_usuarios, mediana_tiempo_respuesta_segundos, puntos_fallo_1_5, actualizado_en)
+    select a.pregunta_id, a.total, a.aciertos, a.total - a.aciertos, a.total, a.aciertos, a.total - a.aciertos,
+           round(a.aciertos * 100.0 / a.total, 2), round((a.total - a.aciertos) * 100.0 / a.total, 2), agg.n, round(agg.med::numeric, 2),
+           case when agg.n >= v_min then least(5, 1 + floor(agg.fallos * 100.0 / agg.n / 20))::integer end, clock_timestamp()
+      from agg_all a join agg on agg.pregunta_id = a.pregunta_id
+    on conflict (pregunta_id) do update
+       set total_respuestas = excluded.total_respuestas, total_aciertos = excluded.total_aciertos, total_fallos = excluded.total_fallos,
+           total_respuestas_ranking = excluded.total_respuestas_ranking, total_aciertos_ranking = excluded.total_aciertos_ranking, total_fallos_ranking = excluded.total_fallos_ranking,
+           porcentaje_acierto = excluded.porcentaje_acierto, porcentaje_fallo = excluded.porcentaje_fallo,
+           muestra_ultimos_usuarios = excluded.muestra_ultimos_usuarios, mediana_tiempo_respuesta_segundos = excluded.mediana_tiempo_respuesta_segundos,
+           puntos_fallo_1_5 = excluded.puntos_fallo_1_5, actualizado_en = clock_timestamp()
     returning g.pregunta_id
   )
-  select count(*)::integer, (select max(m) from sucias) into v_n, v_nuevo from upd;
-  v_filas := coalesce(v_n, 0);
+  select count(*)::integer into v_filas from upd;
   -- five equal groups by median time over every question with enough sample, combined with the failure band (rounded average)
   with rated as (
     select g.pregunta_id, ntile(5) over (order by g.mediana_tiempo_respuesta_segundos, g.pregunta_id) as nt
@@ -603,10 +612,12 @@ begin
   update public.estadisticas_globales_pregunta g
      set puntos_tiempo_1_5 = null, dificultad_calculada_1_5 = null, puntos_fallo_1_5 = null
    where (g.muestra_ultimos_usuarios < v_min or g.puntos_fallo_1_5 is null) and (g.dificultad_calculada_1_5 is not null or g.puntos_tiempo_1_5 is not null);
+  -- a full page: continue after the last question of it; a short page: everything up to the max seq seen at the start is done
   update public.lotes_actualizacion_ranking
-     set estado = 'ok', finalizado_en = clock_timestamp(), filas = v_filas, detalle = jsonb_build_object('hasta', coalesce(v_nuevo, v_hasta), 'forzado', p_forzar)
+     set estado = 'ok', finalizado_en = clock_timestamp(), filas = v_filas,
+         detalle = jsonb_build_object('hasta_seq', greatest(case when v_pagina >= v_lim then v_nuevo else v_max end - 1000, v_hasta), 'forzado', p_forzar, 'pendiente', v_pagina >= v_lim)
    where id = v_lote;
-  return jsonb_build_object('estado', 'OK', 'filas', v_filas);
+  return jsonb_build_object('estado', 'OK', 'filas', v_filas, 'pendiente', v_pagina >= v_lim);
 end;
 $$;
 revoke all on function public.app_job_dificultad(boolean) from public, anon, authenticated;
@@ -869,7 +880,8 @@ begin
 
   -- STATS (C-S1): only when THIS call wrote the first answer of the user to the question (the guard row inside decides; a replay, a retry or a double click never counts twice).
   -- A failure here fails the whole answer: no half state.
-  if v_first is true and p_opcion_id is not null then
+  -- C-W3-3 decision: a real first answer to a question whose correction the user already saw in a demo is stored but does NOT feed stats, Nota media, league or ranking (same rule as cuenta_para_ranking).
+  if v_first is true and p_opcion_id is not null and not v_visto_en_demo then
     perform private.app_apply_first_answer_stats(p_usuario_id, p_pregunta_id, v_es_correcta, v_ms, p_intento_id);
   end if;
 

@@ -56,6 +56,8 @@ as $$
     when p_clave in ('debilidad_min_respuestas') then array[0, 1000]
     when p_clave = 'dificultad_min_respuestas' then array[1, 10000]
     when p_clave = 'dificultad_muestra' then array[10, 1000]
+    when p_clave = 'stats_activo' then array[0, 1]
+    when p_clave = 'tiempo_max_respuesta_seg' then array[1, 3600]
     when p_clave in ('dominio_medio_pct', 'dominio_alto_pct') then array[0, 100]
     when p_clave = 'ventana_nota_defecto' then array[1, 1000]
     when p_clave = 'cohorte_minima_comparativa' then array[1, 100000]

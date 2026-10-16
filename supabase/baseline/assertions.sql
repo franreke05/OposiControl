@@ -2426,7 +2426,7 @@ begin
   perform pg_temp.ans(ua, a, pg_temp.q(1), true);
   assert (select count(*) from public.primeras_respuestas_usuario where usuario_id = ua) = 1 and (select preguntas_respondidas from public.estadisticas_usuario where usuario_id = ua) = 1, 'first answer counted';
   perform pg_temp.ans(ua, a, pg_temp.q(1), true);
-  assert (select preguntas_respondidas from public.estadisticas_usuario where usuario_id = ua) = 1 and (select total_respuestas from public.estadisticas_globales_pregunta where pregunta_id = pg_temp.q(1)) = 1, 'a replay never counts twice';
+  assert (select preguntas_respondidas from public.estadisticas_usuario where usuario_id = ua) = 1 and not exists (select 1 from public.estadisticas_globales_pregunta where pregunta_id = pg_temp.q(1) and total_respuestas > 0), 'a replay never counts twice (the global counters are written by the job only)';
   perform public.app_record_attempt_answer(ua, a, pg_temp.q(2), null, 0, 0, null);
   assert (select count(*) from public.primeras_respuestas_usuario where usuario_id = ua) = 1, 'a skip is not a first answer';
   perform public.app_record_attempt_answer(ua, a, pg_temp.q(2), pg_temp.bad(pg_temp.q(2)), 0, 1, null);
@@ -2487,6 +2487,19 @@ begin
      and not has_table_privilege('authenticated', 'public.estadisticas_globales_pregunta', 'select') and not has_table_privilege('anon', 'public.estadisticas_globales_pregunta', 'select'), 'tables closed to clients';
   assert not has_function_privilege('authenticated', 'public.app_stats_summary(uuid)', 'execute') and not has_function_privilege('anon', 'public.app_job_dificultad(boolean)', 'execute')
      and not has_function_privilege('authenticated', 'public.admin_recompute_stats(uuid,text)', 'execute') and has_function_privilege('service_role', 'public.app_stats_weaknesses(uuid,uuid,integer)', 'execute'), 'functions service-only';
+  -- E2 conditions: kill switch (C-W3-1) skips ONLY the statistics, the answer is stored; time clamp (C-W3-2); counters come from the job (C-W3-4/7); paged job with a seq watermark (C-W3-5/6)
+  update public.configuracion_v1 set valor_integer = 0 where clave = 'stats_activo';
+  b := ((public.app_start_exam_attempt(ub, ex)) ->> 'intento_id')::uuid;
+  perform pg_temp.ans(ub, b, pg_temp.q(12), true);
+  assert exists (select 1 from public.respuestas_intento where usuario_id = ub and pregunta_id = pg_temp.q(12) and opcion_seleccionada_id is not null)
+     and not exists (select 1 from public.primeras_respuestas_usuario where usuario_id = ub and pregunta_id = pg_temp.q(12)), 'kill switch: the answer is stored, the statistics part is skipped';
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'stats_activo';
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = 2 where clave = 'stats_activo'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  perform private.app_apply_first_answer_stats(ub, pg_temp.q(16), true, 99999999, null);
+  assert (select tiempo_ms from public.primeras_respuestas_usuario where usuario_id = ub and pregunta_id = pg_temp.q(16)) = 300000, 'client time is clamped server side';
+  r := public.app_job_dificultad(true);
+  assert (r ->> 'pendiente')::boolean is false and (select total_respuestas from public.estadisticas_globales_pregunta where pregunta_id = pg_temp.q(16)) = (select count(*) from public.primeras_respuestas_usuario where pregunta_id = pg_temp.q(16))
+     and (select (detalle ->> 'hasta_seq')::bigint from public.lotes_actualizacion_ranking where tipo = 'dificultad' order by iniciado_en desc limit 1) is not null, 'the job derives the global counters and keeps a seq watermark';
   raise notice 'OK V1 wave 3 stats';
 end $$;
 rollback;
