@@ -197,6 +197,105 @@ await scenario('B_IDEMPOTENCY', async () => {
   invariants('B_IDEMPOTENCY', [u, d, u3, u4]);
 });
 
+await scenario('R_REFUND_P2', async () => {
+  const users = [];
+  const refund = (order, over = {}) => webhook(webhookBody(order, { type: 'payment.refunded', ...over }));
+  const buy = async (u, product = 'LOCAL_PACK_10') => { const o = await createOrder(u, product); const row = orderRow(o.json.order.id); await webhook(webhookBody(row)); return row; };
+  const endDays = (u, e, motivo) => Number(sql("select coalesce(extract(epoch from valido_hasta - now()) / 86400, -999)::numeric(9,3) from public.contenido_desbloqueado_usuario where usuario_id = '" + u.id + "' and examen_id = '" + e + "' and motivo = '" + (motivo ?? 'compra') + "';"));
+  const state = async (u, e) => (await call(u, 'GET', '/api/v1/app/examenes/' + e)).json?.examen?.accessState;
+  const nu = (l) => { const u = mkUser(l); users.push(u); return u; };
+  // P1 pack 10, exam price 10 (30 d) fully financed by it: refund removes all 30 financed days (never below now)
+  { const u = nu('p1'); const c = await buy(u); await redeem(u, EX.CHEAP); const before = endDays(u, EX.CHEAP); const r = await refund(c);
+    const after = endDays(u, EX.CHEAP);
+    check('P2.fully_spent_credit_removes_the_financed_days_never_below_now', r.json?.result === 'REFUNDED_P2' && before > 29.9 && after <= 0.01 && after > -0.01 && (await state(u, EX.CHEAP)) === 'LOCKED' && balance(u) === 0, 'before=' + before + ' after=' + after + ' state=' + (await state(u, EX.CHEAP)));
+    check('P2.refund_case_is_closed_with_policy_P2', sql("select politica || '/' || (resuelto_en is not null) from public.refund_case where compra_id = '" + c.id + "';") === 'P2/true', sql("select politica from public.refund_case where compra_id = '" + c.id + "';")); }
+  // P2 exam of 30 OT financed by two credits (10 + 50): FIFO takes 10 from c1 and 20 from c2; refund c1 cuts 10 d, then c2 cuts 20 d
+  { const u = nu('p2'); const c1 = await buy(u); const c2 = await buy(u, 'LOCAL_PACK_50'); await redeem(u, EX.IMM30); const b = endDays(u, EX.IMM30);
+    const r1 = await refund(c1); const m = endDays(u, EX.IMM30); const r2 = await refund(c2); const a = endDays(u, EX.IMM30);
+    check('P2.access_financed_by_two_credits_is_cut_proportionally_per_credit', r1.json?.result === 'REFUNDED_P2' && r2.json?.result === 'REFUNDED_P2' && Math.abs(b - 30) < 0.05 && Math.abs(m - 20) < 0.05 && a <= 0.01 && balance(u) === 0, 'end ' + b + ' -> ' + m + ' -> ' + a + ' balance=' + balance(u)); }
+  // P3 later purchase extended the access from another credit: refund the first credit only cuts its own 30 days
+  { const u = nu('p3'); const c1 = await buy(u); await redeem(u, EX.CHEAP); const c2 = await buy(u); await redeem(u, EX.CHEAP); const b = endDays(u, EX.CHEAP); const r = await refund(c1); const a = endDays(u, EX.CHEAP);
+    check('P2.refund_after_an_extension_by_a_later_purchase_cuts_only_the_refunded_credit_share', r.json?.result === 'REFUNDED_P2' && Math.abs(b - 60) < 0.05 && Math.abs(a - 30) < 0.05 && (await state(u, EX.CHEAP)) === 'GRANTED', 'end ' + b + ' -> ' + a);
+    const r2 = await refund(c2); check('P2.then_refunding_the_second_credit_closes_it_and_the_ledger_stays_consistent', r2.json?.result === 'REFUNDED_P2' && endDays(u, EX.CHEAP) <= 0.01, 'end=' + endDays(u, EX.CHEAP)); }
+  // P4 same credit financed both purchases (pack 50, two exams of 10): refund before AND after the second purchase
+  { const u = nu('p4'); const c = await buy(u, 'LOCAL_PACK_50'); await redeem(u, EX.CHEAP); await redeem(u, EX.CHEAP); const b = endDays(u, EX.CHEAP); const r = await refund(c);
+    check('P2.one_credit_financing_two_extensions_cuts_both_and_reverses_the_unspent_part', r.json?.result === 'REFUNDED_P2' && Math.abs(b - 60) < 0.05 && endDays(u, EX.CHEAP) <= 0.01 && balance(u) === 0, 'end ' + b + ' -> ' + endDays(u, EX.CHEAP) + ' balance=' + balance(u)); }
+  // P5 double refund / replay / another event id: nothing changes twice
+  { const u = nu('p5'); const c = await buy(u); await redeem(u, EX.CHEAP); const ev = 'evt-' + uuid(); const r1 = await refund(c, { eventId: ev }); const mid = endDays(u, EX.CHEAP);
+    const r2 = await refund(c, { eventId: ev }); const r3 = await refund(c, { eventId: 'other-' + uuid() });
+    check('P2.replay_and_second_event_do_not_cut_twice', r1.json?.result === 'REFUNDED_P2' && ['REPLAY', 'NOOP'].includes(r2.json?.result) && ['REPLAY', 'NOOP'].includes(r3.json?.result) && endDays(u, EX.CHEAP) === mid && Number(sql("select count(*) from public.refund_case where compra_id = '" + c.id + "';")) === 1, r2.json?.result + '/' + r3.json?.result); }
+  // P6 gifted access: the gift row is never touched; the purchase row stacked on top is cut back
+  { const u = nu('p6'); const has = sql("select to_regprocedure('public.admin_grant_exam_access(uuid,uuid,text,uuid)') is not null;") === 't';
+    if (!has) check('P2.gifted_access_untouched_NOT_RUN_function_missing_converge_first', true, 'admin_grant_exam_access(4 args) not applied on this DB');
+    else { sql("select * from public.admin_grant_exam_access('" + u.id + "', '" + EX.CHEAP + "', 'regalo', null);"); const c = await buy(u); await redeem(u, EX.CHEAP); const gift0 = endDays(u, EX.CHEAP, 'regalo'); const b = endDays(u, EX.CHEAP); const r = await refund(c);
+      check('P2.refund_when_the_access_was_gifted_keeps_the_gift_and_cuts_the_purchase_row', r.json?.result === 'REFUNDED_P2' && Math.abs(endDays(u, EX.CHEAP, 'regalo') - gift0) < 0.01 && endDays(u, EX.CHEAP) <= gift0 + 0.01 && (await state(u, EX.CHEAP)) === 'GRANTED', 'gift=' + gift0 + ' purchase ' + b + ' -> ' + endDays(u, EX.CHEAP)); } }
+  // P7 days changed after the purchase (the cut uses the CURRENT dias_acceso_compra, not the days granted at purchase)
+  { const u = nu('p7'); const c = await buy(u, 'LOCAL_PACK_50'); await redeem(u, EX.CHEAP); const b = endDays(u, EX.CHEAP);
+    sql("set session_replication_role = replica; update public.examenes set dias_acceso_compra = 90 where id = '" + EX.CHEAP + "'; set session_replication_role = origin;");
+    const other = nu('p7o'); const oc = await buy(other, 'LOCAL_PACK_50'); sql("select 1;");
+    await refund(c); const a = endDays(u, EX.CHEAP);
+    sql("set session_replication_role = replica; update public.examenes set dias_acceso_compra = 30 where id = '" + EX.CHEAP + "'; set session_replication_role = origin;");
+    finding('P2.cut_uses_the_days_granted_at_purchase_not_the_current_exam_setting', Math.abs((b - a) - 30) < 0.1 || a <= 0.01, 'granted ' + b + ' d, after refund ' + a + ' d with the exam setting changed to 90 before the refund (over-cut is bounded by now)', 'E2-V1-P01'); }
+  // P8 flag off (APP_ENV local but PAYMENTS_REFUNDS_ENABLED=false): the webhook writes nothing and answers 503
+  { const u = nu('p8'); const c = await buy(u); const wBefore = Number(sql("select count(*) from public.eventos_pago where compra_id = '" + c.id + "';"));
+    killKtor(); await sleep(1500); const savedEnv = process.env.PAYMENTS_REFUNDS_ENABLED; process.env.PAYMENTS_REFUNDS_ENABLED = 'false'; await startKtor();
+    const r = await refund(c); const after = Number(sql("select count(*) from public.eventos_pago where compra_id = '" + c.id + "';")); const est = orderRow(c.id).estado;
+    check('P2.flag_off_webhook_writes_nothing_and_answers_503_provider_retries', r.status === 503 && after === wBefore && est === 'pagada' && balance(u) === 10, r.status + ' events ' + wBefore + '->' + after + ' order=' + est + ' balance=' + balance(u));
+    if (savedEnv === undefined) delete process.env.PAYMENTS_REFUNDS_ENABLED; else process.env.PAYMENTS_REFUNDS_ENABLED = savedEnv; await restartKtor(); const again = await refund(c);
+    check('P2.flag_on_again_the_same_order_refunds_normally', again.json?.result === 'REFUNDED' && balance(u) === 0, again.status + ' ' + again.json?.result); }
+  invariants('R_REFUND_P2', users);
+});
+
+await scenario('T_SAVED', async () => {
+  const LOCX = 'e5000000-0000-4000-8000-000000000001', OTHX = 'e2b50000-0000-4000-8000-000000000001';
+  const Q = 'f2c00000-0000-4000-8000-000000000001', QD = 'f2c00000-0000-4000-8000-000000000041', EXD = 'e2c00000-0000-4000-8000-000000000041';
+  sql("set session_replication_role = replica; insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas, comunidad_id, comprable_con_tickets, precio_tickets, dias_acceso_compra, demo_disponible) values ('" + EXD + "', 'E2C-DEMO', '" + LOCX + "', 'E2C demo', 'inmersivo', 'premium', true, now() - interval '1 day', 1, (select id from public.comunidades_autonomas order by codigo limit 1), true, 10, 30, true) on conflict (id) do update set demo_disponible = true, activo = true, publicado_en = now() - interval '1 day'; insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values ('" + QD + "', 'E2C-QD', 'inmersiva', 'TITULO-SECRETO-DEL-EXAMEN-PREMIUM', true) on conflict (id) do nothing; insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select '" + EXD + "', '" + QD + "', 1, 1 where not exists (select 1 from public.preguntas_examen where examen_id = '" + EXD + "'); set session_replication_role = origin;");
+  const B = '/api/v1/app/opositeca/guardados';
+  const put = (u, q) => call(u, 'PUT', B + '/pregunta/' + q); const del = (u, q) => call(u, 'DELETE', B + '/pregunta/' + q); const list = (u, qs = '') => call(u, 'GET', B + '/pregunta' + qs);
+  const NF = (r) => r.status === 404; const users = [];
+  const a = mkUser('sva'); users.push(a); grant(a, 40); const b = mkUser('svb'); users.push(b);
+  const own = await redeem(a, EX.CHEAP); const p1 = await put(a, Q); const p2 = await put(a, Q);
+  check('SV.save_is_idempotent_returns_the_same_guardadoEn_and_one_row', own.status === 201 && p1.status === 200 && p2.status === 200 && p1.json?.guardadoEn === p2.json?.guardadoEn && Number(sql("select count(*) from public.recursos_guardados_usuario where usuario_id = '" + a.id + "';")) === 1, p1.status + '/' + p2.status);
+  const ghost = await put(b, uuid()); const noAccess = await put(b, Q); const nu0 = mkUser('svn', null); users.push(nu0); const noSpec = await put(nu0, Q); const oth = mkUser('svo', OTHX); users.push(oth); const otherSpec = await put(oth, Q);
+  check('SV.missing_question_and_one_the_user_cannot_open_answer_the_same_404', NF(ghost) && NF(noAccess) && NF(noSpec) && NF(otherSpec) && JSON.stringify(Object.keys(ghost.json ?? {}).sort()) === JSON.stringify(Object.keys(noAccess.json ?? {}).sort()) && ghost.json?.code === noAccess.json?.code, [ghost, noAccess, noSpec, otherSpec].map((r) => r.status + '/' + r.json?.code).join(' '));
+  check('SV.refused_saves_write_no_row', Number(sql("select count(*) from public.recursos_guardados_usuario where usuario_id in ('" + b.id + "', '" + nu0.id + "', '" + oth.id + "');")) === 0, 'rows=0');
+  // IDOR: B cannot see A's items, unsave of A's item by B changes nothing, list is scoped
+  const lb = await list(b); const db = await del(b, Q); const la = await list(a);
+  check('SV.IDOR_list_and_unsave_are_scoped_to_the_caller', lb.status === 200 && !lb.text.includes(Q) && [200, 204].includes(db.status) && la.text.includes(Q) && Number(sql("select count(*) from public.recursos_guardados_usuario where usuario_id = '" + a.id + "';")) === 1, 'B list=' + lb.status + ' B unsave=' + db.status + ' A still lists=' + la.text.includes(Q));
+  const idsOk = await call(a, 'GET', B + '/pregunta?ids=' + Q + ',' + uuid()); const ids51 = await call(a, 'GET', B + '/pregunta?ids=' + Array.from({ length: 51 }, uuid).join(',')); const ids50 = await call(a, 'GET', B + '/pregunta?ids=' + Array.from({ length: 50 }, uuid).join(','));
+  const idsBad = await call(a, 'GET', B + '/pregunta?ids=' + Q + ",x' or 1=1"); const idsB = await call(b, 'GET', B + '/pregunta?ids=' + Q);
+  check('SV.ids_limit_50_invalid_and_foreign_ids', idsOk.status === 200 && idsOk.text.includes(Q) && ids50.status === 200 && ids51.status === 400 && idsBad.status === 400 && idsB.status === 200 && !idsB.text.includes(Q), [idsOk, ids50, ids51, idsBad, idsB].map((r) => r.status).join(','));
+  const inj = []; for (const [t, q] of [['pregunta', "x' or 1=1 --"], ['pregunta;drop table x', Q], ['PREGUNTA', Q], ['examen', Q], ['pregunta', '../etc']]) { const r = await call(a, 'PUT', B + '/' + encodeURIComponent(t) + '/' + encodeURIComponent(q)); if (![400, 404, 422].includes(r.status) && !(t === 'PREGUNTA' && r.status === 200)) inj.push(t.slice(0, 8) + ':' + r.status); }
+  check('SV.injection_and_bad_tipo_rejected_without_5xx', inj.length === 0, inj.join(' ') || '5 cases');
+  // accesible recomputed at read time, content hidden when false
+  sql("set session_replication_role = replica; update public.contenido_desbloqueado_usuario set valido_hasta = now() - interval '1 minute', valido_desde = now() - interval '31 days' where usuario_id = '" + a.id + "' and examen_id = '" + EX.CHEAP + "'; set session_replication_role = origin;");
+  const lock = await list(a); const row = (lock.json?.items ?? lock.json?.data ?? []).find((i) => (i.targetId ?? i.target_id) === Q);
+  check('SV.accesible_is_recomputed_at_read_time_and_the_content_is_hidden_when_false', lock.status === 200 && row && row.accesible === false && !row.titulo && !row.examenTitulo && !lock.text.includes('"titulo":"E2C'), JSON.stringify(row ?? {}).slice(0, 200));
+  // DEMO state: saving any question of an exam in DEMO state (not entitled, demo_disponible)
+  const dm = mkUser('svd'); users.push(dm); const dp = await put(dm, QD); const dl = await list(dm);
+  finding('SV.demo_only_state_does_not_let_a_user_save_and_read_titles_of_non_demo_questions', !(dp.status === 200 && dl.text.includes('TITULO-SECRETO')), 'save=' + dp.status + ' list shows the premium question title=' + dl.text.includes('TITULO-SECRETO') + ' (gate is state <> LOCKED and DEMO is not LOCKED)', 'E2-V1-S01');
+  // keyset abuse
+  const many = mkUser('svm'); users.push(many); grant(many, 100);
+  sql("set session_replication_role = replica; insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) select ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid, 'E2C-SV' || i, 'inmersiva', 'sv ' || i, true from generate_series(1, 520) i on conflict (id) do nothing; insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select '" + EX.CHEAP + "', ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid, 100 + i, 100 + i from generate_series(1, 520) i where not exists (select 1 from public.preguntas_examen pe where pe.pregunta_id = ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid and pe.examen_id = '" + EX.CHEAP + "'); set session_replication_role = origin;");
+  await redeem(many, EX.CHEAP);
+  sql("set session_replication_role = replica; insert into public.recursos_guardados_usuario (usuario_id, tipo, pregunta_id, guardado_en) select '" + many.id + "', 'pregunta', ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid, now() - (i || ' seconds')::interval from generate_series(1, 499) i; set session_replication_role = origin;");
+  const q500 = 'f2c00000-0000-4000-8000-' + (1000 + 500).toString(16).padStart(12, '0'); const q501 = 'f2c00000-0000-4000-8000-' + (1000 + 501).toString(16).padStart(12, '0');
+  const c500 = await put(many, q500); const c501 = await put(many, q501); const again = await put(many, q500);
+  check('SV.cap_500_blocks_the_501st_but_replay_of_a_saved_one_still_works', c500.status === 200 && c501.status !== 200 && c501.status < 500 && again.status === 200 && Number(sql("select count(*) from public.recursos_guardados_usuario where usuario_id = '" + many.id + "';")) === 500, c500.status + '/' + c501.status + ' ' + (c501.json?.code ?? '') + '/' + again.status);
+  const pg1 = await list(many, '?limit=50'); const next = pg1.json?.nextCursor ?? pg1.json?.next ?? pg1.json?.cursor;
+  const seen = new Set(); let cur = next; let pages = 1; for (const i of (pg1.json?.items ?? [])) seen.add(i.id ?? i.targetId);
+  while (cur && pages < 15) { const pg = await list(many, '?limit=50&cursor=' + encodeURIComponent(cur)); for (const i of (pg.json?.items ?? [])) seen.add(i.id ?? i.targetId); cur = pg.json?.nextCursor ?? pg.json?.next ?? pg.json?.cursor; pages++; }
+  const tamper = []; for (const c of ['AAAA', 'not-a-cursor', Buffer.from('{"ts":"2000-01-01T00:00:00Z","id":"' + uuid() + '"}').toString('base64url'), "x' or 1=1", 'A'.repeat(5000)]) { const r = await list(many, '?cursor=' + encodeURIComponent(c)); if (![400, 422].includes(r.status)) tamper.push(c.slice(0, 8) + ':' + r.status); }
+  const cross = next ? await list(b, '?cursor=' + encodeURIComponent(next)) : { status: 0, text: '' };
+  check('SV.keyset_pages_cover_all_500_without_duplicates_and_forged_cursors_are_rejected_4xx', seen.size === 500 && tamper.length === 0 && !(cross.text ?? '').includes(many.id), 'pages=' + pages + ' seen=' + seen.size + ' tamper-bad=' + (tamper.join(' ') || 'none') + ' cross=' + cross.status);
+  const lim = []; for (let i = 0; i < 65; i++) lim.push((await call(b, 'DELETE', B + '/pregunta/' + uuid())).status);
+  check('SV.write_limiter_SAVED_WRITE_429_after_60_per_minute', lim.indexOf(429) >= 60 && lim.indexOf(429) <= 62, 'first429=#' + (lim.indexOf(429) + 1));
+  const pre = Number(sql("select count(*) from public.recursos_guardados_usuario;"));
+  const direct = sqlTry("set role service_role; select count(*) from public.recursos_guardados_usuario;"); const anon = sqlTry("set role authenticated; select count(*) from public.recursos_guardados_usuario;");
+  check('SV.table_has_no_grants_for_service_role_or_clients', !direct.ok && !anon.ok, 'service_role=' + direct.ok + ' authenticated=' + anon.ok + ' rows=' + pre);
+  invariants('T_SAVED', users);
+});
+
 await scenario('L_F01_BACKFILL', async () => {
   // Crafts LEGACY shapes (seqless rows) with triggers off (replica role) for OWN users, then runs private.v1_ledger_backfill(user) and the reconcile.
   const legacy = (u, rows, snap) => sql("set session_replication_role = replica;\n" +
@@ -477,27 +576,27 @@ await scenario('G_REFUNDS', async () => {
   sql(`set session_replication_role = replica; insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas, comunidad_id, comprable_con_tickets, precio_tickets, dias_acceso_compra) values ('e2c00000-0000-4000-8000-000000000008', 'E2C-8', 'e5000000-0000-4000-8000-000000000001', 'E2C 8', 'inmersivo', 'premium', true, now() - interval '1 day', 1, (select id from public.comunidades_autonomas order by codigo limit 1), true, 8, 30) on conflict (id) do update set precio_tickets = 8, comprable_con_tickets = true, activo = true; set session_replication_role = origin;`);
   const sp = await redeem(B, 'e2c00000-0000-4000-8000-000000000008'); const grantBefore = sql(`select valido_hasta::text from public.contenido_desbloqueado_usuario where usuario_id = '${B.id}' and examen_id = 'e2c00000-0000-4000-8000-000000000008';`);
   const rb = await refund(b.row);
-  check('X8.caseB_D_partly_spent_reverses_only_unspent_opens_case_keeps_access', sp.status === 201 && rb.json?.result === 'REFUNDED_CASE_OPEN' && balance(B) === 0 && caseRow(b.row.id) === '2/8' && sql(`select valido_hasta::text from public.contenido_desbloqueado_usuario where usuario_id = '${B.id}' and examen_id = 'e2c00000-0000-4000-8000-000000000008';`) === grantBefore, `${rb.json?.result} case=${caseRow(b.row.id)} balance=${balance(B)}`);
+  check('X8.caseB_D_partly_spent_reverses_only_unspent_closes_case_P2_cuts_the_financed_access', sp.status === 201 && rb.json?.result === 'REFUNDED_P2' && balance(B) === 0 && caseRow(b.row.id) === '2/8' && Number(sql(`select extract(epoch from valido_hasta - now()) from public.contenido_desbloqueado_usuario where usuario_id = '${B.id}' and examen_id = 'e2c00000-0000-4000-8000-000000000008';`)) <= 1 /* P2: the 8 OT spent on this exam came from the refunded credit, so its 30 financed days are removed (never below now); before P2 the access was kept */, `${rb.json?.result} case=${caseRow(b.row.id)} balance=${balance(B)}`);
   // C fully spent
   const C = mkUser('gc'); users.push(C); const c = await buy(C); await redeem(C, EX.CHEAP); const rc = await refund(c.row);
-  check('X8.caseC_fully_spent_no_reversal_case_only_no_negative_balance', rc.json?.result === 'REFUNDED_CASE_OPEN' && balance(C) === 0 && caseRow(c.row.id) === '0/10' && ledgerRows(C, 'devolucion') === 0, `${rc.json?.result} case=${caseRow(c.row.id)}`);
+  check('X8.caseC_fully_spent_no_reversal_case_only_no_negative_balance', rc.json?.result === 'REFUNDED_P2' && balance(C) === 0 && caseRow(c.row.id) === '0/10' && ledgerRows(C, 'devolucion') === 0, `${rc.json?.result} case=${caseRow(c.row.id)}`);
   // E expired entitlement
   const E = mkUser('ge'); users.push(E); const e = await buy(E); await redeem(E, EX.CHEAP);
   sql(`set session_replication_role = replica; update public.contenido_desbloqueado_usuario set valido_desde = now() - interval '40 days', valido_hasta = now() - interval '10 days' where usuario_id = '${E.id}' and motivo = 'compra'; set session_replication_role = origin;`);
   const re = await refund(e.row);
-  check('X8.caseE_expired_entitlement_case_only', re.json?.result === 'REFUNDED_CASE_OPEN' && caseRow(e.row.id) === '0/10', `${re.json?.result}`);
+  check('X8.caseE_expired_entitlement_case_only', re.json?.result === 'REFUNDED_P2' && caseRow(e.row.id) === '0/10', `${re.json?.result}`);
   // F multiple mixed purchases: c1=10, c2=10, spend 12 -> c1 fully spent, 2 from c2
   const F = mkUser('gf'); users.push(F); const f1 = await buy(F); const f2 = await buy(F);
   sql(`set session_replication_role = replica; insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas, comunidad_id, comprable_con_tickets, precio_tickets, dias_acceso_compra) values ('e2c00000-0000-4000-8000-000000000012', 'E2C-12', 'e5000000-0000-4000-8000-000000000001', 'E2C 12', 'inmersivo', 'premium', true, now() - interval '1 day', 1, (select id from public.comunidades_autonomas order by codigo limit 1), true, 12, 30) on conflict (id) do update set precio_tickets = 12, comprable_con_tickets = true, activo = true; set session_replication_role = origin;`);
   await redeem(F, 'e2c00000-0000-4000-8000-000000000012'); const rf1 = await refund(f1.row); const rf2 = await refund(f2.row);
-  check('X8.caseF_FIFO_traces_each_order_separately', rf1.json?.result === 'REFUNDED_CASE_OPEN' && caseRow(f1.row.id) === '0/10' && rf2.json?.result === 'REFUNDED_CASE_OPEN' && caseRow(f2.row.id) === '8/2' && balance(F) === 0, `o1=${caseRow(f1.row.id)} o2=${caseRow(f2.row.id)} balance=${balance(F)}`);
+  check('X8.caseF_FIFO_traces_each_order_separately', rf1.json?.result === 'REFUNDED_P2' && caseRow(f1.row.id) === '0/10' && rf2.json?.result === 'REFUNDED_P2' && caseRow(f2.row.id) === '8/2' && balance(F) === 0, `o1=${caseRow(f1.row.id)} o2=${caseRow(f2.row.id)} balance=${balance(F)}`);
   // refund of other statuses / unknown order
   const G = mkUser('gg'); users.push(G); const pend = orderRow((await createOrder(G)).json.order.id); const rp = await refund(pend); const rn = await refund({ ...pend, id: uuid() });
   check('X8.refund_for_unpaid_or_unknown_order_is_noop_or_refused', ['NOOP'].includes(rp.json?.result) && orderRow(pend.id).estado === 'pendiente' && [404, 400, 422].includes(rn.status), `${rp.json?.result}/${rn.status}`);
   // refund vs redeem race: credit 10, 5 parallel redeems of price 10 and 1 refund
   const H = mkUser('gh'); users.push(H); const h = await buy(H); const rr = await Promise.all([...Array.from({ length: 5 }, () => redeem(H, EX.CHEAP)), refund(h.row)]);
   const sold = rr.slice(0, 5).filter((r) => r.status === 201).length; const rh = rr[5].json?.result;
-  check('X8.refund_vs_redeem_race_totals_consistent', (sold === 1 && rh === 'REFUNDED_CASE_OPEN' && balance(H) === 0) || (sold === 0 && rh === 'REFUNDED' && balance(H) === 0), `sold=${sold} refund=${rh} balance=${balance(H)}`);
+  check('X8.refund_vs_redeem_race_totals_consistent', (sold === 1 && rh === 'REFUNDED_P2' && balance(H) === 0) || (sold === 0 && rh === 'REFUNDED' && balance(H) === 0), `sold=${sold} refund=${rh} balance=${balance(H)}`);
   invariants('G_REFUNDS', users);
 });
 
