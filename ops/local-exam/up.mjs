@@ -4,6 +4,7 @@
 //
 //   node ops/local-exam/up.mjs            crea o reutiliza el stack (los datos persisten en el volumen del contenedor)
 //   node ops/local-exam/up.mjs --reset    lo destruye (docker compose down -v) y lo vuelve a crear desde cero
+//   node ops/local-exam/up.mjs --converge   deja una base viva en las definiciones de los ficheros V1 (migraciones editadas + nuevas) SIN reset y verifica checksums
 //   node ops/local-exam/up.mjs --restore-fixtures   (E5-V1-F03) deja Q1..Q4 y Q2Z en su saldo y derechos base SIN reset (stack ya levantado; exige STACK_LOCK)
 //
 // Salida: .local/compose.env (compose), .local/ktor.env (Ktor), .local/tokens.json (JWT de A, B y P), .local/jwks.json.
@@ -17,6 +18,12 @@ import { requireStackLock } from './stack-lock.mjs';
 
 // Escritura en el stack compartido: falla (exit 3) si STACK_LOCK es de otro. Ver stack-lock.mjs.
 requireStackLock('up.mjs');
+// LIVE CONVERGE (no reset): re-apply the edited V1 migrations + the new ones and verify function checksums against the files. See converge.mjs.
+if (process.argv.includes('--converge')) {
+  const m = await import('./converge.mjs');
+  const r = m.converge({ psql: m.makePsql() });
+  process.exit(r.ok ? 0 : 1);
+}
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
