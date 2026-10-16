@@ -4,6 +4,7 @@
 //
 //   node ops/local-exam/up.mjs            crea o reutiliza el stack (los datos persisten en el volumen del contenedor)
 //   node ops/local-exam/up.mjs --reset    lo destruye (docker compose down -v) y lo vuelve a crear desde cero
+//   node ops/local-exam/up.mjs --restore-fixtures   (E5-V1-F03) deja Q1..Q4 y Q2Z en su saldo y derechos base SIN reset (stack ya levantado; exige STACK_LOCK)
 //
 // Salida: .local/compose.env (compose), .local/ktor.env (Ktor), .local/tokens.json (JWT de A, B y P), .local/jwks.json.
 import { execFileSync } from 'node:child_process';
@@ -62,6 +63,13 @@ const psql = (sql, vars = {}, user = 'postgres') => execFileSync('docker', ['com
   ...Object.entries(vars).flatMap(([k, v]) => ['-v', `${k}=${v}`]), '-f', '-'], { input: sql, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'] }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+if (process.argv.includes('--restore-fixtures')) {
+  if (reset) { console.error('--restore-fixtures no se combina con --reset'); process.exit(2); }
+  psql(fs.readFileSync(path.join(here, 'sql/96_restore_fixtures.sql'), 'utf8'));
+  const rows = psql("select u.email || ' ' || c.saldo_tickets || ' ' || (select count(*) from public.contenido_desbloqueado_usuario g where g.usuario_id = u.id) from auth.users u join public.carteras_usuario c on c.usuario_id = u.id where u.email in ('q1@exam.local','q2@exam.local','q2z@exam.local','q3@exam.local','q4@exam.local') order by u.email");
+  console.log('fixtures restored (email balance entitlements):' + String.fromCharCode(10) + rows);
+  process.exit(0);
+}
 if (reset) compose('down', '-v', '--remove-orphans');
 compose('up', '-d', '--wait', 'db');
 for (let i = 0; i < 60; i++) {
