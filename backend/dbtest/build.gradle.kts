@@ -13,6 +13,6 @@ kotlin {
 dependencies {
     testImplementation(kotlin("test"))
     testImplementation("io.zonky.test:embedded-postgres:2.0.7")
-    testImplementation(enforcedPlatform("io.zonky.test.postgres:embedded-postgres-binaries-bom:16.2.0"))
+    testImplementation(enforcedPlatform("io.zonky.test.postgres:embedded-postgres-binaries-bom:18.6.0"))
     testImplementation("org.postgresql:postgresql:42.7.4")
 }
