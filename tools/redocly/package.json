@@ -3,6 +3,6 @@
   "private": true,
   "description": "Solo verificacion (MASTER7-CICD-005): fija @redocly/cli y su arbol transitivo con package-lock.json.",
   "devDependencies": {
-    "@redocly/cli": "2.56.1"
+    "@redocly/cli": "2.63.0"
   }
 }
