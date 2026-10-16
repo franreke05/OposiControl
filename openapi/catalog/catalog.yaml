@@ -85,7 +85,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [VALIDATION, UNAUTHENTICATED, EXAM_NOT_FOUND, INTERNAL, UPSTREAM_ERROR]
-        description: 'No question bodies. FA22 (owner 2026-10-16): an exam outside the caller specialty is 404 EXAM_NOT_FOUND here and absent from the lists (D2-01, D2-13 are scoped to the own specialty; another specialty returns an empty page). precio is the OT price stored in the database (FA21, null when not purchasable) and accesoValidoHasta the server-decided end of the caller access. Cache private, no-store for accessState. intentoAbiertoId and ultimoIntentoFinalizadoId (FA18) come from one bounded read of the caller attempts on this exam (command-created only).'
+        description: 'No question bodies. FA23 (owner 2026-10-16): an exam outside the caller specialty is 404 EXAM_NOT_FOUND here and absent from the lists (D2-01, D2-13 are scoped to the own specialty; another specialty returns an empty page). precio is the OT price stored in the database (FA22, null when not purchasable) and accesoValidoHasta the server-decided end of the caller access. Cache private, no-store for accessState. intentoAbiertoId and ultimoIntentoFinalizadoId (FA19) come from one bounded read of the caller attempts on this exam (command-created only).'
         security:
           - bearerAuth: []
         parameters:
@@ -107,7 +107,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
-            description: 'RATE_LIMITED (FA19, per-user read limit; Retry-After).'
+            description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
             description: 'EXAM_NOT_FOUND (also draft or archived).'
@@ -189,7 +189,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
-            description: 'RATE_LIMITED (FA19, per-user read limit; Retry-After).'
+            description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
     PublicExams:
       get:
         operationId: listPublicExams
@@ -296,7 +296,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [RATE_LIMITED, INTERNAL, UPSTREAM_ERROR]
-        description: 'Bounded catalog of active specialties with their capabilities. ids are the real especialidades ids (the ones of the profile and of D2-01 especialidadId). Served by Ktor since 2026-10-14 (FA18), public cache.'
+        description: 'Bounded catalog of active specialties with their capabilities. ids are the real especialidades ids (the ones of the profile and of D2-01 especialidadId). Served by Ktor since 2026-10-14 (FA19), public cache.'
         security: []
         responses:
           '200':
@@ -2050,7 +2050,7 @@ components:
             $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
     ExamPrice:
       type: [object, 'null']
-      description: 'FA21 (V1): the OposiTickets price and access days exactly as stored in the database, only when the exam is paid, purchasable with tickets and BOTH values are set; null otherwise (a price is never invented). The wallet redeem D6-03 charges this value.'
+      description: 'FA22 (V1): the OposiTickets price and access days exactly as stored in the database, only when the exam is paid, purchasable with tickets and BOTH values are set; null otherwise (a price is never invented). The wallet redeem D6-03 charges this value.'
       required: [tickets, diasAcceso]
       properties:
         tickets:
@@ -2101,13 +2101,13 @@ components:
         ultimoIntentoFinalizadoId:
           type: [string, 'null']
           format: uuid
-          description: 'FA18 (2026-10-14, PERF01): the most recent FINISHED attempt of the caller on this exam (result D2-12 / review D2-65), so a cover never pages D2-13. One bounded read on (usuario_id, examen_id); null when there is none.'
+          description: 'FA19 (2026-10-14, PERF01): the most recent FINISHED attempt of the caller on this exam (result D2-12 / review D2-65), so a cover never pages D2-13. One bounded read on (usuario_id, examen_id); null when there is none.'
         precio:
           $ref: '#/components/schemas/ExamPrice'
         accesoValidoHasta:
           type: [string, 'null']
           format: date-time
-          description: 'FA21 (V1): when the caller current access ends, decided by the server (database clock), when accessState is GRANTED with an end date; null when there is no grant or it does not expire. A re-purchase extends it from max(now, this end).'
+          description: 'FA22 (V1): when the caller current access ends, decided by the server (database clock), when accessState is GRANTED with an end date; null when there is no grant or it does not expire. A re-purchase extends it from max(now, this end).'
     MyExamItem:
       type: object
       required: [examen, accessState]
@@ -2135,7 +2135,7 @@ components:
         accesoValidoHasta:
           type: [string, 'null']
           format: date-time
-          description: 'FA21 (V1): end of the caller current access (server decided) when accessState is GRANTED with an end date; null otherwise.'
+          description: 'FA22 (V1): end of the caller current access (server decided) when accessState is GRANTED with an end date; null otherwise.'
         intentoId:
           type: [string, 'null']
           format: uuid

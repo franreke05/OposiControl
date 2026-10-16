@@ -98,21 +98,32 @@ if (psql("select to_regclass('public.solicitudes_acceso_admin') is not null") !=
 }
 psql(fs.readFileSync(path.join(here, 'sql/01_overlay_wallet_entitlement.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/02_overlay_idempotency_finalize.sql'), 'utf8'));
-// E2-P03: la migracion pendiente 20261017100000 solo reescribe cuatro politicas (ALTER POLICY, idempotente): tambien se
+// E2-P03: la migracion pendiente 20261022100100 solo reescribe cuatro politicas (ALTER POLICY, idempotente): tambien se
 // aplica sobre un stack creado antes de ella. En un stack nuevo ya la aplico el bucle de pendientes.
-psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261017100000_security_exam_publication_time.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261022100100_security_exam_publication_time.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/93_phase_b_scheduled_exam.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/94_e2e_users.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/95_v1_specialties.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/96_v1_communities.sql'), 'utf8'));
 // V1 STEP 2: comunidad obligatoria (NOT NULL + trigger + FK RESTRICT; despues de 96, que asigna comunidad a los examenes locales previos). Tambien sobre stacks creados antes de ella.
-psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261018100000_v1_exam_community_required.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261022100200_v1_exam_community_required.sql'), 'utf8'));
 // V1 economia (OposiTickets): libro de cartera, pedidos de pago y canje. Las tres migraciones son idempotentes (create or replace / if not exists /
 // drop-create de triggers y restricciones) salvo los PREFLIGHT, que fallan sin cambiar nada. Despues, lo que SOLO existe en local: el proveedor sandbox
 // en el CHECK de compras_usuario y la cartera vacia de los usuarios antiguos.
+// Converge desde los sellos antiguos (V1 los re-sello DESPUES de develop: 20261022100000..600). El stack local no lleva historial de migraciones (cada fichero es idempotente y se aplica por nombre),
+// pero si una base trae supabase_migrations.schema_migrations con los sellos viejos, se renombran en sitio para que ninguna herramienta vea 7 migraciones "nuevas" duplicadas.
+psql(`do $$ begin
+  if to_regclass('supabase_migrations.schema_migrations') is not null then
+    update supabase_migrations.schema_migrations set version = case version
+      when '20261016100000' then '20261022100000' when '20261017100000' then '20261022100100' when '20261018100000' then '20261022100200'
+      when '20261018100100' then '20261022100300' when '20261018100200' then '20261022100400' when '20261018100300' then '20261022100500'
+      when '20261018100400' then '20261022100600' else version end
+     where version in ('20261016100000','20261017100000','20261018100000','20261018100100','20261018100200','20261018100300','20261018100400');
+  end if;
+end $$;`);
 // E5-V1-F01: quita la fila de apertura DUPLICADA que dejo un borrador anterior de la migracion (solo local; no hace nada en una cartera limpia).
 if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
-for (const v of ['20261018100100_v1_wallet_ledger_hardening', '20261018100200_v1_payment_orders', '20261018100300_v1_exam_redeem', '20261018100400_v1_specialty_immutable']) {
+for (const v of ['20261022100300_v1_wallet_ledger_hardening', '20261022100400_v1_payment_orders', '20261022100500_v1_exam_redeem', '20261022100600_v1_specialty_immutable']) {
   psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));
 }
 psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));

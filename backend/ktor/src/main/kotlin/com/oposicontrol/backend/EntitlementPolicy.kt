@@ -116,7 +116,7 @@ internal data class PremiumFact(val esPremium: Boolean, val status: String, val 
 internal data class UserAccessFacts(
     val premium: PremiumFact? = null,
     val grants: List<ExamGrantFact> = emptyList(),
-    /** V1: la especialidad del usuario (se fija una vez). `null` = aun no elegida: sin puerta. */
+    /** V1: la especialidad del usuario (se fija una vez). `null` = aun no elegida: DENEGADO (nada se ve ni se abre hasta elegirla). */
     val specialtyId: String? = null,
 )
 
@@ -128,7 +128,7 @@ internal object EntitlementPolicy {
         now: Instant,
     ): AccessVerdict {
         // Regla 0 (V1, el propietario 2026-10-16): la especialidad es una PUERTA de acceso. Un examen de otra especialidad ni se ve ni se abre, tenga el usuario lo que tenga.
-        if (user.specialtyId != null && exam.specialtyId != null && user.specialtyId != exam.specialtyId) {
+        if (exam.specialtyId != null && user.specialtyId != exam.specialtyId) { // un usuario SIN especialidad tambien queda fuera (E2-V1-E06)
             return AccessVerdict(AccessDecision.DENY, AccessState.LOCKED, AccessDenyReason.SPECIALTY_MISMATCH)
         }
         if (!capabilities.allows(exam.kind)) {

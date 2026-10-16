@@ -54,11 +54,11 @@ components:
         balance:
           type: integer
           minimum: 0
-          description: 'FA21: the caller own OposiTickets balance (INSUFFICIENT_BALANCE).'
+          description: 'FA22: the caller own OposiTickets balance (INSUFFICIENT_BALANCE).'
         price:
           type: integer
           minimum: 0
-          description: 'FA21: the current OposiTickets price of the exam (INSUFFICIENT_BALANCE, PRICE_CHANGED).'
+          description: 'FA22: the current OposiTickets price of the exam (INSUFFICIENT_BALANCE, PRICE_CHANGED).'
     ValidationIssue:
       type: object
       required: [field, issue]
@@ -119,7 +119,7 @@ components:
         - OPTION_NOT_IN_QUESTION
     EconomyErrorCode:
       type: string
-      description: 'FA21 (V1 economy) codes.'
+      description: 'FA22 (V1 economy) codes.'
       enum:
         - INSUFFICIENT_BALANCE
         - PRICE_CHANGED

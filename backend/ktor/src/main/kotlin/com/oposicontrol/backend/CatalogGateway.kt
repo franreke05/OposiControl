@@ -286,7 +286,7 @@ internal class CatalogGateway(
     }
 
     /**
-     * D2-02 (PERF01, FA18): en UNA lectura acotada (limit 2) el intento abierto y el ultimo FINALIZADO del usuario en ESTE
+     * D2-02 (PERF01, FA19): en UNA lectura acotada (limit 2) el intento abierto y el ultimo FINALIZADO del usuario en ESTE
      * examen. `estado` ordena en_progreso antes que finalizado y, dentro de los finalizados, el mas reciente primero: la
      * fila 1 es el abierto si existe (como mucho uno) y la siguiente finalizada es la ultima. Solo intentos del comando
      * canonico (los demas no existen para D2-07 / D2-12). Indice (usuario_id, examen_id): no crece con el historial del
@@ -351,6 +351,7 @@ internal class CatalogGateway(
             put("p_despues_id", after?.id?.let(::JsonPrimitive) ?: JsonNull)
             put("p_limite", fetchLimit)
             put("p_con_grupos", withGroups)
+            put("p_especialidad_id", filter.specialtyId?.let(::JsonPrimitive) ?: JsonNull) // E2-V1-E05: la union de la coleccion tambien se acota a la especialidad
         }
         val raw = try {
             upstream.rpc(MY_COLLECTION_RPC, body.toString())

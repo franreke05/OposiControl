@@ -103,7 +103,7 @@ class AttemptRoutesTest {
         /** Estado HTTP de la lectura de `respuestas_intento` (por defecto 200): otro valor simula el upstream caido. */
         var answersStatus = 200
         var annulled = "[]"
-        var profileSpecialty = "[]"
+        var profileSpecialty = """[{"especialidad_principal_id":"11111111-1111-4111-8111-111111111111"}]"""
         var tags = "[]"
 
         fun respond(rawUri: String): V1StubResponse {
@@ -126,7 +126,7 @@ class AttemptRoutesTest {
                             // Como PostgREST: el filtro del marcador solo deja pasar la fila que lo tiene.
                             (attemptHasCommandMarker || !uri.contains("&creado_por_comando=not.is.null"))
                     }?.let { "[$it]" } ?: "[]"
-                // 20261016100000: lecturas por revision. Sin revision configurada se devuelven las filas legacy (sin
+                // 20261022100000: lecturas por revision. Sin revision configurada se devuelven las filas legacy (sin
                 // `revisiones_pregunta`), y la pasarela completa con la lectura viva de siempre.
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id,revisiones_pregunta(contenido)&") ->
                     questionRevision?.invoke(uri) ?: questionPage(uri)
@@ -412,7 +412,7 @@ class AttemptRoutesTest {
         val foreign = client.call(HttpMethod.Post, start, key = "0a0a0a0a-0000-4000-8000-000000000009")
         assertEquals(HttpStatusCode.NotFound, foreign.status)
         assertEquals("EXAM_NOT_FOUND", code(foreign.bodyAsText()))
-        upstream.profileSpecialty = "[]"
+        upstream.profileSpecialty = "[{\"especialidad_principal_id\":\"11111111-1111-4111-8111-111111111111\"}]"
         // borrador / archivado / inexistente -> el mismo 404
         upstream.examById = "[]"
         val missing = client.call(HttpMethod.Post, start, key = "0a0a0a0a-0000-4000-8000-000000000004")

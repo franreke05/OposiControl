@@ -14,7 +14,7 @@ internal class CatalogRuntime(
     val resolver: CanonicalIdentityResolver,
     val catalog: CatalogService,
     val entitlement: EntitlementService,
-    /** E2-P02 / FA19: limite por usuario (CATALOG_READ) antes de leer el perfil. Por defecto no limita (pruebas). */
+    /** E2-P02 / FA20: limite por usuario (CATALOG_READ) antes de leer el perfil. Por defecto no limita (pruebas). */
     val limit: suspend (CanonicalUserId) -> Unit = {},
 ) {
     companion object {

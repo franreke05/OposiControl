@@ -34,7 +34,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
-            description: 'RATE_LIMITED (FA19, per-user read limit; Retry-After).'
+            description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
           '403':
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '502':
@@ -91,7 +91,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
-            description: 'RATE_LIMITED (FA19, per-user read limit; Retry-After).'
+            description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
           '403':
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '502':

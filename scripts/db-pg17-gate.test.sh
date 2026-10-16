@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Control negativo de db-pg17-gate.sh (DB-CI-PG17), con PostgreSQL 17 REAL (Docker): una copia sin tocar del arbol PASA y cada
 # mutacion sembrada FALLA por SU motivo (mensaje FAIL concreto), nunca por otro. Desde la captura de MAIN del 2026-10-14
-# (supabase/baseline/MAIN_MIGRATION_HISTORY.txt) las pendientes son 20261016100000 (revisiones de pregunta) y 20261017100000 (E2-P03);
+# (supabase/baseline/MAIN_MIGRATION_HISTORY.txt) las pendientes son 20261022100000 (revisiones de pregunta) y 20261022100100 (E2-P03);
 #   manifiesto: la pendiente borrada de PENDING_MIGRATIONS.txt / una ya aplicada en MAIN anadida / un VERIFY ausente
 #   (a) grant select de solicitudes_eliminacion_cuenta a authenticated en la pendiente -> frontera de assertions.sql
 #   (a2) grant execute de idem_begin (objeto de MAIN) a authenticated -> la matriz grants/RLS de assertions.sql
@@ -22,12 +22,12 @@ expect_fail() { # $1 = escenario, $2 = mensaje FAIL esperado
   echo "ok:   $1 -> $(grep '^FAIL:' "$tmp/out" | head -1)"
 }
 mutated() { cmp -s "$1" "${1#$w/}" && { echo "TEST FAIL: mutacion vacua en $1"; exit 1; }; return 0; }
-rev=supabase/migrations/20261016100000_slice3_attempt_content_revisions.sql
+rev=supabase/migrations/20261022100000_slice3_attempt_content_revisions.sql
 pend=supabase/baseline/PENDING_MIGRATIONS.txt
-fresh; sed -i 's/^20261016100000_slice3_attempt_content_revisions/20261015100000_security_audit_log_index/' "$w/$pend"; mutated "$w/$pend"
+fresh; sed -i 's/^20261022100000_slice3_attempt_content_revisions/20261015100000_security_audit_log_index/' "$w/$pend"; mutated "$w/$pend"
 expect_fail "pendiente sustituida por una ya aplicada en MAIN" "PENDING_MIGRATIONS.txt y (repo - historial de MAIN) difieren"
 fresh; sed -i '/^-- VERIFY-BEGIN/,/^-- VERIFY-END/d' "$w/$rev"; mutated "$w/$rev"
-expect_fail "bloque VERIFY ausente" "20261016100000_slice3_attempt_content_revisions: bloque VERIFY ausente"
+expect_fail "bloque VERIFY ausente" "20261022100000_slice3_attempt_content_revisions: bloque VERIFY ausente"
 fresh; gate || { cat "$tmp/out"; echo "TEST FAIL: la copia sin mutar deberia pasar"; exit 1; }; echo "ok:   copia sin mutar pasa"
 fresh; echo 'grant select on table public.solicitudes_eliminacion_cuenta to authenticated;' >> "$w/$rev"; mutated "$w/$rev"
 expect_fail "(a) grant de cliente en la pendiente" "assertions.sql"
@@ -38,14 +38,14 @@ expect_fail "(a2) EXECUTE de cliente sobre una RPC SECURITY DEFINER" "assertions
 grep -q 'client EXECUTE on SECURITY DEFINER: idem_begin(uuid,text,text,text,interval,interval) authenticated' "$tmp/out" \
   || { echo "TEST FAIL: (a2) sin el mensaje de la matriz grants/RLS"; exit 1; }
 fresh; echo 'grant execute on function public.app_record_attempt_answer(uuid, uuid, uuid, uuid, integer, integer, integer) to authenticated;' >> "$w/$rev"; mutated "$w/$rev"
-expect_fail "(b) EXECUTE de cliente sobre el comando de respuesta" "20261016100000_slice3_attempt_content_revisions: VERIFY con contadores distintos de 0"
+expect_fail "(b) EXECUTE de cliente sobre el comando de respuesta" "20261022100000_slice3_attempt_content_revisions: VERIFY con contadores distintos de 0"
 grep -q 'VERIFY revision_commands_executable_by_clients = 1' "$tmp/out" || { echo "TEST FAIL: (b) sin el contador"; exit 1; }
 fresh; echo 'selec 1;' >> "$w/$rev"; mutated "$w/$rev"
-expect_fail "(c) error de sintaxis" "20261016100000_slice3_attempt_content_revisions no aplica"
+expect_fail "(c) error de sintaxis" "20261022100000_slice3_attempt_content_revisions no aplica"
 fresh; sed -i '/^-- drop table if exists public.revisiones_pregunta;$/d' "$w/$rev"; mutated "$w/$rev"
 expect_fail "(d) rollback incompleto" "el ROLLBACK falla\|tras los ROLLBACK el catalogo no vuelve al bootstrap"
 fresh; echo 'grant select on table public.revisiones_pregunta to authenticated;' >> "$w/$rev"; mutated "$w/$rev"
-expect_fail "(e) SELECT de cliente sobre las revisiones" "20261016100000_slice3_attempt_content_revisions: VERIFY con contadores distintos de 0"
+expect_fail "(e) SELECT de cliente sobre las revisiones" "20261022100000_slice3_attempt_content_revisions: VERIFY con contadores distintos de 0"
 grep -q 'VERIFY revisions_client_privileges = 1' "$tmp/out" || { echo "TEST FAIL: (e) sin el contador"; exit 1; }
 fresh; sed -i 's/^      insert into public.preguntas_intento (intento_id, pregunta_id, posicion, revision_pregunta_id)$/      insert into public.preguntas_intento (intento_id, pregunta_id, posicion)/; s/^      select p_intento_id, u.pregunta_id, u.ord::integer, r.id$/      select p_intento_id, u.pregunta_id, u.ord::integer/' "$w/$rev"; mutated "$w/$rev"
 expect_fail "(f) el congelado no liga la revision" "assertions.sql"
