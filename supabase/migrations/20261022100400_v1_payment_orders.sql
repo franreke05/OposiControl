@@ -1,7 +1,7 @@
 -- =============================================================================
 -- V1 -- payment orders, credit once, refund chain (OposiTickets economy, step 2 of 3). Design: E1-V1-MINIDESIGN.md sections 1, 3, 5.
 -- =============================================================================
--- LOCAL / PG17 GATE ONLY. NOT applied to MAIN. Forward-only. Requires 20261018100100.
+-- LOCAL / PG17 GATE ONLY. NOT applied to MAIN. Forward-only. Requires 20261022100300.
 --
 -- The payment ORDER is the existing table `compras_usuario` (provider, product, state, price, currency, provider transaction id; the ledger row
 -- of its credit points back to it through `transacciones_cartera.compra_id`). No parallel table.
@@ -84,7 +84,7 @@ begin
      or to_regprocedure('private.ot_credit_remaining(uuid)') is null or to_regclass('public.ot_consumos') is null
      or to_regclass('public.productos_comerciales') is null or to_regclass('public.auditoria_log') is null then
     raise exception using errcode = 'P0001', message = 'V1_ORDERS_PREFLIGHT',
-      hint = 'apply 20261018100100 first; compras_usuario, productos_comerciales and auditoria_log must exist';
+      hint = 'apply 20261022100300 first; compras_usuario, productos_comerciales and auditoria_log must exist';
   end if;
   if exists (select 1 from public.compras_usuario c where c.identificador_transaccion is not null group by c.proveedor, c.identificador_transaccion having count(*) > 1) then
     raise exception using errcode = 'P0001', message = 'V1_ORDERS_PREFLIGHT',

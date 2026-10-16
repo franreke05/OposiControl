@@ -13,7 +13,7 @@ import kotlin.test.assertTrue
 
 /**
  * GATE-1 (E2): paridad entre la politica Kotlin ([EntitlementPolicy]) y la UNICA definicion SQL del veredicto
- * (`private.exam_access_verdict`, migracion 20261018100300), sobre una MATRIZ generada de hechos.
+ * (`private.exam_access_verdict`, migracion 20261022100500), sobre una MATRIZ generada de hechos.
  *
  * Este test (1) comprueba el tamano y la cobertura de la matriz y (2) cuando existe `PARITY_OUT`, vuelca matriz + veredictos de Kotlin a ese
  * fichero JSON. `ops/local-exam/verdict-parity.mjs` ejecuta este test, construye los MISMOS hechos en la base local (dentro de una transaccion que

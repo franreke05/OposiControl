@@ -74,7 +74,7 @@ internal class ServerClock(
         const val MAX_STALE_MILLIS = 5 * 60_000L
         private val LOG = LoggerFactory.getLogger("com.oposicontrol.backend.ServerClock")
 
-        /** `app_server_now()` por el transporte de servicio (migracion 20261018100300 antes que este Ktor: sin ella las lecturas de acceso son 503, nunca una hora inventada). */
+        /** `app_server_now()` por el transporte de servicio (migracion 20261022100500 antes que este Ktor: sin ella las lecturas de acceso son 503, nunca una hora inventada). */
         fun fromTransport(transport: SupabaseRequestTransport): () -> Instant {
             val clock = ServerClock(
                 DatabaseClockSource {

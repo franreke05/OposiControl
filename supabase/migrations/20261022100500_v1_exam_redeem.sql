@@ -1,7 +1,7 @@
 -- =============================================================================
 -- V1 -- redeem an exam with OposiTickets: ONE transaction (economy step 3 of 3). Design: E1-V1-MINIDESIGN.md sections 4, 5, 7.
 -- =============================================================================
--- LOCAL / PG17 GATE ONLY. NOT applied to MAIN. Forward-only. Requires 20261018100100 and 20261018100200.
+-- LOCAL / PG17 GATE ONLY. NOT applied to MAIN. Forward-only. Requires 20261022100300 and 20261022100400.
 --
 -- WHAT IT DOES
 --   * contenido_desbloqueado_usuario: purchase fields (pricePaid, currency, transactionId, purchasedAt), mandatory for every NEW 'compra' row (a trigger:
@@ -70,7 +70,7 @@ begin
   if to_regclass('public.contenido_desbloqueado_usuario') is null or to_regclass('public.examenes') is null or to_regclass('public.estado_premium_usuario') is null
      or to_regclass('public.ot_consumos') is null or to_regprocedure('public.app_wallet_reconcile(uuid)') is null
      or to_regclass('public.capacidades_especialidad') is null then
-    raise exception using errcode = 'P0001', message = 'V1_REDEEM_PREFLIGHT', hint = 'apply 20261018100100 and 20261018100200 first';
+    raise exception using errcode = 'P0001', message = 'V1_REDEEM_PREFLIGHT', hint = 'apply 20261022100300 and 20261022100400 first';
   end if;
   if exists (select 1 from public.contenido_desbloqueado_usuario g where g.motivo = 'compra' and g.examen_id is not null
               group by g.usuario_id, g.examen_id having count(*) > 1) then
