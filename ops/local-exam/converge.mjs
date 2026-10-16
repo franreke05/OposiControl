@@ -25,11 +25,11 @@ const FIRST = '20261022100300';
 const md5 = (s) => crypto.createHash('md5').update(s, 'utf8').digest('hex');
 const sha256Lf = (s) => crypto.createHash('sha256').update(s.split('\r\n').join('\n'), 'utf8').digest('hex');
 
-export function makePsql({ container, local = path.join(here, '.local') } = {}) {
+export function makePsql({ container, local = path.join(here, '.local'), user = 'postgres' } = {}) {
   const args = container
-    ? ['exec', '-i', container, 'psql', '-U', 'postgres', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-At', '-f', '-']
+    ? ['exec', '-i', container, 'psql', '-U', user, '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-At', '-f', '-']
     : ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-      'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-At', '-f', '-'];
+      'exec', '-T', 'db', 'psql', '-U', user, '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-At', '-f', '-'];
   return (sql) => execFileSync('docker', args, { input: sql, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'] }).trim();
 }
 
@@ -54,7 +54,9 @@ export function functionBodies(sources) {
   return out;
 }
 
-export function converge({ psql, root = repo }) {
+export function converge({ psql, psqlAdmin, root = repo }) {
+  // MAIN shape owned by supabase_auth_admin (e.g. auth.users.email_confirmed_at for the referral trigger): applied as supabase_admin when the caller provides it
+  if (psqlAdmin) psqlAdmin(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_auth_users.sql'), 'utf8'));
   const stamps = v1Migrations(root);
   const files = stamps.map((v) => ({ v, text: fs.readFileSync(path.join(root, 'supabase/migrations', `${v}.sql`), 'utf8') }));
   psql('create schema if not exists private;\n' +

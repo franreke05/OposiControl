@@ -36,8 +36,10 @@
 -- drop function if exists public.app_ranking_me(uuid);
 -- drop function if exists public.app_job_ranking(boolean);
 -- drop function if exists private.cohorte_tramo(integer);
+-- drop view if exists public.ranking_ventanas_rapidas;
+-- grant select on table public.lotes_actualizacion_ranking to anon, authenticated;
 -- drop table if exists public.ranking_top;
--- delete from public.configuracion_v1 where clave = 'ranking_job_minutos';
+-- delete from public.configuracion_v1 where clave in ('ranking_job_minutos', 'ranking_min_ms_respuesta');
 -- alter table public.estado_competitivo_usuario drop column if exists ranking_calculado_en, drop column if exists ranking_cohorte, drop column if exists probabilidad_cohorte, drop column if exists probabilidad_plaza;
 -- alter table public.perfiles_usuario drop column if exists ranking_publico;
 -- commit;
@@ -49,6 +51,10 @@
 --        (case when has_function_privilege('anon', f.n, 'execute') or has_function_privilege('authenticated', f.n, 'execute')
 --                or not has_function_privilege('service_role', f.n, 'execute') then 1 else 0 end)::bigint as failures
 --   from (values ('public.app_ranking_me(uuid)'), ('public.app_set_ranking_visibility(uuid,boolean)'), ('public.app_job_ranking(boolean)'), ('public.admin_recompute_stats(uuid,text)')) f(n)
+-- union all
+-- select 'ranking_batches_readable_by_clients', (case when has_table_privilege('anon', 'public.lotes_actualizacion_ranking', 'select') or has_table_privilege('authenticated', 'public.lotes_actualizacion_ranking', 'select') then 1 else 0 end)::bigint
+-- union all
+-- select 'ranking_fast_windows_view_readable_by_clients', (case when has_table_privilege('anon', 'public.ranking_ventanas_rapidas', 'select') or has_table_privilege('authenticated', 'public.ranking_ventanas_rapidas', 'select') then 1 else 0 end)::bigint
 -- union all
 -- select 'ranking_top_client_access',
 --        (case when has_table_privilege('anon', 'public.ranking_top', 'select') or has_table_privilege('authenticated', 'public.ranking_top', 'select') or has_table_privilege('service_role', 'public.ranking_top', 'select')
@@ -90,7 +96,19 @@ create table if not exists public.ranking_top (
 alter table public.ranking_top enable row level security;
 revoke all on table public.ranking_top from public, anon, authenticated, service_role;
 
-insert into public.configuracion_v1 (clave, valor_integer) values ('ranking_job_minutos', 15) on conflict (clave) do nothing;
+-- C-W4-1: a window answered faster than this average (ms per first answer) is not ranked (a scripted account that already knows the answers cannot fill a window quickly); 0 = off
+insert into public.configuracion_v1 (clave, valor_integer) values ('ranking_job_minutos', 15), ('ranking_min_ms_respuesta', 1000) on conflict (clave) do nothing;
+
+-- defence in depth (E2 FINAL6 INFO): the job batches are server data; no client role reads the table directly
+revoke select on table public.lotes_actualizacion_ranking from anon, authenticated;
+
+-- Control alert: users with a FULL window answered faster than the minimum (not ranked); server only
+create or replace view public.ranking_ventanas_rapidas with (security_invoker = true) as
+  select ec.usuario_id, ec.liga_nivel_id, ec.ventana_calculo, ec.ventana_tiempo_medio_ms, ec.actualizado_en
+    from public.estado_competitivo_usuario ec
+   where ec.preguntas_validas_ranking >= coalesce(ec.ventana_calculo, 1) and ec.ventana_tiempo_medio_ms is not null
+     and ec.ventana_tiempo_medio_ms < private.config_int('ranking_min_ms_respuesta', 1000);
+revoke all on public.ranking_ventanas_rapidas from public, anon, authenticated;
 
 -- ---- 2. cohort bucket (never the exact size)
 create or replace function private.cohorte_tramo(p_n integer)
@@ -119,6 +137,7 @@ declare
   v_nuevo timestamptz;
   v_esp uuid[];
   v_filas integer := 0;
+  v_min_ms integer := private.config_int('ranking_min_ms_respuesta', 1000);
 begin
   if not pg_try_advisory_xact_lock(hashtextextended('job:ranking', 0)) then
     return jsonb_build_object('estado', 'OCUPADO');
@@ -145,6 +164,7 @@ begin
         from public.estado_competitivo_usuario ec join public.perfiles_usuario pf on pf.usuario_id = ec.usuario_id
        where pf.especialidad_principal_id = any (v_esp) and ec.liga_nivel_id is not null and ec.nota_media_actual is not null
          and ec.preguntas_validas_ranking >= coalesce(ec.ventana_calculo, 1)  -- only FULL windows are comparable (a 1-question 10.0 must not top a league)
+         and (v_min_ms = 0 or ec.ventana_tiempo_medio_ms is null or ec.ventana_tiempo_medio_ms >= v_min_ms)  -- C-W4-1: not a window filled in seconds
     ), pos as (
       select b.*, row_number() over (partition by b.esp, b.liga order by b.nota desc, b.v desc, b.usuario_id) as p, count(*) over (partition by b.esp, b.liga) as n from base b
     ), prob as (

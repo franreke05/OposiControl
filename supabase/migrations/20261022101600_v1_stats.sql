@@ -264,6 +264,7 @@
 -- drop function if exists public.app_stats_weaknesses(uuid, uuid, integer);
 -- drop function if exists public.app_stats_summary(uuid);
 -- drop function if exists private.app_apply_first_answer_stats(uuid, uuid, boolean, integer, uuid);
+-- alter table public.estado_competitivo_usuario drop column if exists ventana_tiempo_medio_ms;
 -- drop table if exists public.primeras_respuestas_usuario;
 -- delete from public.configuracion_v1 where clave in ('evolucion_cada_preguntas', 'debilidad_min_respuestas', 'dificultad_min_respuestas', 'dificultad_muestra', 'dominio_medio_pct', 'dominio_alto_pct', 'ventana_nota_defecto', 'cohorte_minima_comparativa', 'dificultad_job_minutos', 'recalculo_admin_cooldown_min');
 -- create policy estadisticas_globales_pregunta_select on public.estadisticas_globales_pregunta for select to authenticated using (true);
@@ -310,6 +311,9 @@ insert into public.configuracion_v1 (clave, valor_integer) values
   ('dificultad_job_minutos', 15), ('recalculo_admin_cooldown_min', 10), ('stats_activo', 1), ('tiempo_max_respuesta_seg', 300)
 on conflict (clave) do nothing;
 
+-- C-W4-1: the average first-answer time of the window (the ranking eligibility reads it; the hook keeps it current)
+alter table public.estado_competitivo_usuario add column if not exists ventana_tiempo_medio_ms integer;
+
 -- ---- 2. the ledger of first answers: the exactly-once guard of the stats hook (C-S1) and the window source of the Nota media
 create table if not exists public.primeras_respuestas_usuario (
   seq bigint generated always as identity primary key,
@@ -351,6 +355,7 @@ declare
   v_validas integer;
   v_ventana integer;
   v_nota numeric;
+  v_avg_ms integer;
   v_desde integer;
   v_cada integer := private.config_int('evolucion_cada_preguntas', 20);
   v_ref numeric;
@@ -403,8 +408,8 @@ begin
   select l.id, l.ventana_calculo into lg
     from public.ligas_nivel l where l.activa and l.preguntas_minimas <= v_validas order by l.preguntas_minimas desc, l.posicion desc limit 1;
   v_ventana := coalesce(lg.ventana_calculo, private.config_int('ventana_nota_defecto', 50));
-  select round(avg(case when w.correcta then 10.0 else 0.0 end), 2) into v_nota
-    from (select pr.correcta from public.primeras_respuestas_usuario pr where pr.usuario_id = p_usuario order by pr.seq desc limit v_ventana) w;
+  select round(avg(case when w.correcta then 10.0 else 0.0 end), 2), round(avg(w.tiempo_ms))::integer into v_nota, v_avg_ms
+    from (select pr.correcta, pr.tiempo_ms from public.primeras_respuestas_usuario pr where pr.usuario_id = p_usuario order by pr.seq desc limit v_ventana) w;
   v_desde := est.preguntas_desde_ultima_evolucion + 1;
   v_ref := est.nota_referencia_evolucion;
   v_evol := est.evolucion_nota;
@@ -418,6 +423,7 @@ begin
          liga_nivel_id = coalesce(lg.id, est.liga_nivel_id),
          ventana_calculo = v_ventana,
          nota_media_actual = v_nota,
+         ventana_tiempo_medio_ms = v_avg_ms,
          nota_referencia_evolucion = v_ref,
          evolucion_nota = v_evol,
          preguntas_desde_ultima_evolucion = v_desde,

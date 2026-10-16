@@ -94,6 +94,9 @@ extra=supabase/baseline/main_shape_subset_extra.sql
 extra_plans=supabase/baseline/main_shape_subset_extra_plans.sql
 [ -s "$extra_plans" ] && { psqlc < "$extra_plans" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_plans no carga con ON_ERROR_STOP=1"; }; }
 # V1 wave 2: retos, registros, rachas, ranking_liga y las funciones recalcular_* de MAIN (con sus grants de cliente de HOY, que 20261022101200 retira).
+extra_auth=supabase/baseline/main_shape_auth_users.sql
+[ -s "$extra_auth" ] && { docker exec -i "$ctr" psql -U supabase_admin -h localhost -d postgres -X -q -v ON_ERROR_STOP=1 < "$extra_auth" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_auth no carga con ON_ERROR_STOP=1"; }; }
+
 extra_eng=supabase/baseline/main_shape_subset_extra_engagement.sql
 [ -s "$extra_eng" ] && { psqlc < "$extra_eng" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_eng no carga con ON_ERROR_STOP=1"; }; }
 fingerprint "$tmp/f0"

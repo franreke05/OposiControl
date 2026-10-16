@@ -222,7 +222,11 @@ internal class OposiBotsAuthRuntime(
                 ),
                 profiles = profiles,
                 deletion = AccountDeletionService(upstream, authProvider, json = json),
-                legacy = LegacyProfileAdapter(profiles, PostgrestSpecialtyResolver(upstream, json)),
+                legacy = LegacyProfileAdapter(
+                    profiles,
+                    ReferralService(TransportEconomyUpstream(transport)).let { svc -> ReferralAttach { user, code -> svc.attach(user, code) } },
+                    PostgrestSpecialtyResolver(upstream, json),
+                ),
             )
         }
     }

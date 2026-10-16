@@ -23,7 +23,7 @@ requireStackLock('up.mjs');
 // LIVE CONVERGE (no reset): re-apply the edited V1 migrations + the new ones and verify function checksums against the files. See converge.mjs.
 if (process.argv.includes('--converge')) {
   const m = await import('./converge.mjs');
-  const r = m.converge({ psql: m.makePsql() });
+  const r = m.converge({ psql: m.makePsql(), psqlAdmin: m.makePsql({ user: 'supabase_admin' }) });
   process.exit(r.ok ? 0 : 1);
 }
 
@@ -205,6 +205,7 @@ end $$;`);
 // E5-V1-F01: quita la fila de apertura DUPLICADA que dejo un borrador anterior de la migracion (solo local; no hace nada en una cartera limpia).
 if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
 // the list is V1_MIGRATIONS.txt (single source, same as --converge): a hard-coded list went stale and a plain up.mjs re-applied OLD definitions (e.g. the pre-v2 access verdict of 20261022100500) over the current ones
+psql(fs.readFileSync(path.join(repo, 'supabase/baseline/main_shape_auth_users.sql'), 'utf8'), {}, 'supabase_admin');   // auth.users.email_confirmed_at (MAIN shape, owned by supabase_auth_admin)
 const { v1Migrations } = await import('./converge.mjs');
 for (const v of v1Migrations(repo)) {
   psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));

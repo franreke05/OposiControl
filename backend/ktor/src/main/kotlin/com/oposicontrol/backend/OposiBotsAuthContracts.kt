@@ -106,6 +106,8 @@ data class OposiBotsProfileRequest(
     val specialty: String = "",
     /** V1: id canonico de la especialidad (D2-17). Opcional; se valida igual que PATCH /me/profile (422 UNKNOWN_SPECIALTY si no existe o esta inactiva). */
     val especialidadId: String? = null,
+    /** V1 wave 5a (FA34): codigo de invitacion OPCIONAL. Neutral: un codigo inutilizable nunca falla ni bloquea el registro. */
+    val codigoInvitacion: String? = null,
 )
 
 @OptIn(ExperimentalSerializationApi::class)

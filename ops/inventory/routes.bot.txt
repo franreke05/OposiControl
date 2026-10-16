@@ -22,6 +22,8 @@ GET /api/v1/app/me
 GET /api/v1/app/me/billing-history
 GET /api/v1/app/me/entitlement
 GET /api/v1/app/me/examenes
+GET /api/v1/app/me/invitacion
+GET /api/v1/app/me/invitaciones
 GET /api/v1/app/oposired/categorias
 GET /api/v1/app/opositeca
 GET /api/v1/app/opositeca/guardados/{}

@@ -194,7 +194,7 @@ internal class CanonicalTestEnv(
         gateway = gateway,
         rateLimiter = limiter,
         json = testJson,
-        canonical = CanonicalProfileRuntime(resolver, profiles, deletion, LegacyProfileAdapter(profiles, specialties)),
+        canonical = CanonicalProfileRuntime(resolver, profiles, deletion, LegacyProfileAdapter(profiles, specialties = specialties)),
         accessRequestMailGuard = NoAccessRequestsMailGuard,
     )
 

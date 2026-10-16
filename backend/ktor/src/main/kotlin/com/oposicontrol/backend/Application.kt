@@ -623,6 +623,7 @@ fun Application.module() {
         challengeRuntime = canonicalIdentityResolver?.let { ChallengeRuntime.fromEnvironment(it, authRuntime) },
         statsRuntime = canonicalIdentityResolver?.let { StatsRuntime.fromEnvironment(it, authRuntime) },
         rankingRuntime = canonicalIdentityResolver?.let { RankingRuntime.fromEnvironment(it, authRuntime) },
+        referralRuntime = canonicalIdentityResolver?.let { ReferralRuntime.fromEnvironment(it, authRuntime) },
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
             catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter, auth = authRuntime) }
         },
@@ -699,6 +700,8 @@ internal class CombinedRoutingDeps(
     internal val statsRuntime: StatsRuntime? = null,
     /** V1 wave 4 (D3-24, D3-25): ranking del usuario. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val rankingRuntime: RankingRuntime? = null,
+    /** V1 wave 5a (D8-01, D8-02): Invita y gana. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val referralRuntime: ReferralRuntime? = null,
     /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
     internal val newsRuntime: NewsRuntime? = null,
     /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
@@ -772,6 +775,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     statsRoutes(statsRuntime)
     // V1 wave 4: ranking (D3-24, D3-25).
     rankingRoutes(rankingRuntime)
+    // V1 wave 5a: Invita y gana (D8-01, D8-02).
+    referralRoutes(referralRuntime)
     authRuntime?.let {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).

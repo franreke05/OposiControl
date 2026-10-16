@@ -188,6 +188,8 @@ class OpenApiContractTest {
         "D3-23" to "POST /api/v1/admin/estadisticas/recalcular",
         "D3-24" to "GET /api/v1/app/ranking",
         "D3-25" to "PUT /api/v1/app/ranking/visibilidad",
+        "D9-01" to "GET /api/v1/app/me/invitacion",
+        "D9-02" to "GET /api/v1/app/me/invitaciones",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
@@ -196,6 +198,7 @@ class OpenApiContractTest {
 
     /** contractId -> (max, default) del limit de las listas paginadas. */
     private val cursorLists = mapOf(
+        "D9-02" to (50L to 20L),
         "D8-01" to (200L to 50L),
         "D2-01" to (50L to 20L),
         "D2-13" to (50L to 20L),
