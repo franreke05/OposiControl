@@ -174,17 +174,18 @@ const NF = (r, c) => r.status === 404 && (r.json?.code === c || r.json?.code ===
   const g = await gift(u.id, EXG.PRICED); const pEnd2 = sql(`select valido_hasta::text from public.contenido_desbloqueado_usuario where usuario_id = '${u.id}' and examen_id = '${EXG.PRICED}' and motivo = 'compra';`);
   check('G11.gift_on_top_of_a_purchase_stacks_to_60_days_and_never_extends_or_shortens_the_purchase_row', p1.status === 201 && g.status === 201 && Math.abs(days(g.json?.validUntil) - 60) < 0.05 && pEnd1 === pEnd2 && rows(u, EXG.PRICED, 'compra') === 1, `purchase=${p1.status} gift-days=${g.json ? days(g.json.validUntil).toFixed(3) : '-'} purchaseRowUnchanged=${pEnd1 === pEnd2}`);
   const p2 = await buy(); const days2 = Number(maxEnd(u, EXG.PRICED));
-  finding('G11.purchase_on_a_gifted_exam_extends_and_debits_OWNER_DECISION', p2.status === 201 && days2 >= 59.9, `second purchase ${p2.status}, latest end=${days2}d, balance=${bal(u)} (today a purchase extends; owner decides whether a gifted exam should refuse until nearly over)`, 'E2-V1-G03');
+  check('G11.v2_purchase_on_a_gifted_exam_is_refused_409_ALREADY_ACCESSIBLE_no_debit_end_unchanged',  p2.status === 409 && days2 >= 59.9 && bal(u) === 90, `second purchase ${p2.status}, latest end=${days2}d, balance=${bal(u)} (W1 resolved the owner point: a gifted exam refuses a purchase)`);
   const gOnly = mkUser('g11b'); sql(`select transaction_id from public.admin_grant_tickets('${gOnly.id}', 100, 'E2 seed', 'e2g-${uuid()}', 'ajuste');`);
   const gg = await gift(gOnly.id, EXG.PRICED); const pb = await http(APP, gOnly.t, 'POST', '/api/v1/app/wallet/canjes', { examId: EXG.PRICED }, { 'Idempotency-Key': uuid() });
-  check('G11.purchase_after_a_gift_extends_from_the_latest_end_never_shortens', gg.status === 201 && (pb.status === 201 ? Number(maxEnd(gOnly, EXG.PRICED)) >= 59.9 : pb.status === 409) && Number(maxEnd(gOnly, EXG.PRICED)) >= 29.9, `gift=${gg.status} purchase=${pb.status} latest end=${maxEnd(gOnly, EXG.PRICED)}d`);
+  check('G11.v2_purchase_right_after_a_gift_is_refused_gift_end_unchanged', gg.status === 201 && pb.status === 409 && Number(maxEnd(gOnly, EXG.PRICED)) >= 29.9 && Number(maxEnd(gOnly, EXG.PRICED)) < 30.1, `gift=${gg.status} purchase=${pb.status} latest end=${maxEnd(gOnly, EXG.PRICED)}d`);
 }
 
 // ---- G12 revoke
 {
   const u = mkUser('g12'); sql(`select transaction_id from public.admin_grant_tickets('${u.id}', 100, 'E2 seed', 'e2g-${uuid()}', 'ajuste');`);
-  const g = await gift(u.id, EXG.PRICED); age(u, EXG.PRICED); const g2 = await gift(u.id, EXG.PRICED, { accessType: 'promocion' });
   await http(APP, u.t, 'POST', '/api/v1/app/wallet/canjes', { examId: EXG.PRICED }, { 'Idempotency-Key': uuid() });
+  const g = await gift(u.id, EXG.PRICED); age(u, EXG.PRICED); const g2 = await gift(u.id, EXG.PRICED, { accessType: 'promocion' });
+  
   const purchaseId = sql(`select id from public.contenido_desbloqueado_usuario where usuario_id = '${u.id}' and examen_id = '${EXG.PRICED}' and motivo = 'compra';`);
   const rp = await revoke(purchaseId);
   check('G12.revoking_a_purchase_is_422_GRANT_IS_PURCHASE_and_changes_nothing', rp.status === 422 && rp.json?.code === 'GRANT_IS_PURCHASE' && Number(sql(`select count(*) from public.contenido_desbloqueado_usuario where id = '${purchaseId}' and valido_hasta > now();`)) === 1, `${rp.status}/${rp.json?.code}`);

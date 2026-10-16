@@ -227,8 +227,8 @@ await scenario('R_REFUND_P2', async () => {
   // P6 gifted access: the gift row is never touched; the purchase row stacked on top is cut back
   { const u = nu('p6'); const has = sql("select to_regprocedure('public.admin_grant_exam_access(uuid,uuid,text,uuid)') is not null;") === 't';
     if (!has) check('P2.gifted_access_untouched_NOT_RUN_function_missing_converge_first', true, 'admin_grant_exam_access(4 args) not applied on this DB');
-    else { sql("select * from public.admin_grant_exam_access('" + u.id + "', '" + EX.CHEAP + "', 'regalo', null);"); const c = await buy(u); await redeem(u, EX.CHEAP); const gift0 = endDays(u, EX.CHEAP, 'regalo'); const b = endDays(u, EX.CHEAP); const r = await refund(c);
-      check('P2.refund_when_the_access_was_gifted_keeps_the_gift_and_cuts_the_purchase_row', r.json?.result === 'REFUNDED_P2' && Math.abs(endDays(u, EX.CHEAP, 'regalo') - gift0) < 0.01 && endDays(u, EX.CHEAP) <= gift0 + 0.01 && (await state(u, EX.CHEAP)) === 'GRANTED', 'gift=' + gift0 + ' purchase ' + b + ' -> ' + endDays(u, EX.CHEAP)); } }
+    else { const c = await buy(u); await redeem(u, EX.CHEAP); sql("select * from public.admin_grant_exam_access('" + u.id + "', '" + EX.CHEAP + "', 'regalo', null);"); const blocked = await redeem(u, EX.CHEAP); const gift0 = endDays(u, EX.CHEAP, 'regalo'); const b = endDays(u, EX.CHEAP); const r = await refund(c);
+      check('P2.refund_when_the_access_was_gifted_keeps_the_gift_and_cuts_the_purchase_row_and_W1_refuses_a_purchase_on_a_gifted_exam', blocked.status === 409 && r.json?.result === 'REFUNDED_P2' && Math.abs(endDays(u, EX.CHEAP, 'regalo') - gift0) < 0.01 && endDays(u, EX.CHEAP) <= gift0 + 0.01 && (await state(u, EX.CHEAP)) === 'GRANTED', 'gift=' + gift0 + ' purchase ' + b + ' -> ' + endDays(u, EX.CHEAP)); } }
   // P7 days changed after the purchase: the cut uses the days GRANTED at purchase (P01 fix), not the current exam setting
   { const u = nu('p7'); const c1 = await buy(u); await redeem(u, EX.CHEAP); const c2 = await buy(u); await redeem(u, EX.CHEAP); const b = endDays(u, EX.CHEAP);
     sql("set session_replication_role = replica; update public.examenes set dias_acceso_compra = 90 where id = '" + EX.CHEAP + "'; set session_replication_role = origin;");
@@ -443,7 +443,7 @@ await scenario('C_ENTITLEMENT', async () => {
   const p = mkUser('cprem'); grant(p, 100);
   sql(`insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, fin_en) values ('${p.id}', true, 'activa', now() + interval '10 days') on conflict (usuario_id) do update set es_premium = true, estado_suscripcion = 'activa', fin_en = now() + interval '10 days';`);
   const rp = await redeem(p, EX.CHEAP);
-  check('B9.premium_user_cannot_pay_for_accessible_exam', rp.status === 409 && rp.json?.code === 'ALREADY_ACCESSIBLE' && balance(p) === 100, `${rp.status} ${rp.json?.code}`);
+  check('B9.v2_a_subscription_never_covers_an_immersive_so_the_subscriber_pays_OT', rp.status === 201 && balance(p) === 90, `${rp.status} ${rp.json?.code} balance=${balance(p)}`);
   const ul = mkUser('cunl'); grant(ul, 100);
   sql(`set session_replication_role = replica; insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('${ul.id}', '${EX.CHEAP}', 'regalo', now() - interval '1 day', null); set session_replication_role = origin;`); /* legacy unlimited row: only reachable bypassing the G05 trigger */
   const ru = await redeem(ul, EX.CHEAP);
@@ -451,7 +451,7 @@ await scenario('C_ENTITLEMENT', async () => {
   const lim = mkUser('clim'); grant(lim, 100);
   sql(`insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('${lim.id}', '${EX.CHEAP}', 'regalo', now() - interval '1 day', now() + interval '100 days');`);
   const rl = await redeem(lim, EX.CHEAP); const lspan = (Date.parse(rl.json?.canje?.validUntil) - Date.now()) / 86400000;
-  check('C7.gift_end_is_the_base_of_the_extension_and_gift_row_untouched', rl.status === 201 && Math.abs(lspan - 130) < 0.05 && Number(sql(`select count(*) from public.contenido_desbloqueado_usuario where usuario_id = '${lim.id}' and motivo = 'regalo';`)) === 1, `span=${lspan.toFixed(2)}d`);
+  check('C7.v2_purchase_on_an_exam_held_by_a_gift_is_ALREADY_ACCESSIBLE_no_debit_gift_row_untouched', rl.status === 409 && rl.json?.code === 'ALREADY_ACCESSIBLE' && balance(lim) === 100 && Number(sql(`select count(*) from public.contenido_desbloqueado_usuario where usuario_id = '${lim.id}' and motivo = 'regalo';`)) === 1, `span=${lspan.toFixed(2)}d`);
   // cross-user
   const x = mkUser('cx'); const xd = await call(x, 'GET', `/api/v1/app/examenes/${EX.IMM30}`); const xs = await call(x, 'POST', `/api/v1/app/examenes/${EX.IMM30}/intentos`, {}, { 'Idempotency-Key': uuid() });
   const xcol = await call(x, 'GET', '/api/v1/app/me/examenes?vista=ADQUIRIDOS&limit=50');
