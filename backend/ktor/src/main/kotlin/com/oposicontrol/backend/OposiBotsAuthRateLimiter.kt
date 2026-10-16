@@ -92,6 +92,9 @@ internal enum class OposiBotsAuthOperation(
     /** V1 Access v2 (FA27): elegir un inmersivo con el cupo del plan (D7-32): 60 por minuto y usuario. */
     PLAN_WRITE(120, 60, 60),
 
+    /** V1 wave 2 (FA29, E2 W-8): responder y reclamar el reto diario (D3-17, D3-18): 60 por minuto y usuario. */
+    CHALLENGE_WRITE(120, 60, 60),
+
     /** V1 demo (FA28): inicios de intento DEMO por IP (limite por IP: 60 al dia; el limite por usuario vive en la base). */
     DEMO_START_IP(60, 20, 86_400),
 

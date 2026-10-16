@@ -1882,9 +1882,9 @@ begin
   begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
   if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
 end $$;
-insert into auth.users (id, email, aud, role) values
-  ('a0000000-0000-0000-0000-0000000000e1','ch-nat@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000e2','ch-a@test.local','authenticated','authenticated'),
-  ('a0000000-0000-0000-0000-0000000000e3','ch-sub@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000e4','ch-nospec@test.local','authenticated','authenticated');
+insert into auth.users (id, email, aud, role, confirmed_at) values
+  ('a0000000-0000-0000-0000-0000000000e1','ch-nat@test.local','authenticated','authenticated', now()), ('a0000000-0000-0000-0000-0000000000e2','ch-a@test.local','authenticated','authenticated', now()),
+  ('a0000000-0000-0000-0000-0000000000e3','ch-sub@test.local','authenticated','authenticated', now()), ('a0000000-0000-0000-0000-0000000000e4','ch-nospec@test.local','authenticated','authenticated', null);
 insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000e1','CH','CH','ch',true);
 insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000a1','CHA','Com A','com-ch-a'), ('c1000000-0000-0000-0000-0000000000b1','CHB','Com B','com-ch-b');
 insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id, comunidad_principal_id) values
@@ -1910,6 +1910,8 @@ select case when n = 1 then 'e5000000-0000-0000-0000-0000000000e8'::uuid when n 
 insert into public.etiquetas (id, nombre, slug) values ('7a800000-0000-0000-0000-000000000001', 'Legislacion autonomica A', 'ch-leg-a');
 insert into public.etiquetas_pregunta (pregunta_id, etiqueta_id) values ('f8000000-0000-0000-0000-000000000004', '7a800000-0000-0000-0000-000000000001');
 set local session_replication_role = origin;
+insert into public.recursos_pregunta (id, pregunta_id, codigo_recurso, tipo_recurso, titulo, bucket_storage, ruta_storage, posicion, metadatos)
+values ('7e500000-0000-0000-0000-000000000001', 'f8000000-0000-0000-0000-000000000001', 'CH-R1', 'imagen', 'Imagen', 'recursos-pregunta', 'preguntas/f8000000-0000-0000-0000-000000000001/7e500000-0000-0000-0000-000000000001.png', 1, '{"mime":"image/png","bytes":1234}'::jsonb);
 insert into public.etiquetas_comunidad (etiqueta_id, comunidad_id) values ('7a800000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-0000000000a1');
 insert into public.planes_suscripcion (id, codigo, nombre, nivel) values ('b1000000-0000-0000-0000-0000000000e0','ch-gratuito','Gratuito',0), ('b1000000-0000-0000-0000-0000000000e3','ch-inmersivo','Inmersivo',3);
 insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, activo, visible, plan_id) values ('b2000000-0000-0000-0000-0000000000e3','ch-sub','suscripcion','Sub',999,'EUR',true,true,'b1000000-0000-0000-0000-0000000000e3');
@@ -1974,22 +1976,62 @@ begin
   end loop;
   assert j ->> 'estado' = 'SUPERADO' and (j ->> 'aciertos')::int = 2 and (j -> 'recompensa' ->> 'base')::int = 5 and (j -> 'recompensa' ->> 'bonusRacha')::int = 0 and not (j -> 'recompensa' ->> 'reclamada')::boolean, 'passed with 2 of 3: free-plan reward frozen, not paid yet: ' || j::text;
   assert (j -> 'racha' ->> 'actual')::int = 1 and (j -> 'racha' ->> 'maxima')::int = 1, 'streak starts at 1';
-  -- ---- claim: only the own, passed row; idempotent; ledger-first
+  -- ---- claim: only the own, passed row; gates; idempotent; ledger-first
   perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, ua, reto_a), 'RETO_NOT_PASSED');
   perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, un, reto_a), 'NOT_FOUND');
+  update auth.users set confirmed_at = null where id = un;
+  perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, un, reto_n), 'EMAIL_UNVERIFIED');
+  update auth.users set confirmed_at = now() where id = un;
   j := public.app_claim_daily_challenge(un, reto_n);
-  assert (j -> 'recompensa' ->> 'total')::int = 5 and (j -> 'recompensa' ->> 'reclamada')::boolean and (j ->> 'saldo')::int = 5, 'claim pays the frozen amount: ' || j::text;
+  assert (j -> 'recompensa' ->> 'total')::int = 5 and (j -> 'recompensa' ->> 'reclamada')::boolean and not (j -> 'recompensa' ->> 'pendiente')::boolean and (j ->> 'saldo')::int = 5, 'claim pays the frozen amount: ' || j::text;
   assert public.app_claim_daily_challenge(un, reto_n) = j and (select count(*) from public.transacciones_cartera where usuario_id = un and tipo = 'reto_diario') = 1, 'a second claim pays nothing more';
-  assert (select idempotency_key from public.transacciones_cartera where usuario_id = un and tipo = 'reto_diario') = 'reto:' || un::text || ':' || today::text, 'one reward per user per Madrid day (key by day)';
+  assert (select idempotency_key from public.transacciones_cartera where usuario_id = un and tipo = 'reto_diario') = 'reto:' || un::text || ':' || today::text || ':base', 'one reward per user per Madrid day (key by day)';
   assert (public.app_get_daily_challenge(un) -> 'barraGlobal' ->> 'jugadores')::int = 1 and (public.app_get_daily_challenge(un) -> 'barraGlobal' ->> 'superados')::int = 1 and public.app_get_daily_challenge(un) ->> 'estado' = 'SUPERADO', 'the bar counts the completion of the user type';
-  -- ---- the guard and the cap function
+  -- ---- challenge media binding (W-4)
+  assert jsonb_array_length(public.app_get_daily_challenge(un) -> 'preguntas' -> 0 -> '_recursos') + jsonb_array_length(public.app_get_daily_challenge(un) -> 'preguntas' -> 1 -> '_recursos') + jsonb_array_length(public.app_get_daily_challenge(un) -> 'preguntas' -> 2 -> '_recursos') = 1, 'the payload carries the resource metadata of the questions of the reto';
+  select pr.pregunta_id into pid from public.preguntas_reto_diario pr where pr.reto_id = reto_n and pr.tipo_slot = 'inmersiva_demo';
+  select r.id into rid from public.recursos_pregunta r where r.pregunta_id = pid;
+  assert (public.app_challenge_resource(un, reto_n, pid, rid) ->> 'id')::uuid = rid, 'the owner of the reto gets the resource of its question';
+  perform pg_temp.expect_e(format($q$select public.app_challenge_resource(%L, %L, %L, %L)$q$, ua, reto_n, pid, rid), 'NOT_FOUND');          -- another user's reto
+  perform pg_temp.expect_e(format($q$select public.app_challenge_resource(%L, %L, %L, %L)$q$, un, reto_a, pid, rid), 'NOT_FOUND');          -- not the user's stored reto
+  perform pg_temp.expect_e(format($q$select public.app_challenge_resource(%L, %L, %L, %L)$q$, un, reto_n, qreg, rid), 'NOT_FOUND');         -- question outside the reto
+  perform pg_temp.expect_e(format($q$select public.app_challenge_resource(%L, %L, %L, %L)$q$, un, reto_n, pid, gen_random_uuid()), 'NOT_FOUND');  -- resource of no question of the reto
+  -- ---- the guard and the ONE earn function
   perform pg_temp.expect_e(format($q$insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, idempotency_key) values (%L, 'reto_diario', 1000, 'x', 'forged')$q$, un), 'FREE_EARN_WRITER_ONLY');
+  perform pg_temp.expect_e(format($q$insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, idempotency_key) values (%L, 'bonus_racha', 1, 'x', 'forged2')$q$, un), 'FREE_EARN_WRITER_ONLY');
+  perform pg_temp.expect_e(format($q$insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, idempotency_key) values (%L, 'referido', 1, 'x', 'forged3')$q$, un), 'FREE_EARN_WRITER_ONLY');
   perform public.admin_grant_tickets(un, 3, 'recompensa de reporte', 'k-rv', 'reporte_validado');
   assert exists (select 1 from public.transacciones_cartera where usuario_id = un and tipo = 'reporte_validado' and cantidad = 3), 'the admin-driven Opositester reward still works (counted in the cap)';
-  perform public.app_credit_free_ot(un, 'referido', 1000, 'invitacion', null, 'ref-1', '{}'::jsonb);
-  assert (select concedido from public.app_credit_free_ot(un, 'referido', 1000, 'invitacion', null, 'ref-1', '{}'::jsonb)) = 92 and (select outcome from public.app_credit_free_ot(un, 'referido', 1000, 'invitacion', null, 'ref-1', '{}'::jsonb)) = 'REPLAY', 'cap 100 - (5 + 3) = 92 granted, replay returns the stored row';
-  assert (select outcome from public.app_credit_free_ot(un, 'referido', 10, 'invitacion', null, 'ref-2', '{}'::jsonb)) = 'CAPPED' and (select concedido from public.app_credit_free_ot(un, 'referido', 10, 'invitacion', null, 'ref-2', '{}'::jsonb)) = 0, 'the daily cap is reached: nothing more is paid';
+  assert not exists (select 1 from pg_proc p where p.pronamespace in ('public'::regnamespace, 'private'::regnamespace) and p.prosrc ~* 'insert into public\.transacciones_cartera' and p.prosrc ~ '(reto_diario|bonus_racha|referido)' and p.proname <> 'free_ot_apply'), 'W-10: no other function writes the free-earn ledger types';
+  assert (select estado from public.app_credit_free_ot(un, 'referido', 1000, 'invitacion', null, 'ref-1', '{}'::jsonb)) = 'REJECTED_CAP' and not exists (select 1 from public.ot_ganancias_diferidas where clave = 'ref-1'), 'an amount above the cap alone is rejected, never split and never stored';
+  assert (select estado from public.app_credit_free_ot(un, 'referido', 92, 'invitacion', null, 'ref-1', '{}'::jsonb)) = 'CREDITED', 'cap 100 - (5 + 3) = 92 fits exactly';
+  assert (select estado from public.app_credit_free_ot(un, 'referido', 92, 'invitacion', null, 'ref-1', '{}'::jsonb)) = 'REPLAY' and (select count(*) from public.transacciones_cartera where usuario_id = un and idempotency_key = 'ref-1') = 1, 'replay returns the stored result, pays nothing';
+  assert (select estado from public.app_credit_free_ot(un, 'referido', 10, 'invitacion', null, 'ref-2', '{}'::jsonb)) = 'DEFERRED' and (select reintentar_despues from public.app_credit_free_ot(un, 'referido', 10, 'invitacion', null, 'ref-2', '{}'::jsonb)) > now(), 'over the window now: DEFERRED with a retry time';
+  assert (select count(*) from public.ot_ganancias_diferidas where usuario_id = un and clave = 'ref-2' and estado = 'pendiente') = 1 and not exists (select 1 from public.transacciones_cartera where idempotency_key = 'ref-2'), 'deferral stored once (replay of a deferred key does not duplicate), nothing paid';
+  assert (select estado from public.app_credit_free_ot(un, 'referido', 0, 'invitacion', null, 'ref-0', '{}'::jsonb)) = 'CREDITED' and not exists (select 1 from public.transacciones_cartera where idempotency_key = 'ref-0'), 'a zero amount writes nothing';
   perform pg_temp.expect_e($q$select * from public.app_credit_free_ot('a0000000-0000-0000-0000-0000000000e1', 'ajuste', 5, 'x', null, 'k', '{}'::jsonb)$q$, 'FREE_EARN_INVALID');
+  -- retry: still over the window = still pending; once the window allows it the deferral is paid exactly once
+  n := (select aplicadas from public.app_retry_deferred_free_ot(50));
+  assert n = 0 and (select count(*) from public.ot_ganancias_diferidas where estado = 'pendiente') = 1, 'the retry leaves it pending while the cap is reached';
+  update public.configuracion_v1 set valor_integer = 200 where clave = 'tope_ot_gratis_dia';
+  n := (select aplicadas from public.app_retry_deferred_free_ot(50));
+  assert n = 1 and (select estado from public.ot_ganancias_diferidas where clave = 'ref-2') = 'aplicada' and (select count(*) from public.transacciones_cartera where usuario_id = un and idempotency_key = 'ref-2') = 1, 'the retry pays the deferral once';
+  n := (select aplicadas from public.app_retry_deferred_free_ot(50));
+  assert (select estado from public.app_credit_free_ot(un, 'referido', 10, 'invitacion', null, 'ref-2', '{}'::jsonb)) = 'REPLAY' and n = 0, 'and never twice';
+  update public.configuracion_v1 set valor_integer = 100 where clave = 'tope_ot_gratis_dia';
+  -- expiry is visible, never paid silently
+  assert (select estado from public.app_credit_free_ot(un, 'referido', 10, 'invitacion', null, 'ref-3', '{}'::jsonb)) = 'DEFERRED', 'ref-3 deferred (day total is over the cap)';
+  update public.ot_ganancias_diferidas set hasta = now() - interval '1 minute' where clave = 'ref-3';
+  n := (select caducadas from public.app_retry_deferred_free_ot(50));
+  assert n = 1 and (select estado from public.ot_ganancias_diferidas where clave = 'ref-3') = 'caducada', 'an old deferral expires with a visible state';
+  assert (select estado from public.app_credit_free_ot(un, 'referido', 10, 'invitacion', null, 'ref-3', '{}'::jsonb)) = 'REJECTED_CAP' and not exists (select 1 from public.transacciones_cartera where idempotency_key = 'ref-3'), 'an expired deferral is not re-opened by the same key';
+  -- per source cap and weekly cap
+  insert into public.configuracion_v1 (clave, valor_integer) values ('tope_ot_referido_dia', 7), ('tope_ot_gratis_semana', 150) on conflict (clave) do update set valor_integer = excluded.valor_integer;
+  assert (select estado from public.app_credit_free_ot(ua, 'referido', 8, 'invitacion', null, 'ref-s1', '{}'::jsonb)) = 'REJECTED_CAP', 'a per-source cap rejects an amount above it';
+  update public.configuracion_v1 set valor_integer = 0 where clave in ('tope_ot_referido_dia', 'tope_ot_gratis_semana');
+  insert into public.configuracion_v1 (clave, valor_integer) values ('ot_gratis_referido_activa', 0) on conflict (clave) do update set valor_integer = 0;
+  assert (select estado from public.app_credit_free_ot(ua, 'referido', 1, 'invitacion', null, 'ref-s2', '{}'::jsonb)) = 'REJECTED_CAP', 'a disabled source rejects';
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'ot_gratis_referido_activa';
   -- ---- window: outside it answers are refused
   j := public.app_get_daily_challenge(us);
   rid := (j ->> 'retoId')::uuid;
@@ -1998,28 +2040,97 @@ begin
   perform pg_temp.expect_e(format($q$select public.app_answer_daily_challenge(%L, %L, %L, %L)$q$, us, rid, pid, ('0e800000-0000-0000-0000-000000000' || lpad(right(pid::text, 2), 2, '0') || '1')::uuid), 'RETO_OUT_OF_WINDOW');
   assert public.app_get_daily_challenge(us) ->> 'estado' = 'FALLADO', 'an unfinished challenge after its window reads as failed';
   update public.retos_diarios set termina_en = (select empieza_en + interval '24 hours' from public.retos_diarios where id = rid) where id = rid;
-  -- ---- streak bonus (from the 3rd consecutive day, plan amount) and the partial cap
+  -- ---- streak bonus (from the 3rd consecutive day, plan amount)
   insert into public.rachas_usuario (usuario_id, racha_actual_dias, mejor_racha_dias, ultima_actividad_fecha) values (us, 2, 5, today - 1);
   for pid in select pr.pregunta_id from public.preguntas_reto_diario pr where pr.reto_id = rid order by pr.posicion loop
     j := public.app_answer_daily_challenge(us, rid, pid, ('0e800000-0000-0000-0000-000000000' || lpad(right(pid::text, 2), 2, '0') || '1')::uuid);
   end loop;
   assert j ->> 'estado' = 'SUPERADO' and (j -> 'racha' ->> 'actual')::int = 3 and (j -> 'racha' ->> 'maxima')::int = 5 and (j -> 'recompensa' ->> 'base')::int = 20 and (j -> 'recompensa' ->> 'bonusRacha')::int = 20, 'subscriber on day 3 of the streak: plan reward + streak bonus: ' || j::text;
+  -- all or nothing: a rejected part rolls the whole claim back
+  insert into public.configuracion_v1 (clave, valor_integer) values ('ot_gratis_bonus_racha_activa', 0) on conflict (clave) do update set valor_integer = 0;
+  perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, us, rid), 'OT_EARN_CAP_REACHED');
+  assert not exists (select 1 from public.transacciones_cartera where usuario_id = us and tipo = 'reto_diario') and not (select recompensa_entregada from public.registros_reto_diario where usuario_id = us and reto_id = rid), 'a rejected part leaves the claim open and pays nothing';
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'ot_gratis_bonus_racha_activa';
+  -- the cap defers the second part: 200 with pendiente, then the retry completes it
   update public.configuracion_v1 set valor_integer = 30 where clave = 'tope_ot_gratis_dia';
   j := public.app_claim_daily_challenge(us, rid);
-  assert (j -> 'recompensa' ->> 'base')::int = 20 and (j -> 'recompensa' ->> 'bonusRacha')::int = 10 and (j ->> 'saldo')::int = 30, 'the daily cap trims the claim (base first, then the bonus): ' || j::text;
-  -- ua passes with the cap at zero: the claim stays OPEN (OT_EARN_CAP_REACHED), then pays when the cap allows it
+  assert (j -> 'recompensa' ->> 'base')::int = 20 and (j -> 'recompensa' ->> 'bonusRacha')::int = 20 and not (j -> 'recompensa' ->> 'reclamada')::boolean and (j -> 'recompensa' ->> 'pendiente')::boolean and (j ->> 'saldo')::int = 20, 'base paid, the bonus is deferred, the claim answers pending: ' || j::text;
+  assert public.app_claim_daily_challenge(us, rid) = j and (select count(*) from public.ot_ganancias_diferidas where usuario_id = us) = 1 and (public.app_get_daily_challenge(us) -> 'recompensa' ->> 'pendiente')::boolean, 'a second claim neither pays nor defers twice';
+  update public.configuracion_v1 set valor_integer = 100 where clave = 'tope_ot_gratis_dia';
+  n := (select aplicadas from public.app_retry_deferred_free_ot(50));
+  assert n = 1 and (select recompensa_entregada from public.registros_reto_diario where usuario_id = us and reto_id = rid), 'the retry completes the reward and closes the claim';
+  j := public.app_claim_daily_challenge(us, rid);
+  assert (j -> 'recompensa' ->> 'reclamada')::boolean and not (j -> 'recompensa' ->> 'pendiente')::boolean and (j ->> 'saldo')::int = 40, 'after the retry the claim reads as paid in full: ' || j::text;
+  -- ---- claim window and farming gates (W-9, W-6) with ua
   for pid in select pr.pregunta_id from public.preguntas_reto_diario pr where pr.reto_id = reto_a order by pr.posicion loop
     perform public.app_answer_daily_challenge(ua, reto_a, pid, ('0e800000-0000-0000-0000-000000000' || lpad(right(pid::text, 2), 2, '0') || '1')::uuid);
   end loop;
-  update public.configuracion_v1 set valor_integer = 0 where clave = 'tope_ot_gratis_dia';
-  perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, ua, reto_a), 'OT_EARN_CAP_REACHED');
-  assert not (select recompensa_entregada from public.registros_reto_diario where usuario_id = ua and reto_id = reto_a), 'the claim stays open while the cap is reached';
-  update public.configuracion_v1 set valor_integer = 100 where clave = 'tope_ot_gratis_dia';
-  assert (public.app_claim_daily_challenge(ua, reto_a) -> 'recompensa' ->> 'total')::int = 5, 'and pays when the cap allows it';
+  update public.registros_reto_diario set completado_en = now() - interval '5 days' where usuario_id = ua and reto_id = reto_a;
+  perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, ua, reto_a), 'RETO_CLAIM_EXPIRED');
+  assert not (select recompensa_entregada from public.registros_reto_diario where usuario_id = ua and reto_id = reto_a), 'an expired claim stays unpaid';
+  update public.registros_reto_diario set completado_en = now() where usuario_id = ua and reto_id = reto_a;
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'reto_min_respuestas_cobrar';
+  perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, ua, reto_a), 'RETO_CLAIM_NOT_ELIGIBLE');
+  update public.configuracion_v1 set valor_integer = 0 where clave = 'reto_min_respuestas_cobrar';
+  update public.configuracion_v1 set valor_integer = 24 where clave = 'reto_edad_minima_horas';
+  perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, ua, reto_a), 'RETO_CLAIM_NOT_ELIGIBLE');
+  update public.configuracion_v1 set valor_integer = 0 where clave = 'reto_edad_minima_horas';
+  assert (public.app_claim_daily_challenge(ua, reto_a) -> 'recompensa' ->> 'total')::int = 5, 'and pays once the gates allow it';
+  -- ---- W-11: no client privilege on any engagement table that exists
+  assert not exists (
+    select 1 from unnest(array['retos_diarios', 'preguntas_reto_diario', 'registros_reto_diario', 'respuestas_reto_diario', 'reto_contadores', 'etiquetas_comunidad', 'ot_ganancias_diferidas', 'rachas_usuario', 'ranking_liga',
+                               'estadisticas_usuario', 'estadisticas_usuario_etiqueta', 'estadisticas_usuario_pregunta', 'estado_competitivo_usuario', 'estado_opositester_usuario', 'ligas_nivel', 'lotes_actualizacion_ranking',
+                               'estadisticas_globales_etiqueta', 'estadisticas_globales_pregunta']) t(n)
+     cross join unnest(array['anon', 'authenticated']) r(rol)
+     cross join unnest(array['insert', 'update', 'delete', 'truncate']) pv(p)
+    where to_regclass('public.' || t.n) is not null and has_table_privilege(r.rol, 'public.' || t.n, pv.p)), 'W-11: no client holds DML on any engagement table';
+  assert not exists (
+    select 1 from unnest(array['preguntas_reto_diario', 'registros_reto_diario', 'respuestas_reto_diario', 'reto_contadores', 'etiquetas_comunidad', 'ot_ganancias_diferidas', 'ranking_liga', 'retos_diarios',
+                               'estadisticas_usuario', 'estadisticas_usuario_etiqueta', 'estadisticas_usuario_pregunta', 'estado_competitivo_usuario', 'estado_opositester_usuario',
+                               'estadisticas_globales_etiqueta', 'estadisticas_globales_pregunta', 'rachas_usuario']) t(n)
+    where to_regclass('public.' || t.n) is not null and has_table_privilege('anon', 'public.' || t.n, 'select')), 'W-11: anon reads none of them';
   -- ---- the streak read
   assert (public.app_get_streak(us) ->> 'actual')::int = 3 and (public.app_get_streak(u0) ->> 'actual')::int = 0, 'streak reads';
   update public.rachas_usuario set ultima_actividad_fecha = today - 2 where usuario_id = us;
   assert (public.app_get_streak(us) ->> 'actual')::int = 0, 'a streak missed for a whole day reads 0';
   raise notice 'OK V1 wave 2';
+end $$;
+rollback;
+
+-- 20261022101150: plan catalog read (D7-33).
+begin;
+do $$
+declare j jsonb;
+begin
+  insert into public.planes_suscripcion (id, codigo, nombre, nivel, posicion) values
+    ('b1000000-0000-0000-0000-0000000000f0', 'pc-gratuito', 'Gratuito', 0, 1), ('b1000000-0000-0000-0000-0000000000f2', 'pc-razonados', 'Razonados', 2, 3),
+    ('b1000000-0000-0000-0000-0000000000f3', 'pc-inmersivo', 'Inmersivo', 3, 4), ('b1000000-0000-0000-0000-0000000000f9', 'pc-oculto', 'Oculto', 1, 2);
+  update public.planes_suscripcion set visible = false where codigo = 'pc-oculto';
+  insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, activo, visible, plan_id, destacado) values
+    ('b2000000-0000-0000-0000-0000000000f2', 'pc-raz-m', 'suscripcion', 'Razonados mensual', true, true, 'b1000000-0000-0000-0000-0000000000f2', false),
+    ('b2000000-0000-0000-0000-0000000000f3', 'pc-inm-m', 'suscripcion', 'Inmersivo mensual', true, true, 'b1000000-0000-0000-0000-0000000000f3', true),
+    ('b2000000-0000-0000-0000-0000000000f4', 'pc-inm-a', 'suscripcion', 'Inmersivo anual', true, true, 'b1000000-0000-0000-0000-0000000000f3', true);
+  insert into public.tarifas_producto_comercial (producto_id, periodo_facturacion, fase_precio, precio_centimos) values
+    ('b2000000-0000-0000-0000-0000000000f2', 'mensual', 'standard', 999), ('b2000000-0000-0000-0000-0000000000f2', 'mensual', 'first_year', 499),
+    ('b2000000-0000-0000-0000-0000000000f3', 'mensual', 'standard', 1999), ('b2000000-0000-0000-0000-0000000000f4', 'anual', 'standard', 19990);
+  insert into public.beneficios_plan (plan_id, codigo_beneficio, valor_integer) values
+    ('b1000000-0000-0000-0000-0000000000f0', 'limite_preguntas_24h', 30), ('b1000000-0000-0000-0000-0000000000f3', 'inmersivos_incluidos', 2);
+  j := public.app_plan_catalog();
+  assert (select count(*) from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' like 'pc-%') = 3, 'only active and visible plans: ' || j::text;
+  assert (select e ->> 'planCodigo' from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' like 'pc-%' order by (e ->> 'orden')::int limit 1) = 'pc-gratuito', 'ordered by posicion';
+  assert (select e -> 'cobertura' ->> 'inmersivos' from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-inmersivo') = 'cupo'
+     and (select (e -> 'cobertura' ->> 'cupoInmersivos')::int from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-inmersivo') = 2
+     and (select e -> 'cobertura' ->> 'inmersivos' from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-razonados') = 'ninguno', 'immersive coverage comes from the plan benefit';
+  assert (select (e -> 'cobertura' ->> 'razonados')::boolean and (e -> 'cobertura' ->> 'rafagas')::boolean from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-razonados')
+     and not (select (e -> 'cobertura' ->> 'rafagas')::boolean from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-gratuito'), 'rafagas / razonados follow the level';
+  assert (select (e ->> 'limitePreguntas24h')::int from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-gratuito') = 30
+     and (select e ->> 'limitePreguntas24h' from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-inmersivo') is null, 'the 24 h limit is data (absent = unlimited)';
+  assert (select jsonb_array_length(e -> 'tarifas') from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-razonados') = 1
+     and (select (e -> 'tarifas' -> 0 ->> 'precioCentimos')::int from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-razonados') = 999, 'only standard tariffs are served (a plan with one period has one row)';
+  assert (select jsonb_array_length(e -> 'tarifas') from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-inmersivo') = 2
+     and (select e -> 'tarifas' -> 0 ->> 'periodo' from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-inmersivo') = 'mensual'
+     and (select e -> 'tarifas' -> 1 ->> 'productoCodigo' from jsonb_array_elements(j -> 'items') e where e ->> 'planCodigo' = 'pc-inmersivo') = 'pc-inm-a', 'monthly and annual are separate rows with their store product code';
+  assert not has_function_privilege('authenticated', 'public.app_plan_catalog()', 'execute') and has_function_privilege('service_role', 'public.app_plan_catalog()', 'execute'), 'service only';
+  raise notice 'OK V1 plan catalog';
 end $$;
 rollback;

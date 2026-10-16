@@ -89,6 +89,39 @@ components:
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    PlanCatalog:
+      get:
+        operationId: getPlanCatalog
+        summary: 'Plan catalog: coverage, daily limit and tariffs as data'
+        tags: [plan]
+        x-contract-id: D7-33
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Read-only, specialty independent, no user data. ACTIVE and VISIBLE plans ordered by orden. Coverage is DATA derived from the plan (rafagas = level >= 1, razonados = level >= 2, immersive quota = the plan benefit inmersivos_incluidos, never the plan name). limitePreguntas24h = the plan benefit (null = no limit). tarifas: only the STANDARD price phase of the plan''s active visible subscription products, ONE row per period (mensual, anual); the annual price is served as data (the client never computes or compares it); a plan with a single period has a single row (no toggle); productoCodigo is the store product code of that row. A plan without tariffs (Gratuito) has an empty list. An empty items list means the plan screen stays hidden. Per-user limiter of the CATALOG_READ class.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'The catalog.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PlanCatalog'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
   headers:
     NoStore:
       description: 'no-store'
@@ -143,3 +176,61 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PlanQuotaChoice'
+    PlanCatalog:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanCatalogItem'
+    PlanCatalogItem:
+      type: object
+      required: [planCodigo, nombre, nivel, orden, cobertura, tarifas]
+      properties:
+        planCodigo:
+          type: string
+        nombre:
+          type: string
+        nivel:
+          type: integer
+          minimum: 0
+          maximum: 3
+        orden:
+          type: integer
+        cobertura:
+          type: object
+          required: [rafagas, razonados, inmersivos]
+          properties:
+            rafagas:
+              type: boolean
+            razonados:
+              type: boolean
+            inmersivos:
+              type: string
+              enum: [ninguno, cupo]
+            cupoInmersivos:
+              type: integer
+              minimum: 1
+              description: 'Only with inmersivos = cupo.'
+        limitePreguntas24h:
+          type: [integer, 'null']
+          description: 'Questions that may be revealed in a rolling 24 hours; null (or absent) = no limit.'
+        tarifas:
+          type: array
+          items:
+            type: object
+            required: [periodo, precioCentimos, moneda, productoCodigo, destacado]
+            properties:
+              periodo:
+                type: string
+                enum: [mensual, anual]
+              precioCentimos:
+                type: integer
+                minimum: 0
+              moneda:
+                type: string
+              productoCodigo:
+                type: string
+              destacado:
+                type: boolean

@@ -22,6 +22,7 @@ import kotlinx.serialization.json.put
 //
 //   D7-31 GET /api/v1/app/plan/cupo                 plan, cupo, elegidos y contador del limitador diario
 //   D7-32 PUT /api/v1/app/plan/cupo/{examenId}      elegir un inmersivo con el cupo (idempotente por naturaleza, sin Idempotency-Key)
+//   D7-33 GET /api/v1/app/plan/catalogo             planes activos y visibles con cobertura, limite diario y tarifas (solo fase standard) COMO DATOS; sin datos de usuario
 //
 // Identidad = SOLO el `sub` del JWT. Todo lo demas (puertas de especialidad y capacidad, cupo, suscripcion, bloqueo por usuario) lo decide la base
 // en UNA funcion bajo el cerrojo del monedero; aqui solo forma, limite por usuario y traduccion de errores.
@@ -88,6 +89,13 @@ internal class PlanQuotaService(
             .getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
     }
 
+    /** D7-33: el cuerpo lo construye la base (`app_plan_catalog`) con la forma del contrato y se sirve tal cual. */
+    suspend fun catalog(): kotlinx.serialization.json.JsonElement {
+        val response = canonicalUpstreamIo { upstream.rpc("app_plan_catalog", "{}") }
+        if (!response.ok) throw EconomyRpcErrors.failure("app_plan_catalog", response)
+        return runCatching { json.parseToJsonElement(response.body) }.getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
+    }
+
     suspend fun choose(userId: CanonicalUserId, examId: String): PlanQuotaChoiceDto {
         if (!examId.isUuid()) throw validationError(ErrorIssue("examenId", CanonicalIssue.INVALID_FORMAT))
         val response = canonicalUpstreamIo {
@@ -113,6 +121,13 @@ private suspend fun ApplicationCall.planGate(runtime: PlanQuotaRuntime?, operati
 }
 
 internal fun Route.planQuotaRoutes(runtime: PlanQuotaRuntime?) {
+    route("/api/v1/app/plan/catalogo") {
+        get {
+            call.planGate(runtime, PlanOperation.READ)
+            requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+            call.respond(runtime!!.service.catalog())
+        }
+    }
     route("/api/v1/app/plan/cupo") {
         get {
             val identity = call.planGate(runtime, PlanOperation.READ)

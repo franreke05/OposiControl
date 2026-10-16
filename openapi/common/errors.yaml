@@ -141,6 +141,8 @@ components:
         - RETO_OUT_OF_WINDOW
         - RETO_NOT_PASSED
         - OT_EARN_CAP_REACHED
+        - RETO_CLAIM_EXPIRED
+        - RETO_CLAIM_NOT_ELIGIBLE
   headers:
     XRequestId:
       description: 'Request correlation id; equals ErrorEnvelope.requestId.'

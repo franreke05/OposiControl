@@ -111,8 +111,8 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NATURAL
-        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, RETO_NOT_PASSED, OT_EARN_CAP_REACHED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'Pays the frozen reward of the user challenge row of today (or a passed row not yet claimed): one ledger entry reto_diario and, from the 3rd consecutive day (capped by the Control parameter), one bonus_racha, each idempotent per user per Madrid day. Claiming twice answers 200 with the same amounts and pays nothing more. Only the user own SUPERADO row can be claimed (404 otherwise, 409 RETO_NOT_PASSED while it is not passed). A per-user daily cap on OT earned by rewards (Control) answers 409 OT_EARN_CAP_REACHED and pays nothing.'
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, EMAIL_UNVERIFIED, NOT_FOUND, RETO_NOT_PASSED, OT_EARN_CAP_REACHED, RETO_CLAIM_EXPIRED, RETO_CLAIM_NOT_ELIGIBLE, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Pays the frozen reward of the user challenge row of today (or a passed row not yet claimed): one ledger entry reto_diario and, from the 3rd consecutive day (capped by the Control parameter), one bonus_racha, each idempotent per user per Madrid day. Claiming twice answers 200 with the same amounts and pays nothing more. Only the user own SUPERADO row can be claimed (404 otherwise, 409 RETO_NOT_PASSED while it is not passed). ALL OR NOTHING through the single earn function: if the daily/weekly cap does not allow the reward NOW it is DEFERRED (stored, paid by a retry job when the window allows it, expires after ot_diferido_dias_validez days with a visible state) and the claim answers 200 with recompensa.pendiente = true and reclamada = false (claiming again neither pays nor defers twice); 409 OT_EARN_CAP_REACHED only when the reward can never be paid (the source is disabled or the amount exceeds the cap itself) and nothing is paid. Gates on the FIRST claim attempt: 403 EMAIL_UNVERIFIED (verified e-mail), 403 RETO_CLAIM_NOT_ELIGIBLE (optional Control minimums: real first answers and account age, off by default), 422 RETO_CLAIM_EXPIRED when more than reto_reclamar_dias (Control, default 3) Madrid days passed since completion (the row stays unpaid).'
         security:
           - bearerAuth: []
         parameters:
@@ -141,6 +141,63 @@ components:
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
             description: 'RETO_NOT_PASSED or OT_EARN_CAP_REACHED.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'RETO_CLAIM_EXPIRED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    DailyChallengeResource:
+      get:
+        operationId: getDailyChallengeResource
+        summary: 'Signed access to a media resource of a challenge question'
+        tags: [challenge]
+        x-contract-id: D3-19
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RESOURCE_NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Short-lived signed URL (same AttemptResourceAccess shape as D2-66). The database confirms the whole chain first: the reto is the user own stored row of today, the question belongs to that reto and the resource is an active resource of that question; anything else is 404 RESOURCE_NOT_FOUND (no probing). It never opens the parent exam.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: retoId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+          - name: preguntaId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+          - name: recursoId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+        responses:
+          '200':
+            description: 'Signed access.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '../attempts/attempts.yaml#/components/schemas/AttemptResourceAccess'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
@@ -225,6 +282,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ChallengeOption'
+        recursos:
+          type: array
+          description: 'Media metadata of the question (same shape as the attempt resources, no bucket or path). Bytes only through D3-19.'
+          items:
+            $ref: '../attempts/attempts.yaml#/components/schemas/AttemptResource'
         respuesta:
           description: 'Present only after the user answered; carries the correction.'
           oneOf:
@@ -245,6 +307,9 @@ components:
           minimum: 0
         reclamada:
           type: boolean
+        pendiente:
+          type: boolean
+          description: 'True while the reward (or its bonus part) is deferred by the earn cap and waits for the retry; reclamada stays false until it is paid in full.'
     DailyChallenge:
       type: object
       required: [estado, necesarios, aciertos, preguntas]

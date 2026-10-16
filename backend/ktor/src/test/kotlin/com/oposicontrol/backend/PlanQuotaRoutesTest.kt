@@ -119,4 +119,21 @@ class PlanQuotaRoutesTest {
         assertEquals(HttpStatusCode.Unauthorized, client.putAs("/api/v1/app/plan/cupo/$exam", token = null).status)
         assertTrue(upstream.rpcs.isEmpty())
     }
+
+    @Test
+    fun theCatalogIsAReadOnlyDatabasePayloadWithoutUserDataAndWithTheReadLimiter() = testApplication {
+        application { planModule() }
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, """{"items":[{"planCodigo":"inmersivo","nombre":"Inmersivo","nivel":3,"orden":4,"cobertura":{"rafagas":true,"razonados":true,"inmersivos":"cupo","cupoInmersivos":2},"tarifas":[{"periodo":"mensual","precioCentimos":1999,"moneda":"EUR","productoCodigo":"pc-inm-m","destacado":true}]}]}""") }
+        val client = createClient { }
+        val r = client.getAs("/api/v1/app/plan/catalogo")
+        assertEquals(HttpStatusCode.OK, r.status, r.bodyAsText())
+        assertEquals("no-store", r.headers[HttpHeaders.CacheControl])
+        assertEquals(1, obj(r.bodyAsText())["items"]!!.jsonArray.size)
+        val (fn, args) = upstream.rpcs.single()
+        assertEquals("app_plan_catalog", fn)
+        assertEquals("{}", args)
+        assertEquals(listOf(PlanOperation.READ), limited.toList())
+        assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/plan/catalogo?usuarioId=x").status)
+        assertEquals(HttpStatusCode.Unauthorized, client.getAs("/api/v1/app/plan/catalogo", token = null).status)
+    }
 }

@@ -175,10 +175,12 @@ class OpenApiContractTest {
         // FA27: cupo de inmersivos del plan (Access v2).
         "D7-31" to "GET /api/v1/app/plan/cupo",
         "D7-32" to "PUT /api/v1/app/plan/cupo/{examenId}",
+        "D7-33" to "GET /api/v1/app/plan/catalogo",
         // FA29: reto diario, reclamar y racha (V1 ola 2).
         "D3-16" to "GET /api/v1/app/retos/hoy",
         "D3-17" to "PUT /api/v1/app/retos/{retoId}/respuestas/{preguntaId}",
         "D3-18" to "POST /api/v1/app/retos/{retoId}/reclamar",
+        "D3-19" to "GET /api/v1/app/retos/{retoId}/preguntas/{preguntaId}/recursos/{recursoId}",
         "D3-04" to "GET /api/v1/app/racha",
     )
 

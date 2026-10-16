@@ -17,7 +17,10 @@ try {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
   }
   run(read('supabase/baseline/main_shape_subset.sql'), ['-1']);
-  for (const f of ['main_shape_subset_extra.sql', 'main_shape_subset_extra_plans.sql', 'main_shape_subset_extra_engagement.sql']) run(read('supabase/baseline/' + f));
+  for (const f of ['main_shape_subset_extra.sql', 'main_shape_subset_extra_plans.sql', 'main_shape_subset_extra_engagement.sql']) {
+    const x = run(read('supabase/baseline/' + f));
+    if (x.status !== 0) console.log('EXTRA FAILED', f, x.stderr.split('\n').filter((l) => !/NOTICE/.test(l)).slice(0, 8).join('\n'));
+  }
   for (const v of read('supabase/baseline/PENDING_MIGRATIONS.txt').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))) {
     const r = run(read(`supabase/migrations/${v}.sql`)); if (r.status !== 0) { console.log('MIGRATION FAILED', v, r.stderr); process.exit(1); }
   }

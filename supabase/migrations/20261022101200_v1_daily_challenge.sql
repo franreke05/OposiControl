@@ -9,15 +9,23 @@
 -- (etiquetas_comunidad) is eligible only for segments of that community; national / untagged questions go everywhere. ONE row per user per Madrid day (registros_reto_diario.dia UNIQUE with usuario_id): the most
 -- specific eligible row, frozen the first time it is opened that day. Answers are final, checked against the solution on the server, never feed exam statistics. Completion (3rd answer) updates the streak (single
 -- writer), freezes the reward amounts from the plan benefits (ot_reto_diario, ot_bonus_racha; trial and free users = the Gratuito plan) and the aggregate bar. The reward is PAID by the claim.
--- EARN CAP (E2): public.app_credit_free_ot is the ONLY writer of the free-earn ledger types (reto_diario, bonus_racha, referido; reporte_validado also from the admin function): wallet lock first, idempotent by key,
--- per-user Madrid-day cap (config tope_ot_gratis_dia). A guard trigger refuses those types otherwise.
+-- EARN CAP (E2 R-1, W-9): public.app_credit_free_ot is the ONLY writer of the free-earn ledger types (reto_diario, bonus_racha, referido; reporte_validado also from the admin function): wallet lock first,
+-- idempotent by key, ALL-OR-NOTHING (CREDITED / DEFERRED / REJECTED_CAP / REPLAY). Over the day/week window a reward is DEFERRED into ot_ganancias_diferidas and paid by app_retry_deferred_free_ot (job) when the window
+-- allows, or expires visibly; it is never split and never paid twice. A guard trigger refuses those ledger types otherwise.
+-- CLAIM (W-9, W-6): verified e-mail gate, optional min first answers / account age (config, default off), claim window reto_reclamar_dias, 200 + pendiente=true when deferred, 409 only when REJECTED_CAP.
+-- MEDIA (W-4): app_challenge_resource confirms the (user's reto of today, question of that reto, active resource of that question) chain before the server signs anything; the exam is never opened.
 --
 -- ROLLBACK (manual, executed verbatim by the PG17 gate)
 -- ROLLBACK-BEGIN
 -- begin;
 -- drop trigger if exists trg_ledger_free_earn_guard on public.transacciones_cartera;
 -- drop function if exists private.tg_ledger_free_earn_guard();
+-- drop function if exists public.app_challenge_resource(uuid, uuid, uuid, uuid);
+-- drop function if exists private.user_auth_facts(uuid);
+-- drop function if exists public.app_retry_deferred_free_ot(integer);
 -- drop function if exists public.app_credit_free_ot(uuid, text, integer, text, uuid, text, jsonb);
+-- drop function if exists private.free_ot_apply(uuid, text, integer, text, uuid, text, jsonb, boolean);
+-- drop table if exists public.ot_ganancias_diferidas;
 -- drop function if exists public.app_get_streak(uuid);
 -- drop function if exists public.app_claim_daily_challenge(uuid, uuid);
 -- drop function if exists public.app_answer_daily_challenge(uuid, uuid, uuid, uuid);
@@ -43,7 +51,7 @@
 -- grant select on public.retos_diarios, public.rachas_usuario, public.registros_reto_diario, public.ranking_liga, public.estado_premium_usuario to anon;
 -- grant select on public.retos_diarios, public.rachas_usuario, public.preguntas_reto_diario, public.ranking_liga to authenticated;
 -- grant select, insert, update, delete on public.registros_reto_diario to authenticated;
--- do $r$ begin if to_regclass('public.estadisticas_usuario') is not null then grant select on public.estadisticas_usuario to anon; end if; end $r$;
+-- do $r$ declare t text; begin foreach t in array array['estadisticas_usuario', 'estadisticas_usuario_etiqueta', 'estadisticas_usuario_pregunta', 'estado_competitivo_usuario', 'estado_opositester_usuario', 'estadisticas_globales_etiqueta', 'estadisticas_globales_pregunta'] loop if to_regclass('public.' || t) is not null then execute format('grant select on public.%I to anon', t); end if; end loop; if to_regclass('public.lotes_actualizacion_ranking') is not null then grant insert, update, delete on public.lotes_actualizacion_ranking to authenticated; end if; end $r$;
 -- do $r$ declare f text; begin for f in select p.oid::regprocedure::text from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'recalcular_estadisticas%' loop execute format('revoke all on function %s from postgres, service_role', f); execute format('grant execute on function %s to public', f); execute format('grant execute on function %s to postgres', f); execute format('grant execute on function %s to anon, authenticated, service_role', f); end loop; end $r$;
 -- commit;
 -- ROLLBACK-END
@@ -54,13 +62,14 @@
 --        (case when has_function_privilege('anon', f.n, 'execute') or has_function_privilege('authenticated', f.n, 'execute')
 --                or not has_function_privilege('service_role', f.n, 'execute') then 1 else 0 end)::bigint as failures
 --   from (values ('public.app_get_daily_challenge(uuid)'), ('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid)'), ('public.app_claim_daily_challenge(uuid,uuid)'), ('public.app_get_streak(uuid)'),
---                ('public.app_generate_daily_challenges(date)'), ('public.app_credit_free_ot(uuid,text,integer,text,uuid,text,jsonb)')) f(n)
+--                ('public.app_generate_daily_challenges(date)'), ('public.app_credit_free_ot(uuid,text,integer,text,uuid,text,jsonb)'),
+--                ('public.app_retry_deferred_free_ot(integer)'), ('public.app_challenge_resource(uuid,uuid,uuid,uuid)')) f(n)
 -- union all
 -- select 'challenge_tables_client_access:' || t.n,
 --        (case when has_table_privilege('anon', t.n, 'select') or has_table_privilege('authenticated', t.n, 'select') or has_table_privilege('authenticated', t.n, 'insert')
 --                or has_table_privilege('authenticated', t.n, 'update') or has_table_privilege('authenticated', t.n, 'delete')
 --                or not (select c.relrowsecurity from pg_class c where c.oid = t.n::regclass) then 1 else 0 end)::bigint
---   from (values ('public.registros_reto_diario'), ('public.preguntas_reto_diario'), ('public.ranking_liga'), ('public.respuestas_reto_diario'), ('public.etiquetas_comunidad'), ('public.reto_contadores')) t(n)
+--   from (values ('public.registros_reto_diario'), ('public.preguntas_reto_diario'), ('public.ranking_liga'), ('public.respuestas_reto_diario'), ('public.etiquetas_comunidad'), ('public.reto_contadores'), ('public.ot_ganancias_diferidas')) t(n)
 -- union all
 -- select 'recalcular_executable_by_clients',
 --        (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'recalcular_estadisticas%'
@@ -94,11 +103,16 @@ revoke select on table public.rachas_usuario from anon;
 do $$
 declare t text;
 begin
-  foreach t in array array['estadisticas_usuario', 'estado_premium_usuario'] loop
+  foreach t in array array['estadisticas_usuario', 'estado_premium_usuario', 'estadisticas_usuario_etiqueta', 'estadisticas_usuario_pregunta', 'estado_competitivo_usuario', 'estado_opositester_usuario',
+                           'estadisticas_globales_etiqueta', 'estadisticas_globales_pregunta'] loop
     if to_regclass('public.' || t) is not null then
       execute format('revoke select on table public.%I from anon', t);
     end if;
   end loop;
+  -- W-11: the ranking batches are written by the server only (an admin session must not rewrite them from a client)
+  if to_regclass('public.lotes_actualizacion_ranking') is not null then
+    revoke insert, update, delete on table public.lotes_actualizacion_ranking from authenticated;
+  end if;
   for t in select p.oid::regprocedure::text from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'recalcular_estadisticas%' loop
     execute format('revoke all on function %s from public, anon, authenticated', t);
     execute format('grant execute on function %s to service_role', t);
@@ -112,7 +126,12 @@ insert into public.configuracion_v1 (clave, valor_integer, valor_text) values
   ('bonus_racha_desde_dia', 3, null),
   ('bonus_racha_max_dias', 7, null),
   ('tope_ot_gratis_dia', 100, null),
-  ('reto_exige_email_verificado', 1, null)
+  ('reto_exige_email_verificado', 1, null),
+  ('reto_reclamar_dias', 3, null),
+  ('reto_min_respuestas_cobrar', 0, null),
+  ('reto_edad_minima_horas', 0, null),
+  ('tope_ot_gratis_semana', 0, null),
+  ('ot_diferido_dias_validez', 7, null)
 on conflict (clave) do nothing;
 
 -- ---- 3. schema
@@ -370,6 +389,7 @@ begin
            'tipoSlot', case pr.tipo_slot when 'inmersiva_demo' then 'INMERSIVA' when 'razonada' then 'RAZONADA' else 'RAFAGA' end,
            'preguntaId', pr.pregunta_id,
            'titulo', c.contenido ->> 'titulo',
+           '_recursos', coalesce(c.contenido -> 'recursos', '[]'::jsonb),
            'opciones', coalesce((select jsonb_agg(jsonb_build_object('id', o ->> 'id', 'letra', o ->> 'letra', 'texto', o ->> 'texto') order by (o ->> 'posicion')::int, o ->> 'id')
                                    from jsonb_array_elements(c.contenido -> 'opciones') o), '[]'::jsonb),
            'respuesta', case when a.pregunta_id is not null then jsonb_build_object('opcionId', a.opcion_id, 'esCorrecta', a.es_correcta,
@@ -381,7 +401,8 @@ begin
     left join public.respuestas_reto_diario a on a.usuario_id = p_usuario and a.reto_id = v_reto and a.pregunta_id = pr.pregunta_id
    where pr.reto_id = v_reto;
   if g.completado and g.superado then
-    v_recomp := jsonb_build_object('base', g.recompensa_base_tickets, 'bonusRacha', g.bonus_racha_tickets, 'total', g.recompensa_total_tickets, 'reclamada', g.recompensa_entregada);
+    v_recomp := jsonb_build_object('base', g.recompensa_base_tickets, 'bonusRacha', g.bonus_racha_tickets, 'total', g.recompensa_total_tickets, 'reclamada', g.recompensa_entregada,
+                                'pendiente', exists (select 1 from public.ot_ganancias_diferidas q where q.usuario_id = p_usuario and q.referencia_id = v_reto and q.estado = 'pendiente'));
   end if;
   v_tipo := case when exists (select 1 from public.estado_premium_usuario e where e.usuario_id = p_usuario and e.estado_suscripcion in ('activa', 'cancelada')
                                  and private.premium_active(e.es_premium, e.estado_suscripcion, e.fin_en, v_now)) then 'suscritos' else 'gratis' end;
@@ -519,7 +540,28 @@ $$;
 revoke all on function public.app_answer_daily_challenge(uuid, uuid, uuid, uuid) from public, anon, authenticated;
 grant execute on function public.app_answer_daily_challenge(uuid, uuid, uuid, uuid) to service_role;
 
--- ---- 9. the ONE writer of free-earn OT (E2 earn cap)
+-- ---- 9. the ONE writer of free-earn OT (E2 R-1 / W-9 / W-10): all-or-nothing, CREDITED / DEFERRED / REJECTED_CAP / REPLAY
+create table if not exists public.ot_ganancias_diferidas (
+  id uuid primary key default gen_random_uuid(),
+  usuario_id uuid not null references auth.users(id) on delete cascade,
+  tipo text not null check (tipo in ('reto_diario', 'bonus_racha', 'referido', 'reporte_validado')),
+  importe integer not null check (importe > 0),
+  clave text not null check (length(clave) between 1 and 128),
+  referencia_tipo text,
+  referencia_id uuid,
+  meta jsonb not null default '{}'::jsonb,
+  hasta timestamptz not null,
+  estado text not null default 'pendiente' check (estado in ('pendiente', 'aplicada', 'caducada')),
+  intentos integer not null default 0,
+  creado_en timestamptz not null default now(),
+  aplicada_en timestamptz,
+  unique (usuario_id, clave)
+);
+create index if not exists ix_ot_diferidas_pendientes on public.ot_ganancias_diferidas (creado_en, id) where estado = 'pendiente';
+create index if not exists ix_ot_diferidas_referencia on public.ot_ganancias_diferidas (usuario_id, referencia_id) where estado = 'pendiente';
+alter table public.ot_ganancias_diferidas enable row level security;
+revoke all on table public.ot_ganancias_diferidas from public, anon, authenticated, service_role;
+
 create or replace function private.tg_ledger_free_earn_guard()
 returns trigger
 language plpgsql
@@ -537,8 +579,9 @@ revoke all on function private.tg_ledger_free_earn_guard() from public, anon, au
 drop trigger if exists trg_ledger_free_earn_guard on public.transacciones_cartera;
 create trigger trg_ledger_free_earn_guard before insert on public.transacciones_cartera for each row execute function private.tg_ledger_free_earn_guard();
 
-create or replace function public.app_credit_free_ot(p_usuario uuid, p_tipo text, p_cantidad integer, p_referencia_tipo text, p_referencia_id uuid, p_idem_key text, p_meta jsonb)
-returns table(outcome text, transaccion_id uuid, concedido integer, saldo integer)
+-- the caller holds the user's wallet advisory lock. p_retry = the retry job re-offering an already stored deferral (no new deferral row).
+create or replace function private.free_ot_apply(p_usuario uuid, p_tipo text, p_cantidad integer, p_referencia_tipo text, p_referencia_id uuid, p_idem_key text, p_meta jsonb, p_retry boolean)
+returns table(estado text, transaccion_id uuid, saldo integer, reintentar_despues timestamptz)
 language plpgsql
 security definer
 set search_path = ''
@@ -546,52 +589,159 @@ as $$
 #variable_conflict use_column
 declare
   v_key text := btrim(p_idem_key);
-  v_ex public.transacciones_cartera%rowtype;
-  v_dia date;
+  v_now timestamptz := clock_timestamp();
   v_tz text := private.reto_tz();
-  v_ganado integer;
-  v_cap integer;
-  v_grant integer;
+  v_hoy date;
+  v_next timestamptz;
+  v_saldo integer;
+  v_ex public.transacciones_cartera%rowtype;
+  v_def public.ot_ganancias_diferidas%rowtype;
+  v_cap_d integer;
+  v_cap_w integer;
+  v_cap_td integer;
+  v_cap_tw integer;
+  v_d integer;
+  v_w integer;
+  v_td integer;
+  v_tw integer;
   v_tx public.transacciones_cartera%rowtype;
 begin
-  if p_tipo is null or p_tipo not in ('reto_diario', 'bonus_racha', 'referido', 'reporte_validado') or p_cantidad is null or p_cantidad < 0 or v_key is null or length(v_key) = 0 or length(v_key) > 128 then
+  v_hoy := (v_now at time zone v_tz)::date;
+  v_next := ((v_hoy + 1)::timestamp at time zone v_tz);
+  select coalesce((select w.saldo_tickets from public.carteras_usuario w where w.usuario_id = p_usuario), 0) into v_saldo;
+  select t.* into v_ex from public.transacciones_cartera t where t.usuario_id = p_usuario and t.idempotency_key = v_key;
+  if found then
+    return query select 'REPLAY'::text, v_ex.id, v_saldo, null::timestamptz;
+    return;
+  end if;
+  if p_cantidad = 0 then
+    return query select 'CREDITED'::text, null::uuid, v_saldo, null::timestamptz;
+    return;
+  end if;
+  select * into v_def from public.ot_ganancias_diferidas d where d.usuario_id = p_usuario and d.clave = v_key;
+  if found and not p_retry then
+    if v_def.estado = 'pendiente' then
+      return query select 'DEFERRED'::text, null::uuid, v_saldo, v_next;
+    else
+      return query select 'REJECTED_CAP'::text, null::uuid, v_saldo, null::timestamptz;  -- expired deferral: not paid, never silently re-opened
+    end if;
+    return;
+  end if;
+  v_cap_d := private.config_int('tope_ot_gratis_dia', 100);
+  v_cap_w := private.config_int('tope_ot_gratis_semana', 0);
+  v_cap_td := private.config_int('tope_ot_' || p_tipo || '_dia', 0);
+  v_cap_tw := private.config_int('tope_ot_' || p_tipo || '_semana', 0);
+  if private.config_int('ot_gratis_' || p_tipo || '_activa', 1) = 0
+     or (v_cap_d > 0 and p_cantidad > v_cap_d) or (v_cap_w > 0 and p_cantidad > v_cap_w)
+     or (v_cap_td > 0 and p_cantidad > v_cap_td) or (v_cap_tw > 0 and p_cantidad > v_cap_tw) then
+    return query select 'REJECTED_CAP'::text, null::uuid, v_saldo, null::timestamptz;
+    return;
+  end if;
+  select coalesce(sum(x.cantidad) filter (where x.d = v_hoy), 0), coalesce(sum(x.cantidad), 0),
+         coalesce(sum(x.cantidad) filter (where x.d = v_hoy and x.tipo = p_tipo), 0), coalesce(sum(x.cantidad) filter (where x.tipo = p_tipo), 0)
+    into v_d, v_w, v_td, v_tw
+    from (select t.cantidad, t.tipo, (t.creado_en at time zone v_tz)::date as d
+            from public.transacciones_cartera t
+           where t.usuario_id = p_usuario and t.tipo in ('reto_diario', 'bonus_racha', 'referido', 'reporte_validado') and t.cantidad > 0
+             and t.creado_en >= ((v_hoy - 6)::timestamp at time zone v_tz)) x;
+  if (v_cap_d > 0 and v_d + p_cantidad > v_cap_d) or (v_cap_w > 0 and v_w + p_cantidad > v_cap_w)
+     or (v_cap_td > 0 and v_td + p_cantidad > v_cap_td) or (v_cap_tw > 0 and v_tw + p_cantidad > v_cap_tw) then
+    if not p_retry then
+      insert into public.ot_ganancias_diferidas (usuario_id, tipo, importe, clave, referencia_tipo, referencia_id, meta, hasta)
+      values (p_usuario, p_tipo, p_cantidad, v_key, p_referencia_tipo, p_referencia_id,
+              coalesce(p_meta, '{}'::jsonb) || jsonb_build_object('ventana', jsonb_build_object('dia', v_d, 'semana', v_w, 'tope_dia', v_cap_d, 'tope_semana', v_cap_w)),
+              v_now + make_interval(days => greatest(private.config_int('ot_diferido_dias_validez', 7), 1)))
+      on conflict (usuario_id, clave) do nothing;
+    end if;
+    return query select 'DEFERRED'::text, null::uuid, v_saldo, v_next;
+    return;
+  end if;
+  perform set_config('oc.free_earn_writer', 'on', true);
+  insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
+  values (p_usuario, p_tipo, p_cantidad, case p_tipo when 'reto_diario' then 'Reto diario' when 'bonus_racha' then 'Bonus de racha' when 'referido' then 'Invitacion' else 'Reporte validado' end,
+          p_referencia_tipo, p_referencia_id, v_key,
+          coalesce(p_meta, '{}'::jsonb) || jsonb_build_object('op', 'free_earn', 'tope_dia', v_cap_d, 'ventana_dia', v_d, 'diferida', coalesce(p_retry, false)))
+  returning * into v_tx;
+  perform set_config('oc.free_earn_writer', 'off', true);
+  return query select 'CREDITED'::text, v_tx.id, v_tx.saldo_resultante, null::timestamptz;
+end;
+$$;
+revoke all on function private.free_ot_apply(uuid, text, integer, text, uuid, text, jsonb, boolean) from public, anon, authenticated;
+
+create or replace function public.app_credit_free_ot(p_usuario uuid, p_tipo text, p_cantidad integer, p_referencia_tipo text, p_referencia_id uuid, p_idem_key text, p_meta jsonb)
+returns table(estado text, transaccion_id uuid, saldo integer, reintentar_despues timestamptz)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if p_tipo is null or p_tipo not in ('reto_diario', 'bonus_racha', 'referido', 'reporte_validado') or p_cantidad is null or p_cantidad < 0
+     or p_idem_key is null or length(btrim(p_idem_key)) = 0 or length(btrim(p_idem_key)) > 128 then
     raise exception using errcode = 'P0001', message = 'FREE_EARN_INVALID';
   end if;
   if p_usuario is null or not exists (select 1 from public.perfiles_usuario pf where pf.usuario_id = p_usuario) then
     raise exception using errcode = 'P0001', message = 'WALLET_INVALID_USER';
   end if;
   perform pg_advisory_xact_lock(hashtextextended('wallet:' || p_usuario::text, 0));
-  select t.* into v_ex from public.transacciones_cartera t where t.usuario_id = p_usuario and t.idempotency_key = v_key;
-  if found then
-    return query select 'REPLAY'::text, v_ex.id, v_ex.cantidad, (select w.saldo_tickets from public.carteras_usuario w where w.usuario_id = p_usuario);
-    return;
-  end if;
-  if p_cantidad = 0 then
-    return query select 'ZERO'::text, null::uuid, 0, coalesce((select w.saldo_tickets from public.carteras_usuario w where w.usuario_id = p_usuario), 0);
-    return;
-  end if;
-  v_dia := (clock_timestamp() at time zone v_tz)::date;
-  select coalesce(sum(t.cantidad), 0) into v_ganado from public.transacciones_cartera t
-   where t.usuario_id = p_usuario and t.tipo in ('reto_diario', 'bonus_racha', 'referido', 'reporte_validado') and t.cantidad > 0 and (t.creado_en at time zone v_tz)::date = v_dia;
-  v_cap := private.config_int('tope_ot_gratis_dia', 100);
-  v_grant := least(p_cantidad, greatest(v_cap - v_ganado, 0));
-  if v_grant <= 0 then
-    return query select 'CAPPED'::text, null::uuid, 0, coalesce((select w.saldo_tickets from public.carteras_usuario w where w.usuario_id = p_usuario), 0);
-    return;
-  end if;
-  perform set_config('oc.free_earn_writer', 'on', true);
-  insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
-  values (p_usuario, p_tipo, v_grant, case p_tipo when 'reto_diario' then 'Reto diario' when 'bonus_racha' then 'Bonus de racha' when 'referido' then 'Invitacion' else 'Reporte validado' end,
-          p_referencia_tipo, p_referencia_id, v_key, coalesce(p_meta, '{}'::jsonb) || jsonb_build_object('op', 'free_earn', 'solicitado', p_cantidad, 'tope_dia', v_cap))
-  returning * into v_tx;
-  perform set_config('oc.free_earn_writer', 'off', true);
-  return query select case when v_grant < p_cantidad then 'CAPPED_PARTIAL' else 'CREDITED' end, v_tx.id, v_grant, v_tx.saldo_resultante;
+  return query select * from private.free_ot_apply(p_usuario, p_tipo, p_cantidad, p_referencia_tipo, p_referencia_id, p_idem_key, p_meta, false);
 end;
 $$;
 revoke all on function public.app_credit_free_ot(uuid, text, integer, text, uuid, text, jsonb) from public, anon, authenticated;
 grant execute on function public.app_credit_free_ot(uuid, text, integer, text, uuid, text, jsonb) to service_role;
 
--- ---- 10. claim (idempotent per user per Madrid day)
+-- retry job: re-offers the pending deferrals in age order (wallet locks taken in ASCENDING user id, the same order as any two-user caller) and expires the old ones
+create or replace function public.app_retry_deferred_free_ot(p_limite integer default 50)
+returns table(aplicadas integer, pendientes integer, caducadas integer)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_lim integer := least(greatest(coalesce(p_limite, 50), 1), 500);
+  v_ap integer := 0;
+  v_cad integer := 0;
+  r record;
+  d public.ot_ganancias_diferidas%rowtype;
+  o record;
+begin
+  update public.ot_ganancias_diferidas x set estado = 'caducada' where x.estado = 'pendiente' and x.hasta <= clock_timestamp();
+  get diagnostics v_cad = row_count;
+  for r in select z.id, z.usuario_id from (select y.id, y.usuario_id, y.creado_en from public.ot_ganancias_diferidas y where y.estado = 'pendiente' order by y.creado_en, y.id limit v_lim) z order by z.usuario_id, z.creado_en, z.id loop
+    perform pg_advisory_xact_lock(hashtextextended('wallet:' || r.usuario_id::text, 0));
+    select * into d from public.ot_ganancias_diferidas x where x.id = r.id for update;
+    if not found or d.estado <> 'pendiente' or d.hasta <= clock_timestamp() then
+      continue;
+    end if;
+    update public.ot_ganancias_diferidas set intentos = intentos + 1 where id = d.id;
+    select * into o from private.free_ot_apply(d.usuario_id, d.tipo, d.importe, d.referencia_tipo, d.referencia_id, d.clave, d.meta, true);
+    if o.estado in ('CREDITED', 'REPLAY') then
+      update public.ot_ganancias_diferidas set estado = 'aplicada', aplicada_en = clock_timestamp() where id = d.id;
+      v_ap := v_ap + 1;
+      if d.referencia_tipo = 'reto' and not exists (select 1 from public.ot_ganancias_diferidas q where q.usuario_id = d.usuario_id and q.referencia_id = d.referencia_id and q.estado = 'pendiente') then
+        update public.registros_reto_diario set recompensa_entregada = true where usuario_id = d.usuario_id and reto_id = d.referencia_id;
+      end if;
+    elsif o.estado = 'REJECTED_CAP' then
+      update public.ot_ganancias_diferidas set estado = 'caducada' where id = d.id;
+      v_cad := v_cad + 1;
+    end if;
+  end loop;
+  return query select v_ap, (select count(*)::integer from public.ot_ganancias_diferidas q where q.estado = 'pendiente'), v_cad;
+end;
+$$;
+revoke all on function public.app_retry_deferred_free_ot(integer) from public, anon, authenticated;
+grant execute on function public.app_retry_deferred_free_ot(integer) to service_role;
+
+-- two facts about the account (no identity data leaves): the app_* functions do not read auth.users themselves
+create or replace function private.user_auth_facts(p_usuario uuid)
+returns table(confirmado_en timestamptz, creado_en timestamptz)
+language sql
+stable
+security definer
+set search_path = ''
+as $$ select u.confirmed_at, u.created_at from auth.users u where u.id = p_usuario $$;
+revoke all on function private.user_auth_facts(uuid) from public, anon, authenticated;
+
+-- ---- 10. claim (idempotent per user per Madrid day; all-or-nothing; deferred = 200 + pendiente)
 create or replace function public.app_claim_daily_challenge(p_usuario uuid, p_reto uuid)
 returns jsonb
 language plpgsql
@@ -601,10 +751,17 @@ as $$
 declare
   g public.registros_reto_diario%rowtype;
   v_now timestamptz;
+  v_today date;
+  v_tz text := private.reto_tz();
+  v_key_base text;
+  v_key_racha text;
   a record;
   b record;
-  v_base integer;
-  v_bonus integer;
+  v_started boolean;
+  v_pend boolean;
+  v_confirmado timestamptz;
+  v_creado timestamptz;
+  v_n integer;
   v_saldo integer;
 begin
   if p_usuario is null or p_reto is null then
@@ -612,6 +769,7 @@ begin
   end if;
   perform pg_advisory_xact_lock(hashtextextended('wallet:' || p_usuario::text, 0));
   v_now := clock_timestamp();
+  v_today := private.reto_today(v_now);
   select * into g from public.registros_reto_diario x where x.usuario_id = p_usuario and x.reto_id = p_reto and x.dia is not null;
   if not found then
     raise exception using errcode = 'P0001', message = 'NOT_FOUND';
@@ -621,23 +779,72 @@ begin
   end if;
   select coalesce(w.saldo_tickets, 0) into v_saldo from public.carteras_usuario w where w.usuario_id = p_usuario;
   if g.recompensa_entregada then
-    return jsonb_build_object('recompensa', jsonb_build_object('base', g.recompensa_base_tickets, 'bonusRacha', g.bonus_racha_tickets, 'total', g.recompensa_total_tickets, 'reclamada', true), 'saldo', coalesce(v_saldo, 0));
+    return jsonb_build_object('recompensa', jsonb_build_object('base', g.recompensa_base_tickets, 'bonusRacha', g.bonus_racha_tickets, 'total', g.recompensa_total_tickets, 'reclamada', true, 'pendiente', false), 'saldo', coalesce(v_saldo, 0));
   end if;
-  select * into a from public.app_credit_free_ot(p_usuario, 'reto_diario', g.recompensa_base_tickets, 'reto', p_reto, 'reto:' || p_usuario::text || ':' || g.dia::text, jsonb_build_object('dia', g.dia));
-  select * into b from public.app_credit_free_ot(p_usuario, 'bonus_racha', g.bonus_racha_tickets, 'reto', p_reto, 'racha:' || p_usuario::text || ':' || g.dia::text, jsonb_build_object('dia', g.dia));
-  v_base := coalesce(a.concedido, 0);
-  v_bonus := coalesce(b.concedido, 0);
-  if v_base + v_bonus = 0 and g.recompensa_total_tickets > 0 then
-    raise exception using errcode = 'P0001', message = 'OT_EARN_CAP_REACHED';  -- nothing could be paid today: the claim stays open
+  v_key_base := 'reto:' || p_usuario::text || ':' || g.dia::text || ':base';
+  v_key_racha := 'racha:' || p_usuario::text || ':' || g.dia::text;
+  v_started := exists (select 1 from public.ot_ganancias_diferidas q where q.usuario_id = p_usuario and q.clave in (v_key_base, v_key_racha))
+            or exists (select 1 from public.transacciones_cartera t where t.usuario_id = p_usuario and t.idempotency_key in (v_key_base, v_key_racha));
+  if not v_started then
+    -- first claim attempt only: window and farming gates (W-9, W-6); once the earn started, replays never re-gate
+    if (v_today - (g.completado_en at time zone v_tz)::date) > private.config_int('reto_reclamar_dias', 3) then
+      raise exception using errcode = 'P0001', message = 'RETO_CLAIM_EXPIRED';
+    end if;
+    select f.confirmado_en, f.creado_en into v_confirmado, v_creado from private.user_auth_facts(p_usuario) f;
+    if private.config_int('reto_exige_email_verificado', 1) = 1 and v_confirmado is null then
+      raise exception using errcode = 'P0001', message = 'EMAIL_UNVERIFIED';
+    end if;
+    if private.config_int('reto_edad_minima_horas', 0) > 0 and (v_creado is null or v_now - v_creado < make_interval(hours => private.config_int('reto_edad_minima_horas', 0))) then
+      raise exception using errcode = 'P0001', message = 'RETO_CLAIM_NOT_ELIGIBLE';
+    end if;
+    if private.config_int('reto_min_respuestas_cobrar', 0) > 0 then
+      select count(*)::integer into v_n from public.respuestas_intento ri join public.intentos_examen ie on ie.id = ri.intento_id
+       where ie.usuario_id = p_usuario and ri.es_primer_intento_pregunta and not coalesce(ie.es_demo, false);
+      if v_n < private.config_int('reto_min_respuestas_cobrar', 0) then
+        raise exception using errcode = 'P0001', message = 'RETO_CLAIM_NOT_ELIGIBLE';
+      end if;
+    end if;
   end if;
-  update public.registros_reto_diario set recompensa_entregada = true, recompensa_base_tickets = v_base, bonus_racha_tickets = v_bonus, recompensa_total_tickets = v_base + v_bonus
-   where usuario_id = p_usuario and reto_id = p_reto;
+  select * into a from public.app_credit_free_ot(p_usuario, 'reto_diario', g.recompensa_base_tickets, 'reto', p_reto, v_key_base, jsonb_build_object('dia', g.dia));
+  select * into b from public.app_credit_free_ot(p_usuario, 'bonus_racha', g.bonus_racha_tickets, 'reto', p_reto, v_key_racha, jsonb_build_object('dia', g.dia));
+  if a.estado = 'REJECTED_CAP' or b.estado = 'REJECTED_CAP' then
+    raise exception using errcode = 'P0001', message = 'OT_EARN_CAP_REACHED';  -- rolls back a part that was already credited: all or nothing
+  end if;
+  v_pend := a.estado = 'DEFERRED' or b.estado = 'DEFERRED';
+  if not v_pend then
+    update public.registros_reto_diario set recompensa_entregada = true where usuario_id = p_usuario and reto_id = p_reto;
+  end if;
   select coalesce(w.saldo_tickets, 0) into v_saldo from public.carteras_usuario w where w.usuario_id = p_usuario;
-  return jsonb_build_object('recompensa', jsonb_build_object('base', v_base, 'bonusRacha', v_bonus, 'total', v_base + v_bonus, 'reclamada', true), 'saldo', v_saldo);
+  return jsonb_build_object('recompensa', jsonb_build_object('base', g.recompensa_base_tickets, 'bonusRacha', g.bonus_racha_tickets, 'total', g.recompensa_total_tickets, 'reclamada', not v_pend, 'pendiente', v_pend), 'saldo', v_saldo);
 end;
 $$;
 revoke all on function public.app_claim_daily_challenge(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.app_claim_daily_challenge(uuid, uuid) to service_role;
+
+-- ---- 10b. challenge media (W-4): the chain (user's stored reto of today, question of that reto, active resource of that question) is confirmed here; Ktor signs only what this returns
+create or replace function public.app_challenge_resource(p_usuario uuid, p_reto uuid, p_pregunta uuid, p_recurso uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_res jsonb;
+begin
+  if p_usuario is null or p_reto is null or p_pregunta is null or p_recurso is null
+     or not exists (select 1 from public.registros_reto_diario g where g.usuario_id = p_usuario and g.reto_id = p_reto and g.dia = private.reto_today(clock_timestamp()))
+     or not exists (select 1 from public.preguntas_reto_diario pr where pr.reto_id = p_reto and pr.pregunta_id = p_pregunta) then
+    raise exception using errcode = 'P0001', message = 'NOT_FOUND';
+  end if;
+  select e into v_res from jsonb_array_elements(coalesce(private.app_revision_pregunta_contenido(p_pregunta) -> 'recursos', '[]'::jsonb)) e where e ->> 'id' = p_recurso::text;
+  if v_res is null then
+    raise exception using errcode = 'P0001', message = 'NOT_FOUND';
+  end if;
+  return v_res;
+end;
+$$;
+revoke all on function public.app_challenge_resource(uuid, uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function public.app_challenge_resource(uuid, uuid, uuid, uuid) to service_role;
 
 create or replace function public.app_get_streak(p_usuario uuid)
 returns jsonb

@@ -16,13 +16,23 @@ insert into public.beneficios_plan (plan_id, codigo_beneficio, valor_integer) va
   ('b1000000-0000-4000-8000-000000000000', 'limite_preguntas_24h', 30),
   ('b1000000-0000-4000-8000-000000000001', 'limite_preguntas_24h', 100),
   ('b1000000-0000-4000-8000-000000000002', 'limite_preguntas_24h', 200),
-  ('b1000000-0000-4000-8000-000000000003', 'inmersivos_incluidos', 2)
+  ('b1000000-0000-4000-8000-000000000003', 'inmersivos_incluidos', 2),
+  -- wave 2 (daily challenge) reward amounts, test values
+  ('b1000000-0000-4000-8000-000000000000', 'ot_reto_diario', 5), ('b1000000-0000-4000-8000-000000000000', 'ot_bonus_racha', 0),
+  ('b1000000-0000-4000-8000-000000000001', 'ot_reto_diario', 10), ('b1000000-0000-4000-8000-000000000001', 'ot_bonus_racha', 5),
+  ('b1000000-0000-4000-8000-000000000002', 'ot_reto_diario', 15), ('b1000000-0000-4000-8000-000000000002', 'ot_bonus_racha', 10),
+  ('b1000000-0000-4000-8000-000000000003', 'ot_reto_diario', 20), ('b1000000-0000-4000-8000-000000000003', 'ot_bonus_racha', 20)
 on conflict (plan_id, codigo_beneficio) do nothing;
 insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, descripcion, precio_centimos, moneda, activo, visible, posicion, plan_id) values
   ('7b400000-0000-4000-8000-000000000001', 'local-sub-rafagas', 'suscripcion', 'Suscripcion Rafagas (prueba local)', 'Valor de prueba local', 299, 'EUR', true, true, 10, 'b1000000-0000-4000-8000-000000000001'),
   ('7b400000-0000-4000-8000-000000000002', 'local-sub-razonados', 'suscripcion', 'Suscripcion Razonados (prueba local)', 'Valor de prueba local', 699, 'EUR', true, true, 11, 'b1000000-0000-4000-8000-000000000002'),
   ('7b400000-0000-4000-8000-000000000003', 'local-sub-inmersivo', 'suscripcion', 'Suscripcion Inmersivo (prueba local)', 'Valor de prueba local', 999, 'EUR', true, true, 12, 'b1000000-0000-4000-8000-000000000003')
 on conflict (id) do nothing;
+-- plan catalog (D7-33): standard tariffs, monthly and annual as separate rows (annual = a Control suggestion of monthly x 10, served as data)
+insert into public.tarifas_producto_comercial (producto_id, periodo_facturacion, fase_precio, precio_centimos, moneda, posicion) values
+  ('7b400000-0000-4000-8000-000000000001', 'mensual', 'standard', 299, 'EUR', 1), ('7b400000-0000-4000-8000-000000000002', 'mensual', 'standard', 699, 'EUR', 1),
+  ('7b400000-0000-4000-8000-000000000003', 'mensual', 'standard', 999, 'EUR', 1), ('7b400000-0000-4000-8000-000000000003', 'anual', 'standard', 9990, 'EUR', 2)
+on conflict (producto_id, periodo_facturacion, fase_precio) do nothing;
 insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, descripcion, cantidad_tickets, precio_centimos, moneda, activo, visible, destacado, posicion, metadatos) values
   ('7b400000-0000-4000-8000-000000000101', 'LOCAL_RECARGA_100', 'pack_tickets', 'Recarga 100 OT (prueba local)', 'Bloque de recarga libre', 100, 100, 'EUR', true, true, false, 20, '{"recarga_base": true}'),
   ('7b400000-0000-4000-8000-000000000102', 'LOCAL_RECARGA_200', 'pack_tickets', 'Recarga 200 OT (prueba local)', 'Bloque de recarga libre', 200, 200, 'EUR', true, true, false, 21, '{"recarga_base": true}'),

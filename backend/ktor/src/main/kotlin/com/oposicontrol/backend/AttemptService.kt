@@ -721,53 +721,10 @@ internal class AttemptService(
         val started = System.nanoTime()
         val resource = gateway.frozenResource(row.id, resourceId)
         metrics.timer("exam_media_metadata_seconds").record(java.time.Duration.ofNanos(System.nanoTime() - started))
-        val path = resource?.ruta
-        if (resource == null || resource.tipo !in RESOURCE_TYPES || resource.bucket != RESOURCES_BUCKET || path == null ||
-            !RESOURCE_PATH.matches(path) || path.split('/')[2].substringBefore('.') != resourceId
-        ) {
-            throw CanonicalErrorCode.RESOURCE_NOT_FOUND.exception()
-        }
-        val now = clock()
-        val url = try {
-            gateway.signedUrl(RESOURCES_BUCKET, path, RESOURCE_URL_TTL_SECONDS)
-        } catch (failure: BackendDomainException) {
-            throw failure
-        } catch (failure: Exception) {
-            throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(retryAfterSeconds = 2, cause = failure)
-        }
-        AttemptResourceAccess(
-            url = url,
-            expiresAt = now.plusSeconds(RESOURCE_URL_TTL_SECONDS.toLong()).toString(),
-            mimeType = resource.mimeString(),
-            version = resource.version(),
-        )
+        QuestionResources.access(resource, resourceId, clock()) { bucket, path, ttl -> gateway.signedUrl(bucket, path, ttl) }
     }
 
-    private fun resourceDto(resource: RevisionResource): AttemptResourceDto? {
-        if (resource.tipo !in RESOURCE_TYPES || !resource.id.isUuid()) return null
-        return AttemptResourceDto(
-            id = resource.id,
-            tipo = resource.tipo,
-            titulo = resource.titulo.orEmpty(),
-            mimeType = resource.mimeString(),
-            version = resource.version(),
-            sizeBytes = resource.bytes.longOrNull()?.takeIf { it >= 0 },
-            durationMs = resource.durationMs.longOrNull()?.takeIf { it >= 0 },
-            envelope = if (resource.tipo == "audio") AudioEnvelope.fromStored(resource.envelope) else null,
-        )
-    }
-
-    private fun RevisionResource.mimeString(): String? =
-        (mime as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { MIME.matches(it) }
-
-    /** sha256(id|ruta|mime|bytes), 16 hex: cambia si cambia el objeto o sus metadatos; estable mientras no. */
-    private fun RevisionResource.version(): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-            .digest("$id|${ruta.orEmpty()}|${mimeString().orEmpty()}|${bytes.longOrNull() ?: ""}".toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }.take(16)
-    }
-
-    private fun JsonElement?.longOrNull(): Long? = (this as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toLongOrNull()
+    private fun resourceDto(resource: RevisionResource): AttemptResourceDto? = QuestionResources.dto(resource)
 
     private fun AttemptRow.toDto(now: Instant, openUnanswered: Int?): AttemptDto {
         if (estado !in ATTEMPT_STATES) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
@@ -907,12 +864,6 @@ internal class AttemptService(
 
         /** Bucket PRIVADO de Q3 (`recursos_pregunta_ubicacion_formato_chk`). */
         internal const val RESOURCES_BUCKET = "recursos-pregunta"
-
-        /** La ruta que exige el CHECK de Q3: `preguntas/<pregunta>/<recurso>.<ext>`. Nada fuera de esta forma se firma. */
-        private val RESOURCE_PATH = Regex(
-            "^preguntas/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[a-z0-9]{2,4}$",
-        )
-        private val MIME = Regex("^[a-z]+/[a-z0-9.+-]+$")
 
         /** Vida de la URL firmada: corta (un enlace filtrado caduca pronto); el cliente pide otra al caducar. */
         internal const val RESOURCE_URL_TTL_SECONDS = 300
