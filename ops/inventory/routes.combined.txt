@@ -143,6 +143,7 @@ GET /api/v1/app/payments/orders/{}
 GET /api/v1/app/plan/catalogo
 GET /api/v1/app/plan/cupo
 GET /api/v1/app/racha
+GET /api/v1/app/ranking
 GET /api/v1/app/reto-diario
 GET /api/v1/app/retos/hoy
 GET /api/v1/app/retos/{}/preguntas/{}/recursos/{}
@@ -297,6 +298,7 @@ PUT /api/v1/admin/tipos-noticia/{}
 PUT /api/v1/app/intentos/{}/respuestas/{}
 PUT /api/v1/app/opositeca/guardados/{}/{}
 PUT /api/v1/app/plan/cupo/{}
+PUT /api/v1/app/ranking/visibilidad
 PUT /api/v1/app/retos/{}/respuestas/{}
 PUT /content/comunidades
 PUT /content/especialidades
