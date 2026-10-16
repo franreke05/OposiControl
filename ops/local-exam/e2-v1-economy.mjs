@@ -229,13 +229,12 @@ await scenario('R_REFUND_P2', async () => {
     if (!has) check('P2.gifted_access_untouched_NOT_RUN_function_missing_converge_first', true, 'admin_grant_exam_access(4 args) not applied on this DB');
     else { sql("select * from public.admin_grant_exam_access('" + u.id + "', '" + EX.CHEAP + "', 'regalo', null);"); const c = await buy(u); await redeem(u, EX.CHEAP); const gift0 = endDays(u, EX.CHEAP, 'regalo'); const b = endDays(u, EX.CHEAP); const r = await refund(c);
       check('P2.refund_when_the_access_was_gifted_keeps_the_gift_and_cuts_the_purchase_row', r.json?.result === 'REFUNDED_P2' && Math.abs(endDays(u, EX.CHEAP, 'regalo') - gift0) < 0.01 && endDays(u, EX.CHEAP) <= gift0 + 0.01 && (await state(u, EX.CHEAP)) === 'GRANTED', 'gift=' + gift0 + ' purchase ' + b + ' -> ' + endDays(u, EX.CHEAP)); } }
-  // P7 days changed after the purchase (the cut uses the CURRENT dias_acceso_compra, not the days granted at purchase)
-  { const u = nu('p7'); const c = await buy(u, 'LOCAL_PACK_50'); await redeem(u, EX.CHEAP); const b = endDays(u, EX.CHEAP);
+  // P7 days changed after the purchase: the cut uses the days GRANTED at purchase (P01 fix), not the current exam setting
+  { const u = nu('p7'); const c1 = await buy(u); await redeem(u, EX.CHEAP); const c2 = await buy(u); await redeem(u, EX.CHEAP); const b = endDays(u, EX.CHEAP);
     sql("set session_replication_role = replica; update public.examenes set dias_acceso_compra = 90 where id = '" + EX.CHEAP + "'; set session_replication_role = origin;");
-    const other = nu('p7o'); const oc = await buy(other, 'LOCAL_PACK_50'); sql("select 1;");
-    await refund(c); const a = endDays(u, EX.CHEAP);
+    const r = await refund(c1); const a = endDays(u, EX.CHEAP);
     sql("set session_replication_role = replica; update public.examenes set dias_acceso_compra = 30 where id = '" + EX.CHEAP + "'; set session_replication_role = origin;");
-    finding('P2.cut_uses_the_days_granted_at_purchase_not_the_current_exam_setting', Math.abs((b - a) - 30) < 0.1 || a <= 0.01, 'granted ' + b + ' d, after refund ' + a + ' d with the exam setting changed to 90 before the refund (over-cut is bounded by now)', 'E2-V1-P01'); }
+    check('P2.P01_cut_uses_the_days_granted_at_purchase_not_the_current_exam_setting', r.json?.result === 'REFUNDED_P2' && Math.abs(b - 60) < 0.05 && Math.abs(a - 30) < 0.05, 'end ' + b + ' -> ' + a + ' (setting changed to 90 before the refund; old code cut 90 and left ~0)'); }
   // P8 flag off (APP_ENV local but PAYMENTS_REFUNDS_ENABLED=false): the webhook writes nothing and answers 503
   { const u = nu('p8'); const c = await buy(u); const wBefore = Number(sql("select count(*) from public.eventos_pago where compra_id = '" + c.id + "';"));
     killKtor(); await sleep(1500); const savedEnv = process.env.PAYMENTS_REFUNDS_ENABLED; process.env.PAYMENTS_REFUNDS_ENABLED = 'false'; await startKtor();
@@ -251,7 +250,7 @@ await scenario('T_SAVED', async () => {
   const Q = 'f2c00000-0000-4000-8000-000000000001', QD = 'f2c00000-0000-4000-8000-000000000041', EXD = 'e2c00000-0000-4000-8000-000000000041';
   sql("set session_replication_role = replica; insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas, comunidad_id, comprable_con_tickets, precio_tickets, dias_acceso_compra, demo_disponible) values ('" + EXD + "', 'E2C-DEMO', '" + LOCX + "', 'E2C demo', 'inmersivo', 'premium', true, now() - interval '1 day', 1, (select id from public.comunidades_autonomas order by codigo limit 1), true, 10, 30, true) on conflict (id) do update set demo_disponible = true, activo = true, publicado_en = now() - interval '1 day'; insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values ('" + QD + "', 'E2C-QD', 'inmersiva', 'TITULO-SECRETO-DEL-EXAMEN-PREMIUM', true) on conflict (id) do nothing; insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select '" + EXD + "', '" + QD + "', 1, 1 where not exists (select 1 from public.preguntas_examen where examen_id = '" + EXD + "'); set session_replication_role = origin;");
   const B = '/api/v1/app/opositeca/guardados';
-  const put = (u, q) => call(u, 'PUT', B + '/pregunta/' + q); const del = (u, q) => call(u, 'DELETE', B + '/pregunta/' + q); const list = (u, qs = '') => call(u, 'GET', B + '/pregunta' + qs);
+  const put = (u, q) => call(u, 'PUT', B + '/pregunta/' + q); const del = (u, q) => call(u, 'DELETE', B + '/pregunta/' + q); const list = (u, qs = '') => call(u, 'GET', '/api/v1/app/opositeca' + qs);
   const NF = (r) => r.status === 404; const users = [];
   const a = mkUser('sva'); users.push(a); grant(a, 40); const b = mkUser('svb'); users.push(b);
   const own = await redeem(a, EX.CHEAP); const p1 = await put(a, Q); const p2 = await put(a, Q);
@@ -273,11 +272,12 @@ await scenario('T_SAVED', async () => {
   check('SV.accesible_is_recomputed_at_read_time_and_the_content_is_hidden_when_false', lock.status === 200 && row && row.accesible === false && !row.titulo && !row.examenTitulo && !lock.text.includes('"titulo":"E2C'), JSON.stringify(row ?? {}).slice(0, 200));
   // DEMO state: saving any question of an exam in DEMO state (not entitled, demo_disponible)
   const dm = mkUser('svd'); users.push(dm); const dp = await put(dm, QD); const dl = await list(dm);
-  finding('SV.demo_only_state_does_not_let_a_user_save_and_read_titles_of_non_demo_questions', !(dp.status === 200 && dl.text.includes('TITULO-SECRETO')), 'save=' + dp.status + ' list shows the premium question title=' + dl.text.includes('TITULO-SECRETO') + ' (gate is state <> LOCKED and DEMO is not LOCKED)', 'E2-V1-S01');
+  check('SV.S01_demo_only_state_cannot_save_nor_read_titles_of_non_demo_questions', NF(dp) && !dl.text.includes('TITULO-SECRETO') && Number(sql("select count(*) from public.recursos_guardados_usuario where usuario_id = '" + dm.id + "';")) === 0, 'save=' + dp.status + ' leak=' + dl.text.includes('TITULO-SECRETO'));
+  const rd = mkUser('svr'); users.push(rd); const reads = []; for (let i = 0; i < 125; i++) reads.push((await list(rd)).status);
+  check('SV.read_limiter_429_after_120_reads_per_minute', reads.indexOf(429) >= 118 && reads.indexOf(429) <= 122, 'first429=#' + (reads.indexOf(429) + 1));
   // keyset abuse
   const many = mkUser('svm'); users.push(many); grant(many, 100);
-  sql("set session_replication_role = replica; insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) select ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid, 'E2C-SV' || i, 'inmersiva', 'sv ' || i, true from generate_series(1, 520) i on conflict (id) do nothing; insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select '" + EX.CHEAP + "', ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid, 100 + i, 100 + i from generate_series(1, 520) i where not exists (select 1 from public.preguntas_examen pe where pe.pregunta_id = ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid and pe.examen_id = '" + EX.CHEAP + "'); set session_replication_role = origin;");
-  await redeem(many, EX.CHEAP);
+  sql("set session_replication_role = replica; insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) select ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid, 'E2C-SV' || i, 'inmersiva', 'sv ' || i, true from generate_series(1, 520) i on conflict (id) do nothing; insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas, comunidad_id, comprable_con_tickets, precio_tickets, dias_acceso_compra) select ('e2c00000-0000-4000-8000-0000000000' || (60 + k))::uuid, 'E2C-SVX' || k, '" + LOCX + "', 'E2C saved ' || k, 'rafaga', 'gratuito', true, now() - interval '1 day', 130, (select id from public.comunidades_autonomas order by codigo limit 1), false, null, 30 from generate_series(0, 3) k on conflict (id) do update set activo = true, publicado_en = now() - interval '1 day'; insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select ('e2c00000-0000-4000-8000-0000000000' || (60 + ((i - 1) / 130)))::uuid, ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid, ((i - 1) % 130) + 1, ((i - 1) % 130) + 1 from generate_series(1, 520) i where not exists (select 1 from public.preguntas_examen pe where pe.pregunta_id = ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid); set session_replication_role = origin;");
   sql("set session_replication_role = replica; insert into public.recursos_guardados_usuario (usuario_id, tipo, pregunta_id, guardado_en) select '" + many.id + "', 'pregunta', ('f2c00000-0000-4000-8000-' || lpad(to_hex(1000 + i), 12, '0'))::uuid, now() - (i || ' seconds')::interval from generate_series(1, 499) i; set session_replication_role = origin;");
   const q500 = 'f2c00000-0000-4000-8000-' + (1000 + 500).toString(16).padStart(12, '0'); const q501 = 'f2c00000-0000-4000-8000-' + (1000 + 501).toString(16).padStart(12, '0');
   const c500 = await put(many, q500); const c501 = await put(many, q501); const again = await put(many, q500);
@@ -288,7 +288,7 @@ await scenario('T_SAVED', async () => {
   const tamper = []; for (const c of ['AAAA', 'not-a-cursor', Buffer.from('{"ts":"2000-01-01T00:00:00Z","id":"' + uuid() + '"}').toString('base64url'), "x' or 1=1", 'A'.repeat(5000)]) { const r = await list(many, '?cursor=' + encodeURIComponent(c)); if (![400, 422].includes(r.status)) tamper.push(c.slice(0, 8) + ':' + r.status); }
   const cross = next ? await list(b, '?cursor=' + encodeURIComponent(next)) : { status: 0, text: '' };
   check('SV.keyset_pages_cover_all_500_without_duplicates_and_forged_cursors_are_rejected_4xx', seen.size === 500 && tamper.length === 0 && !(cross.text ?? '').includes(many.id), 'pages=' + pages + ' seen=' + seen.size + ' tamper-bad=' + (tamper.join(' ') || 'none') + ' cross=' + cross.status);
-  const lim = []; for (let i = 0; i < 65; i++) lim.push((await call(b, 'DELETE', B + '/pregunta/' + uuid())).status);
+  const wu = mkUser('svw'); users.push(wu); const lim = []; for (let i = 0; i < 65; i++) lim.push((await call(wu, 'DELETE', B + '/pregunta/' + uuid())).status);
   check('SV.write_limiter_SAVED_WRITE_429_after_60_per_minute', lim.indexOf(429) >= 60 && lim.indexOf(429) <= 62, 'first429=#' + (lim.indexOf(429) + 1));
   const pre = Number(sql("select count(*) from public.recursos_guardados_usuario;"));
   const direct = sqlTry("set role service_role; select count(*) from public.recursos_guardados_usuario;"); const anon = sqlTry("set role authenticated; select count(*) from public.recursos_guardados_usuario;");
@@ -445,7 +445,7 @@ await scenario('C_ENTITLEMENT', async () => {
   const rp = await redeem(p, EX.CHEAP);
   check('B9.premium_user_cannot_pay_for_accessible_exam', rp.status === 409 && rp.json?.code === 'ALREADY_ACCESSIBLE' && balance(p) === 100, `${rp.status} ${rp.json?.code}`);
   const ul = mkUser('cunl'); grant(ul, 100);
-  sql(`insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('${ul.id}', '${EX.CHEAP}', 'regalo', now() - interval '1 day', null);`);
+  sql(`set session_replication_role = replica; insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('${ul.id}', '${EX.CHEAP}', 'regalo', now() - interval '1 day', null); set session_replication_role = origin;`); /* legacy unlimited row: only reachable bypassing the G05 trigger */
   const ru = await redeem(ul, EX.CHEAP);
   check('B9.unlimited_grant_cannot_be_bought_again', ru.status === 409 && ru.json?.code === 'ALREADY_ACCESSIBLE' && balance(ul) === 100, `${ru.status} ${ru.json?.code}`);
   const lim = mkUser('clim'); grant(lim, 100);

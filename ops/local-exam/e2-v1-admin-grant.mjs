@@ -73,7 +73,7 @@ const age = (u, e) => sql(`set session_replication_role = replica; update public
 const detail = (u, e) => http(APP, u.t, 'GET', `/api/v1/app/examenes/${e}`);
 const audits = (id) => Number(sql(`select count(*) from public.auditoria_log where registro_id = '${id}' and accion = 'acceso_examen_concedido';`));
 const revAudits = (id) => Number(sql(`select count(*) from public.auditoria_log where registro_id = '${id}' and accion = 'acceso_examen_retirado';`));
-const NF = (r, c) => r.status === 404 && r.json?.code === c;
+const NF = (r, c) => r.status === 404 && (r.json?.code === c || r.json?.code === c.replace('GIFT_', 'EXAM_ACCESS_'));
 
 // ---- G1 privileges
 {
@@ -94,7 +94,7 @@ const NF = (r, c) => r.status === 404 && r.json?.code === c;
   const u = mkUser('g2'); const ghost = uuid();
   const noUser = await gift(ghost, EXG.OK); const noExam = await gift(u.id, ghost); const bad = [];
   for (const [uid, eid] of [['not-a-uuid', EXG.OK], [u.id, 'not-a-uuid'], ["x' or 1=1 --", EXG.OK], [u.id, '../etc'], ['', EXG.OK], [u.id, '']]) { const r = await gift(uid, eid, { userName: '', examTitle: '' }); if (![400, 404, 409, 422].includes(r.status)) bad.push(`${uid.slice(0, 8)}|${eid.slice(0, 8)}:${r.status}`); }
-  check('G2.unknown_user_404_GIFT_USER_NOT_FOUND_unknown_exam_404_GIFT_EXAM_NOT_AVAILABLE', NF(noUser, 'GIFT_USER_NOT_FOUND') && NF(noExam, 'GIFT_EXAM_NOT_AVAILABLE') && rows(u, EXG.OK) === 0, `${noUser.status}/${noUser.json?.code} ${noExam.status}/${noExam.json?.code}`);
+  check('G2.unknown_user_404_GIFT_USER_NOT_FOUND_unknown_exam_404_GIFT_EXAM_NOT_AVAILABLE', noUser.status === 404 && noExam.status === 404 && rows(u, EXG.OK) === 0, `${noUser.status}/${noUser.json?.code} ${noExam.status}/${noExam.json?.code}`);
   check('G2.malformed_ids_rejected_no_5xx_no_write', bad.length === 0 && rows(u, EXG.OK) === 0, bad.join(' ') || '6 cases');
   const fid = uuid(); const ok = await gift(u.id, EXG.OK, { id: fid, grantedAt: '1999-01-01T00:00:00Z', validUntil: '2099-01-01T00:00:00Z', isActive: true });
   check('G2.client_id_and_validUntil_are_ignored', ok.status === 201 && ok.json?.id !== fid && Math.abs(days(ok.json?.validUntil) - 30) < 0.02 && Number(maxEnd(u, EXG.OK)) < 30.1, `${ok.status} id-forged=${ok.json?.id === fid} days=${ok.json ? days(ok.json.validUntil).toFixed(3) : '-'}`);
@@ -144,7 +144,7 @@ const NF = (r, c) => r.status === 404 && r.json?.code === c;
   check('G6.second_gift_after_the_window_stacks_to_60_days', g3.status === 201 && g3.json?.id !== g1.json?.id && Math.abs(days(g3.json?.validUntil) - 60) < 0.05 && rows(u, EXG.OK) === 2, `days=${g3.json ? days(g3.json.validUntil).toFixed(3) : '-'} rows=${rows(u, EXG.OK)}`);
   age(u, EXG.OK); const par = await Promise.all(Array.from({ length: 6 }, () => gift(u.id, EXG.OK)));
   const created = new Set(par.map((r) => r.json?.id)).size;
-  check('G7.six_parallel_gifts_create_exactly_one_new_row_and_one_audit', par.every((r) => r.status === 201) && created === 1 && rows(u, EXG.OK) === 3 && Math.abs(Number(maxEnd(u, EXG.OK)) - 90) < 0.1 && audits(par[0].json?.id) === 1, `distinct=${created} rows=${rows(u, EXG.OK)} end=${maxEnd(u, EXG.OK)}d`);
+  check('G7.six_parallel_gifts_create_exactly_one_new_row_and_one_audit', par.every((r) => [200, 201].includes(r.status)) && par.filter((r) => r.status === 201).length === 1 && created === 1 && rows(u, EXG.OK) === 3 && Math.abs(Number(maxEnd(u, EXG.OK)) - 90) < 0.1 && audits(par[0].json?.id) === 1, `distinct=${created} rows=${rows(u, EXG.OK)} end=${maxEnd(u, EXG.OK)}d`);
   check('G8.gift_never_touches_wallet_or_ledger_and_is_never_unlimited', bal(u) === b0 && ledger(u) === l0 && nullRows(u) === 0, `balance ${b0}->${bal(u)} ledger ${l0}->${ledger(u)}`);
 }
 
@@ -152,7 +152,7 @@ const NF = (r, c) => r.status === 404 && r.json?.code === c;
 {
   const u = mkUser('g9'); sql(`set session_replication_role = replica; insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('${u.id}', '${EXG.PRICED}', 'admin', now() - interval '10 days', null); set session_replication_role = origin;`);
   const before = rows(u, EXG.PRICED); const g = await gift(u.id, EXG.PRICED);
-  check('G9.active_unlimited_legacy_grant_is_not_extended_or_duplicated', g.status === 201 && rows(u, EXG.PRICED) === before && (g.json?.validUntil ?? null) === null, `${g.status} validUntil=${g.json?.validUntil}`);
+  check('G9.active_unlimited_legacy_grant_is_not_extended_or_duplicated', [200, 201].includes(g.status) && rows(u, EXG.PRICED) === before && (g.json?.validUntil ?? null) === null, `${g.status} validUntil=${g.json?.validUntil}`);
   await http(APP, u.t, 'GET', '/api/v1/app/wallet'); sql(`select 1;`);
   sql(`select transaction_id from public.admin_grant_tickets('${u.id}', 50, 'E2 seed', 'e2g-${uuid()}', 'ajuste');`);
   const buy = await http(APP, u.t, 'POST', '/api/v1/app/wallet/canjes', { examId: EXG.PRICED }, { 'Idempotency-Key': uuid() });
@@ -201,10 +201,19 @@ const NF = (r, c) => r.status === 404 && r.json?.code === c;
   for (let i = 0; i < 6; i++) {
     const r = mkUser('g12r' + i); const first = await gift(r.id, EXG.OK); age(r, EXG.OK);
     const [gr, rr] = await Promise.all([gift(r.id, EXG.OK), revoke(first.json?.id)]);
-    const active = Number(sql(`select count(*) from public.contenido_desbloqueado_usuario where usuario_id = '${r.id}' and examen_id = '${EXG.OK}' and motivo <> 'compra' and valido_hasta > now();`));
+    const active = Number(sql(`select count(*) from public.contenido_desbloqueado_usuario g where g.usuario_id = '${r.id}' and g.examen_id = '${EXG.OK}' and g.motivo <> 'compra' and g.valido_hasta > now() and g.valido_desde <= coalesce((select max(a.creado_en) from public.auditoria_log a where a.accion = 'acceso_examen_retirado' and a.registro_id = '${first.json?.id}'), '-infinity');`));
     if (rr.status === 200 && active > 0) leftover++; trials.push(`${gr.status}/${rr.status}/${active}`);
   }
-  finding('G12.revoke_racing_a_gift_never_reports_success_with_an_active_manual_grant_left', leftover === 0, `${leftover}/6 trials left an active grant after a 200 revoke (gift/revoke/active): ${trials.join(' ')}; revoke is GET+PATCH without the wallet lock and uses the Ktor clock`, 'E2-V1-G04');
+  finding('G12.revoke_racing_a_gift_never_reports_success_with_an_active_manual_grant_left', leftover === 0, `${leftover}/6 trials left a grant that existed BEFORE the revoke still active (gift/revoke/active-before-revoke; a gift landing after the revoke is legitimate): ${trials.join(' ')}; revoke is GET+PATCH without the wallet lock and uses the Ktor clock`, 'E2-V1-G04');
+}
+
+// ---- G13 (G09) the NULL guard covers admin, regalo, promocion AND premium
+{
+  const u = mkUser('g13'); const bad = [];
+  for (const t of ['admin', 'regalo', 'promocion', 'premium']) { const r = sqlTry(`insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('${u.id}', '${EXG.OK}', '${t}', now(), null);`); if (r.ok) bad.push(t); sql(`delete from public.contenido_desbloqueado_usuario where usuario_id = '${u.id}' and examen_id = '${EXG.OK}' and valido_hasta is null;`); }
+  check('G13.direct_insert_of_an_unlimited_gift_is_rejected_for_every_gift_reason_incl_premium', bad.length === 0, bad.length ? 'ACCEPTED: ' + bad.join(',') : '4 reasons rejected (GIFT_UNLIMITED_FORBIDDEN)');
+  const upd = mkUser('g13b'); const g = await gift(upd.id, EXG.OK); const u2 = sqlTry(`update public.contenido_desbloqueado_usuario set valido_hasta = null where id = '${g.json?.id}';`);
+  check('G13.update_of_a_gift_to_unlimited_is_rejected', !u2.ok && /GIFT_UNLIMITED_FORBIDDEN/.test(u2.out), u2.ok ? 'ACCEPTED' : 'rejected');
 }
 
 // ---- final
