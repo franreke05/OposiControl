@@ -347,7 +347,7 @@ $$;
 
 -- 7. Refund of a credited order, POLICY P2 (owner decision 2026-10-16): reverse ONLY the unspent part of THIS credit; for the part that was SPENT on
 --    exam access (compra_examen debits traced to this credit by ot_consumos) shorten the still-valid access in proportion (consumed/price of the
---    purchase x dias_acceso_compra); never below now, never lengthen, expired access untouched, no silent negative balance, no revocation.
+--    purchase x the days GRANTED at purchase, kept in the debit metadata as dias; an older debit without it falls back to the exam current dias_acceso_compra); never below now, never lengthen, expired access untouched, no silent negative balance, no revocation.
 --    Spent OT on anything else (ajuste, regalo...) has no access to shorten: it stays spent and is recorded in the closed case.
 create or replace function public.app_refund_payment_order(p_proveedor text, p_evento_id text, p_orden uuid)
 returns table(outcome text, orden_id uuid, estado text, producto_codigo text, cantidad_tickets integer, importe_centimos integer,
@@ -403,7 +403,7 @@ begin
     v_now := clock_timestamp();  -- DB clock, after the wallet lock
     -- P2: shorten the still-valid purchase access financed by this credit (one pass per traced exam debit, FIFO already decided by ot_consumos).
     for v_cut in
-      select d.id as debit_id, d.referencia_id as examen_id, k.cantidad as consumed, -d.cantidad as price, e.dias_acceso_compra as dias
+      select d.id as debit_id, d.referencia_id as examen_id, k.cantidad as consumed, -d.cantidad as price, coalesce(nullif(d.metadatos ->> 'dias', '')::integer, e.dias_acceso_compra) as dias
         from public.ot_consumos k
         join public.transacciones_cartera d on d.id = k.debit_tx_id
         join public.examenes e on e.id = d.referencia_id

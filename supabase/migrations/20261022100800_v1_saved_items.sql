@@ -5,8 +5,8 @@
 --   Deleting the user or the question deletes the saved rows (on delete cascade).
 -- public.app_save_item(user, tipo, target): ONE transaction under a per-user advisory lock ('saved:' || user, separate from the wallet lock: saving never waits for a payment):
 --   * idempotent: an already saved question returns its ORIGINAL guardado_en, nothing is written (even if access was lost since);
---   * a NEW save needs the question to be active and to belong (preguntas_examen, not anulada) to an exam that is active, published and whose access verdict for the user is not
---     LOCKED (the verdict holds rule 0 = the SPECIALTY GATE, then capability, free / grant / subscription / demo). Missing or not openable = NOT_FOUND (same answer, no probing);
+--   * a NEW save needs the question to be active and to belong (preguntas_examen, not anulada) to an exam that is active, published and whose access verdict for the user is FREE,
+--     GRANTED or SUBSCRIPTION (the set that may START the exam; DEMO does not count: a demo subset is not the whole exam; the verdict holds rule 0 = the SPECIALTY GATE, then capability). Missing or not openable = NOT_FOUND (same answer, no probing);
 --   * cap of 500 saved questions per user (technical default, NEEDS_OWNER_DECISION) = SAVED_LIMIT_REACHED, checked under the lock so parallel saves cannot pass it together.
 -- public.app_unsave_item(user, tipo, target): idempotent delete scoped to the user; returns the number of rows removed (0 or 1).
 -- public.app_saved_state(user, tipo, ids[]): which of up to 50 ids the user has saved (initial state of the toggle).
@@ -98,7 +98,7 @@ begin
       join public.preguntas_examen pe on pe.pregunta_id = q.id and not pe.anulada
       join public.examenes e on e.id = pe.examen_id and e.activo and e.publicado_en <= v_now
      where q.id = p_target and q.activa
-       and exists (select 1 from private.exam_access_verdict(p_usuario, e.id, v_now) v where v.state <> 'LOCKED')
+       and exists (select 1 from private.exam_access_verdict(p_usuario, e.id, v_now) v where v.state in ('FREE', 'GRANTED', 'SUBSCRIPTION'))
   ) then
     raise exception using errcode = 'P0001', message = 'NOT_FOUND';
   end if;
@@ -170,7 +170,7 @@ begin
           from public.preguntas_examen pe
           join public.examenes e on e.id = pe.examen_id and e.activo and e.publicado_en <= v_now
          where pe.pregunta_id = s.pregunta_id and not pe.anulada and q.activa
-           and exists (select 1 from private.exam_access_verdict(p_usuario, e.id, v_now) v where v.state <> 'LOCKED')
+           and exists (select 1 from private.exam_access_verdict(p_usuario, e.id, v_now) v where v.state in ('FREE', 'GRANTED', 'SUBSCRIPTION'))
          order by e.publicado_en desc, e.id
          limit 1
       ) x on true

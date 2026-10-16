@@ -15,7 +15,7 @@
 --   never a purchase (GRANT_IS_PURCHASE), idempotent (ALREADY_INACTIVE writes nothing), audited in the same transaction (`acceso_examen_retirado`). A gift committed between a read and the update
 --   cannot stay active while the revoke answers 200.
 -- Table guard (trigger): an INSERT, or an UPDATE of valido_hasta, that leaves valido_hasta NULL on a GIFT row (motivo admin, regalo, promocion) is refused (GIFT_UNLIMITED_FORBIDDEN). Legacy unlimited
---   rows stay valid and untouched (an UPDATE that keeps NULL is allowed). Not applied to premium (a subscription may be open ended) nor to purchases (their own trigger).
+--   rows stay valid and untouched (an UPDATE that keeps NULL is allowed). Premium is included (E2-V1-G09: the route accepts it and develop CHECK vocabulary keeps it; the subscription itself lives in estado_premium_usuario, not here); purchases have their own trigger.
 --   RECONCILE NOTE: develop's un-merged `upsertExamAccess` writes NULL; this trigger would refuse it, but the merge replaces that body with the RPC call (develop did not change that function since the
 --   merge-base), and this migration is only ever deployed together with that route.
 --
@@ -167,7 +167,7 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  if new.valido_hasta is null and new.motivo in ('admin', 'regalo', 'promocion') and new.examen_id is not null
+  if new.valido_hasta is null and new.motivo in ('admin', 'regalo', 'promocion', 'premium') and new.examen_id is not null
      and (tg_op = 'INSERT' or old.valido_hasta is not null) then
     raise exception using errcode = '23514', message = 'GIFT_UNLIMITED_FORBIDDEN';
   end if;

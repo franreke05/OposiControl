@@ -154,6 +154,7 @@ class SavedItemsRoutesTest {
         val r = client.getAs("/api/v1/app/opositeca/guardados/pregunta?ids=$question,$other,$question")
         assertEquals(HttpStatusCode.OK, r.status, r.bodyAsText())
         assertEquals(listOf(question), obj(r.bodyAsText())["guardados"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertTrue(SavedOperation.READ in limited, "INFO: the state read goes through the per-user read limiter (CATALOG_READ class)")
         val sent = obj(upstream.rpcs.single().second)["p_ids"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals(listOf(question, other), sent, "se normaliza y sin repetidos")
         upstream.rpcs.clear()
@@ -180,6 +181,7 @@ class SavedItemsRoutesTest {
         val page = obj(first.bodyAsText())
         val items = page["items"]!!.jsonArray.map { it.jsonObject }
         assertEquals(2, items.size)
+        assertTrue(SavedOperation.READ in limited, "INFO: the list goes through the per-user read limiter (CATALOG_READ class)")
         assertEquals("T1", items[0]["pregunta"]!!.jsonObject["titulo"]!!.jsonPrimitive.content)
         assertEquals(false, items[1]["accesible"]!!.jsonPrimitive.content.toBoolean())
         assertNull(items[1]["pregunta"], "el contenido de lo que ya no se puede abrir no se sirve")

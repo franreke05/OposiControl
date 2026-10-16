@@ -252,7 +252,7 @@ begin
 
   insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
   values (p_usuario, 'compra_examen', -v_exam.precio_tickets, 'Acceso a examen', 'examen', p_examen, v_key,
-          jsonb_build_object('op', 'redeem', 'fp', v_fp, 'valido_desde', v_from, 'valido_hasta', v_until, 'comprado_en', v_now))
+          jsonb_build_object('op', 'redeem', 'fp', v_fp, 'dias', v_exam.dias_acceso_compra, 'valido_desde', v_from, 'valido_hasta', v_until, 'comprado_en', v_now))
   returning * into v_ledger;
 
   insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta, precio_pagado, moneda, transaccion_id, comprado_en)

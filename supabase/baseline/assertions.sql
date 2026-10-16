@@ -1010,6 +1010,39 @@ begin
   assert (select valido_hasta from public.contenido_desbloqueado_usuario where usuario_id = u4 and examen_id = e30) = v, 'A: the access financed by ANOTHER credit is untouched';
 end $$;
 
+-- ---- P01 (E2-V1-P01): the cut uses the days GRANTED at purchase (debit metadata), not the exam current setting; older debits fall back to the current days
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000d5','p25@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000d6','p26@test.local','authenticated','authenticated');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+  select u, 'p2' || right(u::text, 1), 'p2' || right(u::text, 1), true, 'activa', 'e1000000-0000-0000-0000-0000000000d1'
+  from (values ('a0000000-0000-0000-0000-0000000000d5'::uuid), ('a0000000-0000-0000-0000-0000000000d6'::uuid)) v(u) on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+do $$
+declare u5 uuid := 'a0000000-0000-0000-0000-0000000000d5'; u6 uuid := 'a0000000-0000-0000-0000-0000000000d6'; e150 uuid := 'e5000000-0000-0000-0000-0000000000d2';
+        oa uuid; ob uuid;
+begin
+  -- both buy two 100-OT packs and the 150-OT exam (30 days granted); u6 will lose the metadata below
+  oa := pg_temp.buy(u5, 'pack-100', 'p5a'); ob := pg_temp.buy(u5, 'pack-100', 'p5b');
+  perform * from public.app_redeem_exam_access(u5, e150, 'k-p5', 150);
+  assert (select metadatos ->> 'dias' from public.transacciones_cartera where usuario_id = u5 and tipo = 'compra_examen') = '30', 'the redeem debit stores the days granted';
+  oa := pg_temp.buy(u6, 'pack-100', 'p6a'); ob := pg_temp.buy(u6, 'pack-100', 'p6b');
+  perform * from public.app_redeem_exam_access(u6, e150, 'k-p6', 150);
+end $$;
+set local session_replication_role = replica;
+update public.transacciones_cartera set metadatos = metadatos - 'dias' where usuario_id = 'a0000000-0000-0000-0000-0000000000d6' and tipo = 'compra_examen';
+set local session_replication_role = origin;
+-- the setting changes between purchase and refund: 30 -> 60 days
+update public.examenes set dias_acceso_compra = 60 where id = 'e5000000-0000-0000-0000-0000000000d2';
+do $$
+declare r record; v timestamptz;
+begin
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p5a-refund', (select id from public.compras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000d5' and idempotency_key = 'o-p5a'));
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000d5' and examen_id = 'e5000000-0000-0000-0000-0000000000d2' and motivo = 'compra';
+  assert v between now() + interval '9 days 23 hours' and now() + interval '10 days 1 hour', 'P01: 100/150 of the 30 days GRANTED = 20 days cut, about 10 left, although the exam now says 60 (' || v || ')';
+  select * into r from public.app_refund_payment_order('google_play', 'ev-p6a-refund', (select id from public.compras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000d6' and idempotency_key = 'o-p6a'));
+  select valido_hasta into v from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000d6' and examen_id = 'e5000000-0000-0000-0000-0000000000d2' and motivo = 'compra';
+  assert v between now() - interval '1 minute' and clock_timestamp() + interval '1 second', 'P01 fallback: a debit without the stored days uses the current 60 (40 days cut = now) (' || v || ')';
+end $$;
+
 -- ---- no client path
 do $$ declare t text; r text; f text; begin
   foreach t in array array['public.eventos_pago','public.refund_case'] loop
@@ -1363,6 +1396,8 @@ begin
   -- table guard: a NEW unlimited gift row is refused; a legacy unlimited row stays valid and an update that keeps NULL is allowed
   begin insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'promocion', now(), null); assert false, 'must refuse';
   exception when others then assert sqlerrm = 'GIFT_UNLIMITED_FORBIDDEN', 'table guard: ' || sqlerrm; end;
+  begin insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000c1', 'e5000000-0000-0000-0000-0000000000c1', 'premium', now(), null); assert false, 'must refuse';
+  exception when others then assert sqlerrm = 'GIFT_UNLIMITED_FORBIDDEN', 'E2-V1-G09: premium is guarded too: ' || sqlerrm; end;
   update public.contenido_desbloqueado_usuario set valido_hasta = null where usuario_id = 'a0000000-0000-0000-0000-0000000000c4' and examen_id = 'e5000000-0000-0000-0000-0000000000c1';
   begin update public.contenido_desbloqueado_usuario set valido_hasta = null where usuario_id = 'a0000000-0000-0000-0000-0000000000c1' and examen_id = 'e5000000-0000-0000-0000-0000000000c1' and motivo = 'admin'; assert false, 'must refuse';
   exception when others then assert sqlerrm = 'GIFT_UNLIMITED_FORBIDDEN', 'a limited gift cannot be made unlimited: ' || sqlerrm; end;
@@ -1418,7 +1453,10 @@ insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, t
 insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
 select ('f5000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, 'SV-' || n, 'rafaga', 'Pregunta guardable ' || n, n <> 5
   from generate_series(1, 9) n;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, demo_disponible) values
+  ('e5000000-0000-0000-0000-0000000000b4','S-DEMO','e1000000-0000-0000-0000-0000000000b1','c1000000-0000-0000-0000-0000000000b1','Premium con demo SA','rafaga','premium',true, now() - interval '1 day', true);
 insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values
+  ('f5000000-0000-0000-0000-000000000012', 'SV-12', 'rafaga', 'Solo demo', true),
   ('f5000000-0000-0000-0000-000000000010', 'SV-10', 'rafaga', 'Pregunta de SB', true),
   ('f5000000-0000-0000-0000-000000000011', 'SV-11', 'rafaga', 'Solo premium', true);
 -- the free SA exam holds q01..q09 (q04 annulled there); the premium one holds q02 (also free elsewhere) and q11
@@ -1427,7 +1465,8 @@ select 'e5000000-0000-0000-0000-0000000000b2', ('f5000000-0000-0000-0000-0000000
 insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) values
   ('e5000000-0000-0000-0000-0000000000b1','f5000000-0000-0000-0000-000000000002', 1, 1),
   ('e5000000-0000-0000-0000-0000000000b1','f5000000-0000-0000-0000-000000000011', 2, 2),
-  ('e5000000-0000-0000-0000-0000000000b3','f5000000-0000-0000-0000-000000000010', 1, 1);
+  ('e5000000-0000-0000-0000-0000000000b3','f5000000-0000-0000-0000-000000000010', 1, 1),
+  ('e5000000-0000-0000-0000-0000000000b4','f5000000-0000-0000-0000-000000000012', 1, 1);
 set local session_replication_role = origin;
 
 do $$
@@ -1444,6 +1483,8 @@ begin
   -- gates: premium-only question without access, another specialty, annulled, inactive, unknown
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000011')$q$, 'NOT_FOUND');
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000010')$q$, 'NOT_FOUND');
+  assert (select state from private.exam_access_verdict(u1, 'e5000000-0000-0000-0000-0000000000b4')) = 'DEMO', 'fixture: the exam is a DEMO for u1';
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000012')$q$, 'NOT_FOUND');  -- E2-V1-S01: DEMO is not enough to save
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000004')$q$, 'NOT_FOUND');
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000005')$q$, 'NOT_FOUND');
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-0000000000ff')$q$, 'NOT_FOUND');
