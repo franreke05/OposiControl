@@ -866,8 +866,8 @@ components:
               description: 'FA31: annulled questions that had no reserve to replace them under REEMPLAZO_POR_RESERVA (they count as NO_PUNTUA).'
             reglaAnuladas:
               type: string
-              enum: [REEMPLAZO_POR_RESERVA, NO_PUNTUA, PUNTUA_ACIERTO]
-              description: 'FA31: the exam rule frozen when the attempt started. Absent on attempts that predate FA31.'
+              enum: [REEMPLAZO_POR_RESERVA, NO_PUNTUA]
+              description: 'FA31: the rule in force frozen when the attempt started (derived when the exam sets none: reserves -> REEMPLAZO_POR_RESERVA, no reserves -> NO_PUNTUA). Absent on attempts that predate FA31.'
             penalizacion:
               type: object
               required: [numerador, denominador]

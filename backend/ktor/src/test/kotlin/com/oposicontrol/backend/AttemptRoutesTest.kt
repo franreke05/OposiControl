@@ -132,14 +132,14 @@ class AttemptRoutesTest {
                     }?.let { "[$it]" } ?: "[]"
                 // 20261022100000: lecturas por revision. Sin revision configurada se devuelven las filas legacy (sin
                 // `revisiones_pregunta`), y la pasarela completa con la lectura viva de siempre.
-                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id,revisiones_pregunta(contenido)&") ->
+                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,rol,anulada_al_inicio,sustituye_a_posicion,revision_pregunta_id,revisiones_pregunta(contenido)&") ->
                     questionRevision?.invoke(uri) ?: questionPage(uri)
-                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id,revisiones_pregunta(contenido,solucion") ->
+                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,rol,anulada_al_inicio,sustituye_a_posicion,revision_pregunta_id,revisiones_pregunta(contenido,solucion") ->
                     reviewRevision?.invoke(uri) ?: reviewPage(uri)
-                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,revision_pregunta_id,revisiones_pregunta(solucion") ->
+                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,rol,anulada_al_inicio,sustituye_a_posicion,revision_pregunta_id,revisiones_pregunta(solucion") ->
                     resultRevision ?: resultQuestions
                 uri.contains("/rest/v1/preguntas_intento?select=revisiones_pregunta!inner(recursos:contenido->recursos)") -> resourceLookup(uri)
-                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final&") -> frozen
+                uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,rol,anulada_al_inicio,sustituye_a_posicion&") -> frozen
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,preguntas(soluciones_pregunta") -> resultQuestions
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,preguntas(") && uri.contains("soluciones_pregunta") -> reviewPage(uri)
                 uri.contains("/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,preguntas(") -> questionPage(uri)
@@ -980,6 +980,109 @@ class AttemptRoutesTest {
         )
     }
 
+    // =================================================================== FA31 official rules
+
+    private fun ruledAttemptRow(estado: String, nota: String, regla: String = "REEMPLAZO_POR_RESERVA", num: Int = 1, den: Int = 3) =
+        attemptRow(estado, respondidas = 3, correctas = 2, falladas = 1, sinResponder = 0, motivoFin = if (estado == "finalizado") "USER" else null).dropLast(1) +
+            ""","regla_anuladas":"$regla","penalizacion_num":$num,"penalizacion_den":$den,"nota":$nota,"total_evaluables":3,"total_anuladas":1,"reservas_usadas":1,"anuladas_sin_reserva":0}"""
+
+    @Test
+    fun anOpenAttemptNeverReadsAnUnusedReserveAndAFinishedOneDoes() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = attemptRow()
+        upstream.frozen = "[" + (1..4).joinToString(",") { frozenRow(it) } + "]"
+        upstream.questionRevision = { "[" + revisionRow(1) + "]" }
+        client.call(HttpMethod.Get, "$base")
+        client.call(HttpMethod.Get, "$base/preguntas?limit=1")
+        val openReads = upstream.urls.filter { "/rest/v1/preguntas_intento" in it }
+        assertTrue(openReads.size >= 2 && openReads.all { "&or=(rol.is.null,rol.neq.RESERVA_NO_USADA)" in it }, "C-O1: cada lectura de un intento abierto excluye la reserva no utilizada EN la consulta: $openReads")
+        // finished: the unused reserve is part of the grid and of the review
+        upstream.sent.clear()
+        finishedFixture()
+        upstream.frozen = "[" + (1..4).joinToString(",") { frozenRow(it) } + "]"
+        upstream.reviewRevision = { "[" + revisionRow(1, "CORRECT", solution = true) + "]" }
+        client.call(HttpMethod.Get, "$base")
+        client.call(HttpMethod.Get, "$base/revision")
+        client.call(HttpMethod.Get, "$base/resultado")
+        val closedReads = upstream.urls.filter { "/rest/v1/preguntas_intento" in it }
+        assertTrue(closedReads.isNotEmpty() && closedReads.none { "RESERVA_NO_USADA" in it }, "tras finalizar no se filtra: $closedReads")
+    }
+
+    @Test
+    fun theResultOfAnAttemptWithFrozenRulesServesTheDatabaseGradeAndTheRuleFields() = testApplication {
+        application { attemptModule() }
+        finishedFixture()
+        upstream.attemptRow = ruledAttemptRow("finalizado", "6.11")
+        upstream.resultQuestions = "[" + listOf(
+            """{"posicion":1,"pregunta_id":"${q(1)}","estado_final":"ANNULLED","rol":"PRINCIPAL","anulada_al_inicio":true,"sustituye_a_posicion":null,"preguntas":{"soluciones_pregunta":{"opcion_correcta_id":"${opt(1, 1)}"}}}""",
+            """{"posicion":2,"pregunta_id":"${q(2)}","estado_final":"CORRECT","rol":"PRINCIPAL","anulada_al_inicio":false,"preguntas":{"soluciones_pregunta":{"opcion_correcta_id":"${opt(2, 1)}"}}}""",
+            """{"posicion":3,"pregunta_id":"${q(3)}","estado_final":"WRONG","rol":"RESERVA_ACTIVA","anulada_al_inicio":false,"sustituye_a_posicion":1,"preguntas":{"soluciones_pregunta":{"opcion_correcta_id":"${opt(3, 1)}"}}}""",
+            """{"posicion":4,"pregunta_id":"${q(4)}","estado_final":"RESERVA_NO_UTILIZADA","rol":"RESERVA_NO_USADA","anulada_al_inicio":false,"preguntas":{"soluciones_pregunta":{"opcion_correcta_id":"${opt(4, 1)}"}}}""",
+        ).joinToString(",") + "]"
+        val response = client.call(HttpMethod.Get, "$base/resultado")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertConforms("D2-12", "200", body)
+        val resumen = obj(body)["resumen"]!!.jsonObject
+        assertEquals("6.11", resumen["nota"]!!.jsonPrimitive.content, "la nota es la de la base, no se recalcula")
+        assertEquals("REEMPLAZO_POR_RESERVA", resumen["reglaAnuladas"]!!.jsonPrimitive.content)
+        assertEquals(3, resumen["evaluables"]!!.jsonPrimitive.content.toInt())
+        assertEquals(1, resumen["reservasUsadas"]!!.jsonPrimitive.content.toInt())
+        assertEquals("1", resumen["penalizacion"]!!.jsonObject["numerador"]!!.jsonPrimitive.content)
+        assertEquals("3", resumen["penalizacion"]!!.jsonObject["denominador"]!!.jsonPrimitive.content)
+        val items = obj(body)["preguntas"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("RESERVA", items[2]["rol"]!!.jsonPrimitive.content)
+        assertEquals(1, items[2]["sustituyeA"]!!.jsonPrimitive.content.toInt())
+        assertEquals("RESERVA_NO_UTILIZADA", items[3]["estado"]!!.jsonPrimitive.content)
+        assertEquals(null, items[3]["opcionElegida"]?.takeIf { it != JsonNull }, "una reserva no utilizada no tiene respuesta")
+        // nothing evaluable: the grade is an explicit null (the contract requires the field)
+        upstream.attemptRow = ruledAttemptRow("finalizado", "null", regla = "NO_PUNTUA", num = 0, den = 1)
+        val empty = client.call(HttpMethod.Get, "$base/resultado").bodyAsText()
+        assertEquals(JsonNull, obj(empty)["resumen"]!!.jsonObject["nota"], "nota null explicita")
+        assertEquals("sin_evaluables", obj(empty)["resumen"]!!.jsonObject["calificacion"]!!.jsonPrimitive.content)
+        assertTrue(obj(empty)["resumen"]!!.jsonObject["penalizacion"] == null, "sin penalizacion no se sirve")
+    }
+
+    @Test
+    fun theReviewLabelsAnUnusedReserveAndTheReplacement() = testApplication {
+        application { attemptModule() }
+        finishedFixture()
+        upstream.attemptRow = ruledAttemptRow("finalizado", "6.11")
+        upstream.reviewRevision = {
+            "[" + revisionRow(1, "ANNULLED").replace("\"estado_final\":\"ANNULLED\",", "\"estado_final\":\"ANNULLED\",\"rol\":\"PRINCIPAL\",\"anulada_al_inicio\":true,") + "," +
+                revisionRow(2, "CORRECT", solution = true).replace("\"estado_final\":\"CORRECT\",", "\"estado_final\":\"CORRECT\",\"rol\":\"RESERVA_ACTIVA\",\"sustituye_a_posicion\":1,") + "," +
+                revisionRow(3, "RESERVA_NO_UTILIZADA", solution = true).replace("\"estado_final\":\"RESERVA_NO_UTILIZADA\",", "\"estado_final\":\"RESERVA_NO_UTILIZADA\",\"rol\":\"RESERVA_NO_USADA\",") + "]"
+        }
+        val body = client.call(HttpMethod.Get, "$base/revision?limit=3").bodyAsText()
+        assertConforms("D2-65", "200", body)
+        val items = obj(body)["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("ANNULLED", items[0]["status"]!!.jsonPrimitive.content)
+        assertEquals("RESERVA", items[1]["rol"]!!.jsonPrimitive.content)
+        assertEquals(1, items[1]["sustituyeA"]!!.jsonPrimitive.content.toInt())
+        assertEquals("RESERVA_NO_UTILIZADA", items[2]["status"]!!.jsonPrimitive.content)
+        assertEquals(null, items[2]["finalAnswer"]?.takeIf { it != JsonNull })
+    }
+
+    @Test
+    fun theKotlinTwinOfTheGradeMatchesTheDatabaseMatrix() {
+        // The SAME matrix and the SAME md5 as supabase/baseline/assertions.sql (private.official_nota): any drift of formula or rounding fails both.
+        val pairs = listOf(0 to 1, 1 to 2, 1 to 3, 1 to 4, 2 to 5)
+        val out = ArrayList<String>()
+        for (c in 0..12) for (f in 0..12) for (e in 1..14) for ((nu, de) in pairs) {
+            if (c + f > e) continue
+            out += OfficialScoring.nota(c, f, e, nu, de)!!.toPlainString()
+        }
+        val md5 = java.security.MessageDigest.getInstance("MD5").digest(out.joinToString(",").toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        assertEquals("450f6571dec69b16f142e60c29033415", md5)
+        assertEquals("6.67", OfficialScoring.nota(4, 1, 6, 0, 1)!!.toPlainString())
+        assertEquals("6.11", OfficialScoring.nota(4, 1, 6, 1, 3)!!.toPlainString())
+        assertEquals("0.00", OfficialScoring.nota(1, 5, 6, 1, 3)!!.toPlainString(), "la penalizacion no baja de 0")
+        assertEquals("0.63", OfficialScoring.nota(1, 0, 16, 0, 1)!!.toPlainString(), "0.625 redondea hacia arriba")
+        assertEquals(null, OfficialScoring.nota(0, 0, 0, 0, 1), "sin evaluables, null")
+        // with no penalty it is exactly the DEC-013 formula of the legacy attempts
+        for (c in 0..14) for (e in 1..14) if (c <= e) assertEquals(AttemptService.gradeOf(c, e).toPlainString(), OfficialScoring.nota(c, e - c, e, 0, 1)!!.toPlainString())
+    }
+
     // =================================================================== D2-11
 
     @Test
@@ -1348,7 +1451,7 @@ class AttemptRoutesTest {
         assertTrue(obj(body)["url"]!!.jsonPrimitive.content.contains("token="))
         assertEquals(now.plusSeconds(AttemptService.RESOURCE_URL_TTL_SECONDS.toLong()).toString(), obj(body)["expiresAt"]!!.jsonPrimitive.content)
         assertTrue(upstream.urls.any { it.contains("/storage/v1/object/sign/recursos-pregunta/preguntas/${q(1)}/$resImage.png") })
-        assertTrue(upstream.urls.any { it.contains("&intento_id=eq.$attempt&revisiones_pregunta.contenido=cs.") }, "el recurso se busca SOLO en las revisiones de ESTE intento")
+        assertTrue(upstream.urls.any { it.contains("&intento_id=eq.$attempt&or=(rol.is.null,rol.neq.RESERVA_NO_USADA)&revisiones_pregunta.contenido=cs.") }, "el recurso se busca SOLO en las revisiones de ESTE intento, sin reservas no utilizadas (C-O1)")
         assertEquals(AttemptOperation.RESOURCE, limited.last())
 
         // Un recurso que no esta en el intento (aunque exista en otro): 404 RESOURCE_NOT_FOUND, sin firmar nada.

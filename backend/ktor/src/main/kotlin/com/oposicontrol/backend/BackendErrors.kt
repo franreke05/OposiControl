@@ -33,6 +33,8 @@ private data class DomainErrorDefinition(
 )
 
 private val SUPABASE_DOMAIN_ERRORS = mapOf(
+    "OFFICIAL_RULES_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Las reglas de anuladas y reservas del examen no son validas: revisa el bloque de reservas, el orden y la regla elegida."),
+    "DEMO_CONFLICT" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Una pregunta de la demo no puede estar anulada, ser de reserva ni cambiar de posicion."),
     "RECORD_ANSWER_INVALID_ATTEMPT" to DomainErrorDefinition(HttpStatusCode.NotFound, "El intento no existe o no pertenece al usuario."),
     "RECORD_ANSWER_QUESTION_NOT_IN_ATTEMPT" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La pregunta no pertenece al intento."),
     "RECORD_ANSWER_OPTION_NOT_IN_QUESTION" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La opción no pertenece a la pregunta."),
