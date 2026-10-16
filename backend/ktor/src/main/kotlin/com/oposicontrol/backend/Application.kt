@@ -621,6 +621,7 @@ fun Application.module() {
         savedItemsRuntime = canonicalIdentityResolver?.let { SavedItemsRuntime.fromEnvironment(it, authRuntime) },
         planQuotaRuntime = canonicalIdentityResolver?.let { PlanQuotaRuntime.fromEnvironment(it, authRuntime) },
         challengeRuntime = canonicalIdentityResolver?.let { ChallengeRuntime.fromEnvironment(it, authRuntime) },
+        statsRuntime = canonicalIdentityResolver?.let { StatsRuntime.fromEnvironment(it, authRuntime) },
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
             catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter, auth = authRuntime) }
         },
@@ -693,6 +694,8 @@ internal class CombinedRoutingDeps(
     internal val planQuotaRuntime: PlanQuotaRuntime? = null,
     /** V1 wave 2 (D3-04, D3-16..D3-19): reto diario, racha, reclamar. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val challengeRuntime: ChallengeRuntime? = null,
+    /** V1 wave 3 (D3-20..D3-22): estadisticas del usuario. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val statsRuntime: StatsRuntime? = null,
     /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
     internal val newsRuntime: NewsRuntime? = null,
     /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
@@ -762,6 +765,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     planQuotaRoutes(planQuotaRuntime)
     // V1 wave 2: reto diario, racha y reclamar (D3-04, D3-16..D3-19).
     challengeRoutes(challengeRuntime)
+    // V1 wave 3: estadisticas (D3-20..D3-22).
+    statsRoutes(statsRuntime)
     authRuntime?.let {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).

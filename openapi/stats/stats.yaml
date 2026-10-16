@@ -49,7 +49,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'One grouped read, weakest first (lowest porcentajeAcierto, then more respondidas). Without examenId: TOTAL = the first answers of every attempt, per tag (tags with fewer than minimoRespuestas answers are left out: Control debilidad_min_respuestas, default 10). With examenId: EXAMEN = the finished, non-demo attempts of the caller on that exam (the per-exam D2-12 numbers summed), no minimum. limit is 1..50 (default 10). nivelDominio is derived from the percentage with Control thresholds (bajo / medio / alto).'
+        description: 'One grouped read, weakest first (lowest porcentajeAcierto, then more respondidas). Without examenId: TOTAL = the first answers of every attempt, per tag (tags with fewer than minimoRespuestas answers are left out: Control debilidad_min_respuestas, default 10). With examenId: EXAMEN = the finished, non-demo attempts of the caller on that exam (the per-exam D2-12 numbers summed), no minimum. top is 1..50 (default 10). nivelDominio is derived from the percentage with Control thresholds (bajo / medio / alto).'
         security:
           - bearerAuth: []
         parameters:
@@ -59,7 +59,7 @@ components:
             schema:
               type: string
               format: uuid
-          - name: limit
+          - name: top
             in: query
             required: false
             schema:
@@ -127,6 +127,56 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    AdminStatsRecompute:
+      post:
+        operationId: recomputeStatsAdmin
+        summary: 'Recompute the question difficulty now (admin only)'
+        tags: [stats]
+        x-contract-id: D3-23
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [ADMIN]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, FORBIDDEN, STATS_SCOPE_INVALID, STATS_RECOMPUTE_COOLDOWN, UPSTREAM_UNAVAILABLE]
+        description: 'C-S4: the ONLY way to force a recompute; no user endpoint can. Audited (the actor is written in the same transaction), serialised by a database lock and rate-limited by a cooldown (Control recalculo_admin_cooldown_min, default 10 minutes; a second call inside it is 429 STATS_RECOMPUTE_COOLDOWN). alcance is dificultad (the only scope in W3); anything else is 422 STATS_SCOPE_INVALID. The periodic job already refreshes the difficulty on its own (dificultad_job_minutos).'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: false
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [alcance]
+                properties:
+                  alcance:
+                    type: string
+                    enum: [dificultad]
+        responses:
+          '200':
+            description: 'Recomputed.'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [estado]
+                  properties:
+                    estado:
+                      type: string
+                    filas:
+                      type: integer
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':

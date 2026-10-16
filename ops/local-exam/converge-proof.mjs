@@ -67,10 +67,13 @@ try {
   converge({ psql });
   assert(process.exitCode !== 1, 'converge #2 (idempotent) ends with VERIFY OK');
   assert(snapshot() === before, 'no data loss: wallets, ledger, orders and access are identical after the converge');
+  // W3 STATS: nothing is back-filled by the converge (history before the hook has no first-answer ledger rows) and the tables stay closed to clients
+  assert(psql("select count(*) from public.primeras_respuestas_usuario") === '0', 'no first-answer ledger rows invented by the converge');
+  assert(psql("select (not has_table_privilege('authenticated', 'public.estadisticas_globales_pregunta', 'select'))::text") === 'true', 'global question stats closed to clients after the converge');
   // OFFICIAL RULES: data from before the migration keeps the legacy path (no rule snapshot, no stored nota, no reserve) and the defaults reproduce today
   assert(psql("select count(*) from public.intentos_examen where regla_anuladas is not null or nota is not null") === '0', 'attempts that predate the official rules carry no snapshot');
   assert(psql("select count(*) from public.preguntas_examen where es_reserva or orden_reserva is not null") === '0' && psql("select count(*) from public.examenes where regla_anuladas is not null or penalizacion_num <> 0") === '0', 'existing exams: no reserve, derived rule, no penalty');
-  assert(psql('select count(*) from private.v1_applied_migrations') === '13', 'thirteen stamps recorded (20261022100300..101500)');
+  assert(psql('select count(*) from private.v1_applied_migrations') === '14', 'fourteen stamps recorded (20261022100300..101600)');
   assert(psql("select (public.app_plan_quota('a0000000-0000-0000-0000-0000000000d1') ->> 'nivel')") === '0', 'the plan summary RPC answers for a pre-existing user (no subscription: nivel 0)');
   assert(psql("select count(*) from pg_proc where proname = 'app_choose_plan_exam'") === '1', 'the quota function exists after the converge');
   assert(psql("select count(*) from pg_proc where proname = 'app_save_item'") === '1', 'saved-items functions exist now');

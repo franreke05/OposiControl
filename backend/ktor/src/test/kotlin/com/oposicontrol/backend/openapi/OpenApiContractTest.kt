@@ -185,6 +185,7 @@ class OpenApiContractTest {
         "D3-20" to "GET /api/v1/app/estadisticas/resumen",
         "D3-21" to "GET /api/v1/app/estadisticas/debilidades",
         "D3-22" to "GET /api/v1/app/estadisticas/dificultad/{preguntaId}",
+        "D3-23" to "POST /api/v1/admin/estadisticas/recalcular",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */

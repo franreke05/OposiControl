@@ -2360,3 +2360,121 @@ begin
   raise notice 'OK V1 config bounds';
 end $$;
 rollback;
+
+-- 20261022101600: W3 stats (first-answer hook exactly once, Nota media windows, Evolucion, Debilidades, difficulty job, grants).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.q(p int) returns uuid language sql as $$ select ('f9100000-0000-0000-0000-' || lpad(p::text, 12, '0'))::uuid $$;
+create function pg_temp.good(q uuid) returns uuid language sql as $$ select opcion_correcta_id from public.soluciones_pregunta where pregunta_id = q $$;
+create function pg_temp.bad(q uuid) returns uuid language sql as $$ select id from public.opciones_pregunta where pregunta_id = q and id <> pg_temp.good(q) limit 1 $$;
+create function pg_temp.ans(u uuid, a uuid, q uuid, ok boolean) returns jsonb language sql as $$
+  select public.app_record_attempt_answer(u, a, q, case when ok then pg_temp.good(q) else pg_temp.bad(q) end, 0, 0, null) $$;
+
+insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-0000000000a1', 'st-a@test.local', 'authenticated', 'authenticated'), ('a0000000-0000-0000-0000-0000000000a2', 'st-b@test.local', 'authenticated', 'authenticated');
+insert into auth.users (id, email, aud, role) select ('a0000000-0000-0000-0000-' || lpad((100 + n)::text, 12, '0'))::uuid, 'st-s' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 6) n;
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000a1', 'ST', 'ST', 'st', true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000a1', 'STC', 'Com ST', 'com-st');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values
+  ('a0000000-0000-0000-0000-0000000000a1', 'sa', 'sta', true, 'activa', 'e1000000-0000-0000-0000-0000000000a1'),
+  ('a0000000-0000-0000-0000-0000000000a2', 'sb', 'stb', true, 'activa', 'e1000000-0000-0000-0000-0000000000a1') on conflict (usuario_id) do nothing;
+insert into public.etiquetas (id, nombre, slug) values ('7a910000-0000-0000-0000-000000000001', 'Tema A', 'st-a'), ('7a910000-0000-0000-0000-000000000002', 'Tema B', 'st-b');
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en)
+values ('e9400000-0000-0000-0000-000000000001', 'ST-1', 'e1000000-0000-0000-0000-0000000000a1', 'c1000000-0000-0000-0000-0000000000a1', 'Stats', 'rafaga', 'gratuito', true, now() - interval '1 day');
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) select pg_temp.q(p), 'ST-' || p, 'rafaga', 'Pregunta stats ' || p, true from generate_series(1, 17) p;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+select ('0a910000-0000-0000-0000-' || lpad((p * 10 + o)::text, 12, '0'))::uuid, pg_temp.q(p), chr(64 + o), 'Opcion', o from generate_series(1, 17) p, generate_series(1, 2) o;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento) select pg_temp.q(p), ('0a910000-0000-0000-0000-' || lpad((p * 10 + 1)::text, 12, '0'))::uuid, 'x' from generate_series(1, 17) p;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select 'e9400000-0000-0000-0000-000000000001', pg_temp.q(p), p, p from generate_series(1, 12) p;
+insert into public.etiquetas_pregunta (pregunta_id, etiqueta_id) select pg_temp.q(p), case when p <= 6 then '7a910000-0000-0000-0000-000000000001'::uuid else '7a910000-0000-0000-0000-000000000002'::uuid end from generate_series(1, 12) p;
+set local session_replication_role = origin;
+insert into public.ligas_nivel (codigo, nombre, preguntas_minimas, ventana_calculo, posicion) values ('st-1', 'Liga 1', 0, 5, 1), ('st-2', 'Liga 2', 10, 8, 2), ('st-3', 'Liga 3', 30, 8, 3);
+
+do $$
+declare
+  ua constant uuid := 'a0000000-0000-0000-0000-0000000000a1'; ub constant uuid := 'a0000000-0000-0000-0000-0000000000a2';
+  ex constant uuid := 'e9400000-0000-0000-0000-000000000001';
+  r jsonb; a uuid; b uuid; s jsonb; i int; seqs boolean[] := array[true, false, true, true, true, false, true, true, true, false];
+begin
+  update public.configuracion_v1 set valor_integer = 4 where clave = 'evolucion_cada_preguntas';
+  update public.configuracion_v1 set valor_integer = 5 where clave = 'dificultad_min_respuestas';
+  update public.configuracion_v1 set valor_integer = 5 where clave = 'debilidad_min_respuestas';
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = 0 where clave = 'evolucion_cada_preguntas'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  -- nothing yet
+  s := public.app_stats_summary(ua);
+  assert s -> 'notaMedia' ->> 'valor' is null and (s ->> 'preguntasValidas')::int = 0 and (s -> 'totales' ->> 'aciertos')::int = 0 and (s -> 'notaMedia' ->> 'provisional')::boolean, 'empty summary';
+  r := public.app_start_exam_attempt(ua, ex);
+  a := (r ->> 'intento_id')::uuid;
+  -- answer 1 (correct), replay, skip then answer (the skip never consumes the first answer)
+  perform pg_temp.ans(ua, a, pg_temp.q(1), true);
+  assert (select count(*) from public.primeras_respuestas_usuario where usuario_id = ua) = 1 and (select preguntas_respondidas from public.estadisticas_usuario where usuario_id = ua) = 1, 'first answer counted';
+  perform pg_temp.ans(ua, a, pg_temp.q(1), true);
+  assert (select preguntas_respondidas from public.estadisticas_usuario where usuario_id = ua) = 1 and (select total_respuestas from public.estadisticas_globales_pregunta where pregunta_id = pg_temp.q(1)) = 1, 'a replay never counts twice';
+  perform public.app_record_attempt_answer(ua, a, pg_temp.q(2), null, 0, 0, null);
+  assert (select count(*) from public.primeras_respuestas_usuario where usuario_id = ua) = 1, 'a skip is not a first answer';
+  perform public.app_record_attempt_answer(ua, a, pg_temp.q(2), pg_temp.bad(pg_temp.q(2)), 0, 1, null);
+  assert (select count(*) from public.primeras_respuestas_usuario where usuario_id = ua) = 2 and not (select correcta from public.primeras_respuestas_usuario where usuario_id = ua and pregunta_id = pg_temp.q(2)), 'the real answer after a skip is the first answer';
+  -- exactly once at the function level: the guard row refuses a second count of the same (user, question)
+  perform private.app_apply_first_answer_stats(ua, pg_temp.q(2), true, 10, a);
+  assert (select preguntas_respondidas from public.estadisticas_usuario where usuario_id = ua) = 2, 'the guard row makes the hook idempotent';
+  -- answers 3..10 following the planned sequence (1 T, 2 F, 3 T, 4 T, 5 T, 6 F, 7 T, 8 T, 9 T, 10 F)
+  for i in 3..10 loop perform pg_temp.ans(ua, a, pg_temp.q(i), seqs[i]); end loop;
+  s := public.app_stats_summary(ua);
+  -- after 10 first answers the user is in Liga 2 (min 10): window 8 over answers 3..10 = 6 of 8 correct = 7.50
+  assert (s -> 'notaMedia' ->> 'valor')::numeric = 7.50 and (s -> 'notaMedia' ->> 'ventana')::int = 8 and (s -> 'notaMedia' ->> 'respondidas')::int = 8 and not (s -> 'notaMedia' ->> 'provisional')::boolean, 'nota media over the league window: ' || s::text;
+  assert s -> 'liga' ->> 'codigo' = 'st-2' and s -> 'liga' -> 'siguiente' ->> 'codigo' = 'st-3' and (s ->> 'preguntasValidas')::int = 10, 'league and next league';
+  -- evolution: reference set at answer 4 (7.50), recomputed at answer 8 (8.00 - 7.50 = 0.50), progress 2 since then
+  assert (s -> 'evolucion' ->> 'valor')::numeric = 0.50 and (s -> 'evolucion' ->> 'referencia')::numeric = 8.00 and (s -> 'evolucion' ->> 'progreso')::int = 2 and (s -> 'evolucion' ->> 'cada')::int = 4, 'evolution every N with a stored reference: ' || s::text;
+  assert (s -> 'totales' ->> 'aciertos')::int = 7 and (s -> 'totales' ->> 'fallos')::int = 3, 'totals over first answers';
+  assert (s -> 'racha' ->> 'actual')::int = 0, 'streak read through the challenge function';
+  -- weaknesses: aggregated (tag A 4 of 6 = 66.67, tag B 3 of 4 = 75.00; minimum 5 hides B), then with minimum 1, weakest first
+  s := public.app_stats_weaknesses(ua, null, 10);
+  assert s ->> 'alcance' = 'TOTAL' and jsonb_array_length(s -> 'items') = 1 and s -> 'items' -> 0 ->> 'nombre' = 'Tema A' and (s -> 'items' -> 0 ->> 'porcentajeAcierto')::numeric = 66.67 and s -> 'items' -> 0 ->> 'nivelDominio' = 'medio', 'weaknesses with the minimum: ' || s::text;
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'debilidad_min_respuestas';
+  s := public.app_stats_weaknesses(ua, null, 10);
+  assert jsonb_array_length(s -> 'items') = 2 and s -> 'items' -> 0 ->> 'nombre' = 'Tema A' and s -> 'items' -> 1 ->> 'nombre' = 'Tema B' and (s -> 'items' -> 1 ->> 'porcentajeAcierto')::numeric = 75.00, 'weakest first';
+  -- per exam, from the finished attempt (D2-12 numbers summed); another user sees nothing of it
+  perform public.app_finish_exam_attempt(ua, a);
+  s := public.app_stats_weaknesses(ua, ex, 10);
+  assert s ->> 'alcance' = 'EXAMEN' and (select (it ->> 'sinResponder')::int from jsonb_array_elements(s -> 'items') it where it ->> 'nombre' = 'Tema B') = 2 and (select (it ->> 'correctas')::int from jsonb_array_elements(s -> 'items') it where it ->> 'nombre' = 'Tema A') = 4, 'per exam: ' || s::text;
+  assert jsonb_array_length(public.app_stats_weaknesses(ub, ex, 10) -> 'items') = 0, 'own data only';
+  assert (public.app_stats_summary(ua) -> 'totales' ->> 'noContestadas')::int = 2, 'unanswered questions of finished attempts';
+  -- a DEMO attempt never feeds the stats
+  r := public.app_start_exam_attempt(ub, ex);
+  b := (r ->> 'intento_id')::uuid;
+  update public.intentos_examen set es_demo = true where id = b;
+  perform pg_temp.ans(ub, b, pg_temp.q(1), true);
+  assert not exists (select 1 from public.primeras_respuestas_usuario where usuario_id = ub) and not exists (select 1 from public.estadisticas_usuario where usuario_id = ub), 'demo rows never count';
+
+  -- ---- question difficulty: periodic job over the last first answers (5 questions x 6 synthetic users: failure bands 1,1,3,5,5 and median-time quintiles 1..5)
+  insert into public.estadisticas_globales_pregunta (pregunta_id) select pg_temp.q(p) from generate_series(13, 17) p on conflict (pregunta_id) do nothing;
+  insert into public.primeras_respuestas_usuario (usuario_id, pregunta_id, correcta, tiempo_ms)
+  select ('a0000000-0000-0000-0000-' || lpad((100 + u)::text, 12, '0'))::uuid, pg_temp.q(12 + d), u > (array[0, 1, 3, 5, 6])[d], d * 2000
+    from generate_series(1, 5) d, generate_series(1, 6) u;
+  assert (public.app_job_dificultad(false) ->> 'estado') = 'OK', 'the job runs';
+  assert (select array_agg(dificultad_calculada_1_5 order by pregunta_id) from public.estadisticas_globales_pregunta where pregunta_id in (select pg_temp.q(p) from generate_series(13, 17) p)) = array[1, 2, 3, 5, 5], 'difficulty 1-5 from median-time groups and the failure band';
+  assert (select dificultad_calculada_1_5 is null from public.estadisticas_globales_pregunta where pregunta_id = pg_temp.q(1)), 'below the minimum: no difficulty';
+  assert (public.app_job_dificultad(false) ->> 'estado') = 'RECIENTE', 'throttled by Control';
+  assert (public.app_job_dificultad(true) ->> 'estado') = 'OK', 'forced run';
+  -- reading: only a question the caller answered
+  insert into public.primeras_respuestas_usuario (usuario_id, pregunta_id, correcta, tiempo_ms) values (ua, pg_temp.q(15), true, 100);
+  assert (public.app_stats_difficulty(ua, pg_temp.q(15)) ->> 'dificultad')::int = 3 and (public.app_stats_difficulty(ua, pg_temp.q(1)) ->> 'dificultad') is null, 'difficulty of an answered question (null below the minimum)';
+  perform pg_temp.expect_e(format($q$select public.app_stats_difficulty(%L, %L)$q$, ub, pg_temp.q(15)), 'NOT_FOUND');
+  -- admin recompute: audited, cooldown, scope
+  perform pg_temp.expect_e($q$select public.admin_recompute_stats(null, 'todo')$q$, 'STATS_SCOPE_INVALID');
+  r := public.admin_recompute_stats(ua, 'dificultad');
+  assert r ->> 'estado' = 'OK' and exists (select 1 from public.auditoria_log where accion = 'estadisticas_recalculo' and usuario_id = ua), 'audited admin recompute';
+  perform pg_temp.expect_e(format($q$select public.admin_recompute_stats(%L, 'dificultad')$q$, ua), 'STATS_RECOMPUTE_COOLDOWN');
+  -- grants (C-S2): no client reads the ledger of first answers or the global question statistics; the functions are service-only
+  assert not has_table_privilege('authenticated', 'public.primeras_respuestas_usuario', 'select') and not has_table_privilege('service_role', 'public.primeras_respuestas_usuario', 'select')
+     and not has_table_privilege('authenticated', 'public.estadisticas_globales_pregunta', 'select') and not has_table_privilege('anon', 'public.estadisticas_globales_pregunta', 'select'), 'tables closed to clients';
+  assert not has_function_privilege('authenticated', 'public.app_stats_summary(uuid)', 'execute') and not has_function_privilege('anon', 'public.app_job_dificultad(boolean)', 'execute')
+     and not has_function_privilege('authenticated', 'public.admin_recompute_stats(uuid,text)', 'execute') and has_function_privilege('service_role', 'public.app_stats_weaknesses(uuid,uuid,integer)', 'execute'), 'functions service-only';
+  raise notice 'OK V1 wave 3 stats';
+end $$;
+rollback;

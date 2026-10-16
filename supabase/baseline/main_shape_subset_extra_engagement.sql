@@ -137,3 +137,125 @@ begin
   end if;
 end
 $f$;
+
+-- ============================================================================================================================================================
+-- W3 STATS TABLES that MAIN has and the bootstrap subset lacks (shapes from the structure-only reads of 2026-10-16 and the repository's live-shape captures; MAIN client grants and policies
+-- reproduced ON PURPOSE: anon SELECT without policy, authenticated own-row SELECT, lotes_actualizacion_ranking with full authenticated DML behind an admin policy).
+-- Migrations 20261022101200 (revokes, guarded) and 20261022101600 remove what the app must not expose; the gate proves it. IDEMPOTENT.
+-- ============================================================================================================================================================
+create table if not exists public.ligas_nivel (
+  id uuid primary key default gen_random_uuid(),
+  codigo text not null,
+  nombre text not null,
+  preguntas_minimas integer not null default 0,
+  ventana_calculo integer not null default 50,
+  activa boolean not null default true,
+  posicion integer not null default 1,
+  creado_en timestamptz not null default now(),
+  constraint ligas_nivel_codigo_key unique (codigo),
+  constraint ligas_nivel_ventana_chk check (ventana_calculo > 0)
+);
+create table if not exists public.estadisticas_usuario (
+  usuario_id uuid primary key references auth.users(id) on delete cascade,
+  examenes_finalizados integer not null default 0,
+  preguntas_respondidas integer not null default 0,
+  respuestas_correctas integer not null default 0,
+  porcentaje_acierto numeric(5,2) not null default 0,
+  puntos_totales integer not null default 0,
+  nivel integer not null default 1,
+  actualizado_en timestamptz not null default now()
+);
+create table if not exists public.estadisticas_usuario_etiqueta (
+  usuario_id uuid not null references auth.users(id) on delete cascade,
+  etiqueta_id uuid not null references public.etiquetas(id) on delete cascade,
+  respondidas integer not null default 0,
+  correctas integer not null default 0,
+  falladas integer not null default 0,
+  porcentaje_acierto numeric(5,2) not null default 0,
+  nivel_dominio text,
+  ultima_practica_en timestamptz,
+  actualizado_en timestamptz not null default now(),
+  primary key (usuario_id, etiqueta_id)
+);
+create index if not exists idx_estadisticas_usuario_etiqueta_etiqueta_id on public.estadisticas_usuario_etiqueta (etiqueta_id);
+create table if not exists public.estadisticas_globales_pregunta (
+  pregunta_id uuid primary key references public.preguntas(id) on delete cascade,
+  total_respuestas integer not null default 0,
+  total_aciertos integer not null default 0,
+  total_fallos integer not null default 0,
+  total_respuestas_ranking integer not null default 0,
+  total_aciertos_ranking integer not null default 0,
+  total_fallos_ranking integer not null default 0,
+  porcentaje_acierto numeric(5,2) not null default 0,
+  porcentaje_fallo numeric(5,2) not null default 0,
+  tiempo_medio_respuesta_segundos numeric(8,2) not null default 0,
+  dificultad_calculada_1_10 numeric(4,2) not null default 1,
+  actualizado_en timestamptz not null default now(),
+  dificultad_calculada_1_5 integer,
+  puntos_fallo_1_5 integer,
+  puntos_tiempo_1_5 integer,
+  muestra_ultimos_usuarios integer not null default 100,
+  mediana_tiempo_respuesta_segundos numeric,
+  constraint estadisticas_globales_pregunta_dificultad_calculada_1_10_check check (dificultad_calculada_1_10 >= 1 and dificultad_calculada_1_10 <= 10),
+  constraint estadisticas_globales_pregunta_dificultad_calculada_1_5_check check (dificultad_calculada_1_5 is null or (dificultad_calculada_1_5 >= 1 and dificultad_calculada_1_5 <= 5))
+);
+create table if not exists public.estado_competitivo_usuario (
+  usuario_id uuid primary key references auth.users(id) on delete cascade,
+  liga_nivel_id uuid references public.ligas_nivel(id),
+  preguntas_validas_ranking integer not null default 0,
+  ventana_calculo integer,
+  nota_media_actual numeric(4,2),
+  nota_referencia_evolucion numeric(4,2),
+  evolucion_nota numeric(5,2),
+  preguntas_desde_ultima_evolucion integer not null default 0,
+  ranking_liga_posicion integer,
+  ranking_global_posicion integer,
+  percentil_global numeric(5,2),
+  actualizado_en timestamptz not null default now()
+);
+create index if not exists idx_estado_competitivo_usuario_liga_nivel_id on public.estado_competitivo_usuario (liga_nivel_id);
+create table if not exists public.lotes_actualizacion_ranking (
+  id uuid primary key default gen_random_uuid(),
+  tipo text not null,
+  estado text not null default 'en_curso',
+  iniciado_en timestamptz not null default now(),
+  finalizado_en timestamptz,
+  filas integer,
+  detalle jsonb not null default '{}'::jsonb,
+  error text
+);
+alter table public.ligas_nivel enable row level security;
+alter table public.estadisticas_usuario enable row level security;
+alter table public.estadisticas_usuario_etiqueta enable row level security;
+alter table public.estadisticas_globales_pregunta enable row level security;
+alter table public.estado_competitivo_usuario enable row level security;
+alter table public.lotes_actualizacion_ranking enable row level security;
+do $s$
+begin
+  if to_regprocedure('public.es_admin()') is not null then
+    if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'estadisticas_usuario') then
+      create policy estadisticas_usuario_select_propio on public.estadisticas_usuario for select to authenticated using (usuario_id = (select auth.uid()) or es_admin());
+    end if;
+    if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'estadisticas_usuario_etiqueta') then
+      create policy estadisticas_usuario_etiqueta_select_propio on public.estadisticas_usuario_etiqueta for select to authenticated using (usuario_id = (select auth.uid()) or es_admin());
+    end if;
+    if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'estado_competitivo_usuario') then
+      create policy estado_competitivo_select_propio on public.estado_competitivo_usuario for select to authenticated using (usuario_id = (select auth.uid()) or es_admin());
+    end if;
+    if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'ligas_nivel') then
+      create policy ligas_nivel_select_publico on public.ligas_nivel for select to authenticated using (activa or es_admin());
+    end if;
+    if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'estadisticas_globales_pregunta') then
+      create policy estadisticas_globales_pregunta_select on public.estadisticas_globales_pregunta for select to authenticated using (true);
+    end if;
+    if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'lotes_actualizacion_ranking') then
+      create policy lotes_actualizacion_ranking_admin on public.lotes_actualizacion_ranking for all to authenticated using (es_admin()) with check (es_admin());
+    end if;
+  end if;
+end
+$s$;
+revoke all on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario, public.lotes_actualizacion_ranking from anon, authenticated;
+grant select on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario, public.lotes_actualizacion_ranking to anon;
+grant select on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario to authenticated;
+grant select, insert, update, delete on public.lotes_actualizacion_ranking to authenticated;
+grant all on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario, public.lotes_actualizacion_ranking to service_role;
