@@ -82,7 +82,8 @@ class CatalogRoutesTest {
         var capabilities = "[]"
         var specialties = "[]"
         var premium = "[]"
-        var plan = "[]"
+        // Access v2: el plan solo cubre rafagas/razonados segun su nivel; por defecto un plan de nivel 3 (los tests que miran D7-02 fijan el suyo)
+        var plan = """[{"planes_suscripcion":{"codigo":"pro","nivel":3}}]"""
         var credits = "[]"
         var signed = "[]"
         var communities = """[{"codigo":"MAD","nombre":"Comunidad de Madrid"},{"codigo":"AND","nombre":"Andalucía"}]"""
@@ -452,7 +453,7 @@ class CatalogRoutesTest {
         listOf("preguntas", "opciones", "totalEvaluables", "demoDisponible", "precioRef").forEach { assertFalse(body.contains("\"$it\""), "$it no forma parte del detalle") }
         val byId = upstream.urls.single { it.contains("/rest/v1/examenes?") }
         assertTrue(byId.contains("&id=eq.$e1&activo=eq.true&publicado_en=not.is.null&publicado_en=lte.2026-10-08T12:00:00Z&limit=1"), byId)
-        assertTrue(upstream.urls.single { it.contains("intentos_examen") }.contains("usuario_id=eq.$TEST_UID&examen_id=eq.$e1&origen_intento=eq.examen&creado_por_comando=not.is.null&estado=in.(en_progreso,finalizado)&order=estado.asc,finalizado_en.desc.nullslast,id.desc&limit=2"))
+        assertTrue(upstream.urls.single { it.contains("intentos_examen") }.contains("usuario_id=eq.$TEST_UID&examen_id=eq.$e1&origen_intento=eq.examen&creado_por_comando=not.is.null&es_demo=eq.false&estado=in.(en_progreso,finalizado)&order=estado.asc,finalizado_en.desc.nullslast,id.desc&limit=2"))
         assertNull(exam["ultimoIntentoFinalizadoId"], "sin intento finalizado: el campo no viaja")
         assertNoQuestionTables()
     }

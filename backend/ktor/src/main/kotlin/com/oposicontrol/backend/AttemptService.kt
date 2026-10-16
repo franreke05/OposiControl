@@ -85,6 +85,8 @@ internal data class AttemptDto(
     val falladas: Int? = null,
     val sinResponder: Int,
     val ultimaPreguntaPosicion: Int? = null,
+    /** FA28: true en un intento DEMO (solo las preguntas marcadas); ausente = false. */
+    val esDemo: Boolean? = null,
 )
 
 @Serializable
@@ -143,6 +145,8 @@ internal data class ResultSummary(
     val examenId: String? = null,
     val especialidadId: String? = null,
     val modo: String,
+    /** FA28: true cuando el resultado es de un intento DEMO. */
+    val esDemo: Boolean? = null,
     val nota: Double,
     val calificacion: String,
     val duracionSegundos: Int,
@@ -321,17 +325,21 @@ internal class AttemptService(
         val uid = userId.value
         // D7-25: la UNICA politica de acceso. Borrador, archivado e inexistente son el mismo 404.
         val access = catalog.startAccess(uid, examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
-        if (!access.verdict.allowed) {
+        val wantsDemo = request.modo == "DEMO" && access.verdict.state == AccessState.DEMO
+        if (!access.verdict.allowed && !wantsDemo) {
             throw when (access.verdict.denyReason) {
                 AccessDenyReason.CAPABILITY_DISABLED -> CanonicalErrorCode.SPECIALTY_TYPE_NOT_ALLOWED.exception()
                 AccessDenyReason.SPECIALTY_MISMATCH -> CanonicalErrorCode.EXAM_NOT_FOUND.exception()
                 else -> CanonicalErrorCode.EXAM_LOCKED.exception(details = ErrorDetails(accessState = access.verdict.state.name))
             }
         }
-        val outcome = gateway.start(uid, examId)
+        val outcome = gateway.start(uid, examId, demo = wantsDemo)
         val created = when (outcome.outcome) {
             "CREATED" -> true
             "RESUMED" -> false
+            "DEMO_LIMIT" -> throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 3_600)
+            "EXAM_LOCKED" -> throw CanonicalErrorCode.EXAM_LOCKED.exception(details = ErrorDetails(accessState = outcome.state))
+            "SPECIALTY_TYPE_NOT_ALLOWED" -> throw CanonicalErrorCode.SPECIALTY_TYPE_NOT_ALLOWED.exception()
             "EXAM_NOT_FOUND" -> throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
             "EXAM_EMPTY" -> throw CanonicalErrorCode.EXAM_EMPTY.exception()
             // El contrato congelado no define un codigo propio para "mas de 200 preguntas servibles" (x-error-codes de D2-03:
@@ -373,6 +381,16 @@ internal class AttemptService(
         val row = ownedAttempt(userId, attemptId)
         val rows = gateway.questionPage(row.id, positionAfter(page.after), page.fetchLimit)
         val cut = page.page(rows) { listOf(JsonPrimitive(it.posicion)) }
+        // Limitador diario (C-L1): lo que la pagina va a REVELAR se registra antes de servirla; un intento finalizado ya se vio.
+        if (row.estado != FINISHED && cut.items.isNotEmpty()) {
+            val reveal = gateway.reveal(userId.value, row.id, cut.items.map { it.preguntaId })
+            when (reveal.outcome) {
+                "OK" -> Unit
+                "DAILY_LIMIT_REACHED" -> throw CanonicalErrorCode.DAILY_LIMIT_REACHED.exception(retryAfterSeconds = (reveal.retryAfterSeconds ?: 3_600).coerceIn(1, 86_400))
+                "ATTEMPT_NOT_FOUND" -> throw CanonicalErrorCode.ATTEMPT_NOT_FOUND.exception()
+                else -> throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+            }
+        }
         // DEC-015: la correccion de lo YA respondido, igual con el intento abierto que finalizado, y solo de la fila propia.
         // Sin soluciones, explicaciones ni recursos (eso es D2-12 / D2-65).
         val reveals = row.estado == FINISHED || revealsOnAnswer(row.kind())
@@ -567,6 +585,7 @@ internal class AttemptService(
                 examenId = row.examenId,
                 especialidadId = row.especialidadSnapshotId,
                 modo = row.kind().wire,
+                esDemo = row.esDemo.takeIf { it },
                 nota = nota.toDouble(),
                 calificacion = bandOf(nota),
                 duracionSegundos = row.durationSeconds(),
@@ -774,6 +793,7 @@ internal class AttemptService(
                 openUnanswered != null -> openUnanswered
                 else -> totalPreguntas - totalRespondidas
             }.coerceAtLeast(0),
+            esDemo = esDemo.takeIf { it },
             ultimaPreguntaPosicion = ultimaPreguntaPosicion?.takeIf { it >= 1 },
         )
     }

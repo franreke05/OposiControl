@@ -137,6 +137,7 @@ components:
         - PLAN_QUOTA_FULL
         - EXAM_NOT_IMMERSIVE
         - DAILY_LIMIT_REACHED
+        - PURCHASE_CAP_REACHED
   headers:
     XRequestId:
       description: 'Request correlation id; equals ErrorEnvelope.requestId.'

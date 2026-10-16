@@ -24,6 +24,7 @@ GET /api/v1/app/opositeca
 GET /api/v1/app/opositeca/guardados/{}
 GET /api/v1/app/opositester/me
 GET /api/v1/app/payments/orders/{}
+GET /api/v1/app/plan/cupo
 GET /api/v1/app/reto-diario
 GET /api/v1/app/wallet
 GET /api/v1/app/wallet/movimientos
@@ -66,3 +67,4 @@ POST /v1/auth/register/profile
 POST /v1/auth/reset-password
 PUT /api/v1/app/intentos/{}/respuestas/{}
 PUT /api/v1/app/opositeca/guardados/{}/{}
+PUT /api/v1/app/plan/cupo/{}

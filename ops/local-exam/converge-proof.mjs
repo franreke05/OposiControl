@@ -67,7 +67,9 @@ try {
   converge({ psql });
   assert(process.exitCode !== 1, 'converge #2 (idempotent) ends with VERIFY OK');
   assert(snapshot() === before, 'no data loss: wallets, ledger, orders and access are identical after the converge');
-  assert(psql('select count(*) from private.v1_applied_migrations') === '6', 'six stamps recorded (20261022100300..800)');
+  assert(psql('select count(*) from private.v1_applied_migrations') === '9', 'nine stamps recorded (20261022100300..101100)');
+  assert(psql("select (public.app_plan_quota('a0000000-0000-0000-0000-0000000000d1') ->> 'nivel')") === '0', 'the plan summary RPC answers for a pre-existing user (no subscription: nivel 0)');
+  assert(psql("select count(*) from pg_proc where proname = 'app_choose_plan_exam'") === '1', 'the quota function exists after the converge');
   assert(psql("select count(*) from pg_proc where proname = 'app_save_item'") === '1', 'saved-items functions exist now');
 
   // behaviour on PRE-EXISTING data: the order paid before the converge is refunded with P2

@@ -611,8 +611,9 @@ fun Application.module() {
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
         economyRuntime = canonicalIdentityResolver?.let { EconomyRuntime.fromEnvironment(it, authRuntime) },
         savedItemsRuntime = canonicalIdentityResolver?.let { SavedItemsRuntime.fromEnvironment(it, authRuntime) },
+        planQuotaRuntime = canonicalIdentityResolver?.let { PlanQuotaRuntime.fromEnvironment(it, authRuntime) },
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
-            catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter) }
+            catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter, auth = authRuntime) }
         },
     )
     configureServerProfile(serverProfile, json, routingDeps)
@@ -679,6 +680,8 @@ internal class CombinedRoutingDeps(
     internal val economyRuntime: EconomyRuntime? = null,
     /** V1 Guardar + OposiTeca (D4-20, D4-21, D4-24, D4-26). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val savedItemsRuntime: SavedItemsRuntime? = null,
+    /** V1 Access v2 (D7-31, D7-32). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val planQuotaRuntime: PlanQuotaRuntime? = null,
     /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
     internal val newsRuntime: NewsRuntime? = null,
     /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
@@ -744,6 +747,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     economyRoutes(economyRuntime)
     // V1 Guardar + OposiTeca: preguntas guardadas del usuario (D4-20, D4-21, D4-24, D4-26).
     savedItemsRoutes(savedItemsRuntime)
+    // V1 Access v2: cupo de inmersivos del plan (D7-31, D7-32).
+    planQuotaRoutes(planQuotaRuntime)
     authRuntime?.let {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).

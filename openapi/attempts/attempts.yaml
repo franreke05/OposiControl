@@ -826,6 +826,9 @@ components:
             modo:
               type: string
               description: 'Value set pending DEC-018.'
+            esDemo:
+              type: boolean
+              description: 'FA28: true when the result is of a DEMO attempt (only the demo-flagged questions). Absent = false. resumen.modo stays the exam type.'
             nota:
               type: number
               description: 'Formula pending DEC-013 (value, not shape).'

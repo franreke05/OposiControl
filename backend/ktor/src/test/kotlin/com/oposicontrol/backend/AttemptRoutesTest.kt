@@ -80,6 +80,8 @@ class AttemptRoutesTest {
         var grantFacts = "[]"
         var capabilities = "[]"
         var premium = "[]"
+        var plan = """[{"planes_suscripcion":{"codigo":"pro","nivel":3}}]"""
+        var revealOutcome = """{"outcome":"OK"}"""
         var startOutcome = """{"outcome":"CREATED","intento_id":"$attempt"}"""
         var answerOutcome = """{"outcome":"OK","estado":"ANSWERED","revision":1,"es_primera_respuesta":true,"respondidas":1,"noop":false}"""
         var finishOutcome = """{"outcome":"OK","already":false}"""
@@ -111,6 +113,8 @@ class AttemptRoutesTest {
             val body = when {
                 uri.endsWith("/rest/v1/rpc/app_start_exam_attempt") -> startOutcome
                 uri.endsWith("/rest/v1/rpc/app_record_attempt_answer") -> answerOutcome
+                uri.endsWith("/rest/v1/rpc/app_reveal_attempt_questions") -> revealOutcome
+                uri.contains("/rest/v1/productos_comerciales") -> plan
                 uri.endsWith("/rest/v1/rpc/app_finish_exam_attempt") -> finishOutcome
                 uri.endsWith("/rest/v1/rpc/app_abandon_exam_attempt") -> abandonOutcome
                 uri.contains("/rest/v1/perfiles_usuario?select=especialidad_principal_id") -> profileSpecialty
@@ -359,7 +363,7 @@ class AttemptRoutesTest {
         // Decisiones abiertas: sin limite de tiempo, sin motivo de fin y sin correccion con el intento abierto.
         listOf("deadline", "motivoFin", "correctas", "falladas").forEach { assertNull(intento[it], it) }
         // El actor del RPC es el `sub` del JWT, y el RPC solo se llama despues de la politica de acceso.
-        assertEquals(listOf(mapOf("p_usuario_id" to TEST_UID, "p_examen_id" to exam)), upstream.rpcBodies("app_start_exam_attempt").map { b -> b.mapValues { it.value.jsonPrimitive.content } })
+        assertEquals(listOf(mapOf("p_usuario_id" to TEST_UID, "p_examen_id" to exam, "p_modo" to "NORMAL")), upstream.rpcBodies("app_start_exam_attempt").map { b -> b.mapValues { it.value.jsonPrimitive.content } })
         assertTrue(upstream.urls.indexOfFirst { "estado_premium_usuario" in it } < upstream.urls.indexOfFirst { "rpc/app_start_exam_attempt" in it }, "D7-25 antes del comando")
         assertEquals(listOf(AttemptOperation.START), limited)
 
@@ -389,16 +393,16 @@ class AttemptRoutesTest {
     @Test
     fun startIsDeniedByTheEntitlementPolicyBeforeAnyCommand() = testApplication {
         application { attemptModule() }
-        // premium sin derecho -> EXAM_LOCKED con accessState; solo demo -> DEMO (tampoco con modo DEMO: semantica abierta).
+        // premium sin derecho -> EXAM_LOCKED con accessState; solo demo -> DEMO (sin modo DEMO sigue cerrado; con modo DEMO ver demoStart...).
         upstream.examById = examRow(acceso = "premium")
         val locked = client.call(HttpMethod.Post, start, key = key1)
         assertEquals(HttpStatusCode.Forbidden, locked.status)
         assertEquals("EXAM_LOCKED", code(locked.bodyAsText()))
         assertEquals("LOCKED", obj(locked.bodyAsText())["details"]!!.jsonObject["accessState"]!!.jsonPrimitive.content)
         upstream.examById = examRow(acceso = "premium", demo = true)
-        val demo = client.call(HttpMethod.Post, start, body = """{"modo":"DEMO"}""", key = key2)
+        val demo = client.call(HttpMethod.Post, start, key = key2)
         assertEquals("EXAM_LOCKED", code(demo.bodyAsText()))
-        assertEquals("DEMO", obj(demo.bodyAsText())["details"]!!.jsonObject["accessState"]!!.jsonPrimitive.content)
+        assertEquals("DEMO", obj(demo.bodyAsText())["details"]!!.jsonObject["accessState"]!!.jsonPrimitive.content, "sin modo DEMO el examen de demo sigue cerrado")
         // la especialidad del examen no admite ese tipo -> SPECIALTY_TYPE_NOT_ALLOWED aunque sea gratuito
         upstream.examById = examRow()
         upstream.capabilities = """[{"especialidad_id":"$esp","permite_rafagas":false}]"""
@@ -423,7 +427,7 @@ class AttemptRoutesTest {
         // con acceso (premium vigente) el comando corre; sus rechazos salen con su codigo y NO se guardan como repeticion
         upstream.capabilities = "[]"
         upstream.examById = examRow(acceso = "premium")
-        upstream.premium = """[{"es_premium":true,"estado_suscripcion":"activa","fin_en":"2099-01-01T00:00:00+00:00"}]"""
+        upstream.premium = """[{"es_premium":true,"estado_suscripcion":"activa","producto_codigo":"plan-pro","fin_en":"2099-01-01T00:00:00+00:00"}]"""
         upstream.startOutcome = """{"outcome":"EXAM_EMPTY"}"""
         val key = "0a0a0a0a-0000-4000-8000-000000000005"
         val empty = client.call(HttpMethod.Post, start, key = key)
@@ -1391,5 +1395,48 @@ class AttemptRoutesTest {
         assertEquals(1L, obj(response.bodyAsText())["details"]!!.jsonObject["currentRevision"]!!.jsonPrimitive.content.toLong())
         assertEquals(1.0, examMetrics.find("exam_revision_conflict_total").tag("op", ExamOp.ANSWER).counter()!!.count())
         assertEquals(1.0, examMetrics.find("exam_4xx_total").tag("code", "REVISION_CONFLICT").counter()!!.count())
+    }
+
+    // ---- V1 Access v2: DEMO start, per-user/IP limits and the daily limiter
+
+    @Test
+    fun demoStartSendsTheDemoModeOnlyWhenTheStateIsDemoAndMapsTheLimits() = testApplication {
+        application { attemptModule() }
+        upstream.examById = examRow(acceso = "premium", demo = true)
+        upstream.attemptRow = attemptRow()
+        upstream.startOutcome = """{"outcome":"CREATED","intento_id":"$attempt","es_demo":true}"""
+        val demo = client.call(HttpMethod.Post, start, body = """{"modo":"DEMO"}""", key = key1)
+        assertEquals(HttpStatusCode.Created, demo.status, demo.bodyAsText())
+        assertEquals("DEMO", upstream.rpcBodies("app_start_exam_attempt").single()["p_modo"]!!.jsonPrimitive.content)
+        // the per-user limit lives in the database: DEMO_LIMIT -> 429
+        upstream.startOutcome = """{"outcome":"DEMO_LIMIT"}"""
+        val limit = client.call(HttpMethod.Post, start, body = """{"modo":"DEMO"}""", key = key2)
+        assertEquals(HttpStatusCode.TooManyRequests, limit.status)
+        assertEquals("RATE_LIMITED", code(limit.bodyAsText()))
+        // an exam WITHOUT demo availability: modo DEMO is just a locked exam, no command is sent
+        upstream.sent.clear()
+        upstream.examById = examRow(acceso = "premium", demo = false)
+        val nodemo = client.call(HttpMethod.Post, start, body = """{"modo":"DEMO"}""", key = "0a0a0a0a-0000-4000-8000-0000000000d1")
+        assertEquals("EXAM_LOCKED", code(nodemo.bodyAsText()))
+        assertTrue(upstream.rpcBodies("app_start_exam_attempt").isEmpty())
+    }
+
+    @Test
+    fun theQuestionPageRegistersWhatItRevealsAndTheDailyLimitIs429WithRetryAfter() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = attemptRow()
+        upstream.questionPage = { _ -> "[" + (1..2).joinToString(",") { questionRow(it) } + "]" }
+        val ok = client.call(HttpMethod.Get, "$base/preguntas?limit=2")
+        assertEquals(HttpStatusCode.OK, ok.status, ok.bodyAsText())
+        val reveal = upstream.rpcBodies("app_reveal_attempt_questions").single()
+        assertEquals(TEST_UID, reveal["p_usuario"]!!.jsonPrimitive.content)
+        assertEquals(attempt, reveal["p_intento"]!!.jsonPrimitive.content)
+        assertEquals(listOf(q(1), q(2)), reveal["p_preguntas"]!!.jsonArray.map { it.jsonPrimitive.content })
+        upstream.revealOutcome = """{"outcome":"DAILY_LIMIT_REACHED","retry_after_seconds":4321,"limit":30}"""
+        val blocked = client.call(HttpMethod.Get, "$base/preguntas?limit=2")
+        assertEquals(HttpStatusCode.TooManyRequests, blocked.status)
+        assertEquals("DAILY_LIMIT_REACHED", code(blocked.bodyAsText()))
+        assertEquals("4321", blocked.headers[HttpHeaders.RetryAfter])
+        assertFalse(blocked.bodyAsText().contains("titulo"), "a refused page serves no question")
     }
 }

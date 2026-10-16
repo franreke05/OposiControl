@@ -75,6 +75,7 @@ internal data class AttemptRow(
     @SerialName("tipo_examen_snapshot") val tipoExamenSnapshot: String? = null,
     @SerialName("especialidad_snapshot_id") val especialidadSnapshotId: String? = null,
     @SerialName("ultima_pregunta_posicion") val ultimaPreguntaPosicion: Int? = null,
+    @SerialName("es_demo") val esDemo: Boolean = false,
 )
 
 @Serializable
@@ -206,6 +207,10 @@ internal data class AttemptCommandOutcome(
     /** 20261022100000: la revelacion DEC-015 sale de la propia RPC (una sola llamada por respuesta). */
     @SerialName("es_correcta") val esCorrecta: Boolean? = null,
     @SerialName("opcion_correcta_id") val opcionCorrectaId: String? = null,
+    /** Access v2: estado de acceso que devuelve el arranque DEMO denegado (`EXAM_LOCKED`). */
+    val state: String? = null,
+    /** Limitador diario: segundos hasta que la ventana libera hueco. */
+    @SerialName("retry_after_seconds") val retryAfterSeconds: Int? = null,
 )
 
 internal class AttemptGateway(
@@ -228,12 +233,27 @@ internal class AttemptGateway(
 
     // ---------- comandos (RPC) ----------
 
-    fun start(userId: String, examId: String): AttemptCommandOutcome {
+    fun start(userId: String, examId: String, demo: Boolean = false): AttemptCommandOutcome {
         require(userId.isUuid() && examId.isUuid()) { "ids" }
         return decodeOutcome(
             upstream.rpc(
                 "app_start_exam_attempt",
-                buildJsonObject { put("p_usuario_id", userId); put("p_examen_id", examId) }.toString(),
+                buildJsonObject { put("p_usuario_id", userId); put("p_examen_id", examId); put("p_modo", if (demo) "DEMO" else "NORMAL") }.toString(),
+            ),
+        )
+    }
+
+    /** Limitador diario (C-L1): registra las preguntas que una pagina va a revelar; `DAILY_LIMIT_REACHED` si la ventana no da. */
+    fun reveal(userId: String, attemptId: String, questionIds: List<String>): AttemptCommandOutcome {
+        require(userId.isUuid() && attemptId.isUuid() && questionIds.all { it.isUuid() }) { "ids" }
+        return decodeOutcome(
+            upstream.rpc(
+                "app_reveal_attempt_questions",
+                buildJsonObject {
+                    put("p_usuario", userId)
+                    put("p_intento", attemptId)
+                    put("p_preguntas", kotlinx.serialization.json.buildJsonArray { questionIds.forEach { add(JsonPrimitive(it)) } })
+                }.toString(),
             ),
         )
     }
@@ -477,7 +497,7 @@ internal class AttemptGateway(
 
         internal const val ATTEMPT_COLUMNS =
             "id,examen_id,estado,motivo_fin,iniciado_en,finalizado_en,duracion_segundos,total_preguntas,total_respondidas," +
-                "total_correctas,total_falladas,total_sin_responder,tipo_examen_snapshot,especialidad_snapshot_id,ultima_pregunta_posicion"
+                "total_correctas,total_falladas,total_sin_responder,tipo_examen_snapshot,especialidad_snapshot_id,ultima_pregunta_posicion,es_demo"
 
         /** Contenido de pregunta que ve el opositor DURANTE el intento. Sin soluciones (SEC-004). */
         internal const val QUESTION_COLUMNS = "codigo_pregunta,tipo_pregunta,titulo,opciones_pregunta(id,letra,texto_opcion,posicion)"

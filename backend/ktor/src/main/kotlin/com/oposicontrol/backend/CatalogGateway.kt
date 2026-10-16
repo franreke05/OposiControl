@@ -294,7 +294,7 @@ internal class CatalogGateway(
      */
     fun attemptRefs(userId: String, examId: String): ExamAttemptRefs {
         val query = "/rest/v1/intentos_examen?select=id,estado&usuario_id=eq.$userId&examen_id=eq.$examId" +
-            "&origen_intento=eq.examen&creado_por_comando=not.is.null&estado=in.(en_progreso,finalizado)" +
+            "&origen_intento=eq.examen&creado_por_comando=not.is.null&es_demo=eq.false&estado=in.(en_progreso,finalizado)" +
             "&order=estado.asc,finalizado_en.desc.nullslast,id.desc&limit=2"
         val rows = decodeList<ExamAttemptRow>(upstream.get(query))
         return ExamAttemptRefs(
@@ -308,7 +308,7 @@ internal class CatalogGateway(
     /** EN_CURSO: intentos abiertos del usuario sobre examenes publicados, `actualizado_en DESC, id DESC`. */
     fun myOpenAttempts(userId: String, filter: CatalogFilter, after: KeysetPosition?, fetchLimit: Int, now: Instant): List<MyAttemptRow> {
         val query = StringBuilder("/rest/v1/intentos_examen?select=id,estado,total_respondidas,total_preguntas,actualizado_en,examenes!inner($EXAM_COLUMNS)")
-        query.append("&usuario_id=eq.$userId&estado=eq.en_progreso&origen_intento=eq.examen")
+        query.append("&usuario_id=eq.$userId&estado=eq.en_progreso&origen_intento=eq.examen&es_demo=eq.false")
         query.append(publishedPredicate("examenes.", now))
         query.append(filterPredicate("examenes.", filter))
         if (after != null) query.append("&or=(").append(keysetOr("actualizado_en", after)).append(")")
@@ -381,7 +381,7 @@ internal class CatalogGateway(
     fun latestAttempts(userId: String, examIds: Collection<String>): Map<String, AttemptBriefRow> {
         if (examIds.isEmpty()) return emptyMap()
         val query = "/rest/v1/intentos_examen?select=id,examen_id,estado,total_respondidas,total_preguntas" +
-            "&usuario_id=eq.$userId&examen_id=in.(${examIds.joinToString(",")})&origen_intento=eq.examen" +
+            "&usuario_id=eq.$userId&examen_id=in.(${examIds.joinToString(",")})&origen_intento=eq.examen&es_demo=eq.false" +
             "&order=actualizado_en.desc,id.desc&limit=$LATEST_ATTEMPTS_FETCH_LIMIT"
         val latest = LinkedHashMap<String, AttemptBriefRow>()
         decodeList<AttemptBriefRow>(upstream.get(query)).forEach { latest.putIfAbsent(it.examenId, it) }

@@ -151,6 +151,7 @@ psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), '
 // V1 economia: usuarios Q1..Q4, examenes con precio de PRUEBA y paquetes de PRUEBA para E5 (valores locales, ninguna decision de producto).
 psql(fs.readFileSync(path.join(here, 'sql/98_v1_economy_fixtures.sql'), 'utf8'));
 // V1: un administrador local (rol canonico `admin`) para recorrer la superficie de administracion por HTTP (Ktor perfil control, puerto 8090).
+psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/99_v1_admin_fixture.sql'), 'utf8'));
 psql('notify pgrst, \'reload schema\';');
 
@@ -191,6 +192,7 @@ const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a', 'a@exam.local'
   Q1: es256('2a000000-0000-4000-8000-00000000002a', 'q1@exam.local'), Q2: es256('2b000000-0000-4000-8000-00000000002b', 'q2@exam.local'),
   Q2Z: es256('2c000000-0000-4000-8000-00000000002c', 'q2z@exam.local'), Q3: es256('2d000000-0000-4000-8000-00000000002d', 'q3@exam.local'),
   Q4: es256('2e000000-0000-4000-8000-00000000002e', 'q4@exam.local'),
+  Q6: es256('2f000000-0000-4000-8000-00000000002f', 'q6@exam.local'), Q7: es256('3b000000-0000-4000-8000-00000000003b', 'q7@exam.local'),
   ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local') };
 fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
 
