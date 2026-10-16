@@ -277,7 +277,9 @@ class SupabaseJwtVerifier(
             if (keys.isEmpty()) throw java.io.IOException("JWKS sin claves")
             throw JwtRejectedException("kid no encontrado en JWKS")
         }
-        val verified = JWT.require(Algorithm.ECDSA256(key, null)).withIssuer(issuer).build().verify(token)
+        // DEBT-095(a): Supabase siempre emite `aud=authenticated` y `exp`; sin ellos el token se rechaza (401).
+        val verified = JWT.require(Algorithm.ECDSA256(key, null)).withIssuer(issuer).withAudience("authenticated").build().verify(token)
+        if (verified.expiresAt == null) throw JwtRejectedException("token sin exp")
         val subject = verified.subject ?: throw JwtRejectedException("token sin sub")
         return VerifiedJwtClaims(
             subject = subject,

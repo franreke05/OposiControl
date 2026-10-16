@@ -87,7 +87,7 @@ class SupabaseJwtVerifierJwksTest {
         }
 
     private fun tokenFor(kid: String, kp: KeyPair): String =
-        JWT.create().withKeyId(kid).withIssuer(issuer).withSubject(uid)
+        JWT.create().withKeyId(kid).withIssuer(issuer).withSubject(uid).withAudience("authenticated").withExpiresAt(java.util.Date(System.currentTimeMillis() + 3_600_000))
             .sign(Algorithm.ECDSA256(kp.public as ECPublicKey, kp.private as ECPrivateKey))
 
     private fun serve(code: Int, text: String, type: String = "application/json") {
@@ -271,7 +271,7 @@ class SupabaseJwtVerifierJwksTest {
         val kp = newKey()
         serve(200, jwks("k1" to kp))
         val algorithm = Algorithm.ECDSA256(kp.public as ECPublicKey, kp.private as ECPrivateKey)
-        val withAmr = JWT.create().withKeyId("k1").withIssuer(issuer).withSubject(uid)
+        val withAmr = JWT.create().withKeyId("k1").withIssuer(issuer).withSubject(uid).withAudience("authenticated").withExpiresAt(java.util.Date(System.currentTimeMillis() + 3_600_000))
             .withIssuedAt(java.util.Date(1_700_000_000_000L))
             .withClaim("amr", listOf(mapOf("method" to "oauth", "timestamp" to 1_699_999_000L), mapOf("method" to "password", "timestamp" to 1_699_999_500L)))
             .sign(algorithm)
@@ -284,9 +284,26 @@ class SupabaseJwtVerifierJwksTest {
 
         // Sin amr (o con una forma inesperada) las marcas son desconocidas: la reautenticacion falla CERRADA.
         assertEquals(emptyList(), verifier.claimsFrom(tokenFor("k1", kp)).authTimes)
-        val weird = JWT.create().withKeyId("k1").withIssuer(issuer).withSubject(uid).withClaim("amr", "password").sign(algorithm)
+        val weird = JWT.create().withKeyId("k1").withIssuer(issuer).withSubject(uid).withAudience("authenticated").withExpiresAt(java.util.Date(System.currentTimeMillis() + 3_600_000)).withClaim("amr", "password").sign(algorithm)
         assertEquals(emptyList(), verifier.claimsFrom(weird).authTimes)
         // Un token que no verifica sigue sin verificar.
         assertFailsWith<Exception> { verifier.claimsFrom(tokenFor("k1", newKey())) }
+    }
+
+    /** DEBT-095(a): `aud=authenticated` y `exp` son obligatorios. */
+    @Test
+    fun tokensWithoutExpOrWithAnotherAudienceAreRejected() {
+        val kp = newKey()
+        serve(200, jwks("k1" to kp))
+        val algorithm = Algorithm.ECDSA256(kp.public as ECPublicKey, kp.private as ECPrivateKey)
+        val exp = java.util.Date(System.currentTimeMillis() + 3_600_000)
+        fun base() = JWT.create().withKeyId("k1").withIssuer(issuer).withSubject(uid)
+        assertEquals(uid, verifier.subFrom(base().withAudience("authenticated").withExpiresAt(exp).sign(algorithm)))
+        assertFailsWith<Exception> { verifier.subFrom(base().withAudience("authenticated").sign(algorithm)) }
+        assertFailsWith<Exception> { verifier.subFrom(base().withExpiresAt(exp).sign(algorithm)) }
+        assertFailsWith<Exception> { verifier.subFrom(base().withAudience("anon").withExpiresAt(exp).sign(algorithm)) }
+        assertFailsWith<Exception> {
+            verifier.subFrom(base().withAudience("authenticated").withExpiresAt(java.util.Date(System.currentTimeMillis() - 60_000)).sign(algorithm))
+        }
     }
 }
