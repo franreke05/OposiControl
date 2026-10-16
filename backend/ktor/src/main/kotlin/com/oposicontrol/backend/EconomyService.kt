@@ -6,6 +6,7 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -69,6 +70,10 @@ internal data class TicketPackDto(
     val currency: String,
     val featured: Boolean,
     val promoLabel: String? = null,
+    /** FA28: bloque base de la recarga libre (100 OT = 1 EUR). Ausente = false. */
+    val recargaBase: Boolean? = null,
+    /** FA28: tickets por euro (informativo, para orientar a los packs grandes). */
+    val otPorEuro: Double? = null,
 )
 
 @Serializable
@@ -136,6 +141,7 @@ internal data class PackRow(
     val moneda: String,
     val destacado: Boolean = false,
     @SerialName("etiqueta_promocional") val etiquetaPromocional: String? = null,
+    val metadatos: kotlinx.serialization.json.JsonObject? = null,
 )
 
 // ---------- puerto hacia la base ----------
@@ -179,6 +185,20 @@ internal object EconomyRpcErrors {
             // Guardar (FA26): NOT_FOUND = pregunta inexistente o sin ningun examen abrible (misma respuesta, sin sondeo).
             "NOT_FOUND" -> CanonicalErrorCode.NOT_FOUND.exception()
             "SAVED_LIMIT_REACHED" -> CanonicalErrorCode.SAVED_LIMIT_REACHED.exception()
+            "PLAN_QUOTA_NONE" -> CanonicalErrorCode.PLAN_QUOTA_NONE.exception()
+            "PLAN_QUOTA_FULL" -> CanonicalErrorCode.PLAN_QUOTA_FULL.exception()
+            "EXAM_NOT_IMMERSIVE" -> CanonicalErrorCode.EXAM_NOT_IMMERSIVE.exception()
+            "PURCHASE_CAP_REACHED" -> CanonicalErrorCode.PURCHASE_CAP_REACHED.exception()
+            // Reto diario (FA29)
+            "ANSWER_LOCKED" -> CanonicalErrorCode.ANSWER_LOCKED.exception()
+            "RETO_OUT_OF_WINDOW" -> CanonicalErrorCode.RETO_OUT_OF_WINDOW.exception()
+            "RETO_NOT_PASSED" -> CanonicalErrorCode.RETO_NOT_PASSED.exception()
+            "OT_EARN_CAP_REACHED" -> CanonicalErrorCode.OT_EARN_CAP_REACHED.exception()
+            "RETO_CLAIM_EXPIRED" -> CanonicalErrorCode.RETO_CLAIM_EXPIRED.exception()
+            "RETO_CLAIM_NOT_ELIGIBLE" -> CanonicalErrorCode.RETO_CLAIM_NOT_ELIGIBLE.exception()
+            "EMAIL_UNVERIFIED" -> CanonicalErrorCode.EMAIL_UNVERIFIED.exception()
+            "OPTION_NOT_IN_QUESTION" -> CanonicalErrorCode.OPTION_NOT_IN_QUESTION.exception()
+            "FREE_EARN_INVALID" -> CanonicalErrorCode.VALIDATION.exception()
             "SAVED_INVALID" -> CanonicalErrorCode.VALIDATION.exception()
             "ORDER_REQUEST_INVALID", "EVENT_INVALID" -> CanonicalErrorCode.VALIDATION.exception()
             // Perfil inexistente: el resolver de identidad ya lo habria cortado; aqui es una carrera con el borrado de cuenta.
@@ -236,14 +256,16 @@ internal class EconomyService(
     suspend fun packs(): TicketPacksResponse {
         val body = canonicalUpstreamIo {
             upstream.get(
-                "/rest/v1/productos_comerciales?select=codigo,nombre,descripcion,cantidad_tickets,precio_centimos,moneda,destacado,etiqueta_promocional" +
+                "/rest/v1/productos_comerciales?select=codigo,nombre,descripcion,cantidad_tickets,precio_centimos,moneda,destacado,etiqueta_promocional,metadatos" +
                     "&tipo_producto=eq.pack_tickets&activo=eq.true&visible=eq.true&cantidad_tickets=gt.0&precio_centimos=gt.0&order=posicion.asc,codigo.asc",
             )
         }
         val rows = decode<PackRow>(body)
         return TicketPacksResponse(
             rows.map {
-                TicketPackDto(it.codigo, it.nombre, it.descripcion, it.cantidadTickets, it.precioCentimos, it.moneda, it.destacado, it.etiquetaPromocional)
+                val base = (it.metadatos?.get("recarga_base") as? kotlinx.serialization.json.JsonPrimitive)?.booleanOrNull == true
+                val perEuro = if (it.moneda == "EUR" && it.precioCentimos > 0) Math.round(it.cantidadTickets * 100.0 / it.precioCentimos * 100.0) / 100.0 else null
+                TicketPackDto(it.codigo, it.nombre, it.descripcion, it.cantidadTickets, it.precioCentimos, it.moneda, it.destacado, it.etiquetaPromocional, base.takeIf { b -> b }, perEuro)
             },
         )
     }

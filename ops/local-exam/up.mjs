@@ -118,10 +118,15 @@ psql(fs.readFileSync(path.join(here, 'sql/02_overlay_idempotency_finalize.sql'),
 psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261022100100_security_exam_publication_time.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/93_phase_b_scheduled_exam.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/94_e2e_users.sql'), 'utf8'));
+// E5-V1-S10: feedback_pregunta existe en MAIN y no en el subconjunto del bootstrap local (Reportar daba 502).
+psql(fs.readFileSync(path.join(here, 'sql/91_feedback_pregunta_local.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/95_v1_specialties.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/96_v1_communities.sql'), 'utf8'));
 // V1 STEP 2: comunidad obligatoria (NOT NULL + trigger + FK RESTRICT; despues de 96, que asigna comunidad a los examenes locales previos). Tambien sobre stacks creados antes de ella.
 psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261022100200_v1_exam_community_required.sql'), 'utf8'));
+// V1 Access v2: beneficios_plan y suscripciones (objetos de MAIN fuera del subconjunto del bootstrap; idempotente).
+psql(fs.readFileSync(path.join(repo, 'supabase/baseline/main_shape_subset_extra_plans.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(repo, 'supabase/baseline/main_shape_subset_extra_engagement.sql'), 'utf8'));
 // V1 economia (OposiTickets): libro de cartera, pedidos de pago y canje. Las tres migraciones son idempotentes (create or replace / if not exists /
 // drop-create de triggers y restricciones) salvo los PREFLIGHT, que fallan sin cambiar nada. Despues, lo que SOLO existe en local: el proveedor sandbox
 // en el CHECK de compras_usuario y la cartera vacia de los usuarios antiguos.
@@ -147,6 +152,7 @@ psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), '
 // V1 economia: usuarios Q1..Q4, examenes con precio de PRUEBA y paquetes de PRUEBA para E5 (valores locales, ninguna decision de producto).
 psql(fs.readFileSync(path.join(here, 'sql/98_v1_economy_fixtures.sql'), 'utf8'));
 // V1: un administrador local (rol canonico `admin`) para recorrer la superficie de administracion por HTTP (Ktor perfil control, puerto 8090).
+psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/99_v1_admin_fixture.sql'), 'utf8'));
 psql('notify pgrst, \'reload schema\';');
 
@@ -187,6 +193,7 @@ const tokens = { A: es256('0a000000-0000-4000-8000-00000000000a', 'a@exam.local'
   Q1: es256('2a000000-0000-4000-8000-00000000002a', 'q1@exam.local'), Q2: es256('2b000000-0000-4000-8000-00000000002b', 'q2@exam.local'),
   Q2Z: es256('2c000000-0000-4000-8000-00000000002c', 'q2z@exam.local'), Q3: es256('2d000000-0000-4000-8000-00000000002d', 'q3@exam.local'),
   Q4: es256('2e000000-0000-4000-8000-00000000002e', 'q4@exam.local'),
+  Q6: es256('2f000000-0000-4000-8000-00000000002f', 'q6@exam.local'), Q7: es256('3b000000-0000-4000-8000-00000000003b', 'q7@exam.local'),
   ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local') };
 fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
 

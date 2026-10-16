@@ -239,6 +239,13 @@ begin
     raise exception using errcode = 'P0001', message = 'ORDER_PENDING_LIMIT';
   end if;
 
+  -- C-P2 (E2): daily cap on OT bought per user, ON by default (config tope_ot_comprados_dia, finite; Control editable), Madrid day on the DB clock; open (unexpired) and paid orders count.
+  if (select coalesce(sum(c.cantidad_tickets), 0) from public.compras_usuario c
+       where c.usuario_id = p_usuario and c.cantidad_tickets is not null and c.creado_en >= (date_trunc('day', now() at time zone coalesce((select k.valor_text from public.configuracion_v1 k where k.clave = 'zona_horaria'), 'Europe/Madrid')) at time zone coalesce((select k.valor_text from public.configuracion_v1 k where k.clave = 'zona_horaria'), 'Europe/Madrid'))
+         and (c.estado = 'pagada' or (c.estado = 'pendiente' and c.expira_en > now()))) + v_prod.cantidad_tickets > private.config_int('tope_ot_comprados_dia', 5200) then
+    raise exception using errcode = 'P0001', message = 'PURCHASE_CAP_REACHED';
+  end if;
+
   insert into public.compras_usuario (usuario_id, proveedor, producto_codigo, tipo_producto, estado, precio_centimos, moneda,
                                       cantidad_tickets, idempotency_key, huella_solicitud, expira_en)
   values (p_usuario, p_proveedor, v_prod.codigo, 'opositickets', 'pendiente', v_prod.precio_centimos, v_prod.moneda,

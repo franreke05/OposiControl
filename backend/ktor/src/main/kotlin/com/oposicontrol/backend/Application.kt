@@ -10,6 +10,7 @@ import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.call
 import io.ktor.server.application.install
+import io.ktor.server.application.log
 import io.ktor.server.auth.Authentication
 import io.ktor.server.auth.AuthenticationConfig
 import io.ktor.server.auth.UnauthorizedResponse
@@ -522,6 +523,13 @@ fun Application.module() {
     }
     // MASTER-ARCH-008: cierre ordenado de los recursos del runtime de auth (Valkey, HttpClient) al parar.
     authRuntime?.let { runtime -> monitor.subscribe(ApplicationStopped) { runtime.close() } }
+    // V1 wave 2: generacion diaria del reto + reintento de OT diferidos (ambos idempotentes y bajo cerrojo consultivo en la base; apagado con CHALLENGE_JOB_SECONDS=0).
+    if (serverProfile != ServerProfile.CONTROL) {
+        TransportEconomyUpstream.fromEnvironment()?.let { upstream ->
+            val job = DailyChallengeJob.start(this, upstream, DailyChallengeJob.intervalFrom()) { message -> log.warn(message) }
+            monitor.subscribe(ApplicationStopped) { job?.cancel() }
+        }
+    }
     installBackendPrometheusMetrics()
     if (consumerOnly) {
         configureConsumerAuthOnly(authRuntime ?: error("Auth consumer no configurado."))
@@ -611,8 +619,10 @@ fun Application.module() {
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
         economyRuntime = canonicalIdentityResolver?.let { EconomyRuntime.fromEnvironment(it, authRuntime) },
         savedItemsRuntime = canonicalIdentityResolver?.let { SavedItemsRuntime.fromEnvironment(it, authRuntime) },
+        planQuotaRuntime = canonicalIdentityResolver?.let { PlanQuotaRuntime.fromEnvironment(it, authRuntime) },
+        challengeRuntime = canonicalIdentityResolver?.let { ChallengeRuntime.fromEnvironment(it, authRuntime) },
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
-            catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter) }
+            catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter, auth = authRuntime) }
         },
     )
     configureServerProfile(serverProfile, json, routingDeps)
@@ -679,6 +689,10 @@ internal class CombinedRoutingDeps(
     internal val economyRuntime: EconomyRuntime? = null,
     /** V1 Guardar + OposiTeca (D4-20, D4-21, D4-24, D4-26). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val savedItemsRuntime: SavedItemsRuntime? = null,
+    /** V1 Access v2 (D7-31, D7-32). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val planQuotaRuntime: PlanQuotaRuntime? = null,
+    /** V1 wave 2 (D3-04, D3-16..D3-19): reto diario, racha, reclamar. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val challengeRuntime: ChallengeRuntime? = null,
     /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
     internal val newsRuntime: NewsRuntime? = null,
     /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
@@ -744,6 +758,10 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     economyRoutes(economyRuntime)
     // V1 Guardar + OposiTeca: preguntas guardadas del usuario (D4-20, D4-21, D4-24, D4-26).
     savedItemsRoutes(savedItemsRuntime)
+    // V1 Access v2: cupo de inmersivos del plan (D7-31, D7-32).
+    planQuotaRoutes(planQuotaRuntime)
+    // V1 wave 2: reto diario, racha y reclamar (D3-04, D3-16..D3-19).
+    challengeRoutes(challengeRuntime)
     authRuntime?.let {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).

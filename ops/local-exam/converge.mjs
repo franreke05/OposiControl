@@ -62,6 +62,9 @@ export function converge({ psql, root = repo }) {
     'revoke all on table private.v1_applied_migrations from public, anon, authenticated, service_role;');
   // a stack that applied the F01 draft: same repair up.mjs runs first
   if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
+  // MAIN objects the bootstrap subset lacks (idempotent): beneficios_plan, suscripciones
+  psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_plans.sql'), 'utf8'));
+  psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_engagement.sql'), 'utf8'));
   for (const f of files) {
     process.stdout.write(`  apply ${f.v}\n`);
     psql(f.text);
@@ -69,6 +72,10 @@ export function converge({ psql, root = repo }) {
           on conflict (version) do update set file_sha256 = excluded.file_sha256, applied_at = clock_timestamp();`);
   }
   psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
+  // E5-V1-S10: feedback_pregunta (MAIN has it, the local bootstrap subset does not)
+  psql(fs.readFileSync(path.join(here, 'sql/91_feedback_pregunta_local.sql'), 'utf8'));
+  // V1 Access v2 local fixtures (test plans, benefits, products, recarga blocks, users Q6/Q7, demo exam); only where the economy fixtures already exist (a live stack)
+  if (psql("select to_regclass('public.especialidades') is not null and exists (select 1 from public.especialidades where id = 'e5000000-0000-4000-8000-000000000001')") === 't') psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
   psql("notify pgrst, 'reload schema';");
   return verify({ psql, root, files });
 }

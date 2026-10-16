@@ -117,7 +117,7 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: REQUIRED
-        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, IDEMPOTENCY_KEY_IN_PROGRESS, PRODUCT_NOT_AVAILABLE, PAYMENT_PROVIDER_UNAVAILABLE, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, PURCHASE_CAP_REACHED, IDEMPOTENCY_KEY_IN_PROGRESS, PRODUCT_NOT_AVAILABLE, PAYMENT_PROVIDER_UNAVAILABLE, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
         description: 'Freezes the quantity, money amount and currency from the catalogue into a pending order that expires after 30 minutes (database clock). Idempotent by (user, key). Creating an order credits nothing: only a verified provider confirmation does.'
         security:
           - bearerAuth: []
@@ -400,6 +400,12 @@ components:
           type: boolean
         promoLabel:
           type: [string, 'null']
+        recargaBase:
+          type: boolean
+          description: 'FA28: true for the small 1 EUR base blocks (100 OT = 1 EUR) the client composes a free recharge from. Absent = false.'
+        otPorEuro:
+          type: [number, 'null']
+          description: 'FA28: tickets per euro of this pack (informational, to steer the user to bigger packs).'
     TicketPacksResponse:
       type: object
       required: [items]

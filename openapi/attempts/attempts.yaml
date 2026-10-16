@@ -17,7 +17,7 @@ components:
         x-pagination: NONE
         x-idempotency: REQUIRED
         x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, EXAM_LOCKED, SPECIALTY_TYPE_NOT_ALLOWED, EXAM_NOT_FOUND, EXAM_EMPTY, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
-        description: 'One transaction: lazy deadline check, CheckExamAccess, partial unique index (usuario_id, examen_id) WHERE estado=en_progreso plus INSERT ON CONFLICT, then preguntas_intento is frozen. Concurrent or new-key calls converge on the single open attempt (200, reanudado=true). A prior finalizado or abandonado attempt means a new attempt (retake). usuario_id is never accepted from the client. The attempt is tied to the exam and to that exam specialty (returned as intento.especialidadId), never to the user current specialty (DEC-002). DEMO semantics are an open exam_engine question.'
+        description: 'FA28 (V1 demo): modo DEMO is LIVE. With modo DEMO the server creates an attempt that contains ONLY the exam questions flagged as demo by Control (always the same set, frozen at start; esDemo true on the attempt): nothing beyond them is ever served, a demo never counts for Nota media, ranking, streak, quota, purchases or the first answer, and it needs the DEMO access state (exam with demo available, capability on, same specialty gate; otherwise the usual EXAM_LOCKED / EXAM_NOT_FOUND / SPECIALTY_TYPE_NOT_ALLOWED). A user who already has access and sends DEMO gets a normal attempt. Starts of demo attempts are limited per user and per IP (429 RATE_LIMITED). Original text follows. One transaction: lazy deadline check, CheckExamAccess, partial unique index (usuario_id, examen_id) WHERE estado=en_progreso plus INSERT ON CONFLICT, then preguntas_intento is frozen. Concurrent or new-key calls converge on the single open attempt (200, reanudado=true). A prior finalizado or abandonado attempt means a new attempt (retake). usuario_id is never accepted from the client. The attempt is tied to the exam and to that exam specialty (returned as intento.especialidadId), never to the user current specialty (DEC-002). DEMO semantics are an open exam_engine question.'
         security:
           - bearerAuth: []
         parameters:
@@ -88,7 +88,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [UNAUTHENTICATED, INTERNAL, UPSTREAM_ERROR]
-        description: 'The date is resolved server-side in the fixed product timezone (DEC-006 fixes the value only).'
+        description: 'FA29: SUPERSEDED for the V1 app by D3-16 (GET /api/v1/app/retos/hoy, openapi/engagement/engagement.yaml): the V1 challenge is not an exam attempt. This operation stays documented for the legacy route only. The date is resolved server-side in the fixed product timezone (DEC-006 fixes the value only).'
         security:
           - bearerAuth: []
         responses:
@@ -116,7 +116,7 @@ components:
         x-pagination: NONE
         x-idempotency: OPTIONAL
         x-error-codes: [IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, CHALLENGE_NOT_FOUND, CHALLENGE_NOT_ACTIVE, CHALLENGE_ALREADY_COMPLETED, RATE_LIMITED]
-        description: 'Natural key: one participation per (usuario, reto); returns the existing attempt. The Idempotency-Key header is optional (a malformed key is 400 IDEMPOTENCY_KEY_INVALID).'
+        description: 'FA29: SUPERSEDED by D3-17/D3-18 (engagement.yaml); the V1 challenge is answered with PUT /api/v1/app/retos/{retoId}/respuestas/{preguntaId}, not through an attempt. Natural key: one participation per (usuario, reto); returns the existing attempt. The Idempotency-Key header is optional (a malformed key is 400 IDEMPOTENCY_KEY_INVALID).'
         security:
           - bearerAuth: []
         parameters:
@@ -201,8 +201,8 @@ components:
         x-roles: [USER]
         x-pagination: CURSOR
         x-idempotency: NONE
-        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, RATE_LIMITED]
-        description: 'Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. Content comes from the immutable question revision bound at start (amendment 2026-10-14). No solutions or explanations; V1 resource METADATA only (recursos; bytes via D2-66): the only correction carried is the one of the user own answer (respuesta.esCorrecta, respuesta.opcionCorrectaId; DEC-015), for an open and for a finished attempt alike.'
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, RATE_LIMITED, DAILY_LIMIT_REACHED]
+        description: 'FA28: on plans with a daily limit (benefit limite_preguntas_24h) a page that would reveal NEW questions beyond the rolling 24 h limit answers 429 DAILY_LIMIT_REACHED with Retry-After (questions already revealed in the window, demo attempts and exams held through purchase, gift or quota are exempt). Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. Content comes from the immutable question revision bound at start (amendment 2026-10-14). No solutions or explanations; V1 resource METADATA only (recursos; bytes via D2-66): the only correction carried is the one of the user own answer (respuesta.esCorrecta, respuesta.opcionCorrectaId; DEC-015), for an open and for a finished attempt alike.'
         security:
           - bearerAuth: []
         parameters:
@@ -519,6 +519,9 @@ components:
       description: 'D2-07 intento shape.'
       required: [id, origen, tipoExamen, estado, iniciadoEn, serverNow, totalPreguntas, respondidas, sinResponder]
       properties:
+        esDemo:
+          type: boolean
+          description: 'FA28: true for a demo attempt (only the demo-flagged questions). Absent = false.'
         id:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         origen:
@@ -823,6 +826,9 @@ components:
             modo:
               type: string
               description: 'Value set pending DEC-018.'
+            esDemo:
+              type: boolean
+              description: 'FA28: true when the result is of a DEMO attempt (only the demo-flagged questions). Absent = false. resumen.modo stays the exam type.'
             nota:
               type: number
               description: 'Formula pending DEC-013 (value, not shape).'

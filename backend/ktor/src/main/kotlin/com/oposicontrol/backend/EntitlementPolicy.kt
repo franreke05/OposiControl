@@ -89,13 +89,32 @@ internal data class ExamGrantFact(val motivo: String, val validFrom: Instant, va
 }
 
 /** La proyeccion `estado_premium_usuario`. */
-internal data class PremiumFact(val esPremium: Boolean, val status: String, val endsAt: Instant?) {
+internal data class PremiumFact(
+    val esPremium: Boolean,
+    val status: String,
+    val endsAt: Instant?,
+    /** V1 Access v2: nivel del plan (0..3) al que resuelve el producto de la suscripcion; `null` = el producto no resuelve a un plan (no cubre nada, falla cerrado). */
+    val planLevel: Int? = null,
+) {
     /**
      * Premium VIGENTE: la proyeccion lo marca, el estado es EXPLICITAMENTE uno de los que dan acceso y `fin_en` no ha pasado
      * (Q-04: nada en la base caduca la fila cuando `fin_en` vence, asi que se re-comprueba al leer).
      */
     fun activeAt(now: Instant): Boolean =
-        esPremium && status in ACCESS_STATUSES && (endsAt == null || endsAt.isAfter(now))
+        esPremium && status in ACCESS_STATUSES && (endsAt == null || endsAt.isAfter(now)) && (status != "cancelada" || endsAt != null)
+
+    /**
+     * Access v2 (client 2026-10-16): el plan cubre una rafaga desde el nivel 1 y un razonado desde el nivel 2; un inmersivo NUNCA lo cubre la suscripcion
+     * por si sola (solo una concesion: compra, regalo o cupo elegido). Un plan sin resolver no cubre nada.
+     */
+    fun covers(kind: ExamKind): Boolean {
+        val level = planLevel ?: return false
+        return when (kind) {
+            ExamKind.RAFAGA -> level >= 1
+            ExamKind.RAZONADO -> level >= 2
+            ExamKind.INMERSIVO -> false
+        }
+    }
 
     companion object {
         /**
@@ -138,7 +157,7 @@ internal object EntitlementPolicy {
         if (user.grants.any { it.activeAt(now) }) {
             return AccessVerdict(AccessDecision.ALLOW_PURCHASED, AccessState.GRANTED)
         }
-        if (user.premium?.activeAt(now) == true) {
+        if (user.premium?.activeAt(now) == true && user.premium.covers(exam.kind)) {
             return AccessVerdict(AccessDecision.ALLOW_PREMIUM, AccessState.SUBSCRIPTION)
         }
         if (exam.demoAvailable && capabilities.allowsDemos) {

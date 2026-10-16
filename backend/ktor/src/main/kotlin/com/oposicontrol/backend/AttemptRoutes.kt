@@ -35,6 +35,8 @@ internal class AttemptRuntime(
     val idempotency: IdempotencyStore,
     /** Limite por usuario (JWT sub ya verificado), ANTES de leer el perfil. Lanza 429 RATE_LIMITED. Por defecto no limita (pruebas). */
     val limit: suspend (AttemptOperation, CanonicalUserId) -> Unit = { _, _ -> },
+    /** Access v2: limite POR IP de los inicios DEMO (la clave de limite por usuario vive en la base). Lanza 429. Por defecto no limita (pruebas). */
+    val demoIpLimit: suspend (ApplicationCall) -> Unit = {},
     /** EX13: registro de las metricas del examen (por defecto el de `/metrics`; las pruebas pasan uno propio). */
     val metrics: io.micrometer.core.instrument.MeterRegistry = BackendPrometheusMetrics.registry,
 ) {
@@ -45,6 +47,7 @@ internal class AttemptRuntime(
             catalog: CatalogService,
             limiter: OposiBotsAuthRateLimiter?,
             environment: (String) -> String? = System::getenv,
+            auth: OposiBotsAuthRuntime? = null,
         ): AttemptRuntime? {
             val upstream = TransportAttemptUpstream.fromEnvironment(environment) ?: return null
             val store = PostgrestIdempotencyStore.fromEnvironment(environment) ?: return null
@@ -58,6 +61,12 @@ internal class AttemptRuntime(
                         if (!decision.allowed) {
                             throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = decision.retryAfterSeconds.coerceIn(1, 3_600).toInt())
                         }
+                    }
+                },
+                demoIpLimit = { call ->
+                    if (limiter != null && auth != null) {
+                        val decision = limiter.checkIp(OposiBotsAuthOperation.DEMO_START_IP, call.trustedClientIp(auth.configuration))
+                        if (!decision.allowed) throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = decision.retryAfterSeconds.coerceIn(1, 3_600).toInt())
                     }
                 },
             )
@@ -98,6 +107,7 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
             val rt = runtime.orMisconfigured()
             val identity = call.gatedIdentity()
             val request = call.receiveCanonicalCommand<AttemptStartRequest>()
+            if (request.modo == "DEMO") rt.demoIpLimit(call)
             val started = rt.attempts.start(identity.userId, call.pathUuid("examId"), request)
             if (started.created) {
                 call.response.header(HttpHeaders.Location, "/api/v1/app/intentos/${started.response.intento.id}")

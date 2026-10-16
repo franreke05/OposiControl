@@ -143,7 +143,12 @@ GET	/api/v1/app/opositeca	BOT	user-jwt	Consumer OposiTeca: saved questions list 
 GET	/api/v1/app/opositeca/guardados/{}	BOT	user-jwt	Consumer OposiTeca: which questions are saved (D4-26)	OposiBot
 GET	/api/v1/app/opositester/me	BOT	user-jwt	Consumer app API: opositester/me (D5-16)	OposiBot
 GET	/api/v1/app/payments/orders/{}	BOT	user-jwt	Consumer economy: payment order status (D6-13)	OposiBot
+GET	/api/v1/app/plan/catalogo	BOT	user-jwt	Consumer plan: catalog with coverage, daily limit and tariffs as data (D7-33)	OposiBot
+GET	/api/v1/app/plan/cupo	BOT	user-jwt	Consumer plan: immersive quota summary (D7-31)	OposiBot
+GET	/api/v1/app/racha	BOT	user-jwt	Consumer challenge: current and best streak (D3-04)	OposiBot
 GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
+GET	/api/v1/app/retos/hoy	BOT	user-jwt	Consumer challenge: today (D3-16)	OposiBot
+GET	/api/v1/app/retos/{}/preguntas/{}/recursos/{}	BOT	user-jwt	Consumer challenge: signed media of a challenge question (D3-19)	OposiBot
 GET	/api/v1/app/wallet	BOT	user-jwt	Consumer wallet balance	OposiBot
 GET	/api/v1/app/wallet/movimientos	BOT	user-jwt	Consumer wallet movements	OposiBot
 GET	/api/v1/app/wallet/paquetes	BOT	user-jwt	Consumer economy: OposiTicket packs on sale (D6-11)	OposiBot
@@ -254,6 +259,7 @@ POST	/api/v1/app/me/onboarding	AUTH	user-jwt	Canonical profile/account: POST me/
 POST	/api/v1/app/payments/orders	BOT	user-jwt	Consumer economy: create payment order (D6-12)	OposiBot
 POST	/api/v1/app/payments/orders/{}/verify	BOT	user-jwt	Consumer economy: confirm payment with receipt (D6-14)	OposiBot
 POST	/api/v1/app/wallet/canjes	BOT	user-jwt	Consumer economy: redeem exam with OposiTickets (D6-03)	OposiBot
+POST	/api/v1/app/retos/{}/reclamar	BOT	user-jwt	Consumer challenge: claim the frozen reward (D3-18)	OposiBot
 POST	/api/v1/webhooks/payments/{}	BOT	none	Payment provider notification (W-01); authenticated by provider signature, not JWT	none
 POST	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 POST	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
@@ -292,6 +298,8 @@ PUT	/api/v1/admin/planes/{}	CONTROL	admin	Admin v1: alta o cambio de un plan por
 PUT	/api/v1/admin/tipos-noticia/{}	CONTROL	admin	Admin news: type upsert	OposiControl
 PUT	/api/v1/app/intentos/{}/respuestas/{}	BOT	user-jwt	Consumer app API: intentos/{}/respuestas/{} (D2-09)	OposiBot
 PUT	/api/v1/app/opositeca/guardados/{}/{}	BOT	user-jwt	Consumer OposiTeca: save a question (D4-20)	OposiBot
+PUT	/api/v1/app/plan/cupo/{}	BOT	user-jwt	Consumer plan: choose an immersive with the quota (D7-32)	OposiBot
+PUT	/api/v1/app/retos/{}/respuestas/{}	BOT	user-jwt	Consumer challenge: answer (final) a challenge question (D3-17)	OposiBot
 PUT	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 PUT	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
 PUT	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl

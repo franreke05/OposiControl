@@ -11,7 +11,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
 
-requireStackLock('verdict-parity.mjs');
+// PARITY_CONTAINER=<name>: run against a DISPOSABLE PG17 container (no live stack, no lock). See parity-disposable.mjs.
+const container = process.env.PARITY_CONTAINER;
+if (!container) requireStackLock('verdict-parity.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
@@ -35,11 +37,15 @@ const E = matrix.exams.length, U = matrix.users.length;
 const sql = [];
 sql.push('begin;', 'set local session_replication_role = replica;');
 sql.push('create temp table pe(e int, kind text, free bool, demo bool);', 'create temp table pc(e int, r bool, z bool, i bool, d bool);',
-  'create temp table pu(u int, es bool, st text, fin timestamptz);', 'create temp table pg(u int, motivo text, f timestamptz, t timestamptz);');
+  'create temp table pu(u int, es bool, st text, fin timestamptz, prod text);', 'create temp table pg(u int, motivo text, f timestamptz, t timestamptz);');
+// Access v2: one plan per level 0..3 and a product per plan (+ a product WITHOUT plan for the unresolved case)
+sql.push(`insert into public.planes_suscripcion (id, codigo, nombre, nivel) select ('a6000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid, 'par-plan-' || n, 'par', n from generate_series(0, 3) n;`);
+sql.push(`insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, moneda, activo, visible, plan_id) select ('a7000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid, 'par-sub-' || n, 'suscripcion', 'par', 'EUR', true, true, ('a6000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid from generate_series(0, 3) n;`);
+sql.push(`insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, moneda, activo, visible, plan_id) values ('a7000000-0000-4000-8000-000000000099', 'par-sub-none', 'suscripcion', 'par', 'EUR', true, true, null);`);
 sql.push(`insert into pe values ${matrix.exams.map((e, i) => `(${i}, ${q(e.kind)}, ${e.free}, ${e.demo})`).join(',')};`);
 const caps = matrix.exams.flatMap((e, i) => (e.caps ? [`(${i}, ${e.caps.join(', ')})`] : []));
 sql.push(`insert into pc values ${caps.join(',')};`);
-const prem = matrix.users.flatMap((u, i) => (u.premium ? [`(${i}, ${u.premium.esPremium}, ${q(u.premium.status)}, ${q(u.premium.endsAt)}::timestamptz)`] : []));
+const prem = matrix.users.flatMap((u, i) => (u.premium ? [`(${i}, ${u.premium.esPremium}, ${q(u.premium.status)}, ${q(u.premium.endsAt)}::timestamptz, ${q(u.premium.planLevel === null || u.premium.planLevel === undefined ? 'par-sub-none' : 'par-sub-' + u.premium.planLevel)})`] : []));
 sql.push(`insert into pu values ${prem.join(',')};`);
 const grants = matrix.users.flatMap((u, i) => u.grants.map((g) => `(${i}, ${q(g.motivo)}, ${q(g.from)}::timestamptz, ${q(g.until)}::timestamptz)`));
 sql.push(`insert into pg values ${grants.join(',')};`);
@@ -51,15 +57,18 @@ sql.push(`insert into public.examenes (id, codigo_examen, especialidad_id, comun
   select ${exam('p.e')}, 'PAR-' || p.e, ${spec('p.e')}, ${q(uuid('a4', 1))}, 'parity', p.kind, case when p.free then 'gratuito' else 'premium' end, p.demo, true, now() from pe p;`);
 sql.push(`insert into public.capacidades_especialidad (especialidad_id, permite_rafagas, permite_razonados, permite_inmersivos, permite_demos) select ${spec('p.e')}, p.r, p.z, p.i, p.d from pc p;`);
 sql.push(`insert into public.perfiles_usuario (usuario_id, especialidad_principal_id) select ${usr}, case c.m when 0 then null when 1 then ${spec('c.e')} else ${q(OTHER)}::uuid end from cs c;`);
-sql.push(`insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, fin_en) select ${usr}, p.es, p.st, p.fin from cs c join pu p on p.u = c.u;`);
+sql.push(`insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, fin_en, producto_codigo) select ${usr}, p.es, p.st, p.fin, p.prod from cs c join pu p on p.u = c.u;`);
 sql.push(`insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) select ${usr}, ${exam('c.e')}, g.motivo, g.f, g.t from cs c join pg g on g.u = c.u;`);
 sql.push(`select r.u || '|' || string_agg(left(r.state, 1), '' order by r.e, r.m)
   from (select c.u, c.e, c.m, v.state from cs c, lateral private.exam_access_verdict(${usr}, ${exam('c.e')}, ${q(matrix.now)}::timestamptz) v) r
   group by r.u order by r.u;`);
 sql.push('rollback;');
 
-const raw = execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
+const psqlArgs = container
+  ? ['exec', '-i', container, 'psql', '-U', 'postgres', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-']
+  : ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
+    'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'];
+const raw = execFileSync('docker', psqlArgs,
 { input: sql.join('\n'), encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 
 const got = new Map(raw.split(/\r?\n/).filter((l) => l.includes('|')).map((l) => [Number(l.split('|')[0]), l.split('|')[1]]));

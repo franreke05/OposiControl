@@ -85,6 +85,8 @@ internal data class AttemptDto(
     val falladas: Int? = null,
     val sinResponder: Int,
     val ultimaPreguntaPosicion: Int? = null,
+    /** FA28: true en un intento DEMO (solo las preguntas marcadas); ausente = false. */
+    val esDemo: Boolean? = null,
 )
 
 @Serializable
@@ -143,6 +145,8 @@ internal data class ResultSummary(
     val examenId: String? = null,
     val especialidadId: String? = null,
     val modo: String,
+    /** FA28: true cuando el resultado es de un intento DEMO. */
+    val esDemo: Boolean? = null,
     val nota: Double,
     val calificacion: String,
     val duracionSegundos: Int,
@@ -321,17 +325,21 @@ internal class AttemptService(
         val uid = userId.value
         // D7-25: la UNICA politica de acceso. Borrador, archivado e inexistente son el mismo 404.
         val access = catalog.startAccess(uid, examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
-        if (!access.verdict.allowed) {
+        val wantsDemo = request.modo == "DEMO" && access.verdict.state == AccessState.DEMO
+        if (!access.verdict.allowed && !wantsDemo) {
             throw when (access.verdict.denyReason) {
                 AccessDenyReason.CAPABILITY_DISABLED -> CanonicalErrorCode.SPECIALTY_TYPE_NOT_ALLOWED.exception()
                 AccessDenyReason.SPECIALTY_MISMATCH -> CanonicalErrorCode.EXAM_NOT_FOUND.exception()
                 else -> CanonicalErrorCode.EXAM_LOCKED.exception(details = ErrorDetails(accessState = access.verdict.state.name))
             }
         }
-        val outcome = gateway.start(uid, examId)
+        val outcome = gateway.start(uid, examId, demo = wantsDemo)
         val created = when (outcome.outcome) {
             "CREATED" -> true
             "RESUMED" -> false
+            "DEMO_LIMIT" -> throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 3_600)
+            "EXAM_LOCKED" -> throw CanonicalErrorCode.EXAM_LOCKED.exception(details = ErrorDetails(accessState = outcome.state))
+            "SPECIALTY_TYPE_NOT_ALLOWED" -> throw CanonicalErrorCode.SPECIALTY_TYPE_NOT_ALLOWED.exception()
             "EXAM_NOT_FOUND" -> throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
             "EXAM_EMPTY" -> throw CanonicalErrorCode.EXAM_EMPTY.exception()
             // El contrato congelado no define un codigo propio para "mas de 200 preguntas servibles" (x-error-codes de D2-03:
@@ -373,6 +381,16 @@ internal class AttemptService(
         val row = ownedAttempt(userId, attemptId)
         val rows = gateway.questionPage(row.id, positionAfter(page.after), page.fetchLimit)
         val cut = page.page(rows) { listOf(JsonPrimitive(it.posicion)) }
+        // Limitador diario (C-L1): lo que la pagina va a REVELAR se registra antes de servirla; un intento finalizado ya se vio.
+        if (row.estado != FINISHED && cut.items.isNotEmpty()) {
+            val reveal = gateway.reveal(userId.value, row.id, cut.items.map { it.preguntaId })
+            when (reveal.outcome) {
+                "OK" -> Unit
+                "DAILY_LIMIT_REACHED" -> throw CanonicalErrorCode.DAILY_LIMIT_REACHED.exception(retryAfterSeconds = (reveal.retryAfterSeconds ?: 3_600).coerceIn(1, 86_400))
+                "ATTEMPT_NOT_FOUND" -> throw CanonicalErrorCode.ATTEMPT_NOT_FOUND.exception()
+                else -> throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+            }
+        }
         // DEC-015: la correccion de lo YA respondido, igual con el intento abierto que finalizado, y solo de la fila propia.
         // Sin soluciones, explicaciones ni recursos (eso es D2-12 / D2-65).
         val reveals = row.estado == FINISHED || revealsOnAnswer(row.kind())
@@ -567,6 +585,7 @@ internal class AttemptService(
                 examenId = row.examenId,
                 especialidadId = row.especialidadSnapshotId,
                 modo = row.kind().wire,
+                esDemo = row.esDemo.takeIf { it },
                 nota = nota.toDouble(),
                 calificacion = bandOf(nota),
                 duracionSegundos = row.durationSeconds(),
@@ -702,53 +721,10 @@ internal class AttemptService(
         val started = System.nanoTime()
         val resource = gateway.frozenResource(row.id, resourceId)
         metrics.timer("exam_media_metadata_seconds").record(java.time.Duration.ofNanos(System.nanoTime() - started))
-        val path = resource?.ruta
-        if (resource == null || resource.tipo !in RESOURCE_TYPES || resource.bucket != RESOURCES_BUCKET || path == null ||
-            !RESOURCE_PATH.matches(path) || path.split('/')[2].substringBefore('.') != resourceId
-        ) {
-            throw CanonicalErrorCode.RESOURCE_NOT_FOUND.exception()
-        }
-        val now = clock()
-        val url = try {
-            gateway.signedUrl(RESOURCES_BUCKET, path, RESOURCE_URL_TTL_SECONDS)
-        } catch (failure: BackendDomainException) {
-            throw failure
-        } catch (failure: Exception) {
-            throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(retryAfterSeconds = 2, cause = failure)
-        }
-        AttemptResourceAccess(
-            url = url,
-            expiresAt = now.plusSeconds(RESOURCE_URL_TTL_SECONDS.toLong()).toString(),
-            mimeType = resource.mimeString(),
-            version = resource.version(),
-        )
+        QuestionResources.access(resource, resourceId, clock()) { bucket, path, ttl -> gateway.signedUrl(bucket, path, ttl) }
     }
 
-    private fun resourceDto(resource: RevisionResource): AttemptResourceDto? {
-        if (resource.tipo !in RESOURCE_TYPES || !resource.id.isUuid()) return null
-        return AttemptResourceDto(
-            id = resource.id,
-            tipo = resource.tipo,
-            titulo = resource.titulo.orEmpty(),
-            mimeType = resource.mimeString(),
-            version = resource.version(),
-            sizeBytes = resource.bytes.longOrNull()?.takeIf { it >= 0 },
-            durationMs = resource.durationMs.longOrNull()?.takeIf { it >= 0 },
-            envelope = if (resource.tipo == "audio") AudioEnvelope.fromStored(resource.envelope) else null,
-        )
-    }
-
-    private fun RevisionResource.mimeString(): String? =
-        (mime as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { MIME.matches(it) }
-
-    /** sha256(id|ruta|mime|bytes), 16 hex: cambia si cambia el objeto o sus metadatos; estable mientras no. */
-    private fun RevisionResource.version(): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-            .digest("$id|${ruta.orEmpty()}|${mimeString().orEmpty()}|${bytes.longOrNull() ?: ""}".toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }.take(16)
-    }
-
-    private fun JsonElement?.longOrNull(): Long? = (this as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toLongOrNull()
+    private fun resourceDto(resource: RevisionResource): AttemptResourceDto? = QuestionResources.dto(resource)
 
     private fun AttemptRow.toDto(now: Instant, openUnanswered: Int?): AttemptDto {
         if (estado !in ATTEMPT_STATES) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
@@ -774,6 +750,7 @@ internal class AttemptService(
                 openUnanswered != null -> openUnanswered
                 else -> totalPreguntas - totalRespondidas
             }.coerceAtLeast(0),
+            esDemo = esDemo.takeIf { it },
             ultimaPreguntaPosicion = ultimaPreguntaPosicion?.takeIf { it >= 1 },
         )
     }
@@ -887,12 +864,6 @@ internal class AttemptService(
 
         /** Bucket PRIVADO de Q3 (`recursos_pregunta_ubicacion_formato_chk`). */
         internal const val RESOURCES_BUCKET = "recursos-pregunta"
-
-        /** La ruta que exige el CHECK de Q3: `preguntas/<pregunta>/<recurso>.<ext>`. Nada fuera de esta forma se firma. */
-        private val RESOURCE_PATH = Regex(
-            "^preguntas/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.[a-z0-9]{2,4}$",
-        )
-        private val MIME = Regex("^[a-z]+/[a-z0-9.+-]+$")
 
         /** Vida de la URL firmada: corta (un enlace filtrado caduca pronto); el cliente pide otra al caducar. */
         internal const val RESOURCE_URL_TTL_SECONDS = 300

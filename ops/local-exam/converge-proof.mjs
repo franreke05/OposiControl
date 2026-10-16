@@ -67,7 +67,9 @@ try {
   converge({ psql });
   assert(process.exitCode !== 1, 'converge #2 (idempotent) ends with VERIFY OK');
   assert(snapshot() === before, 'no data loss: wallets, ledger, orders and access are identical after the converge');
-  assert(psql('select count(*) from private.v1_applied_migrations') === '6', 'six stamps recorded (20261022100300..800)');
+  assert(psql('select count(*) from private.v1_applied_migrations') === '11', 'eleven stamps recorded (20261022100300..101200)');
+  assert(psql("select (public.app_plan_quota('a0000000-0000-0000-0000-0000000000d1') ->> 'nivel')") === '0', 'the plan summary RPC answers for a pre-existing user (no subscription: nivel 0)');
+  assert(psql("select count(*) from pg_proc where proname = 'app_choose_plan_exam'") === '1', 'the quota function exists after the converge');
   assert(psql("select count(*) from pg_proc where proname = 'app_save_item'") === '1', 'saved-items functions exist now');
 
   // behaviour on PRE-EXISTING data: the order paid before the converge is refunded with P2
@@ -78,6 +80,8 @@ try {
   assert(psql("select (select count(*) from public.app_wallet_reconcile(null))") === '0', 'reconcile is clean after the refund');
   const saved = psql("select count(*) from public.app_save_item('a0000000-0000-0000-0000-0000000000d1', 'pregunta', 'f5000000-0000-0000-0000-0000000000d1')");
   assert(saved === '1', 'a question of a free exam can be saved after the converge');
+  assert(psql("select to_regclass('public.feedback_pregunta') is not null") === 't', 'feedback_pregunta exists after the converge (E5-V1-S10)');
+  assert(psql("insert into public.feedback_pregunta (usuario_id, pregunta_id, tipo_feedback, descripcion) values ('a0000000-0000-0000-0000-0000000000d1', 'f5000000-0000-0000-0000-0000000000d1', 'otro', 'prueba') returning estado") === 'pendiente', 'a report can be inserted (estado pendiente)');
   console.log('PROOF OK (old ref ' + OLD + ')');
 } finally {
   cleanup();

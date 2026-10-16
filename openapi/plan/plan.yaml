@@ -1,0 +1,236 @@
+# PLAN QUOTA (FA27, V1 Access v2): the Inmersivo plan includes a configurable quota of immersive exams that the USER chooses. Design: E1-V1-ACCESS-V2-DESIGN.md.
+# Plan coverage (decided by the database, one access verdict): Rafagas plan = all rafagas; Razonados plan = rafagas + razonados; Inmersivo plan = rafagas + razonados
+# + the quota exams the user chose; every other immersive costs OposiTickets. The quota size is the plan benefit `inmersivos_incluidos` (Control, bounded, fail closed: 0).
+# A choice persists while the user is subscribed (extended at each renewal) and ends with the paid period; there is NO swap and no endpoint to free a slot in V1.
+# Everything is owner-scoped by the JWT sub. Failed gates (specialty, capability, unknown/unpublished exam) are the SAME 404 as any unknown exam (no probing).
+components:
+  pathItems:
+    PlanQuota:
+      get:
+        operationId: getPlanQuota
+        summary: 'Plan, immersive quota and the exams already chosen'
+        tags: [plan]
+        x-contract-id: D7-31
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Always 200 for an active account. A user without an active subscription (or whose plan cannot be resolved) gets nivel 0 / cupoTotal 0 and an empty list. periodoHasta is the end of the paid period (fin_en) the choices run until; null when there is no subscription. limitePreguntas24h and reveladas24h describe the daily limiter of the plan (null limit = unlimited).'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'The plan summary.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PlanQuota'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    PlanQuotaExam:
+      put:
+        operationId: choosePlanQuotaExam
+        summary: 'Choose an immersive exam with the plan quota'
+        tags: [plan]
+        x-contract-id: D7-32
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, EXAM_NOT_FOUND, ALREADY_ACCESSIBLE, PLAN_QUOTA_NONE, PLAN_QUOTA_FULL, EXAM_NOT_IMMERSIVE, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Naturally idempotent (no Idempotency-Key): choosing an exam already held through the quota answers 200 with the same row and writes nothing. ONE database transaction under the per-user wallet lock (so two devices, or a choice racing a purchase of the same exam, serialise): the exam must exist, be active and published and pass the specialty and capability gates (otherwise 404 EXAM_NOT_FOUND, never a different code); it must be an immersive exam (422 EXAM_NOT_IMMERSIVE); the user must hold an active subscription whose plan has quota (422 PLAN_QUOTA_NONE); an exam the user can already open through a purchase, gift or free access is 409 ALREADY_ACCESSIBLE (nothing to spend); a full quota is 422 PLAN_QUOTA_FULL. On success the exam is GRANTED until the end of the paid period and is extended at each renewal while the user stays subscribed.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: examenId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+        responses:
+          '200':
+            description: 'Chosen (or already chosen).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PlanQuotaChoice'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'EXAM_NOT_FOUND (unknown, unpublished, other specialty or capability off: the same answer).'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ALREADY_ACCESSIBLE.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'PLAN_QUOTA_NONE, PLAN_QUOTA_FULL or EXAM_NOT_IMMERSIVE.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    PlanCatalog:
+      get:
+        operationId: getPlanCatalog
+        summary: 'Plan catalog: coverage, daily limit and tariffs as data'
+        tags: [plan]
+        x-contract-id: D7-33
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Read-only, specialty independent, no user data. ACTIVE and VISIBLE plans ordered by orden. Coverage is DATA derived from the plan (rafagas = level >= 1, razonados = level >= 2, immersive quota = the plan benefit inmersivos_incluidos, never the plan name). limitePreguntas24h = the plan benefit (null = no limit). tarifas: only the STANDARD price phase of the plan''s active visible subscription products, ONE row per period (mensual, anual); the annual price is served as data (the client never computes or compares it); a plan with a single period has a single row (no toggle); productoCodigo is the store product code of that row. A plan without tariffs (Gratuito) has an empty list. An empty items list means the plan screen stays hidden. Per-user limiter of the CATALOG_READ class.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'The catalog.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/PlanCatalog'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    PlanQuotaChoice:
+      type: object
+      required: [examenId, desde, hasta]
+      properties:
+        examenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: [string, 'null']
+        desde:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        hasta:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    PlanQuota:
+      type: object
+      required: [nivel, cupoTotal, cupoUsado, cupoLibre, elegidos]
+      properties:
+        planCodigo:
+          type: [string, 'null']
+          description: 'Code of the plan the active subscription resolves to; null without a subscription or with an unresolvable product.'
+        nivel:
+          type: integer
+          minimum: 0
+          maximum: 3
+          description: '0 Gratuito, 1 Rafagas, 2 Razonados, 3 Inmersivo.'
+        cupoTotal:
+          type: integer
+          minimum: 0
+        cupoUsado:
+          type: integer
+          minimum: 0
+        cupoLibre:
+          type: integer
+          minimum: 0
+        periodoHasta:
+          type: [string, 'null']
+          format: date-time
+        limitePreguntas24h:
+          type: [integer, 'null']
+          description: 'Questions that may be revealed in a rolling 24 hours with this plan; null = no limit.'
+        reveladas24h:
+          type: integer
+          minimum: 0
+        elegidos:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanQuotaChoice'
+    PlanCatalog:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanCatalogItem'
+    PlanCatalogItem:
+      type: object
+      required: [planCodigo, nombre, nivel, orden, cobertura, tarifas]
+      properties:
+        planCodigo:
+          type: string
+        nombre:
+          type: string
+        nivel:
+          type: integer
+          minimum: 0
+          maximum: 3
+        orden:
+          type: integer
+        cobertura:
+          type: object
+          required: [rafagas, razonados, inmersivos]
+          properties:
+            rafagas:
+              type: boolean
+            razonados:
+              type: boolean
+            inmersivos:
+              type: string
+              enum: [ninguno, cupo]
+            cupoInmersivos:
+              type: integer
+              minimum: 1
+              description: 'Only with inmersivos = cupo.'
+        limitePreguntas24h:
+          type: [integer, 'null']
+          description: 'Questions that may be revealed in a rolling 24 hours; null (or absent) = no limit.'
+        tarifas:
+          type: array
+          items:
+            type: object
+            required: [periodo, precioCentimos, moneda, productoCodigo, destacado]
+            properties:
+              periodo:
+                type: string
+                enum: [mensual, anual]
+              precioCentimos:
+                type: integer
+                minimum: 0
+              moneda:
+                type: string
+              productoCodigo:
+                type: string
+              destacado:
+                type: boolean
