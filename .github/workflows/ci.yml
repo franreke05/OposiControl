@@ -21,6 +21,7 @@ jobs:
       - run: bash scripts/verify-ops-config.test.sh
       - run: bash scripts/assert-clean-tree.test.sh
       - run: bash scripts/smoke-backend-image.test.sh
+      - run: bash scripts/release.test.sh
       # MASTER4-ARCH-002: el manifiesto Slice 1 (copia del de OposiBot) debe coincidir con supabase/migrations/2026093*.sql.
       - run: bash scripts/verify-migrations-manifest.sh
       - run: bash scripts/verify-migrations-manifest.test.sh
