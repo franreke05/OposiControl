@@ -234,6 +234,11 @@ begin
     raise exception using errcode = 'P0001', message = 'PRODUCT_NOT_AVAILABLE';
   end if;
 
+  -- E2-V1-E02: at most 5 open (pending, not yet expired) orders per user; the 6th is refused, nothing is written (technical bound, not a product value).
+  if (select count(*) from public.compras_usuario c where c.usuario_id = p_usuario and c.cantidad_tickets is not null and c.estado = 'pendiente' and c.expira_en > now()) >= 5 then
+    raise exception using errcode = 'P0001', message = 'ORDER_PENDING_LIMIT';
+  end if;
+
   insert into public.compras_usuario (usuario_id, proveedor, producto_codigo, tipo_producto, estado, precio_centimos, moneda,
                                       cantidad_tickets, idempotency_key, huella_solicitud, expira_en)
   values (p_usuario, p_proveedor, v_prod.codigo, 'opositickets', 'pendiente', v_prod.precio_centimos, v_prod.moneda,
@@ -277,6 +282,7 @@ as $$
 #variable_conflict use_column
 declare
   v_o public.compras_usuario%rowtype;
+  v_user uuid;
   v_rows integer;
   v_new boolean;
   v_late boolean;
@@ -286,13 +292,14 @@ begin
   if p_proveedor is null or p_evento_id is null or length(btrim(p_evento_id)) = 0 or p_transaccion is null or length(btrim(p_transaccion)) = 0 or p_orden is null then
     raise exception using errcode = 'P0001', message = 'EVENT_INVALID';
   end if;
-  select c.* into v_o from public.compras_usuario c where c.id = p_orden and c.proveedor = p_proveedor and c.cantidad_tickets is not null for update;
+  -- E2-V1-E01: ONE lock order everywhere (wallet advisory lock FIRST, then the order row), same as redeem/create/get: find the owner without locking,
+  -- take the wallet lock, then lock and re-read the order.
+  select c.usuario_id into v_user from public.compras_usuario c where c.id = p_orden and c.proveedor = p_proveedor and c.cantidad_tickets is not null;
   if not found then
     raise exception using errcode = 'P0001', message = 'ORDER_NOT_FOUND';
   end if;
-  perform pg_advisory_xact_lock(hashtextextended('wallet:' || v_o.usuario_id::text, 0));
-  -- re-read under the wallet lock
-  select c.* into v_o from public.compras_usuario c where c.id = p_orden;
+  perform pg_advisory_xact_lock(hashtextextended('wallet:' || v_user::text, 0));
+  select c.* into v_o from public.compras_usuario c where c.id = p_orden for update;
 
   insert into public.eventos_pago (proveedor, evento_id, compra_id) values (p_proveedor, p_evento_id, v_o.id)
   on conflict (proveedor, evento_id) do nothing;
@@ -349,6 +356,7 @@ as $$
 #variable_conflict use_column
 declare
   v_o public.compras_usuario%rowtype;
+  v_user uuid;
   v_credit public.transacciones_cartera%rowtype;
   v_rows integer;
   v_new boolean;
@@ -359,12 +367,14 @@ begin
   if p_proveedor is null or p_evento_id is null or length(btrim(p_evento_id)) = 0 or p_orden is null then
     raise exception using errcode = 'P0001', message = 'EVENT_INVALID';
   end if;
-  select c.* into v_o from public.compras_usuario c where c.id = p_orden and c.proveedor = p_proveedor and c.cantidad_tickets is not null for update;
+  -- E2-V1-E01: ONE lock order everywhere (wallet advisory lock FIRST, then the order row), same as redeem/create/get: find the owner without locking,
+  -- take the wallet lock, then lock and re-read the order.
+  select c.usuario_id into v_user from public.compras_usuario c where c.id = p_orden and c.proveedor = p_proveedor and c.cantidad_tickets is not null;
   if not found then
     raise exception using errcode = 'P0001', message = 'ORDER_NOT_FOUND';
   end if;
-  perform pg_advisory_xact_lock(hashtextextended('wallet:' || v_o.usuario_id::text, 0));
-  select c.* into v_o from public.compras_usuario c where c.id = p_orden;
+  perform pg_advisory_xact_lock(hashtextextended('wallet:' || v_user::text, 0));
+  select c.* into v_o from public.compras_usuario c where c.id = p_orden for update;
 
   insert into public.eventos_pago (proveedor, evento_id, compra_id) values (p_proveedor, p_evento_id, v_o.id)
   on conflict (proveedor, evento_id) do nothing;

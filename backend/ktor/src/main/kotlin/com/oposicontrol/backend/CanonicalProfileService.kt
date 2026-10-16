@@ -421,6 +421,7 @@ internal object ProfileRpcErrors {
         val mapped: CanonicalErrorCode? = when (key) {
             "USERNAME_TAKEN" -> CanonicalErrorCode.USERNAME_TAKEN
             "UNKNOWN_SPECIALTY" -> CanonicalErrorCode.UNKNOWN_SPECIALTY
+            "SPECIALTY_ALREADY_SET" -> CanonicalErrorCode.SPECIALTY_ALREADY_SET
             "UNKNOWN_COMMUNITY" -> CanonicalErrorCode.UNKNOWN_COMMUNITY
             "DOCUMENT_NOT_ACTIVE" -> documentNotActiveAs
             "ALREADY_ONBOARDED_CONFLICT" -> CanonicalErrorCode.ALREADY_ONBOARDED_CONFLICT

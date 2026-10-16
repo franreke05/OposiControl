@@ -83,6 +83,7 @@ internal fun Route.economyRoutes(runtime: EconomyRuntime?) {
         post("/wallet/canjes") {
             val rt = runtime.orMisconfigured()
             val identity = call.economyIdentity()
+            call.requireJsonNumber("expectedPrice") // E2-V1-E04: a JSON string "30" is NOT a number (the decoder would coerce it)
             val request = call.receiveCanonicalCommand<ExamRedeemRequest>(nullableFields = setOf("expectedPrice"))
             val result = rt.economy.redeem(identity.userId, request, call.idempotencyKey())
             if (result.replayed) {
@@ -182,4 +183,13 @@ private object EconomyMisconfiguredStore : IdempotencyStore {
     override suspend fun complete(claim: IdempotencyClaim, response: StoredIdempotentResponse) = Unit
 
     override suspend fun release(claim: IdempotencyClaim) = Unit
+}
+
+/** E2-V1-E04: si el cuerpo trae [field] como cadena JSON ("30"), 400 VALIDATION INVALID_FORMAT: el decodificador la convertiria en numero. */
+private suspend fun ApplicationCall.requireJsonNumber(field: String) {
+    val raw = canonicalRawBody()
+    if (raw.isEmpty()) return
+    val element = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(String(raw, Charsets.UTF_8)) }.getOrNull() as? kotlinx.serialization.json.JsonObject ?: return
+    val value = element[field] as? kotlinx.serialization.json.JsonPrimitive ?: return
+    if (value.isString) throw validationError(ErrorIssue(field, CanonicalIssue.INVALID_FORMAT))
 }

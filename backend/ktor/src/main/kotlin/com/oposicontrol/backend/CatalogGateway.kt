@@ -73,6 +73,9 @@ internal class TransportCatalogUpstream(
 internal data class CommunityRef(val codigo: String? = null)
 
 @Serializable
+internal data class UserSpecialtyRow(@SerialName("especialidad_principal_id") val especialidadPrincipalId: String? = null)
+
+@Serializable
 internal data class CommunityNameRow(val codigo: String, val nombre: String)
 
 @Serializable
@@ -397,6 +400,12 @@ internal class CatalogGateway(
             val until = row.validoHasta?.let { parseInstantOrNull(it) ?: return@mapNotNull null }
             row.examenId to ExamGrantFact(row.motivo, from, until)
         }.groupBy({ it.first }, { it.second })
+    }
+
+    /** V1: la especialidad del usuario (`perfiles_usuario.especialidad_principal_id`), o `null` si aun no la ha elegido. */
+    fun userSpecialty(userId: String): String? {
+        require(userId.isUuid()) { "userId" }
+        return decodeList<UserSpecialtyRow>(upstream.get("/rest/v1/perfiles_usuario?select=especialidad_principal_id&usuario_id=eq.$userId&limit=1")).firstOrNull()?.especialidadPrincipalId
     }
 
     /** V1: nombre legible de cada comunidad por codigo (tabla pequena y acotada). Nunca se muestra el codigo crudo (ES-MD). */

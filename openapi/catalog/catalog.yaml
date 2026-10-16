@@ -85,7 +85,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [VALIDATION, UNAUTHENTICATED, EXAM_NOT_FOUND, INTERNAL, UPSTREAM_ERROR]
-        description: 'No question bodies. precio is the OT price stored in the database (FA21, null when not purchasable) and accesoValidoHasta the server-decided end of the caller access. Cache private, no-store for accessState. intentoAbiertoId and ultimoIntentoFinalizadoId (FA18) come from one bounded read of the caller attempts on this exam (command-created only).'
+        description: 'No question bodies. FA22 (owner 2026-10-16): an exam outside the caller specialty is 404 EXAM_NOT_FOUND here and absent from the lists (D2-01, D2-13 are scoped to the own specialty; another specialty returns an empty page). precio is the OT price stored in the database (FA21, null when not purchasable) and accesoValidoHasta the server-decided end of the caller access. Cache private, no-store for accessState. intentoAbiertoId and ultimoIntentoFinalizadoId (FA18) come from one bounded read of the caller attempts on this exam (command-created only).'
         security:
           - bearerAuth: []
         parameters:

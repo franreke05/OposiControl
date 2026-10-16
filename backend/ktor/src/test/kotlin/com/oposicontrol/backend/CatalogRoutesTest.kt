@@ -86,6 +86,7 @@ class CatalogRoutesTest {
         var credits = "[]"
         var signed = "[]"
         var communities = """[{"codigo":"MAD","nombre":"Comunidad de Madrid"},{"codigo":"AND","nombre":"Andalucía"}]"""
+        var profileSpecialty = "[]"
         var failOn: String? = null
 
         fun respond(rawUri: String): V1StubResponse {
@@ -95,6 +96,7 @@ class CatalogRoutesTest {
             if (uri.contains(COLLECTION_RPC)) return collection(Json.parseToJsonElement(readRequestBody(sent.last())).jsonObject)
             val body = when {
                 uri.contains("/storage/v1/object/sign/") -> signed
+                uri.contains("/rest/v1/perfiles_usuario?select=especialidad_principal_id") -> profileSpecialty
                 uri.contains("/rest/v1/estado_premium_usuario") -> premium
                 uri.contains("/rest/v1/productos_comerciales") -> plan
                 uri.contains("/rest/v1/creditos_contenido_usuario") -> credits
@@ -393,6 +395,41 @@ class CatalogRoutesTest {
         assertFalse(response.bodyAsText().contains("boom"), "el detalle del upstream no sale")
     }
 
+    // =================================================================== V1: la especialidad es una PUERTA (propietario 2026-10-16)
+
+    private val otherSpecialty = "22222222-2222-4222-8222-222222222222"
+
+    @Test
+    fun anExamOutsideTheUsersSpecialtyDoesNotExistForThemEvenIfTheyOwnIt() = testApplication {
+        application { catalogModule() }
+        upstream.profileSpecialty = """[{"especialidad_principal_id":"$otherSpecialty"}]"""
+        upstream.examById = { "[${exam(e1, acceso = "premium")}]" }
+        upstream.grantFacts = "[${grantFact(e1, motivo = "compra")}]" // a stored purchase does not open it while the specialty differs
+        val response = client.getAs("/api/v1/app/examenes/$e1")
+        assertEquals(HttpStatusCode.NotFound, response.status, response.bodyAsText())
+        assertEquals("EXAM_NOT_FOUND", code(response.bodyAsText()))
+        upstream.profileSpecialty = """[{"especialidad_principal_id":"$esp"}]"""
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/examenes/$e1").status)
+        upstream.profileSpecialty = "[]" // no specialty chosen yet: no gate
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/examenes/$e1").status)
+    }
+
+    @Test
+    fun listsAreScopedToTheUsersSpecialtyAndAnotherSpecialtyIsEmpty() = testApplication {
+        application { catalogModule() }
+        upstream.profileSpecialty = """[{"especialidad_principal_id":"$esp"}]"""
+        upstream.exams = { "[${exam(e1)}]" }
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/examenes").status)
+        assertTrue(upstream.urls.last { it.contains("/rest/v1/examenes?select=id,codigo_examen") }.contains("especialidad_id=eq.$esp"), "scoped to the own specialty without the client asking")
+        val sentBefore = upstream.urls.size
+        val other = client.getAs("/api/v1/app/examenes?especialidadId=$otherSpecialty")
+        assertEquals(HttpStatusCode.OK, other.status)
+        assertEquals(0, JsonObjectOf(other.bodyAsText())["items"]!!.jsonArray.size)
+        assertTrue(upstream.urls.drop(sentBefore).none { it.contains("/rest/v1/examenes?select=id,codigo_examen") }, "another specialty never reaches the catalog read")
+        val mine = client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO&especialidadId=$otherSpecialty")
+        assertEquals(0, JsonObjectOf(mine.bodyAsText())["items"]!!.jsonArray.size)
+    }
+
     // =================================================================== D2-02
 
     @Test
@@ -608,7 +645,7 @@ class CatalogRoutesTest {
         assertEquals(HttpStatusCode.BadRequest, forged.status, forged.bodyAsText())
         assertTrue(upstream.sent.isEmpty(), "una consulta con usuario forjado no debe llegar a la base: ${upstream.urls}")
         client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO")
-        val url = upstream.urls.single()
+        val url = upstream.urls.single { it.contains("intentos_examen") }
         assertTrue(url.contains("usuario_id=eq.$TEST_UID"))
         assertFalse(url.contains("dddddddd"))
     }
@@ -712,7 +749,7 @@ class CatalogRoutesTest {
         assertEquals("2024", call["p_anio"]!!.jsonPrimitive.content)
         assertEquals("51", call["p_limite"]!!.jsonPrimitive.content, "limit recortado a 50 (+1)")
         assertFalse(call.toString().contains("dddddddd"), "ningun usuario del query llega a la funcion: $call")
-        assertEquals(1, upstream.sent.size, "coleccion vacia: ni derechos ni portadas")
+        assertEquals(2, upstream.sent.size, "coleccion vacia: la lectura de la especialidad del usuario y la funcion; ni derechos ni portadas")
     }
 
     @Test
@@ -792,8 +829,8 @@ class CatalogRoutesTest {
         assertEquals(HttpStatusCode.ServiceUnavailable, response.status, body)
         assertEquals("UPSTREAM_UNAVAILABLE", code(body))
         assertFalse(body.contains("PGRST202") || body.contains("app_my_exams_collection") || body.contains("items"), "ni detalle del upstream ni datos parciales: $body")
-        assertEquals(1, upstream.sent.size, "solo la llamada a la funcion: sin lectura de respaldo")
-        assertTrue(upstream.urls.single().endsWith(Upstream.COLLECTION_RPC))
+        assertEquals(2, upstream.sent.size, "la especialidad del usuario y la funcion: sin lectura de respaldo")
+        assertTrue(upstream.urls.single { it.contains(Upstream.COLLECTION_RPC) }.endsWith(Upstream.COLLECTION_RPC))
         // Las otras dos vistas no dependen de la funcion.
         assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/me/examenes?vista=ADQUIRIDOS").status)
         assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO").status)

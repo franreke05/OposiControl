@@ -6,3 +6,4 @@
 20261018100100_v1_wallet_ledger_hardening
 20261018100200_v1_payment_orders
 20261018100300_v1_exam_redeem
+20261018100400_v1_specialty_immutable

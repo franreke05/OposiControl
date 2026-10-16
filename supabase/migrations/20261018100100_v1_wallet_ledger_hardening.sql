@@ -21,8 +21,12 @@
 --   6. public.admin_grant_tickets is redefined (same signature/grants): per-user key, no direct snapshot write.
 --   6b. Every NEW profile gets an EMPTY wallet row (balance 0) in the same transaction (AFTER INSERT trigger on perfiles_usuario), so the
 --       balance of a new user is confirmed by a real row; a missing row (older users) is equivalent to a ledger sum of 0 and D6-01 answers 0.
---   7. LEGACY: ledger rows that already exist keep seq NULL and are never rewritten. For every wallet with a positive balance ONE opening row
---      (`ajuste`, referencia_tipo 'legacy_opening', seq 1, cantidad = current snapshot) starts its chain, so reconcile is clean from day one.
+--   7. LEGACY (E5-V1-F01 fix): `private.v1_ledger_backfill()` runs once at the end of this migration and is idempotent. For every wallet that still has ledger
+--      rows without `seq`, those rows get seq 1..n in (creado_en, id) order, their saldo_anterior / saldo_resultante are recomputed as the running sum of `cantidad`
+--      (a chain that already closes is unchanged), and ONE opening row (`ajuste`, referencia_tipo 'legacy_opening') = snapshot - sum(existing rows) is appended
+--      ONLY when that difference is not zero. A wallet with a snapshot and NO rows gets the opening row = snapshot. A wallet whose old rows already sum to its
+--      snapshot gets NO new row (no double count). Mixed state (some rows with seq, some without) fails closed. Legacy debits are traced FIFO (ot_consumos).
+--      `app_wallet_reconcile` now covers rows WITHOUT seq and compares the snapshot with the sum of ALL rows, so a double count is reported.
 --      The number of wallets affected is a MAIN count I prepared as an aggregate-only script and did NOT run without the owner's approval.
 --
 -- LOCKING: ALTER TABLE ... ADD COLUMN (nullable) is catalog-only; unique constraints build indexes (SHARE lock on the ledger, small table).
@@ -32,6 +36,7 @@
 -- ROLLBACK-BEGIN
 -- begin;
 -- drop view if exists public.v_wallet_reconcile;
+-- drop function if exists private.v1_ledger_backfill(uuid);
 -- drop function if exists public.app_wallet_reconcile(uuid);
 -- drop trigger if exists trg_ledger_after_insert on public.transacciones_cartera;
 -- drop trigger if exists trg_ledger_before_insert on public.transacciones_cartera;
@@ -145,14 +150,7 @@ $$;
 -- 1. Columns and constraints (nothing is rewritten).
 alter table public.transacciones_cartera add column if not exists seq bigint;
 
--- 2. Opening row for every wallet that already holds a balance and has no chain yet (legacy rows keep seq NULL, untouched).
---    Done BEFORE the triggers exist, so it does not move the snapshot (the snapshot already equals this amount).
-insert into public.transacciones_cartera (usuario_id, tipo, cantidad, saldo_anterior, saldo_resultante, descripcion, referencia_tipo, seq, metadatos)
-select c.usuario_id, 'ajuste', c.saldo_tickets, 0, c.saldo_tickets, 'Saldo inicial', 'legacy_opening', 1,
-       jsonb_build_object('op', 'legacy_opening')
-from public.carteras_usuario c
-where c.saldo_tickets > 0
-  and not exists (select 1 from public.transacciones_cartera t where t.usuario_id = c.usuario_id and t.seq is not null);
+-- 2. (legacy rows are sequenced and the opening difference appended by private.v1_ledger_backfill() at the END of this migration)
 
 alter table public.transacciones_cartera drop constraint if exists transacciones_cartera_idempotency_key_key;
 alter table public.transacciones_cartera drop constraint if exists transacciones_cartera_usuario_idempotency_key;
@@ -403,13 +401,17 @@ as $$
   -- (a) snapshot vs the sum of the chained ledger rows
   select w.usuario_id, 'SNAPSHOT_NE_LEDGER'::text, coalesce(l.s, 0)::bigint, w.saldo_tickets::bigint
     from (select c.usuario_id, c.saldo_tickets from public.carteras_usuario c where p_usuario is null or c.usuario_id = p_usuario) w
-    left join (select t.usuario_id, sum(t.cantidad) s from public.transacciones_cartera t where t.seq is not null group by t.usuario_id) l on l.usuario_id = w.usuario_id
+    left join (select t.usuario_id, sum(t.cantidad) s from public.transacciones_cartera t group by t.usuario_id) l on l.usuario_id = w.usuario_id
    where w.saldo_tickets <> coalesce(l.s, 0)
   union all
   -- (a2) chained rows exist but there is no wallet row at all
   select l.usuario_id, 'LEDGER_WITHOUT_SNAPSHOT'::text, l.s::bigint, 0::bigint
-    from (select t.usuario_id, sum(t.cantidad) s from public.transacciones_cartera t where t.seq is not null and (p_usuario is null or t.usuario_id = p_usuario) group by t.usuario_id) l
+    from (select t.usuario_id, sum(t.cantidad) s from public.transacciones_cartera t where (p_usuario is null or t.usuario_id = p_usuario) group by t.usuario_id) l
    where not exists (select 1 from public.carteras_usuario c where c.usuario_id = l.usuario_id)
+  union all
+  -- (a3) ledger rows WITHOUT seq (legacy rows the backfill has not sequenced)
+  select t.usuario_id, 'SEQLESS_ROWS'::text, count(*)::bigint, 0::bigint
+    from public.transacciones_cartera t where t.seq is null and (p_usuario is null or t.usuario_id = p_usuario) group by t.usuario_id
   union all
   -- (b) per-wallet seq must be exactly 1..n
   select s.usuario_id, 'SEQ_GAP'::text, s.n::bigint, s.mx::bigint
@@ -502,5 +504,69 @@ $function$;
 -- Same ACL as MAIN ({postgres, service_role}); explicit so a database that does not have the function yet gets the same grants.
 revoke all on function public.admin_grant_tickets(uuid, integer, text, text, text) from public, anon, authenticated;
 grant execute on function public.admin_grant_tickets(uuid, integer, text, text, text) to service_role;
+
+-- 7. Legacy backfill (idempotent; see header item 7). Runs as the table owner: the ledger triggers are switched off for the wallet being repaired and back on.
+create or replace function private.v1_ledger_backfill(p_usuario uuid default null)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  w record;
+  r record;
+  v_wallets uuid[];
+  v_run integer;
+  v_n integer;
+  v_diff integer;
+  v_done integer := 0;
+  v_before boolean := exists (select 1 from pg_trigger where tgrelid = 'public.transacciones_cartera'::regclass and tgname = 'trg_ledger_before_insert' and not tgisinternal);
+  v_immut boolean := exists (select 1 from pg_trigger where tgrelid = 'public.transacciones_cartera'::regclass and tgname = 'trg_ledger_immutable' and not tgisinternal);
+begin
+  -- the wallet list is materialised first: ALTER TABLE ... DISABLE TRIGGER fails while a query over the table is still open in this session
+  select coalesce(array_agg(x.usuario_id order by x.usuario_id), '{}'::uuid[]) into v_wallets from (
+    select c.usuario_id from public.carteras_usuario c
+     where (p_usuario is null or c.usuario_id = p_usuario)
+       and (exists (select 1 from public.transacciones_cartera t where t.usuario_id = c.usuario_id and t.seq is null)
+            or (c.saldo_tickets <> 0 and not exists (select 1 from public.transacciones_cartera t where t.usuario_id = c.usuario_id)))
+  ) x;
+  for w in select c.usuario_id, c.saldo_tickets from public.carteras_usuario c where c.usuario_id = any (v_wallets) order by c.usuario_id
+  loop
+    perform pg_advisory_xact_lock(hashtextextended('wallet:' || w.usuario_id::text, 0));
+    if exists (select 1 from public.transacciones_cartera t where t.usuario_id = w.usuario_id and t.seq is null)
+       and exists (select 1 from public.transacciones_cartera t where t.usuario_id = w.usuario_id and t.seq is not null) then
+      raise exception using errcode = 'P0001', message = 'V1_LEDGER_BACKFILL_MIXED', hint = 'a wallet has ledger rows with and without seq; resolve with the owner first';
+    end if;
+    if v_before then alter table public.transacciones_cartera disable trigger trg_ledger_before_insert; end if;
+    if v_immut then alter table public.transacciones_cartera disable trigger trg_ledger_immutable; end if;
+    v_run := 0; v_n := 0;
+    for r in select t.id, t.cantidad from public.transacciones_cartera t where t.usuario_id = w.usuario_id order by t.creado_en, t.id loop
+      v_n := v_n + 1;
+      update public.transacciones_cartera t set seq = v_n, saldo_anterior = v_run, saldo_resultante = v_run + r.cantidad where t.id = r.id;
+      v_run := v_run + r.cantidad;
+    end loop;
+    v_diff := w.saldo_tickets - v_run;
+    if v_diff <> 0 then
+      insert into public.transacciones_cartera (usuario_id, tipo, cantidad, saldo_anterior, saldo_resultante, descripcion, referencia_tipo, seq, metadatos)
+      values (w.usuario_id, 'ajuste', v_diff, v_run, w.saldo_tickets, 'Saldo inicial', 'legacy_opening', v_n + 1, jsonb_build_object('op', 'legacy_opening'));
+    end if;
+    if v_before then alter table public.transacciones_cartera enable trigger trg_ledger_before_insert; end if;
+    if v_immut then alter table public.transacciones_cartera enable trigger trg_ledger_immutable; end if;
+    -- FIFO traceability of the legacy debits (best effort: a history that cannot be traced stops at the first debit it cannot allocate)
+    begin
+      for r in select t.id, t.cantidad, t.tipo, t.referencia_id from public.transacciones_cartera t where t.usuario_id = w.usuario_id and t.cantidad < 0 order by t.seq loop
+        perform private.ledger_allocate_debit(r.id, w.usuario_id, -r.cantidad, r.tipo, r.referencia_id);
+      end loop;
+    exception when others then
+      raise notice 'V1_LEDGER_BACKFILL: FIFO trace skipped for a wallet (%)', sqlerrm;
+    end;
+    v_done := v_done + 1;
+  end loop;
+  return v_done;
+end;
+$$;
+revoke all on function private.v1_ledger_backfill(uuid) from public, anon, authenticated;
+
+select private.v1_ledger_backfill();
 
 commit;

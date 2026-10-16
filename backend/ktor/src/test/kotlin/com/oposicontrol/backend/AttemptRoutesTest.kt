@@ -103,6 +103,7 @@ class AttemptRoutesTest {
         /** Estado HTTP de la lectura de `respuestas_intento` (por defecto 200): otro valor simula el upstream caido. */
         var answersStatus = 200
         var annulled = "[]"
+        var profileSpecialty = "[]"
         var tags = "[]"
 
         fun respond(rawUri: String): V1StubResponse {
@@ -112,6 +113,7 @@ class AttemptRoutesTest {
                 uri.endsWith("/rest/v1/rpc/app_record_attempt_answer") -> answerOutcome
                 uri.endsWith("/rest/v1/rpc/app_finish_exam_attempt") -> finishOutcome
                 uri.endsWith("/rest/v1/rpc/app_abandon_exam_attempt") -> abandonOutcome
+                uri.contains("/rest/v1/perfiles_usuario?select=especialidad_principal_id") -> profileSpecialty
                 uri.contains("/rest/v1/estado_premium_usuario") -> premium
                 uri.contains("/rest/v1/capacidades_especialidad") -> capabilities
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=examen_id,motivo") -> grantFacts
@@ -403,6 +405,14 @@ class AttemptRoutesTest {
         val capability = client.call(HttpMethod.Post, start, key = "0a0a0a0a-0000-4000-8000-000000000003")
         assertEquals(HttpStatusCode.Forbidden, capability.status)
         assertEquals("SPECIALTY_TYPE_NOT_ALLOWED", code(capability.bodyAsText()))
+        // V1: otra especialidad que la del usuario -> el examen no existe para el (404), tenga lo que tenga
+        upstream.examById = examRow()
+        upstream.capabilities = "[]"
+        upstream.profileSpecialty = """[{"especialidad_principal_id":"22222222-2222-4222-8222-222222222222"}]"""
+        val foreign = client.call(HttpMethod.Post, start, key = "0a0a0a0a-0000-4000-8000-000000000009")
+        assertEquals(HttpStatusCode.NotFound, foreign.status)
+        assertEquals("EXAM_NOT_FOUND", code(foreign.bodyAsText()))
+        upstream.profileSpecialty = "[]"
         // borrador / archivado / inexistente -> el mismo 404
         upstream.examById = "[]"
         val missing = client.call(HttpMethod.Post, start, key = "0a0a0a0a-0000-4000-8000-000000000004")

@@ -98,9 +98,10 @@ begin
   assert (select onboarding_completado from public.perfiles_usuario where usuario_id = 'a0000000-0000-0000-0000-00000000000f') = false, 'F untouched after failed attempts (atomic)';
   assert (select count(*) from public.aceptaciones_legales where usuario_id = 'a0000000-0000-0000-0000-00000000000f') = 0, 'F no acceptance';
 
-  -- DEC-002: change specialty; history untouched (no history writes possible: only one column written)
-  r := public.app_actualizar_perfil('a0000000-0000-0000-0000-00000000000a','{"especialidadId":"e1000000-0000-0000-0000-000000000002","introSeen":true,"detail":{"edad":30,"ciudad":"Sevilla"},"targetCommunityIds":["c1000000-0000-0000-0000-000000000002","c1000000-0000-0000-0000-000000000001"]}'::jsonb, null);
-  assert r->>'especialidadPrincipalId' = 'e1000000-0000-0000-0000-000000000002', 'specialty replaced';
+  -- DEC-002 + owner 2026-10-16: the specialty is SET ONCE. The same id is a no-op; another id is refused (SPECIALTY_ALREADY_SET) and nothing else of that patch is written.
+  perform pg_temp.expect($q$select public.app_actualizar_perfil('a0000000-0000-0000-0000-00000000000a','{"especialidadId":"e1000000-0000-0000-0000-000000000002","introSeen":true}'::jsonb, null)$q$, 'OC409', 'SPECIALTY_ALREADY_SET');
+  r := public.app_actualizar_perfil('a0000000-0000-0000-0000-00000000000a','{"especialidadId":"e1000000-0000-0000-0000-000000000001","introSeen":true,"detail":{"edad":30,"ciudad":"Sevilla"},"targetCommunityIds":["c1000000-0000-0000-0000-000000000002","c1000000-0000-0000-0000-000000000001"]}'::jsonb, null);
+  assert r->>'especialidadPrincipalId' = 'e1000000-0000-0000-0000-000000000001', 'specialty unchanged (same id = no-op)';
   etag := r->>'actualizadoEn';
   assert public.app_actualizar_perfil('a0000000-0000-0000-0000-00000000000a','{"detail":{"edad":30}}'::jsonb, null)->>'actualizadoEn' = etag, 'no-op patch keeps ETag';
   perform pg_temp.expect($q$select public.app_actualizar_perfil('a0000000-0000-0000-0000-00000000000a','{"nombre":"Q"}'::jsonb,'2000-01-01T00:00:00Z')$q$, 'OC412', 'PRECONDITION_FAILED');
@@ -946,6 +947,84 @@ do $$ declare t text; r text; f text; begin
   end loop;
   raise notice 'OK V1 payment orders';
 end $$;
+-- E2-V1-E02: at most 5 open (pending, unexpired) orders per user; the 6th is refused and writes nothing; a replay of an existing key is still answered
+do $$
+declare o record; n0 integer; n1 integer; nall integer;
+begin
+  for i in 1..4 loop
+    select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-100','google_play','cap-' || i);
+  end loop;
+  select count(*) into n0 from public.compras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e2' and estado = 'pendiente' and expira_en > now();
+  assert n0 = 5, 'five open orders: ' || n0;
+  select count(*) into nall from public.compras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e2';
+  begin perform * from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-100','google_play','cap-6'); assert false, 'the sixth must be refused';
+  exception when others then assert sqlerrm = 'ORDER_PENDING_LIMIT', 'cap error: ' || sqlerrm; end;
+  select count(*) into n1 from public.compras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e2';
+  assert n1 = nall, 'the refused order wrote nothing';
+  select * into o from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-100','google_play','cap-1');
+  assert o.outcome = 'REPLAY', 'a replay is still answered at the cap';
+end $$;
+rollback;
+
+-- E5-V1-F01: legacy backfill. Old state = ledger rows WITHOUT seq (as they exist on MAIN). Five shapes; reconcile must report the double count first.
+begin;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000b1','bf1@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000b2','bf2@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000b3','bf3@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000b4','bf4@test.local','authenticated','authenticated');
+set local session_replication_role = replica;
+-- B1 = user A of the fixtures: five old rows (50 -20 +5 +0... = 35) and a snapshot of 35
+insert into public.carteras_usuario (usuario_id, saldo_tickets) values ('a0000000-0000-0000-0000-0000000000b1', 35), ('a0000000-0000-0000-0000-0000000000b2', 40),
+  ('a0000000-0000-0000-0000-0000000000b3', 35), ('a0000000-0000-0000-0000-0000000000b4', 0)
+  on conflict (usuario_id) do update set saldo_tickets = excluded.saldo_tickets;
+insert into public.transacciones_cartera (usuario_id, tipo, cantidad, saldo_anterior, saldo_resultante, descripcion, creado_en) values
+  ('a0000000-0000-0000-0000-0000000000b1','recarga',50,0,50,'old1', now() - interval '5 days'),
+  ('a0000000-0000-0000-0000-0000000000b1','gasto',-20,50,30,'old2', now() - interval '4 days'),
+  ('a0000000-0000-0000-0000-0000000000b1','regalo',5,30,35,'old3', now() - interval '3 days'),
+  ('a0000000-0000-0000-0000-0000000000b3','recarga',30,0,30,'old1', now() - interval '2 days');
+set local session_replication_role = origin;
+do $$
+declare n integer;
+begin
+  -- the double count the draft migration made would have shown here: rows without seq are REPORTED
+  assert exists (select 1 from public.app_wallet_reconcile('a0000000-0000-0000-0000-0000000000b1') where kind = 'SEQLESS_ROWS'), 'reconcile reports legacy rows without seq';
+  assert exists (select 1 from public.app_wallet_reconcile('a0000000-0000-0000-0000-0000000000b2') where kind = 'SNAPSHOT_NE_LEDGER'), 'reconcile reports a snapshot with no rows';
+  n := private.v1_ledger_backfill();
+  assert n >= 3, 'three wallets to repair: ' || n;
+  -- B1: rows already sum to the snapshot -> sequenced 1..3, NO opening row, chain closed, sum == snapshot
+  assert (select count(*) from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000b1') = 3, 'no row added when the old rows already sum to the balance';
+  assert (select array_agg(seq order by creado_en) from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000b1') = array[1,2,3]::bigint[], 'old rows sequenced in creado_en order';
+  assert (select sum(cantidad) from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000b1') = 35, 'history sums to the balance';
+  -- B2: snapshot 40 and no rows -> exactly one opening row = 40
+  assert (select count(*) from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000b2' and referencia_tipo = 'legacy_opening' and cantidad = 40 and seq = 1) = 1, 'a wallet with a snapshot and no rows gets one opening row';
+  -- B3: rows sum 30, snapshot 35 -> opening row of +5 at the end
+  assert (select cantidad from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000b3' and referencia_tipo = 'legacy_opening') = 5, 'opening row = snapshot - sum(rows)';
+  -- B4: snapshot 0 and no rows -> untouched
+  assert not exists (select 1 from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000b4'), 'an empty wallet stays empty';
+  assert (select count(*) from public.app_wallet_reconcile(null) where usuario_id in ('a0000000-0000-0000-0000-0000000000b1','a0000000-0000-0000-0000-0000000000b2','a0000000-0000-0000-0000-0000000000b3','a0000000-0000-0000-0000-0000000000b4')) = 0, 'reconcile clean after the backfill';
+  -- idempotent / re-runnable
+  assert private.v1_ledger_backfill() = 0, 'a second run changes nothing';
+  -- the wallet still works through the normal path afterwards
+  perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000b1', 5, 'post', 'post-1', 'ajuste');
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000b1') = 40, 'normal movements continue the chain';
+  assert (select count(*) from public.app_wallet_reconcile('a0000000-0000-0000-0000-0000000000b1')) = 0, 'and stay reconciled';
+  raise notice 'OK V1 legacy backfill';
+end $$;
+-- mixed state (some rows with seq, some without) fails closed
+set local session_replication_role = replica;
+insert into public.carteras_usuario (usuario_id, saldo_tickets) values ('a0000000-0000-0000-0000-0000000000b5', 10);
+insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-0000000000b5','bf5@test.local','authenticated','authenticated');
+insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, seq, saldo_anterior, saldo_resultante) values ('a0000000-0000-0000-0000-0000000000b5','recarga',10,'x',1,0,10);
+insert into public.transacciones_cartera (usuario_id, tipo, cantidad, saldo_anterior, saldo_resultante, descripcion) values ('a0000000-0000-0000-0000-0000000000b5','regalo',5,10,15,'y');
+set local session_replication_role = origin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+select pg_temp.expect_e($q$select private.v1_ledger_backfill('a0000000-0000-0000-0000-0000000000b5')$q$, 'V1_LEDGER_BACKFILL_MIXED');
 rollback;
 
 -- 20261018100300: V1 redeem an exam with OT in ONE transaction (atomic, idempotent, extension, expiry, accessibility, no price from the client).
@@ -1015,7 +1094,7 @@ begin
   first_until := r.valido_hasta; first_tx := r.transaccion_id;
   assert (select count(*) from public.contenido_desbloqueado_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and examen_id = 'e5000000-0000-0000-0000-0000000000a1' and motivo = 'compra') = 1, 'one purchased row';
   assert exists (select 1 from public.contenido_desbloqueado_usuario g where g.transaccion_id = first_tx and g.precio_pagado = 100 and g.moneda = 'OPOSITICKETS' and g.comprado_en is not null and g.valido_hasta = first_until), 'entitlement carries price, currency, transaction and purchase time';
-  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1')) = 'GRANTED', 'the verdict sees the grant';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1', clock_timestamp())) = 'GRANTED', 'the verdict sees the grant';
   assert (select sum(cantidad) from public.ot_consumos where debit_tx_id = first_tx) = 100, 'the debit is traced to its credit';
   -- same key, same body: the SAME result, one debit
   select * into r2 from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1','k-buy-1', 100);
@@ -1035,10 +1114,47 @@ declare r record;
 begin
   update public.contenido_desbloqueado_usuario set valido_hasta = now() - interval '1 day', valido_desde = now() - interval '31 days'
    where usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and examen_id = 'e5000000-0000-0000-0000-0000000000a1';
-  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1')) = 'LOCKED', 'expired entitlement is enforced by the server';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1', clock_timestamp())) = 'LOCKED', 'expired entitlement is enforced by the server';
   select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1','k-buy-3');
   assert r.valido_desde >= now() - interval '1 minute' and r.valido_hasta between now() + interval '29 days 23 hours' and now() + interval '30 days 1 hour' and r.saldo = 200, 'a re-buy after expiry restarts from now';
-  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1')) = 'GRANTED', 'and it opens again';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a1', clock_timestamp())) = 'GRANTED', 'and it opens again';
+end $$;
+-- E2-V1-E03: the base of an extension is max(valido_hasta) of the exam grants regardless of valido_desde, and the clock is read after the lock.
+-- A grant that starts a second AFTER this transaction began (what a concurrent purchase committed just before us looks like) must still be extended, not ignored.
+insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-0000000000f6','rd6@test.local','authenticated','authenticated');
+do $$
+declare r record; seed_until timestamptz;
+begin
+  perform public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f6', 300, 'seed', 'seed-e03', 'ajuste');
+  seed_until := now() + interval '40 days';
+  insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000f6','e5000000-0000-0000-0000-0000000000a1','regalo', now() + interval '1 second', seed_until);
+  select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f6','e5000000-0000-0000-0000-0000000000a1','k-e03-1');
+  assert r.valido_hasta >= seed_until + interval '29 days 23 hours', 'extension starts from the latest end even if that grant started a moment ago: ' || r.valido_hasta;
+  select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f6','e5000000-0000-0000-0000-0000000000a1','k-e03-2');
+  assert r.valido_hasta >= seed_until + interval '59 days 23 hours', 'two purchases give 60 days from the base, never 30: ' || r.valido_hasta;
+  assert (select count(*) from public.transacciones_cartera where usuario_id = 'a0000000-0000-0000-0000-0000000000f6' and tipo = 'compra_examen') = 2, 'both purchases were debited';
+end $$;
+-- SPECIALTY GATE: the user's specialty is set (RX = e1..f1); an exam of another specialty (RY = e1..f2) is invisible: verdict LOCKED/SPECIALTY_MISMATCH, redeem = EXAM_NOT_FOUND, nothing written.
+do $$
+declare before_bal integer;
+begin
+  insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+    values ('a0000000-0000-0000-0000-0000000000f3', 'rd3', 'rd3', true, 'activa', 'e1000000-0000-0000-0000-0000000000f1') on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+  assert (select state || ':' || reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f3','e5000000-0000-0000-0000-0000000000a6', clock_timestamp())) = 'LOCKED:SPECIALTY_MISMATCH', 'an exam of another specialty is locked by rule 0';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f3','e5000000-0000-0000-0000-0000000000a4', clock_timestamp())) = 'FREE', 'an exam of the own specialty is unaffected';
+  update public.examenes set especialidad_id = 'e1000000-0000-0000-0000-0000000000f2' where id = 'e5000000-0000-0000-0000-0000000000a8';
+  select saldo_tickets into before_bal from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f3';
+  begin perform * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f3','e5000000-0000-0000-0000-0000000000a8','k-spec'); assert false, 'must refuse';
+  exception when others then assert sqlerrm = 'EXAM_NOT_FOUND', 'out-of-specialty redeem: ' || sqlerrm; end;
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f3') = before_bal and not exists (select 1 from public.transacciones_cartera where idempotency_key = 'k-spec'), 'nothing written';
+  update public.examenes set especialidad_id = 'e1000000-0000-0000-0000-0000000000f1' where id = 'e5000000-0000-0000-0000-0000000000a8';
+  -- the specialty cannot be changed once set (same value = no-op; NULL -> value allowed)
+  begin update public.perfiles_usuario set especialidad_principal_id = 'e1000000-0000-0000-0000-0000000000f2' where usuario_id = 'a0000000-0000-0000-0000-0000000000f3'; assert false, 'must refuse';
+  exception when others then assert sqlerrm = 'SPECIALTY_ALREADY_SET', 'change refused: ' || sqlerrm; end;
+  begin update public.perfiles_usuario set especialidad_principal_id = null where usuario_id = 'a0000000-0000-0000-0000-0000000000f3'; assert false, 'must refuse';
+  exception when others then assert sqlerrm = 'SPECIALTY_ALREADY_SET', 'clear refused: ' || sqlerrm; end;
+  update public.perfiles_usuario set especialidad_principal_id = 'e1000000-0000-0000-0000-0000000000f1' where usuario_id = 'a0000000-0000-0000-0000-0000000000f3';
+  assert (select especialidad_principal_id from public.perfiles_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000f3') = 'e1000000-0000-0000-0000-0000000000f1', 'the same value is a no-op';
 end $$;
 -- exact balance == price, then nothing left
 do $$
@@ -1055,7 +1171,7 @@ declare r record;
 begin
   select * into r from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a6','k-cap');
   assert r.outcome = 'CREATED', 'purchase is not refused because of the specialty switch (owner decision, C3 withdrawn)';
-  assert (select reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a6')) = 'CAPABILITY_DISABLED', 'rule 0 is unchanged until the owner decides';
+  assert (select reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a6', clock_timestamp())) = 'CAPABILITY_DISABLED', 'rule 0 is unchanged until the owner decides';
 end $$;
 -- subscription and unlimited grants make a purchase pointless
 insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, fin_en) values ('a0000000-0000-0000-0000-0000000000f2', true, 'activa', now() + interval '10 days');
@@ -1068,9 +1184,9 @@ select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000
 select pg_temp.expect_e($q$insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a8','compra', now(), now() + interval '1 day')$q$, 'ENTITLEMENT_PURCHASE_INCOMPLETE');
 -- verdict matrix spot checks: DEMO and NOT_ENTITLED
 do $$ begin
-  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a7')) = 'SUBSCRIPTION', 'premium user gets SUBSCRIPTION';
-  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a7')) = 'DEMO', 'demo exam without entitlement is DEMO';
-  assert (select reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f3','e5000000-0000-0000-0000-0000000000a2')) = 'NOT_ENTITLED', 'no entitlement is LOCKED';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a7', clock_timestamp())) = 'SUBSCRIPTION', 'premium user gets SUBSCRIPTION';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f1','e5000000-0000-0000-0000-0000000000a7', clock_timestamp())) = 'DEMO', 'demo exam without entitlement is DEMO';
+  assert (select reason from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f3','e5000000-0000-0000-0000-0000000000a2', clock_timestamp())) = 'NOT_ENTITLED', 'no entitlement is LOCKED';
 end $$;
 -- atomicity: a failure AFTER the debit leaves no trace (balance, ledger and entitlement all roll back)
 create function pg_temp.boom() returns trigger language plpgsql as $$ begin raise exception 'BOOM'; end $$;

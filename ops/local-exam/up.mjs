@@ -110,7 +110,9 @@ psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261018100000_v1_exam
 // V1 economia (OposiTickets): libro de cartera, pedidos de pago y canje. Las tres migraciones son idempotentes (create or replace / if not exists /
 // drop-create de triggers y restricciones) salvo los PREFLIGHT, que fallan sin cambiar nada. Despues, lo que SOLO existe en local: el proveedor sandbox
 // en el CHECK de compras_usuario y la cartera vacia de los usuarios antiguos.
-for (const v of ['20261018100100_v1_wallet_ledger_hardening', '20261018100200_v1_payment_orders', '20261018100300_v1_exam_redeem']) {
+// E5-V1-F01: quita la fila de apertura DUPLICADA que dejo un borrador anterior de la migracion (solo local; no hace nada en una cartera limpia).
+if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
+for (const v of ['20261018100100_v1_wallet_ledger_hardening', '20261018100200_v1_payment_orders', '20261018100300_v1_exam_redeem', '20261018100400_v1_specialty_immutable']) {
   psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));
 }
 psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
