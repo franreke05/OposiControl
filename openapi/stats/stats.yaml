@@ -1,0 +1,280 @@
+# STATS (FA32, V1 wave 3): Nota media, Evolucion, Debilidades by tag, summaries and question difficulty of the CURRENT user. Design: E1-V1-ENGAGEMENT-DESIGN.md section 2 (E2 conditions C-S1..C-S4).
+# Only the FIRST answer to each question counts (first_response of the exam attempts): never a demo row, never a challenge answer, never an annulled question, never a skip. Everything is written by the database in the
+# same transaction as that first answer (exactly once) and read from single-row or indexed tables. Own data only: no endpoint returns another user's numbers or identity. Windows, steps and minimums are Control
+# configuration (configuracion_v1 and ligas_nivel), never constants of the app. No endpoint triggers a recompute.
+components:
+  pathItems:
+    StatsSummary:
+      get:
+        operationId: getStatsSummary
+        summary: 'Nota media, evolution, streak, league and totals of the current user'
+        tags: [stats]
+        x-contract-id: D3-20
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Always 200 for an active account (a user with no first answer gets valor null and zeros). notaMedia.valor = correct / N x 10 over the LAST N first answers, N = the window of the league the user is in (Control: 50 in the first league, 100 afterwards); provisional = fewer than N first answers exist (the value is over what exists). evolucion.valor = notaMedia now minus the stored reference, recomputed every evolucion.cada new first answers (Control, default 20); null until the first reference exists. totales.aciertos / fallos count first answers; noContestadas = skipped or unanswered questions of finished, non-demo exam attempts.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'The summary.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/StatsSummary'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    StatsWeaknesses:
+      get:
+        operationId: getStatsWeaknesses
+        summary: 'Weak tags of the current user (aggregated, or for one exam)'
+        tags: [stats]
+        x-contract-id: D3-21
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'One grouped read, weakest first (lowest porcentajeAcierto, then more respondidas). Without examenId: TOTAL = the first answers of every attempt, per tag (tags with fewer than minimoRespuestas answers are left out: Control debilidad_min_respuestas, default 10). With examenId: EXAMEN = the finished, non-demo attempts of the caller on that exam (the per-exam D2-12 numbers summed), no minimum. limit is 1..50 (default 10). nivelDominio is derived from the percentage with Control thresholds (bajo / medio / alto).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: examenId
+            in: query
+            required: false
+            schema:
+              type: string
+              format: uuid
+          - name: limit
+            in: query
+            required: false
+            schema:
+              type: integer
+              minimum: 1
+              maximum: 50
+              default: 10
+        responses:
+          '200':
+            description: 'The weak tags.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/StatsWeaknesses'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    StatsDifficulty:
+      get:
+        operationId: getQuestionDifficulty
+        summary: 'Difficulty 1-5 of a question the caller has answered'
+        tags: [stats]
+        x-contract-id: D3-22
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Comparative data, so it is published only for a question the caller has ANSWERED (otherwise 404 NOT_FOUND, no probing) and only once enough users answered it (Control dificultad_min_respuestas, default 20; below it dificultad is null = sin datos). dificultad is 1..5: five equal groups by median time combined (rounded average) with the failure band, over the last dificultad_muestra (default 100) first answers; refreshed by a periodic job, never on request.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: preguntaId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+        responses:
+          '200':
+            description: 'The difficulty.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/StatsDifficulty'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    StatsSummary:
+      type: object
+      required: [notaMedia, evolucion, racha, preguntasValidas, totales]
+      properties:
+        notaMedia:
+          type: object
+          required: [ventana, respondidas, provisional]
+          properties:
+            valor:
+              type: [number, 'null']
+              minimum: 0
+              maximum: 10
+            ventana:
+              type: integer
+              minimum: 1
+            respondidas:
+              type: integer
+              minimum: 0
+              description: 'First answers inside the window (at most ventana).'
+            provisional:
+              type: boolean
+        evolucion:
+          type: object
+          required: [cada, progreso]
+          properties:
+            valor:
+              type: [number, 'null']
+              description: 'Signed difference with the stored reference, null until a reference exists.'
+            referencia:
+              type: [number, 'null']
+            cada:
+              type: integer
+              minimum: 1
+            progreso:
+              type: integer
+              minimum: 0
+              description: 'First answers since the last evolution recompute.'
+        racha:
+          type: object
+          required: [actual, maxima]
+          properties:
+            actual:
+              type: integer
+              minimum: 0
+            maxima:
+              type: integer
+              minimum: 0
+            ultimoDiaSuperado:
+              type: [string, 'null']
+              format: date
+        liga:
+          type: [object, 'null']
+          required: [codigo, nombre, preguntasMinimas]
+          properties:
+            codigo:
+              type: string
+            nombre:
+              type: string
+            preguntasMinimas:
+              type: integer
+            siguiente:
+              type: [object, 'null']
+              required: [codigo, nombre, preguntasMinimas]
+              properties:
+                codigo:
+                  type: string
+                nombre:
+                  type: string
+                preguntasMinimas:
+                  type: integer
+        preguntasValidas:
+          type: integer
+          minimum: 0
+          description: 'First answers counted (decides the league).'
+        totales:
+          type: object
+          required: [aciertos, fallos, noContestadas]
+          properties:
+            aciertos:
+              type: integer
+              minimum: 0
+            fallos:
+              type: integer
+              minimum: 0
+            noContestadas:
+              type: integer
+              minimum: 0
+    StatsWeaknesses:
+      type: object
+      required: [alcance, minimoRespuestas, items]
+      properties:
+        alcance:
+          type: string
+          enum: [TOTAL, EXAMEN]
+        minimoRespuestas:
+          type: integer
+          minimum: 0
+        items:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [etiquetaId, nombre, respondidas, correctas, falladas, porcentajeAcierto, nivelDominio]
+            properties:
+              etiquetaId:
+                $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+              nombre:
+                type: string
+              respondidas:
+                type: integer
+                minimum: 0
+              correctas:
+                type: integer
+                minimum: 0
+              falladas:
+                type: integer
+                minimum: 0
+              sinResponder:
+                type: integer
+                minimum: 0
+                description: 'Only with alcance EXAMEN.'
+              porcentajeAcierto:
+                type: number
+                minimum: 0
+                maximum: 100
+              nivelDominio:
+                type: string
+                enum: [bajo, medio, alto]
+    StatsDifficulty:
+      type: object
+      required: [preguntaId]
+      properties:
+        preguntaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        dificultad:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 5
+          description: 'null = sin datos (below the Control minimum of answers).'

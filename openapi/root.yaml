@@ -33,6 +33,8 @@ tags:
     description: 'News articles, news types and news assets administration.'
   - name: wallet
     description: 'OposiTickets wallet of the current user (reads).'
+  - name: stats
+    description: 'Nota media, evolution, weaknesses by tag and question difficulty of the current user (V1 wave 3).'
   - name: challenge
     description: 'The daily challenge, its reward claim and the streak of the current user (V1 wave 2).'
   - name: plan
@@ -244,6 +246,12 @@ paths:
     $ref: 'engagement/engagement.yaml#/components/pathItems/DailyChallengeResource'
   /api/v1/app/racha:
     $ref: 'engagement/engagement.yaml#/components/pathItems/Streak'
+  /api/v1/app/estadisticas/resumen:
+    $ref: 'stats/stats.yaml#/components/pathItems/StatsSummary'
+  /api/v1/app/estadisticas/debilidades:
+    $ref: 'stats/stats.yaml#/components/pathItems/StatsWeaknesses'
+  /api/v1/app/estadisticas/dificultad/{preguntaId}:
+    $ref: 'stats/stats.yaml#/components/pathItems/StatsDifficulty'
   /api/v1/app/plan/cupo:
     $ref: 'plan/plan.yaml#/components/pathItems/PlanQuota'
   /api/v1/app/plan/cupo/{examenId}:
