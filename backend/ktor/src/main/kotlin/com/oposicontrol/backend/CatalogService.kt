@@ -481,7 +481,11 @@ internal class CatalogService(
     private fun accessInfoFor(userId: String, exams: List<CatalogExamRow>, now: Instant): Map<String, AccessInfo> {
         if (exams.isEmpty()) return emptyMap()
         val examIds = exams.map { it.id }.distinct()
-        val premium = gateway.premiumRow(userId)?.toFact()
+        val premiumRow = gateway.premiumRow(userId)
+        val premium = premiumRow?.toFact()?.let { fact ->
+            // Access v2: el nivel del plan solo se lee cuando la suscripcion da acceso ahora (una peticion mas, no por examen)
+            if (fact.activeAt(now)) fact.copy(planLevel = premiumRow.productoCodigo?.takeIf(String::isNotBlank)?.let { gateway.planOf(it)?.nivel }) else fact
+        }
         val grants = gateway.grantsFor(userId, examIds)
         val capabilities = gateway.capabilitiesFor(exams.map { it.especialidadId }.distinct())
         val userSpecialty = gateway.userSpecialty(userId)

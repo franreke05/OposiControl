@@ -90,6 +90,9 @@ psqlc -1 < "$boot" >/dev/null 2>"$err" || { cat "$err"; fail "$boot no carga con
 # V1: objetos de MAIN que el bootstrap generado no arrastra y sobre los que construyen las migraciones V1 (compras_usuario, transacciones_cartera).
 extra=supabase/baseline/main_shape_subset_extra.sql
 [ -s "$extra" ] && { psqlc < "$extra" >/dev/null 2>"$err" || { cat "$err"; fail "$extra no carga con ON_ERROR_STOP=1"; }; }
+# V1 Access v2: beneficios_plan y suscripciones (objetos de MAIN fuera del subconjunto; ver el fichero).
+extra_plans=supabase/baseline/main_shape_subset_extra_plans.sql
+[ -s "$extra_plans" ] && { psqlc < "$extra_plans" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_plans no carga con ON_ERROR_STOP=1"; }; }
 fingerprint "$tmp/f0"
 apply_all
 fingerprint "$tmp/f1"

@@ -62,6 +62,8 @@ export function converge({ psql, root = repo }) {
     'revoke all on table private.v1_applied_migrations from public, anon, authenticated, service_role;');
   // a stack that applied the F01 draft: same repair up.mjs runs first
   if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
+  // MAIN objects the bootstrap subset lacks (idempotent): beneficios_plan, suscripciones
+  psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_plans.sql'), 'utf8'));
   for (const f of files) {
     process.stdout.write(`  apply ${f.v}\n`);
     psql(f.text);

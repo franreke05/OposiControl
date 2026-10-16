@@ -40,10 +40,13 @@ class AccessVerdictParityTest {
     private val users: List<UserCombo> = buildList {
         val premiums: List<PremiumFact?> = buildList {
             add(null)
+            // Access v2: el nivel del plan (null = producto sin plan) multiplica los estados que dan acceso; el resto solo lo prueba con null y con 3
             for (status in listOf("activa", "periodo_prueba", "cancelada", "pausada", "caducada", "sin_suscripcion")) {
-                for (end in listOf(days(30), days(-1), null)) add(PremiumFact(true, status, end))
+                val levels: List<Int?> = if (status == "activa" || status == "cancelada") listOf(null, 0, 1, 2, 3) else listOf(null, 3)
+                for (end in listOf(days(30), days(-1), null)) for (level in levels) add(PremiumFact(true, status, end, level))
             }
-            add(PremiumFact(false, "activa", days(30)))
+            add(PremiumFact(false, "activa", days(30), 3))
+            add(PremiumFact(false, "activa", days(30), null))
         }
         val grantSets: List<List<ExamGrantFact>> = listOf(
             emptyList(),
@@ -83,7 +86,8 @@ class AccessVerdictParityTest {
             seen += verdict(exam, user, mode)
             cases++
         }
-        assertEquals(204 * 140 * 3, cases)
+        assertEquals(exams.size * users.size * 3, cases)
+        assertEquals(204, exams.size)
         assertEquals(AccessState.entries.toSet(), seen, "la matriz tiene que producir los cinco estados")
     }
 
@@ -111,7 +115,7 @@ class AccessVerdictParityTest {
                         JsonObject(
                             mapOf(
                                 "premium" to (u.premium?.let {
-                                    JsonObject(mapOf("esPremium" to JsonPrimitive(it.esPremium), "status" to JsonPrimitive(it.status), "endsAt" to instant(it.endsAt)))
+                                    JsonObject(mapOf("esPremium" to JsonPrimitive(it.esPremium), "status" to JsonPrimitive(it.status), "endsAt" to instant(it.endsAt), "planLevel" to (it.planLevel?.let { l -> JsonPrimitive(l) } ?: JsonNull)))
                                 } ?: JsonNull),
                                 "grants" to JsonArray(
                                     u.grants.map {

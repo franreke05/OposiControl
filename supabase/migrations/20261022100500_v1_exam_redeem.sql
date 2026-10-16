@@ -233,7 +233,10 @@ begin
 
   select v.* into v_verdict from private.exam_access_verdict(p_usuario, p_examen, v_now) v;
   -- A free exam is never sold, even if its specialty switch makes the verdict LOCKED; premium subscribers and unlimited grants already have access.
-  if v_exam.tipo_acceso = 'gratuito' or v_verdict.state in ('FREE', 'SUBSCRIPTION') or (v_verdict.state = 'GRANTED' and v_verdict.unlimited_grant) then
+  -- Owner GO 2026-10-16: a purchase on an exam already open through a GIFT, a PLAN QUOTA choice or the subscription answers ALREADY_ACCESSIBLE (only a purchase extends a purchase).
+  if v_exam.tipo_acceso = 'gratuito' or v_verdict.state in ('FREE', 'SUBSCRIPTION') or (v_verdict.state = 'GRANTED' and v_verdict.unlimited_grant)
+     or exists (select 1 from public.contenido_desbloqueado_usuario g where g.usuario_id = p_usuario and g.examen_id = p_examen and g.motivo <> 'compra'
+                   and g.valido_desde <= v_now and (g.valido_hasta is null or g.valido_hasta > v_now)) then
     raise exception using errcode = 'P0001', message = 'ALREADY_ACCESSIBLE', detail = format('{"state":"%s"}', case when v_exam.tipo_acceso = 'gratuito' then 'FREE' else v_verdict.state end);
   end if;
 

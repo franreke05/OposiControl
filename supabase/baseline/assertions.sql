@@ -1310,9 +1310,16 @@ begin
   exception when others then assert sqlerrm = 'EXAM_NOT_FOUND', 'no specialty redeem: ' || sqlerrm; end;
 end $$;
 -- subscription and unlimited grants make a purchase pointless
-insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, fin_en) values ('a0000000-0000-0000-0000-0000000000f2', true, 'activa', now() + interval '10 days');
+-- Access v2 (client 2026-10-16): a subscription covers a rafaga from nivel 1, a razonado from nivel 2 and NEVER an immersive by itself.
+insert into public.planes_suscripcion (id, codigo, nombre, nivel) values ('b1000000-0000-0000-0000-0000000000f1', 'plan-rafagas-f', 'Rafagas', 1);
+insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, activo, visible, plan_id) values ('b2000000-0000-0000-0000-0000000000f1', 'sub-rafagas-f', 'suscripcion', 'Sub rafagas', 299, 'EUR', true, true, 'b1000000-0000-0000-0000-0000000000f1');
+insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, producto_codigo, fin_en) values ('a0000000-0000-0000-0000-0000000000f2', true, 'activa', 'sub-rafagas-f', now() + interval '10 days');
 select public.admin_grant_tickets('a0000000-0000-0000-0000-0000000000f2', 300, 'seed', 'seed-2', 'ajuste');
-select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a1','k-sub')$q$, 'ALREADY_ACCESSIBLE');
+select pg_temp.expect_e($q$select * from public.app_redeem_exam_access('a0000000-0000-0000-0000-0000000000f2','e5000000-0000-0000-0000-0000000000a7','k-sub')$q$, 'ALREADY_ACCESSIBLE');
+do $$ begin
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f2', 'e5000000-0000-0000-0000-0000000000a7')) = 'SUBSCRIPTION', 'a rafagas plan covers a rafaga exam';
+  assert (select state from private.exam_access_verdict('a0000000-0000-0000-0000-0000000000f2', 'e5000000-0000-0000-0000-0000000000a1')) = 'LOCKED', 'a subscription does NOT open an immersive by itself';
+end $$;
 set local session_replication_role = replica; -- legacy unlimited gift rows (the table guard refuses new ones)
 insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('a0000000-0000-0000-0000-0000000000f3', 'e5000000-0000-0000-0000-0000000000a1', 'admin', now() - interval '1 day', null);
 set local session_replication_role = origin;
@@ -1555,5 +1562,140 @@ delete from public.preguntas where id = 'f5000000-0000-0000-0000-000000000010';
 do $$ begin
   assert not exists (select 1 from public.recursos_guardados_usuario where pregunta_id = 'f5000000-0000-0000-0000-000000000010'), 'on delete cascade from the question';
   raise notice 'OK V1 saved items';
+end $$;
+rollback;
+
+-- 20261022100900: V1 Access v2 (plan coverage, quota choice, subscription lifecycle, benefit bounds).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.vs(p_u uuid, p_e uuid) returns text language sql as $f$ select state from private.exam_access_verdict(p_u, p_e, clock_timestamp()) $f$;
+insert into auth.users (id, email, aud, role) values
+  ('a0000000-0000-0000-0000-0000000000a1','pl0@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000a2','pl1@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000a3','pl2@test.local','authenticated','authenticated'), ('a0000000-0000-0000-0000-0000000000a4','pl3@test.local','authenticated','authenticated'),
+  ('a0000000-0000-0000-0000-0000000000a5','pl4@test.local','authenticated','authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000a1','PA','PA','pa',true), ('e1000000-0000-0000-0000-0000000000a2','PB','PB','pb',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000a1','CPA','Com PA','com-pa');
+insert into public.capacidades_especialidad (especialidad_id, permite_rafagas, permite_razonados, permite_inmersivos, permite_demos) values ('e1000000-0000-0000-0000-0000000000a2', true, true, false, true);
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+  select u, 'pl' || right(u::text, 1), 'pl' || right(u::text, 1), true, 'activa', 'e1000000-0000-0000-0000-0000000000a1'
+  from (values ('a0000000-0000-0000-0000-0000000000a1'::uuid), ('a0000000-0000-0000-0000-0000000000a2'::uuid), ('a0000000-0000-0000-0000-0000000000a3'::uuid), ('a0000000-0000-0000-0000-0000000000a4'::uuid), ('a0000000-0000-0000-0000-0000000000a5'::uuid)) v(u)
+  on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, comprable_con_tickets, precio_tickets, dias_acceso_compra, demo_disponible) values
+  ('e5000000-0000-0000-0000-0000000000e1','PL-RAF','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Rafaga premium','rafaga','premium',true, now() - interval '1 day', false, null, 30, false),
+  ('e5000000-0000-0000-0000-0000000000e2','PL-RAZ','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Razonado premium','razonado','premium',true, now() - interval '1 day', false, null, 30, false),
+  ('e5000000-0000-0000-0000-0000000000e3','PL-IM1','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Inmersivo 1','inmersivo','premium',true, now() - interval '1 day', true, 50, 30, false),
+  ('e5000000-0000-0000-0000-0000000000e4','PL-IM2','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Inmersivo 2','inmersivo','premium',true, now() - interval '1 day', true, 50, 30, false),
+  ('e5000000-0000-0000-0000-0000000000e5','PL-IM3','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Inmersivo 3','inmersivo','premium',true, now() - interval '1 day', true, 50, 30, false),
+  ('e5000000-0000-0000-0000-0000000000e6','PL-OTHER','e1000000-0000-0000-0000-0000000000a2','c1000000-0000-0000-0000-0000000000a1','Inmersivo otra especialidad','inmersivo','premium',true, now() - interval '1 day', true, 50, 30, false),
+  ('e5000000-0000-0000-0000-0000000000e7','PL-DRAFT','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Inmersivo borrador','inmersivo','premium',false, null, true, 50, 30, false),
+  ('e5000000-0000-0000-0000-0000000000e8','PL-FREE','e1000000-0000-0000-0000-0000000000a1','c1000000-0000-0000-0000-0000000000a1','Rafaga gratis','rafaga','gratuito',true, now() - interval '1 day', false, null, 30, false);
+set local session_replication_role = origin;
+insert into public.planes_suscripcion (id, codigo, nombre, nivel) values
+  ('b1000000-0000-0000-0000-0000000000a0','plan-gratuito','Gratuito',0), ('b1000000-0000-0000-0000-0000000000a1','plan-rafagas','Rafagas',1),
+  ('b1000000-0000-0000-0000-0000000000a2','plan-razonados','Razonados',2), ('b1000000-0000-0000-0000-0000000000a3','plan-inmersivo','Inmersivo',3);
+insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, activo, visible, plan_id) values
+  ('b2000000-0000-0000-0000-0000000000a1','sub-rafagas','suscripcion','Sub rafagas',299,'EUR',true,true,'b1000000-0000-0000-0000-0000000000a1'),
+  ('b2000000-0000-0000-0000-0000000000a2','sub-razonados','suscripcion','Sub razonados',699,'EUR',true,true,'b1000000-0000-0000-0000-0000000000a2'),
+  ('b2000000-0000-0000-0000-0000000000a3','sub-inmersivo','suscripcion','Sub inmersivo',999,'EUR',true,true,'b1000000-0000-0000-0000-0000000000a3'),
+  ('b2000000-0000-0000-0000-0000000000a9','sub-huerfana','suscripcion','Sub sin plan',999,'EUR',true,true,null);
+insert into public.beneficios_plan (plan_id, codigo_beneficio, valor_integer) values ('b1000000-0000-0000-0000-0000000000a3', 'inmersivos_incluidos', 2);
+
+do $$
+declare
+  u0 uuid := 'a0000000-0000-0000-0000-0000000000a1'; u1 uuid := 'a0000000-0000-0000-0000-0000000000a2'; u2 uuid := 'a0000000-0000-0000-0000-0000000000a3';
+  u3 uuid := 'a0000000-0000-0000-0000-0000000000a4'; u4 uuid := 'a0000000-0000-0000-0000-0000000000a5';
+  raf uuid := 'e5000000-0000-0000-0000-0000000000e1'; raz uuid := 'e5000000-0000-0000-0000-0000000000e2'; im1 uuid := 'e5000000-0000-0000-0000-0000000000e3';
+  im2 uuid := 'e5000000-0000-0000-0000-0000000000e4'; im3 uuid := 'e5000000-0000-0000-0000-0000000000e5'; other uuid := 'e5000000-0000-0000-0000-0000000000e6';
+  draft uuid := 'e5000000-0000-0000-0000-0000000000e7'; free uuid := 'e5000000-0000-0000-0000-0000000000e8';
+  r record; h1 timestamptz; h2 timestamptz; n int;
+  function_state text;
+begin
+  insert into public.estado_premium_usuario (usuario_id, es_premium, estado_suscripcion, producto_codigo, inicio_en, fin_en) values
+    (u1, true, 'activa', 'sub-rafagas', now() - interval '5 days', now() + interval '25 days'),
+    (u2, true, 'activa', 'sub-razonados', now() - interval '5 days', now() + interval '25 days'),
+    (u3, true, 'activa', 'sub-inmersivo', now() - interval '5 days', now() + interval '25 days'),
+    (u4, true, 'activa', 'sub-huerfana', now() - interval '5 days', now() + interval '25 days');
+  -- ---- plan coverage
+  assert pg_temp.vs(u0, raf) = 'LOCKED' and pg_temp.vs(u0, free) = 'FREE', 'no subscription: only free';
+  assert pg_temp.vs(u1, raf) = 'SUBSCRIPTION' and pg_temp.vs(u1, raz) = 'LOCKED', 'rafagas plan: rafagas yes, razonados no';
+  assert pg_temp.vs(u2, raf) = 'SUBSCRIPTION' and pg_temp.vs(u2, raz) = 'SUBSCRIPTION' and pg_temp.vs(u2, im1) = 'LOCKED', 'razonados plan: rafagas + razonados, never an immersive';
+  assert pg_temp.vs(u3, raz) = 'SUBSCRIPTION' and pg_temp.vs(u3, im1) = 'LOCKED', 'inmersivo plan: the immersive still needs a choice or OT';
+  assert pg_temp.vs(u4, raf) = 'LOCKED', 'a product without plan covers nothing (fail closed)';
+  -- cancelada keeps the paid period; without an end, or terminal, it does not
+  update public.estado_premium_usuario set estado_suscripcion = 'cancelada' where usuario_id = u1;
+  assert pg_temp.vs(u1, raf) = 'SUBSCRIPTION', 'cancelada with paid time left keeps access (Kotlin wins)';
+  update public.estado_premium_usuario set fin_en = null where usuario_id = u1;
+  assert pg_temp.vs(u1, raf) = 'LOCKED', 'cancelada without a known end: no access';
+  update public.estado_premium_usuario set estado_suscripcion = 'caducada', fin_en = now() - interval '1 day' where usuario_id = u1;
+  assert pg_temp.vs(u1, raf) = 'LOCKED', 'caducada: no access';
+  update public.estado_premium_usuario set estado_suscripcion = 'activa', fin_en = now() + interval '25 days' where usuario_id = u1;
+
+  -- ---- choose: order of checks
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u3, other), 'EXAM_NOT_FOUND');   -- other specialty: gate
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u3, draft), 'EXAM_NOT_FOUND');   -- unpublished
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u3, gen_random_uuid()), 'EXAM_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u3, raz), 'EXAM_NOT_IMMERSIVE');
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u0, im1), 'PLAN_QUOTA_NONE');
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u2, im1), 'PLAN_QUOTA_NONE');   -- razonados plan has no quota
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u4, im1), 'PLAN_QUOTA_NONE');   -- unresolved plan
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, 'a0000000-0000-0000-0000-0000000000ff', im1), 'WALLET_INVALID_USER');
+  -- the writer guard
+  perform pg_temp.expect_e(format($q$insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta, cupo_suscripcion_inicio) values (%L, %L, 'plan_cupo', now(), now() + interval '1 day', now())$q$, u0, im1), 'PLAN_CUPO_WRITER_ONLY');
+  -- choose: idempotent, counts, verdict GRANTED until the paid period end
+  select * into r from public.app_choose_plan_exam(u3, im1);
+  assert r.outcome = 'CREATED' and r.hasta between now() + interval '24 days 23 hours' and now() + interval '25 days 1 hour', 'quota choice lasts until the paid period end';
+  h1 := r.hasta;
+  assert pg_temp.vs(u3, im1) = 'GRANTED', 'a quota exam is GRANTED';
+  select * into r from public.app_choose_plan_exam(u3, im1);
+  assert r.outcome = 'EXISTS' and r.hasta = h1 and (select count(*) from public.contenido_desbloqueado_usuario where usuario_id = u3 and motivo = 'plan_cupo') = 1, 'choosing twice is a no-op';
+  perform public.app_choose_plan_exam(u3, im2);
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u3, im3), 'PLAN_QUOTA_FULL');
+  assert (select count(*) from public.auditoria_log where accion = 'plan_cupo_elegido' and usuario_id = u3) = 2, 'every choice is audited';
+  -- a purchase of a quota-held exam is refused (nothing to buy)
+  perform public.admin_grant_tickets(u3, 200, 'seed', 'seed-pl3', 'ajuste');
+  perform pg_temp.expect_e(format($q$select * from public.app_redeem_exam_access(%L, %L, 'k-pl-quota')$q$, u3, im1), 'ALREADY_ACCESSIBLE');
+  -- an exam already owned by a gift / purchase is not spent from the quota
+  insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values (u3, im3, 'admin', now() - interval '1 hour', now() + interval '5 days');
+  perform pg_temp.expect_e(format($q$select * from public.app_choose_plan_exam(%L, %L)$q$, u3, im3), 'ALREADY_ACCESSIBLE');
+  delete from public.contenido_desbloqueado_usuario where usuario_id = u3 and examen_id = im3;
+  -- ---- benefit bounds (C-A2): malformed / out of range = no quota
+  update public.beneficios_plan set valor_integer = 9999 where plan_id = 'b1000000-0000-0000-0000-0000000000a3';
+  assert private.plan_benefit_int('b1000000-0000-0000-0000-0000000000a3', 'inmersivos_incluidos', 0, 4) is null, 'out of range = NULL';
+  update public.beneficios_plan set valor_integer = null, valor_numeric = 2 where plan_id = 'b1000000-0000-0000-0000-0000000000a3';
+  assert private.plan_benefit_int('b1000000-0000-0000-0000-0000000000a3', 'inmersivos_incluidos', 0, 4) is null, 'a numeric value is not an integer benefit';
+  update public.beneficios_plan set valor_numeric = null, valor_integer = 2, valor_text = 'x' where plan_id = 'b1000000-0000-0000-0000-0000000000a3';
+  assert private.plan_benefit_int('b1000000-0000-0000-0000-0000000000a3', 'inmersivos_incluidos', 0, 4) is null, 'two values = malformed';
+  update public.beneficios_plan set valor_text = null where plan_id = 'b1000000-0000-0000-0000-0000000000a3';
+  assert private.plan_benefit_int('b1000000-0000-0000-0000-0000000000a3', 'inmersivos_incluidos', 0, 4) = 2, 'restored';
+  -- ---- lifecycle: renewal extends the OLDEST N; lowering the quota never revokes; a terminal state closes at once
+  select hasta into h1 from public.app_choose_plan_exam(u3, im1);
+  update public.beneficios_plan set valor_integer = 1 where plan_id = 'b1000000-0000-0000-0000-0000000000a3';
+  update public.estado_premium_usuario set fin_en = now() + interval '55 days' where usuario_id = u3;
+  assert (select valido_hasta from public.contenido_desbloqueado_usuario where usuario_id = u3 and examen_id = im1 and motivo = 'plan_cupo') > now() + interval '54 days', 'renewal extends the oldest choice';
+  assert (select valido_hasta from public.contenido_desbloqueado_usuario where usuario_id = u3 and examen_id = im2 and motivo = 'plan_cupo') < now() + interval '26 days', 'the choice beyond the lowered quota is NOT extended and NOT revoked';
+  assert pg_temp.vs(u3, im2) = 'GRANTED', 'not revoked before the paid period ends';
+  update public.estado_premium_usuario set es_premium = false, estado_suscripcion = 'sin_suscripcion', fin_en = null where usuario_id = u3;
+  assert pg_temp.vs(u3, im1) = 'LOCKED' and pg_temp.vs(u3, im2) = 'LOCKED', 'terminal state closes the quota rows at once';
+  update public.beneficios_plan set valor_integer = 2 where plan_id = 'b1000000-0000-0000-0000-0000000000a3';
+  -- a NEW subscription after the lapse starts with an empty quota
+  update public.estado_premium_usuario set es_premium = true, estado_suscripcion = 'activa', producto_codigo = 'sub-inmersivo', inicio_en = now(), fin_en = now() + interval '30 days' where usuario_id = u3;
+  select * into r from public.app_choose_plan_exam(u3, im3);
+  assert r.outcome = 'CREATED' and private.plan_quota_used(u3, (select inicio_en from public.estado_premium_usuario where usuario_id = u3), clock_timestamp()) = 1, 'new subscription: empty quota';
+  -- ---- projection from suscripciones (Kotlin wins on cancelada; terminal motives deny at once)
+  insert into public.suscripciones (usuario_id, proveedor, producto_codigo, estado, inicio_en, fin_en) values (u0, 'google_play', 'sub-rafagas', 'cancelada', now() - interval '2 days', now() + interval '10 days');
+  assert (select estado_suscripcion from public.estado_premium_usuario where usuario_id = u0) = 'cancelada' and pg_temp.vs(u0, raf) = 'SUBSCRIPTION', 'cancelada keeps access until fin_en through the projection';
+  update public.suscripciones set fin_motivo = 'reembolso' where usuario_id = u0;
+  assert (select estado_suscripcion from public.estado_premium_usuario where usuario_id = u0) = 'sin_suscripcion' and pg_temp.vs(u0, raf) = 'LOCKED', 'refund: denied at once';
+  -- ---- configuration edits are audited
+  update public.configuracion_v1 set valor_integer = 6 where clave = 'demo_preguntas';
+  assert exists (select 1 from public.auditoria_log where accion = 'configuracion_v1_editada' and despues ->> 'clave' = 'demo_preguntas' and (despues ->> 'valor_integer')::int = 6), 'config edits are audited';
+  update public.configuracion_v1 set valor_integer = 5 where clave = 'demo_preguntas';
+  raise notice 'OK V1 access v2';
 end $$;
 rollback;
