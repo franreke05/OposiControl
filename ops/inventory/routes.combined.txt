@@ -119,6 +119,9 @@ GET /api/v1/app/commercial/catalog
 GET /api/v1/app/commercial/purchases
 GET /api/v1/app/commercial/subscriptions
 GET /api/v1/app/estadisticas
+GET /api/v1/app/estadisticas/debilidades
+GET /api/v1/app/estadisticas/dificultad/{}
+GET /api/v1/app/estadisticas/resumen
 GET /api/v1/app/examenes
 GET /api/v1/app/examenes/{}
 GET /api/v1/app/home
@@ -201,6 +204,7 @@ POST /api/v1/admin/comercial/productos
 POST /api/v1/admin/comercial/productos/{}/tarifas
 POST /api/v1/admin/comunidades-autonomas
 POST /api/v1/admin/especialidades
+POST /api/v1/admin/estadisticas/recalcular
 POST /api/v1/admin/etiquetas
 POST /api/v1/admin/examenes
 POST /api/v1/admin/examenes/{}/archivar

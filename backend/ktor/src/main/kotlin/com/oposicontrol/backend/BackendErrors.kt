@@ -33,6 +33,8 @@ private data class DomainErrorDefinition(
 )
 
 private val SUPABASE_DOMAIN_ERRORS = mapOf(
+    "STATS_RECOMPUTE_COOLDOWN" to DomainErrorDefinition(HttpStatusCode.TooManyRequests, "El recalculo de estadisticas se ha pedido hace poco: espera unos minutos."),
+    "STATS_SCOPE_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "El alcance del recalculo no es valido."),
     "OFFICIAL_RULES_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Las reglas de anuladas y reservas del examen no son validas: revisa el bloque de reservas, el orden y la regla elegida."),
     "DEMO_CONFLICT" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Una pregunta de la demo no puede estar anulada, ser de reserva ni cambiar de posicion."),
     "RECORD_ANSWER_INVALID_ATTEMPT" to DomainErrorDefinition(HttpStatusCode.NotFound, "El intento no existe o no pertenece al usuario."),

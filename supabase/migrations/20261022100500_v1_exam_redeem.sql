@@ -232,12 +232,19 @@ begin
   end if;
 
   select v.* into v_verdict from private.exam_access_verdict(p_usuario, p_examen, v_now) v;
-  -- A free exam is never sold, even if its specialty switch makes the verdict LOCKED; premium subscribers and unlimited grants already have access.
-  -- Owner GO 2026-10-16: a purchase on an exam already open through a GIFT, a PLAN QUOTA choice or the subscription answers ALREADY_ACCESSIBLE (only a purchase extends a purchase).
-  if v_exam.tipo_acceso = 'gratuito' or v_verdict.state in ('FREE', 'SUBSCRIPTION') or (v_verdict.state = 'GRANTED' and v_verdict.unlimited_grant)
+  -- ALREADY_ACCESSIBLE is answered from the SAME single verdict (the access v2 one) and only when the user can already START: FREE, SUBSCRIPTION (plan coverage is inside the verdict),
+  -- an unlimited grant, or a non-purchase grant still running (gift / plan quota: only a purchase extends a purchase). It is NEVER answered for a LOCKED verdict:
+  -- a subscriber whose plan does not cover an immersive is LOCKED and buys it with OT (201). A free exam is never sold: FREE -> ALREADY_ACCESSIBLE, locked free exam -> NOT_PURCHASABLE.
+  if v_exam.tipo_acceso = 'gratuito' then
+    if v_verdict.state = 'FREE' then
+      raise exception using errcode = 'P0001', message = 'ALREADY_ACCESSIBLE', detail = '{"state":"FREE"}';
+    end if;
+    raise exception using errcode = 'P0001', message = 'NOT_PURCHASABLE';
+  end if;
+  if v_verdict.state in ('FREE', 'SUBSCRIPTION') or (v_verdict.state = 'GRANTED' and v_verdict.unlimited_grant)
      or exists (select 1 from public.contenido_desbloqueado_usuario g where g.usuario_id = p_usuario and g.examen_id = p_examen and g.motivo <> 'compra'
                    and g.valido_desde <= v_now and (g.valido_hasta is null or g.valido_hasta > v_now)) then
-    raise exception using errcode = 'P0001', message = 'ALREADY_ACCESSIBLE', detail = format('{"state":"%s"}', case when v_exam.tipo_acceso = 'gratuito' then 'FREE' else v_verdict.state end);
+    raise exception using errcode = 'P0001', message = 'ALREADY_ACCESSIBLE', detail = format('{"state":"%s"}', v_verdict.state);
   end if;
 
   select coalesce((select w.saldo_tickets from public.carteras_usuario w where w.usuario_id = p_usuario), 0) into v_balance;

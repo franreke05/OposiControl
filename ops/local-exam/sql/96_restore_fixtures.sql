@@ -8,7 +8,8 @@ declare
 begin
   for t in select * from (values ('2a000000-0000-4000-8000-00000000002a'::uuid, 200), ('2b000000-0000-4000-8000-00000000002b'::uuid, 29),
                                  ('2c000000-0000-4000-8000-00000000002c'::uuid, 0),   ('2d000000-0000-4000-8000-00000000002d'::uuid, 30),
-                                 ('2e000000-0000-4000-8000-00000000002e'::uuid, 25)) v(u, target)
+                                 ('2e000000-0000-4000-8000-00000000002e'::uuid, 25),
+                                 ('2f000000-0000-4000-8000-00000000002f'::uuid, 0),   ('3b000000-0000-4000-8000-00000000003b'::uuid, 0)) v(u, target)
   loop
     select saldo_tickets into v_cur from public.carteras_usuario where usuario_id = t.u;
     v_cur := coalesce(v_cur, 0);
@@ -19,6 +20,8 @@ begin
   end loop;
 end $$;
 
+-- plan subscribers Q6/Q7 (98b): only their PURCHASES are removed; the plan_cupo (quota) rows belong to the subscription lifecycle and stay
+delete from public.contenido_desbloqueado_usuario where usuario_id in ('2f000000-0000-4000-8000-00000000002f', '3b000000-0000-4000-8000-00000000003b') and motivo = 'compra';
 delete from public.contenido_desbloqueado_usuario g
  where g.usuario_id in ('2a000000-0000-4000-8000-00000000002a', '2b000000-0000-4000-8000-00000000002b', '2c000000-0000-4000-8000-00000000002c',
                         '2d000000-0000-4000-8000-00000000002d', '2e000000-0000-4000-8000-00000000002e')

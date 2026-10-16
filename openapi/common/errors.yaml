@@ -144,6 +144,9 @@ components:
         - RETO_CLAIM_EXPIRED
         - RETO_CLAIM_NOT_ELIGIBLE
         - OFFICIAL_RULES_INVALID
+        - STATS_SCOPE_INVALID
+        - USERNAME_REQUIRED
+        - STATS_RECOMPUTE_COOLDOWN
   headers:
     XRequestId:
       description: 'Request correlation id; equals ErrorEnvelope.requestId.'

@@ -163,6 +163,7 @@ POST /api/v1/admin/comercial/productos
 POST /api/v1/admin/comercial/productos/{}/tarifas
 POST /api/v1/admin/comunidades-autonomas
 POST /api/v1/admin/especialidades
+POST /api/v1/admin/estadisticas/recalcular
 POST /api/v1/admin/etiquetas
 POST /api/v1/admin/examenes
 POST /api/v1/admin/examenes/{}/archivar

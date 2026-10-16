@@ -958,6 +958,14 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 )
             }
         }
+        // V1 wave 3 (C-S4): recalculo de estadisticas solo para administradores. Auditado y con enfriamiento en la base (429 STATS_RECOMPUTE_COOLDOWN); nunca desde un endpoint de usuario.
+        route("/estadisticas") {
+            post("/recalcular") {
+                val req = call.receive<AdminRecomputeStatsRequest>()
+                val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+                call.respond(withUpstreamIo { gateway.recalcularEstadisticas(req.alcance, actorId) })
+            }
+        }
         route("/importaciones") {
             route("/preguntas") {
                 get {
@@ -3768,6 +3776,12 @@ private data class AdminCreateQuestionResult(
 // que es lo único que la pantalla pinta. Un DTO que nadie lee sólo sería otra forma más
 // de que el contrato y el código se separen sin que ningún test lo note.
 
+@Serializable
+internal data class AdminRecomputeStatsRequest(val alcance: String = "dificultad")
+
+@Serializable
+private data class AdminRecomputeStatsRpc(@SerialName("p_actor") val actor: String? = null, @SerialName("p_alcance") val alcance: String)
+
 /** Argumentos de `admin_import_lote_preguntas` (IM3, KI3-1). */
 @Serializable
 private data class AdminImportLoteRpc(
@@ -5676,6 +5690,16 @@ class AdminV1Gateway private constructor(
      * `IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED` (las preguntas se verían al
      * instante), y viaja sólo porque él lo confirmó en un diálogo.
      */
+    /** V1 wave 3: `admin_recompute_stats` (auditado, con enfriamiento y cerrojo en la base). */
+    fun recalcularEstadisticas(alcance: String, actorId: String?): kotlinx.serialization.json.JsonElement {
+        val body = rpcOrUnavailable(
+            "admin_recompute_stats",
+            sbJson.encodeToString(AdminRecomputeStatsRpc(actorId, alcance)),
+            "STATS_RPC_NOT_PROVISIONED",
+        )
+        return json.parseToJsonElement(body)
+    }
+
     fun importarLote(
         loteId: String,
         confirmarExamenPublicado: Boolean = false,

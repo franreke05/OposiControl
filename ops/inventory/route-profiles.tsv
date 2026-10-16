@@ -146,6 +146,9 @@ GET	/api/v1/app/payments/orders/{}	BOT	user-jwt	Consumer economy: payment order 
 GET	/api/v1/app/plan/catalogo	BOT	user-jwt	Consumer plan: catalog with coverage, daily limit and tariffs as data (D7-33)	OposiBot
 GET	/api/v1/app/plan/cupo	BOT	user-jwt	Consumer plan: immersive quota summary (D7-31)	OposiBot
 GET	/api/v1/app/racha	BOT	user-jwt	Consumer challenge: current and best streak (D3-04)	OposiBot
+GET	/api/v1/app/estadisticas/resumen	BOT	user-jwt	Consumer stats: nota media, evolution, streak, league, totals (D3-20)	OposiBot
+GET	/api/v1/app/estadisticas/debilidades	BOT	user-jwt	Consumer stats: weak tags, aggregated or per exam (D3-21)	OposiBot
+GET	/api/v1/app/estadisticas/dificultad/{}	BOT	user-jwt	Consumer stats: difficulty 1-5 of an answered question (D3-22)	OposiBot
 GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
 GET	/api/v1/app/retos/hoy	BOT	user-jwt	Consumer challenge: today (D3-16)	OposiBot
 GET	/api/v1/app/retos/{}/preguntas/{}/recursos/{}	BOT	user-jwt	Consumer challenge: signed media of a challenge question (D3-19)	OposiBot
@@ -247,6 +250,7 @@ POST	/api/v1/admin/solicitudes-acceso/{}/rechazar	CONTROL	admin	Admin access req
 POST	/api/v1/admin/usuarios/{}/estado-cuenta	CONTROL	admin	Admin v1: dar de baja o reactivar una cuenta (superadmin)	OposiControl
 POST	/api/v1/admin/usuarios/{}/roles	CONTROL	admin	Admin v1: usuarios/{}/roles	OposiControl
 POST	/api/v1/admin/usuarios/{}/tickets	CONTROL	admin	Admin v1: usuarios/{}/tickets	OposiControl
+POST	/api/v1/admin/estadisticas/recalcular	CONTROL	admin	Admin v1: audited stats recompute with cooldown (C-S4)	OposiControl
 POST	/api/v1/app/eventos	BOT	user-jwt	Consumer app API: eventos	OposiBot
 POST	/api/v1/app/examenes/{}/iniciar	BOT	user-jwt	Consumer app API: examenes/{}/iniciar	OposiBot
 POST	/api/v1/app/examenes/{}/intentos	BOT	user-jwt	Consumer app API: examenes/{}/intentos (D2-03)	OposiBot

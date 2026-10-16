@@ -87,3 +87,8 @@ select e, p, 1, 1 from (values ('e3000000-0000-4000-8000-0000000000d2'::uuid, 'f
 where not exists (select 1 from public.preguntas_examen pe where pe.examen_id = v.e);
 set session_replication_role = origin;
 update public.examenes set demo_disponible = true where id = 'e3000000-0000-4000-8000-0000000000d1' and not demo_disponible;
+
+-- W3: league tiers (Control data in production; test values here): thresholds by first answers 50/200/500/800/1000, window 50 then 100
+insert into public.ligas_nivel (codigo, nombre, preguntas_minimas, ventana_calculo, posicion) values
+  ('liga-50', 'Liga 50', 50, 50, 1), ('liga-200', 'Liga 200', 200, 100, 2), ('liga-500', 'Liga 500', 500, 100, 3), ('liga-800', 'Liga 800', 800, 100, 4), ('liga-1000', 'Liga 1000', 1000, 100, 5)
+on conflict (codigo) do nothing;
