@@ -3,6 +3,8 @@
 Estado: `NOT_VERIFIED` (runbook escrito, aun no ejercitado; ningun despliegue realizado desde este repo).
 El despliegue lo ejecuta un humano con el gate de produccion; CI solo VERIFICA (tests, build y humo de la imagen, db-pg17 en PostgreSQL 17...) y nunca despliega ni toca MAIN. El gate de produccion de OposiBot (`SLICE_1_PRODUCTION_GATE.md`) es la autoridad unica de clasificacion y rollback de las migraciones.
 
+Procedimiento de publicacion actual (develop a produccion, un solo punto de entrada `ops/deploy/release.sh`): `docs/engineering/RELEASE_RUNBOOK.md`.
+
 ## Orden obligatorio: parar el Ktor viejo, migrar, luego desplegar
 
 0. (MASTER6-CICD-001, RC-14) Ventana de mantenimiento: la clase de CADA migracion 1-16 (una sola por migracion) esta en la tabla de la seccion 1 del gate de produccion, la autoridad unica; este runbook solo la resume (EXPAND 1-4 y 9-13; EXPAND-COMPATIBLE 7-8; CONTRACT 5 y 6; HARDENING 14-16, que estrechan privilegios/politicas de clientes; la 13, `20260930102000`, es EXPAND y ademas ESTRECHA la politica INSERT de clientes de `reportes_contenido` sin cambiar de clase) y no puede contradecirla ni contradecir el parrafo Rollback. El Ktor VIEJO
