@@ -138,6 +138,9 @@ components:
         - EXAM_NOT_IMMERSIVE
         - DAILY_LIMIT_REACHED
         - PURCHASE_CAP_REACHED
+        - RETO_OUT_OF_WINDOW
+        - RETO_NOT_PASSED
+        - OT_EARN_CAP_REACHED
   headers:
     XRequestId:
       description: 'Request correlation id; equals ErrorEnvelope.requestId.'

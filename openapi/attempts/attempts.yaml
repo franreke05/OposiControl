@@ -88,7 +88,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [UNAUTHENTICATED, INTERNAL, UPSTREAM_ERROR]
-        description: 'The date is resolved server-side in the fixed product timezone (DEC-006 fixes the value only).'
+        description: 'FA29: SUPERSEDED for the V1 app by D3-16 (GET /api/v1/app/retos/hoy, openapi/engagement/engagement.yaml): the V1 challenge is not an exam attempt. This operation stays documented for the legacy route only. The date is resolved server-side in the fixed product timezone (DEC-006 fixes the value only).'
         security:
           - bearerAuth: []
         responses:
@@ -116,7 +116,7 @@ components:
         x-pagination: NONE
         x-idempotency: OPTIONAL
         x-error-codes: [IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, CHALLENGE_NOT_FOUND, CHALLENGE_NOT_ACTIVE, CHALLENGE_ALREADY_COMPLETED, RATE_LIMITED]
-        description: 'Natural key: one participation per (usuario, reto); returns the existing attempt. The Idempotency-Key header is optional (a malformed key is 400 IDEMPOTENCY_KEY_INVALID).'
+        description: 'FA29: SUPERSEDED by D3-17/D3-18 (engagement.yaml); the V1 challenge is answered with PUT /api/v1/app/retos/{retoId}/respuestas/{preguntaId}, not through an attempt. Natural key: one participation per (usuario, reto); returns the existing attempt. The Idempotency-Key header is optional (a malformed key is 400 IDEMPOTENCY_KEY_INVALID).'
         security:
           - bearerAuth: []
         parameters:

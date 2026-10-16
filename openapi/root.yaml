@@ -33,6 +33,8 @@ tags:
     description: 'News articles, news types and news assets administration.'
   - name: wallet
     description: 'OposiTickets wallet of the current user (reads).'
+  - name: challenge
+    description: 'The daily challenge, its reward claim and the streak of the current user (V1 wave 2).'
   - name: plan
     description: 'Plan coverage and the immersive quota of the current user (V1 Access v2).'
   - name: opositeca
@@ -232,6 +234,14 @@ paths:
     $ref: 'economy/economy.yaml#/components/pathItems/PaymentOrder'
   /api/v1/app/payments/orders/{orderId}/verify:
     $ref: 'economy/economy.yaml#/components/pathItems/PaymentOrderVerify'
+  /api/v1/app/retos/hoy:
+    $ref: 'engagement/engagement.yaml#/components/pathItems/DailyChallenge'
+  /api/v1/app/retos/{retoId}/respuestas/{preguntaId}:
+    $ref: 'engagement/engagement.yaml#/components/pathItems/DailyChallengeAnswer'
+  /api/v1/app/retos/{retoId}/reclamar:
+    $ref: 'engagement/engagement.yaml#/components/pathItems/DailyChallengeClaim'
+  /api/v1/app/racha:
+    $ref: 'engagement/engagement.yaml#/components/pathItems/Streak'
   /api/v1/app/plan/cupo:
     $ref: 'plan/plan.yaml#/components/pathItems/PlanQuota'
   /api/v1/app/plan/cupo/{examenId}:
