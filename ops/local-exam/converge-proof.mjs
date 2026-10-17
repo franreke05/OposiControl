@@ -62,9 +62,10 @@ try {
   process.exitCode = 0;
 
   // converge, twice
-  converge({ psql });
+  const psqlAdmin = makePsql({ container: ctr, user: 'supabase_admin' });
+  converge({ psql, psqlAdmin });
   assert(process.exitCode !== 1, 'converge #1 ends with VERIFY OK');
-  converge({ psql });
+  converge({ psql, psqlAdmin });
   assert(process.exitCode !== 1, 'converge #2 (idempotent) ends with VERIFY OK');
   assert(snapshot() === before, 'no data loss: wallets, ledger, orders and access are identical after the converge');
   // W3 STATS: nothing is back-filled by the converge (history before the hook has no first-answer ledger rows) and the tables stay closed to clients
@@ -73,11 +74,22 @@ try {
   // OFFICIAL RULES: data from before the migration keeps the legacy path (no rule snapshot, no stored nota, no reserve) and the defaults reproduce today
   assert(psql("select count(*) from public.intentos_examen where regla_anuladas is not null or nota is not null") === '0', 'attempts that predate the official rules carry no snapshot');
   assert(psql("select count(*) from public.preguntas_examen where es_reserva or orden_reserva is not null") === '0' && psql("select count(*) from public.examenes where regla_anuladas is not null or penalizacion_num <> 0") === '0', 'existing exams: no reserve, derived rule, no penalty');
-  assert(psql('select count(*) from private.v1_applied_migrations') === '15', 'fifteen stamps recorded (20261022100300..101700)');
+  assert(psql('select count(*) from private.v1_applied_migrations') === '17', 'seventeen stamps recorded (20261022100300..101900)');
   // W4 RANKING: nothing is ranked or published by the converge; every pre-existing user stays private (opt-in default false); the top table is closed; the job runs on the old data without error
   assert(psql('select count(*) from public.ranking_top') === '0' && psql('select count(*) from public.estado_competitivo_usuario where ranking_liga_posicion is not null or probabilidad_plaza is not null') === '0', 'no ranking invented by the converge');
   assert(psql('select count(*) from public.perfiles_usuario where ranking_publico') === '0', 'every pre-existing user is private (ranking_publico default false)');
   assert(psql("select (not has_table_privilege('authenticated', 'public.ranking_top', 'select') and not has_table_privilege('anon', 'public.ranking_top', 'select'))::text") === 'true', 'ranking_top is closed to clients after the converge');
+  // W5a REFERRAL: nothing is invented by the converge; the feature is OFF, tables closed, no invitation, no code
+  assert(psql('select count(*) from public.invitaciones') === '0' && psql('select count(*) from public.codigos_invitacion') === '0', 'no invitation or code invented by the converge');
+  assert(psql("select valor_integer from public.configuracion_v1 where clave = 'referido_activo'") === '0', 'the referral reward is OFF after the converge');
+  assert(psql("select (not has_table_privilege('authenticated', 'public.invitaciones', 'select') and not has_table_privilege('anon', 'public.codigos_invitacion', 'select'))::text") === 'true', 'referral tables are closed to clients after the converge');
+  assert(psql("select public.app_job_referidos() ->> 'estado'") === 'APAGADO', 'the referral job runs on pre-existing data and stays off');
+  // W5b FORO: the MAIN forum tables are closed to every client role after the converge (reads AND writes), nothing is invented, the restriction table is server-only, the jobs run on old data
+  assert(psql("select (not exists (select 1 from (values ('public.publicaciones_oposired'), ('public.comentarios_oposired'), ('public.reacciones_oposired'), ('public.reportes_contenido'), ('public.acciones_moderacion'), ('public.categorias_oposired')) t(n) where has_table_privilege('anon', t.n, 'select') or has_table_privilege('authenticated', t.n, 'select') or has_table_privilege('authenticated', t.n, 'insert') or has_table_privilege('authenticated', t.n, 'update') or has_table_privilege('authenticated', t.n, 'delete')))::text") === 'true', 'forum tables closed to clients after the converge');
+  assert(psql("select count(*) from pg_policies where schemaname = 'public' and tablename in ('publicaciones_oposired', 'comentarios_oposired', 'reacciones_oposired', 'reportes_contenido', 'acciones_moderacion', 'categorias_oposired')") === '0', 'no client policy left on the forum tables');
+  assert(psql('select (select count(*) from public.publicaciones_oposired) + (select count(*) from public.comentarios_oposired) + (select count(*) from public.restricciones_foro) + (select count(*) from public.moderacion_autor)') === '0', 'no forum row invented by the converge');
+  assert(psql("select (not has_table_privilege('authenticated', 'public.restricciones_foro', 'select') and not has_table_privilege('service_role', 'public.restricciones_foro', 'select'))::text") === 'true', 'the restriction table is server-only');
+  assert(psql("select public.app_job_foro() ->> 'estado'") === 'OK' && psql("select jsonb_array_length(public.app_foro_categorias('a0000000-0000-0000-0000-0000000000d1') -> 'items')") === '0', 'the forum job and read run on pre-existing data (no specialty: no channels)');
   assert(psql("select public.app_job_ranking(true) ->> 'estado'") === 'OK' && psql("select (public.app_ranking_me('a0000000-0000-0000-0000-0000000000d1') -> 'probabilidadPlaza' ->> 'disponible')") === 'false', 'the ranking job and read run on pre-existing data (no league: not available)');
   assert(psql("select (public.app_plan_quota('a0000000-0000-0000-0000-0000000000d1') ->> 'nivel')") === '0', 'the plan summary RPC answers for a pre-existing user (no subscription: nivel 0)');
   assert(psql("select count(*) from pg_proc where proname = 'app_choose_plan_exam'") === '1', 'the quota function exists after the converge');

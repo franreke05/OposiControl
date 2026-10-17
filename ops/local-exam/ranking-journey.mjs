@@ -15,7 +15,8 @@ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8
 const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
 const ADMIN = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
 const Q1 = '2a000000-0000-4000-8000-00000000002a', Q4 = '2e000000-0000-4000-8000-00000000002e';
-const ESP = 'e5000000-0000-4000-8000-000000000001', ESP2 = 'e1000000-0000-4000-8000-000000000002';
+// the journey runs in its OWN specialty (the live stack holds other users of the main specialty from other suites: they would change the positions); Q1 is moved there and back
+const ESP = 'e1000000-0000-4000-8000-0000000000e0', ESP2 = 'e1000000-0000-4000-8000-000000000002', ESP_Q1 = 'e5000000-0000-4000-8000-000000000001';
 const R = (n) => `4c000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
@@ -34,9 +35,12 @@ const check = (id, ok, detail = '') => { results.push(ok); console.log(`${ok ? '
 const prevMin = sql(`select valor_integer from public.configuracion_v1 where clave = 'cohorte_minima_comparativa'`);
 const prevUser = sql(`select coalesce(username, '') from public.perfiles_usuario where usuario_id = '${Q4}'`);
 const prevPublic = sql(`select ranking_publico from public.perfiles_usuario where usuario_id = '${Q1}'`);
+const prevEsp = sql(`select especialidad_principal_id from public.perfiles_usuario where usuario_id = '${Q1}'`) || ESP_Q1;
 try {
   // ---- fixtures (idempotent): users R1..R11 and the caller Q1 at Nota 6.5 inside the same tier
-  sql(`set session_replication_role = replica;
+  sql(`insert into public.especialidades (id, codigo, nombre, slug, activa) values ('${ESP}', 'J20', 'J20 ranking', 'j20-ranking', true) on conflict (id) do nothing;
+set session_replication_role = replica;
+update public.perfiles_usuario set especialidad_principal_id = '${ESP}' where usuario_id = '${Q1}';
 delete from public.ranking_top where usuario_id::text like '4c000000-%' or usuario_id = '${Q1}';
 delete from public.estado_competitivo_usuario where usuario_id::text like '4c000000-%' or usuario_id = '${Q1}';
 insert into auth.users (id, email, aud, role, created_at, updated_at) select ('4c000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid, 'rk-j20-' || n || '@exam.local', 'authenticated', 'authenticated', now(), now() from generate_series(1, 11) n on conflict do nothing;
@@ -103,9 +107,10 @@ delete from public.lotes_actualizacion_ranking where tipo = 'ranking_admin';`);
   const throttled = JSON.parse(sql(`select public.app_job_ranking(false)`));
   check('J20.job_is_throttled_by_control', throttled.estado === 'RECIENTE', JSON.stringify(throttled));
 } finally {
-  sql(`update public.configuracion_v1 set valor_integer = ${prevMin || 50} where clave = 'cohorte_minima_comparativa';
+  sql(`set session_replication_role = replica;
+update public.configuracion_v1 set valor_integer = ${prevMin || 50} where clave = 'cohorte_minima_comparativa';
 update public.perfiles_usuario set username = ${prevUser ? `'${prevUser}'` : 'null'} where usuario_id = '${Q4}';
-update public.perfiles_usuario set ranking_publico = ${prevPublic === 't' ? 'true' : 'false'} where usuario_id = '${Q1}';
+update public.perfiles_usuario set ranking_publico = ${prevPublic === 't' ? 'true' : 'false'}, especialidad_principal_id = '${prevEsp}' where usuario_id = '${Q1}';
 delete from public.ranking_top where usuario_id = '${Q1}';
 set session_replication_role = replica;
 delete from public.estado_competitivo_usuario where usuario_id = '${Q1}';`);

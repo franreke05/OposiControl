@@ -33,6 +33,8 @@ tags:
     description: 'News articles, news types and news assets administration.'
   - name: wallet
     description: 'OposiTickets wallet of the current user (reads).'
+  - name: referral
+    description: 'Invita y gana: own invitation code, counters and rewarded invitations (V1 wave 5a).'
   - name: ranking
     description: 'League, own position, top 3 of the own cohort and place probability of the current user (V1 wave 4).'
   - name: stats
@@ -258,6 +260,34 @@ paths:
     $ref: 'ranking/ranking.yaml#/components/pathItems/Ranking'
   /api/v1/app/ranking/visibilidad:
     $ref: 'ranking/ranking.yaml#/components/pathItems/RankingVisibility'
+  /api/v1/app/me/invitacion:
+    $ref: 'referral/referral.yaml#/components/pathItems/MeInvitation'
+  /api/v1/app/me/invitaciones:
+    $ref: 'referral/referral.yaml#/components/pathItems/MeInvitations'
+  /api/v1/app/oposired/canales:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoChannels'
+  /api/v1/app/oposired/publicaciones:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoPosts'
+  /api/v1/app/oposired/publicaciones/{id}:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoPost'
+  /api/v1/app/oposired/publicaciones/{id}/comentarios:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoComments'
+  /api/v1/app/oposired/comentarios/{id}:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoCommentDelete'
+  /api/v1/app/oposired/publicaciones/{id}/voto:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoPostVote'
+  /api/v1/app/oposired/comentarios/{id}/voto:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoCommentVote'
+  /api/v1/app/oposired/reportes:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoReport'
+  /api/v1/app/oposired/imagenes:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoImageInit'
+  /api/v1/app/oposired/imagenes/{id}/contenido:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoImageContent'
+  /api/v1/app/oposired/imagenes/{id}:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoImageStatus'
+  /api/v1/app/oposired/publicaciones/{id}/imagen:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoPostImage'
   /api/v1/admin/estadisticas/recalcular:
     $ref: 'stats/stats.yaml#/components/pathItems/AdminStatsRecompute'
   /api/v1/app/plan/cupo:

@@ -17,6 +17,7 @@ try {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000);
   }
   run(read('supabase/baseline/main_shape_subset.sql'), ['-1']);
+  spawnSync('docker', ['exec', '-i', ctr, 'psql', '-U', 'supabase_admin', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1'], { input: read('supabase/baseline/main_shape_auth_users.sql'), encoding: 'utf8' });
   for (const f of ['main_shape_subset_extra.sql', 'main_shape_subset_extra_plans.sql', 'main_shape_subset_extra_engagement.sql']) {
     const x = run(read('supabase/baseline/' + f));
     if (x.status !== 0) console.log('EXTRA FAILED', f, x.stderr.split('\n').filter((l) => !/NOTICE/.test(l)).slice(0, 8).join('\n'));

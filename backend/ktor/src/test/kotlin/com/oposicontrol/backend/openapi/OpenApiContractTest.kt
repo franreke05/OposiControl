@@ -188,14 +188,36 @@ class OpenApiContractTest {
         "D3-23" to "POST /api/v1/admin/estadisticas/recalcular",
         "D3-24" to "GET /api/v1/app/ranking",
         "D3-25" to "PUT /api/v1/app/ranking/visibilidad",
+        "D9-01" to "GET /api/v1/app/me/invitacion",
+        "D9-02" to "GET /api/v1/app/me/invitaciones",
+        "D5-02" to "GET /api/v1/app/oposired/canales",
+        "D5-03" to "GET /api/v1/app/oposired/publicaciones",
+        "D5-04" to "GET /api/v1/app/oposired/publicaciones/{id}",
+        "D5-05" to "GET /api/v1/app/oposired/publicaciones/{id}/comentarios",
+        "D5-06" to "POST /api/v1/app/oposired/publicaciones",
+        "D5-07" to "POST /api/v1/app/oposired/publicaciones/{id}/comentarios",
+        "D5-08" to "DELETE /api/v1/app/oposired/publicaciones/{id}",
+        "D5-09" to "DELETE /api/v1/app/oposired/comentarios/{id}",
+        "D5-10" to "PUT /api/v1/app/oposired/publicaciones/{id}/voto",
+        "D5-11" to "DELETE /api/v1/app/oposired/publicaciones/{id}/voto",
+        "D5-12" to "PUT /api/v1/app/oposired/comentarios/{id}/voto",
+        "D5-13" to "DELETE /api/v1/app/oposired/comentarios/{id}/voto",
+        "D5-14" to "POST /api/v1/app/oposired/reportes",
+        "D5-30" to "POST /api/v1/app/oposired/imagenes",
+        "D5-31" to "PUT /api/v1/app/oposired/imagenes/{id}/contenido",
+        "D5-32" to "GET /api/v1/app/oposired/imagenes/{id}",
+        "D5-33" to "GET /api/v1/app/oposired/publicaciones/{id}/imagen",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
     private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D4-03", "D4-09", "D6-03", "D6-12")
-    private val idempotencyOptional = setOf("D2-06", "D2-10", "D6-14", "D5-15")
+    private val idempotencyOptional = setOf("D2-06", "D2-10", "D6-14", "D5-15", "D5-06", "D5-07")
 
     /** contractId -> (max, default) del limit de las listas paginadas. */
     private val cursorLists = mapOf(
+        "D5-03" to (50L to 20L),
+        "D5-05" to (50L to 20L),
+        "D9-02" to (50L to 20L),
         "D8-01" to (200L to 50L),
         "D2-01" to (50L to 20L),
         "D2-13" to (50L to 20L),

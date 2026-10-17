@@ -17,6 +17,10 @@ DELETE /api/v1/admin/preguntas/{}
 DELETE /api/v1/admin/preguntas/{}/examenes/{}
 DELETE /api/v1/admin/preguntas/{}/recursos/{}
 DELETE /api/v1/app/me
+DELETE /api/v1/app/oposired/comentarios/{}
+DELETE /api/v1/app/oposired/comentarios/{}/voto
+DELETE /api/v1/app/oposired/publicaciones/{}
+DELETE /api/v1/app/oposired/publicaciones/{}/voto
 DELETE /api/v1/app/opositeca/guardados/{}/{}
 DELETE /content/comunidades/{}
 DELETE /content/especialidades/{}
@@ -135,7 +139,15 @@ GET /api/v1/app/me
 GET /api/v1/app/me/billing-history
 GET /api/v1/app/me/entitlement
 GET /api/v1/app/me/examenes
+GET /api/v1/app/me/invitacion
+GET /api/v1/app/me/invitaciones
+GET /api/v1/app/oposired/canales
 GET /api/v1/app/oposired/categorias
+GET /api/v1/app/oposired/imagenes/{}
+GET /api/v1/app/oposired/publicaciones
+GET /api/v1/app/oposired/publicaciones/{}
+GET /api/v1/app/oposired/publicaciones/{}/comentarios
+GET /api/v1/app/oposired/publicaciones/{}/imagen
 GET /api/v1/app/opositeca
 GET /api/v1/app/opositeca/guardados/{}
 GET /api/v1/app/opositester/me
@@ -255,6 +267,10 @@ POST /api/v1/app/intentos/{}/finalizar
 POST /api/v1/app/intentos/{}/responder
 POST /api/v1/app/me/legal-acceptances
 POST /api/v1/app/me/onboarding
+POST /api/v1/app/oposired/imagenes
+POST /api/v1/app/oposired/publicaciones
+POST /api/v1/app/oposired/publicaciones/{}/comentarios
+POST /api/v1/app/oposired/reportes
 POST /api/v1/app/payments/orders
 POST /api/v1/app/payments/orders/{}/verify
 POST /api/v1/app/retos/{}/reclamar
@@ -296,6 +312,9 @@ PUT /api/v1/admin/especialidades/{}/capacidades
 PUT /api/v1/admin/planes/{}
 PUT /api/v1/admin/tipos-noticia/{}
 PUT /api/v1/app/intentos/{}/respuestas/{}
+PUT /api/v1/app/oposired/comentarios/{}/voto
+PUT /api/v1/app/oposired/imagenes/{}/contenido
+PUT /api/v1/app/oposired/publicaciones/{}/voto
 PUT /api/v1/app/opositeca/guardados/{}/{}
 PUT /api/v1/app/plan/cupo/{}
 PUT /api/v1/app/ranking/visibilidad

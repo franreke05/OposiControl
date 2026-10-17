@@ -151,6 +151,8 @@ GET	/api/v1/app/estadisticas/debilidades	BOT	user-jwt	Consumer stats: weak tags,
 GET	/api/v1/app/estadisticas/dificultad/{}	BOT	user-jwt	Consumer stats: difficulty 1-5 of an answered question (D3-22)	OposiBot
 GET	/api/v1/app/ranking	BOT	user-jwt	Consumer ranking: league, own position, top 3 (opt-in handles), place probability (D3-24)	OposiBot
 PUT	/api/v1/app/ranking/visibilidad	BOT	user-jwt	Consumer ranking: opt-in/out of the public handle (D3-25)	OposiBot
+GET	/api/v1/app/me/invitacion	BOT	user-jwt	Consumer referral: own code, counters, OT per invitation (D9-01)	OposiBot
+GET	/api/v1/app/me/invitaciones	BOT	user-jwt	Consumer referral: rewarded invitations, public handle only (D9-02)	OposiBot
 GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
 GET	/api/v1/app/retos/hoy	BOT	user-jwt	Consumer challenge: today (D3-16)	OposiBot
 GET	/api/v1/app/retos/{}/preguntas/{}/recursos/{}	BOT	user-jwt	Consumer challenge: signed media of a challenge question (D3-19)	OposiBot
@@ -317,3 +319,20 @@ PUT	/content/rafaga/{}/preguntas/order	CONTROL	admin	Legacy content: rafaga/{}/p
 PUT	/content/solucionarios	CONTROL	admin	Legacy content: solucionarios	OposiControl
 PUT	/content/solucionarios/{}/preguntas	CONTROL	admin	Legacy content: solucionarios/{}/preguntas	OposiControl
 PUT	/content/solucionarios/{}/preguntas/order	CONTROL	admin	Legacy content: solucionarios/{}/preguntas/order	OposiControl
+GET	/api/v1/app/oposired/canales	BOT	user-jwt	Forum: channels open to the caller specialty (D5-02)	OposiBot
+GET	/api/v1/app/oposired/publicaciones	BOT	user-jwt	Forum: feed (D5-03)	OposiBot
+GET	/api/v1/app/oposired/publicaciones/{}	BOT	user-jwt	Forum: post detail (D5-04)	OposiBot
+GET	/api/v1/app/oposired/publicaciones/{}/comentarios	BOT	user-jwt	Forum: comments (D5-05)	OposiBot
+POST	/api/v1/app/oposired/publicaciones	BOT	user-jwt	Forum: create post (D5-06)	OposiBot
+POST	/api/v1/app/oposired/publicaciones/{}/comentarios	BOT	user-jwt	Forum: create comment (D5-07)	OposiBot
+DELETE	/api/v1/app/oposired/publicaciones/{}	BOT	user-jwt	Forum: delete own post (D5-08)	OposiBot
+DELETE	/api/v1/app/oposired/comentarios/{}	BOT	user-jwt	Forum: delete own comment (D5-09)	OposiBot
+PUT	/api/v1/app/oposired/publicaciones/{}/voto	BOT	user-jwt	Forum: vote post (D5-10)	OposiBot
+DELETE	/api/v1/app/oposired/publicaciones/{}/voto	BOT	user-jwt	Forum: remove vote on post (D5-11)	OposiBot
+PUT	/api/v1/app/oposired/comentarios/{}/voto	BOT	user-jwt	Forum: vote comment (D5-12)	OposiBot
+DELETE	/api/v1/app/oposired/comentarios/{}/voto	BOT	user-jwt	Forum: remove vote on comment (D5-13)	OposiBot
+POST	/api/v1/app/oposired/reportes	BOT	user-jwt	Forum: report content (D5-14)	OposiBot
+POST	/api/v1/app/oposired/imagenes	BOT	user-jwt	Forum: start an image upload (D5-30)	OposiBot
+PUT	/api/v1/app/oposired/imagenes/{}/contenido	BOT	user-jwt	Forum: upload the image bytes, verified and re-encoded (D5-31)	OposiBot
+GET	/api/v1/app/oposired/imagenes/{}	BOT	user-jwt	Forum: state of an own upload (D5-32)	OposiBot
+GET	/api/v1/app/oposired/publicaciones/{}/imagen	BOT	user-jwt	Forum: short-lived signed URL of a post image (D5-33)	OposiBot

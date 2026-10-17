@@ -70,6 +70,8 @@ internal fun normalizeSpecialtyText(value: String): String =
  */
 internal class LegacyProfileAdapter(
     private val profiles: CanonicalProfileService,
+    /** V1 wave 5a: adjunta el codigo de invitacion del registro (opcional, nunca falla). Va ANTES de [specialties] para no romper la lambda final (SAM) de los llamadores. */
+    private val referral: ReferralAttach? = null,
     private val specialties: SpecialtyResolver,
 ) {
     /** `GET /v1/auth/me` (EP-124) sobre `GET /api/v1/app/me`. */
@@ -118,5 +120,6 @@ internal class LegacyProfileAdapter(
             ),
             context,
         )
+        referral?.attach(identity.userId.value, request.codigoInvitacion)
     }
 }

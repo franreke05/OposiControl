@@ -6,6 +6,7 @@
 //   node ops/local-exam/up.mjs --reset    lo destruye (docker compose down -v) y lo vuelve a crear desde cero
 //   node ops/local-exam/up.mjs --converge   deja una base viva en las definiciones de los ficheros V1 (migraciones editadas + nuevas) SIN reset y verifica checksums
 //   node ops/local-exam/up.mjs --clean-test-exams [--legacy-harness-prefixes]   borra/oculta SOLO los examenes que un harness marco (nunca LOC-* ni sin marca)
+//   node ops/local-exam/up.mjs --real-auth | --stub-auth   gateway /auth/v1 -> REAL GoTrue + Mailpit (real-auth gate) | back to the host stub
 //   node ops/local-exam/up.mjs --restore-fixtures   (E5-V1-F03) deja Q1..Q4 y Q2Z en su saldo y derechos base SIN reset (stack ya levantado; exige STACK_LOCK)
 //
 // Salida: .local/compose.env (compose), .local/ktor.env (Ktor), .local/tokens.json (JWT de A, B y P), .local/jwks.json.
@@ -22,7 +23,7 @@ requireStackLock('up.mjs');
 // LIVE CONVERGE (no reset): re-apply the edited V1 migrations + the new ones and verify function checksums against the files. See converge.mjs.
 if (process.argv.includes('--converge')) {
   const m = await import('./converge.mjs');
-  const r = m.converge({ psql: m.makePsql() });
+  const r = m.converge({ psql: m.makePsql(), psqlAdmin: m.makePsql({ user: 'supabase_admin' }) });
   process.exit(r.ok ? 0 : 1);
 }
 
@@ -91,6 +92,32 @@ function mintTokens() {
     Q6: es256('2f000000-0000-4000-8000-00000000002f', 'q6@exam.local'), Q7: es256('3b000000-0000-4000-8000-00000000003b', 'q7@exam.local'),
     ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local') };
   fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
+}
+// REAL AUTH GATE (E1-V1-REAL-AUTH-GATE.md): --real-auth routes the gateway's /auth/v1/* to a REAL GoTrue container (+ Mailpit as the mailbox, http://127.0.0.1:8025);
+// --stub-auth goes back to the host stub (fast path, the default). Neither touches data. A plain up.mjs run rewrites compose.env and returns to the stub.
+if (process.argv.includes('--real-auth') || process.argv.includes('--stub-auth')) {
+  const real = process.argv.includes('--real-auth');
+  const envFile = path.join(local, 'compose.env');
+  const kept = fs.readFileSync(envFile, 'utf8').split(/\r?\n/).filter((l) => l && !l.startsWith('NGINX_SITE=') && !l.startsWith('GOTRUE_JWT_KEYS='));
+  if (real) {
+    kept.push('NGINX_SITE=nginx.realauth.conf');
+    kept.push("GOTRUE_JWT_KEYS='" + JSON.stringify([{ ...secrets.privateJwk, kid: secrets.kid, alg: 'ES256', use: 'sig', key_ops: ['sign', 'verify'] }]) + "'");
+  }
+  fs.writeFileSync(envFile, kept.join('\n') + '\n');
+  if (real) {
+    psql("alter role supabase_auth_admin with password 'postgres'", {}, 'supabase_admin');
+    compose('--profile', 'real-auth', 'up', '-d', '--force-recreate', 'auth', 'mail', 'gateway');
+    for (let i = 0; i < 60; i++) {
+      try { if ((await fetch(GATEWAY + '/auth/v1/health')).ok) break; } catch { /* arrancando */ }
+      await sleep(2000);
+    }
+    console.log('REAL AUTH ON: GoTrue behind ' + GATEWAY + '/auth/v1, mailbox http://127.0.0.1:8025. Stop the host stub if running (run-gotrue-stub.mjs --stop).');
+  } else {
+    compose('--profile', 'real-auth', 'stop', 'auth', 'mail');
+    compose('up', '-d', '--force-recreate', 'gateway');
+    console.log('STUB AUTH ON (host stub on 127.0.0.1:9999 via run-gotrue-stub.mjs --detach).');
+  }
+  process.exit(0);
 }
 if (process.argv.includes('--clean-test-exams')) {
   // deletes (or hides, when still referenced) ONLY exams a harness marked; --legacy-harness-prefixes first marks the enumerated pre-marker harness prefixes (explicit one-off opt-in)
@@ -178,6 +205,7 @@ end $$;`);
 // E5-V1-F01: quita la fila de apertura DUPLICADA que dejo un borrador anterior de la migracion (solo local; no hace nada en una cartera limpia).
 if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
 // the list is V1_MIGRATIONS.txt (single source, same as --converge): a hard-coded list went stale and a plain up.mjs re-applied OLD definitions (e.g. the pre-v2 access verdict of 20261022100500) over the current ones
+psql(fs.readFileSync(path.join(repo, 'supabase/baseline/main_shape_auth_users.sql'), 'utf8'), {}, 'supabase_admin');   // auth.users.email_confirmed_at (MAIN shape, owned by supabase_auth_admin)
 const { v1Migrations } = await import('./converge.mjs');
 for (const v of v1Migrations(repo)) {
   psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));

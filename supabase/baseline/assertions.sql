@@ -2553,6 +2553,14 @@ begin
   assert r -> 'liga' = 'null'::jsonb and r -> 'probabilidadPlaza' ->> 'motivo' = 'sin_liga' and r -> 'top3' = '[]'::jsonb, 'no league';
   r := public.app_ranking_me(pg_temp.u(9));
   assert r -> 'probabilidadPlaza' ->> 'motivo' = 'ventana_incompleta', 'incomplete window';
+  -- C-W4-1: a window answered too fast is not ranked and is listed for Control
+  update public.configuracion_v1 set valor_integer = 1000 where clave = 'ranking_min_ms_respuesta';
+  update public.estado_competitivo_usuario set ventana_tiempo_medio_ms = 100 where usuario_id = pg_temp.u(5);
+  perform public.app_job_ranking(true);
+  assert (select ranking_liga_posicion from public.estado_competitivo_usuario where usuario_id = pg_temp.u(5)) is null and exists (select 1 from public.ranking_ventanas_rapidas where usuario_id = pg_temp.u(5)), 'fast window: not ranked, listed';
+  assert not has_table_privilege('authenticated', 'public.ranking_ventanas_rapidas', 'select') and not has_table_privilege('authenticated', 'public.lotes_actualizacion_ranking', 'select') and not has_table_privilege('anon', 'public.lotes_actualizacion_ranking', 'select'), 'views and batches closed to clients';
+  update public.estado_competitivo_usuario set ventana_tiempo_medio_ms = null where usuario_id = pg_temp.u(5);
+  perform public.app_job_ranking(true);
   -- below the minimum cohort: only the own position
   update public.configuracion_v1 set valor_integer = 7 where clave = 'cohorte_minima_comparativa';
   r := public.app_ranking_me(pg_temp.u(4));
@@ -2580,5 +2588,376 @@ begin
   assert not has_table_privilege('authenticated', 'public.ranking_top', 'select') and not has_table_privilege('anon', 'public.ranking_top', 'select') and not has_table_privilege('service_role', 'public.ranking_top', 'select'), 'top table closed';
   assert not has_function_privilege('authenticated', 'public.app_ranking_me(uuid)', 'execute') and not has_function_privilege('anon', 'public.app_job_ranking(boolean)', 'execute') and has_function_privilege('service_role', 'public.app_set_ranking_visibility(uuid,boolean)', 'execute'), 'functions service-only';
   raise notice 'OK V1 wave 4 ranking';
+end $$;
+rollback;
+
+-- 20261022101800: W5a referral (neutral attach, state machine, payout job, signals that never raise, caps, privacy, revoke, grants).
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.att(p_id uuid, p_user uuid, p_demo boolean, p_answers int, p_secs int) returns void language plpgsql as $f$
+begin
+  insert into public.intentos_examen (id, usuario_id, examen_id, estado, es_demo, total_respondidas, duracion_segundos, iniciado_en) values (p_id, p_user, 'e9400000-0000-0000-0000-0000000003c1', 'en_progreso', p_demo, p_answers, p_secs, now() - interval '2 hours');
+  update public.intentos_examen set estado = 'finalizado', finalizado_en = now() where id = p_id;
+end $f$;
+create function pg_temp.u(n int) returns uuid language sql as $$ select ('a0000000-0000-0000-0000-' || lpad((300 + n)::text, 12, '0'))::uuid $$;
+insert into auth.users (id, email, aud, role) select pg_temp.u(n), 'ref' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 7) n;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta)
+select pg_temp.u(n), 'ref' || n, 'ref_user' || n, true, 'activa' from generate_series(1, 7) n on conflict (usuario_id) do update set username = excluded.username, estado_cuenta = 'activa';
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000003c1', 'RFX', 'RFX', 'rfx', true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000003c1', 'RFC', 'Com RF', 'com-rf');
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en)
+values ('e9400000-0000-0000-0000-0000000003c1', 'RF-1', 'e1000000-0000-0000-0000-0000000003c1', 'c1000000-0000-0000-0000-0000000003c1', 'Referral', 'rafaga', 'gratuito', true, now() - interval '1 day');
+update auth.users set email = 'same.root+a@test.local' where id = pg_temp.u(6);
+update auth.users set email = 'samerootb@test.local' where id = pg_temp.u(1);
+update auth.users set email = 'same.root+b@test.local' where id = pg_temp.u(7);
+
+do $$
+declare
+  r jsonb; c1 text; c2 text; i public.invitaciones%rowtype; a uuid; n integer; s jsonb;
+begin
+  -- OFF by default: nothing attaches, nothing pays, the client sees no amount
+  assert (select valor_integer from public.configuracion_v1 where clave = 'referido_activo') = 0, 'reward OFF by default';
+  r := public.app_referral_get(pg_temp.u(1));
+  c1 := r ->> 'codigo';
+  assert c1 ~ '^[A-HJKMNP-TV-Z2-9]{8}$' and r -> 'configuracion' ->> 'otPorInvitacion' is null and (r -> 'invitados' ->> 'total')::int = 0, 'code format, feature off: no amount ' || r::text;
+  assert (public.app_referral_get(pg_temp.u(1)) ->> 'codigo') = c1, 'the code is stable';
+  c2 := public.app_referral_get(pg_temp.u(2)) ->> 'codigo';
+  assert c2 <> c1, 'one code per user';
+  assert (public.app_referral_attach(pg_temp.u(2), c1, null) ->> 'adjunta')::boolean is false, 'feature off: neutral false';
+  assert (public.app_job_referidos() ->> 'estado') = 'APAGADO', 'job is off';
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = 5000 where clave = 'referido_ot_invitador'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  perform pg_temp.expect_e($q$update public.configuracion_v1 set valor_integer = 2 where clave = 'referido_activo'$q$, 'CONFIG_VALUE_OUT_OF_BOUNDS');
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'referido_activo';
+  update public.configuracion_v1 set valor_integer = 10 where clave in ('referido_ot_invitador', 'referido_ot_invitado');
+  update public.configuracion_v1 set valor_integer = 2 where clave = 'referido_min_respuestas';
+  update public.configuracion_v1 set valor_integer = 0 where clave in ('referido_min_segundos', 'referido_min_horas', 'referido_retener_horas');
+  assert (public.app_referral_get(pg_temp.u(1)) -> 'configuracion' ->> 'otPorInvitacion')::int = 10, 'feature on shows the server amount';
+
+  -- neutral attach: every unusable code is the same {adjunta:false}, never an error, never a row
+  assert (public.app_referral_attach(pg_temp.u(2), 'ZZZZZZZZ', null) ->> 'adjunta')::boolean is false and (public.app_referral_attach(pg_temp.u(2), 'nope', null) ->> 'adjunta')::boolean is false
+     and (public.app_referral_attach(pg_temp.u(2), c2, null) ->> 'adjunta')::boolean is false and (public.app_referral_attach(null, c1, null) ->> 'adjunta')::boolean is false, 'unknown / malformed / own / null user: neutral false';
+  assert not exists (select 1 from public.invitaciones), 'no row from unusable codes';
+  -- same mailbox root (plus-tag + dots) is rejected on the spot, silently
+  perform public.app_referral_get(pg_temp.u(6));
+  r := public.app_referral_attach(pg_temp.u(7), (select codigo from public.codigos_invitacion where usuario_id = pg_temp.u(6)), null);
+  assert (r ->> 'adjunta')::boolean is true, 'attach answered';
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(7)) = 'rechazada', 'same mailbox root => rechazada';
+  -- valid attach
+  assert (public.app_referral_attach(pg_temp.u(2), c1, 'iphash1') ->> 'adjunta')::boolean is true, 'attach';
+  select * into i from public.invitaciones where invitado_id = pg_temp.u(2);
+  assert i.estado = 'registrada' and i.invitador_id = pg_temp.u(1) and i.pago_invitador = 'pendiente', 'registered, e-mail not confirmed yet';
+  assert (public.app_referral_attach(pg_temp.u(2), c1, null) ->> 'adjunta')::boolean is false, 'an invitee attaches once';
+  -- e-mail verified signal
+  update auth.users set last_sign_in_at = now() where id = pg_temp.u(2);
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(2)) = 'registrada', 'only email_confirmed_at moves the state';
+  update auth.users set email_confirmed_at = now() - interval '1 hour' where id = pg_temp.u(2);
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(2)) = 'email_verificado', 'e-mail verified recorded';
+  -- exam finish: a demo attempt is ignored, a normal one is recorded, the FIRST stays
+  perform pg_temp.att('b0000000-0000-0000-0000-000000000301', pg_temp.u(2), true, 9, 500);
+  assert (select primer_examen_en from public.invitaciones where invitado_id = pg_temp.u(2)) is null, 'a demo attempt never counts';
+  perform pg_temp.att('b0000000-0000-0000-0000-000000000302', pg_temp.u(2), false, 1, 100);
+  assert (select intento_id from public.invitaciones where invitado_id = pg_temp.u(2)) = 'b0000000-0000-0000-0000-000000000302', 'first finished attempt recorded';
+  -- a weak first attempt does not block the reward forever (R-2): the job looks at ALL attempts
+  s := public.app_job_referidos();
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(2)) = 'email_verificado', 'weak attempt (1 answer < 2): not eligible yet ' || s::text;
+  perform pg_temp.att('b0000000-0000-0000-0000-000000000303', pg_temp.u(2), false, 3, 100);
+  assert (select intento_id from public.invitaciones where invitado_id = pg_temp.u(2)) = 'b0000000-0000-0000-0000-000000000302', 'the recorded first attempt is not overwritten';
+  s := public.app_job_referidos();
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(2)) = 'diferida', 'rules met => diferida (hold)';
+  s := public.app_job_referidos();
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(2)) = 'premiada' and (select pago_invitador from public.invitaciones where invitado_id = pg_temp.u(2)) = 'pagado', 'hold elapsed => premiada ' || s::text || (select coalesce(ultimo_error, '-') from public.invitaciones where invitado_id = pg_temp.u(2));
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(1)) = 10 and (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(2)) = 10, 'both sides paid exactly the configured amount';
+  assert (select count(*) from public.transacciones_cartera where tipo = 'referido' and referencia_tipo = 'invitacion') = 2, 'two ledger rows';
+  perform public.app_job_referidos(); perform public.app_job_referidos();
+  assert (select count(*) from public.transacciones_cartera where tipo = 'referido') = 2, 'a second run never pays twice';
+  -- privacy: counters for the inviter; the list only has rewarded invitees by public username; the invitee sees nothing of the inviter
+  r := public.app_referral_get(pg_temp.u(1));
+  assert (r -> 'invitados' ->> 'premiados')::int = 1 and (r ->> 'otGanados')::int = 10, 'counters';
+  r := public.app_referral_list(pg_temp.u(1), null, 20);
+  assert jsonb_array_length(r -> 'items') = 1 and r -> 'items' -> 0 ->> 'handle' = 'ref_user2' and not (r::text like '%ref2@%') and not (r::text like '%a0000000%'), 'list: handle only ' || r::text;
+  assert jsonb_array_length(public.app_referral_list(pg_temp.u(2), null, 20) -> 'items') = 0, 'the invitee list is empty';
+  perform pg_temp.expect_e($q$select public.app_referral_list('a0000000-0000-0000-0000-000000000301', 'bad-cursor', 5)$q$, 'CURSOR_INVALID');
+
+  -- inviter daily cap: the second invitation waits (diferida) instead of paying
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'referido_tope_diario';
+  perform public.app_referral_get(pg_temp.u(3));
+  assert (public.app_referral_attach(pg_temp.u(3), c1, null) ->> 'adjunta')::boolean is true, 'second invitee';
+  update auth.users set email_confirmed_at = now() - interval '1 hour' where id = pg_temp.u(3);
+  perform pg_temp.att(gen_random_uuid(), pg_temp.u(3), false, 5, 100);
+  perform public.app_job_referidos(); perform public.app_job_referidos();
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(3)) = 'diferida' and (select diferida_hasta from public.invitaciones where invitado_id = pg_temp.u(3)) > now() + interval '1 hour'
+     and (select count(*) from public.transacciones_cartera where tipo = 'referido') = 2, 'daily cap of the inviter keeps it waiting, nothing paid';
+  update public.configuracion_v1 set valor_integer = 5 where clave = 'referido_tope_diario';
+
+  -- poison row: a failing payout goes to error after the allowed attempts and never blocks the others
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'referido_max_intentos_pago';
+  perform public.app_referral_get(pg_temp.u(4));
+  perform public.app_referral_attach(pg_temp.u(5), (select codigo from public.codigos_invitacion where usuario_id = pg_temp.u(4)), null);
+  update auth.users set email_confirmed_at = now() - interval '1 hour' where id = pg_temp.u(5);
+  perform pg_temp.att(gen_random_uuid(), pg_temp.u(5), false, 5, 100);
+  update public.invitaciones set diferida_hasta = now() - interval '1 minute', estado = 'diferida' where invitado_id in (pg_temp.u(3), pg_temp.u(5));
+  create function public.tmp_poison() returns trigger language plpgsql as $f$ begin if new.pago_invitador = 'pagado' and new.invitador_id = 'a0000000-0000-0000-0000-000000000304' then raise exception 'boom'; end if; return new; end $f$;
+  create trigger tmp_poison before update on public.invitaciones for each row execute function public.tmp_poison();
+  s := public.app_job_referidos();
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(5)) = 'error' and (s ->> 'errores')::int >= 1, 'poison row => error ' || s::text;
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(3)) = 'premiada', 'the poison row did not block the other invitation';
+  drop trigger tmp_poison on public.invitaciones;
+  drop function public.tmp_poison();
+
+  -- revoke: audited, never negative, reverses at most the unspent part, idempotent
+  r := public.admin_referral_revoke(pg_temp.u(1), (select id from public.invitaciones where invitado_id = pg_temp.u(2)), 'test');
+  assert r ->> 'estado' = 'revocada' and (r ->> 'noRevertible')::int = 0 and (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(2)) = 0, 'revoke reverses the unspent grant ' || r::text;
+  assert (public.admin_referral_revoke(pg_temp.u(1), (select id from public.invitaciones where invitado_id = pg_temp.u(2)), 'again') ->> 'revertido')::int = 0, 'revoke twice is a no-op';
+  assert exists (select 1 from public.auditoria_log where accion = 'invitacion_revocada'), 'audited';
+  assert (select min(saldo_tickets) from public.carteras_usuario where usuario_id in (select pg_temp.u(g) from generate_series(1, 7) g)) >= 0, 'never negative';
+  perform pg_temp.expect_e($q$select public.admin_referral_revoke(null, gen_random_uuid(), 'x')$q$, 'REFERRAL_NOT_FOUND');
+
+  -- grants: tables closed, functions service-only
+  assert not has_table_privilege('authenticated', 'public.invitaciones', 'select') and not has_table_privilege('service_role', 'public.codigos_invitacion', 'select')
+     and not has_table_privilege('authenticated', 'public.invitacion_intentos', 'insert') and not has_table_privilege('anon', 'public.invitaciones_dominios_bloqueados', 'select'), 'tables closed';
+  assert not has_function_privilege('authenticated', 'public.app_referral_attach(uuid,text,text)', 'execute') and not has_function_privilege('anon', 'public.app_job_referidos()', 'execute')
+     and has_function_privilege('service_role', 'public.app_referral_get(uuid)', 'execute'), 'functions service-only';
+  raise notice 'OK V1 wave 5a referral';
+end $$;
+rollback;
+
+-- 20261022101900: W5b foro (text): client writes/reads closed, server-only restriction, specialty gate, pre-moderation, content rules, duplicates, limits, counters, votes, reports, tombstone.
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.u(n int) returns uuid language sql as $$ select ('a0000000-0000-0000-0000-' || lpad((400 + n)::text, 12, '0'))::uuid $$;
+create function pg_temp.cat(n int) returns uuid language sql as $$ select ('c0000000-0000-0000-0000-' || lpad((400 + n)::text, 12, '0'))::uuid $$;
+insert into auth.users (id, email, aud, role) select pg_temp.u(n), 'foro' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 8) n;
+update auth.users set created_at = now() - interval '3 days', email_confirmed_at = now() - interval '3 days' where id in (select pg_temp.u(n) from generate_series(1, 7) n);   -- u8 stays young and unverified
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-000000000401', 'FA', 'FA', 'fa', true), ('e1000000-0000-0000-0000-000000000402', 'FB', 'FB', 'fb', true);
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+select pg_temp.u(n), 'f' || n, 'foro_u' || n, true, 'activa', case when n = 4 then 'e1000000-0000-0000-0000-000000000402'::uuid when n = 5 then null else 'e1000000-0000-0000-0000-000000000401'::uuid end
+  from generate_series(1, 8) n on conflict (usuario_id) do update set username = excluded.username, estado_cuenta = 'activa', especialidad_principal_id = excluded.especialidad_principal_id;
+insert into public.categorias_oposired (id, nombre, slug, especialidad_id, solo_lectura) values
+  (pg_temp.cat(1), 'General', 'f-general', null, false), (pg_temp.cat(2), 'Solo FA', 'f-fa', 'e1000000-0000-0000-0000-000000000401', false),
+  (pg_temp.cat(3), 'Solo FB', 'f-fb', 'e1000000-0000-0000-0000-000000000402', false), (pg_temp.cat(4), 'Avisos', 'f-avisos', null, true);
+
+do $$
+declare
+  r jsonb; p1 uuid; p2 uuid; p3 uuid; c1 uuid; n integer; s text;
+begin
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'foro_premoderacion_posts';
+  -- ---- M-F3 / M-F4 BLOCKER: no client privilege, no client policy on the forum tables
+  assert not exists (select 1 from (values ('public.publicaciones_oposired'), ('public.comentarios_oposired'), ('public.reacciones_oposired'), ('public.reportes_contenido'), ('public.acciones_moderacion'), ('public.categorias_oposired')) t(n)
+                      where has_table_privilege('anon', t.n, 'select') or has_table_privilege('authenticated', t.n, 'select') or has_table_privilege('authenticated', t.n, 'insert')
+                         or has_table_privilege('authenticated', t.n, 'update') or has_table_privilege('authenticated', t.n, 'delete')), 'forum tables closed to clients (read and write)';
+  assert (select count(*) from pg_policies where schemaname = 'public' and tablename in ('publicaciones_oposired', 'comentarios_oposired', 'reacciones_oposired', 'reportes_contenido', 'acciones_moderacion', 'categorias_oposired')) = 0, 'no client policy left';
+  assert not exists (select 1 from (values ('public.restricciones_foro'), ('public.moderacion_autor'), ('public.foro_actividad'), ('public.foro_bloqueos')) t(n)
+                      where has_table_privilege('anon', t.n, 'select') or has_table_privilege('authenticated', t.n, 'select') or has_table_privilege('authenticated', t.n, 'update') or has_table_privilege('service_role', t.n, 'select')), 'M-F5: the restriction table has no client access';
+  assert not exists (select 1 from pg_attribute a where a.attrelid = 'public.perfiles_usuario'::regclass and a.attname in ('puede_publicar', 'restringido_hasta') and not a.attisdropped), 'M-F5: nothing about restrictions on the profile';
+  -- as the authenticated role: denied, really (not only by privilege flags)
+  set local role authenticated;
+  perform pg_temp.expect_e($q$insert into public.publicaciones_oposired (usuario_id, contenido) values ('a0000000-0000-0000-0000-000000000401', 'x')$q$, 'permission denied for table publicaciones_oposired');
+  perform pg_temp.expect_e($q$select count(*) from public.publicaciones_oposired$q$, 'permission denied for table publicaciones_oposired');
+  perform pg_temp.expect_e($q$delete from public.reacciones_oposired$q$, 'permission denied for table reacciones_oposired');
+  perform pg_temp.expect_e($q$insert into public.reportes_contenido (reportado_por, tipo_entidad, entidad_id, motivo) values ('a0000000-0000-0000-0000-000000000401', 'usuario', gen_random_uuid(), 'x')$q$, 'permission denied for table reportes_contenido');
+  reset role;
+  set local role anon;
+  perform pg_temp.expect_e($q$select count(*) from public.categorias_oposired$q$, 'permission denied for table categorias_oposired');
+  reset role;
+
+  -- ---- the gate: channels by specialty; no specialty = no forum
+  assert (select jsonb_array_length(public.app_foro_categorias(pg_temp.u(1)) -> 'items')) = 3, 'FA user: general + FA + read-only';
+  assert (select jsonb_array_length(public.app_foro_categorias(pg_temp.u(4)) -> 'items')) = 3 and (public.app_foro_categorias(pg_temp.u(4)) -> 'items' -> 1 ->> 'nombre') is not null, 'FB user: general + FB + read-only';
+  assert jsonb_array_length(public.app_foro_categorias(pg_temp.u(5)) -> 'items') = 0, 'no specialty: no channels';
+  perform pg_temp.expect_e(format($q$select public.app_foro_list(%L, null, 'recientes', null, 10)$q$, pg_temp.u(5)), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Titulo', 'Cuerpo del mensaje', 'k1')$q$, pg_temp.u(5), pg_temp.cat(1)), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Titulo', 'Cuerpo del mensaje', 'k1')$q$, pg_temp.u(4), pg_temp.cat(2)), 'FORO_NOT_FOUND');   -- other specialty's channel
+
+  -- ---- first post is pre-moderated: only its author (marked) and Control see it
+  r := public.app_foro_create_post(pg_temp.u(1), pg_temp.cat(2), 'Mi primera duda', 'Una duda sobre el tema 3 del temario.', 'key-1');
+  p1 := (r ->> 'id')::uuid;
+  assert r ->> 'enRevision' = 'true' and r ->> 'repetida' = 'false', 'new account: pendiente_moderacion';
+  assert jsonb_array_length(public.app_foro_list(pg_temp.u(1), null, 'recientes', null, 10) -> 'items') = 1, 'the author sees it';
+  assert jsonb_array_length(public.app_foro_list(pg_temp.u(2), null, 'recientes', null, 10) -> 'items') = 0, 'others do not see it in lists';
+  perform pg_temp.expect_e(format($q$select public.app_foro_post(%L, %L)$q$, pg_temp.u(2), p1), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_vote(%L, 'publicacion', %L, true)$q$, pg_temp.u(2), p1), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_comment(%L, %L, 'hola', 'c-x')$q$, pg_temp.u(2), p1), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_report(%L, 'publicacion', %L, 'spam', null)$q$, pg_temp.u(2), p1), 'FORO_NOT_FOUND');
+  -- the idempotent replay answers the same post
+  r := public.app_foro_create_post(pg_temp.u(1), pg_temp.cat(2), 'Otro titulo', 'Otro cuerpo distinto del anterior mensaje', 'key-1');
+  assert (r ->> 'id')::uuid = p1 and r ->> 'repetida' = 'true', 'same Idempotency-Key = same post';
+  -- other specialty cannot read it even after approval
+  perform public.admin_foro_moderate(pg_temp.u(1), 'publicacion', p1, 'aprobar', null, 'ok');
+  assert (select aprobadas from public.moderacion_autor where usuario_id = pg_temp.u(1)) = 1, 'approval counted';
+  assert jsonb_array_length(public.app_foro_list(pg_temp.u(2), null, 'recientes', null, 10) -> 'items') = 1, 'visible to the same specialty after approval';
+  perform pg_temp.expect_e(format($q$select public.app_foro_post(%L, %L)$q$, pg_temp.u(4), p1), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_vote(%L, 'publicacion', %L, true)$q$, pg_temp.u(4), p1), 'FORO_NOT_FOUND');
+  -- afterwards the author posts without review
+  r := public.app_foro_create_post(pg_temp.u(1), pg_temp.cat(1), 'Segundo mensaje', 'Contenido del segundo mensaje del foro.', 'key-2');
+  p2 := (r ->> 'id')::uuid;
+  assert r ->> 'enRevision' = 'false', 'after the allowed number of approvals: published at once';
+  -- read-only channel and write guards
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Aviso', 'Un aviso que no debe poder escribirse', 'k9')$q$, pg_temp.u(1), pg_temp.cat(4)), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Titulo', 'Cuerpo del mensaje de prueba', 'k10')$q$, pg_temp.u(8), pg_temp.cat(1)), 'POSTING_RESTRICTED');   -- young + unverified account
+
+  -- ---- content rules
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Enlace', 'mira https://ejemplo.com ahora', 'k11')$q$, pg_temp.u(2), pg_temp.cat(1)), 'CONTENT_REJECTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Enlace', 'mira ejemplo . com ahora', 'k12')$q$, pg_temp.u(2), pg_temp.cat(1)), 'CONTENT_REJECTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Enlace', 'mira ejemplo[.]com ahora', 'k13')$q$, pg_temp.u(2), pg_temp.cat(1)), 'CONTENT_REJECTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Enlace', 'mira hxxp://ejemplo ahora', 'k14')$q$, pg_temp.u(2), pg_temp.cat(1)), 'CONTENT_REJECTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Enlace', 'mira www.ejemplo ahora', 'k15')$q$, pg_temp.u(2), pg_temp.cat(1)), 'CONTENT_REJECTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Enlace', 'mira bit.ly/abc ahora', 'k16')$q$, pg_temp.u(2), pg_temp.cat(1)), 'CONTENT_REJECTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Enlace', 'mira ejemplo。com ahora', 'k17')$q$, pg_temp.u(2), pg_temp.cat(1)), 'CONTENT_REJECTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Emoji', 'familia %s de prueba', 'k18')$q$, pg_temp.u(2), pg_temp.cat(1), E'\U0001F468‍\U0001F469‍\U0001F467'), 'CONTENT_REJECTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Vacio', E'  \n\t ', 'k19')$q$, pg_temp.u(2), pg_temp.cat(1)), 'CONTENT_REJECTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, %L, 'Cuerpo normal del mensaje', 'k20')$q$, pg_temp.u(2), pg_temp.cat(1), repeat('t', 121)), 'CONTENT_REJECTED');
+  insert into public.foro_bloqueos (patron) values ('palabrota');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Titulo', 'una Palabrota cualquiera', 'k21')$q$, pg_temp.u(2), pg_temp.cat(1)), 'CONTENT_REJECTED');
+  -- normalisation: NFC, bidi override and zero-width stripped
+  r := public.app_foro_create_post(pg_temp.u(2), pg_temp.cat(1), 'Normaliza', E'café con​ leche‮ invertida', 'k22');
+  assert (r ->> 'cuerpo') = 'café con leche invertida', 'NFC + bidi/zero-width stripped: ' || (r ->> 'cuerpo');
+
+  -- ---- duplicates: same user / same text within the window = 409; another user's identical text goes to review silently
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Segundo mensaje', 'Contenido del segundo mensaje del foro.', 'key-3')$q$, pg_temp.u(1), pg_temp.cat(1)), 'DUPLICATE_POST');
+  r := public.app_foro_create_post(pg_temp.u(3), pg_temp.cat(1), 'Segundo mensaje', 'Contenido del segundo mensaje del foro.', 'key-4');
+  assert r ->> 'enRevision' = 'true', 'identical text from ANOTHER user: pre-moderated (not rejected, not told)';
+
+  -- ---- rate limit is database-authoritative and carries Retry-After
+  update public.configuracion_v1 set valor_integer = 2 where clave = 'foro_posts_hora';
+  perform public.app_foro_create_post(pg_temp.u(6), pg_temp.cat(1), 'Uno', 'Primer mensaje de la tanda de seis.', 'k30');
+  perform public.app_foro_create_post(pg_temp.u(6), pg_temp.cat(1), 'Dos', 'Segundo mensaje de la tanda de seis.', 'k31');
+  begin
+    perform public.app_foro_create_post(pg_temp.u(6), pg_temp.cat(1), 'Tres', 'Tercer mensaje de la tanda de seis.', 'k32');
+    raise exception 'rate limit did not fire';
+  exception when others then
+    get stacked diagnostics s = pg_exception_detail;
+    assert sqlerrm = 'FORO_RATE_LIMITED' and (s::jsonb ->> 'retryAfter')::int between 1 and 3600, 'rate limit with retryAfter: ' || sqlerrm || coalesce(s, '');
+  end;
+  update public.configuracion_v1 set valor_integer = 5 where clave = 'foro_posts_hora';
+
+  -- ---- restriction: server only, silent about who/why; expires
+  perform public.admin_foro_moderate(pg_temp.u(1), 'publicacion', (select id from public.publicaciones_oposired where usuario_id = pg_temp.u(2) limit 1), 'silenciar', 3, 'prueba');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Tras mute', 'Mensaje escrito estando silenciado', 'k40')$q$, pg_temp.u(2), pg_temp.cat(1)), 'POSTING_RESTRICTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_vote(%L, 'publicacion', %L, true)$q$, pg_temp.u(2), p2), 'POSTING_RESTRICTED');
+  update public.restricciones_foro set hasta = now() - interval '1 minute' where usuario_id = pg_temp.u(2);
+  perform public.app_foro_create_post(pg_temp.u(2), pg_temp.cat(1), 'Tras mute', 'Mensaje escrito despues del mute', 'k41');
+
+  -- ---- comments: flat, counters, own delete
+  c1 := (public.app_foro_create_comment(pg_temp.u(2), p2, 'Buena pregunta, yo tambien la tenia.', 'c1') ->> 'id')::uuid;
+  assert (select n_comentarios from public.publicaciones_oposired where id = p2) = 1 and not exists (select 1 from public.comentarios_oposired where comentario_padre_id is not null), 'flat comment + counter';
+  assert (public.app_foro_create_comment(pg_temp.u(2), p2, 'Otra cosa distinta', 'c1') ->> 'repetido') = 'true', 'comment replay';
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_comment(%L, %L, 'Buena pregunta, yo tambien la tenia.', 'c2')$q$, pg_temp.u(2), p2), 'DUPLICATE_POST');
+  assert jsonb_array_length(public.app_foro_comments(pg_temp.u(3), p2, null, 20) -> 'items') = 1, 'comments readable';
+  perform pg_temp.expect_e(format($q$select public.app_foro_comments(%L, %L, null, 20)$q$, pg_temp.u(4), p1), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_delete_own(%L, 'comentario', %L)$q$, pg_temp.u(3), c1), 'FORO_NOT_FOUND');   -- not the author
+  perform public.app_foro_delete_own(pg_temp.u(2), 'comentario', c1);
+  assert (select n_comentarios from public.publicaciones_oposired where id = p2) = 0, 'counter follows the delete';
+
+  -- ---- votes: up-only, idempotent, none on own content, young accounts do not count
+  assert (public.app_foro_vote(pg_temp.u(2), 'publicacion', p2, true) ->> 'meGusta')::int = 1, 'vote counted';
+  assert (public.app_foro_vote(pg_temp.u(2), 'publicacion', p2, true) ->> 'meGusta')::int = 1, 'repeat is idempotent';
+  perform pg_temp.expect_e(format($q$select public.app_foro_vote(%L, 'publicacion', %L, true)$q$, pg_temp.u(1), p2), 'FORO_NOT_FOUND');
+  update auth.users set created_at = now() where id = pg_temp.u(3);
+  r := public.app_foro_vote(pg_temp.u(3), 'publicacion', p2, true);
+  assert (r ->> 'meGusta')::int = 1, 'young vote does not change the counter ' || r::text;
+  assert (select cuenta from public.reacciones_oposired where usuario_id = pg_temp.u(3) and publicacion_id = p2) is false, 'a young account votes but does not count';
+  update auth.users set created_at = now() - interval '3 days' where id = pg_temp.u(3);
+  assert (public.app_foro_vote(pg_temp.u(2), 'publicacion', p2, false) ->> 'meGusta')::int = 0, 'unvote';
+  perform public.app_foro_vote(pg_temp.u(2), 'publicacion', p2, true);
+  assert jsonb_array_length(public.app_foro_list(pg_temp.u(3), null, 'votadas', null, 10) -> 'items') >= 2 and (public.app_foro_list(pg_temp.u(3), null, 'votadas', null, 10) -> 'items' -> 0 ->> 'id')::uuid = p2, 'orden votadas puts the voted post first';
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'foro_votos_min';
+  perform pg_temp.expect_e(format($q$select public.app_foro_vote(%L, 'publicacion', %L, true)$q$, pg_temp.u(2), p1), 'FORO_RATE_LIMITED');
+  update public.configuracion_v1 set valor_integer = 60 where clave = 'foro_votos_min';
+  assert not exists (select 1 from public.foro_reconcile()), 'counters match the rows (drift view empty)';
+
+  -- ---- reports: vocabulary, unique per reporter and entity, auto-hide off by default and reversible
+  perform pg_temp.expect_e(format($q$select public.app_foro_report(%L, 'publicacion', %L, 'otra cosa', null)$q$, pg_temp.u(2), p2), 'FORO_REPORT_INVALID');
+  perform public.app_foro_report(pg_temp.u(2), 'publicacion', p2, 'spam', 'parece publicidad');
+  perform public.app_foro_report(pg_temp.u(2), 'publicacion', p2, 'ofensivo', null);
+  assert (select count(*) from public.reportes_contenido where reportado_por = pg_temp.u(2) and entidad_id = p2) = 1, 'one report per reporter and entity';
+  perform pg_temp.expect_e(format($q$select public.app_foro_report(%L, 'publicacion', %L, 'spam', null)$q$, pg_temp.u(1), p2), 'FORO_NOT_FOUND');   -- own content
+  update public.configuracion_v1 set valor_integer = 2 where clave = 'foro_autoocultar_k';
+  perform public.app_foro_report(pg_temp.u(3), 'publicacion', p2, 'spam', null);
+  assert (select estado from public.publicaciones_oposired where id = p2) = 'oculta', 'K distinct aged spam reporters hide the post';
+  assert jsonb_array_length(public.app_foro_list(pg_temp.u(2), null, 'recientes', null, 10) -> 'items') >= 1 and not exists (select 1 from jsonb_array_elements(public.app_foro_list(pg_temp.u(2), null, 'recientes', null, 10) -> 'items') i where (i ->> 'id')::uuid = p2), 'hidden content is not listed';
+  perform pg_temp.expect_e(format($q$select public.app_foro_post(%L, %L)$q$, pg_temp.u(2), p2), 'FORO_NOT_FOUND');
+  perform public.admin_foro_moderate(pg_temp.u(1), 'publicacion', p2, 'restaurar', null, 'falsa alarma');
+  assert (select estado from public.publicaciones_oposired where id = p2) = 'publicada', 'a moderator restores it';
+  update public.configuracion_v1 set valor_integer = 0 where clave = 'foro_autoocultar_k';
+
+  -- ---- pagination and cursors
+  update public.configuracion_v1 set valor_integer = 100 where clave = 'foro_posts_hora';
+  perform public.app_foro_create_post(pg_temp.u(7), pg_temp.cat(1), 'P7a', 'Primer mensaje del usuario siete.', 'k50');
+  perform public.admin_foro_moderate(pg_temp.u(1), 'publicacion', (select id from public.publicaciones_oposired where usuario_id = pg_temp.u(7) limit 1), 'aprobar', null, null);
+  perform public.app_foro_create_post(pg_temp.u(7), pg_temp.cat(1), 'P7b', 'Segundo mensaje del usuario siete.', 'k51');
+  perform public.app_foro_create_post(pg_temp.u(7), pg_temp.cat(1), 'P7c', 'Tercer mensaje del usuario siete.', 'k52');
+  r := public.app_foro_list(pg_temp.u(2), pg_temp.cat(1), 'recientes', null, 2);
+  assert jsonb_array_length(r -> 'items') = 2 and r ->> 'nextCursor' is not null, 'first page with cursor';
+  s := r ->> 'nextCursor';
+  assert (public.app_foro_list(pg_temp.u(2), pg_temp.cat(1), 'recientes', s, 50) -> 'items' -> 0 ->> 'id') <> (r -> 'items' -> 0 ->> 'id'), 'next page continues';
+  perform pg_temp.expect_e(format($q$select public.app_foro_list(%L, null, 'recientes', 'not-a-cursor', 10)$q$, pg_temp.u(2)), 'CURSOR_INVALID');
+  perform pg_temp.expect_e(format($q$select public.app_foro_list(%L, %L, 'recientes', null, 10)$q$, pg_temp.u(2), pg_temp.cat(3)), 'FORO_NOT_FOUND');   -- another specialty's channel
+
+  -- ---- delete own post, tombstone on account deletion
+  perform public.app_foro_delete_own(pg_temp.u(7), 'publicacion', (select id from public.publicaciones_oposired where usuario_id = pg_temp.u(7) and titulo = 'P7c'));
+  assert not exists (select 1 from jsonb_array_elements(public.app_foro_list(pg_temp.u(2), pg_temp.cat(1), 'recientes', null, 50) -> 'items') i where i ->> 'titulo' = 'P7c'), 'a deleted post is gone';
+  perform pg_temp.expect_e(format($q$select public.app_foro_delete_own(%L, 'publicacion', %L)$q$, pg_temp.u(3), p2), 'FORO_NOT_FOUND');
+  perform public.foro_tombstone_user(pg_temp.u(2));
+  assert not exists (select 1 from public.reacciones_oposired where usuario_id = pg_temp.u(2)) and (select n_me_gusta from public.publicaciones_oposired where id = p2) = 0, 'votes of a deleted account go and the counter follows';
+  update public.publicaciones_oposired set usuario_id = null where usuario_id = pg_temp.u(7) and titulo = 'P7a';
+  assert (select (i -> 'autor' ->> 'handle') is null from jsonb_array_elements(public.app_foro_list(pg_temp.u(3), pg_temp.cat(1), 'recientes', null, 50) -> 'items') i where i ->> 'titulo' = 'P7a'), 'tombstone: no handle';
+
+  -- ---- images: dedicated table, init -> (Ktor re-encodes) -> commit, one post per image, retirement, sweeper, orphans
+  assert not has_table_privilege('authenticated', 'public.imagenes_oposired', 'select') and not has_table_privilege('service_role', 'public.imagenes_oposired', 'select'), 'image table is server-only';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_init(%L, 'image/png', 1000)$q$, pg_temp.u(8)), 'POSTING_RESTRICTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_init(%L, 'image/gif', 1000)$q$, pg_temp.u(1)), 'IMAGE_NOT_USABLE');
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_init(%L, 'image/png', 3145729)$q$, pg_temp.u(1)), 'IMAGE_NOT_USABLE');
+  r := public.app_foro_image_init(pg_temp.u(1), 'image/png', 2000);
+  assert (r ->> 'path') like pg_temp.u(1)::text || '/%.png' and (select estado from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 'subida', 'server-generated path under the owner prefix';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_commit(%L, %L, 'abc', 10, 10, 1000)$q$, pg_temp.u(2), r ->> 'imagenId'), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_status(%L, %L)$q$, pg_temp.u(2), r ->> 'imagenId'), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Con imagen', 'Mensaje que usa una imagen sin verificar', 'ki1', %L)$q$, pg_temp.u(1), pg_temp.cat(1), r ->> 'imagenId'), 'IMAGE_NOT_USABLE');
+  perform public.app_foro_image_commit(pg_temp.u(1), (r ->> 'imagenId')::uuid, repeat('a', 64), 100, 80, 1500);
+  assert public.app_foro_image_status(pg_temp.u(1), (r ->> 'imagenId')::uuid) ->> 'estado' = 'verificada', 'verified';
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Con imagen', 'Mensaje que usa una imagen ajena de otro usuario', 'ki2', %L)$q$, pg_temp.u(3), pg_temp.cat(1), r ->> 'imagenId'), 'IMAGE_NOT_USABLE');
+  p3 := (public.app_foro_create_post(pg_temp.u(1), pg_temp.cat(1), 'Con imagen', 'Mensaje que adjunta una imagen verificada propia', 'ki3', (r ->> 'imagenId')::uuid) ->> 'id')::uuid;
+  assert (public.app_foro_post(pg_temp.u(1), p3) ->> 'imagenId') = r ->> 'imagenId' and (public.app_foro_list(pg_temp.u(2), pg_temp.cat(1), 'recientes', null, 1) -> 'items' -> 0 ->> 'tieneImagen')::boolean, 'detail and feed show the image';
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Otra', 'Otro mensaje que intenta reutilizar la imagen', 'ki4', %L)$q$, pg_temp.u(1), pg_temp.cat(1), r ->> 'imagenId'), 'IMAGE_NOT_USABLE');
+  assert (public.app_foro_image_path(pg_temp.u(2), p3) ->> 'path') = r ->> 'path', 'a reader of a published post gets the object path to sign';
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'foro_imagen_urls_hora';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_path(%L, %L)$q$, pg_temp.u(2), p3), 'FORO_RATE_LIMITED');
+  update public.configuracion_v1 set valor_integer = 120 where clave = 'foro_imagen_urls_hora';
+  -- retirement: deleting the post retires the image, bumps the version, queues the object for the sweeper
+  perform public.app_foro_delete_own(pg_temp.u(1), 'publicacion', p3);
+  assert (select estado from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 'retirada' and (select version from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 2, 'retired with a new version';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_path(%L, %L)$q$, pg_temp.u(2), p3), 'FORO_NOT_FOUND');
+  assert jsonb_array_length(public.app_foro_images_to_purge(10)) >= 1, 'the retired object is queued for the sweeper';
+  assert public.app_foro_images_purged(array[(r ->> 'imagenId')::uuid]) = 1, 'purge confirmed';
+  assert not exists (select 1 from jsonb_array_elements(public.app_foro_images_to_purge(10)) e where (e ->> 'id')::uuid = (r ->> 'imagenId')::uuid), 'the sweeper queue empties after the purge';
+  -- reject and orphans
+  r := public.app_foro_image_init(pg_temp.u(1), 'image/jpeg', 1000);
+  perform public.app_foro_image_reject(pg_temp.u(1), (r ->> 'imagenId')::uuid, 'no valida');
+  assert (select estado from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 'rechazada', 'rejected';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_commit(%L, %L, 'x', 1, 1, 1)$q$, pg_temp.u(1), r ->> 'imagenId'), 'FORO_NOT_FOUND');
+  r := public.app_foro_image_init(pg_temp.u(1), 'image/jpeg', 1000);
+  update public.imagenes_oposired set creado_en = now() - interval '2 hours' where id = (r ->> 'imagenId')::uuid;
+  perform public.app_job_foro();
+  assert (select estado from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 'retirada', 'an upload never verified is retired by the job';
+  update public.configuracion_v1 set valor_integer = 2 where clave = 'foro_imagenes_hora';
+  perform public.app_foro_image_init(pg_temp.u(6), 'image/png', 100);
+  perform public.app_foro_image_init(pg_temp.u(6), 'image/png', 100);
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_init(%L, 'image/png', 100)$q$, pg_temp.u(6)), 'FORO_RATE_LIMITED');
+  update public.configuracion_v1 set valor_integer = 5 where clave = 'foro_imagenes_hora';
+
+  -- ---- jobs and grants
+  assert public.app_job_foro() ->> 'estado' = 'OK', 'job runs';
+  assert not has_function_privilege('authenticated', 'public.app_foro_create_post(uuid,uuid,text,text,text,uuid)', 'execute') and not has_function_privilege('anon', 'public.app_foro_list(uuid,uuid,text,text,integer)', 'execute')
+     and has_function_privilege('service_role', 'public.admin_foro_moderate(uuid,text,uuid,text,integer,text)', 'execute'), 'functions service-only';
+  raise notice 'OK V1 wave 5b foro (text)';
 end $$;
 rollback;
