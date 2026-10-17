@@ -2912,9 +2912,51 @@ begin
   update public.publicaciones_oposired set usuario_id = null where usuario_id = pg_temp.u(7) and titulo = 'P7a';
   assert (select (i -> 'autor' ->> 'handle') is null from jsonb_array_elements(public.app_foro_list(pg_temp.u(3), pg_temp.cat(1), 'recientes', null, 50) -> 'items') i where i ->> 'titulo' = 'P7a'), 'tombstone: no handle';
 
+  -- ---- images: dedicated table, init -> (Ktor re-encodes) -> commit, one post per image, retirement, sweeper, orphans
+  assert not has_table_privilege('authenticated', 'public.imagenes_oposired', 'select') and not has_table_privilege('service_role', 'public.imagenes_oposired', 'select'), 'image table is server-only';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_init(%L, 'image/png', 1000)$q$, pg_temp.u(8)), 'POSTING_RESTRICTED');
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_init(%L, 'image/gif', 1000)$q$, pg_temp.u(1)), 'IMAGE_NOT_USABLE');
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_init(%L, 'image/png', 3145729)$q$, pg_temp.u(1)), 'IMAGE_NOT_USABLE');
+  r := public.app_foro_image_init(pg_temp.u(1), 'image/png', 2000);
+  assert (r ->> 'path') like pg_temp.u(1)::text || '/%.png' and (select estado from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 'subida', 'server-generated path under the owner prefix';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_commit(%L, %L, 'abc', 10, 10, 1000)$q$, pg_temp.u(2), r ->> 'imagenId'), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_status(%L, %L)$q$, pg_temp.u(2), r ->> 'imagenId'), 'FORO_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Con imagen', 'Mensaje que usa una imagen sin verificar', 'ki1', %L)$q$, pg_temp.u(1), pg_temp.cat(1), r ->> 'imagenId'), 'IMAGE_NOT_USABLE');
+  perform public.app_foro_image_commit(pg_temp.u(1), (r ->> 'imagenId')::uuid, repeat('a', 64), 100, 80, 1500);
+  assert public.app_foro_image_status(pg_temp.u(1), (r ->> 'imagenId')::uuid) ->> 'estado' = 'verificada', 'verified';
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Con imagen', 'Mensaje que usa una imagen ajena de otro usuario', 'ki2', %L)$q$, pg_temp.u(3), pg_temp.cat(1), r ->> 'imagenId'), 'IMAGE_NOT_USABLE');
+  p3 := (public.app_foro_create_post(pg_temp.u(1), pg_temp.cat(1), 'Con imagen', 'Mensaje que adjunta una imagen verificada propia', 'ki3', (r ->> 'imagenId')::uuid) ->> 'id')::uuid;
+  assert (public.app_foro_post(pg_temp.u(1), p3) ->> 'imagenId') = r ->> 'imagenId' and (public.app_foro_list(pg_temp.u(2), pg_temp.cat(1), 'recientes', null, 1) -> 'items' -> 0 ->> 'tieneImagen')::boolean, 'detail and feed show the image';
+  perform pg_temp.expect_e(format($q$select public.app_foro_create_post(%L, %L, 'Otra', 'Otro mensaje que intenta reutilizar la imagen', 'ki4', %L)$q$, pg_temp.u(1), pg_temp.cat(1), r ->> 'imagenId'), 'IMAGE_NOT_USABLE');
+  assert (public.app_foro_image_path(pg_temp.u(2), p3) ->> 'path') = r ->> 'path', 'a reader of a published post gets the object path to sign';
+  update public.configuracion_v1 set valor_integer = 1 where clave = 'foro_imagen_urls_hora';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_path(%L, %L)$q$, pg_temp.u(2), p3), 'FORO_RATE_LIMITED');
+  update public.configuracion_v1 set valor_integer = 120 where clave = 'foro_imagen_urls_hora';
+  -- retirement: deleting the post retires the image, bumps the version, queues the object for the sweeper
+  perform public.app_foro_delete_own(pg_temp.u(1), 'publicacion', p3);
+  assert (select estado from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 'retirada' and (select version from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 2, 'retired with a new version';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_path(%L, %L)$q$, pg_temp.u(2), p3), 'FORO_NOT_FOUND');
+  assert jsonb_array_length(public.app_foro_images_to_purge(10)) >= 1, 'the retired object is queued for the sweeper';
+  assert public.app_foro_images_purged(array[(r ->> 'imagenId')::uuid]) = 1, 'purge confirmed';
+  assert not exists (select 1 from jsonb_array_elements(public.app_foro_images_to_purge(10)) e where (e ->> 'id')::uuid = (r ->> 'imagenId')::uuid), 'the sweeper queue empties after the purge';
+  -- reject and orphans
+  r := public.app_foro_image_init(pg_temp.u(1), 'image/jpeg', 1000);
+  perform public.app_foro_image_reject(pg_temp.u(1), (r ->> 'imagenId')::uuid, 'no valida');
+  assert (select estado from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 'rechazada', 'rejected';
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_commit(%L, %L, 'x', 1, 1, 1)$q$, pg_temp.u(1), r ->> 'imagenId'), 'FORO_NOT_FOUND');
+  r := public.app_foro_image_init(pg_temp.u(1), 'image/jpeg', 1000);
+  update public.imagenes_oposired set creado_en = now() - interval '2 hours' where id = (r ->> 'imagenId')::uuid;
+  perform public.app_job_foro();
+  assert (select estado from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 'retirada', 'an upload never verified is retired by the job';
+  update public.configuracion_v1 set valor_integer = 2 where clave = 'foro_imagenes_hora';
+  perform public.app_foro_image_init(pg_temp.u(6), 'image/png', 100);
+  perform public.app_foro_image_init(pg_temp.u(6), 'image/png', 100);
+  perform pg_temp.expect_e(format($q$select public.app_foro_image_init(%L, 'image/png', 100)$q$, pg_temp.u(6)), 'FORO_RATE_LIMITED');
+  update public.configuracion_v1 set valor_integer = 5 where clave = 'foro_imagenes_hora';
+
   -- ---- jobs and grants
   assert public.app_job_foro() ->> 'estado' = 'OK', 'job runs';
-  assert not has_function_privilege('authenticated', 'public.app_foro_create_post(uuid,uuid,text,text,text)', 'execute') and not has_function_privilege('anon', 'public.app_foro_list(uuid,uuid,text,text,integer)', 'execute')
+  assert not has_function_privilege('authenticated', 'public.app_foro_create_post(uuid,uuid,text,text,text,uuid)', 'execute') and not has_function_privilege('anon', 'public.app_foro_list(uuid,uuid,text,text,integer)', 'execute')
      and has_function_privilege('service_role', 'public.admin_foro_moderate(uuid,text,uuid,text,integer,text)', 'execute'), 'functions service-only';
   raise notice 'OK V1 wave 5b foro (text)';
 end $$;

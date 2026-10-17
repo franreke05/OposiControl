@@ -58,6 +58,8 @@ as $$
     when p_clave = 'dificultad_muestra' then array[10, 1000]
     when p_clave = 'ranking_min_ms_respuesta' then array[0, 60000]
     when p_clave in ('foro_activo') then array[0, 1]
+    when p_clave = 'foro_imagenes_hora' then array[1, 1000]
+    when p_clave = 'foro_imagen_urls_hora' then array[1, 100000]
     when p_clave in ('foro_edad_min_horas') then array[0, 720]
     when p_clave in ('foro_posts_hora', 'foro_comentarios_hora') then array[1, 1000]
     when p_clave in ('foro_posts_dia', 'foro_reportes_dia', 'foro_votos_dia') then array[1, 100000]

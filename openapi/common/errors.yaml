@@ -149,6 +149,7 @@ components:
         - POSTING_RESTRICTED
         - DUPLICATE_POST
         - CONTENT_REJECTED
+        - IMAGE_REJECTED
         - STATS_RECOMPUTE_COOLDOWN
   headers:
     XRequestId:

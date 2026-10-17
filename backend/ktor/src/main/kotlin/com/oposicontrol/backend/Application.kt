@@ -526,7 +526,8 @@ fun Application.module() {
     // V1 wave 2: generacion diaria del reto + reintento de OT diferidos (ambos idempotentes y bajo cerrojo consultivo en la base; apagado con CHALLENGE_JOB_SECONDS=0).
     if (serverProfile != ServerProfile.CONTROL) {
         TransportEconomyUpstream.fromEnvironment()?.let { upstream ->
-            val job = DailyChallengeJob.start(this, upstream, DailyChallengeJob.intervalFrom()) { message -> log.warn(message) }
+            val images = ForoImageService.fromEnvironment()
+            val job = DailyChallengeJob.start(this, upstream, DailyChallengeJob.intervalFrom(), { message -> log.warn(message) }) { images?.sweep() }
             monitor.subscribe(ApplicationStopped) { job?.cancel() }
         }
     }

@@ -203,6 +203,10 @@ class OpenApiContractTest {
         "D5-12" to "PUT /api/v1/app/oposired/comentarios/{id}/voto",
         "D5-13" to "DELETE /api/v1/app/oposired/comentarios/{id}/voto",
         "D5-14" to "POST /api/v1/app/oposired/reportes",
+        "D5-30" to "POST /api/v1/app/oposired/imagenes",
+        "D5-31" to "PUT /api/v1/app/oposired/imagenes/{id}/contenido",
+        "D5-32" to "GET /api/v1/app/oposired/imagenes/{id}",
+        "D5-33" to "GET /api/v1/app/oposired/publicaciones/{id}/imagen",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */

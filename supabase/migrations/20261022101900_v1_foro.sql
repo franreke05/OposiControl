@@ -1,4 +1,4 @@
--- V1 WAVE 5b: FORO / RED (text part). Contract: E1-V1-W5-FORO-CONTRACT.md (FA35). Design: E4-V1-FORO-DESIGN v3.1 + E1-V1-FORO-MIGRATION-NOTES (M-F1..M-F10).
+-- V1 WAVE 5b: FORO / RED (text and images). Contract: E1-V1-W5-FORO-CONTRACT.md (FA35). Design: E4-V1-FORO-DESIGN v3.1 + E1-V1-FORO-MIGRATION-NOTES (M-F1..M-F10).
 -- Forward-only; local stack and PG17 gate only, NOT applied to MAIN. Requires 20261022101200 (config), 20261022101500 (config bounds + audit) and 20261022101800 (private.referral_mail).
 -- BLOCKER M-F3: MAIN lets any authenticated client write the forum tables straight through PostgREST. This migration REVOKES client INSERT/UPDATE/DELETE (and client SELECT: every read goes through the server, so the
 -- specialty gate cannot be bypassed) on posts, comments, reactions, reports and moderation actions, drops their policies, and routes every write through service-role functions.
@@ -12,6 +12,14 @@
 -- drop trigger if exists trg_comentarios_oposired_contadores on public.comentarios_oposired;
 -- drop function if exists private.tg_foro_reacciones_contadores();
 -- drop function if exists private.tg_foro_comentarios_contadores();
+-- drop function if exists public.app_foro_images_purged(uuid[]);
+-- drop function if exists public.app_foro_images_to_purge(integer);
+-- drop function if exists public.app_foro_image_path(uuid, uuid);
+-- drop function if exists public.app_foro_image_status(uuid, uuid);
+-- drop function if exists public.app_foro_image_reject(uuid, uuid, text);
+-- drop function if exists public.app_foro_image_commit(uuid, uuid, text, integer, integer, integer);
+-- drop function if exists public.app_foro_image_init(uuid, text, integer);
+-- drop function if exists private.foro_retire_images(uuid, uuid);
 -- drop function if exists public.app_job_foro();
 -- drop function if exists public.foro_reconcile();
 -- drop function if exists public.foro_tombstone_user(uuid);
@@ -20,7 +28,7 @@
 -- drop function if exists public.app_foro_vote(uuid, text, uuid, boolean);
 -- drop function if exists public.app_foro_delete_own(uuid, text, uuid);
 -- drop function if exists public.app_foro_create_comment(uuid, uuid, text, text);
--- drop function if exists public.app_foro_create_post(uuid, uuid, text, text, text);
+-- drop function if exists public.app_foro_create_post(uuid, uuid, text, text, text, uuid);
 -- drop function if exists public.app_foro_comments(uuid, uuid, text, integer);
 -- drop function if exists public.app_foro_post(uuid, uuid);
 -- drop function if exists public.app_foro_list(uuid, uuid, text, text, integer);
@@ -33,6 +41,9 @@
 -- drop function if exists private.foro_user_specialty(uuid);
 -- drop function if exists private.cur_dec(text);
 -- drop function if exists private.cur_enc(text[]);
+-- drop index if exists public.ux_publicaciones_oposired_imagen;
+-- alter table public.publicaciones_oposired drop column if exists imagen_id;
+-- drop table if exists public.imagenes_oposired;
 -- drop table if exists public.foro_bloqueos;
 -- drop table if exists public.foro_actividad;
 -- drop table if exists public.moderacion_autor;
@@ -84,12 +95,13 @@
 --        (case when has_table_privilege('anon', t.n, 'select') or has_table_privilege('authenticated', t.n, 'select') or has_table_privilege('authenticated', t.n, 'insert')
 --                or has_table_privilege('authenticated', t.n, 'update') or has_table_privilege('authenticated', t.n, 'delete') or has_table_privilege('service_role', t.n, 'select')
 --                or not (select c.relrowsecurity from pg_class c where c.oid = t.n::regclass) then 1 else 0 end)::bigint
---   from (values ('public.restricciones_foro'), ('public.moderacion_autor'), ('public.foro_actividad'), ('public.foro_bloqueos')) t(n)
+--   from (values ('public.restricciones_foro'), ('public.moderacion_autor'), ('public.foro_actividad'), ('public.foro_bloqueos'), ('public.imagenes_oposired')) t(n)
 -- union all
 -- select 'foro_functions_not_service_role_only:' || f.n,
 --        (case when has_function_privilege('anon', f.n, 'execute') or has_function_privilege('authenticated', f.n, 'execute') or not has_function_privilege('service_role', f.n, 'execute') then 1 else 0 end)::bigint
 --   from (values ('public.app_foro_categorias(uuid)'), ('public.app_foro_list(uuid,uuid,text,text,integer)'), ('public.app_foro_post(uuid,uuid)'), ('public.app_foro_comments(uuid,uuid,text,integer)'),
---                ('public.app_foro_create_post(uuid,uuid,text,text,text)'), ('public.app_foro_create_comment(uuid,uuid,text,text)'), ('public.app_foro_delete_own(uuid,text,uuid)'), ('public.app_foro_vote(uuid,text,uuid,boolean)'),
+--                ('public.app_foro_create_post(uuid,uuid,text,text,text,uuid)'), ('public.app_foro_image_init(uuid,text,integer)'), ('public.app_foro_image_commit(uuid,uuid,text,integer,integer,integer)'), ('public.app_foro_image_reject(uuid,uuid,text)'),
+--                ('public.app_foro_image_status(uuid,uuid)'), ('public.app_foro_image_path(uuid,uuid)'), ('public.app_foro_images_to_purge(integer)'), ('public.app_foro_images_purged(uuid[])'), ('public.app_foro_create_comment(uuid,uuid,text,text)'), ('public.app_foro_delete_own(uuid,text,uuid)'), ('public.app_foro_vote(uuid,text,uuid,boolean)'),
 --                ('public.app_foro_report(uuid,text,uuid,text,text)'), ('public.admin_foro_moderate(uuid,text,uuid,text,integer,text)'), ('public.foro_tombstone_user(uuid)'), ('public.app_job_foro()'), ('public.foro_reconcile()')) f(n);
 -- VERIFY-END
 
@@ -111,7 +123,7 @@ $$;
 insert into public.configuracion_v1 (clave, valor_integer) values
   ('foro_activo', 1), ('foro_edad_min_horas', 24), ('foro_posts_hora', 5), ('foro_posts_dia', 20), ('foro_comentarios_hora', 30), ('foro_reportes_dia', 20),
   ('foro_votos_min', 60), ('foro_votos_dia', 500), ('foro_premoderacion_posts', 3), ('foro_titulo_max', 120), ('foro_cuerpo_max', 4000), ('foro_comentario_max', 1000),
-  ('foro_dup_minutos', 10), ('foro_dup_cruzado_minutos', 60), ('foro_autoocultar_k', 0)
+  ('foro_dup_minutos', 10), ('foro_dup_cruzado_minutos', 60), ('foro_autoocultar_k', 0), ('foro_imagenes_hora', 5), ('foro_imagen_urls_hora', 120)
 on conflict (clave) do nothing;
 
 -- ---- 2. shape (M-F1, M-F2, M-F6): additive columns, mapped states
@@ -161,13 +173,37 @@ create table if not exists public.moderacion_autor (
 create table if not exists public.foro_actividad (
   id bigint generated always as identity primary key,
   usuario_id uuid not null,
-  tipo text not null check (tipo in ('post', 'comentario', 'voto', 'reporte')),
+  tipo text not null check (tipo in ('post', 'comentario', 'voto', 'reporte', 'imagen', 'imagen_url')),
   creado_en timestamptz not null default clock_timestamp()
 );
 create index if not exists ix_foro_actividad on public.foro_actividad (usuario_id, tipo, creado_en desc);
 create table if not exists public.foro_bloqueos (
   patron text primary key check (patron = lower(patron) and char_length(patron) between 2 and 100)
 );
+-- M-F7 / N-F1: DEDICATED image table (never the exam-media tables/bucket). The path is generated by the server; the bytes are re-encoded by Ktor before they are stored.
+create table if not exists public.imagenes_oposired (
+  id uuid primary key default gen_random_uuid(),
+  usuario_id uuid not null references auth.users(id) on delete cascade,
+  path text not null,
+  mime text not null check (mime in ('image/jpeg', 'image/png')),
+  bytes integer not null check (bytes between 1 and 3145728),
+  sha256 text,
+  ancho integer,
+  alto integer,
+  estado text not null default 'subida' check (estado in ('subida', 'verificada', 'rechazada', 'retirada')),
+  version integer not null default 1,
+  creado_en timestamptz not null default clock_timestamp(),
+  verificada_en timestamptz,
+  retirada_en timestamptz,
+  purgada_en timestamptz,
+  motivo text
+);
+create index if not exists ix_imagenes_oposired_usuario on public.imagenes_oposired (usuario_id, estado, creado_en desc);
+create index if not exists ix_imagenes_oposired_barrido on public.imagenes_oposired (estado, creado_en) where estado in ('subida', 'verificada', 'retirada') and purgada_en is null;
+alter table public.publicaciones_oposired add column if not exists imagen_id uuid references public.imagenes_oposired(id) on delete set null;
+create unique index if not exists ux_publicaciones_oposired_imagen on public.publicaciones_oposired (imagen_id) where imagen_id is not null;
+alter table public.imagenes_oposired enable row level security;
+revoke all on table public.imagenes_oposired from public, anon, authenticated, service_role;
 alter table public.restricciones_foro enable row level security;
 alter table public.moderacion_autor enable row level security;
 alter table public.foro_actividad enable row level security;
@@ -408,7 +444,8 @@ begin
   end if;
   with page as (
     select p.id, p.categoria_id, p.titulo, left(p.contenido, 200) as extracto, p.n_me_gusta, p.n_comentarios, p.creado_en, p.estado, pf.username,
-           exists (select 1 from public.reacciones_oposired r where r.publicacion_id = p.id and r.usuario_id = p_usuario and r.tipo_reaccion = 'me_gusta') as mi_voto
+           exists (select 1 from public.reacciones_oposired r where r.publicacion_id = p.id and r.usuario_id = p_usuario and r.tipo_reaccion = 'me_gusta') as mi_voto,
+           exists (select 1 from public.imagenes_oposired i where i.id = p.imagen_id and i.estado = 'verificada') as tiene_imagen
       from public.publicaciones_oposired p
       join public.categorias_oposired c on c.id = p.categoria_id and c.activa and (c.especialidad_id is null or c.especialidad_id = v_esp)
       left join public.perfiles_usuario pf on pf.usuario_id = p.usuario_id
@@ -420,7 +457,7 @@ begin
   ), agg as (
     select coalesce(jsonb_agg(jsonb_build_object('id', f.id, 'categoriaId', f.categoria_id, 'titulo', f.titulo, 'extracto', f.extracto,
              'autor', jsonb_build_object('handle', f.username), 'meGusta', f.n_me_gusta, 'comentarios', f.n_comentarios, 'creadoEn', f.creado_en,
-             'miVoto', f.mi_voto, 'enRevision', f.estado = 'pendiente_moderacion', 'tieneImagen', false)
+             'miVoto', f.mi_voto, 'enRevision', f.estado = 'pendiente_moderacion', 'tieneImagen', f.tiene_imagen)
            order by case when v_orden = 'votadas' then f.n_me_gusta end desc nulls last, f.creado_en desc, f.id desc), '[]'::jsonb) as items, count(*)::integer as n from page f
   ), ultimo as (
     select f.id, f.creado_en, f.n_me_gusta from page f order by case when v_orden = 'votadas' then f.n_me_gusta end asc nulls last, f.creado_en asc, f.id asc limit 1
@@ -458,7 +495,8 @@ begin
   return jsonb_build_object('id', r.id, 'categoriaId', r.categoria_id, 'titulo', r.titulo, 'cuerpo', r.contenido,
            'autor', jsonb_build_object('handle', r.username), 'meGusta', r.n_me_gusta, 'comentarios', r.n_comentarios, 'creadoEn', r.creado_en,
            'miVoto', exists (select 1 from public.reacciones_oposired x where x.publicacion_id = r.id and x.usuario_id = p_usuario and x.tipo_reaccion = 'me_gusta'),
-           'enRevision', r.estado = 'pendiente_moderacion', 'esMio', r.usuario_id = p_usuario, 'soloLectura', r.solo_lectura, 'imagenId', null);
+           'enRevision', r.estado = 'pendiente_moderacion', 'esMio', r.usuario_id = p_usuario, 'soloLectura', r.solo_lectura,
+           'imagenId', (select i.id from public.imagenes_oposired i where i.id = r.imagen_id and i.estado = 'verificada'));
 end;
 $$;
 revoke all on function public.app_foro_post(uuid, uuid) from public, anon, authenticated;
@@ -496,7 +534,7 @@ revoke all on function public.app_foro_comments(uuid, uuid, text, integer) from 
 grant execute on function public.app_foro_comments(uuid, uuid, text, integer) to service_role;
 
 -- ---- 8. writes
-create or replace function public.app_foro_create_post(p_usuario uuid, p_categoria uuid, p_titulo text, p_cuerpo text, p_clave text)
+create or replace function public.app_foro_create_post(p_usuario uuid, p_categoria uuid, p_titulo text, p_cuerpo text, p_clave text, p_imagen uuid default null)
 returns jsonb
 language plpgsql
 security definer
@@ -540,14 +578,19 @@ begin
     when exists (select 1 from public.publicaciones_oposired p where p.hash_cuerpo = v_hash and p.usuario_id is distinct from p_usuario
                   and p.creado_en > clock_timestamp() - make_interval(mins => private.config_int('foro_dup_cruzado_minutos', 60))) then 'pendiente_moderacion'
     else 'publicada' end;
-  insert into public.publicaciones_oposired (usuario_id, categoria_id, titulo, contenido, estado, hash_cuerpo, clave_idem)
-  values (p_usuario, p_categoria, v_titulo, v_cuerpo, v_estado, v_hash, p_clave) returning id into v_id;
+  -- an image may be attached only if it is VERIFIED, OWNED by the author and not used by another post (M-F: one post per image)
+  if p_imagen is not null and not exists (select 1 from public.imagenes_oposired i where i.id = p_imagen and i.usuario_id = p_usuario and i.estado = 'verificada'
+                                             and not exists (select 1 from public.publicaciones_oposired x where x.imagen_id = i.id)) then
+    raise exception using errcode = 'P0001', message = 'IMAGE_NOT_USABLE';
+  end if;
+  insert into public.publicaciones_oposired (usuario_id, categoria_id, titulo, contenido, estado, hash_cuerpo, clave_idem, imagen_id, creado_en)
+  values (p_usuario, p_categoria, v_titulo, v_cuerpo, v_estado, v_hash, p_clave, p_imagen, clock_timestamp()) returning id into v_id;   -- the real clock (not the transaction start) keeps the feed order stable
   insert into public.foro_actividad (usuario_id, tipo) values (p_usuario, 'post');
   return public.app_foro_post(p_usuario, v_id) || jsonb_build_object('repetida', false);
 end;
 $$;
-revoke all on function public.app_foro_create_post(uuid, uuid, text, text, text) from public, anon, authenticated;
-grant execute on function public.app_foro_create_post(uuid, uuid, text, text, text) to service_role;
+revoke all on function public.app_foro_create_post(uuid, uuid, text, text, text, uuid) from public, anon, authenticated;
+grant execute on function public.app_foro_create_post(uuid, uuid, text, text, text, uuid) to service_role;
 
 create or replace function public.app_foro_create_comment(p_usuario uuid, p_post uuid, p_cuerpo text, p_clave text)
 returns jsonb
@@ -577,14 +620,26 @@ begin
               and c.creado_en > clock_timestamp() - make_interval(mins => private.config_int('foro_dup_minutos', 10))) then
     raise exception using errcode = 'P0001', message = 'DUPLICATE_POST';
   end if;
-  insert into public.comentarios_oposired (publicacion_id, usuario_id, comentario_padre_id, contenido, estado, hash_cuerpo, clave_idem)
-  values (p_post, p_usuario, null, v_cuerpo, v_estado, v_hash, p_clave) returning id into v_id;
+  insert into public.comentarios_oposired (publicacion_id, usuario_id, comentario_padre_id, contenido, estado, hash_cuerpo, clave_idem, creado_en)
+  values (p_post, p_usuario, null, v_cuerpo, v_estado, v_hash, p_clave, clock_timestamp()) returning id into v_id;
   insert into public.foro_actividad (usuario_id, tipo) values (p_usuario, 'comentario');
   return jsonb_build_object('id', v_id, 'publicacionId', p_post, 'cuerpo', v_cuerpo, 'creadoEn', clock_timestamp(), 'repetido', false);
 end;
 $$;
 revoke all on function public.app_foro_create_comment(uuid, uuid, text, text) from public, anon, authenticated;
 grant execute on function public.app_foro_create_comment(uuid, uuid, text, text) to service_role;
+
+-- retire the image of a post (or every image of a user): the object is deleted by the Ktor sweeper, the version bump kills cached URLs
+create or replace function private.foro_retire_images(p_post uuid, p_usuario uuid)
+returns void
+language sql
+volatile
+set search_path = ''
+as $$
+  update public.imagenes_oposired i set estado = 'retirada', retirada_en = clock_timestamp(), version = i.version + 1, motivo = coalesce(i.motivo, 'retirada')
+   where i.estado in ('verificada', 'subida') and (i.id = (select p.imagen_id from public.publicaciones_oposired p where p.id = p_post) or i.usuario_id = p_usuario)
+$$;
+revoke all on function private.foro_retire_images(uuid, uuid) from public, anon, authenticated;
 
 -- delete OWN content (soft: the row stays for threads, reports and Control); the author comes from the JWT only
 create or replace function public.app_foro_delete_own(p_usuario uuid, p_tipo text, p_id uuid)
@@ -600,6 +655,7 @@ begin
   end if;
   if p_tipo = 'publicacion' then
     update public.publicaciones_oposired set estado = 'eliminada' where id = p_id and usuario_id = p_usuario and estado in ('publicada', 'pendiente_moderacion', 'oculta');
+    if found then perform private.foro_retire_images(p_id, null); end if;
   else
     update public.comentarios_oposired set estado = 'eliminado' where id = p_id and usuario_id = p_usuario and estado in ('publicado', 'pendiente_moderacion', 'oculto');
   end if;
@@ -737,6 +793,7 @@ begin
     end if;
   elsif p_accion in ('rechazar', 'ocultar') then
     if p_tipo = 'publicacion' then update public.publicaciones_oposired set estado = 'oculta' where id = p_id and estado in ('pendiente_moderacion', 'publicada');
+      if found and p_accion = 'rechazar' then perform private.foro_retire_images(p_id, null); end if;
     else update public.comentarios_oposired set estado = 'oculto' where id = p_id and estado in ('pendiente_moderacion', 'publicado'); end if;
   elsif p_accion = 'restaurar' then
     if p_tipo = 'publicacion' then update public.publicaciones_oposired set estado = 'publicada' where id = p_id and estado = 'oculta';
@@ -768,6 +825,7 @@ declare v_v integer;
 begin
   update public.publicaciones_oposired set usuario_id = null where usuario_id = p_usuario;
   update public.comentarios_oposired set usuario_id = null where usuario_id = p_usuario;
+  perform private.foro_retire_images(null, p_usuario);
   delete from public.reacciones_oposired where usuario_id = p_usuario;
   get diagnostics v_v = row_count;
   delete from public.restricciones_foro where usuario_id = p_usuario;
@@ -813,6 +871,10 @@ begin
   perform set_config('statement_timeout', '30000', true);
   delete from public.foro_actividad where creado_en < clock_timestamp() - interval '2 days';
   get diagnostics v_pod = row_count;
+  -- orphans: an upload never verified after 1 h, a verified image not attached to a post after 24 h (the sweeper deletes the objects)
+  update public.imagenes_oposired i set estado = 'retirada', retirada_en = clock_timestamp(), version = i.version + 1, motivo = 'huerfana'
+   where ((i.estado = 'subida' and i.creado_en < clock_timestamp() - interval '1 hour')
+       or (i.estado = 'verificada' and i.creado_en < clock_timestamp() - interval '24 hours' and not exists (select 1 from public.publicaciones_oposired p where p.imagen_id = i.id)));
   select count(*) into v_drift from public.foro_reconcile();
   if v_drift > 0 then
     insert into public.auditoria_log (usuario_id, accion, tabla_afectada, registro_id, despues) values (null, 'foro_contadores_desviados', 'publicaciones_oposired', null, jsonb_build_object('filas', v_drift));
@@ -822,5 +884,141 @@ end;
 $$;
 revoke all on function public.app_job_foro() from public, anon, authenticated;
 grant execute on function public.app_job_foro() to service_role;
+
+-- ---- 12. image pipeline (DB part; the bytes are decoded, re-encoded and stored by Ktor)
+create or replace function public.app_foro_image_init(p_usuario uuid, p_mime text, p_bytes integer)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_id uuid := gen_random_uuid();
+begin
+  if p_usuario is null or not exists (select 1 from public.perfiles_usuario pf where pf.usuario_id = p_usuario) then
+    raise exception using errcode = 'P0001', message = 'WALLET_INVALID_USER';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('foro:' || p_usuario::text, 0));
+  perform private.foro_check_write(p_usuario, 'imagen');
+  if p_mime is null or p_mime not in ('image/jpeg', 'image/png') or p_bytes is null or p_bytes < 1 or p_bytes > 3145728 then
+    raise exception using errcode = 'P0001', message = 'IMAGE_NOT_USABLE';
+  end if;
+  perform private.foro_rate(p_usuario, 'imagen', interval '1 hour', private.config_int('foro_imagenes_hora', 5));
+  -- a cap of unverified rows per user (a loop of inits cannot fill the table)
+  if (select count(*) from public.imagenes_oposired i where i.usuario_id = p_usuario and i.estado = 'subida') >= 10 then
+    raise exception using errcode = 'P0001', message = 'FORO_RATE_LIMITED', detail = '{"retryAfter":600}';
+  end if;
+  insert into public.imagenes_oposired (id, usuario_id, path, mime, bytes) values (v_id, p_usuario, p_usuario::text || '/' || v_id::text || case p_mime when 'image/png' then '.png' else '.jpg' end, p_mime, p_bytes);
+  insert into public.foro_actividad (usuario_id, tipo) values (p_usuario, 'imagen');
+  return jsonb_build_object('imagenId', v_id, 'path', p_usuario::text || '/' || v_id::text || case p_mime when 'image/png' then '.png' else '.jpg' end, 'mime', p_mime, 'bytesMax', p_bytes);
+end;
+$$;
+revoke all on function public.app_foro_image_init(uuid, text, integer) from public, anon, authenticated;
+grant execute on function public.app_foro_image_init(uuid, text, integer) to service_role;
+
+-- Ktor verified the bytes (magic, header size, decode, re-encode) and stored the re-encoded object: it is now usable
+create or replace function public.app_foro_image_commit(p_usuario uuid, p_id uuid, p_sha256 text, p_ancho integer, p_alto integer, p_bytes integer)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_n integer;
+begin
+  update public.imagenes_oposired set estado = 'verificada', sha256 = p_sha256, ancho = p_ancho, alto = p_alto, bytes = least(greatest(p_bytes, 1), 3145728), verificada_en = clock_timestamp()
+   where id = p_id and usuario_id = p_usuario and estado = 'subida';
+  get diagnostics v_n = row_count;
+  if v_n = 0 then
+    raise exception using errcode = 'P0001', message = 'FORO_NOT_FOUND';
+  end if;
+  return jsonb_build_object('estado', 'verificada');
+end;
+$$;
+revoke all on function public.app_foro_image_commit(uuid, uuid, text, integer, integer, integer) from public, anon, authenticated;
+grant execute on function public.app_foro_image_commit(uuid, uuid, text, integer, integer, integer) to service_role;
+
+create or replace function public.app_foro_image_reject(p_usuario uuid, p_id uuid, p_motivo text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  update public.imagenes_oposired set estado = 'rechazada', motivo = left(coalesce(p_motivo, 'rechazada'), 60), retirada_en = clock_timestamp(), version = version + 1
+   where id = p_id and usuario_id = p_usuario and estado = 'subida';
+  if not found then
+    raise exception using errcode = 'P0001', message = 'FORO_NOT_FOUND';
+  end if;
+  return jsonb_build_object('estado', 'rechazada');
+end;
+$$;
+revoke all on function public.app_foro_image_reject(uuid, uuid, text) from public, anon, authenticated;
+grant execute on function public.app_foro_image_reject(uuid, uuid, text) to service_role;
+
+-- the owner sees the state of his image (never a URL); anything else is the same "not found"
+create or replace function public.app_foro_image_status(p_usuario uuid, p_id uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare r record;
+begin
+  select i.estado, i.mime, i.path into r from public.imagenes_oposired i where i.id = p_id and i.usuario_id = p_usuario;
+  if not found then
+    raise exception using errcode = 'P0001', message = 'FORO_NOT_FOUND';
+  end if;
+  return jsonb_build_object('estado', r.estado, 'mime', r.mime, 'path', r.path);   -- for the owner's server only: the HTTP route returns the state alone
+end;
+$$;
+revoke all on function public.app_foro_image_status(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.app_foro_image_status(uuid, uuid) to service_role;
+
+-- the object path of the VERIFIED image of a post the caller can read (gate first); Ktor signs it. Per-user hourly cap on mints.
+create or replace function public.app_foro_image_path(p_usuario uuid, p_post uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare v_img jsonb := public.app_foro_post(p_usuario, p_post); r record;
+begin
+  select i.path, i.version, i.mime into r from public.imagenes_oposired i where i.id = (v_img ->> 'imagenId')::uuid and i.estado = 'verificada';
+  if not found then
+    raise exception using errcode = 'P0001', message = 'FORO_NOT_FOUND';
+  end if;
+  perform private.foro_rate(p_usuario, 'imagen_url', interval '1 hour', private.config_int('foro_imagen_urls_hora', 120));
+  insert into public.foro_actividad (usuario_id, tipo) values (p_usuario, 'imagen_url');
+  return jsonb_build_object('path', r.path, 'version', r.version, 'mime', r.mime);
+end;
+$$;
+revoke all on function public.app_foro_image_path(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.app_foro_image_path(uuid, uuid) to service_role;
+
+-- sweeper support: retired / rejected / stale objects that still have to be deleted from Storage, and the confirmation
+create or replace function public.app_foro_images_to_purge(p_limite integer default 50)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'path', x.path)), '[]'::jsonb)
+    from (select i.id, i.path from public.imagenes_oposired i where i.estado in ('retirada', 'rechazada') and i.purgada_en is null order by i.retirada_en nulls first limit least(greatest(coalesce(p_limite, 50), 1), 200)) x
+$$;
+revoke all on function public.app_foro_images_to_purge(integer) from public, anon, authenticated;
+grant execute on function public.app_foro_images_to_purge(integer) to service_role;
+
+create or replace function public.app_foro_images_purged(p_ids uuid[])
+returns integer
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  with u as (update public.imagenes_oposired set purgada_en = clock_timestamp() where id = any (p_ids) and estado in ('retirada', 'rechazada') returning 1) select count(*)::integer from u
+$$;
+revoke all on function public.app_foro_images_purged(uuid[]) from public, anon, authenticated;
+grant execute on function public.app_foro_images_purged(uuid[]) to service_role;
 
 commit;

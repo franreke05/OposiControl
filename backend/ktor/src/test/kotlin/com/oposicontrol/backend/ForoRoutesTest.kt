@@ -124,7 +124,7 @@ class ForoRoutesTest {
         val created = client.sendJson("/api/v1/app/oposired/publicaciones", """{"categoriaId":"$cat","titulo":"Hola","cuerpo":"Texto"}""", key)
         assertEquals(HttpStatusCode.Created, created.status, created.bodyAsText())
         val args = obj(upstream.rpcs.last().second)
-        assertEquals(setOf("p_usuario", "p_categoria", "p_titulo", "p_cuerpo", "p_clave"), args.keys)
+        assertEquals(setOf("p_usuario", "p_categoria", "p_titulo", "p_cuerpo", "p_clave", "p_imagen"), args.keys)
         assertEquals(key, args["p_clave"]!!.jsonPrimitive.content)
         val noKey = client.sendJson("/api/v1/app/oposired/publicaciones", """{"categoriaId":"$cat","titulo":"Hola","cuerpo":"Texto"}""")
         assertEquals(HttpStatusCode.Created, noKey.status)

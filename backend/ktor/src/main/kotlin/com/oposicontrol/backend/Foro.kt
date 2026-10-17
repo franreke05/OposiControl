@@ -4,6 +4,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
+import io.ktor.server.request.receive
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -49,6 +50,7 @@ internal class ForoRuntime(
     val resolver: CanonicalIdentityResolver,
     val service: ForoService,
     val limit: suspend (ForoOperation, CanonicalUserId) -> Unit = { _, _ -> },
+    val images: ForoImageService? = null,
 ) {
     companion object {
         fun fromEnvironment(
@@ -61,6 +63,7 @@ internal class ForoRuntime(
             return ForoRuntime(
                 resolver = resolver,
                 service = ForoService(upstream),
+                images = ForoImageService.fromEnvironment(environment),
                 limit = { operation, userId ->
                     if (limiter != null) {
                         val decision = limiter.checkSubject(operation.limit, userId.value)
@@ -74,7 +77,11 @@ internal class ForoRuntime(
 
 @Serializable
 @CanonicalCommand
-internal data class ForoPostRequest(val categoriaId: String, val titulo: String, val cuerpo: String)
+internal data class ForoPostRequest(val categoriaId: String, val titulo: String, val cuerpo: String, val imagenId: String? = null)
+
+@Serializable
+@CanonicalCommand
+internal data class ForoImageInitRequest(val mime: String, val bytes: Int)
 
 @Serializable
 @CanonicalCommand
@@ -121,10 +128,12 @@ internal class ForoService(
 
     suspend fun createPost(user: CanonicalUserId, request: ForoPostRequest, key: String?): JsonElement {
         if (!request.categoriaId.isUuid()) throw validationError(ErrorIssue("categoriaId", CanonicalIssue.INVALID_FORMAT))
+        if (request.imagenId != null && !request.imagenId.isUuid()) throw validationError(ErrorIssue("imagenId", CanonicalIssue.INVALID_FORMAT))
         return rpc(
             "app_foro_create_post",
             buildJsonObject {
                 put("p_usuario", user.value); put("p_categoria", request.categoriaId.lowercase()); put("p_titulo", request.titulo); put("p_cuerpo", request.cuerpo); put("p_clave", key?.let { JsonPrimitive(it) } ?: JsonNull)
+                put("p_imagen", request.imagenId?.takeIf { it.isUuid() }?.lowercase()?.let { JsonPrimitive(it) } ?: JsonNull)
             },
         )
     }
@@ -256,6 +265,35 @@ internal fun Route.foroRoutes(runtime: ForoRuntime?) {
             requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
             call.respond(runtime!!.service.vote(identity.userId, tipo, call.parameters["id"].orEmpty().trim(), false))
         }
+    }
+    // ---- images (D5-30..D5-33): the bytes come here, are verified and RE-ENCODED, and only then stored (private bucket)
+    post("/api/v1/app/oposired/imagenes") {
+        val identity = call.foroGate(runtime, ForoOperation.WRITE)
+        requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+        val images = runtime!!.images ?: throw CanonicalErrorCode.INTERNAL.exception()
+        val request = call.receiveCanonicalCommand<ForoImageInitRequest>()
+        call.respond(HttpStatusCode.Created, images.init(identity.userId, request.mime, request.bytes))
+    }
+    put("/api/v1/app/oposired/imagenes/{id}/contenido") {
+        val identity = call.foroGate(runtime, ForoOperation.WRITE)
+        requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+        val images = runtime!!.images ?: throw CanonicalErrorCode.INTERNAL.exception()
+        val declared = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: throw validationError(ErrorIssue("Content-Length", CanonicalIssue.REQUIRED))
+        if (declared < 1 || declared > ForoImageSanitizer.MAX_BYTES) throw CanonicalErrorCode.IMAGE_REJECTED.exception()
+        val body = call.receive<ByteArray>()
+        call.respond(images.upload(identity.userId, call.parameters["id"].orEmpty().trim(), call.request.headers[HttpHeaders.ContentType], body))
+    }
+    get("/api/v1/app/oposired/imagenes/{id}") {
+        val identity = call.foroGate(runtime, ForoOperation.READ)
+        requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+        val images = runtime!!.images ?: throw CanonicalErrorCode.INTERNAL.exception()
+        call.respond(images.status(identity.userId, call.parameters["id"].orEmpty().trim()))
+    }
+    get("/api/v1/app/oposired/publicaciones/{id}/imagen") {
+        val identity = call.foroGate(runtime, ForoOperation.READ)
+        requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+        val images = runtime!!.images ?: throw CanonicalErrorCode.INTERNAL.exception()
+        call.respond(images.signedUrl(identity.userId, call.parameters["id"].orEmpty().trim()))
     }
     post("/api/v1/app/oposired/reportes") {
         val identity = call.foroGate(runtime, ForoOperation.WRITE)

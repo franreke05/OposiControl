@@ -189,6 +189,7 @@ internal object EconomyRpcErrors {
             "POSTING_RESTRICTED" -> CanonicalErrorCode.POSTING_RESTRICTED.exception()
             "DUPLICATE_POST" -> CanonicalErrorCode.DUPLICATE_POST.exception()
             "CONTENT_REJECTED" -> CanonicalErrorCode.CONTENT_REJECTED.exception()
+            "IMAGE_NOT_USABLE" -> CanonicalErrorCode.IMAGE_REJECTED.exception()
             "FORO_RATE_LIMITED" -> CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = (detail.int("retryAfter") ?: 60).coerceIn(1, 3_600))
             "FORO_REPORT_INVALID" -> CanonicalErrorCode.VALIDATION.exception()
             "CURSOR_INVALID" -> CanonicalErrorCode.INVALID_CURSOR.exception()

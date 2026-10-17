@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { requireStackLock } from './stack-lock.mjs';
 
 requireStackLock('foro-journey.mjs');
@@ -29,6 +30,15 @@ const http = async (user, method, p, body, key) => {
   const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch { /* empty */ }
   return { status: r.status, json, text, headers: r.headers };
 };
+/** A small valid PNG (8 x 8, red) built here with real CRC32 chunks: the server must accept it, re-encode it and serve it back. */
+function tinyPng() {
+  const w = 8, h = 8, raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) { raw[y * (w * 3 + 1)] = 0; for (let x = 0; x < w; x++) { raw[y * (w * 3 + 1) + 1 + x * 3] = 200; raw[y * (w * 3 + 1) + 2 + x * 3] = 30; raw[y * (w * 3 + 1) + 3 + x * 3] = 30; } }
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(Buffer.concat([Buffer.from(type), data])) >>> 0); return Buffer.concat([len, Buffer.from(type), data, crc]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+const rawPut = async (user, p, bytes, type) => { const r = await fetch(APP + p, { method: 'PUT', headers: { Authorization: `Bearer ${tokens[user]}`, 'Content-Type': type }, body: bytes }); const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch { /* empty */ } return { status: r.status, json, text }; };
 const results = [];
 const check = (id, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${detail ? '  ' + detail : ''}`); };
 const KEYS = ['foro_premoderacion_posts', 'foro_posts_hora', 'foro_votos_min'];
@@ -36,6 +46,7 @@ const prev = Object.fromEntries(sql(`select clave || '=' || valor_integer from p
 const clean = () => sql(`delete from public.reportes_contenido where motivo_codigo is not null and reportado_por in ('${Q1}','${Q2}','${Q3}');
 delete from public.publicaciones_oposired where categoria_id in ('${CH_OPEN}', '${CH_ING}');
 delete from public.categorias_oposired where id in ('${CH_OPEN}', '${CH_ING}');
+delete from public.imagenes_oposired where usuario_id in ('${Q1}','${Q2}','${Q3}');
 delete from public.restricciones_foro where usuario_id in ('${Q1}','${Q2}','${Q3}');
 delete from public.moderacion_autor where usuario_id in ('${Q1}','${Q2}','${Q3}');
 delete from public.foro_actividad where usuario_id in ('${Q1}','${Q2}','${Q3}');`);
@@ -82,6 +93,33 @@ insert into public.categorias_oposired (id, nombre, slug, especialidad_id, posic
   check('J22.vote_is_idempotent_and_never_on_own_content', v1.json?.meGusta === 1 && v2.json?.meGusta === 1 && own1.status === 404, `${v1.json?.meGusta} ${v2.json?.meGusta} ${own1.status}`);
   const unvote = await http('Q2', 'DELETE', `${P}/publicaciones/${postId}/voto`);
   check('J22.unvote', unvote.json?.meGusta === 0 && unvote.json?.miVoto === false);
+
+  // ---- images: init -> bytes (verified + re-encoded by the server) -> attach -> signed URL -> retirement
+  const bytes = tinyPng();
+  const init = await http('Q1', 'POST', `${P}/imagenes`, { mime: 'image/png', bytes: bytes.length });
+  const imgId = init.json?.imagenId;
+  check('J22.image_init_returns_an_id_and_never_the_path', init.status === 201 && !!imgId && !/\.png|oposired/.test(init.text), `${init.status} ${init.text.slice(0, 100)}`);
+  const stranger = await http('Q2', 'GET', `${P}/imagenes/${imgId}`);
+  check('J22.another_user_cannot_see_the_upload', stranger.status === 404);
+  const gif = await rawPut('Q1', `${P}/imagenes/${imgId}/contenido`, Buffer.from('GIF89a-this-is-not-a-png'), 'image/png');
+  const init2 = await http('Q1', 'POST', `${P}/imagenes`, { mime: 'image/png', bytes: bytes.length });
+  const up = await rawPut('Q1', `${P}/imagenes/${init2.json?.imagenId}/contenido`, bytes, 'image/png');
+  check('J22.fake_image_is_422_and_a_real_one_is_verified', gif.status === 422 && gif.json?.code === 'IMAGE_REJECTED' && up.status === 200 && up.json?.estado === 'verificada', `${gif.status} ${up.status} ${up.text.slice(0, 80)}`);
+  const reuse = await http('Q1', 'POST', `${P}/publicaciones`, { categoriaId: CH_OPEN, titulo: 'Con imagen rechazada', cuerpo: 'Intento adjuntar una imagen que nunca se verifico.', imagenId: imgId });
+  check('J22.unverified_image_cannot_be_attached', reuse.status === 422 && reuse.json?.code === 'IMAGE_REJECTED', `${reuse.status}`);
+  const withImg = await http('Q1', 'POST', `${P}/publicaciones`, { categoriaId: CH_OPEN, titulo: 'Con imagen', cuerpo: 'Una publicacion con una imagen verificada propia.', imagenId: init2.json.imagenId });
+  check('J22.post_with_a_verified_own_image', withImg.status === 201 && withImg.json?.imagenId === init2.json.imagenId, `${withImg.status}`);
+  const stolen = await http('Q2', 'POST', `${P}/publicaciones`, { categoriaId: CH_OPEN, titulo: 'Imagen ajena', cuerpo: 'Intento usar la imagen de otra persona.', imagenId: init2.json.imagenId });
+  check('J22.someone_elses_or_used_image_is_refused', stolen.status === 422, `${stolen.status}`);
+  const url = await http('Q2', 'GET', `${P}/publicaciones/${withImg.json.id}/imagen`);
+  const fetched = url.json?.url ? await fetch(url.json.url) : null;
+  const body = fetched ? Buffer.from(await fetched.arrayBuffer()) : Buffer.alloc(0);
+  check('J22.signed_url_serves_the_reencoded_png', url.status === 200 && fetched?.status === 200 && body.subarray(0, 4).toString('hex') === '89504e47', `${url.status} ${fetched?.status} ${body.length}B`);
+  const urlOther = await http('Q2', 'GET', `${P}/publicaciones/${postId}/imagen`);
+  check('J22.no_image_url_for_a_post_without_image', urlOther.status === 404);
+  const delImg = await http('Q1', 'DELETE', `${P}/publicaciones/${withImg.json.id}`);
+  const afterDel = await http('Q2', 'GET', `${P}/publicaciones/${withImg.json.id}/imagen`);
+  check('J22.deleting_the_post_retires_the_image', delImg.status === 200 && afterDel.status === 404 && sql(`select estado from public.imagenes_oposired where id = '${init2.json.imagenId}'`) === 'retirada');
 
   const ing = await http('Q2', 'POST', `${P}/publicaciones`, { categoriaId: CH_ING, titulo: 'Fuera de mi especialidad', cuerpo: 'No deberia poder publicar aqui nunca jamas.' });
   const ingFeed = await http('Q2', 'GET', `${P}/publicaciones?categoriaId=${CH_ING}`);

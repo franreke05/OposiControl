@@ -1022,6 +1022,7 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     ORDER_NOT_FOUND(HttpStatusCode.NotFound, "El pedido no existe."),
     POSTING_RESTRICTED(HttpStatusCode.Forbidden, "No puedes publicar ahora."),
     DUPLICATE_POST(HttpStatusCode.Conflict, "Ya has publicado eso hace un momento."),
+    IMAGE_REJECTED(HttpStatusCode.UnprocessableEntity, "La imagen no se puede usar."),
     CONTENT_REJECTED(HttpStatusCode.UnprocessableEntity, "El texto no cumple las normas de publicacion."),
     USERNAME_REQUIRED(HttpStatusCode.UnprocessableEntity, "Necesitas un nombre de usuario para aparecer en el ranking."),
     PLAN_QUOTA_NONE(HttpStatusCode.UnprocessableEntity, "Tu plan no incluye examenes inmersivos o no tienes una suscripcion activa."),

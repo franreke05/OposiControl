@@ -280,6 +280,14 @@ paths:
     $ref: 'foro/foro.yaml#/components/pathItems/ForoCommentVote'
   /api/v1/app/oposired/reportes:
     $ref: 'foro/foro.yaml#/components/pathItems/ForoReport'
+  /api/v1/app/oposired/imagenes:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoImageInit'
+  /api/v1/app/oposired/imagenes/{id}/contenido:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoImageContent'
+  /api/v1/app/oposired/imagenes/{id}:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoImageStatus'
+  /api/v1/app/oposired/publicaciones/{id}/imagen:
+    $ref: 'foro/foro.yaml#/components/pathItems/ForoPostImage'
   /api/v1/admin/estadisticas/recalcular:
     $ref: 'stats/stats.yaml#/components/pathItems/AdminStatsRecompute'
   /api/v1/app/plan/cupo:

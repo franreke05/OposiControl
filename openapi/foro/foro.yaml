@@ -608,6 +608,189 @@ components:
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoImageInit:
+      post:
+        operationId: initForumImage
+        summary: 'Start an image upload for a forum post'
+        tags: [community]
+        x-contract-id: D5-30
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, IMAGE_REJECTED, NOT_FOUND, POSTING_RESTRICTED, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Creates the upload record (server-generated object path, never returned). JPEG or PNG, up to 3 MiB. Needs the same account conditions as posting; at most 5 per hour and 10 unverified at a time. The image is usable only after D5-31 verified it.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForoImagenInitRequest'
+        responses:
+          '201':
+            description: 'Upload record created.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoImagenInit'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoImageContent:
+      put:
+        operationId: uploadForumImage
+        summary: 'Upload the bytes of the image (verified and re-encoded by the server)'
+        tags: [community]
+        x-contract-id: D5-31
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, IMAGE_REJECTED, NOT_FOUND, POSTING_RESTRICTED, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'The body is the raw image; Content-Type must match the declared mime. The server checks the size, the MAGIC BYTES (not the extension), the dimensions from the header BEFORE decoding (pixel cap), rejects animated images, decodes in a separate pool with a time limit, RE-ENCODES it (EXIF, GPS, ICC and thumbnails do not survive) and stores only the re-encoded object in a private bucket. 422 IMAGE_REJECTED on any failure (neutral).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        requestBody:
+          required: true
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        responses:
+          '200':
+            description: 'Verified.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoImagenEstado'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoImageStatus:
+      get:
+        operationId: getForumImageStatus
+        summary: 'State of the caller own upload'
+        tags: [community]
+        x-contract-id: D5-32
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [NOT_FOUND, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'subida | verificada | rechazada | retirada. Never a URL.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'The state.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoImagenEstado'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ForoPostImage:
+      get:
+        operationId: getForumPostImageUrl
+        summary: 'Short-lived signed URL of the image of a readable post'
+        tags: [community]
+        x-contract-id: D5-33
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [NOT_FOUND, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Minted AFTER the same visibility gate as the post (404 otherwise, also when the image was retired); TTL 120 s; capped per user per hour (429); never stored or logged. The client loads it on tap under Ahorro de datos.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'The URL.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ForoImagenUrl'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
   headers:
     NoStore:
       description: 'no-store'
@@ -783,6 +966,9 @@ components:
           type: string
           minLength: 1
           maxLength: 20000
+        imagenId:
+          type: [string, 'null']
+          description: 'A VERIFIED image of the author (D5-31) that no other post uses; otherwise 422 IMAGE_REJECTED.'
     ForoCommentRequest:
       type: object
       additionalProperties: false
@@ -792,6 +978,45 @@ components:
           type: string
           minLength: 1
           maxLength: 5000
+    ForoImagenInitRequest:
+      type: object
+      additionalProperties: false
+      required: [mime, bytes]
+      properties:
+        mime:
+          type: string
+          enum: [image/jpeg, image/png]
+        bytes:
+          type: integer
+          minimum: 1
+          maximum: 3145728
+    ForoImagenInit:
+      type: object
+      required: [imagenId, mime, expiraEn]
+      properties:
+        imagenId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        mime:
+          type: string
+        expiraEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    ForoImagenEstado:
+      type: object
+      required: [estado]
+      properties:
+        estado:
+          type: string
+          enum: [subida, verificada, rechazada, retirada]
+    ForoImagenUrl:
+      type: object
+      required: [url, expiraEn]
+      properties:
+        url:
+          type: string
+        expiraEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        version:
+          type: integer
     ForoReportRequest:
       type: object
       additionalProperties: false
