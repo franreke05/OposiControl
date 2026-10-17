@@ -62,7 +62,7 @@ export const allUsers = [];
 export function mkUser(label, spec = LOC, unverified = false) {
   const id = uuid(); const clean = label.replace(/\W/g, '').slice(0, 10);
   sql(`set session_replication_role = replica;
-insert into auth.users (id, email, aud, role, raw_user_meta_data, created_at, updated_at, confirmed_at) values ('${id}', 'e2x-${run}-${clean}@e2.local', 'authenticated', 'authenticated', '{}'::jsonb, now(), now(), ${unverified ? 'null' : 'now()'});
+insert into auth.users (id, email, aud, role, raw_user_meta_data, created_at, updated_at, email_confirmed_at) values ('${id}', 'e2x-${run}-${clean}@e2.local', 'authenticated', 'authenticated', '{}'::jsonb, now() - interval '3 days', now(), ${unverified ? 'null' : "now() - interval '3 days'"});
 set session_replication_role = origin;
 insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values ('${id}', 'E2X ${clean}', 'e2x_${run}_${clean}', true, 'activa', ${spec ? `'${spec}'` : 'null'}) on conflict (usuario_id) do nothing;`);
   allUsers.push(id);

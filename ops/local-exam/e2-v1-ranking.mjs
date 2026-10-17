@@ -119,6 +119,18 @@ try {
     check('E3.the_stored_first_answers_equal_the_distinct_real_questions_answered', seen === '12', `first answers=${seen}`);
   });
 
+  await scenario(only, 'G_MIN_TIME_C_W4_1', async () => {
+    setMin(1);
+    const ans = async (u, a, q, opt) => { for (let i = 0; i < 4; i++) { const r = await answer(u, a, q, opt); if (r.status !== 429) return r; await sleep(1500); } return answer(u, a, q, opt); };
+    const exF = L.mkExam({ tipo: 'rafaga', acceso: 'gratuito', n: 50, spec: RK }), exG = L.mkExam({ tipo: 'rafaga', acceso: 'gratuito', n: 50, spec: RK });
+    const fast = mkUser('rfast', RK); const af = L.attemptId(await start(fast, exF.id)); for (const q of exF.qs) await ans(fast, af, q.id, q.ok);
+    const gamer = mkUser('rgamer', RK); const ag = L.attemptId(await start(gamer, exG.id)); for (const q of exG.qs.slice(0, 49)) await ans(gamer, ag, q.id, q.ok); await sleep(55000); await call(gamer, 'PUT', '/api/v1/app/intentos/' + ag + '/respuestas/' + exG.qs[49].id, { opcionSeleccionadaId: exG.qs[49].ok, tiempoRespuestaMs: 60000, baseRevision: 0 }, { 'Idempotency-Key': uuid() });
+    job(); const rf = await rank(fast), rg = await rank(gamer);
+    const mf = sql("select coalesce(ventana_tiempo_medio_ms::text, 'null') from public.estado_competitivo_usuario where usuario_id = '" + fast.id + "';"), mg = sql("select coalesce(ventana_tiempo_medio_ms::text, 'null') from public.estado_competitivo_usuario where usuario_id = '" + gamer.id + "';");
+    check('W4a.fifty_answers_given_in_a_few_seconds_do_not_enter_the_ranking_C_W4_1', rf.json?.posicion == null, 'window mean time=' + mf + ' ms (minimum 1000), posicion=' + rf.json?.posicion);
+    finding('W4b.one_long_pause_cannot_lift_a_scripted_window_over_the_average_time_minimum', rg.json?.posicion == null, 'scripted window of 49 instant answers + one 55 s pause: mean time=' + mg + ' ms, posicion=' + rg.json?.posicion + ' (the rule uses the MEAN; use the median or the share of answers faster than the minimum)', 'E2-V1-RK01');
+  });
+
   await scenario(only, 'F_JOBS_AND_GRANTS', async () => {
     const before = Number(sql(`select count(*) from public.lotes_actualizacion_ranking where tipo like 'ranking%';`));
     const par = await Promise.all(Array.from({ length: 4 }, () => Promise.resolve(sqlTry(`select public.app_job_ranking(true)::text;`))));
