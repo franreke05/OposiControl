@@ -38,7 +38,7 @@ const prevPublic = sql(`select ranking_publico from public.perfiles_usuario wher
 const prevEsp = sql(`select especialidad_principal_id from public.perfiles_usuario where usuario_id = '${Q1}'`) || ESP_Q1;
 try {
   // ---- fixtures (idempotent): users R1..R11 and the caller Q1 at Nota 6.5 inside the same tier
-  sql(`insert into public.especialidades (id, codigo, nombre, slug, activa) values ('${ESP}', 'J20', 'J20 ranking', 'j20-ranking', true) on conflict (id) do nothing;
+  sql(`insert into public.especialidades (id, codigo, nombre, slug, activa) values ('${ESP}', 'J20', 'J20 ranking', 'j20-ranking', false) on conflict (id) do nothing;   -- not published: it must never show in the register picker
 set session_replication_role = replica;
 update public.perfiles_usuario set especialidad_principal_id = '${ESP}' where usuario_id = '${Q1}';
 delete from public.ranking_top where usuario_id::text like '4c000000-%' or usuario_id = '${Q1}';

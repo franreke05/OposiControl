@@ -123,6 +123,7 @@ if (process.argv.includes('--real-auth') || process.argv.includes('--stub-auth')
 if (process.argv.includes('--clean-test-exams')) {
   // deletes (or hides, when still referenced) ONLY exams a harness marked; --legacy-harness-prefixes first marks the enumerated pre-marker harness prefixes (explicit one-off opt-in)
   psql(fs.readFileSync(path.join(here, 'sql/88_harness_exams_local.sql'), 'utf8'));
+  console.log('test specialties hidden: ' + psql('select public.local_hide_test_specialties()'));
   console.log('clean-test-exams (deleted|hidden): ' + psql(`select borrados || '|' || ocultados from public.local_clean_harness_exams(${process.argv.includes('--legacy-harness-prefixes')})`));
   process.exit(0);
 }
@@ -134,6 +135,7 @@ if (process.argv.includes('--restore-fixtures')) {
 psql(fs.readFileSync(path.join(here, 'sql/98c_v1_qa_fixtures.sql'), 'utf8'));   // QA data: renewal dates, Q8 cancelled-but-paid, tagged stats + a ranking cohort
   mintTokens();
   psql(fs.readFileSync(path.join(here, 'sql/88_harness_exams_local.sql'), 'utf8'));
+  console.log('test specialties hidden: ' + psql('select public.local_hide_test_specialties()'));
   console.log('harness exams (deleted|hidden): ' + psql("select borrados || '|' || ocultados from public.local_clean_harness_exams(false)"));
   const rows = psql("select u.email || ' ' || c.saldo_tickets || ' ' || (select count(*) from public.contenido_desbloqueado_usuario g where g.usuario_id = u.id) from auth.users u join public.carteras_usuario c on c.usuario_id = u.id where u.email in ('q1@exam.local','q2@exam.local','q2z@exam.local','q3@exam.local','q4@exam.local') order by u.email");
   console.log('fixtures restored (email balance entitlements):' + String.fromCharCode(10) + rows);
