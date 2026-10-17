@@ -2403,6 +2403,16 @@ begin
   assert (select nota = 0.00 and penalizacion_descuento = 3.00 from public.intentos_examen where id = a), 'PD = 1 - 3 < 0 -> floor 0';
   -- the constraint: the rational penalty and a fixed fraction never mix
   perform pg_temp.expect_e(format($q$update public.examenes set penalizacion_num = 1, penalizacion_den = 3 where id = %L$q$, pg_temp.ex(15)), 'new row for relation "examenes" violates check constraint "examenes_penalizacion_chk"');
+  -- FA36b: changing the grading rules is audited (who, old/new); other columns and no-op updates are not
+  perform set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000f1', true);
+  delete from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas';
+  update public.examenes set titulo = 'Racional 15b' where id = pg_temp.ex(15);
+  update public.examenes set penalizacion_racional = true where id = pg_temp.ex(15);
+  assert (select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas') = 0, 'a title change or a no-op rule update writes no audit';
+  update public.examenes set penalizacion_racional = false, penalizacion_num = 1, penalizacion_den = 3 where id = pg_temp.ex(15);
+  assert (select count(*) = 1 and bool_and(usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and tabla_afectada = 'examenes' and registro_id = pg_temp.ex(15)
+            and (antes ->> 'penalizacion_racional')::boolean is true and (despues ->> 'penalizacion_racional')::boolean is false and (despues ->> 'penalizacion_num')::int = 1 and (despues ->> 'penalizacion_den')::int = 3)
+            from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas'), 'a rule change writes ONE audit row with the actor and old/new values';
   raise notice 'OK V1 rational penalty';
 end $$;
 rollback;

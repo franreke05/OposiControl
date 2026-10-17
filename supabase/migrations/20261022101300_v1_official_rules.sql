@@ -510,6 +510,8 @@
 --                                              where ep.pregunta_id = p.id and ec.comunidad_id = p_com)))
 -- $$;
 --
+-- drop trigger if exists trg_examenes_audit_grading_rules on public.examenes;
+-- drop function if exists private.tg_examenes_audit_grading_rules();
 -- drop trigger if exists trg_examenes_official_rules on public.examenes;
 -- drop trigger if exists trg_preguntas_examen_official_rules on public.preguntas_examen;
 -- drop trigger if exists trg_preguntas_examen_demo_rules on public.preguntas_examen;
@@ -543,7 +545,7 @@
 --   from (values ('private.official_nota(integer,integer,integer,integer,integer)'), ('private.official_nota_racional(integer,bigint,integer)'), ('private.official_rules_problem(uuid)'), ('private.intento_pregunta_anulada(uuid,uuid,uuid)')) f(n)
 -- union all
 -- select 'official_triggers_missing',
---        (3 - (select count(*) from pg_trigger t where t.tgname in ('trg_examenes_official_rules', 'trg_preguntas_examen_official_rules', 'trg_preguntas_examen_demo_rules') and not t.tgisinternal))::bigint;
+--        (4 - (select count(*) from pg_trigger t where t.tgname in ('trg_examenes_official_rules', 'trg_examenes_audit_grading_rules', 'trg_preguntas_examen_official_rules', 'trg_preguntas_examen_demo_rules') and not t.tgisinternal))::bigint;
 -- VERIFY-END
 
 begin;
@@ -789,6 +791,28 @@ create constraint trigger trg_preguntas_examen_official_rules after insert or up
 drop trigger if exists trg_examenes_official_rules on public.examenes;
 create constraint trigger trg_examenes_official_rules after update of publicado_en, regla_anuladas, penalizacion_num, penalizacion_den, penalizacion_racional on public.examenes
   deferrable initially deferred for each row execute function private.tg_official_rules_check();
+
+-- FA36b (E2-V1-FINAL9): changing the grading rules of an exam is audited in public.auditoria_log (append-only by use: the trigger only INSERTs), same row shape as the other audited commands
+-- (accion, tabla_afectada = 'examenes', registro_id = exam, antes/despues jsonb, usuario_id = the acting admin = auth.uid(), null for a service-role call). Fires only when a grading-rule column really changes.
+create or replace function private.tg_examenes_audit_grading_rules()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  insert into public.auditoria_log (usuario_id, accion, tabla_afectada, registro_id, antes, despues)
+  values ((select auth.uid()), 'examen_reglas_puntuacion_modificadas', 'examenes', new.id,
+          jsonb_build_object('regla_anuladas', old.regla_anuladas, 'penalizacion_num', old.penalizacion_num, 'penalizacion_den', old.penalizacion_den, 'penalizacion_racional', old.penalizacion_racional),
+          jsonb_build_object('regla_anuladas', new.regla_anuladas, 'penalizacion_num', new.penalizacion_num, 'penalizacion_den', new.penalizacion_den, 'penalizacion_racional', new.penalizacion_racional));
+  return new;
+end $$;
+revoke all on function private.tg_examenes_audit_grading_rules() from public, anon, authenticated;
+drop trigger if exists trg_examenes_audit_grading_rules on public.examenes;
+create trigger trg_examenes_audit_grading_rules after update of regla_anuladas, penalizacion_num, penalizacion_den, penalizacion_racional on public.examenes
+  for each row when (old.regla_anuladas is distinct from new.regla_anuladas or old.penalizacion_num is distinct from new.penalizacion_num
+                     or old.penalizacion_den is distinct from new.penalizacion_den or old.penalizacion_racional is distinct from new.penalizacion_racional)
+  execute function private.tg_examenes_audit_grading_rules();
 
 -- ---- 4. the attempt: freeze with roles (C-O1), answer, finish, reveal; the challenge pool never takes a reserve
 create or replace function private.app_congelar_preguntas_intento(p_intento_id uuid, p_examen_id uuid, p_solo_demo boolean)
