@@ -58,6 +58,18 @@ update public.configuracion_v1 set valor_integer = 6 where clave = 'cohorte_mini
 update public.lotes_actualizacion_ranking set iniciado_en = now() - interval '1 day' where tipo = 'ranking';
 delete from public.lotes_actualizacion_ranking where tipo = 'ranking_admin';`);
 
+  // ---- E2-V1-RK01: 7 instant answers + ONE long pause: the stored MEDIAN of the window stays instant (a mean would pass the minimum)
+  sql(`insert into auth.users (id, email, aud, role, created_at, updated_at) values ('${R(12)}', 'rk-j20-12@exam.local', 'authenticated', 'authenticated', now(), now()) on conflict do nothing;
+delete from public.primeras_respuestas_usuario where usuario_id = '${R(12)}';
+delete from public.estado_competitivo_usuario where usuario_id = '${R(12)}';`);
+  const qs = sql(`select id from public.preguntas order by id limit 8`).split(String.fromCharCode(10));
+  for (let i = 0; i < 7; i++) sql(`select private.app_apply_first_answer_stats('${R(12)}', '${qs[i]}', true, 50, null)`);
+  sql(`select private.app_apply_first_answer_stats('${R(12)}', '${qs[7]}', true, 60000, null)`);
+  const med = sql(`select ventana_tiempo_mediano_ms from public.estado_competitivo_usuario where usuario_id = '${R(12)}'`);
+  const mean = sql(`select round(avg(tiempo_ms)) from (select tiempo_ms from public.primeras_respuestas_usuario where usuario_id = '${R(12)}' order by seq desc limit 5) w`);
+  check('J20.rk01_one_long_pause_does_not_lift_the_window_median', Number(med) === 50 && Number(mean) > 1000, `median ${med} ms, mean would be ${mean} ms`);
+  sql(`delete from public.primeras_respuestas_usuario where usuario_id = '${R(12)}'; delete from public.estado_competitivo_usuario where usuario_id = '${R(12)}'; delete from auth.users where id = '${R(12)}';`);
+
   // ---- before the job: league known, nothing ranked
   const before = await app('Q1', 'GET', '/api/v1/app/ranking');
   check('J20.before_the_job_the_user_has_a_league_but_no_position', before.status === 200 && before.json?.liga?.codigo === 'liga-50' && before.json?.posicion === undefined && before.json?.top3?.length === 0

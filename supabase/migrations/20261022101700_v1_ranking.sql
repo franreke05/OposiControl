@@ -103,7 +103,8 @@ insert into public.configuracion_v1 (clave, valor_integer) values ('ranking_job_
 revoke select on table public.lotes_actualizacion_ranking from anon, authenticated;
 
 -- Control alert: users with a FULL window answered faster than the minimum (not ranked); server only
-create or replace view public.ranking_ventanas_rapidas with (security_invoker = true) as
+drop view if exists public.ranking_ventanas_rapidas;
+create view public.ranking_ventanas_rapidas with (security_invoker = true) as
   select ec.usuario_id, ec.liga_nivel_id, ec.ventana_calculo, ec.ventana_tiempo_mediano_ms, ec.actualizado_en
     from public.estado_competitivo_usuario ec
    where ec.preguntas_validas_ranking >= coalesce(ec.ventana_calculo, 1) and ec.ventana_tiempo_mediano_ms is not null

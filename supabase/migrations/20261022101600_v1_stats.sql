@@ -312,6 +312,8 @@ insert into public.configuracion_v1 (clave, valor_integer) values
 on conflict (clave) do nothing;
 
 -- C-W4-1 / E2-V1-RK01: the MEDIAN first-answer time of the window (a mean is bypassed with one long pause; half of the window must be slower than the minimum) (the ranking eligibility reads it; the hook keeps it current)
+drop view if exists public.ranking_ventanas_rapidas;   -- (stacks converged before E2-V1-RK01 hold the old mean column and a view on it)
+alter table public.estado_competitivo_usuario drop column if exists ventana_tiempo_medio_ms;
 alter table public.estado_competitivo_usuario add column if not exists ventana_tiempo_mediano_ms integer;
 
 -- ---- 2. the ledger of first answers: the exactly-once guard of the stats hook (C-S1) and the window source of the Nota media
