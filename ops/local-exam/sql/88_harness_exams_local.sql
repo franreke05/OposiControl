@@ -37,3 +37,15 @@ begin
   delete from public.local_harness_exams m where not exists (select 1 from public.examenes e where e.id = m.examen_id);
   return query select v_del, v_hid;
 end $$;
+
+-- F5 (E5-V1-QA-INT09): test specialties created by harnesses (E2 challenge / foro / final8..., J20) must not be served by the public picker: only the baseline ones stay published.
+create or replace function public.local_hide_test_specialties()
+returns integer
+language plpgsql
+as $$
+declare v_n integer;
+begin
+  update public.especialidades set activa = false where activa and codigo not in ('LOC', 'ING');
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;

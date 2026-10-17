@@ -74,6 +74,8 @@ internal data class AppExamDetail(
     val precio: ExamPrice? = null,
     /** V1: hasta cuando vale el derecho (decidido por el servidor) cuando `accessState` es GRANTED con caducidad; `null` si no hay derecho o no caduca. */
     val accesoValidoHasta: String? = null,
+    /** FA36: la penalizacion por fallo del examen (`null` = no penaliza). Cada intento la congela al empezar. */
+    val penalizacion: Penalizacion? = null,
 )
 
 @Serializable
@@ -376,6 +378,7 @@ internal class CatalogService(
                 ultimoIntentoFinalizadoId = attempts.lastFinishedId,
                 precio = row.purchasePrice(),
                 accesoValidoHasta = info.validUntil?.toString(),
+                penalizacion = row.penaltyRule(),
             ),
         )
     }
@@ -522,6 +525,12 @@ internal class CatalogService(
     }
 
     /** Precio en OT y dias de acceso, solo si el examen es de pago, comprable y la base tiene AMBOS valores; si no, `null` (nada se inventa). */
+    private fun CatalogExamRow.penaltyRule(): Penalizacion? = when {
+        penalizacionRacional -> Penalizacion(tipo = "RACIONAL")
+        penalizacionNum > 0 -> Penalizacion(penalizacionNum, penalizacionDen.coerceAtLeast(1))
+        else -> null
+    }
+
     private fun CatalogExamRow.purchasePrice(): ExamPrice? =
         if (tipoAcceso == "premium" && comprableConTickets && (precioTickets ?: 0) > 0 && (diasAccesoCompra ?: 0) > 0) ExamPrice(precioTickets!!, diasAccesoCompra!!) else null
 

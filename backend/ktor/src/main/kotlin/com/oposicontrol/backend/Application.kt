@@ -527,7 +527,7 @@ fun Application.module() {
     if (serverProfile != ServerProfile.CONTROL) {
         TransportEconomyUpstream.fromEnvironment()?.let { upstream ->
             val images = ForoImageService.fromEnvironment()
-            val job = DailyChallengeJob.start(this, upstream, DailyChallengeJob.intervalFrom(), { message -> log.warn(message) }) { images?.sweep() }
+            val job = DailyChallengeJob.start(this, upstream, DailyChallengeJob.intervalFrom(), { message -> log.warn(message) }) { var rounds = 0; do { val purged = images?.sweep(50) ?: 0; rounds++ } while (purged >= 50 && rounds < 4) }
             monitor.subscribe(ApplicationStopped) { job?.cancel() }
         }
     }

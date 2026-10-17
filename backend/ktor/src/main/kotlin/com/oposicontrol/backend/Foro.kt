@@ -151,7 +151,8 @@ internal class ForoService(
         rpc("app_foro_vote", buildJsonObject { put("p_usuario", user.value); put("p_tipo", tipo); put("p_id", requireId(id)); put("p_on", on) })
 
     suspend fun report(user: CanonicalUserId, request: ForoReportRequest): JsonElement {
-        noNul(request.descripcion ?: "")
+        noNul(request.descripcion ?: "", request.motivo, request.entidadTipo, request.entidadId)
+        if (request.motivo !in setOf("spam", "ofensivo", "incorrecto", "otro")) throw validationError(ErrorIssue("motivo", CanonicalIssue.INVALID_FORMAT))
         if (request.entidadTipo != "publicacion" && request.entidadTipo != "comentario") throw validationError(ErrorIssue("entidadTipo", CanonicalIssue.INVALID_FORMAT))
         return rpc(
             "app_foro_report",

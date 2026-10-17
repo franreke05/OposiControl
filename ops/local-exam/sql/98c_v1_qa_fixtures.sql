@@ -50,5 +50,32 @@ begin
       case when q <= 30 then (q % 5) <> 0 else (q % 4) = 0 end, 4000 + (q % 5) * 500, null);
   end loop;
 end $$;
+-- F4 (E5-V1-QA-INT09): a FINISHED attempt of Q7 on a free exam made of these 60 questions, so the review screen has answered questions whose difficulty chip (D3-22) is served. The first answers already exist
+-- (guard rows above), so the attempt adds no statistic; it only gives the review its data. LOC-QA-STATS is a free local exam ("QA estadisticas").
+set session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas)
+values ('e3000000-0000-4000-8000-0000000000f1', 'LOC-QA-STATS', 'e5000000-0000-4000-8000-000000000001', 'c1000000-0000-4000-8000-000000000001', 'QA estadisticas (datos de prueba)', 'rafaga', 'gratuito', true, now() - interval '30 days', 60)
+on conflict (id) do nothing;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+select ('fd000000-0000-4000-8000-' || lpad((q * 10 + o)::text, 12, '0'))::uuid, ('fc000000-0000-4000-8000-' || lpad(q::text, 12, '0'))::uuid, chr(64 + o), case when o = 1 then 'Opcion correcta' else 'Opcion incorrecta' end, o
+  from generate_series(1, 60) q, generate_series(1, 2) o on conflict (id) do nothing;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento)
+select ('fc000000-0000-4000-8000-' || lpad(q::text, 12, '0'))::uuid, ('fd000000-0000-4000-8000-' || lpad((q * 10 + 1)::text, 12, '0'))::uuid, 'Explicacion de prueba.' from generate_series(1, 60) q on conflict (pregunta_id) do nothing;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen)
+select 'e3000000-0000-4000-8000-0000000000f1', ('fc000000-0000-4000-8000-' || lpad(q::text, 12, '0'))::uuid, q, q from generate_series(1, 60) q
+ where not exists (select 1 from public.preguntas_examen x where x.examen_id = 'e3000000-0000-4000-8000-0000000000f1');
+set session_replication_role = origin;
+do $$
+declare r jsonb; a uuid; q integer;
+begin
+  if exists (select 1 from public.intentos_examen where usuario_id = '3b000000-0000-4000-8000-00000000003b' and examen_id = 'e3000000-0000-4000-8000-0000000000f1' and estado = 'finalizado') then return; end if;
+  r := public.app_start_exam_attempt('3b000000-0000-4000-8000-00000000003b', 'e3000000-0000-4000-8000-0000000000f1');
+  a := (r ->> 'intento_id')::uuid;
+  for q in 1..60 loop
+    perform public.app_record_attempt_answer('3b000000-0000-4000-8000-00000000003b', a, ('fc000000-0000-4000-8000-' || lpad(q::text, 12, '0'))::uuid,
+      ('fd000000-0000-4000-8000-' || lpad((q * 10 + case when (case when q <= 30 then (q % 5) <> 0 else (q % 4) = 0 end) then 1 else 2 end)::text, 12, '0'))::uuid, 0, 0, null);
+  end loop;
+  perform public.app_finish_exam_attempt('3b000000-0000-4000-8000-00000000003b', a);
+end $$;
 select public.app_job_dificultad(true) is not null;
 select public.app_job_ranking(true) is not null;

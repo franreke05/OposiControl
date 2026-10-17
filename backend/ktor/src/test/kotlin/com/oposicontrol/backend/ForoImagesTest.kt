@@ -212,6 +212,23 @@ class ForoImagesTest {
     }
 
     @Test
+    fun oneBadObjectNeverBlocksTheQueueAndAMissingOneCountsAsPurged() {
+        val failing = object : ForoImageStorage {
+            val deleted = CopyOnWriteArrayList<String>()
+            override fun put(path: String, bytes: ByteArray, contentType: String) = Unit
+            override fun delete(path: String): Boolean { if (path == "u/bad.png") error("storage down"); deleted += path; return path != "u/missing.png" }   // false = it was not there
+            override fun signedUrl(path: String, expiresInSeconds: Int) = ""
+        }
+        upstream.handler = { fn, _ -> if (fn == "app_foro_images_to_purge") SupabaseRawResponse(200, """[{"id":"$img","path":"u/bad.png"},{"id":"$post","path":"u/missing.png"},{"id":"7c7c7c7c-7c7c-4c7c-8c7c-7c7c7c7c7c7c","path":"u/ok.png"}]""") else SupabaseRawResponse(200, "1") }
+        val n = runBlocking { ForoImageService(upstream, failing).sweep() }
+        assertEquals(2, n, "the missing object and the good one are purged; the bad one does not stop the loop")
+        val purged = upstream.rpcs.first { it.first == "app_foro_images_purged" }.second
+        val failed = upstream.rpcs.first { it.first == "app_foro_images_purge_failed" }.second
+        assertTrue(!purged.contains(img) && purged.contains(post), purged)
+        assertTrue(failed.contains(img) && !failed.contains(post), failed)
+    }
+
+    @Test
     fun theSweeperDeletesObjectsAndConfirms() {
         upstream.handler = { fn, _ -> if (fn == "app_foro_images_to_purge") SupabaseRawResponse(200, """[{"id":"$img","path":"u/a.png"},{"id":"$post","path":"u/b.png"}]""") else SupabaseRawResponse(200, "2") }
         val n = runBlocking { ForoImageService(upstream, storage).sweep() }

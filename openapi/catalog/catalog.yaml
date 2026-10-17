@@ -2104,6 +2104,20 @@ components:
           description: 'FA19 (2026-10-14, PERF01): the most recent FINISHED attempt of the caller on this exam (result D2-12 / review D2-65), so a cover never pages D2-13. One bounded read on (usuario_id, examen_id); null when there is none.'
         precio:
           $ref: '#/components/schemas/ExamPrice'
+        penalizacion:
+          type: object
+          required: [tipo]
+          description: 'FA36: the penalty per wrong answer this exam applies (each attempt freezes it when it starts). Absent = no penalty. tipo FIJA = numerador/denominador per wrong answer; tipo RACIONAL = each wrong answer subtracts 1/(n-1) of a correct one (n = options of that question). Show it on the cover ("penaliza") before the user starts.'
+          properties:
+            tipo:
+              type: string
+              enum: [FIJA, RACIONAL]
+            numerador:
+              type: integer
+              minimum: 1
+            denominador:
+              type: integer
+              minimum: 1
         accesoValidoHasta:
           type: [string, 'null']
           format: date-time

@@ -184,10 +184,11 @@ class CatalogRoutesTest {
         comunidad: String? = "MAD",
         demo: Boolean = false,
         anio: Int? = 2024,
+        penalty: String = "",
     ): String =
         """{"id":"$id","codigo_examen":"EX-${id.takeLast(3)}","titulo":"$titulo","descripcion":"desc","tipo_examen":"$tipo","tipo_acceso":"$acceso",""" +
             """"especialidad_id":"$especialidad","total_preguntas":10,"duracion_minutos":60,"anio":${anio ?: "null"},""" +
-            """"portada_storage_path":${cover?.let { "\"$it\"" } ?: "null"},"publicado_en":"$publicado","demo_disponible":$demo,""" +
+            """"portada_storage_path":${cover?.let { "\"$it\"" } ?: "null"},"publicado_en":"$publicado","demo_disponible":$demo,$penalty""" +
             """"comunidades_autonomas":${comunidad?.let { """{"codigo":"$it"}""" } ?: "null"}}"""
 
     private fun premiumRow(end: String? = "2099-01-01T00:00:00+00:00", estado: String = "activa", flag: Boolean = true) =
@@ -551,6 +552,21 @@ class CatalogRoutesTest {
         val before = upstream.sent.size
         assertEquals(HttpStatusCode.OK, client.get("/api/v1/public/especialidades").status)
         assertEquals(before, upstream.sent.size, "segunda lectura servida por la cache de proceso")
+    }
+
+    @Test
+    fun theCoverExposesThePenaltyRuleOfTheExam() = testApplication {
+        application { catalogModule() }
+        suspend fun penalty(row: String): JsonObject? {
+            upstream.examById = { "[$row]" }
+            val body = client.getAs("/api/v1/app/examenes/$e1").bodyAsText()
+            assertConforms("D2-02", body)
+            return JsonObjectOf(body)["examen"]!!.jsonObject["penalizacion"] as? JsonObject
+        }
+        assertNull(penalty(exam(e1)), "no penalty: the field does not travel")
+        assertEquals("RACIONAL", penalty(exam(e1, penalty = """"penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":true,"""))!!["tipo"]!!.jsonPrimitive.content)
+        val fixed = penalty(exam(e1, penalty = """"penalizacion_num":1,"penalizacion_den":3,"penalizacion_racional":false,"""))!!
+        assertEquals("FIJA", fixed["tipo"]!!.jsonPrimitive.content); assertEquals("1", fixed["numerador"]!!.jsonPrimitive.content); assertEquals("3", fixed["denominador"]!!.jsonPrimitive.content)
     }
 
     @Test

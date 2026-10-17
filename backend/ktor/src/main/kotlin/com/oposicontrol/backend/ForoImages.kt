@@ -177,6 +177,7 @@ internal class ForoImageService(
     private val inFlight = ConcurrentHashMap.newKeySet<String>()   // 1 trabajo de imagen a la vez por usuario
 
     suspend fun init(user: CanonicalUserId, mime: String, bytes: Int): JsonElement {
+        if (mime != "image/jpeg" && mime != "image/png") throw CanonicalErrorCode.IMAGE_REJECTED.exception()   // also keeps a NUL or any odd text out of the database
         val r = rpc("app_foro_image_init", buildJsonObject { put("p_usuario", user.value); put("p_mime", mime); put("p_bytes", bytes) }).jsonObject
         return buildJsonObject {
             put("imagenId", r["imagenId"] ?: JsonNull)
@@ -234,12 +235,15 @@ internal class ForoImageService(
     suspend fun sweep(limit: Int = 50): Int {
         val pending = rpc("app_foro_images_to_purge", buildJsonObject { put("p_limite", limit) }).jsonArray
         val done = mutableListOf<String>()
+        val failed = mutableListOf<String>()
         for (item in pending) {
             val o = item as? JsonObject ?: continue
             val id = o["id"]?.jsonPrimitive?.contentOrNull ?: continue
             val path = o["path"]?.jsonPrimitive?.contentOrNull ?: continue
-            runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { storage.delete(path) } }.onSuccess { done += id }
+            // a missing object (already deleted) is a success (storage.delete returns false, it does not throw); only a real failure counts an attempt
+            runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { storage.delete(path) } }.onSuccess { done += id }.onFailure { failed += id }
         }
+        if (failed.isNotEmpty()) rpc("app_foro_images_purge_failed", buildJsonObject { put("p_ids", buildJsonArray { failed.forEach { add(JsonPrimitive(it)) } }) })
         if (done.isNotEmpty()) rpc("app_foro_images_purged", buildJsonObject { put("p_ids", buildJsonArray { done.forEach { add(JsonPrimitive(it)) } }) })
         return done.size
     }

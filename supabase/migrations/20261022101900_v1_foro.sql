@@ -12,6 +12,7 @@
 -- drop trigger if exists trg_comentarios_oposired_contadores on public.comentarios_oposired;
 -- drop function if exists private.tg_foro_reacciones_contadores();
 -- drop function if exists private.tg_foro_comentarios_contadores();
+-- drop function if exists public.app_foro_images_purge_failed(uuid[]);
 -- drop function if exists public.app_foro_images_purged(uuid[]);
 -- drop function if exists public.app_foro_images_to_purge(integer);
 -- drop function if exists public.app_foro_image_path(uuid, uuid);
@@ -101,7 +102,7 @@
 --        (case when has_function_privilege('anon', f.n, 'execute') or has_function_privilege('authenticated', f.n, 'execute') or not has_function_privilege('service_role', f.n, 'execute') then 1 else 0 end)::bigint
 --   from (values ('public.app_foro_categorias(uuid)'), ('public.app_foro_list(uuid,uuid,text,text,integer)'), ('public.app_foro_post(uuid,uuid)'), ('public.app_foro_comments(uuid,uuid,text,integer)'),
 --                ('public.app_foro_create_post(uuid,uuid,text,text,text,uuid)'), ('public.app_foro_image_init(uuid,text,integer)'), ('public.app_foro_image_commit(uuid,uuid,text,integer,integer,integer)'), ('public.app_foro_image_reject(uuid,uuid,text)'),
---                ('public.app_foro_image_status(uuid,uuid)'), ('public.app_foro_image_path(uuid,uuid)'), ('public.app_foro_images_to_purge(integer)'), ('public.app_foro_images_purged(uuid[])'), ('public.app_foro_create_comment(uuid,uuid,text,text)'), ('public.app_foro_delete_own(uuid,text,uuid)'), ('public.app_foro_vote(uuid,text,uuid,boolean)'),
+--                ('public.app_foro_image_status(uuid,uuid)'), ('public.app_foro_image_path(uuid,uuid)'), ('public.app_foro_images_to_purge(integer)'), ('public.app_foro_images_purged(uuid[])'), ('public.app_foro_images_purge_failed(uuid[])'), ('public.app_foro_create_comment(uuid,uuid,text,text)'), ('public.app_foro_delete_own(uuid,text,uuid)'), ('public.app_foro_vote(uuid,text,uuid,boolean)'),
 --                ('public.app_foro_report(uuid,text,uuid,text,text)'), ('public.admin_foro_moderate(uuid,text,uuid,text,integer,text)'), ('public.foro_tombstone_user(uuid)'), ('public.app_job_foro()'), ('public.foro_reconcile()')) f(n);
 -- VERIFY-END
 
@@ -196,9 +197,11 @@ create table if not exists public.imagenes_oposired (
   verificada_en timestamptz,
   retirada_en timestamptz,
   purgada_en timestamptz,
+  intentos_purga integer not null default 0,
   motivo text
 );
 create index if not exists ix_imagenes_oposired_usuario on public.imagenes_oposired (usuario_id, estado, creado_en desc);
+alter table public.imagenes_oposired add column if not exists intentos_purga integer not null default 0;
 create index if not exists ix_imagenes_oposired_barrido on public.imagenes_oposired (estado, creado_en) where estado in ('subida', 'verificada', 'retirada') and purgada_en is null;
 alter table public.publicaciones_oposired add column if not exists imagen_id uuid references public.imagenes_oposired(id) on delete set null;
 create unique index if not exists ux_publicaciones_oposired_imagen on public.publicaciones_oposired (imagen_id) where imagen_id is not null;
@@ -1004,10 +1007,23 @@ security definer
 set search_path = ''
 as $$
   select coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'path', x.path)), '[]'::jsonb)
-    from (select i.id, i.path from public.imagenes_oposired i where i.estado in ('retirada', 'rechazada') and i.purgada_en is null order by i.retirada_en nulls first limit least(greatest(coalesce(p_limite, 50), 1), 200)) x
+    from (select i.id, i.path from public.imagenes_oposired i where i.estado in ('retirada', 'rechazada') and i.purgada_en is null and i.intentos_purga < 10
+           order by i.intentos_purga, i.retirada_en nulls first limit least(greatest(coalesce(p_limite, 50), 1), 200)) x   -- fewest failures first, and a row that failed 10 times leaves the queue: one bad row never blocks the head
 $$;
 revoke all on function public.app_foro_images_to_purge(integer) from public, anon, authenticated;
 grant execute on function public.app_foro_images_to_purge(integer) to service_role;
+
+create or replace function public.app_foro_images_purge_failed(p_ids uuid[])
+returns integer
+language sql
+volatile
+security definer
+set search_path = ''
+as $$
+  with u as (update public.imagenes_oposired set intentos_purga = intentos_purga + 1 where id = any (p_ids) and purgada_en is null returning 1) select count(*)::integer from u
+$$;
+revoke all on function public.app_foro_images_purge_failed(uuid[]) from public, anon, authenticated;
+grant execute on function public.app_foro_images_purge_failed(uuid[]) to service_role;
 
 create or replace function public.app_foro_images_purged(p_ids uuid[])
 returns integer

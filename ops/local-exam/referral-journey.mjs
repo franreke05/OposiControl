@@ -28,6 +28,7 @@ const saldo = async (u) => (await get(u, '/api/v1/app/wallet')).json?.saldo;
 
 try {
   sql(`delete from public.invitaciones where invitado_id = '${Q4}' or invitador_id = '${Q1}';
+delete from public.invitacion_intentos where usuario_id = '${Q4}';   -- the per-account attach limit would otherwise block repeated runs
 update public.configuracion_v1 set valor_integer = 0 where clave in ('referido_activo');
 update public.configuracion_v1 set valor_integer = 7 where clave in ('referido_ot_invitador', 'referido_ot_invitado');
 update public.configuracion_v1 set valor_integer = 1 where clave = 'referido_min_respuestas';
@@ -66,7 +67,7 @@ update public.intentos_examen set estado = 'finalizado', finalizado_en = now() w
   const badQ = [await get('Q1', '/api/v1/app/me/invitaciones?limit=abc'), await get('Q1', '/api/v1/app/me/invitaciones?usuarioId=x'), await get('Q1', '/api/v1/app/me/invitaciones?cursor=no%20valido')];
   check('J21.strict_query', badQ.every((r) => r.status === 400), badQ.map((r) => r.status).join(','));
   check('J21.unauthenticated_is_401', (await fetch(APP + '/api/v1/app/me/invitacion', { headers: { Authorization: 'Bearer bad' } })).status === 401);
-  check('J21.ledger_rows_are_keyed_per_beneficiary', sql(`select count(*) from public.transacciones_cartera where tipo = 'referido' and idempotency_key like 'referido:%' and referencia_tipo = 'invitacion' and usuario_id in ('${Q1}', '${Q4}')`) >= '2');
+  check('J21.ledger_rows_are_keyed_per_beneficiary', Number(sql(`select count(*) from public.transacciones_cartera where tipo = 'referido' and idempotency_key like 'referido:%' and referencia_tipo = 'invitacion' and usuario_id in ('${Q1}', '${Q4}')`)) >= 2);   // (a string comparison made '10' >= '2' false once the ledger grew)
 } finally {
   sql(Object.entries(prev).map(([k, v]) => `update public.configuracion_v1 set valor_integer = ${v} where clave = '${k}';`).join('\n') + `\ndelete from public.invitaciones where invitado_id = '${Q4}';`);
 }

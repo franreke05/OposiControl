@@ -80,6 +80,9 @@ internal data class AttemptRow(
     @SerialName("regla_anuladas") val reglaAnuladas: String? = null,
     @SerialName("penalizacion_num") val penalizacionNum: Int? = null,
     @SerialName("penalizacion_den") val penalizacionDen: Int? = null,
+    /** FA36: penalizacion racional congelada al empezar (`null` = intento anterior). */
+    @SerialName("penalizacion_racional") val penalizacionRacional: Boolean? = null,
+    @SerialName("penalizacion_descuento") val penalizacionDescuento: Double? = null,
     /** FA31: la calcula la base al finalizar (una sola implementacion); `null` = intento anterior o sin evaluables. */
     val nota: Double? = null,
     @SerialName("total_evaluables") val totalEvaluables: Int? = null,
@@ -517,7 +520,7 @@ internal class AttemptGateway(
         internal const val ATTEMPT_COLUMNS =
             "id,examen_id,estado,motivo_fin,iniciado_en,finalizado_en,duracion_segundos,total_preguntas,total_respondidas," +
                 "total_correctas,total_falladas,total_sin_responder,tipo_examen_snapshot,especialidad_snapshot_id,ultima_pregunta_posicion,es_demo," +
-                "regla_anuladas,penalizacion_num,penalizacion_den,nota,total_evaluables,total_anuladas,reservas_usadas,anuladas_sin_reserva"
+                "regla_anuladas,penalizacion_num,penalizacion_den,penalizacion_racional,penalizacion_descuento,nota,total_evaluables,total_anuladas,reservas_usadas,anuladas_sin_reserva"
 
         /** Contenido de pregunta que ve el opositor DURANTE el intento. Sin soluciones (SEC-004). */
         internal const val QUESTION_COLUMNS = "codigo_pregunta,tipo_pregunta,titulo,opciones_pregunta(id,letra,texto_opcion,posicion)"

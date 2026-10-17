@@ -153,6 +153,8 @@ class ForoRoutesTest {
         }
         assertEquals(HttpStatusCode.UnprocessableEntity, client.sendJson("/api/v1/app/oposired/publicaciones/$id/comentarios", """{"cuerpo":"x y"}""").status)
         assertEquals(HttpStatusCode.UnprocessableEntity, client.sendJson("/api/v1/app/oposired/reportes", """{"entidadTipo":"publicacion","entidadId":"$id","motivo":"spam","descripcion":"a b"}""").status)
+        assertEquals(HttpStatusCode.UnprocessableEntity, client.sendJson("/api/v1/app/oposired/reportes", """{"entidadTipo":"publicacion","entidadId":"$id","motivo":"sp\u0000am"}""").status)
+        assertEquals(HttpStatusCode.BadRequest, client.sendJson("/api/v1/app/oposired/reportes", """{"entidadTipo":"publicacion","entidadId":"$id","motivo":"otra cosa"}""").status)
         assertTrue(upstream.rpcs.isEmpty(), "a NUL never reaches the database")
     }
 

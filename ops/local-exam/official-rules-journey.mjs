@@ -44,20 +44,22 @@ const spec = [
   { n: 1, annulled: [2], reserves: 3, num: 0, den: 1 },
   { n: 2, annulled: [2, 5], reserves: 3, num: 1, den: 3 },
   { n: 3, annulled: [], reserves: 3, num: 0, den: 1 },
+  { n: 4, annulled: [], reserves: 0, num: 0, den: 1, rac: true }, // FA36: rational penalty, 4 options per question
 ];
 let fixtures = `set session_replication_role = replica;
 delete from public.intentos_examen where usuario_id = '${Q1}' and examen_id::text like 'ea000000-%';
 `;
 for (const s of spec) {
-  fixtures += `insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, penalizacion_num, penalizacion_den)
-  select '${ex(s.n)}', 'OFF-${s.n}', '${ESP}', (select id from public.comunidades_autonomas order by id limit 1), 'Oficial OFF-${s.n}', 'rafaga', 'gratuito', true, now() - interval '1 day', ${s.num}, ${s.den}
-  on conflict (id) do update set penalizacion_num = excluded.penalizacion_num, penalizacion_den = excluded.penalizacion_den, publicado_en = excluded.publicado_en, activo = true;
+  fixtures += `insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, penalizacion_num, penalizacion_den, penalizacion_racional)
+  select '${ex(s.n)}', 'OFF-${s.n}', '${ESP}', (select id from public.comunidades_autonomas order by id limit 1), 'Oficial OFF-${s.n}', 'rafaga', 'gratuito', true, now() - interval '1 day', ${s.num}, ${s.den}, ${s.rac === true}
+  on conflict (id) do update set penalizacion_num = excluded.penalizacion_num, penalizacion_den = excluded.penalizacion_den, penalizacion_racional = excluded.penalizacion_racional, publicado_en = excluded.publicado_en, activo = true;
 delete from public.preguntas_examen where examen_id = '${ex(s.n)}';
 `;
   for (let p = 1; p <= 6 + s.reserves; p++) {
     const anul = s.annulled.includes(p);
     fixtures += `insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values ('${qid(s.n, p)}', 'OFF-${s.n}-${p}', 'rafaga', 'Pregunta oficial ${s.n}-${p}', true) on conflict (id) do nothing;
 insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion) values ('${oid(s.n, p, 1)}', '${qid(s.n, p)}', 'A', 'Correcta', 1), ('${oid(s.n, p, 2)}', '${qid(s.n, p)}', 'B', 'Otra', 2) on conflict (id) do nothing;
+${s.rac ? `insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion) values ('${oid(s.n, p, 3)}', '${qid(s.n, p)}', 'C', 'Tercera', 3), ('${oid(s.n, p, 4)}', '${qid(s.n, p)}', 'D', 'Cuarta', 4) on conflict (id) do nothing;` : ''}
 insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento) values ('${qid(s.n, p)}', '${oid(s.n, p, 1)}', 'x') on conflict (pregunta_id) do nothing;
 insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, anulada, motivo_anulacion, es_reserva, orden_reserva)
   values ('${ex(s.n)}', '${qid(s.n, p)}', ${p}, ${p}, ${anul}, ${anul ? "'tribunal'" : 'null'}, ${p > 6}, ${p > 6 ? p - 6 : 'null'});
@@ -137,6 +139,28 @@ try {
 check('J18.more_annulled_than_reserves_is_refused', refused.includes('OFFICIAL_RULES_INVALID'), refused.slice(0, 80));
 const warn = JSON.parse(sql(`select public.admin_official_rules_check('${ex(1)}')`));
 check('J18.control_check_returns_rule_and_no_block', warn.problema === null && warn.regla === 'REEMPLAZO_POR_RESERVA', JSON.stringify(warn));
+
+// ---- OFF-4 (FA36): rational penalty, 4 options: each wrong answer subtracts 1/3 of a correct one; rule frozen at start
+const cover = (await http('GET', `/api/v1/app/examenes/${ex(4)}`)).json;
+check('J18.cover_exposes_the_rational_penalty', cover?.examen?.penalizacion?.tipo === 'RACIONAL' || cover?.penalizacion?.tipo === 'RACIONAL', JSON.stringify(cover?.examen?.penalizacion ?? cover?.penalizacion));
+const r4 = await start(4);
+for (const p of [1, 2, 3]) await answer(r4.id, 4, p, true);
+for (const p of [4, 5]) await answer(r4.id, 4, p, false);
+// the exam parameter changes AFTER the start: the grade due must not move
+sql(`update public.examenes set penalizacion_racional = false where id = '${ex(4)}';`);
+const f4 = (await http('POST', `/api/v1/app/intentos/${r4.id}/finalizar`)).json?.resumen;
+// c=3, wrong 2 (4 options -> 1/3 each), position 6 unanswered (never penalised): PD = 3 - 2/3 = 7/3 over 6 -> 3.89, descuento 0.67
+check('J18.rational_penalty_grade_is_frozen_and_computed_by_the_database', f4?.nota === 3.89 && f4?.evaluables === 6 && f4?.falladas === 2 && f4?.sinResponder === 1
+  && f4?.penalizacion?.tipo === 'RACIONAL' && f4?.penalizacion?.descuento === 0.67, JSON.stringify(f4));
+const res4 = (await http('GET', `/api/v1/app/intentos/${r4.id}/resultado`)).json;
+check('J18.stored_result_keeps_the_frozen_rule_after_the_exam_changed', res4?.resumen?.nota === 3.89 && res4?.resumen?.penalizacion?.tipo === 'RACIONAL', JSON.stringify(res4?.resumen?.penalizacion));
+const cover2 = (await http('GET', `/api/v1/app/examenes/${ex(4)}`)).json;
+check('J18.cover_follows_the_exam_not_the_old_attempt', (cover2?.examen?.penalizacion ?? cover2?.penalizacion) == null, JSON.stringify(cover2?.examen?.penalizacion ?? cover2?.penalizacion));
+const r4b = await start(4);
+for (const p of [1, 2, 3]) await answer(r4b.id, 4, p, true);
+for (const p of [4, 5]) await answer(r4b.id, 4, p, false);
+const f4b = (await http('POST', `/api/v1/app/intentos/${r4b.id}/finalizar`)).json?.resumen;
+check('J18.a_new_attempt_after_the_change_has_no_penalty', f4b?.nota === 5 && f4b?.penalizacion === undefined, JSON.stringify(f4b));
 
 const failed = results.filter((r) => !r).length;
 console.log(`\nJ18: ${results.length - failed}/${results.length} checks passed`);

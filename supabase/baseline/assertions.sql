@@ -2330,6 +2330,81 @@ begin
   assert not exists (select 1 from private.reto_pool('e1000000-0000-0000-0000-0000000000f1', null, 'rafaga') p where p in (pg_temp.q(1, 7), pg_temp.q(1, 8), pg_temp.q(2, 7))), 'a reserve is not in the challenge pool';
   raise notice 'OK V1 official rules';
 end $$;
+
+-- ---- FA36 (owner 2026-10-17): RATIONAL penalty PD = A - E/(n-1), n = options of each wrong question, frozen at start
+create function pg_temp.mkq(n int, p int, opts int, anul boolean default false, res int default null) returns void language plpgsql as $f$
+begin
+  insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values (pg_temp.q(n, p), 'OR-' || n || '-' || p, 'rafaga', 'Pregunta ' || n || '-' || p, true);
+  insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+    select ('0a000000-0000-0000-' || lpad(n::text, 4, '0') || '-' || lpad((p * 10 + o)::text, 12, '0'))::uuid, pg_temp.q(n, p), chr(64 + o), 'Opcion', o from generate_series(1, opts) o;
+  insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento) values (pg_temp.q(n, p), ('0a000000-0000-0000-' || lpad(n::text, 4, '0') || '-' || lpad((p * 10 + 1)::text, 12, '0'))::uuid, 'x');
+  insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, anulada, motivo_anulacion, es_reserva, orden_reserva)
+    values (pg_temp.ex(n), pg_temp.q(n, p), p, p, anul, case when anul then 'tribunal' end, res is not null, res);
+end $f$;
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, regla_anuladas, penalizacion_racional) values
+  (pg_temp.ex(12), 'OR-12', 'e1000000-0000-0000-0000-0000000000f1', 'c1000000-0000-0000-0000-0000000000f1', 'Racional 12', 'rafaga', 'gratuito', true, now() - interval '1 day', 'NO_PUNTUA', true),
+  (pg_temp.ex(13), 'OR-13', 'e1000000-0000-0000-0000-0000000000f1', 'c1000000-0000-0000-0000-0000000000f1', 'Racional 13', 'rafaga', 'gratuito', true, now() - interval '1 day', 'REEMPLAZO_POR_RESERVA', true),
+  (pg_temp.ex(15), 'OR-15', 'e1000000-0000-0000-0000-0000000000f1', 'c1000000-0000-0000-0000-0000000000f1', 'Racional 15', 'rafaga', 'gratuito', true, now() - interval '1 day', 'NO_PUNTUA', true);
+select pg_temp.mkq(12, 1, 2), pg_temp.mkq(12, 2, 3), pg_temp.mkq(12, 3, 4), pg_temp.mkq(12, 4, 4), pg_temp.mkq(12, 5, 3), pg_temp.mkq(12, 6, 4);
+select pg_temp.mkq(13, 1, 4), pg_temp.mkq(13, 2, 4, true), pg_temp.mkq(13, 3, 4), pg_temp.mkq(13, 4, 4), pg_temp.mkq(13, 5, 3, false, 1), pg_temp.mkq(13, 6, 3, false, 2);
+select pg_temp.mkq(15, 1, 2), pg_temp.mkq(15, 2, 2), pg_temp.mkq(15, 3, 2), pg_temp.mkq(15, 4, 2);
+set local session_replication_role = origin;
+
+do $$
+declare
+  ua constant uuid := 'a0000000-0000-0000-0000-0000000000f1';
+  r jsonb; a uuid; b uuid;
+begin
+  assert (select md5(string_agg(coalesce(private.official_nota_racional(c, pen, e)::text, 'null'), ',' order by c, e, pen))
+            from generate_series(0, 10) c, generate_series(1, 12) e, (values (0), (6930), (9240), (13860), (20790), (27720), (41580), (55440), (83160), (138600)) p(pen)
+           where c <= e) = 'edc00d6f3b7fe469e9484dc94cdf189b', 'the rational matrix equals the Kotlin matrix (AttemptRoutesTest)';
+  assert private.official_nota_racional(2, 30030, 6) = 1.53 and private.official_nota_racional(2, 23100, 4) = 2.92 and private.official_nota_racional(1, 83160, 4) = 0.00 and private.official_nota_racional(3, 0, 0) is null,
+         'worked examples (4 options: three wrong cancel one right), floor 0, no evaluables = null';
+  assert private.official_nota_racional(2, 0, 6) = private.official_nota(2, 4, 6, 0, 1), 'without wrong answers it is the plain formula';
+
+  -- ---- no annulment: wrong answers on questions with 3, 4 and 5 options; one unanswered (never penalised)
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(12));
+  a := (r ->> 'intento_id')::uuid;
+  assert (select penalizacion_racional is true from public.intentos_examen where id = a), 'the rule is frozen into the attempt at start';
+  perform pg_temp.ans(ua, a, pg_temp.q(12, 1), true); perform pg_temp.ans(ua, a, pg_temp.q(12, 2), false); perform pg_temp.ans(ua, a, pg_temp.q(12, 3), true);
+  perform pg_temp.ans(ua, a, pg_temp.q(12, 4), false); perform pg_temp.ans(ua, a, pg_temp.q(12, 5), false);
+  -- the exam and the question change AFTER the start: the grade already due must not move
+  update public.examenes set penalizacion_racional = false where id = pg_temp.ex(12);
+  insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+    select ('0b000000-0000-0000-0000-' || lpad(o::text, 12, '0'))::uuid, pg_temp.q(12, 2), chr(67 + o), 'Extra', 3 + o from generate_series(1, 1) o;
+  perform public.app_finish_exam_attempt(ua, a);
+  -- c=2 (q1,q3) wrong: q2 (3 opts: 1/2), q4 (4: 1/3), q5 (3: 1/2); q6 unanswered: PD = 2 - 4/3 = 2/3 over 6 evaluables (MAIN allows 2..4 options: letters A-D)
+  assert (select nota = 1.11 and penalizacion_descuento = 1.33 and total_correctas = 2 and total_falladas = 3 and total_sin_responder = 1 and total_evaluables = 6 from public.intentos_examen where id = a),
+         'rational grade 1.11 (frozen options and flag, later edits ignored)';
+  -- a NEW attempt after the exam parameter changed uses the NEW parameter (off): plain 2/6
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(12));
+  b := (r ->> 'intento_id')::uuid;
+  assert (select penalizacion_racional is false from public.intentos_examen where id = b), 'a new attempt freezes the new value';
+  perform pg_temp.ans(ua, b, pg_temp.q(12, 1), true); perform pg_temp.ans(ua, b, pg_temp.q(12, 2), true); perform pg_temp.ans(ua, b, pg_temp.q(12, 3), false);
+  perform public.app_finish_exam_attempt(ua, b);
+  assert (select nota = 3.33 and penalizacion_descuento is null from public.intentos_examen where id = b), 'penalty off = plain formula';
+
+  -- ---- annulled + reserve: the activated reserve is evaluable and penalised with ITS OWN option count (3), the annulled one is neither
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(13));
+  a := (r ->> 'intento_id')::uuid;
+  assert (select penalizacion_racional is true and reservas_usadas = 1 and total_anuladas = 1 from public.intentos_examen where id = a), 'frozen: rational + 1 reserve activated';
+  assert pg_temp.ans(ua, a, pg_temp.q(13, 2), false) ->> 'estado' = 'ANNULLED', 'the annulled question stores nothing';
+  perform pg_temp.ans(ua, a, pg_temp.q(13, 1), true); perform pg_temp.ans(ua, a, pg_temp.q(13, 3), false); perform pg_temp.ans(ua, a, pg_temp.q(13, 4), true); perform pg_temp.ans(ua, a, pg_temp.q(13, 5), false);
+  perform public.app_finish_exam_attempt(ua, a);
+  -- evaluables 4 (3 mains + reserve 1), c=2, wrong q3 (4 opts: 1/3) and the reserve (3 opts: 1/2): PD = 2 - 5/6 = 7/6 over 4
+  assert (select nota = 2.92 and total_evaluables = 4 and total_correctas = 2 and total_falladas = 2 and penalizacion_descuento = 0.83 from public.intentos_examen where id = a), 'annulled + reserve: 2.92';
+
+  -- ---- the grade never goes below 0
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(15));
+  a := (r ->> 'intento_id')::uuid;
+  perform pg_temp.ans(ua, a, pg_temp.q(15, 1), true); perform pg_temp.ans(ua, a, pg_temp.q(15, 2), false); perform pg_temp.ans(ua, a, pg_temp.q(15, 3), false); perform pg_temp.ans(ua, a, pg_temp.q(15, 4), false);
+  perform public.app_finish_exam_attempt(ua, a);
+  assert (select nota = 0.00 and penalizacion_descuento = 3.00 from public.intentos_examen where id = a), 'PD = 1 - 3 < 0 -> floor 0';
+  -- the constraint: the rational penalty and a fixed fraction never mix
+  perform pg_temp.expect_e(format($q$update public.examenes set penalizacion_num = 1, penalizacion_den = 3 where id = %L$q$, pg_temp.ex(15)), 'new row for relation "examenes" violates check constraint "examenes_penalizacion_chk"');
+  raise notice 'OK V1 rational penalty';
+end $$;
 rollback;
 
 -- 20261022101500: configuracion_v1 bounds + audit (E2-V1-P02); a `premium` gift can never be quota (E2-V1-A01).

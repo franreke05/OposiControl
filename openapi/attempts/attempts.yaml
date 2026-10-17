@@ -870,15 +870,21 @@ components:
               description: 'FA31: the rule in force frozen when the attempt started (derived when the exam sets none: reserves -> REEMPLAZO_POR_RESERVA, no reserves -> NO_PUNTUA). Absent on attempts that predate FA31.'
             penalizacion:
               type: object
-              required: [numerador, denominador]
-              description: 'FA31: penalty per wrong answer as an exact fraction frozen at start (1/3 typical of official exams). Absent when the attempt predates FA31 or the penalty is 0.'
+              required: [tipo]
+              description: 'FA31/FA36: the penalty rule FROZEN when the attempt started (a later change of the exam never alters a grade already given). tipo FIJA = numerador/denominador per wrong answer (1/3 typical). tipo RACIONAL (FA36, owner 2026-10-17) = each wrong answer subtracts 1/(n-1) of a correct one, n = the number of options of THAT question (4 options: three wrong cancel one right; 3 options: two wrong cancel one right): PD = A - E/(n-1) over the evaluable questions (annulled excluded, activated reserves included), then the usual 0-10 scale, never below 0; unanswered and skipped are never penalised; a question with fewer than 2 options carries no penalty. descuento = points deducted by the wrong answers (informative). Absent when the attempt predates FA31, is a demo, or does not penalise.'
               properties:
+                tipo:
+                  type: string
+                  enum: [FIJA, RACIONAL]
                 numerador:
                   type: integer
                   minimum: 1
                 denominador:
                   type: integer
                   minimum: 1
+                descuento:
+                  type: number
+                  minimum: 0
             calificacion:
               type: string
             duracionSegundos:

@@ -1083,6 +1083,45 @@ class AttemptRoutesTest {
         for (c in 0..14) for (e in 1..14) if (c <= e) assertEquals(AttemptService.gradeOf(c, e).toPlainString(), OfficialScoring.nota(c, e - c, e, 0, 1)!!.toPlainString())
     }
 
+    @Test
+    fun theResultExposesTheFrozenRationalPenaltyRule() = testApplication {
+        application { attemptModule() }
+        finishedFixture()
+        upstream.attemptRow = ruledAttemptRow("finalizado", "1.11", regla = "NO_PUNTUA", num = 0, den = 1).dropLast(1) + ""","penalizacion_racional":true,"penalizacion_descuento":1.33}"""
+        upstream.resultQuestions = "[]"
+        val body = client.call(HttpMethod.Get, "$base/resultado").bodyAsText()
+        assertConforms("D2-12", "200", body)
+        val pen = obj(body)["resumen"]!!.jsonObject["penalizacion"]!!.jsonObject
+        assertEquals("RACIONAL", pen["tipo"]!!.jsonPrimitive.content)
+        assertEquals(1.33, pen["descuento"]!!.jsonPrimitive.content.toDouble())
+        assertTrue(pen["numerador"] == null && pen["denominador"] == null, "the rational rule has no fixed fraction")
+        assertEquals("1.11", obj(body)["resumen"]!!.jsonObject["nota"]!!.jsonPrimitive.content, "the grade is the database one")
+        // a fixed fraction keeps its tipo FIJA
+        upstream.attemptRow = ruledAttemptRow("finalizado", "6.11")
+        val fixed = obj(client.call(HttpMethod.Get, "$base/resultado").bodyAsText())["resumen"]!!.jsonObject["penalizacion"]!!.jsonObject
+        assertEquals("FIJA", fixed["tipo"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun theRationalPenaltyTwinMatchesTheDatabaseMatrixAndTheWorkedExamples() {
+        // The SAME matrix and md5 as supabase/baseline/assertions.sql (private.official_nota_racional); weights per option count are the owner example (4 options: 3 wrong cancel 1 right).
+        val out = ArrayList<String>()
+        for (c in 0..10) for (e in 1..12) for (pen in listOf(0L, 6930L, 9240L, 13860L, 20790L, 27720L, 41580L, 55440L, 83160L, 138600L)) {
+            if (c > e) continue
+            out += OfficialScoring.notaRacional(c, pen, e)!!.toPlainString()
+        }
+        val md5 = java.security.MessageDigest.getInstance("MD5").digest(out.joinToString(",").toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        assertEquals("edc00d6f3b7fe469e9484dc94cdf189b", md5)
+        assertEquals(listOf(0, 0, 27720, 13860, 9240, 6930), (0..5).map { OfficialScoring.pesoFallo(it) }, "n < 2: no penalty; n = 2..5: 1, 1/2, 1/3, 1/4")
+        assertEquals(2310, OfficialScoring.pesoFallo(13)); assertEquals(2310, OfficialScoring.pesoFallo(40), "more than 13 options are treated as 13")
+        assertEquals("1.53", OfficialScoring.notaRacional(2, listOf(3, 4, 5), 6)!!.toPlainString(), "2 right, wrong with 3/4/5 options: 2 - (1/2+1/3+1/4) = 11/12 over 6")
+        assertEquals("2.92", OfficialScoring.notaRacional(2, listOf(4, 3), 4)!!.toPlainString())
+        assertEquals("0.00", OfficialScoring.notaRacional(1, listOf(2, 2, 2), 4)!!.toPlainString(), "the grade never goes below 0")
+        assertEquals("3.33", OfficialScoring.notaRacional(2, emptyList(), 6)!!.toPlainString(), "no wrong answers = the plain formula (unanswered are never penalised)")
+        assertEquals("3.33", OfficialScoring.notaRacional(2, listOf(1), 6)!!.toPlainString(), "a wrong answer on a question with fewer than 2 options carries no penalty")
+        assertEquals(null, OfficialScoring.notaRacional(0, emptyList(), 0))
+    }
+
     // =================================================================== D2-11
 
     @Test
