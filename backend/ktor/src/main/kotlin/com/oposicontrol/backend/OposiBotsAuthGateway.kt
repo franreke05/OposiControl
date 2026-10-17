@@ -125,6 +125,7 @@ internal class SupabaseOposiBotsAuthGateway(
         // the first is an existence oracle (a new signup answers 202), so a 429 is logged and answered like a new signup. (The stub never throttles.)
         if (response.status == HttpStatusCode.TooManyRequests) {
             GatewayLogger.warn("auth signup throttled by upstream (indistinguishable 202 returned)")
+            logStrategicEvent(StrategicEvent.AUTH_SIGNUP_THROTTLED, requestId = context.requestId, operation = "register", result = "202_without_mail")
             return OposiBotsRegisterResponse()
         }
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = false, purpose = AuthPurpose.REGISTER)

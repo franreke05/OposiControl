@@ -96,7 +96,7 @@ create table if not exists public.ranking_top (
 alter table public.ranking_top enable row level security;
 revoke all on table public.ranking_top from public, anon, authenticated, service_role;
 
--- C-W4-1: a window answered faster than this average (ms per first answer) is not ranked (a scripted account that already knows the answers cannot fill a window quickly); 0 = off
+-- C-W4-1: a window whose MEDIAN first-answer time is below this value (ms) (E2-V1-RK01: the median, not the mean, so one pause cannot hide 49 instant answers) is not ranked (a scripted account that already knows the answers cannot fill a window quickly); 0 = off
 insert into public.configuracion_v1 (clave, valor_integer) values ('ranking_job_minutos', 15), ('ranking_min_ms_respuesta', 1000) on conflict (clave) do nothing;
 
 -- defence in depth (E2 FINAL6 INFO): the job batches are server data; no client role reads the table directly
@@ -104,10 +104,10 @@ revoke select on table public.lotes_actualizacion_ranking from anon, authenticat
 
 -- Control alert: users with a FULL window answered faster than the minimum (not ranked); server only
 create or replace view public.ranking_ventanas_rapidas with (security_invoker = true) as
-  select ec.usuario_id, ec.liga_nivel_id, ec.ventana_calculo, ec.ventana_tiempo_medio_ms, ec.actualizado_en
+  select ec.usuario_id, ec.liga_nivel_id, ec.ventana_calculo, ec.ventana_tiempo_mediano_ms, ec.actualizado_en
     from public.estado_competitivo_usuario ec
-   where ec.preguntas_validas_ranking >= coalesce(ec.ventana_calculo, 1) and ec.ventana_tiempo_medio_ms is not null
-     and ec.ventana_tiempo_medio_ms < private.config_int('ranking_min_ms_respuesta', 1000);
+   where ec.preguntas_validas_ranking >= coalesce(ec.ventana_calculo, 1) and ec.ventana_tiempo_mediano_ms is not null
+     and ec.ventana_tiempo_mediano_ms < private.config_int('ranking_min_ms_respuesta', 1000);
 revoke all on public.ranking_ventanas_rapidas from public, anon, authenticated;
 
 -- ---- 2. cohort bucket (never the exact size)
@@ -164,7 +164,7 @@ begin
         from public.estado_competitivo_usuario ec join public.perfiles_usuario pf on pf.usuario_id = ec.usuario_id
        where pf.especialidad_principal_id = any (v_esp) and ec.liga_nivel_id is not null and ec.nota_media_actual is not null
          and ec.preguntas_validas_ranking >= coalesce(ec.ventana_calculo, 1)  -- only FULL windows are comparable (a 1-question 10.0 must not top a league)
-         and (v_min_ms = 0 or ec.ventana_tiempo_medio_ms is null or ec.ventana_tiempo_medio_ms >= v_min_ms)  -- C-W4-1: not a window filled in seconds
+         and (v_min_ms = 0 or ec.ventana_tiempo_mediano_ms is null or ec.ventana_tiempo_mediano_ms >= v_min_ms)  -- C-W4-1: not a window filled in seconds
     ), pos as (
       select b.*, row_number() over (partition by b.esp, b.liga order by b.nota desc, b.v desc, b.usuario_id) as p, count(*) over (partition by b.esp, b.liga) as n from base b
     ), prob as (

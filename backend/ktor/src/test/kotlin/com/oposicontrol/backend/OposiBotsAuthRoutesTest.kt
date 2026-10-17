@@ -561,6 +561,33 @@ class OposiBotsAuthRoutesTest {
     }
 
     @Test
+    fun legacyRegisterProfileIsIdenticalWhateverTheInvitationCodeIs() = testApplication {
+        val attached = java.util.concurrent.CopyOnWriteArrayList<String?>()
+        val canonical = CanonicalTestEnv().apply {
+            upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) }
+            referral = ReferralAttach { _, code -> attached += code; if (code == "BOOM0001") error("the referral store is down") }
+        }
+        application { authTestModule(FakeGateway(), canonical = canonical) }
+        suspend fun save(extra: String) = client.post("/v1/auth/register/profile") {
+            header(HttpHeaders.Authorization, "Bearer $TEST_LONG_TOKEN")
+            contentType(ContentType.Application.Json)
+            setBody("""{"firstName":"Ada","lastName":"Lovelace","username":"ada_l","specialty":"Sanidad"$extra}""")
+        }
+        val none = save("")
+        val valid = save(""","codigoInvitacion":"ABCDEFGH"""")
+        val unknown = save(""","codigoInvitacion":"ZZZZZZZZ"""")
+        val own = save(""","codigoInvitacion":"OWNCODE2"""")
+        val failing = save(""","codigoInvitacion":"BOOM0001"""")
+        val garbage = save(""","codigoInvitacion":"x y z <script>"""")
+        for ((name, r) in listOf("none" to none, "valid" to valid, "unknown" to unknown, "own" to own, "failing" to failing, "garbage" to garbage)) {
+            assertEquals(HttpStatusCode.NoContent, r.status, name)
+            assertEquals("", r.bodyAsText(), name)
+        }
+        assertEquals(listOf(null, "ABCDEFGH", "ZZZZZZZZ", "OWNCODE2", "BOOM0001", "x y z <script>"), attached.toList(), "the code reaches the bridge as sent; the bridge decides, the route never differs")
+        assertEquals(6, canonical.upstream.rpcNames().count { it == "app_completar_onboarding" }, "onboarding ran every time")
+    }
+
+    @Test
     fun legacyRegisterProfileAcceptsTheCanonicalSpecialtyIdAndTheIdWinsOverTheName() = testApplication {
         val canonical = CanonicalTestEnv().apply { upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) } }
         application { authTestModule(FakeGateway(), canonical = canonical) }

@@ -2487,6 +2487,14 @@ begin
      and not has_table_privilege('authenticated', 'public.estadisticas_globales_pregunta', 'select') and not has_table_privilege('anon', 'public.estadisticas_globales_pregunta', 'select'), 'tables closed to clients';
   assert not has_function_privilege('authenticated', 'public.app_stats_summary(uuid)', 'execute') and not has_function_privilege('anon', 'public.app_job_dificultad(boolean)', 'execute')
      and not has_function_privilege('authenticated', 'public.admin_recompute_stats(uuid,text)', 'execute') and has_function_privilege('service_role', 'public.app_stats_weaknesses(uuid,uuid,integer)', 'execute'), 'functions service-only';
+  -- E2-V1-RK01: 7 instant answers and ONE long pause: the MEAN would pass a 1000 ms minimum (7 x 50 + 60000) / 8; the stored MEDIAN stays instant
+  insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-0000000000c9', 'st-c9@test.local', 'authenticated', 'authenticated');
+  for i in 1..7 loop
+    perform private.app_apply_first_answer_stats('a0000000-0000-0000-0000-0000000000c9', pg_temp.q(i), true, 50, null);
+  end loop;
+  perform private.app_apply_first_answer_stats('a0000000-0000-0000-0000-0000000000c9', pg_temp.q(8), true, 60000, null);
+  assert (select ventana_tiempo_mediano_ms from public.estado_competitivo_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000c9') = 50
+     and (select avg(tiempo_ms) from (select tiempo_ms from public.primeras_respuestas_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000c9' order by seq desc limit 5) w) > 1000, 'the window median stays at the instant level although the mean would pass the minimum';
   -- E2 conditions: kill switch (C-W3-1) skips ONLY the statistics, the answer is stored; time clamp (C-W3-2); counters come from the job (C-W3-4/7); paged job with a seq watermark (C-W3-5/6)
   update public.configuracion_v1 set valor_integer = 0 where clave = 'stats_activo';
   b := ((public.app_start_exam_attempt(ub, ex)) ->> 'intento_id')::uuid;
@@ -2555,11 +2563,11 @@ begin
   assert r -> 'probabilidadPlaza' ->> 'motivo' = 'ventana_incompleta', 'incomplete window';
   -- C-W4-1: a window answered too fast is not ranked and is listed for Control
   update public.configuracion_v1 set valor_integer = 1000 where clave = 'ranking_min_ms_respuesta';
-  update public.estado_competitivo_usuario set ventana_tiempo_medio_ms = 100 where usuario_id = pg_temp.u(5);
+  update public.estado_competitivo_usuario set ventana_tiempo_mediano_ms = 100 where usuario_id = pg_temp.u(5);
   perform public.app_job_ranking(true);
   assert (select ranking_liga_posicion from public.estado_competitivo_usuario where usuario_id = pg_temp.u(5)) is null and exists (select 1 from public.ranking_ventanas_rapidas where usuario_id = pg_temp.u(5)), 'fast window: not ranked, listed';
   assert not has_table_privilege('authenticated', 'public.ranking_ventanas_rapidas', 'select') and not has_table_privilege('authenticated', 'public.lotes_actualizacion_ranking', 'select') and not has_table_privilege('anon', 'public.lotes_actualizacion_ranking', 'select'), 'views and batches closed to clients';
-  update public.estado_competitivo_usuario set ventana_tiempo_medio_ms = null where usuario_id = pg_temp.u(5);
+  update public.estado_competitivo_usuario set ventana_tiempo_mediano_ms = null where usuario_id = pg_temp.u(5);
   perform public.app_job_ranking(true);
   -- below the minimum cohort: only the own position
   update public.configuracion_v1 set valor_integer = 7 where clave = 'cohorte_minima_comparativa';
@@ -2939,6 +2947,12 @@ begin
   assert jsonb_array_length(public.app_foro_images_to_purge(10)) >= 1, 'the retired object is queued for the sweeper';
   assert public.app_foro_images_purged(array[(r ->> 'imagenId')::uuid]) = 1, 'purge confirmed';
   assert not exists (select 1 from jsonb_array_elements(public.app_foro_images_to_purge(10)) e where (e ->> 'id')::uuid = (r ->> 'imagenId')::uuid), 'the sweeper queue empties after the purge';
+  -- E2-V1-F06: a moderator HIDE retires the image as well
+  r := public.app_foro_image_init(pg_temp.u(1), 'image/png', 2000);
+  perform public.app_foro_image_commit(pg_temp.u(1), (r ->> 'imagenId')::uuid, repeat('b', 64), 50, 50, 900);
+  p3 := (public.app_foro_create_post(pg_temp.u(1), pg_temp.cat(1), 'Para ocultar', 'Mensaje con imagen que un moderador va a ocultar.', 'ki9', (r ->> 'imagenId')::uuid) ->> 'id')::uuid;
+  perform public.admin_foro_moderate(pg_temp.u(1), 'publicacion', p3, 'ocultar', null, 'prueba');
+  assert (select estado from public.imagenes_oposired where id = (r ->> 'imagenId')::uuid) = 'retirada', 'hide retires the image';
   -- reject and orphans
   r := public.app_foro_image_init(pg_temp.u(1), 'image/jpeg', 1000);
   perform public.app_foro_image_reject(pg_temp.u(1), (r ->> 'imagenId')::uuid, 'no valida');

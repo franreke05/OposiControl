@@ -127,6 +127,7 @@ internal class ForoService(
     }
 
     suspend fun createPost(user: CanonicalUserId, request: ForoPostRequest, key: String?): JsonElement {
+        noNul(request.titulo, request.cuerpo)
         if (!request.categoriaId.isUuid()) throw validationError(ErrorIssue("categoriaId", CanonicalIssue.INVALID_FORMAT))
         if (request.imagenId != null && !request.imagenId.isUuid()) throw validationError(ErrorIssue("imagenId", CanonicalIssue.INVALID_FORMAT))
         return rpc(
@@ -138,8 +139,10 @@ internal class ForoService(
         )
     }
 
-    suspend fun createComment(user: CanonicalUserId, id: String, request: ForoCommentRequest, key: String?): JsonElement =
-        rpc("app_foro_create_comment", buildJsonObject { put("p_usuario", user.value); put("p_post", requireId(id)); put("p_cuerpo", request.cuerpo); put("p_clave", key?.let { JsonPrimitive(it) } ?: JsonNull) })
+    suspend fun createComment(user: CanonicalUserId, id: String, request: ForoCommentRequest, key: String?): JsonElement {
+        noNul(request.cuerpo)
+        return rpc("app_foro_create_comment", buildJsonObject { put("p_usuario", user.value); put("p_post", requireId(id)); put("p_cuerpo", request.cuerpo); put("p_clave", key?.let { JsonPrimitive(it) } ?: JsonNull) })
+    }
 
     suspend fun deleteOwn(user: CanonicalUserId, tipo: String, id: String): JsonElement =
         rpc("app_foro_delete_own", buildJsonObject { put("p_usuario", user.value); put("p_tipo", tipo); put("p_id", requireId(id)) })
@@ -148,6 +151,7 @@ internal class ForoService(
         rpc("app_foro_vote", buildJsonObject { put("p_usuario", user.value); put("p_tipo", tipo); put("p_id", requireId(id)); put("p_on", on) })
 
     suspend fun report(user: CanonicalUserId, request: ForoReportRequest): JsonElement {
+        noNul(request.descripcion ?: "")
         if (request.entidadTipo != "publicacion" && request.entidadTipo != "comentario") throw validationError(ErrorIssue("entidadTipo", CanonicalIssue.INVALID_FORMAT))
         return rpc(
             "app_foro_report",
@@ -156,6 +160,11 @@ internal class ForoService(
                 put("p_descripcion", request.descripcion?.let { JsonPrimitive(it) } ?: JsonNull)
             },
         )
+    }
+
+    /** E2-V1-F05: a NUL cannot be stored by PostgreSQL text and used to end as a 502; it is a content rejection (422) and never reaches the database. */
+    private fun noNul(vararg texts: String) {
+        if (texts.any { it.indexOf('\u0000') >= 0 }) throw CanonicalErrorCode.CONTENT_REJECTED.exception()
     }
 
     private fun requireId(id: String): String {
@@ -247,7 +256,9 @@ internal fun Route.foroRoutes(runtime: ForoRuntime?) {
     delete("/api/v1/app/oposired/publicaciones/{id}") {
         val identity = call.foroGate(runtime, ForoOperation.WRITE)
         requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
-        call.respond(runtime!!.service.deleteOwn(identity.userId, "publicacion", call.parameters["id"].orEmpty().trim()))
+        val deleted = runtime!!.service.deleteOwn(identity.userId, "publicacion", call.parameters["id"].orEmpty().trim())
+        runCatching { runtime.images?.sweep(10) }   // the object of the retired image is deleted now (best effort; the periodic sweeper is the backstop). A signed URL minted before stays valid for its 120 s TTL: documented
+        call.respond(deleted)
     }
     delete("/api/v1/app/oposired/comentarios/{id}") {
         val identity = call.foroGate(runtime, ForoOperation.WRITE)
