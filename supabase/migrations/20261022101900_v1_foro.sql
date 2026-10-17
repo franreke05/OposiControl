@@ -793,7 +793,7 @@ begin
     end if;
   elsif p_accion in ('rechazar', 'ocultar') then
     if p_tipo = 'publicacion' then update public.publicaciones_oposired set estado = 'oculta' where id = p_id and estado in ('pendiente_moderacion', 'publicada');
-      if found and p_accion = 'rechazar' then perform private.foro_retire_images(p_id, null); end if;
+      if found then perform private.foro_retire_images(p_id, null); end if;   -- reject AND hide retire the image (a restore brings the post back without it)
     else update public.comentarios_oposired set estado = 'oculto' where id = p_id and estado in ('pendiente_moderacion', 'publicado'); end if;
   elsif p_accion = 'restaurar' then
     if p_tipo = 'publicacion' then update public.publicaciones_oposired set estado = 'publicada' where id = p_id and estado = 'oculta';

@@ -90,7 +90,8 @@ function mintTokens() {
     Q2Z: es256('2c000000-0000-4000-8000-00000000002c', 'q2z@exam.local'), Q3: es256('2d000000-0000-4000-8000-00000000002d', 'q3@exam.local'),
     Q4: es256('2e000000-0000-4000-8000-00000000002e', 'q4@exam.local'),
     Q6: es256('2f000000-0000-4000-8000-00000000002f', 'q6@exam.local'), Q7: es256('3b000000-0000-4000-8000-00000000003b', 'q7@exam.local'),
-    ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local') };
+    Q8: es256('4d000000-0000-4000-8000-00000000004d', 'q8@exam.local'),
+  ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local') };
   fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
 }
 // REAL AUTH GATE (E1-V1-REAL-AUTH-GATE.md): --real-auth routes the gateway's /auth/v1/* to a REAL GoTrue container (+ Mailpit as the mailbox, http://127.0.0.1:8025);
@@ -130,6 +131,7 @@ if (process.argv.includes('--restore-fixtures')) {
   psql(fs.readFileSync(path.join(here, 'sql/96_restore_fixtures.sql'), 'utf8'));
   // plan subscribers Q6 (Razonados) / Q7 (Inmersivo + quota) and fresh tokens (12 h JWTs). 98b is idempotent and never touches the ledger guard.
   psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(here, 'sql/98c_v1_qa_fixtures.sql'), 'utf8'));   // QA data: renewal dates, Q8 cancelled-but-paid, tagged stats + a ranking cohort
   mintTokens();
   psql(fs.readFileSync(path.join(here, 'sql/88_harness_exams_local.sql'), 'utf8'));
   console.log('harness exams (deleted|hidden): ' + psql("select borrados || '|' || ocultados from public.local_clean_harness_exams(false)"));
@@ -217,6 +219,7 @@ psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), '
 psql(fs.readFileSync(path.join(here, 'sql/98_v1_economy_fixtures.sql'), 'utf8'));
 // V1: un administrador local (rol canonico `admin`) para recorrer la superficie de administracion por HTTP (Ktor perfil control, puerto 8090).
 psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
+psql(fs.readFileSync(path.join(here, 'sql/98c_v1_qa_fixtures.sql'), 'utf8'));   // QA data: renewal dates, Q8 cancelled-but-paid, tagged stats + a ranking cohort
 psql(fs.readFileSync(path.join(here, 'sql/99_v1_admin_fixture.sql'), 'utf8'));
 psql('notify pgrst, \'reload schema\';');
 

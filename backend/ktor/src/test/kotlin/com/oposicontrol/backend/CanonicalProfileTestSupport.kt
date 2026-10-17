@@ -187,6 +187,9 @@ internal class CanonicalTestEnv(
         verifyClaims = { if (it == TEST_TOKEN || it == TEST_LONG_TOKEN) VerifiedJwtClaims(TEST_UID, authTimes = authTimes) else error("firma invalida") },
     )
 
+    /** Puente del codigo de invitacion del registro (null = no cableado). */
+    var referral: ReferralAttach? = null
+
     val specialties = SpecialtyResolver { text -> if (text.equals("Sanidad", ignoreCase = true)) TEST_SPECIALTY else null }
 
     fun runtime() = OposiBotsAuthRuntime(
@@ -194,7 +197,7 @@ internal class CanonicalTestEnv(
         gateway = gateway,
         rateLimiter = limiter,
         json = testJson,
-        canonical = CanonicalProfileRuntime(resolver, profiles, deletion, LegacyProfileAdapter(profiles, specialties = specialties)),
+        canonical = CanonicalProfileRuntime(resolver, profiles, deletion, LegacyProfileAdapter(profiles, referral, specialties)),
         accessRequestMailGuard = NoAccessRequestsMailGuard,
     )
 

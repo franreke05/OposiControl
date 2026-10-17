@@ -120,6 +120,13 @@ internal class LegacyProfileAdapter(
             ),
             context,
         )
-        referral?.attach(identity.userId.value, request.codigoInvitacion)
+        // E2-V1: the invitation code NEVER changes the outcome of the registration (a failure or an unusable code is invisible)
+        try {
+            referral?.attach(identity.userId.value, request.codigoInvitacion)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // ignored on purpose
+        }
     }
 }

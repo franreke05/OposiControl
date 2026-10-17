@@ -78,6 +78,7 @@ export function converge({ psql, psqlAdmin, root = repo }) {
   psql(fs.readFileSync(path.join(here, 'sql/91_feedback_pregunta_local.sql'), 'utf8'));
   // V1 Access v2 local fixtures (test plans, benefits, products, recarga blocks, users Q6/Q7, demo exam); only where the economy fixtures already exist (a live stack)
   if (psql("select to_regclass('public.especialidades') is not null and exists (select 1 from public.especialidades where id = 'e5000000-0000-4000-8000-000000000001')") === 't') psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
+  if (psql("select to_regclass('public.especialidades') is not null and exists (select 1 from public.especialidades where id = 'e5000000-0000-4000-8000-000000000001')") === 't') psql(fs.readFileSync(path.join(here, 'sql/98c_v1_qa_fixtures.sql'), 'utf8'));
   psql("notify pgrst, 'reload schema';");
   return verify({ psql, root, files });
 }

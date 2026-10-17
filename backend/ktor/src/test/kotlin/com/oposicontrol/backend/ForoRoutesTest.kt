@@ -143,6 +143,20 @@ class ForoRoutesTest {
     }
 
     @Test
+    fun aNulCharacterIsAContentRejectionNeverAServerError() = testApplication {
+        application { foroModule() }
+        val client = createClient { }
+        for (body in listOf("""{"categoriaId":"$cat","titulo":"a b","cuerpo":"texto"}""", """{"categoriaId":"$cat","titulo":"a","cuerpo":"te xto"}""")) {
+            val r = client.sendJson("/api/v1/app/oposired/publicaciones", body)
+            assertEquals(HttpStatusCode.UnprocessableEntity, r.status, r.bodyAsText())
+            assertEquals("CONTENT_REJECTED", obj(r.bodyAsText())["code"]!!.jsonPrimitive.content)
+        }
+        assertEquals(HttpStatusCode.UnprocessableEntity, client.sendJson("/api/v1/app/oposired/publicaciones/$id/comentarios", """{"cuerpo":"x y"}""").status)
+        assertEquals(HttpStatusCode.UnprocessableEntity, client.sendJson("/api/v1/app/oposired/reportes", """{"entidadTipo":"publicacion","entidadId":"$id","motivo":"spam","descripcion":"a b"}""").status)
+        assertTrue(upstream.rpcs.isEmpty(), "a NUL never reaches the database")
+    }
+
+    @Test
     fun votesDeletesAndReportsGoToTheRightFunctions() = testApplication {
         application { foroModule() }
         val client = createClient { }

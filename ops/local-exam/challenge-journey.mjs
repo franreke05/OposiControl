@@ -36,7 +36,7 @@ sql(`delete from public.respuestas_reto_diario where usuario_id = '${Q1}';
 delete from public.registros_reto_diario where usuario_id = '${Q1}';
 delete from public.ot_ganancias_diferidas where usuario_id = '${Q1}';
 delete from public.rachas_usuario where usuario_id = '${Q1}';
-update auth.users set confirmed_at = null where id = '${Q1}';`);
+update auth.users set email_confirmed_at = null where id = '${Q1}';`);
 
 // ---- plan catalog (D7-33)
 const cat = await app('GET', '/api/v1/app/plan/catalogo');
@@ -88,9 +88,9 @@ check('J17.streak_starts_at_one', st.status === 200 && st.json?.actual === 1 && 
 // ---- claim: e-mail gate, then paid once
 const noMail = await app('POST', `/api/v1/app/retos/${reto}/reclamar`);
 const started = Number(sql(`select count(*) from public.transacciones_cartera where usuario_id = '${Q1}' and idempotency_key like 'reto:${Q1}:%:base'`)) > 0;
-// the gate applies to the FIRST claim attempt only; on a repeated run of the day the ledger key exists and the claim is a replay (by design)
-check('J17.claim_needs_a_verified_email', started ? noMail.status === 200 : noMail.status === 403 && noMail.json?.code === 'EMAIL_UNVERIFIED', `${noMail.status} ${noMail.json?.code}${started ? ' (replay run)' : ''}`);
-sql(`update auth.users set confirmed_at = now() where id = '${Q1}';`);
+// the gate applies to the FIRST claim attempt only; on a repeated run of the day the ledger key exists and the claim is a replay OR still refused by the e-mail gate (the server checks the gate first): nothing is paid twice either way
+check('J17.claim_needs_a_verified_email', started ? (noMail.status === 200 || (noMail.status === 403 && noMail.json?.code === 'EMAIL_UNVERIFIED')) : noMail.status === 403 && noMail.json?.code === 'EMAIL_UNVERIFIED', `${noMail.status} ${noMail.json?.code}${started ? ' (replay run)' : ''}`);
+sql(`update auth.users set email_confirmed_at = now() where id = '${Q1}';`);
 const before = Number(sql(`select coalesce(saldo_tickets, 0) from public.carteras_usuario where usuario_id = '${Q1}'`) || 0);
 const c1 = await app('POST', `/api/v1/app/retos/${reto}/reclamar`);
 check('J17.claim_pays_the_frozen_amount', c1.status === 200 && c1.json?.recompensa?.total === 5 && c1.json?.recompensa?.reclamada === true && c1.json?.recompensa?.pendiente === false, `${c1.status} ${c1.text.slice(0, 200)}`);
@@ -105,7 +105,7 @@ check('J17.today_reads_superado_with_the_correction_and_the_reward', today2.json
 // ---- the earn cap: a reward above the whole cap can never be paid (409, nothing paid); a user (Q4, fresh) is used because a repeated day replays the key
 const Q4 = '2e000000-0000-4000-8000-00000000002e';
 sql(`delete from public.respuestas_reto_diario where usuario_id = '${Q4}'; delete from public.registros_reto_diario where usuario_id = '${Q4}'; delete from public.ot_ganancias_diferidas where usuario_id = '${Q4}';
-     update auth.users set confirmed_at = now() where id = '${Q4}'; update public.configuracion_v1 set valor_integer = 3 where clave = 'tope_ot_gratis_dia';`);
+     update auth.users set email_confirmed_at = now() where id = '${Q4}'; update public.configuracion_v1 set valor_integer = 3 where clave = 'tope_ot_gratis_dia';`);
 try {
   const t1 = await app('GET', '/api/v1/app/retos/hoy', undefined, 'Q4');
   const q1 = t1.json?.preguntas ?? [];
@@ -122,11 +122,11 @@ try {
 // ---- parallel claims (two devices): one ledger entry, every answer 200
 const Q2 = '2b000000-0000-4000-8000-00000000002b';
 sql(`delete from public.respuestas_reto_diario where usuario_id = '${Q2}'; delete from public.registros_reto_diario where usuario_id = '${Q2}'; delete from public.ot_ganancias_diferidas where usuario_id = '${Q2}';
-     delete from public.rachas_usuario where usuario_id = '${Q2}'; update auth.users set confirmed_at = now() where id = '${Q2}';`);
+     delete from public.rachas_usuario where usuario_id = '${Q2}'; update auth.users set email_confirmed_at = now() where id = '${Q2}';`);
 const t2 = await app('GET', '/api/v1/app/retos/hoy', undefined, 'Q2');
 for (const q of t2.json?.preguntas ?? []) await app('PUT', `/api/v1/app/retos/${t2.json.retoId}/respuestas/${q.preguntaId}`, { opcionSeleccionadaId: correct(q.preguntaId) }, 'Q2');
 const race = await Promise.all([1, 2, 3, 4].map(() => app('POST', `/api/v1/app/retos/${t2.json.retoId}/reclamar`, undefined, 'Q2')));
-const rows = sql(`select count(*) from public.transacciones_cartera where usuario_id = '${Q2}' and tipo = 'reto_diario' and idempotency_key like 'reto:${Q2}:%:base'`);
+const rows = sql(`select count(*) from public.transacciones_cartera where usuario_id = '${Q2}' and tipo = 'reto_diario' and idempotency_key like 'reto:${Q2}:%:base' and (creado_en at time zone 'Europe/Madrid')::date = (now() at time zone 'Europe/Madrid')::date`);
 check('J17.parallel_claims_pay_once', race.every((r) => r.status === 200) && rows === '1', `${race.map((r) => r.status).join(',')} ledger ${rows}`);
 
 const failed = results.filter((r) => !r).length;
