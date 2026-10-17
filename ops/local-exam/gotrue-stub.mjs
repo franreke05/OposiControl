@@ -104,7 +104,7 @@ const normEmail = (e) => (typeof e === 'string' ? e.trim().toLowerCase() : '');
 const validEmail = (e) => e.length > 3 && e.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
 async function findUser(email) {
-  const out = await sql(`select coalesce((select row_to_json(u)::text from (select id, email, confirmed_at is not null as confirmed from auth.users where lower(email) = :'email') u), '');`, { email });
+  const out = await sql(`select coalesce((select row_to_json(u)::text from (select id, email, email_confirmed_at is not null as confirmed from auth.users where lower(email) = :'email') u), '');`, { email });
   return out ? JSON.parse(out) : null;
 }
 
@@ -150,7 +150,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req); const email = normEmail(body?.email);
       if (validEmail(email) && (await findUser(email))?.confirmed === false) {
         const code = crypto.randomBytes(16).toString('hex');
-        await sql(`update auth.users set confirmation_token = :'code', confirmation_sent_at = now() where lower(email) = :'email' and confirmed_at is null;`, { email, code });
+        await sql(`update auth.users set confirmation_token = :'code', confirmation_sent_at = now() where lower(email) = :'email' and email_confirmed_at is null;`, { email, code });
         deliver(email, 'signup', code);
       }
       return json(res, 200, {});
@@ -160,8 +160,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const code = typeof body?.token_hash === 'string' ? body.token_hash : '';
       if (body?.type !== 'signup' || !/^[0-9a-f]{32}$/.test(code)) return gotrueError(res, 403, 'otp_expired', 'Email link is invalid or has expired');
-      const out = await sql(`with u as (update auth.users set confirmed_at = now(), confirmation_token = null, last_sign_in_at = now()
-        where confirmation_token = :'code' and confirmed_at is null returning id, email) select coalesce((select row_to_json(u)::text from u limit 1), '');`, { code });
+      const out = await sql(`with u as (update auth.users set email_confirmed_at = now(), confirmation_token = null, last_sign_in_at = now()
+        where confirmation_token = :'code' and email_confirmed_at is null returning id, email) select coalesce((select row_to_json(u)::text from u limit 1), '');`, { code });
       if (!out) return gotrueError(res, 403, 'otp_expired', 'Email link is invalid or has expired');
       return json(res, 200, session(JSON.parse(out)));
     }
@@ -172,7 +172,7 @@ const server = http.createServer(async (req, res) => {
       if (grant === 'password') {
         const email = normEmail(body?.email); const password = body?.password;
         if (!validEmail(email) || typeof password !== 'string') return gotrueError(res, 400, 'invalid_credentials', 'Invalid login credentials');
-        const out = await sql(`select coalesce((select row_to_json(u)::text from (select id, email, confirmed_at is not null as confirmed,
+        const out = await sql(`select coalesce((select row_to_json(u)::text from (select id, email, email_confirmed_at is not null as confirmed,
           encrypted_password = extensions.crypt(:'password', encrypted_password) as ok from auth.users where lower(email) = :'email') u), '');`, { email, password });
         const row = out ? JSON.parse(out) : null;
         if (!row || !row.ok) return gotrueError(res, 400, 'invalid_credentials', 'Invalid login credentials');
