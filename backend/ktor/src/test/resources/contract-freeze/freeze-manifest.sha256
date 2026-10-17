@@ -3,10 +3,10 @@
 # fails OpenApiFreezeManifestTest; the amendment is then recorded in CONTRACT_FREEZE.md (OposiBot repo) and this manifest updated
 # in the same change.
 73f17c2f9e8dfdeabc86bc888fe9c65ea6cc54bb2031b8b18e9ecf28cc9221e6  openapi/.redocly.lint-ignore.yaml
-686c75c93a88e9be71540c518e8c7aafddcd620272354447c87631a6409988ed  openapi/attempts/attempts.yaml
+b1da61497a9957c375c107d427ba015357c1ac0c2a94b9a8473b112cf269af2b  openapi/attempts/attempts.yaml
 9dcbc8aadb0f03d11f9f68e7ad22222658383129d2ae9a2af0ef50be6c862fdb  openapi/auth/auth.yaml
 19358124bfcaff3bc269d22c2287983bb0a0691ca89377076731eac4e938c3fc  openapi/billing/billing.yaml
-040f839ea0f1a9b86c52d066ed625a861b8a9ff413bfdd75ae6cef204c301ca1  openapi/catalog/catalog.yaml
+4cfbe325889fe4a6dc480e141aaf72ce12075f4d62ddcf1fbb067b02e46eedc5  openapi/catalog/catalog.yaml
 cc321d38903d80cac095305abc80bfa0a7e50821e400901a4c467aa511a9ea13  openapi/commerce/commerce.yaml
 5dbacd164faab070bea603db6242109b8b8a4b001343bd1de5a0aba5c498f5a4  openapi/common/errors.yaml
 f15f9212675fe933ef30b034628b656970104970864d2744ace7f65fc8b89e58  openapi/common/idempotency.yaml

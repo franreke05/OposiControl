@@ -2,7 +2,7 @@
 -- Forward-only; local stack and PG17 gate only, NOT applied to MAIN. Requires 20261022101000 (demo), 20261022101100 (limiter) and 20261022101200 (challenge pool).
 --
 -- MODEL: preguntas_examen gets es_reserva (boolean) and orden_reserva; examenes gets regla_anuladas (REEMPLAZO_POR_RESERVA | NO_PUNTUA; NULL = DERIVED: an exam with reserves replaces, one without does not count the annulled = today) and the penalty as an exact
--- fraction penalizacion_num/den (default 0/1). At START the attempt freezes (preguntas_intento.rol PRINCIPAL | RESERVA_ACTIVA | RESERVA_NO_USADA, anulada_al_inicio, sustituye_a_posicion) and snapshots the rule on
+-- fraction penalizacion_num/den (default 0/1). FA36 (owner 2026-10-17): RATIONAL penalty `examenes.penalizacion_racional` (default false): PD = A - E/(n-1) with n = options of EACH wrong question (frozen revision), frozen into the attempt at start. At START the attempt freezes (preguntas_intento.rol PRINCIPAL | RESERVA_ACTIVA | RESERVA_NO_USADA, anulada_al_inicio, sustituye_a_posicion) and snapshots the rule on
 -- intentos_examen; attempts that carry the snapshot never read the live annulment again (option 1 of the design); older attempts keep the M10 live rule. C-O1: an unused reserve is not answerable, not revealed and its
 -- media is not served while the attempt is open (record answer / reveal here, page+grid+resource reads filter in the gateway query); it is visible only after finish. PUNTUA_ACIERTO was dropped (client answer 2026-10-16 (c)). C-O3: demo cross-check on every edit. C-O4: publish AND later-edit validation (OFFICIAL_RULES_INVALID). C-O5: nota computed ONCE in SQL (private.official_nota, integer arithmetic,
 -- half-up) and stored on the attempt; a Kotlin twin is pinned by a parity matrix.
@@ -521,17 +521,18 @@
 -- drop function if exists private.official_rule_effective(uuid);
 -- delete from public.configuracion_v1 where clave = 'max_reservas_oficiales';
 -- drop function if exists private.intento_pregunta_anulada(uuid, uuid, uuid);
+-- drop function if exists private.official_nota_racional(integer, bigint, integer);
 -- drop function if exists private.official_nota(integer, integer, integer, integer, integer);
 -- alter table public.preguntas_intento drop constraint if exists preguntas_intento_estado_final_check;
 -- alter table public.preguntas_intento add constraint preguntas_intento_estado_final_check check (((estado_final IS NULL) OR (estado_final = ANY (ARRAY['CORRECT'::text, 'WRONG'::text, 'SKIPPED'::text, 'UNANSWERED'::text, 'ANNULLED'::text]))));
 -- alter table public.preguntas_intento drop column if exists sustituye_a_posicion, drop column if exists anulada_al_inicio, drop column if exists rol;
 -- alter table public.intentos_examen drop column if exists anuladas_sin_reserva, drop column if exists reservas_usadas, drop column if exists total_anuladas, drop column if exists total_evaluables,
---   drop column if exists nota, drop column if exists penalizacion_den, drop column if exists penalizacion_num, drop column if exists regla_anuladas;
+--   drop column if exists nota, drop column if exists penalizacion_descuento, drop column if exists penalizacion_racional, drop column if exists penalizacion_den, drop column if exists penalizacion_num, drop column if exists regla_anuladas;
 -- drop index if exists public.ux_preguntas_examen_orden_reserva;
 -- alter table public.preguntas_examen drop constraint if exists preguntas_examen_reserva_chk;
 -- alter table public.preguntas_examen drop column if exists orden_reserva, drop column if exists es_reserva;
 -- alter table public.examenes drop constraint if exists examenes_penalizacion_chk;
--- alter table public.examenes drop column if exists penalizacion_den, drop column if exists penalizacion_num, drop column if exists regla_anuladas;
+-- alter table public.examenes drop column if exists penalizacion_racional, drop column if exists penalizacion_den, drop column if exists penalizacion_num, drop column if exists regla_anuladas;
 -- commit;
 -- ROLLBACK-END
 --
@@ -539,7 +540,7 @@
 -- VERIFY-BEGIN
 -- select 'official_functions_private_only:' || f.n as check_name,
 --        (case when has_function_privilege('anon', f.n, 'execute') or has_function_privilege('authenticated', f.n, 'execute') then 1 else 0 end)::bigint as failures
---   from (values ('private.official_nota(integer,integer,integer,integer,integer)'), ('private.official_rules_problem(uuid)'), ('private.intento_pregunta_anulada(uuid,uuid,uuid)')) f(n)
+--   from (values ('private.official_nota(integer,integer,integer,integer,integer)'), ('private.official_nota_racional(integer,bigint,integer)'), ('private.official_rules_problem(uuid)'), ('private.intento_pregunta_anulada(uuid,uuid,uuid)')) f(n)
 -- union all
 -- select 'official_triggers_missing',
 --        (3 - (select count(*) from pg_trigger t where t.tgname in ('trg_examenes_official_rules', 'trg_preguntas_examen_official_rules', 'trg_preguntas_examen_demo_rules') and not t.tgisinternal))::bigint;
@@ -565,10 +566,12 @@ $$;
 alter table public.examenes
   add column if not exists regla_anuladas text,
   add column if not exists penalizacion_num smallint not null default 0,
-  add column if not exists penalizacion_den smallint not null default 1;
+  add column if not exists penalizacion_den smallint not null default 1,
+  add column if not exists penalizacion_racional boolean not null default false;
 alter table public.examenes drop constraint if exists examenes_penalizacion_chk;
 alter table public.examenes add constraint examenes_penalizacion_chk
-  check ((regla_anuladas is null or regla_anuladas in ('REEMPLAZO_POR_RESERVA', 'NO_PUNTUA')) and penalizacion_den >= 1 and penalizacion_num >= 0 and penalizacion_num <= penalizacion_den);
+  check ((regla_anuladas is null or regla_anuladas in ('REEMPLAZO_POR_RESERVA', 'NO_PUNTUA')) and penalizacion_den >= 1 and penalizacion_num >= 0 and penalizacion_num <= penalizacion_den
+         and (not penalizacion_racional or penalizacion_num = 0));   -- the rational penalty and a fixed fraction never mix
 
 alter table public.preguntas_examen
   add column if not exists es_reserva boolean not null default false,
@@ -582,6 +585,8 @@ alter table public.intentos_examen
   add column if not exists regla_anuladas text,
   add column if not exists penalizacion_num smallint,
   add column if not exists penalizacion_den smallint,
+  add column if not exists penalizacion_racional boolean,          -- frozen at start (null = legacy / demo)
+  add column if not exists penalizacion_descuento numeric(6, 2),   -- points deducted by wrong answers, informative (the grade is computed with integers)
   add column if not exists nota numeric(4, 2),
   add column if not exists total_evaluables integer,
   add column if not exists total_anuladas integer,
@@ -610,6 +615,18 @@ as $$
                 / (2 * p_den::bigint * p_evaluables))::numeric / 100)::numeric(4, 2) end
 $$;
 revoke all on function private.official_nota(integer, integer, integer, integer, integer) from public, anon, authenticated;
+
+-- FA36: rational penalty. p_penalizacion_escalada = SUM over the WRONG evaluable questions of 27720 / (n - 1) (n = options of the question's frozen revision, 2 <= n <= 13; fewer than 2 options: no penalty; more than 13: treated as 13).
+-- 27720 = lcm(1..12), so every weight is an exact integer. The grade is official_nota(c, 1, e, penalty, 27720): c x 27720 - penalty, floored at 0, scaled to 10, HALF-UP to 2 decimals (the same single formula).
+create or replace function private.official_nota_racional(p_correctas integer, p_penalizacion_escalada bigint, p_evaluables integer)
+returns numeric
+language sql
+immutable
+set search_path = ''
+as $$
+  select private.official_nota(p_correctas, 1, p_evaluables, least(greatest(coalesce(p_penalizacion_escalada, 0), 0), 2000000000)::integer, 27720)
+$$;
+revoke all on function private.official_nota_racional(integer, bigint, integer) from public, anon, authenticated;
 
 -- is the question annulled FOR THIS ATTEMPT? Attempts that carry the snapshot (rol not null) use the state frozen at start; older attempts keep the live rule (M10).
 create or replace function private.intento_pregunta_anulada(p_intento uuid, p_examen uuid, p_pregunta uuid)
@@ -770,7 +787,7 @@ drop trigger if exists trg_preguntas_examen_official_rules on public.preguntas_e
 create constraint trigger trg_preguntas_examen_official_rules after insert or update or delete on public.preguntas_examen
   deferrable initially deferred for each row execute function private.tg_official_rules_check();
 drop trigger if exists trg_examenes_official_rules on public.examenes;
-create constraint trigger trg_examenes_official_rules after update of publicado_en, regla_anuladas, penalizacion_num, penalizacion_den on public.examenes
+create constraint trigger trg_examenes_official_rules after update of publicado_en, regla_anuladas, penalizacion_num, penalizacion_den, penalizacion_racional on public.examenes
   deferrable initially deferred for each row execute function private.tg_official_rules_check();
 
 -- ---- 4. the attempt: freeze with roles (C-O1), answer, finish, reveal; the challenge pool never takes a reserve
@@ -795,11 +812,12 @@ declare
   v_a integer;
   v_r integer;
   v_k integer;
+  v_rac boolean;
 begin
   -- ATTEMPT_FREEZE_KEEPS_ANNULLED + ATTEMPT_CONTENT_REVISIONS + OFFICIAL_RULES: every active question is frozen with its ROLE and its annulment state at start.
   -- A DEMO attempt ignores the official rules (rol null = the legacy live rule over exactly the flagged questions).
   if not exists (select 1 from public.preguntas_intento pi where pi.intento_id = p_intento_id) then
-    select private.official_rule_effective(p_examen_id), e.penalizacion_num, e.penalizacion_den into v_regla, v_num, v_den from public.examenes e where e.id = p_examen_id;
+    select private.official_rule_effective(p_examen_id), e.penalizacion_num, e.penalizacion_den, e.penalizacion_racional into v_regla, v_num, v_den, v_rac from public.examenes e where e.id = p_examen_id;
     select count(*) filter (where not pe.es_reserva and pe.anulada), count(*) filter (where pe.es_reserva and not pe.anulada)
       into v_a, v_r
     from public.preguntas_examen pe join public.preguntas p on p.id = pe.pregunta_id
@@ -857,7 +875,7 @@ begin
       end if;
       if not p_solo_demo then
         update public.intentos_examen
-           set regla_anuladas = v_regla, penalizacion_num = v_num, penalizacion_den = v_den,
+           set regla_anuladas = v_regla, penalizacion_num = v_num, penalizacion_den = v_den, penalizacion_racional = v_rac,
                reservas_usadas = v_k, total_anuladas = v_a,
                anuladas_sin_reserva = case when v_regla = 'REEMPLAZO_POR_RESERVA' then greatest(v_a - v_r, 0) else 0 end
          where id = p_intento_id;
@@ -1145,14 +1163,16 @@ declare
   v_den integer;
   v_anuladas integer := 0;
   v_evaluables integer;
+  v_rac boolean;
+  v_pen bigint := 0;
 begin
   -- ATTEMPT_CONTENT_REVISIONS + OFFICIAL_RULES
   if p_usuario_id is null or p_intento_id is null then
     return jsonb_build_object('outcome', 'ATTEMPT_NOT_FOUND');
   end if;
 
-  select ie.estado, ie.examen_id, ie.iniciado_en, ie.regla_anuladas, ie.penalizacion_num, ie.penalizacion_den
-    into v_estado, v_examen_id, v_iniciado, v_regla, v_num, v_den
+  select ie.estado, ie.examen_id, ie.iniciado_en, ie.regla_anuladas, ie.penalizacion_num, ie.penalizacion_den, ie.penalizacion_racional
+    into v_estado, v_examen_id, v_iniciado, v_regla, v_num, v_den, v_rac
   from public.intentos_examen ie
   where ie.id = p_intento_id and ie.usuario_id = p_usuario_id
     and ie.origen_intento = 'examen' and ie.creado_por_comando is not null
@@ -1195,6 +1215,15 @@ begin
   from public.preguntas_intento pi
   where pi.intento_id = p_intento_id;
   v_evaluables := v_correctas + v_falladas + v_sin_responder;
+  -- FA36: the rational penalty uses the FROZEN flag of the attempt and the options of each wrong question's FROZEN revision (a later edit of the exam or the question never changes a grade already given);
+  -- unanswered and annulled are never penalised; a question with fewer than 2 options carries no penalty; a demo has no rule (v_regla null).
+  if v_regla is not null and coalesce(v_rac, false) then
+    select coalesce(sum(case when k.n >= 2 then 27720 / (least(k.n, 13) - 1) else 0 end), 0)::bigint into v_pen
+      from (select coalesce(jsonb_array_length(r.contenido -> 'opciones'),
+                            (select count(*)::integer from public.opciones_pregunta o where o.pregunta_id = pi.pregunta_id)) as n
+              from public.preguntas_intento pi left join public.revisiones_pregunta r on r.id = pi.revision_pregunta_id
+             where pi.intento_id = p_intento_id and pi.estado_final = 'WRONG') k;
+  end if;
 
   insert into public.resumen_intento_etiqueta
     (intento_id, etiqueta_id, total_preguntas, correctas, falladas, sin_responder,
@@ -1248,7 +1277,9 @@ begin
                                    then round(v_correctas * 100.0 / (v_correctas + v_falladas), 2) else 0 end,
          puntuacion = v_correctas,
          total_evaluables = case when v_regla is not null then v_evaluables end,
-         nota = case when v_regla is not null then private.official_nota(v_correctas, v_falladas, v_evaluables, v_num, v_den) end,
+         nota = case when v_regla is null then null when coalesce(v_rac, false) then private.official_nota_racional(v_correctas, v_pen, v_evaluables)
+                     else private.official_nota(v_correctas, v_falladas, v_evaluables, v_num, v_den) end,
+         penalizacion_descuento = case when v_regla is not null and coalesce(v_rac, false) then round(v_pen / 27720.0, 2) end,
          calculado_en = now()
    where id = p_intento_id;
 

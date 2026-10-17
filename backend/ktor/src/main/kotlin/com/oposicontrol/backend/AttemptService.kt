@@ -174,7 +174,17 @@ internal data class ResultSummary(
 )
 
 @Serializable
-internal data class Penalizacion(val numerador: Int, val denominador: Int)
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+internal data class Penalizacion(
+    /** FIJA: fraccion por fallo (1/3). RACIONAL: ausentes (cada fallo resta 1/(n-1), n = opciones de ESA pregunta). */
+    val numerador: Int? = null,
+    val denominador: Int? = null,
+    /** FA36: `FIJA` | `RACIONAL`. */
+    @kotlinx.serialization.EncodeDefault
+    val tipo: String = "FIJA",
+    /** FA36 (RACIONAL, en el resultado): puntos descontados por los fallos (informativo; la nota se calcula con enteros). */
+    val descuento: Double? = null,
+)
 
 @Serializable
 internal data class ResultQuestion(
@@ -631,7 +641,12 @@ internal class AttemptService(
                 reservasUsadas = row.reservasUsadas.takeIf { frozenRules },
                 anuladasSinReserva = row.anuladasSinReserva.takeIf { frozenRules },
                 reglaAnuladas = row.reglaAnuladas,
-                penalizacion = if (frozenRules && (row.penalizacionNum ?: 0) > 0) Penalizacion(row.penalizacionNum!!, (row.penalizacionDen ?: 1).coerceAtLeast(1)) else null,
+                penalizacion = when {
+                    !frozenRules -> null
+                    row.penalizacionRacional == true -> Penalizacion(tipo = "RACIONAL", descuento = row.penalizacionDescuento)
+                    (row.penalizacionNum ?: 0) > 0 -> Penalizacion(row.penalizacionNum!!, (row.penalizacionDen ?: 1).coerceAtLeast(1))
+                    else -> null
+                },
             ),
             preguntas = frozen.map { question ->
                 val answer = answers[question.preguntaId]
@@ -949,6 +964,18 @@ internal class AttemptService(
  * nota = max(0, c x den - num x f) x 10 / (den x e), HALF-UP a 2 decimales UNA vez; null sin evaluables.
  */
 internal object OfficialScoring {
+    /** FA36: lcm(1..12). Cada fallo pesa 27720 / (n - 1) unidades enteras (n = opciones de su pregunta congelada, 2..13; menos de 2: sin penalizacion; mas de 13: se trata como 13). */
+    const val UNIDADES = 27720
+
+    fun pesoFallo(opciones: Int): Int = if (opciones < 2) 0 else UNIDADES / (minOf(opciones, 13) - 1)
+
+    /** Gemelo de `private.official_nota_racional`: PD = A - E/(n-1) sobre los evaluables, misma formula unica, suelo 0, HALF-UP a 2 decimales. */
+    fun notaRacional(correctas: Int, penalizacionEscalada: Long, evaluables: Int): BigDecimal? =
+        nota(correctas, 1, evaluables, penalizacionEscalada.coerceIn(0L, 2_000_000_000L).toInt(), UNIDADES)
+
+    fun notaRacional(correctas: Int, opcionesDeLasFalladas: List<Int>, evaluables: Int): BigDecimal? =
+        notaRacional(correctas, opcionesDeLasFalladas.sumOf { pesoFallo(it).toLong() }, evaluables)
+
     fun nota(correctas: Int, falladas: Int, evaluables: Int, num: Int, den: Int): BigDecimal? {
         if (evaluables <= 0 || den < 1 || num < 0) return null
         val bruto = (correctas.toLong() * den - num.toLong() * falladas).coerceAtLeast(0L)
