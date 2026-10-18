@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
+import { ensurePorts } from './ports.mjs';
 
 // Escritura en el stack compartido: falla (exit 3) si STACK_LOCK es de otro. Ver stack-lock.mjs.
 requireStackLock('up.mjs');
@@ -30,7 +31,10 @@ if (process.argv.includes('--converge')) {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
 const local = path.join(here, '.local');
-const GATEWAY = 'http://localhost:54321';
+// Published host ports (E1-V1-PORT-FIX): one place, outside Windows' dynamically excluded TCP ranges; persisted in .local/ports.json.
+const ports = await ensurePorts();
+const GATEWAY = `http://localhost:${ports.gateway}`;
+if (ports.changed) console.log(`ports: gateway ${ports.gateway}, postgres ${ports.db} (re-picked; the previous ones were excluded or busy)`);
 const reset = process.argv.includes('--reset');
 fs.mkdirSync(local, { recursive: true });
 
@@ -64,13 +68,24 @@ if (!secrets) {
 if (!secrets.paymentsSandboxSecret) { secrets.paymentsSandboxSecret = crypto.randomBytes(32).toString('hex'); fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2)); }
 fs.writeFileSync(path.join(local, 'jwks.json'), JSON.stringify({ keys: [{ ...secrets.publicJwk, kid: secrets.kid, alg: 'ES256', use: 'sig' }] }));
 fs.writeFileSync(path.join(local, 'compose.env'),
-  `LOCAL_JWT_SECRET=${secrets.jwtSecret}\nLOCAL_ANON_KEY=${secrets.anonKey}\nLOCAL_SERVICE_KEY=${secrets.serviceKey}\n`);
+  `LOCAL_JWT_SECRET=${secrets.jwtSecret}\nLOCAL_ANON_KEY=${secrets.anonKey}\nLOCAL_SERVICE_KEY=${secrets.serviceKey}\nLOCAL_DB_PORT=${ports.db}\nLOCAL_GATEWAY_PORT=${ports.gateway}\n`);
+fs.writeFileSync(path.join(local, 'issuer.txt'), `${GATEWAY}/auth/v1\n`);
 
 const compose = (...args) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'), ...args], { stdio: 'inherit' });
 const psql = (sql, vars = {}, user = 'postgres') => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
   'exec', '-T', 'db', 'psql', '-U', user, '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-At',
   ...Object.entries(vars).flatMap(([k, v]) => ['-v', `${k}=${v}`]), '-f', '-'], { input: sql, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'] }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** ktor.env carries SUPABASE_URL = the gateway URL (ports.mjs), so it is rewritten whenever the ports can have changed. */
+function writeKtorEnv() {
+  fs.writeFileSync(path.join(local, 'ktor.env'), [
+    'APP_ENV=local', 'SERVER_PROFILE=bot', 'HOST=127.0.0.1', 'PORT=8089', 'LOG_LEVEL=INFO',
+    `SUPABASE_URL=${GATEWAY}`, `SUPABASE_SERVICE_ROLE_KEY=${secrets.serviceKey}`, `SUPABASE_ANON_KEY=${secrets.anonKey}`,
+    'OPOSIBOTS_AUTH_ENABLED=true', 'AUTH_RATE_LIMIT_MODE=memory', `AUTH_RATE_LIMIT_HMAC_SECRET=${secrets.rateLimitSecret}`,
+    'AUTH_CAPTCHA_REQUIRED=false', `PAYMENTS_SANDBOX_SECRET=${secrets.paymentsSandboxSecret}`, 'METRICS_ENABLED=true', `METRICS_SCRAPE_TOKEN=${secrets.metricsToken}`, '',
+  ].join('\n'));
+}
 
 function mintTokens() {
   // ---------- JWT ES256 de los usuarios de prueba (el JWKS lo sirve la pasarela en /auth/v1) ----------
@@ -129,6 +144,9 @@ if (process.argv.includes('--clean-test-exams')) {
 }
 if (process.argv.includes('--restore-fixtures')) {
   if (reset) { console.error('--restore-fixtures no se combina con --reset'); process.exit(2); }
+  // after a reboot / a port change the containers may be stopped or published elsewhere: bring them up on the CURRENT ports (volumes and data untouched)
+  compose('up', '-d', 'db', 'rest', 'storage', 'gateway');
+  writeKtorEnv();
   psql(fs.readFileSync(path.join(here, 'sql/96_restore_fixtures.sql'), 'utf8'));
   // plan subscribers Q6 (Razonados) / Q7 (Inmersivo + quota) and fresh tokens (12 h JWTs). 98b is idempotent and never touches the ledger guard.
   psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
@@ -248,12 +266,7 @@ psql("update public.recursos_pregunta set activo = false where id = '5e000000-00
 
 mintTokens();
 
-fs.writeFileSync(path.join(local, 'ktor.env'), [
-  'APP_ENV=local', 'SERVER_PROFILE=bot', 'HOST=127.0.0.1', 'PORT=8089', 'LOG_LEVEL=INFO',
-  `SUPABASE_URL=${GATEWAY}`, `SUPABASE_SERVICE_ROLE_KEY=${secrets.serviceKey}`, `SUPABASE_ANON_KEY=${secrets.anonKey}`,
-  'OPOSIBOTS_AUTH_ENABLED=true', 'AUTH_RATE_LIMIT_MODE=memory', `AUTH_RATE_LIMIT_HMAC_SECRET=${secrets.rateLimitSecret}`,
-  'AUTH_CAPTCHA_REQUIRED=false', `PAYMENTS_SANDBOX_SECRET=${secrets.paymentsSandboxSecret}`, 'METRICS_ENABLED=true', `METRICS_SCRAPE_TOKEN=${secrets.metricsToken}`, '',
-].join('\n'));
+writeKtorEnv();
 
 // ---------- recursos inmersivos por la INGESTA REAL (AdminV1Gateway.addRecursoArchivo, autorizada 2026-10-14) ----------
 // audio (2 s), video (mp4 real hecho con el ffmpeg de la imagen local del backend, si existe) y audio LENTO (30 s, la
@@ -275,7 +288,7 @@ if (!ingested) {
   }
 }
 
-console.log(`\nLOCAL STACK READY: gateway ${GATEWAY} (rest, storage, jwks), postgres 127.0.0.1:54329 (postgres/postgres)`);
+console.log(`\nLOCAL STACK READY: gateway ${GATEWAY} (rest, storage, jwks), postgres 127.0.0.1:${ports.db} (postgres/postgres)`);
 console.log(`Ktor env: ${path.join(local, 'ktor.env')}   tokens: ${path.join(local, 'tokens.json')}`);
 
 /** WAV mono 16 kHz de [ms] con un seno de 440 Hz y amplitud amp(tiempo en ms). */

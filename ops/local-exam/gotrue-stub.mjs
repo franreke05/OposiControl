@@ -32,7 +32,8 @@ requireStackLock('gotrue-stub.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const local = path.join(here, '.local');
 const PORT = Number(process.env.GOTRUE_STUB_PORT ?? 9999);
-const GATEWAY = process.env.GOTRUE_STUB_GATEWAY ?? 'http://localhost:54321';
+import { GATEWAY as LOCAL_GATEWAY } from './ports.mjs';
+const GATEWAY = process.env.GOTRUE_STUB_GATEWAY ?? LOCAL_GATEWAY;
 const DB_CONTAINER = process.env.GOTRUE_STUB_DB_CONTAINER ?? 'oposi-exam-local-db-1';
 // Belt and braces (E2-V1-R-REGISTER INFO-1): the stub writes only into the local stack's own database container.
 if (!DB_CONTAINER.startsWith('oposi-exam-local-')) {
