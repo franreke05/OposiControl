@@ -45,6 +45,7 @@ import com.oposicontrol.admin.data.repository.KtorCommerceRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorCommercialCatalogRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorMarketCatalogRepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorProductAnalyticsRepositoryImpl
+import com.oposicontrol.admin.data.repository.KtorControlV1RepositoryImpl
 import com.oposicontrol.admin.data.repository.KtorRankingsRepositoryImpl
 import com.oposicontrol.admin.data.repository.UsersRepositoryImpl
 import com.oposicontrol.admin.data.storage.PlatformFileReader
@@ -55,6 +56,7 @@ import com.oposicontrol.admin.domain.repository.CommerceRepository
 import com.oposicontrol.admin.domain.repository.CommercialCatalogRepository
 import com.oposicontrol.admin.domain.repository.MarketCatalogRepository
 import com.oposicontrol.admin.domain.repository.ProductAnalyticsRepository
+import com.oposicontrol.admin.domain.repository.ControlV1Repository
 import com.oposicontrol.admin.domain.repository.RankingsRepository
 import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ConnectionDiagnosticsRepository
@@ -152,6 +154,16 @@ val dataModule = module {
     // DashboardRepository sigue vivo: alimenta el Home movil.
     single<DashboardOverviewRepository> {
         KtorDashboardOverviewRepositoryImpl(
+            client = get(),
+            appConfig = get(),
+            sessionLocalDataSource = get(),
+            adapter = get(),
+        )
+    }
+
+    // Control V1: reglas de puntuación, configuración, invitaciones, foro, economía por examen, pedidos y alertas.
+    single<ControlV1Repository> {
+        KtorControlV1RepositoryImpl(
             client = get(),
             appConfig = get(),
             sessionLocalDataSource = get(),

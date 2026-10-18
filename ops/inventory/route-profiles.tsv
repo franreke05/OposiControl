@@ -293,3 +293,28 @@ PUT	/content/rafaga/{}/preguntas/order	CONTROL	admin	Legacy content: rafaga/{}/p
 PUT	/content/solucionarios	CONTROL	admin	Legacy content: solucionarios	OposiControl
 PUT	/content/solucionarios/{}/preguntas	CONTROL	admin	Legacy content: solucionarios/{}/preguntas	OposiControl
 PUT	/content/solucionarios/{}/preguntas/order	CONTROL	admin	Legacy content: solucionarios/{}/preguntas/order	OposiControl
+DELETE	/api/v1/admin/foro/bloqueos/{}	CONTROL	admin	Admin v1 (Control V1): foro/bloqueos/{}	OposiControl
+DELETE	/api/v1/admin/foro/restricciones/{}	CONTROL	admin	Admin v1 (Control V1): foro/restricciones/{}	OposiControl
+GET	/api/v1/admin/alertas/foro-contadores	CONTROL	admin	Admin v1 (Control V1): alertas/foro-contadores	OposiControl
+GET	/api/v1/admin/alertas/ranking-ventanas-rapidas	CONTROL	admin	Admin v1 (Control V1): alertas/ranking-ventanas-rapidas	OposiControl
+GET	/api/v1/admin/config-v1	CONTROL	admin	Admin v1 (Control V1): config-v1	OposiControl
+GET	/api/v1/admin/examenes-economia	CONTROL	admin	Admin v1 (Control V1): examenes-economia	OposiControl
+GET	/api/v1/admin/examenes/{}/reglas-puntuacion	CONTROL	admin	Admin v1 (Control V1): examenes/{}/reglas-puntuacion	OposiControl
+GET	/api/v1/admin/examenes/{}/reglas-puntuacion/auditoria	CONTROL	admin	Admin v1 (Control V1): examenes/{}/reglas-puntuacion/auditoria	OposiControl
+GET	/api/v1/admin/foro/bloqueos	CONTROL	admin	Admin v1 (Control V1): foro/bloqueos	OposiControl
+GET	/api/v1/admin/foro/canales	CONTROL	admin	Admin v1 (Control V1): foro/canales	OposiControl
+GET	/api/v1/admin/foro/cola	CONTROL	admin	Admin v1 (Control V1): foro/cola	OposiControl
+GET	/api/v1/admin/foro/restricciones	CONTROL	admin	Admin v1 (Control V1): foro/restricciones	OposiControl
+GET	/api/v1/admin/pedidos	CONTROL	admin	Admin v1 (Control V1): pedidos	OposiControl
+GET	/api/v1/admin/pedidos/en-revision/total	CONTROL	admin	Admin v1 (Control V1): pedidos/en-revision/total	OposiControl
+GET	/api/v1/admin/pedidos/{}	CONTROL	admin	Admin v1 (Control V1): pedidos/{}	OposiControl
+GET	/api/v1/admin/referidos/invitaciones	CONTROL	admin	Admin v1 (Control V1): referidos/invitaciones	OposiControl
+PATCH	/api/v1/admin/examenes-economia/{}	CONTROL	admin	Admin v1 (Control V1): examenes-economia/{}	OposiControl
+PATCH	/api/v1/admin/foro/canales/{}	CONTROL	admin	Admin v1 (Control V1): foro/canales/{}	OposiControl
+POST	/api/v1/admin/foro/bloqueos	CONTROL	admin	Admin v1 (Control V1): foro/bloqueos	OposiControl
+POST	/api/v1/admin/foro/canales	CONTROL	admin	Admin v1 (Control V1): foro/canales	OposiControl
+POST	/api/v1/admin/foro/moderar	CONTROL	admin	Admin v1 (Control V1): foro/moderar	OposiControl
+POST	/api/v1/admin/pedidos/{}/nota	CONTROL	admin	Admin v1 (Control V1): pedidos/{}/nota	OposiControl
+POST	/api/v1/admin/referidos/invitaciones/{}/revocar	CONTROL	admin	Admin v1 (Control V1): referidos/invitaciones/{}/revocar	OposiControl
+PUT	/api/v1/admin/config-v1/{}	CONTROL	admin	Admin v1 (Control V1): config-v1/{}	OposiControl
+PUT	/api/v1/admin/examenes/{}/reglas-puntuacion	CONTROL	admin	Admin v1 (Control V1): examenes/{}/reglas-puntuacion	OposiControl

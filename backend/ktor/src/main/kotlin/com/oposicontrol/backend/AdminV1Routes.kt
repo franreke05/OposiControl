@@ -4027,6 +4027,13 @@ class AdminV1Gateway private constructor(
         client = client,
     )
 
+    /**
+     * Superficie de Control V1 (reglas de puntuacion, importacion por lotes, invitaciones, foro, comunidad y precios,
+     * pedidos, alertas). Comparte este transporte —mismo cliente, misma politica de credenciales— y el actor de auditoria
+     * del JWT. Ver `AdminControlV1.kt`.
+     */
+    val controlV1: AdminControlV1Gateway by lazy { AdminControlV1Gateway(transport, json) }
+
     // Para ESCRIBIR en Supabase: encodeDefaults=true (envia tipo_examen="rafaga" aunque
     // sea el default) + explicitNulls=false (omite nulls para que apliquen defaults de BD).
     private val sbJson = Json {

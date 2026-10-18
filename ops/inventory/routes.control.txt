@@ -9,6 +9,8 @@ DELETE /api/v1/admin/etiquetas/{}
 DELETE /api/v1/admin/examenes/{}
 DELETE /api/v1/admin/examenes/{}/portada
 DELETE /api/v1/admin/examenes/{}/preguntas/{}
+DELETE /api/v1/admin/foro/bloqueos/{}
+DELETE /api/v1/admin/foro/restricciones/{}
 DELETE /api/v1/admin/noticias/{}
 DELETE /api/v1/admin/oposibots/usuarios/{}
 DELETE /api/v1/admin/planes/{}
@@ -40,6 +42,8 @@ GET /admin/users
 GET /admin/users/{}
 GET /api/v1/admin/accesos
 GET /api/v1/admin/ajustes
+GET /api/v1/admin/alertas/foro-contadores
+GET /api/v1/admin/alertas/ranking-ventanas-rapidas
 GET /api/v1/admin/analytics/comunidad
 GET /api/v1/admin/analytics/economia
 GET /api/v1/admin/analytics/estudio
@@ -52,6 +56,7 @@ GET /api/v1/admin/auditoria/{}
 GET /api/v1/admin/comercial/productos
 GET /api/v1/admin/comercial/productos/{}/tarifas
 GET /api/v1/admin/comunidades-autonomas
+GET /api/v1/admin/config-v1
 GET /api/v1/admin/dashboard
 GET /api/v1/admin/dashboard/overview
 GET /api/v1/admin/especialidades
@@ -59,10 +64,17 @@ GET /api/v1/admin/especialidades/{}/capacidades
 GET /api/v1/admin/estado-sistema
 GET /api/v1/admin/etiquetas
 GET /api/v1/admin/examenes
+GET /api/v1/admin/examenes-economia
 GET /api/v1/admin/examenes/{}
 GET /api/v1/admin/examenes/{}/preguntas
+GET /api/v1/admin/examenes/{}/reglas-puntuacion
+GET /api/v1/admin/examenes/{}/reglas-puntuacion/auditoria
 GET /api/v1/admin/feedback/preguntas
 GET /api/v1/admin/feedback/preguntas/{}
+GET /api/v1/admin/foro/bloqueos
+GET /api/v1/admin/foro/canales
+GET /api/v1/admin/foro/cola
+GET /api/v1/admin/foro/restricciones
 GET /api/v1/admin/importaciones/preguntas
 GET /api/v1/admin/importaciones/preguntas/{}
 GET /api/v1/admin/market/packs
@@ -81,6 +93,9 @@ GET /api/v1/admin/noticias
 GET /api/v1/admin/noticias/{}
 GET /api/v1/admin/oposibots/usuarios
 GET /api/v1/admin/oposibots/usuarios/{}
+GET /api/v1/admin/pedidos
+GET /api/v1/admin/pedidos/en-revision/total
+GET /api/v1/admin/pedidos/{}
 GET /api/v1/admin/planes
 GET /api/v1/admin/planes/{}/beneficios
 GET /api/v1/admin/preguntas
@@ -92,6 +107,7 @@ GET /api/v1/admin/rankings/liga/{}
 GET /api/v1/admin/rankings/ligas
 GET /api/v1/admin/rankings/usuario/{}
 GET /api/v1/admin/rankings/usuarios
+GET /api/v1/admin/referidos/invitaciones
 GET /api/v1/admin/reportes
 GET /api/v1/admin/reportes/{}
 GET /api/v1/admin/roles
@@ -136,8 +152,10 @@ GET /v1/examenes/{}/preguntas
 PATCH /api/v1/admin/comunidades-autonomas/{}
 PATCH /api/v1/admin/especialidades/{}
 PATCH /api/v1/admin/etiquetas/{}
+PATCH /api/v1/admin/examenes-economia/{}
 PATCH /api/v1/admin/examenes/{}
 PATCH /api/v1/admin/examenes/{}/preguntas/orden
+PATCH /api/v1/admin/foro/canales/{}
 PATCH /api/v1/admin/importaciones/staging/{}
 PATCH /api/v1/admin/noticias/{}
 PATCH /api/v1/admin/oposibots/usuarios/{}
@@ -170,6 +188,9 @@ POST /api/v1/admin/examenes/{}/despublicar
 POST /api/v1/admin/examenes/{}/portada
 POST /api/v1/admin/examenes/{}/publicar
 POST /api/v1/admin/feedback/preguntas/{}/resolver
+POST /api/v1/admin/foro/bloqueos
+POST /api/v1/admin/foro/canales
+POST /api/v1/admin/foro/moderar
 POST /api/v1/admin/importaciones/preguntas
 POST /api/v1/admin/importaciones/preguntas/pdf
 POST /api/v1/admin/importaciones/{}/importar
@@ -184,12 +205,14 @@ POST /api/v1/admin/noticias/{}/archivar
 POST /api/v1/admin/noticias/{}/programar
 POST /api/v1/admin/noticias/{}/publicar
 POST /api/v1/admin/oposibots/usuarios
+POST /api/v1/admin/pedidos/{}/nota
 POST /api/v1/admin/planes
 POST /api/v1/admin/planes/{}/beneficios
 POST /api/v1/admin/preguntas
 POST /api/v1/admin/preguntas/{}/examenes
 POST /api/v1/admin/preguntas/{}/recursos
 POST /api/v1/admin/preguntas/{}/recursos/archivo
+POST /api/v1/admin/referidos/invitaciones/{}/revocar
 POST /api/v1/admin/reportes/{}/resolver
 POST /api/v1/admin/solicitudes-acceso/{}/aprobar
 POST /api/v1/admin/solicitudes-acceso/{}/rechazar
@@ -223,7 +246,9 @@ PUT /admin/settings
 PUT /admin/users/{}
 PUT /api/v1/admin/comercial/productos/{}
 PUT /api/v1/admin/comercial/productos/{}/tarifas/{}/{}
+PUT /api/v1/admin/config-v1/{}
 PUT /api/v1/admin/especialidades/{}/capacidades
+PUT /api/v1/admin/examenes/{}/reglas-puntuacion
 PUT /api/v1/admin/planes/{}
 PUT /api/v1/admin/tipos-noticia/{}
 PUT /content/comunidades

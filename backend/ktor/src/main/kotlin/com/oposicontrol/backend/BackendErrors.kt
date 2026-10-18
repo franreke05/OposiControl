@@ -332,6 +332,33 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
         HttpStatusCode.Conflict,
         "Esta fila ya se publicó y no se puede modificar.",
     ),
+    // ------------------------------------------------------------------
+    // Control V1 (rama de servidor feature/december-v1-server): los levantan las migraciones de reglas oficiales,
+    // comunidad obligatoria, foro e invitaciones. Mensajes constantes: sin ids, sin texto del cliente.
+    // ------------------------------------------------------------------
+    "OFFICIAL_RULES_INVALID" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Las reglas de puntuación no son válidas para este examen (anuladas sin reservas suficientes, reservas desordenadas " +
+            "o reservas antes de la última pregunta principal). Revisa el chequeo del examen.",
+    ),
+    "DEMO_CONFLICT" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Una pregunta de demostración no puede estar anulada ni ser reserva, ni moverse de sitio.",
+    ),
+    "EXAM_COMMUNITY_REQUIRED" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Todo examen necesita una comunidad. Elige una antes de guardar o publicar.",
+    ),
+    "FORO_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "El contenido del foro no existe."),
+    "FORO_ACTION_INVALID" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "La acción de moderación no es válida para este contenido.",
+    ),
+    "REFERRAL_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "La invitación no existe."),
+    "CONTROL_RPC_NOT_PROVISIONED" to DomainErrorDefinition(
+        HttpStatusCode.NotImplemented,
+        "Esta función todavía no está disponible en el servidor de datos conectado. No se ha cambiado nada.",
+    ),
 )
 
 /**

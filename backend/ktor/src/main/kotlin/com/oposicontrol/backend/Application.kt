@@ -776,6 +776,7 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
             installAdminAuditActor()
             adminRoutes(adminGateway, adminV1Gateway)
             adminV1Routes(adminV1Gateway, deps.adminIdempotencyStore)
+            adminControlV1Routes(adminV1Gateway.controlV1)
             // FA11: noticias canonicas de administracion (D4-01..D4-11), mismo servicio que `/content/noticias*`.
             adminNewsRoutes(deps.newsRuntime)
             adminRankingsRoutes(adminRankingsGateway)
