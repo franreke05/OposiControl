@@ -408,7 +408,7 @@ private fun validateCodeVerifier(verifier: String?, email: String?, configuratio
     } else if (!Pkce.VERIFIER.matches(verifier)) {
         throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_VERIFIER)
     }
-    if (email != null && (email.isBlank() || !email.isValidEmail())) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
+    if (email != null && (email.isBlank() || authEmailIssue(email) != null)) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
 }
 
 private fun OposiBotsProfileRequest.validate() {
