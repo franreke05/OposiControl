@@ -1,6 +1,7 @@
 package com.oposicontrol.admin.app.root
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,6 +49,8 @@ import com.oposicontrol.admin.features.dashboard.presentation.DashboardV2Screen
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardV2ViewModel
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardViewModel
 import com.oposicontrol.admin.features.dashboard.presentation.MobileDashboardScreen
+import com.oposicontrol.admin.features.exams.presentation.ExamGradingRulesViewModel
+import com.oposicontrol.admin.features.exams.presentation.LocalGradingRulesViewModel
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessIntent
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessScreen
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessViewModel
@@ -58,7 +61,6 @@ import com.oposicontrol.admin.features.exams.presentation.ContentUploadScreen
 import com.oposicontrol.admin.features.exams.presentation.MobileContentView
 import com.oposicontrol.admin.features.questions.presentation.QuestionsScreen
 import com.oposicontrol.admin.features.questions.presentation.QuestionsViewModel
-import com.oposicontrol.admin.features.imports.presentation.ImportScreen
 import com.oposicontrol.admin.features.imports.presentation.ImportViewModel
 import com.oposicontrol.admin.features.forum.presentation.ForumIntent
 import com.oposicontrol.admin.features.forum.presentation.ForumScreen
@@ -612,7 +614,7 @@ fun AppRoot(
                             ContentUploadScreen(viewModel = koinInject())
                         } else {
                             val importViewModel: ImportViewModel = koinInject()
-                            ImportScreen(importViewModel)
+                            ImportHubScreen(importViewModel)
                         }
                     }
                     AppContentTarget.SYSTEM_STATUS -> {
@@ -648,7 +650,11 @@ fun AppRoot(
                         val testerId = (route as AppRoute.OposiTester.Detail).testerId
                         TesterDetailScreen(viewModel = koinInject(parameters = { parametersOf(testerId) }))
                     }
-                    AppContentTarget.EXAM_WORKSPACE -> ExamWorkspaceScreen(
+                    AppContentTarget.EXAM_WORKSPACE -> CompositionLocalProvider(
+                        // Reglas de puntuación del examen (Control V1): el editor las pinta solo si alguien las provee.
+                        LocalGradingRulesViewModel provides koinInject<ExamGradingRulesViewModel>(),
+                    ) {
+                        ExamWorkspaceScreen(
                         // El mismo ViewModel que alimenta «Nuevo examen» en la
                         // cabecera; en esta rama nunca es null.
                         viewModel = requireNotNull(examsViewModel),
@@ -657,7 +663,8 @@ fun AppRoot(
                         // pantalla de Preguntas. El enlace es real, no un atajo
                         // decorativo: lleva justo donde se hace.
                         onOpenQuestionBank = { navigator.push(AppRoute.Content.Questions) },
-                    )
+                        )
+                    }
                     AppContentTarget.MOBILE_CONTENT_ROOT -> MobileContentRoot(
                         appConfig = appConfig,
                         initialView = route.toMobileContentView(),

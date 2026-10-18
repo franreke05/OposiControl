@@ -17,6 +17,14 @@ import com.oposicontrol.admin.core.ui.components.DesktopTab
 import com.oposicontrol.admin.core.ui.components.DesktopTabs
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.features.audit.presentation.AuditScreen
+import com.oposicontrol.admin.features.controlv1.di.FORUM_CONFIG
+import com.oposicontrol.admin.features.controlv1.di.REFERRAL_CONFIG
+import com.oposicontrol.admin.features.controlv1.presentation.AlertsScreen
+import com.oposicontrol.admin.features.controlv1.presentation.ExamEconomyScreen
+import com.oposicontrol.admin.features.controlv1.presentation.ForumOpsScreen
+import com.oposicontrol.admin.features.controlv1.presentation.MarkupEditorScreen
+import com.oposicontrol.admin.features.controlv1.presentation.OrdersScreen
+import com.oposicontrol.admin.features.controlv1.presentation.ReferralScreen
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessScreen
 import com.oposicontrol.admin.features.moderation.presentation.ModerationScreen
 import com.oposicontrol.admin.features.newstypes.presentation.NewsTypesScreen
@@ -93,6 +101,9 @@ internal enum class SystemHubTab(val id: String, val label: String, val icon: Ap
     /** Quién puede entrar, quién lo ha pedido y qué permite cada rol. Absorbe «Solicitudes de acceso», antes en Usuarios. */
     ADMINS("admins", "Administradores", AppIcon.ROLES),
     AUDIT("audit", "Auditoría", AppIcon.AUDIT),
+
+    /** Ventanas de ranking demasiado rápidas y desvíos de contadores del foro: solo lectura. */
+    ALERTS("alerts", "Alertas", AppIcon.WARNING),
 }
 
 /**
@@ -142,6 +153,7 @@ internal fun SystemHubScreen(
                     onOpenUser = onOpenUser,
                 )
                 SystemHubTab.AUDIT.id -> AuditScreen(viewModel = koinInject())
+                SystemHubTab.ALERTS.id -> AlertsScreen(viewModel = koinInject())
                 else -> SystemStatusScreen(viewModel = koinInject())
             }
         }
@@ -155,6 +167,9 @@ internal enum class UsersHubTab(val id: String, val label: String, val icon: App
     TICKETS("tickets", "OposiTickets", AppIcon.TICKETS),
     COMPETITION("competition", "Competición", AppIcon.RANKINGS),
     ACCESS("access", "Accesos", AppIcon.ACCESS),
+
+    /** Programa Invita y gana: configuración y lista de invitaciones. */
+    REFERRALS("referrals", "Invitaciones", AppIcon.USERS),
 }
 
 /**
@@ -189,6 +204,10 @@ internal fun UsersHubScreen(initialTab: UsersHubTab?) {
                 )
                 UsersHubTab.COMPETITION.id -> RankingsScreen(viewModel = koinInject())
                 UsersHubTab.ACCESS.id -> ExamAccessScreen(viewModel = koinInject())
+                UsersHubTab.REFERRALS.id -> ReferralScreen(
+                    configViewModel = koinInject(qualifier = REFERRAL_CONFIG),
+                    viewModel = koinInject(),
+                )
                 else -> UsersScreen(
                     viewModel = koinInject(),
                     onOpenTickets = { userId ->
@@ -212,6 +231,12 @@ internal enum class CatalogHubTab(val id: String, val label: String, val icon: A
     SERVICES("services", "Servicios", AppIcon.MARKET),
     PROMOTIONS("promotions", "Promociones", AppIcon.PLANS),
     POPUPS("popups", "Avisos", AppIcon.EVENTS),
+
+    /** Comunidad obligatoria, precio en OT y días de acceso de cada examen. */
+    ECONOMY("economy", "Comunidad y precios", AppIcon.TICKETS),
+
+    /** Pedidos de pago: en revisión y casos de reembolso. */
+    ORDERS("orders", "Pedidos", AppIcon.MARKET),
     ;
 
     /** El editor de OposiMarket que monta esta pestaña; `null` en las dos que tienen pantalla propia. */
@@ -220,7 +245,7 @@ internal enum class CatalogHubTab(val id: String, val label: String, val icon: A
             SERVICES -> MarketSection.SERVICES
             PROMOTIONS -> MarketSection.PROMOTIONS
             POPUPS -> MarketSection.POPUPS
-            PRODUCTS, PLANS -> null
+            PRODUCTS, PLANS, ECONOMY, ORDERS -> null
         }
 }
 
@@ -269,6 +294,8 @@ internal fun CatalogHubScreen(
         HubTabBody(selectedTab) {
             when (selectedTab) {
                 CatalogHubTab.PLANS.id -> CommercialPlansScreen(viewModel = plansViewModel)
+                CatalogHubTab.ECONOMY.id -> ExamEconomyScreen(viewModel = koinInject())
+                CatalogHubTab.ORDERS.id -> OrdersScreen(viewModel = koinInject())
                 CatalogHubTab.SERVICES.id, CatalogHubTab.PROMOTIONS.id, CatalogHubTab.POPUPS.id -> {
                     val section = CatalogHubTab.entries.first { it.id == selectedTab }.marketSection
                     if (section != null) MarketCatalogEditor(viewModel = marketViewModel, section = section, onOpenUser = onOpenUser)
@@ -283,6 +310,9 @@ internal enum class ModerationHubTab(val id: String, val label: String, val icon
     MODERATION("moderation", "Moderación", AppIcon.MODERATION),
     REPORTS("reports", "Reportes", AppIcon.REPORTS),
     OPOSITESTER("opositester", "OposiTester", AppIcon.TESTER),
+
+    /** OposiRed: cola de moderación, canales, bloqueos y límites. */
+    FORUM("forum", "Foro", AppIcon.FORUM),
 }
 
 /**
@@ -311,6 +341,12 @@ internal fun ModerationHubScreen(
             when (selectedTab) {
                 ModerationHubTab.REPORTS.id -> ReportsScreen(viewModel = koinInject(), onOpenReport = onOpenReport)
                 ModerationHubTab.OPOSITESTER.id -> TesterListScreen(viewModel = koinInject(), onOpenReport = onOpenTester)
+                ModerationHubTab.FORUM.id -> ForumOpsScreen(
+                    queueViewModel = koinInject(),
+                    channelsViewModel = koinInject(),
+                    blocksViewModel = koinInject(),
+                    configViewModel = koinInject(qualifier = FORUM_CONFIG),
+                )
                 else -> ModerationScreen(viewModel = koinInject())
             }
         }
@@ -336,6 +372,35 @@ internal fun NewsHubScreen(initialTab: NewsHubTab?) {
         when (selectedTab) {
             NewsHubTab.TYPES.id -> NewsTypesScreen(viewModel = koinInject())
             else -> NewsScreen(viewModel = koinInject())
+        }
+    }
+}
+
+internal enum class ImportHubTab(val id: String, val label: String, val icon: AppIcon) {
+    IMPORT("import", "Importación", AppIcon.IMPORT),
+
+    /** Escribe o pega un razonado con marcado y ve exactamente cómo lo verá la app, con los problemas señalados. */
+    MARKUP("markup", "Marcado de razonados", AppIcon.EDIT),
+}
+
+/**
+ * Importación y su editor de marcado. La importación conserva su pantalla tal cual; el editor de marcado es la
+ * herramienta para preparar los razonados antes de subirlos: valida la gramática y enseña la vista previa.
+ */
+@Composable
+internal fun ImportHubScreen(importViewModel: com.oposicontrol.admin.features.imports.presentation.ImportViewModel) {
+    var selectedTab by rememberSaveable { mutableStateOf(ImportHubTab.IMPORT.id) }
+    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
+        DesktopTabs(
+            tabs = ImportHubTab.entries.map { DesktopTab(it.id, it.label, it.icon) },
+            selectedId = selectedTab,
+            onSelect = { selectedTab = it },
+        )
+        HubTabBody(selectedTab) {
+            when (selectedTab) {
+                ImportHubTab.MARKUP.id -> MarkupEditorScreen()
+                else -> com.oposicontrol.admin.features.imports.presentation.ImportScreen(importViewModel)
+            }
         }
     }
 }

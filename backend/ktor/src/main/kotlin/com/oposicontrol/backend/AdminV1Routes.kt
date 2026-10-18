@@ -427,6 +427,18 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
                 if (body.especialidadId.isNotBlank()) body.especialidadId.validatedUuid("especialidadId")
                 body.comunidadId?.validatedUuid("comunidadId")
                 val saved = withUpstreamIo { gateway.createExamen(body) }
+                // V1: un examen OFICIAL nace con la penalización racional activada (E1-V1-PENALTY-CONTRACT); el administrador
+                // puede apagarla en Reglas de puntuación. Mejor esfuerzo: si el servidor aún no tiene la columna, el examen
+                // se crea igual y el panel de reglas enseña el estado real.
+                if (saved.esOficial) {
+                    try {
+                        withUpstreamIo { gateway.controlV1.applyOfficialExamDefaults(saved.id) }
+                    } catch (cancellation: kotlin.coroutines.cancellation.CancellationException) {
+                        throw cancellation
+                    } catch (failure: Exception) {
+                        AuditLogger.error("official exam default (rational penalty) not applied examId={} error={}", saved.id, failure::class.simpleName)
+                    }
+                }
                 call.respond(HttpStatusCode.Created, AdminExamenResponse(saved))
             }
             // Todas las rutas `/{id}` de esta vertical validan el identificador.

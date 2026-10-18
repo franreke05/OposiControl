@@ -276,7 +276,11 @@ class KtorControlV1RepositoryImpl(
     private fun HttpRequestBuilder.auth() = adminAuthHeaders(appConfig, sessionLocalDataSource)
 
     private suspend fun HttpResponse.requireSuccess(endpoint: String) {
-        if (!status.isSuccess()) error("backend ${status.value} $endpoint: ${bodyAsText().take(240)}")
+        if (status.isSuccess()) return
+        // 501 = la función de servidor que necesita la operación aún no existe en el entorno conectado. Es un mensaje
+        // para el operador (no un 5xx opaco): `IllegalArgumentException` llega a la pantalla como validación legible.
+        if (status.value == 501) throw IllegalArgumentException(NOT_PROVISIONED_MESSAGE)
+        error("backend ${status.value} $endpoint: ${bodyAsText().take(240)}")
     }
 
     private suspend inline fun <reified T> HttpResponse.checkedBody(endpoint: String): T {
@@ -284,8 +288,12 @@ class KtorControlV1RepositoryImpl(
         return body()
     }
 
-    private companion object {
-        const val ECONOMY_PAGE = 25
+    companion object {
+        /** Lo que se le dice al operador cuando el servidor contesta 501 `CONTROL_RPC_NOT_PROVISIONED`. */
+        const val NOT_PROVISIONED_MESSAGE =
+            "Esta función todavía no está disponible en el servidor conectado. No se ha cambiado nada."
+
+        private const val ECONOMY_PAGE = 25
         const val ORDERS_PAGE = 25
         const val ALERTS_PAGE = 25
     }

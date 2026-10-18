@@ -277,3 +277,29 @@ fun Route.adminControlGradingRoutes(gateway: AdminControlV1Gateway) {
         }
     }
 }
+
+/**
+ * Valor por defecto de un examen OFICIAL recién creado: penalización racional encendida (E1-V1-PENALTY-CONTRACT,
+ * «Control spec»). Solo toca la fila si sigue siendo oficial y con el valor de la base (apagada): nunca pisa una decisión.
+ * Devuelve `true` si cambió algo. El trigger de la base deja la fila antes/después; aquí se añade el autor y el motivo.
+ */
+internal fun AdminControlV1Gateway.applyOfficialExamDefaults(examenId: String): Boolean {
+    val updated = send(
+        "PATCH",
+        "/rest/v1/examenes?id=eq.$examenId&es_oficial=is.true&penalizacion_racional=is.false",
+        buildJsonObject { put("penalizacion_racional", JsonPrimitive(true)) }.toString(),
+        prefer = "return=representation",
+    )
+    if ((json.parseToJsonElement(updated) as? JsonArray).isNullOrEmpty()) return false
+    audit(
+        accion = "examen_reglas_puntuacion_motivo",
+        tabla = "examenes",
+        registroId = examenId,
+        antes = buildJsonObject {
+            put("actor", actorId()?.let(::JsonPrimitive) ?: JsonNull)
+            put("publicado", JsonPrimitive(false))
+        },
+        despues = buildJsonObject { put("motivo", JsonPrimitive("Valor por defecto de un examen oficial: penalización racional activada")) },
+    )
+    return true
+}

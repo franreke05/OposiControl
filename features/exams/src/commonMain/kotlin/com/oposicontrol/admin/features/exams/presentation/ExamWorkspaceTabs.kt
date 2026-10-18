@@ -236,15 +236,19 @@ private fun ExamWorkspaceTabContent(
 ) {
     when (selectedTab) {
         ExamWorkspaceTabId.BASICA -> ExamBasicInfoSection(state, onIntent)
-        ExamWorkspaceTabId.CONFIGURACION -> ExamConfigurationSection(
-            state = state,
-            onIntent = onIntent,
-            // El banco de Preguntas, no una pestaña de este examen. Si la pantalla
-            // no recibe cómo abrirlo, Configuración no pinta el enlace.
-            onOpenQuestions = onOpenQuestionBank,
-            onOpenBasicInfo = { onSelectTab(ExamWorkspaceTabId.BASICA) },
-            contentWidth = contentWidth,
-        )
+        ExamWorkspaceTabId.CONFIGURACION -> {
+            ExamConfigurationSection(
+                state = state,
+                onIntent = onIntent,
+                // El banco de Preguntas, no una pestaña de este examen. Si la pantalla
+                // no recibe cómo abrirlo, Configuración no pinta el enlace.
+                onOpenQuestions = onOpenQuestionBank,
+                onOpenBasicInfo = { onSelectTab(ExamWorkspaceTabId.BASICA) },
+                contentWidth = contentWidth,
+            )
+            // Reglas de puntuación y su historial: solo con un examen ya guardado y si la app provee el ViewModel.
+            if (exam != null && exam.id.isNotBlank()) ExamGradingRulesHost(examId = exam.id, isOfficial = exam.isOfficial)
+        }
         ExamWorkspaceTabId.ACCESO -> ExamAccessSection(
             state = state,
             exam = exam,

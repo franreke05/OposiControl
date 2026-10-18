@@ -171,6 +171,7 @@ kotlin {
             implementation(projects.data)
             implementation(projects.domain)
             implementation(projects.features.audit)
+            implementation(projects.features.controlV1)
             implementation(projects.features.auth)
             implementation(projects.features.communities)
             implementation(projects.features.dashboard)

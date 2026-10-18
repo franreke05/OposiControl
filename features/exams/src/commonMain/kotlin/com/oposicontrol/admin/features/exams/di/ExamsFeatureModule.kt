@@ -1,5 +1,6 @@
 package com.oposicontrol.admin.features.exams.di
 
+import com.oposicontrol.admin.features.exams.presentation.ExamGradingRulesViewModel
 import com.oposicontrol.admin.domain.usecase.communities.ObserveCommunitiesUseCase
 import com.oposicontrol.admin.domain.usecase.communities.RefreshCommunitiesUseCase
 import com.oposicontrol.admin.domain.usecase.content.ArchiveExamUseCase
@@ -141,4 +142,6 @@ val examsFeatureModule = module {
             analyticsTracker = get(),
         )
     }
+    // Reglas de puntuación de un examen (Control V1). `single`: el editor lo recarga al cambiar de examen.
+    single { ExamGradingRulesViewModel(dispatcherProvider = get(), repository = get()) }
 }
