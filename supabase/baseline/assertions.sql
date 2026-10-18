@@ -3357,7 +3357,7 @@ begin
   -- ---- ACL: service role only, nothing for clients
   assert (select bool_and(has_function_privilege('service_role', f, 'execute') and not has_function_privilege('anon', f, 'execute') and not has_function_privilege('authenticated', f, 'execute'))
             from unnest(array['public.admin_referral_list(text,text,integer)', 'public.admin_foro_bloqueos_list()', 'public.admin_foro_bloqueos_add(uuid,text)', 'public.admin_foro_bloqueos_remove(uuid,text)',
-                              'public.admin_foro_restricciones_list()', 'public.admin_foro_restriccion_levantar(uuid,uuid)', 'public.admin_set_exam_question_flags(uuid,uuid,uuid,boolean,text,boolean,integer)',
+                              'public.admin_foro_restricciones_list()', 'public.admin_foro_imagenes_purga_resumen()', 'public.admin_foro_restriccion_levantar(uuid,uuid)', 'public.admin_set_exam_question_flags(uuid,uuid,uuid,boolean,text,boolean,integer)',
                               'public.admin_set_exam_grading_rules(uuid,uuid,text,integer,integer,boolean,text)', 'public.admin_payment_order_resolve(uuid,uuid,text,text,boolean)']) f), 'service role only';
 
   -- ---- referral list: handles only, filter, cursor paging, summary
@@ -3406,6 +3406,15 @@ begin
   r := public.admin_foro_restriccion_levantar(adm, pg_temp.u(3));
   assert r = '{"levantada": true}'::jsonb and pg_temp.audits('foro_restriccion_levantada') = n0 + 1 and public.admin_foro_restricciones_list() = '[]'::jsonb, 'lifted + audited';
   assert public.admin_foro_restriccion_levantar(adm, pg_temp.u(3)) = '{"levantada": false}'::jsonb and pg_temp.audits('foro_restriccion_levantada') = n0 + 1, 'second lift is a no-op';
+
+  -- ---- forum image purge summary (read only)
+  assert public.admin_foro_imagenes_purga_resumen() = '{"pendientes": 0, "atascadas": 0, "masAntiguaEn": null}'::jsonb, 'empty queue';
+  insert into public.imagenes_oposired (usuario_id, path, mime, bytes, estado, retirada_en, intentos_purga) values
+    (pg_temp.u(3), 'p/a.jpg', 'image/jpeg', 10, 'retirada', now() - interval '3 days', 0), (pg_temp.u(3), 'p/b.jpg', 'image/jpeg', 10, 'rechazada', now() - interval '1 day', 2),
+    (pg_temp.u(3), 'p/c.jpg', 'image/jpeg', 10, 'retirada', now() - interval '2 days', 10), (pg_temp.u(3), 'p/d.jpg', 'image/jpeg', 10, 'verificada', null, 0);
+  insert into public.imagenes_oposired (usuario_id, path, mime, bytes, estado, retirada_en, purgada_en) values (pg_temp.u(3), 'p/e.jpg', 'image/jpeg', 10, 'retirada', now() - interval '9 days', now());
+  r := public.admin_foro_imagenes_purga_resumen();
+  assert (r ->> 'pendientes')::int = 2 and (r ->> 'atascadas')::int = 1 and (r ->> 'masAntiguaEn')::timestamptz = (select min(retirada_en) from public.imagenes_oposired where path in ('p/a.jpg', 'p/b.jpg', 'p/c.jpg')), 'pending, stuck, oldest (verified and already purged rows excluded): ' || r::text;
 
   -- ---- exam question flags
   insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000f7', 'NC7', 'NC7', 'nc7', true);
