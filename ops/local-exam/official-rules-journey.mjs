@@ -175,10 +175,12 @@ const adminJwt = (() => { // the admin token PostgREST verifies against the LOCA
   return head + '.' + body + '.' + crypto.createHmac('sha256', secrets.jwtSecret).update(head + '.' + body).digest('base64url');
 })();
 const patchExam = (body) => fetch(GATEWAY_URL + '/rest/v1/examenes?id=eq.' + ex(4), { method: 'PATCH', headers: { apikey: anonKey, Authorization: 'Bearer ' + adminJwt, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(body) });
-sql(`delete from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = '${ex(4)}';`);
+// the audit log is append-only (develop): count rows before and after instead of deleting
+const auditBefore = Number(sql(`select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = '${ex(4)}';`));
 const t1 = await patchExam({ titulo: 'Oficial OFF-4 (titulo)' });
 const p1 = await patchExam({ penalizacion_racional: true });
-const audit = JSON.parse(sql(`select coalesce(json_agg(a), '[]') from (select usuario_id, antes, despues from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = '${ex(4)}') a;`));
+const auditAll = JSON.parse(sql(`select coalesce(json_agg(a), '[]') from (select usuario_id, antes, despues from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = '${ex(4)}' order by creado_en, id) a;`));
+const audit = auditAll.slice(auditBefore);
 check('J18.admin_rule_change_writes_one_audit_row_with_actor_and_old_new', t1.status === 200 && p1.status === 200 && audit.length === 1 && audit[0].usuario_id === adminSub
   && audit[0].antes.penalizacion_racional === false && audit[0].despues.penalizacion_racional === true, `${t1.status} ${p1.status} ${JSON.stringify(audit)}`);
 

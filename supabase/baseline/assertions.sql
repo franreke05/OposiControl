@@ -2405,14 +2405,16 @@ begin
   perform pg_temp.expect_e(format($q$update public.examenes set penalizacion_num = 1, penalizacion_den = 3 where id = %L$q$, pg_temp.ex(15)), 'new row for relation "examenes" violates check constraint "examenes_penalizacion_chk"');
   -- FA36b: changing the grading rules is audited (who, old/new); other columns and no-op updates are not
   perform set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000f1', true);
-  delete from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas';
+  -- the audit log is append-only in develop: never DELETE from it, compare with a baseline taken before
+  create temp table pg_aud_base on commit drop as select count(*) as n from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = pg_temp.ex(15);
   update public.examenes set titulo = 'Racional 15b' where id = pg_temp.ex(15);
   update public.examenes set penalizacion_racional = true where id = pg_temp.ex(15);
-  assert (select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas') = 0, 'a title change or a no-op rule update writes no audit';
+  assert (select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = pg_temp.ex(15)) = (select n from pg_aud_base), 'a title change or a no-op rule update writes no audit';
   update public.examenes set penalizacion_racional = false, penalizacion_num = 1, penalizacion_den = 3 where id = pg_temp.ex(15);
-  assert (select count(*) = 1 and bool_and(usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and tabla_afectada = 'examenes' and registro_id = pg_temp.ex(15)
+  assert (select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = pg_temp.ex(15)) = (select n from pg_aud_base) + 1, 'a rule change writes exactly ONE audit row';
+  assert (select bool_and(usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and tabla_afectada = 'examenes'
             and (antes ->> 'penalizacion_racional')::boolean is true and (despues ->> 'penalizacion_racional')::boolean is false and (despues ->> 'penalizacion_num')::int = 1 and (despues ->> 'penalizacion_den')::int = 3)
-            from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas'), 'a rule change writes ONE audit row with the actor and old/new values';
+            from (select * from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = pg_temp.ex(15) order by creado_en desc, id limit 1) l), 'with the actor and old/new values';
   raise notice 'OK V1 rational penalty';
 end $$;
 rollback;
@@ -3325,5 +3327,197 @@ begin
   perform pg_temp.expect_e($q$select public.auth_code_binding_register('signup', 'not-hex', repeat('A', 43))$q$, 'new row for relation "auth_code_bindings" violates check constraint "auth_code_bindings_email_ref_check"');
   perform pg_temp.expect_e($q$select public.auth_code_binding_register('signup', repeat('a', 64), 'short')$q$, 'new row for relation "auth_code_bindings" violates check constraint "auth_code_bindings_challenge_check"');
   raise notice 'OK FA39 auth code binding';
+end $$;
+rollback;
+
+-- 20261022102300: NIGHT-C Control RPCs (E1-V1-NIGHT-C.md): admin-only, audited (append-only: only INSERTs), strict inputs, idempotent, no oracle
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.u(n int) returns uuid language sql as $$ select ('a0000000-0000-0000-0000-' || lpad((700 + n)::text, 12, '0'))::uuid $$;
+create function pg_temp.ex(n int) returns uuid language sql as $$ select ('e9700000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid $$;
+create function pg_temp.q(n int, p int) returns uuid language sql as $$ select ('f9700000-0000-0000-' || lpad(n::text, 4, '0') || '-' || lpad(p::text, 12, '0'))::uuid $$;
+create function pg_temp.audits(p_accion text) returns bigint language sql as $$ select count(*) from public.auditoria_log where accion = p_accion $$;
+insert into auth.users (id, email, aud, role) select pg_temp.u(n), 'nc' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 8) n;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta)
+  select pg_temp.u(n), 'nc' || n, 'nc_user_' || n, true, 'activa' from generate_series(1, 8) n
+  on conflict (usuario_id) do update set username = excluded.username;
+insert into public.roles_app (codigo, nombre) select 'admin', 'Admin' where not exists (select 1 from public.roles_app where codigo = 'admin');
+insert into public.roles_usuario (usuario_id, rol_id) select pg_temp.u(1), id from public.roles_app where codigo = 'admin';
+do $$
+declare
+  adm constant uuid := pg_temp.u(1);
+  usr constant uuid := pg_temp.u(2);
+  r jsonb; r2 jsonb; n0 bigint; o record; oid uuid; oid2 uuid; oid3 uuid;
+begin
+  -- ---- ACL: service role only, nothing for clients
+  assert (select bool_and(has_function_privilege('service_role', f, 'execute') and not has_function_privilege('anon', f, 'execute') and not has_function_privilege('authenticated', f, 'execute'))
+            from unnest(array['public.admin_referral_list(text,text,integer)', 'public.admin_foro_bloqueos_list()', 'public.admin_foro_bloqueos_add(uuid,text)', 'public.admin_foro_bloqueos_remove(uuid,text)',
+                              'public.admin_foro_restricciones_list()', 'public.admin_foro_restriccion_levantar(uuid,uuid)', 'public.admin_set_exam_question_flags(uuid,uuid,uuid,boolean,text,boolean,integer)',
+                              'public.admin_set_exam_grading_rules(uuid,uuid,text,integer,integer,boolean,text)', 'public.admin_payment_order_resolve(uuid,uuid,text,text,boolean)']) f), 'service role only';
+
+  -- ---- referral list: handles only, filter, cursor paging, summary
+  insert into public.invitaciones (invitador_id, invitado_id, codigo, estado, creado_en, flags, ultimo_error)
+    values (pg_temp.u(3), pg_temp.u(4), 'AAAAAAAA', 'registrada', now() - interval '3 hours', '{"misma_ip": true, "x": false}', 'boom'),
+           (pg_temp.u(3), pg_temp.u(5), 'AAAAAAAA', 'premiada', now() - interval '2 hours', '{}', null),
+           (pg_temp.u(3), pg_temp.u(6), 'AAAAAAAA', 'premiada', now() - interval '1 hours', '{}', null);
+  r := public.admin_referral_list(null, null, 2);
+  assert jsonb_array_length(r -> 'items') = 2 and r ->> 'nextCursor' is not null and r -> 'resumen' = '{"registrada": 1, "premiada": 2}'::jsonb, 'page 1 + summary: ' || r::text;
+  assert (r -> 'items' -> 0 ->> 'invitadoHandle') = 'nc_user_6' and (r -> 'items' -> 0 ->> 'invitadorHandle') = 'nc_user_3' and not (r::text like '%nc3@test.local%'), 'handles only, newest first';
+  r2 := public.admin_referral_list(null, r ->> 'nextCursor', 2);
+  assert jsonb_array_length(r2 -> 'items') = 1 and r2 ->> 'nextCursor' is null and r2 -> 'items' -> 0 -> 'marcas' = '{"misma_ip": true}'::jsonb and r2 -> 'items' -> 0 ->> 'ultimoError' = 'boom', 'page 2, only true flags';
+  assert jsonb_array_length(public.admin_referral_list('premiada', null, 50) -> 'items') = 2 and jsonb_array_length(public.admin_referral_list('revocada', null, 50) -> 'items') = 0, 'state filter';
+  perform pg_temp.expect_e($q$select public.admin_referral_list('hacked', null, 10)$q$, 'REFERRAL_FILTER_INVALID');
+  perform pg_temp.expect_e($q$select public.admin_referral_list(null, 'not-a-cursor', 10)$q$, 'CURSOR_INVALID');
+  assert jsonb_array_length(public.admin_referral_list(null, null, 100000) -> 'items') = 3 and jsonb_array_length(public.admin_referral_list(null, null, -5) -> 'items') = 1, 'limit clamped 1..100';
+
+  -- ---- forum block list: literal patterns, normalised, bounded, audited once, admin only
+  n0 := pg_temp.audits('foro_bloqueo_agregado');
+  r := public.admin_foro_bloqueos_add(adm, '  PalabroTA  ');
+  assert r = '{"patron": "palabrota", "creado": true}'::jsonb and pg_temp.audits('foro_bloqueo_agregado') = n0 + 1, 'added, lower case, audited';
+  assert public.admin_foro_bloqueos_add(adm, 'palabrota') = '{"patron": "palabrota", "creado": false}'::jsonb and pg_temp.audits('foro_bloqueo_agregado') = n0 + 1, 'idempotent: no second audit row';
+  assert public.admin_foro_bloqueos_list() ? 'palabrota' and private.foro_has_link('eres un PALABROTA'), 'listed and enforced';
+  perform public.admin_foro_bloqueos_add(adm, '%a%');
+  assert private.foro_has_link('oferta 10%a% hoy') and not private.foro_has_link('hola caracola'), 'LITERAL match: % is not a LIKE wildcard';
+  perform pg_temp.expect_e($q$select public.admin_foro_bloqueos_add(pg_temp.u(2), 'otro')$q$, 'ADMIN_ACTOR_INVALID');
+  perform pg_temp.expect_e($q$select public.admin_foro_bloqueos_add(null, 'otro')$q$, 'ADMIN_ACTOR_INVALID');
+  perform pg_temp.expect_e($q$select public.admin_foro_bloqueos_add(pg_temp.u(1), 'a')$q$, 'FORO_BLOCK_INVALID');
+  perform pg_temp.expect_e($q$select public.admin_foro_bloqueos_add(pg_temp.u(1), null)$q$, 'FORO_BLOCK_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_foro_bloqueos_add(%L, %L)$q$, adm, repeat('x', 101)), 'FORO_BLOCK_INVALID');
+  n0 := pg_temp.audits('foro_bloqueo_quitado');
+  r := public.admin_foro_bloqueos_remove(adm, 'PALABROTA');
+  assert r = '{"patron": "palabrota", "eliminado": true}'::jsonb and pg_temp.audits('foro_bloqueo_quitado') = n0 + 1 and not private.foro_has_link('eres un palabrota'), 'removed + audited';
+  assert (public.admin_foro_bloqueos_remove(adm, 'palabrota') ->> 'eliminado') = 'false' and pg_temp.audits('foro_bloqueo_quitado') = n0 + 1, 'second removal is a no-op without audit';
+  perform pg_temp.expect_e($q$select public.admin_foro_bloqueos_remove(pg_temp.u(2), 'x1')$q$, 'ADMIN_ACTOR_INVALID');
+  insert into public.foro_bloqueos (patron) select 'bulk-' || lpad(g::text, 4, '0') from generate_series(1, 499) g;
+  perform pg_temp.expect_e(format($q$select public.admin_foro_bloqueos_add(%L, 'one-too-many')$q$, adm), 'FORO_BLOCK_LIMIT');
+  assert (public.admin_foro_bloqueos_add(adm, '%A%') ->> 'creado') = 'false', 'an existing pattern is still idempotent at the limit';
+
+  -- ---- active mutes
+  insert into public.restricciones_foro (usuario_id, hasta, motivo, por) values (pg_temp.u(3), now() + interval '2 days', 'spam', adm), (pg_temp.u(4), now() - interval '1 day', 'old', adm);
+  r := public.admin_foro_restricciones_list();
+  assert jsonb_array_length(r) = 1 and r -> 0 ->> 'handle' = 'nc_user_3' and r -> 0 ->> 'motivo' = 'spam' and r -> 0 ->> 'usuarioId' = pg_temp.u(3)::text, 'only active mutes, with the handle: ' || r::text;
+  perform pg_temp.expect_e($q$select public.admin_foro_restriccion_levantar(pg_temp.u(2), pg_temp.u(3))$q$, 'ADMIN_ACTOR_INVALID');
+  n0 := pg_temp.audits('foro_restriccion_levantada');
+  r := public.admin_foro_restriccion_levantar(adm, pg_temp.u(3));
+  assert r = '{"levantada": true}'::jsonb and pg_temp.audits('foro_restriccion_levantada') = n0 + 1 and public.admin_foro_restricciones_list() = '[]'::jsonb, 'lifted + audited';
+  assert public.admin_foro_restriccion_levantar(adm, pg_temp.u(3)) = '{"levantada": false}'::jsonb and pg_temp.audits('foro_restriccion_levantada') = n0 + 1, 'second lift is a no-op';
+
+  -- ---- exam question flags
+  insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000f7', 'NC7', 'NC7', 'nc7', true);
+  insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000f7', 'NCC', 'Com NC', 'com-nc');
+  set local session_replication_role = replica;
+  insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, es_oficial)
+    values (pg_temp.ex(1), 'NC-1', 'e1000000-0000-0000-0000-0000000000f7', 'c1000000-0000-0000-0000-0000000000f7', 'NC official', 'rafaga', 'gratuito', false, true),
+           (pg_temp.ex(2), 'NC-2', 'e1000000-0000-0000-0000-0000000000f7', 'c1000000-0000-0000-0000-0000000000f7', 'NC plain', 'rafaga', 'gratuito', false, false);
+  insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) select pg_temp.q(1, p), 'NC-1-' || p, 'rafaga', 'NC pregunta ' || p, true from generate_series(1, 6) p;
+  insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select pg_temp.ex(1), pg_temp.q(1, p), p, p from generate_series(1, 6) p;
+  insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values (pg_temp.q(2, 1), 'NC-2-1', 'rafaga', 'NC plain 1', true);
+  insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) values (pg_temp.ex(2), pg_temp.q(2, 1), 1, 1);
+  set local session_replication_role = origin;
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, %L, true, 'x', false, null)$q$, usr, pg_temp.ex(1), pg_temp.q(1, 2)), 'ADMIN_ACTOR_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, %L, null, null, false, null)$q$, adm, pg_temp.ex(1), pg_temp.q(1, 2)), 'FLAGS_INPUT_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, %L, false, 'because', false, null)$q$, adm, pg_temp.ex(1), pg_temp.q(1, 2)), 'FLAGS_REASON_REQUIRES_ANNULLED');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, gen_random_uuid(), %L, false, null, false, null)$q$, adm, pg_temp.q(1, 2)), 'EXAM_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, gen_random_uuid(), false, null, false, null)$q$, adm, pg_temp.ex(1)), 'EXAM_QUESTION_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, %L, false, null, true, 1)$q$, adm, pg_temp.ex(2), pg_temp.q(2, 1)), 'FLAGS_RESERVE_REQUIRES_OFFICIAL_EXAM');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, %L, false, null, false, 2)$q$, adm, pg_temp.ex(1), pg_temp.q(1, 2)), 'FLAGS_ORDER_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, %L, false, null, true, 9)$q$, adm, pg_temp.ex(1), pg_temp.q(1, 6)), 'FLAGS_ORDER_INVALID');
+  n0 := pg_temp.audits('pregunta_examen_marcas_modificadas');
+  r := public.admin_set_exam_question_flags(adm, pg_temp.ex(1), pg_temp.q(1, 2), true, '  Anulada   por el tribunal ', false, null);
+  assert (r ->> 'changed')::boolean and r -> 'problema' = 'null'::jsonb and pg_temp.audits('pregunta_examen_marcas_modificadas') = n0 + 1
+     and (select anulada and motivo_anulacion = 'Anulada por el tribunal' from public.preguntas_examen where examen_id = pg_temp.ex(1) and pregunta_id = pg_temp.q(1, 2)), 'annulled with a clean reason, audited';
+  assert not (public.admin_set_exam_question_flags(adm, pg_temp.ex(1), pg_temp.q(1, 2), true, 'Anulada por el tribunal', false, null) ->> 'changed')::boolean and pg_temp.audits('pregunta_examen_marcas_modificadas') = n0 + 1, 'no-op: no audit';
+  -- reserves: q6 becomes reserve 1 (after the last main), then q5 takes order 1 and q6 shifts to 2
+  perform public.admin_set_exam_question_flags(adm, pg_temp.ex(1), pg_temp.q(1, 6), false, null, true, null);
+  perform public.admin_set_exam_question_flags(adm, pg_temp.ex(1), pg_temp.q(1, 5), false, null, true, 1);
+  assert (select string_agg(posicion || ':' || es_reserva::text || ':' || coalesce(orden_reserva::text, '-'), ',' order by posicion) from public.preguntas_examen where examen_id = pg_temp.ex(1))
+         = '1:false:-,2:false:-,3:false:-,4:false:-,5:true:1,6:true:2', 'reserves 1..R after the mains, mains untouched';
+  assert (select numero_en_examen from public.preguntas_examen where examen_id = pg_temp.ex(1) and pregunta_id = pg_temp.q(1, 5)) = 5, 'the official question number never changes';
+  perform public.admin_set_exam_question_flags(adm, pg_temp.ex(1), pg_temp.q(1, 3), true, 'tribunal', false, null);
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, %L, true, 'tribunal', false, null)$q$, adm, pg_temp.ex(1), pg_temp.q(1, 4)), 'FLAGS_OFFICIAL_RULES_INVALID');
+  assert not (select anulada from public.preguntas_examen where examen_id = pg_temp.ex(1) and pregunta_id = pg_temp.q(1, 4)), 'more annulled than reserves: refused and rolled back';
+  -- an annulled reserve is allowed (warned) as long as the active reserves still cover the annulled mains
+  perform public.admin_set_exam_question_flags(adm, pg_temp.ex(1), pg_temp.q(1, 3), false, null, false, null);
+  r := public.admin_set_exam_question_flags(adm, pg_temp.ex(1), pg_temp.q(1, 6), true, 'anulada', true, 2);
+  assert r -> 'avisos' ? 'ANNULLED_RESERVE_SKIPPED', 'annulled reserve warned';
+  -- a demo question is never annulled nor reserve
+  update public.preguntas_examen set es_demo = true where examen_id = pg_temp.ex(1) and pregunta_id = pg_temp.q(1, 1);
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, %L, true, 'x', false, null)$q$, adm, pg_temp.ex(1), pg_temp.q(1, 1)), 'DEMO_CONFLICT');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_question_flags(%L, %L, %L, false, null, true, 1)$q$, adm, pg_temp.ex(1), pg_temp.q(1, 1)), 'DEMO_CONFLICT');
+  perform public.admin_set_exam_question_flags(adm, pg_temp.ex(1), pg_temp.q(1, 6), false, null, true, 2);
+  -- back to a main: goes right after the last main, the remaining reserve is renumbered 1
+  perform public.admin_set_exam_question_flags(adm, pg_temp.ex(1), pg_temp.q(1, 5), false, null, false, null);
+  assert (select string_agg(posicion || ':' || es_reserva::text || ':' || coalesce(orden_reserva::text, '-'), ',' order by posicion) from public.preguntas_examen where examen_id = pg_temp.ex(1))
+         = '1:false:-,2:false:-,3:false:-,4:false:-,5:false:-,6:true:1', 'a reserve turned main sits after the last main; orders compacted';
+  assert exists (select 1 from public.auditoria_log where accion = 'pregunta_examen_marcas_modificadas' and registro_id = pg_temp.ex(1) and usuario_id = adm and antes ->> 'pregunta' = pg_temp.q(1, 5)::text
+            and antes ->> 'esReserva' = 'true' and (despues ->> 'esReserva') = 'false' and despues ->> 'ordenReserva' is null), 'audit with actor, old and new';
+
+  -- ---- grading rules in one statement, actor and reason in the trigger audit row (DEBT-159)
+  n0 := pg_temp.audits('examen_reglas_puntuacion_modificadas');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_grading_rules(%L, %L, null, 0, 1, true, null)$q$, usr, pg_temp.ex(2)), 'ADMIN_ACTOR_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_grading_rules(%L, %L, 'PUNTUA_ACIERTO', 0, 1, false, null)$q$, adm, pg_temp.ex(2)), 'GRADING_RULE_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_grading_rules(%L, %L, null, 1, 3, true, null)$q$, adm, pg_temp.ex(2)), 'GRADING_PENALTY_CONFLICT');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_grading_rules(%L, %L, null, 5, 3, false, null)$q$, adm, pg_temp.ex(2)), 'GRADING_PENALTY_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_grading_rules(%L, %L, null, null, 3, false, null)$q$, adm, pg_temp.ex(2)), 'GRADING_INPUT_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_grading_rules(%L, gen_random_uuid(), null, 0, 1, false, null)$q$, adm), 'EXAM_NOT_FOUND');
+  assert pg_temp.audits('examen_reglas_puntuacion_modificadas') = n0, 'refused calls wrote nothing';
+  r := public.admin_set_exam_grading_rules(adm, pg_temp.ex(2), 'NO_PUNTUA', 1, 3, false, 'fraccion oficial');
+  assert (r ->> 'changed')::boolean and r ->> 'reglaEfectiva' = 'NO_PUNTUA' and pg_temp.audits('examen_reglas_puntuacion_modificadas') = n0 + 1, 'changed';
+  assert (select usuario_id = adm and despues ->> 'motivo' = 'fraccion oficial' and (despues ->> 'penalizacion_num')::int = 1 and (antes ->> 'penalizacion_num')::int = 0
+            from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = pg_temp.ex(2) order by creado_en desc, id limit 1), 'the trigger audit row carries the ACTOR and the reason';
+  assert not (public.admin_set_exam_grading_rules(adm, pg_temp.ex(2), 'NO_PUNTUA', 1, 3, false, null) ->> 'changed')::boolean and pg_temp.audits('examen_reglas_puntuacion_modificadas') = n0 + 1, 'same values: no audit';
+  assert coalesce(current_setting('app.audit_actor', true), '') = '' and coalesce(current_setting('app.audit_reason', true), '') = '', 'the transaction-local settings are cleared';
+  update public.examenes set publicado_en = now() - interval '1 day', activo = true where id = pg_temp.ex(2);
+  perform pg_temp.expect_e(format($q$select public.admin_set_exam_grading_rules(%L, %L, null, 0, 1, true, null)$q$, adm, pg_temp.ex(2)), 'REASON_INVALID');
+  assert (public.admin_set_exam_grading_rules(adm, pg_temp.ex(2), null, 0, 1, true, 'penalizacion racional') ->> 'changed')::boolean, 'published exam: allowed with a reason';
+
+  -- ---- orders in review
+  insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, cantidad_tickets, activo, visible)
+    values ('b9700000-0000-0000-0000-000000000001', 'nc-pack-100', 'pack_tickets', 'NC 100', 499, 'EUR', 100, true, true);
+  select * into o from public.app_create_payment_order(pg_temp.u(5), 'nc-pack-100', 'google_play', 'nc-o1');
+  oid := o.orden_id;
+  assert (select outcome from public.app_credit_payment_order('google_play', 'nc-ev1', oid, 'nc-tx1', 1, 'EUR', 'nc-pack-100')) = 'EN_REVISION', 'a mismatch puts the order in review';
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'acreditar', 'verificado a mano', false)$q$, usr, oid), 'ADMIN_ACTOR_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'regalar', 'verificado a mano', false)$q$, adm, oid), 'ORDER_DECISION_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'acreditar', 'ok', false)$q$, adm, oid), 'REASON_INVALID');
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, gen_random_uuid(), 'acreditar', 'verificado a mano', false)$q$, adm), 'ORDER_NOT_FOUND');
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'confirmar', 'verificado a mano', false)$q$, adm, oid), 'ORDER_NOT_CREDITED');
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'reembolsar', 'verificado a mano', true)$q$, adm, oid), 'ORDER_NOT_CREDITED');
+  perform pg_temp.expect_e(format($q$update public.compras_usuario set estado = 'pagada' where id = %L$q$, oid), 'ORDER_STATE_TRANSITION_FORBIDDEN');
+  n0 := pg_temp.audits('pedido_resuelto');
+  r := public.admin_payment_order_resolve(adm, oid, 'acreditar', 'verificado en el panel del proveedor', false);
+  assert r ->> 'outcome' = 'CREDITED' and r ->> 'estado' = 'pagada' and pg_temp.audits('pedido_resuelto') = n0 + 1
+     and (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(5)) = 100
+     and (select count(*) from public.transacciones_cartera where compra_id = oid and tipo = 'pack_tickets') = 1, 'ledger-first credit of the frozen quantity: ' || r::text;
+  assert public.admin_payment_order_resolve(adm, oid, 'acreditar', 'verificado en el panel del proveedor', false) ->> 'outcome' = 'REPLAY' and pg_temp.audits('pedido_resuelto') = n0 + 1
+     and (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(5)) = 100, 'replay: no second credit, no second audit';
+  assert (select outcome from public.app_credit_payment_order('google_play', 'nc-ev2', oid, 'nc-tx2', 499, 'EUR', 'nc-pack-100')) = 'REPLAY'
+     and (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(5)) = 100, 'a late webhook for the resolved order cannot credit again';
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'rechazar', 'verificado en el panel', false)$q$, adm, oid), 'ORDER_NOT_IN_REVIEW');
+  -- reject
+  select * into o from public.app_create_payment_order(pg_temp.u(5), 'nc-pack-100', 'google_play', 'nc-o2');
+  oid2 := o.orden_id;
+  perform public.app_credit_payment_order('google_play', 'nc-ev3', oid2, 'nc-tx3', 1, 'EUR', 'nc-pack-100');
+  r := public.admin_payment_order_resolve(adm, oid2, 'rechazar', 'fraude confirmado', false);
+  assert r ->> 'outcome' = 'REJECTED' and r ->> 'estado' = 'fallida' and (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(5)) = 100, 'rejected: no ledger movement';
+  assert public.admin_payment_order_resolve(adm, oid2, 'rechazar', 'fraude confirmado', false) ->> 'outcome' = 'REPLAY', 'reject replay';
+  -- a credited order that went to review: confirm, or refund (policy P2 through app_refund_payment_order, only when the switch is on)
+  update public.compras_usuario set estado = 'en_revision' where id = oid;
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'acreditar', 'verificado a mano', false)$q$, adm, oid), 'ORDER_ALREADY_CREDITED');
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'rechazar', 'verificado a mano', false)$q$, adm, oid), 'ORDER_ALREADY_CREDITED');
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'reembolsar', 'cliente reclama', false)$q$, adm, oid), 'REFUNDS_DISABLED');
+  assert (select estado from public.compras_usuario where id = oid) = 'en_revision', 'a refused refund changed nothing';
+  assert public.admin_payment_order_resolve(adm, oid, 'confirmar', 'el pago es correcto', false) ->> 'estado' = 'pagada', 'confirmed: back to paid, no ledger movement';
+  update public.compras_usuario set estado = 'en_revision' where id = oid;
+  r := public.admin_payment_order_resolve(adm, oid, 'reembolsar', 'cliente reclama', true);
+  assert r ->> 'outcome' = 'REFUNDED' and r ->> 'estado' = 'reembolsada' and (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(5)) = 0, 'refund P2: the unspent part is reversed: ' || r::text;
+  assert public.admin_payment_order_resolve(adm, oid, 'reembolsar', 'cliente reclama', true) ->> 'outcome' = 'REPLAY' and (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(5)) = 0, 'refund replay writes nothing';
+  assert (select count(*) from public.auditoria_log where accion = 'pedido_resuelto' and registro_id = oid) = 3 and (select bool_and(usuario_id = adm) from public.auditoria_log where accion = 'pedido_resuelto'), 'every resolution audited with the actor';
+  raise notice 'OK NIGHT-C control rpcs';
 end $$;
 rollback;
