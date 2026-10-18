@@ -16,6 +16,7 @@ import com.oposicontrol.admin.domain.model.ForumChannel
 import com.oposicontrol.admin.domain.model.ForumChannelDraft
 import com.oposicontrol.admin.domain.model.ForumContentType
 import com.oposicontrol.admin.domain.model.ForumCounterDrift
+import com.oposicontrol.admin.domain.model.ForumImagePurge
 import com.oposicontrol.admin.domain.model.ForumQueueItem
 import com.oposicontrol.admin.domain.model.ForumQueuePage
 import com.oposicontrol.admin.domain.model.ForumRestriction
@@ -23,7 +24,9 @@ import com.oposicontrol.admin.domain.model.GradingAuditEntry
 import com.oposicontrol.admin.domain.model.GradingCheck
 import com.oposicontrol.admin.domain.model.GradingRules
 import com.oposicontrol.admin.domain.model.GradingSnapshot
+import com.oposicontrol.admin.domain.model.OrderDecision
 import com.oposicontrol.admin.domain.model.OrderItem
+import com.oposicontrol.admin.domain.model.OrderResolution
 import com.oposicontrol.admin.domain.model.OfficialQuestion
 import com.oposicontrol.admin.domain.model.OfficialQuestionDraft
 import com.oposicontrol.admin.domain.model.OfficialQuestions
@@ -220,6 +223,11 @@ class KtorControlV1RepositoryImpl(
             .checkedBody<ForumRestrictionsDto>("/api/v1/admin/foro/restricciones").data.map { it.toDomain() }
     }
 
+    override suspend fun forumImagePurge(): AppResult<ForumImagePurge> = adapter.safeCall {
+        client.get(url("/foro/imagenes-purga")) { auth() }
+            .checkedBody<ImagePurgeDto>("/api/v1/admin/foro/imagenes-purga").let { ForumImagePurge(it.pendientes, it.atascadas, it.masAntiguaEn) }
+    }
+
     override suspend fun liftForumRestriction(userId: String): AppResult<Unit> = adapter.safeCall {
         client.delete(url("/foro/restricciones/$userId")) { auth() }.requireSuccess("/api/v1/admin/foro/restricciones/$userId")
     }
@@ -276,6 +284,14 @@ class KtorControlV1RepositoryImpl(
             contentType(ContentType.Application.Json)
             setBody(NoteBodyDto(note.trim()))
         }.requireSuccess("/api/v1/admin/pedidos/$id/nota")
+    }
+
+    override suspend fun resolveOrder(id: String, decision: OrderDecision, note: String): AppResult<OrderResolution> = adapter.safeCall {
+        client.post(url("/pedidos/$id/resolver")) {
+            auth()
+            contentType(ContentType.Application.Json)
+            setBody(ResolveBodyDto(decision.wire, note.trim()))
+        }.checkedBody<OrderResolutionDto>("/api/v1/admin/pedidos/$id/resolver").toDomain()
     }
 
     // ---------------------------------------------------------------- alertas
@@ -416,6 +432,14 @@ private data class ReasonBodyDto(val motivo: String)
 
 @Serializable
 private data class NoteBodyDto(val nota: String)
+
+@Serializable
+private data class ResolveBodyDto(val decision: String, val nota: String)
+
+@Serializable
+private data class OrderResolutionDto(val outcome: String = "", val estado: String = "", val casoReembolso: Boolean = false) {
+    fun toDomain() = OrderResolution(outcome, estado, casoReembolso)
+}
 
 @Serializable
 private data class ReferralItemDto(
@@ -624,9 +648,18 @@ private data class OrderDto(
 }
 
 @Serializable
-private data class OrderPageDto(val data: List<OrderDto> = emptyList(), val total: Int = 0, val limit: Int = 0, val offset: Int = 0) {
-    fun toDomain() = OrderPage(data.map { it.toDomain() }, total, limit, offset)
+private data class OrderPageDto(
+    val data: List<OrderDto> = emptyList(),
+    val total: Int = 0,
+    val limit: Int = 0,
+    val offset: Int = 0,
+    val reembolsosHabilitados: Boolean = false,
+) {
+    fun toDomain() = OrderPage(data.map { it.toDomain() }, total, limit, offset, reembolsosHabilitados)
 }
+
+@Serializable
+private data class ImagePurgeDto(val pendientes: Int = 0, val atascadas: Int = 0, val masAntiguaEn: String? = null)
 
 @Serializable
 private data class CountDto(val total: Int = 0)
@@ -681,8 +714,13 @@ private data class OfficialQuestionsDto(
     val preguntas: List<OfficialQuestionDto> = emptyList(),
     val reservasDisponibles: Boolean = false,
     val chequeo: GradingCheckDto? = null,
+    val problema: String? = null,
+    val avisos: List<String> = emptyList(),
 ) {
-    fun toDomain() = OfficialQuestions(examenId, preguntas.map { it.toDomain() }, reservasDisponibles, chequeo?.let { GradingCheck(it.problema, it.avisos, it.regla) })
+    fun toDomain() = OfficialQuestions(
+        examenId, preguntas.map { it.toDomain() }, reservasDisponibles, chequeo?.let { GradingCheck(it.problema, it.avisos, it.regla) },
+        problem = problema, warnings = avisos,
+    )
 }
 
 /** Cuerpo de `PUT .../preguntas-oficiales/{id}`: sin valores por defecto, así que `anulada` y `esReserva` viajan SIEMPRE. */

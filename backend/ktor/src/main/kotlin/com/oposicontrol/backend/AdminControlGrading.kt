@@ -184,6 +184,28 @@ internal fun AdminControlV1Gateway.putGradingRules(examenId: String, input: Grad
     val actor = requireActor()
     val current = getGradingRules(examenId) ?: return null
     GradingRules.requireReasonWhenPublished(current.publicado, input.motivo)
+    // Camino principal: RPC transaccional. El actor y el motivo llegan al trigger de auditoria (usuario_id = admin,
+    // despues.motivo = motivo): una sola fila de rastro y ninguna escritura posterior que pueda fallar (DEBT-159).
+    val rpcDone = try {
+        rpcOrNotProvisioned(
+            "admin_set_exam_grading_rules",
+            buildJsonObject {
+                put("p_actor", JsonPrimitive(actor))
+                put("p_examen", JsonPrimitive(examenId))
+                put("p_regla_anuladas", input.reglaAnuladas?.let(::JsonPrimitive) ?: JsonNull)
+                put("p_penalizacion_num", JsonPrimitive(input.penalizacionNum))
+                put("p_penalizacion_den", JsonPrimitive(input.penalizacionDen))
+                put("p_penalizacion_racional", JsonPrimitive(input.penalizacionRacional))
+                put("p_motivo", input.motivo?.let(::JsonPrimitive) ?: JsonNull)
+            },
+        )
+        true
+    } catch (e: BackendDomainException) {
+        // Solo la ausencia de la funcion degrada al camino antiguo; cualquier otro error de dominio se propaga.
+        if (e.errorCode != CONTROL_RPC_NOT_PROVISIONED) throw e
+        false
+    }
+    if (rpcDone) return getGradingRules(examenId)
     val before = AdminGradingSnapshotDto(current.reglaAnuladas, current.penalizacionRacional, current.penalizacionNum, current.penalizacionDen)
     val patch = buildJsonObject {
         put("regla_anuladas", input.reglaAnuladas?.let(::JsonPrimitive) ?: JsonNull)
@@ -234,6 +256,7 @@ internal fun AdminControlV1Gateway.gradingAudit(examenId: String): List<AdminGra
                 id = id,
                 creadoEn = row["creado_en"].contentOrNullSafe(),
                 actorId = row["usuario_id"].contentOrNullSafe(),
+                motivo = ((row["despues"] as? JsonObject)?.get("motivo")).contentOrNullSafe()?.controlSanitized(GradingRules.MOTIVO_MAX),
                 antes = (row["antes"] as? JsonObject)?.toSnapshot(),
                 despues = (row["despues"] as? JsonObject)?.toSnapshot(),
             )

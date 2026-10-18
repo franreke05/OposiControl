@@ -10,6 +10,7 @@ import com.oposicontrol.admin.domain.model.ForumChannel
 import com.oposicontrol.admin.domain.model.ForumChannelDraft
 import com.oposicontrol.admin.domain.model.ForumChannelValidator
 import com.oposicontrol.admin.domain.model.ForumContentType
+import com.oposicontrol.admin.domain.model.ForumImagePurge
 import com.oposicontrol.admin.domain.model.ForumModeration
 import com.oposicontrol.admin.domain.model.ForumQueueItem
 import com.oposicontrol.admin.domain.model.ForumQueueState
@@ -244,6 +245,8 @@ class ForumChannelsViewModel(
 data class ForumBlocksUiState(
     val patterns: UiAsync<List<String>> = UiAsync.Loading,
     val restrictions: UiAsync<List<ForumRestriction>> = UiAsync.Loading,
+    /** Solo lectura: imágenes retiradas pendientes de borrado físico. */
+    val imagePurge: UiAsync<ForumImagePurge> = UiAsync.Loading,
     val newPattern: String = "",
     val patternError: String? = null,
     val confirmRemove: String? = null,
@@ -291,6 +294,7 @@ class ForumBlocksViewModel(
     private suspend fun refresh() {
         val patterns = repository.forumBlockList()
         val restrictions = repository.forumRestrictions()
+        val purge = repository.forumImagePurge()
         updateState {
             it.copy(
                 patterns = when (patterns) {
@@ -300,6 +304,10 @@ class ForumBlocksViewModel(
                 restrictions = when (restrictions) {
                     is AppResult.Failure -> UiAsync.Error(restrictions.error)
                     is AppResult.Success -> if (restrictions.value.isEmpty()) UiAsync.Empty else UiAsync.Success(restrictions.value)
+                },
+                imagePurge = when (purge) {
+                    is AppResult.Failure -> UiAsync.Error(purge.error)
+                    is AppResult.Success -> UiAsync.Success(purge.value)
                 },
             )
         }

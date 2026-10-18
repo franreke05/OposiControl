@@ -49,8 +49,8 @@ internal object OfficialQuestionFlags {
         }
         val rawOrden = raw.optionalInt("ordenReserva")
         if (esReserva) {
-            if (rawOrden == null || rawOrden < 1 || rawOrden > ORDEN_MAX) {
-                controlReject("RESERVE_ORDER_INVALID", "Una reserva necesita un orden de 1 a $ORDEN_MAX.")
+            if (rawOrden != null && (rawOrden < 1 || rawOrden > ORDEN_MAX)) {
+                controlReject("RESERVE_ORDER_INVALID", "El orden de una reserva va de 1 a $ORDEN_MAX (sin orden se coloca al final).")
             }
         } else if (rawOrden != null) {
             controlReject("RESERVE_ORDER_INVALID", "Una pregunta principal no lleva orden de reserva.")
@@ -78,6 +78,9 @@ data class AdminOfficialQuestionsDto(
     /** `false` = el servidor conectado no tiene aún las columnas de reserva: se muestran las anuladas y se avisa. */
     val reservasDisponibles: Boolean,
     val chequeo: AdminGradingRulesCheckDto? = null,
+    /** Solo tras una escritura: resultado de `admin_set_exam_question_flags` (problema abierto y avisos no bloqueantes). */
+    val problema: String? = null,
+    val avisos: List<String> = emptyList(),
 )
 
 private const val OFFICIAL_COLUMNS_FULL = "pregunta_id,posicion,anulada,motivo_anulacion,es_reserva,orden_reserva,es_demo,preguntas(titulo)"
@@ -122,7 +125,7 @@ internal fun AdminControlV1Gateway.setOfficialQuestionFlags(
     input: OfficialQuestionFlags.Input,
 ): AdminOfficialQuestionsDto? {
     val actor = requireActor()
-    rpcOrNotProvisioned(
+    val raw = rpcOrNotProvisioned(
         "admin_set_exam_question_flags",
         buildJsonObject {
             put("p_actor", JsonPrimitive(actor))
@@ -134,7 +137,14 @@ internal fun AdminControlV1Gateway.setOfficialQuestionFlags(
             put("p_orden_reserva", input.ordenReserva?.let(::JsonPrimitive) ?: JsonNull)
         },
     )
-    return officialQuestions(examenId)
+    val result = try {
+        json.parseToJsonElement(raw) as? JsonObject
+    } catch (_: Exception) {
+        null
+    }
+    val problema = result?.get("problema").contentOrNullSafe()?.controlSanitized(120)
+    val avisos = (result?.get("avisos") as? JsonArray).orEmpty().mapNotNull { it.contentOrNullSafe()?.controlSanitized(80) }
+    return officialQuestions(examenId)?.copy(problema = problema, avisos = avisos)
 }
 
 fun Route.adminControlOfficialQuestionsRoutes(gateway: AdminControlV1Gateway) {

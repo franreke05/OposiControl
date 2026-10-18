@@ -1,5 +1,6 @@
 package com.oposicontrol.backend
 
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.plugins.BadRequestException
@@ -204,5 +205,77 @@ class AdminControlCommerceAlertsTest {
         val rows = f.gateway().forumDrift(20)
         assertEquals(3, rows.single().filas)
         assertTrue(f.calls.single().pathAndQuery.contains("accion=eq.foro_contadores_desviados"))
+    }
+
+    // ------------------------------------------------------------ resolucion de pedidos
+
+    private fun resolveFake(status: Int = 200, body: String = """{"outcome":"CREDITED","estado":"pagada","ordenId":"$exam","casoReembolso":false}""") =
+        ControlFake { _, uri, _ -> if (uri.contains("/rpc/admin_payment_order_resolve")) V1StubResponse(status, body) else V1StubResponse(200, "[]") }
+
+    @Test
+    fun resolvingCallsTheOneFunctionWithTheJwtActorTheNoteAndTheRefundSwitch() {
+        listOf(false, true).forEach { switch ->
+            val f = resolveFake()
+            val r = f.gateway(refundsEnabled = switch).resolveOrder(exam, "acreditar", "Verificado en Play Console")
+            assertEquals("CREDITED", r.outcome)
+            assertEquals("pagada", r.estado)
+            val body = obj(f.calls.single().body)
+            assertEquals(ControlFake.ACTOR, body["p_actor"].contentOrNullSafe())
+            assertEquals(exam, body["p_orden"].contentOrNullSafe())
+            assertEquals("acreditar", body["p_decision"].contentOrNullSafe())
+            assertEquals("Verificado en Play Console", body["p_nota"].contentOrNullSafe())
+            assertEquals(switch.toString(), body["p_reembolsos_habilitados"].contentOrNullSafe())
+            assertTrue(f.writes().size == 1 && f.writes().single().pathAndQuery.contains("/rpc/admin_payment_order_resolve"), f.describe())
+        }
+    }
+
+    @Test
+    fun theListAdvertisesWhetherRefundsAreEnabled() {
+        assertEquals(true, orderFake().gateway(refundsEnabled = true).listOrders(null, 25, 0).reembolsosHabilitados)
+        assertEquals(false, orderFake().gateway(refundsEnabled = false).listOrders(null, 25, 0).reembolsosHabilitados)
+    }
+
+    @Test
+    fun refundsFollowTheSameEnvironmentRuleAsTheEconomyService() {
+        fun on(vararg kv: Pair<String, String>) = controlRefundsEnabledFrom(mapOf(*kv)::get)
+        assertEquals(false, on("APP_ENV" to "production"))
+        assertEquals(false, on())
+        assertEquals(true, on("APP_ENV" to "local"))
+        assertEquals(true, on("APP_ENV" to "test"))
+        assertEquals(false, on("APP_ENV" to "local", "PAYMENTS_REFUNDS_ENABLED" to "false"))
+        assertEquals(true, on("APP_ENV" to "production", "PAYMENTS_REFUNDS_ENABLED" to "true"))
+    }
+
+    @Test
+    fun resolveRoutesValidateBeforeAnyRequestAndTranslateServerErrors() = testApplication {
+        val f = resolveFake(status = 400, body = """{"code":"P0001","message":"REFUNDS_DISABLED","details":"secreto"}""")
+        installControlRoutes(f.gateway())
+        val url = "/api/v1/admin/pedidos/$exam/resolver"
+        assertEquals(HttpStatusCode.UnprocessableEntity, sendJson(HttpMethod.Post, url, """{"decision":"regalar","nota":"nota valida"}""").status)
+        assertEquals(HttpStatusCode.UnprocessableEntity, sendJson(HttpMethod.Post, url, """{"decision":"acreditar","nota":"ab"}""").status)
+        assertEquals(HttpStatusCode.BadRequest, sendJson(HttpMethod.Post, url, """{"decision":"acreditar","nota":"nota valida","estado":"pagada"}""").status)
+        assertEquals(HttpStatusCode.BadRequest, sendJson(HttpMethod.Post, "/api/v1/admin/pedidos/no-uuid/resolver", """{"decision":"acreditar","nota":"nota valida"}""").status)
+        assertTrue(f.calls.isEmpty(), f.describe())
+        val refused = sendJson(HttpMethod.Post, url, """{"decision":"reembolsar","nota":"nota valida"}""")
+        assertEquals(HttpStatusCode.UnprocessableEntity, refused.status)
+        assertTrue(refused.bodyAsText().contains("REFUNDS_DISABLED") && !refused.bodyAsText().contains("secreto"), refused.bodyAsText())
+    }
+
+    @Test
+    fun resolveMapsConflictsAndAnAbsentFunction() = testApplication {
+        var code = "ORDER_NOT_IN_REVIEW"
+        val f = ControlFake { _, _, _ ->
+            if (code == "ABSENT") V1StubResponse(404, """{"code":"PGRST202"}""") else V1StubResponse(400, """{"code":"P0001","message":"$code"}""")
+        }
+        installControlRoutes(f.gateway())
+        val url = "/api/v1/admin/pedidos/$exam/resolver"
+        val json = """{"decision":"acreditar","nota":"nota valida"}"""
+        assertEquals(HttpStatusCode.Conflict, sendJson(HttpMethod.Post, url, json).status)
+        code = "ORDER_NOT_FOUND"
+        assertEquals(HttpStatusCode.NotFound, sendJson(HttpMethod.Post, url, json).status)
+        code = "ADMIN_ACTOR_INVALID"
+        assertEquals(HttpStatusCode.Forbidden, sendJson(HttpMethod.Post, url, json).status)
+        code = "ABSENT"
+        assertEquals(HttpStatusCode.NotImplemented, sendJson(HttpMethod.Post, url, json).status)
     }
 }

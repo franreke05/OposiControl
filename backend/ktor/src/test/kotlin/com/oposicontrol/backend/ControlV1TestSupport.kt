@@ -37,15 +37,16 @@ internal class ControlFake(
         responder = { uri -> handler(last!!.method(), uri, calls.last().body) },
     )
 
-    fun gateway(actor: String? = ACTOR): AdminControlV1Gateway =
+    fun gateway(actor: String? = ACTOR, refundsEnabled: Boolean = false): AdminControlV1Gateway =
         AdminControlV1Gateway(
             SupabaseRequestTransport.forTesting("https://stub.supabase.test", "stub-key", client),
             Json { ignoreUnknownKeys = true },
             actor = { actor },
+            refundsEnabled = { refundsEnabled },
         )
 
     /** Escrituras reales: ni GET ni RPC de solo comprobacion (`*_check`, `*_list`). */
-    fun writes(): List<Call> = calls.filter { it.method != "GET" && !Regex("/rpc/[a-z_]*_(check|list|get)[?]").containsMatchIn(it.pathAndQuery) }
+    fun writes(): List<Call> = calls.filter { it.method != "GET" && !Regex("/rpc/[a-z_]*_(check|list|get|resumen)[?]").containsMatchIn(it.pathAndQuery) }
 
     fun describe(): String = calls.joinToString(" | ") { "${it.method} ${it.pathAndQuery}" }
 

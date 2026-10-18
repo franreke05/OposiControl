@@ -13,6 +13,12 @@ import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.domain.model.ExamEconomyDraft
 import com.oposicontrol.admin.domain.model.ForumAction
 import com.oposicontrol.admin.domain.model.ForumContentType
+import com.oposicontrol.admin.domain.model.ForumImagePurge
+import com.oposicontrol.admin.domain.model.OfficialQuestionDraft
+import com.oposicontrol.admin.domain.model.OfficialQuestions
+import com.oposicontrol.admin.domain.model.OrderDecision
+import com.oposicontrol.admin.domain.model.OrderPage
+import com.oposicontrol.admin.domain.model.OrderResolution
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -132,5 +138,53 @@ class KtorControlV1RepositoryImplTest {
         val requests = mutableListOf<HttpRequestData>()
         val result = repo(requests, HttpStatusCode.Forbidden, """{"error":"FORBIDDEN","message":"no"}""").liftForumRestriction("u1")
         assertIs<AppError.Authorization>(assertIs<AppResult.Failure>(result).error)
+    }
+
+    @Test
+    fun resolvingAnOrderPostsOnlyTheDecisionAndTheNoteAndMapsTheOutcome() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val result = repo(requests, body = """{"outcome":"REFUNDED_P2","estado":"reembolsada","ordenId":"o1","casoReembolso":true}""")
+            .resolveOrder("o1", OrderDecision.REFUND, "  Pedido duplicado ")
+        val sent = requests.single()
+        assertEquals("POST", sent.method.value)
+        assertTrue(sent.url.encodedPath.endsWith("/api/v1/admin/pedidos/o1/resolver"))
+        assertEquals("""{"decision":"reembolsar","nota":"Pedido duplicado"}""", sent.text())
+        val resolution = assertIs<AppResult.Success<OrderResolution>>(result).value
+        assertEquals("REFUNDED_P2", resolution.outcome)
+        assertTrue(resolution.refundCaseRecorded)
+    }
+
+    @Test
+    fun aRefusedResolutionKeepsTheDomainCode() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val body = """{"error":"REFUNDS_DISABLED","message":"Los reembolsos están desactivados."}"""
+        val result = repo(requests, HttpStatusCode.UnprocessableEntity, body).resolveOrder("o1", OrderDecision.REFUND, "motivo")
+        assertEquals("REFUNDS_DISABLED", assertIs<AppError.Validation>(assertIs<AppResult.Failure>(result).error).code)
+    }
+
+    @Test
+    fun theOrderPageCarriesTheRefundSwitchAndTheImagePurgeIsReadOnly() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val page = assertIs<AppResult.Success<OrderPage>>(
+            repo(requests, body = """{"data":[],"total":0,"limit":25,"offset":0,"reembolsosHabilitados":true}""").orders("en_revision", 0),
+        ).value
+        assertTrue(page.refundsEnabled)
+        val purge = assertIs<AppResult.Success<ForumImagePurge>>(
+            repo(requests, body = """{"pendientes":3,"atascadas":1,"masAntiguaEn":"2026-10-17T08:00:00Z"}""").forumImagePurge(),
+        ).value
+        assertEquals(3, purge.pending)
+        assertEquals(1, purge.stuck)
+        assertEquals("GET", requests.last().method.value)
+        assertTrue(requests.last().url.encodedPath.endsWith("/api/v1/admin/foro/imagenes-purga"))
+    }
+
+    @Test
+    fun savingAQuestionMarkAppendsAReserveWithoutAnOrderAndReadsTheWarnings() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val result = repo(requests, body = """{"examenId":"e1","preguntas":[],"reservasDisponibles":true,"problema":null,"avisos":["MORE_RESERVES_THAN_MAX"]}""")
+            .saveOfficialQuestion("e1", "q1", OfficialQuestionDraft(false, "", true, ""))
+        assertTrue(requests.single().text().contains("\"esReserva\":true"), requests.single().text())
+        assertTrue(!requests.single().text().contains("ordenReserva\":1"), requests.single().text())
+        assertEquals(listOf("MORE_RESERVES_THAN_MAX"), assertIs<AppResult.Success<OfficialQuestions>>(result).value.warnings)
     }
 }

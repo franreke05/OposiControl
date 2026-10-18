@@ -104,8 +104,11 @@ class AdminControlGradingTest {
         """[{"id":"${ControlFake.EXAM}","es_oficial":true,"publicado_en":${if (published) "\"2026-10-01T00:00:00Z\"" else "null"},""" +
             """"regla_anuladas":${regla?.let { "\"$it\"" } ?: "null"},"penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":$racional}]"""
 
-    private fun fake(published: Boolean = false, checkStatus: Int = 200) = ControlFake { method, uri, _ ->
+    private fun fake(published: Boolean = false, checkStatus: Int = 200, gradingRpc: Boolean = false) = ControlFake { method, uri, _ ->
         when {
+            uri.contains("/rpc/admin_set_exam_grading_rules") ->
+                if (gradingRpc) V1StubResponse(200, """{"changed":true,"reglaEfectiva":"NO_PUNTUA","problema":null,"avisos":[]}""")
+                else V1StubResponse(404, """{"code":"PGRST202","message":"not found"}""")
             uri.contains("/rpc/admin_official_rules_check") ->
                 if (checkStatus == 200) V1StubResponse(200, """{"problema":null,"avisos":["MORE_RESERVES_THAN_MAX"],"regla":"NO_PUNTUA"}""")
                 else V1StubResponse(404, """{"code":"PGRST202","message":"not found"}""")
@@ -250,5 +253,50 @@ class AdminControlGradingTest {
         assertEquals(HttpStatusCode.UnprocessableEntity, response.status, response.bodyAsText())
         assertTrue(response.bodyAsText().contains("OFFICIAL_RULES_INVALID"), response.bodyAsText())
         assertTrue(!response.bodyAsText().contains("secreto") && !response.bodyAsText().contains("REEMPLAZO_NOT_ENOUGH"), response.bodyAsText())
+    }
+
+    @Test
+    fun savingThroughTheTransactionalRpcWritesNoSecondAuditRowAndNoPatch() {
+        val f = fake(gradingRpc = true)
+        val saved = f.gateway().putGradingRules(ControlFake.EXAM, GradingRules.Input("NO_PUNTUA", true, 0, 1, "Cambio de criterio"))
+        assertTrue(saved != null)
+        val writes = f.writes()
+        val rpc = writes.single()
+        assertTrue(rpc.pathAndQuery.contains("/rpc/admin_set_exam_grading_rules"), f.describe())
+        listOf(
+            "\"p_actor\":\"${ControlFake.ACTOR}\"", "\"p_examen\":\"${ControlFake.EXAM}\"", "\"p_regla_anuladas\":\"NO_PUNTUA\"",
+            "\"p_penalizacion_num\":0", "\"p_penalizacion_den\":1", "\"p_penalizacion_racional\":true", "\"p_motivo\":\"Cambio de criterio\"",
+        ).forEach { assertTrue(rpc.body.contains(it), rpc.body) }
+        assertTrue(writes.none { it.method == "PATCH" || it.pathAndQuery.contains("auditoria_log") }, f.describe())
+    }
+
+    @Test
+    fun aDomainErrorFromTheRpcIsPropagatedNotSwallowedByTheLegacyFallback() = testApplication {
+        val f = ControlFake { _, uri, _ ->
+            when {
+                uri.contains("/rpc/admin_set_exam_grading_rules") -> V1StubResponse(400, """{"code":"P0001","message":"GRADING_PENALTY_CONFLICT","details":"secreto"}""")
+                uri.contains("/rpc/") -> V1StubResponse(404, """{"code":"PGRST202"}""")
+                uri.contains("/rest/v1/preguntas_examen") -> V1StubResponse(200, "[]")
+                else -> V1StubResponse(200, examJson())
+            }
+        }
+        installControlRoutes(f.gateway())
+        val response = sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/reglas-puntuacion",
+            """{"reglaAnuladas":null,"penalizacionRacional":false,"penalizacionNum":0,"penalizacionDen":1}""")
+        assertEquals(HttpStatusCode.UnprocessableEntity, response.status, response.bodyAsText())
+        assertTrue(response.bodyAsText().contains("GRADING_PENALTY_CONFLICT") && !response.bodyAsText().contains("secreto"), response.bodyAsText())
+        assertTrue(f.writes().none { it.method == "PATCH" }, f.describe())
+    }
+
+    @Test
+    fun theRpcTrailRowCarriesTheActorAndTheReasonInOneRow() {
+        val f = ControlFake { _, uri, _ ->
+            if (uri.contains("auditoria_log")) {
+                V1StubResponse(200, """[{"id":"r1","usuario_id":"${ControlFake.ACTOR}","accion":"examen_reglas_puntuacion_modificadas","antes":{"regla_anuladas":null,"penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":false},"despues":{"regla_anuladas":"NO_PUNTUA","penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":true,"motivo":"Por el tribunal"},"creado_en":"2026-10-18T10:00:00Z"}]""")
+            } else V1StubResponse(200, "[]")
+        }
+        val entry = f.gateway().gradingAudit(ControlFake.EXAM).single()
+        assertEquals(ControlFake.ACTOR, entry.actorId)
+        assertEquals("Por el tribunal", entry.motivo)
     }
 }

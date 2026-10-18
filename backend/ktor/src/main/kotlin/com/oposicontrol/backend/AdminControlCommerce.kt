@@ -220,7 +220,7 @@ data class AdminRefundCaseDto(
 )
 
 @Serializable
-data class AdminOrderPageDto(val data: List<AdminOrderDto>, val total: Int, val limit: Int, val offset: Int, val resumen: Map<String, Int> = emptyMap())
+data class AdminOrderPageDto(val data: List<AdminOrderDto>, val total: Int, val limit: Int, val offset: Int, val resumen: Map<String, Int> = emptyMap(), val reembolsosHabilitados: Boolean = false)
 
 private const val ORDER_COLUMNS =
     "id,usuario_id,proveedor,producto_codigo,tipo_producto,estado,precio_centimos,moneda,identificador_transaccion,cantidad_tickets,expira_en,pagada_en,creado_en,actualizado_en"
@@ -287,7 +287,7 @@ internal fun AdminControlV1Gateway.listOrders(estado: String?, limit: Int, offse
     val rows = (json.parseToJsonElement(page.body) as? JsonArray).orEmpty().map { it.jsonObject }
     val handles = handlesOf(rows.mapNotNull { it["usuario_id"].contentOrNullSafe() })
     val refunds = refundsOf(rows.mapNotNull { it["id"].contentOrNullSafe() })
-    return AdminOrderPageDto(rows.mapNotNull { it.toOrder(handles, refunds) }, page.total, limit, offset)
+    return AdminOrderPageDto(rows.mapNotNull { it.toOrder(handles, refunds) }, page.total, limit, offset, reembolsosHabilitados = refundsEnabled())
 }
 
 internal fun AdminControlV1Gateway.orderReviewCount(): Int =
@@ -305,6 +305,54 @@ internal fun AdminControlV1Gateway.addOrderNote(id: String, note: String): Boole
     if (!exists) return false
     audit("pedido_nota_interna", "compras_usuario", id, despues = buildJsonObject { put("nota", JsonPrimitive(note)) })
     return true
+}
+
+internal object OrderResolution {
+    val DECISIONES: Set<String> = setOf("acreditar", "confirmar", "rechazar", "reembolsar")
+    const val NOTE_MIN = 3
+    const val NOTE_MAX = 300
+
+    fun decision(raw: String?): String {
+        val v = raw?.trim().orEmpty()
+        if (v !in DECISIONES) controlReject("ORDER_DECISION_INVALID", "La decisión sobre el pedido no es válida.")
+        return v
+    }
+
+    fun note(raw: String?): String {
+        val n = raw?.controlSanitized(NOTE_MAX).orEmpty()
+        if (n.length < NOTE_MIN) controlReject("REASON_INVALID", "Indica el motivo de la decisión (entre $NOTE_MIN y $NOTE_MAX caracteres).")
+        return n
+    }
+}
+
+@Serializable
+data class AdminOrderResolutionDto(
+    val outcome: String,
+    val estado: String,
+    val ordenId: String,
+    val casoReembolso: Boolean = false,
+)
+
+/** Resuelve un pedido en revision con `admin_payment_order_resolve` (idempotente, auditada en la misma transaccion). */
+internal fun AdminControlV1Gateway.resolveOrder(id: String, decision: String, nota: String): AdminOrderResolutionDto {
+    val actor = requireActor()
+    val body = rpcOrNotProvisioned(
+        "admin_payment_order_resolve",
+        buildJsonObject {
+            put("p_actor", JsonPrimitive(actor))
+            put("p_orden", JsonPrimitive(id))
+            put("p_decision", JsonPrimitive(decision))
+            put("p_nota", JsonPrimitive(nota))
+            put("p_reembolsos_habilitados", JsonPrimitive(refundsEnabled()))
+        },
+    )
+    val obj = json.parseToJsonElement(body) as? JsonObject ?: throw domainError(CONTROL_RPC_NOT_PROVISIONED)
+    return AdminOrderResolutionDto(
+        outcome = obj["outcome"].contentOrNullSafe()?.controlSanitized(30).orEmpty(),
+        estado = obj["estado"].contentOrNullSafe()?.takeIf { it in OrderRules.ESTADOS } ?: "",
+        ordenId = id,
+        casoReembolso = obj["casoReembolso"].boolOrFalse(),
+    )
 }
 
 fun Route.adminControlCommerceRoutes(gateway: AdminControlV1Gateway) {
@@ -356,6 +404,16 @@ fun Route.adminControlCommerceRoutes(gateway: AdminControlV1Gateway) {
             val note = OrderRules.note(body.optionalString("nota"))
             if (!withUpstreamIo { gateway.addOrderNote(id, note) }) throw CanonicalErrorCode.NOT_FOUND.exception("Pedido no encontrado.")
             call.respond(AdminOrderNoteResultDto(true))
+        }
+        post("/{id}/resolver") {
+            val id = call.requiredPath("id").validatedUuid("id")
+            val body = call.receive<JsonObject>()
+            body.requireOnlyKeys(setOf("decision", "nota"))
+            val decision = OrderResolution.decision(body.optionalString("decision"))
+            val nota = OrderResolution.note(body.optionalString("nota"))
+            val result = withUpstreamIo { gateway.resolveOrder(id, decision, nota) }
+            call.response.header(HttpHeaders.CacheControl, "no-store")
+            call.respond(result)
         }
     }
 }

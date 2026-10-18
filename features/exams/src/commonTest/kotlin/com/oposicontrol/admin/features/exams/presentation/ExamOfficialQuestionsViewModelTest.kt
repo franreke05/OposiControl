@@ -3,6 +3,8 @@ package com.oposicontrol.admin.features.exams.presentation
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
 import com.oposicontrol.admin.domain.model.OfficialQuestion
+import com.oposicontrol.admin.domain.model.OfficialQuestionDraft
+import com.oposicontrol.admin.domain.model.OfficialQuestionValidator
 import com.oposicontrol.admin.domain.model.OfficialQuestions
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -63,7 +65,7 @@ class ExamOfficialQuestionsViewModelTest {
     }
 
     @Test
-    fun theOrderCannotBeTypedOnAMainQuestionNorRepeated() = runTest {
+    fun theOrderCannotBeTypedOnAMainQuestionAndMustBeInRange() = runTest {
         val repo = ExamsFakeControlRepo(official = data(q("a", 1), q("r1", 2, reserve = 1)))
         val vm = loaded(repo)
         vm.dispatch(OfficialQuestionsIntent.Select("a"))
@@ -71,11 +73,25 @@ class ExamOfficialQuestionsViewModelTest {
         advanceUntilIdle()
         assertEquals("", vm.state.value.draft?.order, "una principal no lleva orden")
         vm.dispatch(OfficialQuestionsIntent.SetReserve(true))
-        vm.dispatch(OfficialQuestionsIntent.SetOrder("1"))
+        vm.dispatch(OfficialQuestionsIntent.SetOrder("11"))
         vm.dispatch(OfficialQuestionsIntent.Save)
         advanceUntilIdle()
         assertTrue("order" in vm.state.value.errors)
         assertTrue(repo.questionSaves.isEmpty())
+    }
+
+    @Test
+    fun anExistingOrCleanedOrderIsAcceptedBecauseTheServerInsertsAndShifts() = runTest {
+        val repo = ExamsFakeControlRepo(official = data(q("a", 1), q("r1", 2, reserve = 1)))
+        val vm = loaded(repo)
+        vm.dispatch(OfficialQuestionsIntent.Select("a"))
+        vm.dispatch(OfficialQuestionsIntent.SetReserve(true))
+        vm.dispatch(OfficialQuestionsIntent.SetOrder("1"))
+        vm.dispatch(OfficialQuestionsIntent.Save)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.errors.isEmpty(), vm.state.value.errors.toString())
+        assertEquals(1, repo.questionSaves.size)
+        assertEquals(OfficialQuestionValidator.check(OfficialQuestionDraft(false, "", true, ""), q("a", 1), emptyList()), emptyMap())
     }
 
     @Test

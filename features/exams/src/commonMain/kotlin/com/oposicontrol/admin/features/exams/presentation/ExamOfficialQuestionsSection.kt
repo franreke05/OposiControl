@@ -70,6 +70,9 @@ internal fun ExamOfficialQuestionsContent(state: OfficialQuestionsUiState, onInt
                 check.problem?.let { WorkspaceNotice(WorkspaceNoticeTone.DANGER, GradingCheckTexts.problem(it)) }
                 check.warnings.forEach { WorkspaceNotice(WorkspaceNoticeTone.WARNING, GradingCheckTexts.warning(it)) }
             }
+            // Resultado de la última escritura (funcion de servidor): problema abierto y avisos que no estén ya en el chequeo.
+            data.problem?.takeIf { it != data.check?.problem }?.let { WorkspaceNotice(WorkspaceNoticeTone.DANGER, GradingCheckTexts.problem(it)) }
+            data.warnings.filter { it !in data.check?.warnings.orEmpty() }.forEach { WorkspaceNotice(WorkspaceNoticeTone.WARNING, GradingCheckTexts.warning(it)) }
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
                 WorkspacePill("${data.questions.size} preguntas")
                 WorkspacePill("${data.mainAnnulled} anuladas principales")
@@ -129,7 +132,7 @@ internal fun ExamOfficialQuestionsContent(state: OfficialQuestionsUiState, onInt
                             label = "Orden de la reserva",
                             value = draft.order,
                             onValueChange = { onIntent(OfficialQuestionsIntent.SetOrder(it)) },
-                            supportingText = state.errors["order"] ?: "De 1 a ${OfficialQuestionValidator.ORDER_MAX}, sin huecos entre reservas.",
+                            supportingText = state.errors["order"] ?: "De 1 a ${OfficialQuestionValidator.ORDER_MAX}; vacío = al final. Si ya existe, las demás se desplazan.",
                             isError = state.errors.containsKey("order"),
                         )
                     }

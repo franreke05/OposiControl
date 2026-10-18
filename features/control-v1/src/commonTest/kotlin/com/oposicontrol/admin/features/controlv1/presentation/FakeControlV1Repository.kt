@@ -17,7 +17,10 @@ import com.oposicontrol.admin.domain.model.ForumQueuePage
 import com.oposicontrol.admin.domain.model.ForumRestriction
 import com.oposicontrol.admin.domain.model.GradingAuditEntry
 import com.oposicontrol.admin.domain.model.GradingRules
+import com.oposicontrol.admin.domain.model.OrderDecision
 import com.oposicontrol.admin.domain.model.OrderItem
+import com.oposicontrol.admin.domain.model.OrderResolution
+import com.oposicontrol.admin.domain.model.ForumImagePurge
 import com.oposicontrol.admin.domain.model.OfficialQuestions
 import com.oposicontrol.admin.domain.model.OrderPage
 import com.oposicontrol.admin.domain.model.ReferralItem
@@ -45,6 +48,8 @@ class FakeControlV1Repository : ControlV1Repository {
     var reviewCount = 0
     var fast: FastWindowPage = FastWindowPage(emptyList(), 0, 25, 0, null)
     var drift: List<ForumCounterDrift> = emptyList()
+    var resolution = OrderResolution("CREDITED", "pagada", false)
+    var imagePurge = ForumImagePurge(0, 0, null)
 
     private fun <T> result(name: String, value: () -> T): AppResult<T> {
         calls += name
@@ -124,6 +129,10 @@ class FakeControlV1Repository : ControlV1Repository {
     override suspend fun ordersInReviewCount() = result("ordersInReviewCount") { reviewCount }
     override suspend fun order(id: String): AppResult<OrderItem> = result("order:$id") { orders.items.first { it.id == id } }
     override suspend fun addOrderNote(id: String, note: String) = result("addOrderNote:$id:$note") { Unit }
+    override suspend fun resolveOrder(id: String, decision: OrderDecision, note: String): AppResult<OrderResolution> =
+        result("resolveOrder:$id:${decision.wire}:$note") { resolution }
+
+    override suspend fun forumImagePurge() = result("forumImagePurge") { imagePurge }
     override suspend fun fastWindows(offset: Int) = result("fastWindows:$offset") { fast.copy(offset = offset) }
     override suspend fun forumCounterDrift() = result("forumCounterDrift") { drift }
 }

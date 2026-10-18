@@ -1,5 +1,6 @@
 package com.oposicontrol.backend
 
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.plugins.BadRequestException
@@ -207,5 +208,38 @@ class AdminControlForumTest {
         installControlRoutes(f.gateway())
         val bad = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString("2020-01-01T00:00:00Z|1-1-1-1-1".toByteArray())
         assertEquals(HttpStatusCode.BadRequest, sendJson(HttpMethod.Get, "/api/v1/admin/foro/cola?cursor=$bad").status)
+    }
+
+    @Test
+    fun theNewServerFunctionErrorsAreTranslatedForBlocksAndReferrals() = testApplication {
+        var code = "FORO_BLOCK_LIMIT"
+        val f = ControlFake { _, _, _ -> V1StubResponse(400, """{"code":"P0001","message":"$code","details":"secreto"}""") }
+        installControlRoutes(f.gateway())
+        val add = sendJson(HttpMethod.Post, "/api/v1/admin/foro/bloqueos", """{"patron":"casino"}""")
+        assertEquals(HttpStatusCode.Conflict, add.status)
+        assertTrue(add.bodyAsText().contains("FORO_BLOCK_LIMIT") && !add.bodyAsText().contains("secreto"), add.bodyAsText())
+        code = "ADMIN_ACTOR_INVALID"
+        assertEquals(HttpStatusCode.Forbidden, sendJson(HttpMethod.Delete, "/api/v1/admin/foro/restricciones/${ControlFake.USER}").status)
+        code = "CURSOR_INVALID"
+        assertEquals(HttpStatusCode.BadRequest, sendJson(HttpMethod.Get, "/api/v1/admin/referidos/invitaciones?cursor=abc").status)
+        code = "REFERRAL_FILTER_INVALID"
+        assertEquals(HttpStatusCode.BadRequest, sendJson(HttpMethod.Get, "/api/v1/admin/referidos/invitaciones").status)
+    }
+
+    @Test
+    fun imagePurgeVisibilityIsAReadOnlyFunctionCallAndHonestWhenAbsent() = testApplication {
+        var present = true
+        val f = ControlFake { _, uri, _ ->
+            if (present && uri.contains("/rpc/admin_foro_imagenes_purga_resumen")) V1StubResponse(200, """{"pendientes":4,"atascadas":1,"masAntiguaEn":"2026-10-17T08:00:00Z"}""")
+            else V1StubResponse(404, """{"code":"PGRST202"}""")
+        }
+        installControlRoutes(f.gateway())
+        val ok = sendJson(HttpMethod.Get, "/api/v1/admin/foro/imagenes-purga")
+        assertEquals(HttpStatusCode.OK, ok.status)
+        assertEquals("no-store", ok.headers["Cache-Control"])
+        assertTrue(ok.bodyAsText().contains("\"pendientes\":4") && ok.bodyAsText().contains("\"atascadas\":1"), ok.bodyAsText())
+        assertTrue(f.writes().isEmpty(), f.describe())
+        present = false
+        assertEquals(HttpStatusCode.NotImplemented, sendJson(HttpMethod.Get, "/api/v1/admin/foro/imagenes-purga").status)
     }
 }

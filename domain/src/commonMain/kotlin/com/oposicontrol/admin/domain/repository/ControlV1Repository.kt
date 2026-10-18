@@ -11,11 +11,14 @@ import com.oposicontrol.admin.domain.model.ForumChannel
 import com.oposicontrol.admin.domain.model.ForumChannelDraft
 import com.oposicontrol.admin.domain.model.ForumContentType
 import com.oposicontrol.admin.domain.model.ForumCounterDrift
+import com.oposicontrol.admin.domain.model.ForumImagePurge
 import com.oposicontrol.admin.domain.model.ForumQueuePage
 import com.oposicontrol.admin.domain.model.ForumRestriction
 import com.oposicontrol.admin.domain.model.GradingAuditEntry
 import com.oposicontrol.admin.domain.model.GradingRules
+import com.oposicontrol.admin.domain.model.OrderDecision
 import com.oposicontrol.admin.domain.model.OrderItem
+import com.oposicontrol.admin.domain.model.OrderResolution
 import com.oposicontrol.admin.domain.model.OrderPage
 import com.oposicontrol.admin.domain.model.OfficialQuestionDraft
 import com.oposicontrol.admin.domain.model.OfficialQuestions
@@ -68,6 +71,9 @@ interface ControlV1Repository {
     suspend fun forumRestrictions(): AppResult<List<ForumRestriction>>
     suspend fun liftForumRestriction(userId: String): AppResult<Unit>
 
+    /** Solo lectura: cuántas imágenes retiradas esperan borrado físico y cuántas se han atascado. */
+    suspend fun forumImagePurge(): AppResult<ForumImagePurge>
+
     // ---- economía por examen
     suspend fun examEconomy(offset: Int, onlyWithoutCommunity: Boolean): AppResult<ExamEconomyPage>
     suspend fun saveExamEconomy(examId: String, draft: ExamEconomyDraft): AppResult<ExamEconomy>
@@ -77,6 +83,9 @@ interface ControlV1Repository {
     suspend fun ordersInReviewCount(): AppResult<Int>
     suspend fun order(id: String): AppResult<OrderItem>
     suspend fun addOrderNote(id: String, note: String): AppResult<Unit>
+
+    /** Resuelve un pedido en revisión (acreditar, confirmar, rechazar, reembolsar). Idempotente y auditada en el servidor. */
+    suspend fun resolveOrder(id: String, decision: OrderDecision, note: String): AppResult<OrderResolution>
 
     // ---- alertas
     suspend fun fastWindows(offset: Int): AppResult<FastWindowPage>

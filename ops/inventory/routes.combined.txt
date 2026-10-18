@@ -76,6 +76,7 @@ GET /api/v1/admin/feedback/preguntas/{}
 GET /api/v1/admin/foro/bloqueos
 GET /api/v1/admin/foro/canales
 GET /api/v1/admin/foro/cola
+GET /api/v1/admin/foro/imagenes-purga
 GET /api/v1/admin/foro/restricciones
 GET /api/v1/admin/importaciones/preguntas
 GET /api/v1/admin/importaciones/preguntas/{}
@@ -233,6 +234,7 @@ POST /api/v1/admin/noticias/{}/programar
 POST /api/v1/admin/noticias/{}/publicar
 POST /api/v1/admin/oposibots/usuarios
 POST /api/v1/admin/pedidos/{}/nota
+POST /api/v1/admin/pedidos/{}/resolver
 POST /api/v1/admin/planes
 POST /api/v1/admin/planes/{}/beneficios
 POST /api/v1/admin/preguntas

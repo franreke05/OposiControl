@@ -2,6 +2,7 @@ package com.oposicontrol.admin.data.inventory
 
 import com.oposicontrol.admin.data.repository.KtorControlV1RepositoryImpl
 import com.oposicontrol.admin.domain.model.ExamEconomyDraft
+import com.oposicontrol.admin.domain.model.OrderDecision
 import com.oposicontrol.admin.domain.model.ForumAction
 import com.oposicontrol.admin.domain.model.ForumChannelDraft
 import com.oposicontrol.admin.domain.model.ForumContentType
@@ -37,12 +38,15 @@ internal val ROWS_E_CONTROL_V1_REPO: List<CallRow> = listOf(
     CallRow(FILE, "removeForumBlock", delete("$A/foro/bloqueos/{}")) { repo().removeForumBlock("ID0") },
     CallRow(FILE, "forumRestrictions", get("$A/foro/restricciones")) { repo().forumRestrictions() },
     CallRow(FILE, "liftForumRestriction", delete("$A/foro/restricciones/{}")) { repo().liftForumRestriction("ID0") },
+    CallRow(FILE, "forumImagePurge", get("$A/foro/imagenes-purga")) { repo().forumImagePurge() },
     CallRow(FILE, "examEconomy", get("$A/examenes-economia?limit&offset&sinComunidad")) { repo().examEconomy(0, true) },
     CallRow(FILE, "saveExamEconomy", patch("$A/examenes-economia/{}")) { repo().saveExamEconomy("ID0", ExamEconomyDraft(true, "100", "30", "c1")) },
     CallRow(FILE, "orders", get("$A/pedidos?estado&limit&offset")) { repo().orders("en_revision", 0) },
     CallRow(FILE, "ordersInReviewCount", get("$A/pedidos/en-revision/total")) { repo().ordersInReviewCount() },
     CallRow(FILE, "order", get("$A/pedidos/{}")) { repo().order("ID0") },
+
     CallRow(FILE, "addOrderNote", post("$A/pedidos/{}/nota")) { repo().addOrderNote("ID0", "nota") },
+    CallRow(FILE, "resolveOrder", post("$A/pedidos/{}/resolver")) { repo().resolveOrder("ID0", OrderDecision.CREDIT, "nota") },
     CallRow(FILE, "fastWindows", get("$A/alertas/ranking-ventanas-rapidas?limit&offset")) { repo().fastWindows(0) },
     CallRow(FILE, "forumCounterDrift", get("$A/alertas/foro-contadores")) { repo().forumCounterDrift() },
 )

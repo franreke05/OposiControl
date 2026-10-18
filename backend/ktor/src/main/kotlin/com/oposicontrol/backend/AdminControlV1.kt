@@ -35,6 +35,8 @@ class AdminControlV1Gateway internal constructor(
     internal val transport: SupabaseRequestTransport,
     internal val json: Json,
     private val actor: () -> String? = AdminAuditActor::current,
+    /** Interruptor de reembolsos (`PAYMENTS_REFUNDS_ENABLED`, apagado fuera de local/test): se pasa a la RPC de pedidos. */
+    internal val refundsEnabled: () -> Boolean = { controlRefundsEnabledFrom(System::getenv) },
 ) {
     internal fun actorId(): String? = actor()
 
@@ -162,3 +164,11 @@ fun io.ktor.server.routing.Route.adminControlV1Routes(gateway: AdminControlV1Gat
     adminControlAlertsRoutes(gateway)
     adminControlOfficialQuestionsRoutes(gateway)
 }
+
+/** Misma regla que `refundsEnabledFrom` del servicio de economia: `true`/`false` explicito manda; sin el, solo `APP_ENV` local o test. */
+internal fun controlRefundsEnabledFrom(environment: (String) -> String?): Boolean =
+    when (environment("PAYMENTS_REFUNDS_ENABLED")?.trim()?.lowercase()) {
+        "true" -> true
+        "false" -> false
+        else -> environment("APP_ENV").let { it == "local" || it == "test" }
+    }

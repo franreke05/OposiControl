@@ -321,7 +321,14 @@ data class OrderItem(
     val refund: RefundCase?,
 )
 
-data class OrderPage(val items: List<OrderItem>, val total: Int, val limit: Int, val offset: Int)
+data class OrderPage(
+    val items: List<OrderItem>,
+    val total: Int,
+    val limit: Int,
+    val offset: Int,
+    /** `PAYMENTS_REFUNDS_ENABLED` del servidor: fuera de local/test el reembolso está apagado y no se ofrece. */
+    val refundsEnabled: Boolean = false,
+)
 
 object OrderNote {
     const val MIN = 3
@@ -370,6 +377,9 @@ data class OfficialQuestions(
     /** `false` = el servidor conectado aún no tiene las columnas de reserva: solo se pueden leer las anuladas. */
     val reservesAvailable: Boolean,
     val check: GradingCheck?,
+    /** Solo tras guardar una marca: problema abierto del examen y avisos no bloqueantes que devolvió el servidor. */
+    val problem: String? = null,
+    val warnings: List<String> = emptyList(),
 ) {
     val reserves: List<OfficialQuestion> get() = questions.filter { it.isReserve }.sortedBy { it.reserveOrder ?: Int.MAX_VALUE }
     val mainAnnulled: Int get() = questions.count { !it.isReserve && it.annulled }
@@ -399,10 +409,9 @@ object OfficialQuestionValidator {
         if (draft.reason.trim().length > REASON_MAX) put("reason", "El motivo no puede superar $REASON_MAX caracteres.")
         val order = draft.order.trim().toIntOrNull()
         if (draft.isReserve) {
-            if (order == null || order < 1 || order > ORDER_MAX) {
-                put("order", "Una reserva necesita un orden de 1 a $ORDER_MAX.")
-            } else if (all.any { it.isReserve && it.questionId != question.questionId && it.reserveOrder == order }) {
-                put("order", "Ya hay otra reserva con el orden $order.")
+            // Sin orden = al final. Con orden, el servidor inserta en ese puesto y desplaza las demás (siguen 1..R).
+            if (draft.order.isNotBlank() && (order == null || order < 1 || order > ORDER_MAX)) {
+                put("order", "El orden de una reserva va de 1 a $ORDER_MAX (vacío = al final).")
             }
         } else if (draft.order.isNotBlank()) {
             put("order", "Una pregunta principal no lleva orden de reserva.")
@@ -411,4 +420,55 @@ object OfficialQuestionValidator {
 
     /** El siguiente orden libre para una reserva nueva: el mayor actual + 1 (la base exige 1..R sin huecos). */
     fun nextOrder(all: List<OfficialQuestion>): Int = (all.filter { it.isReserve }.maxOfOrNull { it.reserveOrder ?: 0 } ?: 0) + 1
+}
+
+// ---------------------------------------------------------------- resolución de pedidos en revisión
+
+/** Decisión sobre un pedido `en_revision` (RPC `admin_payment_order_resolve`). El servidor valida el estado real del pedido. */
+enum class OrderDecision(val wire: String, val label: String, val effect: String) {
+    CREDIT("acreditar", "Acreditar", "Abona los tickets del pedido (una sola vez) y lo marca como pagado. Úsalo si el pago es correcto y nunca se acreditó."),
+    CONFIRM("confirmar", "Confirmar", "El pedido ya estaba acreditado: vuelve a pagado sin mover tickets."),
+    REJECT("rechazar", "Rechazar", "El pago no es válido y nunca se acreditó: el pedido pasa a fallido sin mover tickets."),
+    REFUND("reembolsar", "Reembolsar", "Devuelve solo la parte de tickets sin gastar y acorta el acceso comprado en proporción (política P2)."),
+    ;
+
+    /** El reembolso solo se ofrece cuando el servidor lo tiene activado; el resto siempre. */
+    fun available(refundsEnabled: Boolean): Boolean = this != REFUND || refundsEnabled
+}
+
+data class OrderResolution(val outcome: String, val state: String, val refundCaseRecorded: Boolean) {
+    /** Frase para el operador; un resultado desconocido se dice como tal en lugar de inventarse. */
+    fun message(): String = when (outcome) {
+        "CREDITED" -> "Pedido acreditado y marcado como pagado."
+        "CONFIRMED" -> "Pedido confirmado: vuelve a pagado sin mover tickets."
+        "REJECTED" -> "Pedido rechazado: queda como fallido."
+        "REFUNDED" -> "Pedido reembolsado."
+        "REFUNDED_P2" -> if (refundCaseRecorded) "Pedido reembolsado en parte (política P2). Se ha registrado un caso de reembolso." else "Pedido reembolsado en parte (política P2)."
+        "REPLAY" -> "Esta decisión ya estaba aplicada: no se ha cambiado nada."
+        else -> "Decisión registrada."
+    }
+}
+
+object OrderResolutionNote {
+    const val MIN = 3
+    const val MAX = 300
+    fun check(raw: String): String? {
+        val n = raw.trim().length
+        return when {
+            n < MIN -> "Indica el motivo de la decisión (mínimo $MIN caracteres)."
+            n > MAX -> "El motivo no puede superar $MAX caracteres."
+            else -> null
+        }
+    }
+}
+
+// ---------------------------------------------------------------- foro: purga de imágenes (solo lectura)
+
+data class ForumImagePurge(val pending: Int, val stuck: Int, val oldestAt: String?) {
+    /** Una frase para el operador; "atascadas" son las que el barrido dejó de reintentar y necesitan una persona. */
+    fun summary(): String = when {
+        pending == 0 -> "No hay imágenes retiradas pendientes de borrar."
+        stuck == 0 -> "$pending imágenes retiradas esperan a que el barrido las borre del almacenamiento."
+        else -> "$pending imágenes retiradas esperan a ser borradas; $stuck llevan 10 intentos fallidos y necesitan revisión manual."
+    }
 }

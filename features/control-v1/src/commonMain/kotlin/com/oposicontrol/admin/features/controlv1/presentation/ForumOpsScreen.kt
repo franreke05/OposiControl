@@ -32,6 +32,8 @@ import com.oposicontrol.admin.core.ui.components.GhostButton
 import com.oposicontrol.admin.core.ui.components.LabeledField
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
+import com.oposicontrol.admin.core.ui.components.WorkspaceNotice
+import com.oposicontrol.admin.core.ui.components.WorkspaceNoticeTone
 import com.oposicontrol.admin.core.ui.components.WorkspacePill
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Spacing
@@ -344,6 +346,24 @@ internal fun ForumBlocksContent(state: ForumBlocksUiState, onIntent: (ForumBlock
             )
         }
         ActionFeedback(state.feedback, success = (state.feedback as? UiAsync.Success<String>)?.value ?: "Hecho.")
+    }
+    FormSection(
+        title = "Imágenes retiradas",
+        description = "Las imágenes de publicaciones rechazadas, ocultas o eliminadas dejan de servirse al instante; el barrido borra después el archivo. Solo lectura.",
+        icon = AppIcon.BLOCKED,
+    ) {
+        AsyncStatePane(
+            state = state.imagePurge,
+            emptyTitle = "Sin datos",
+            emptyMessage = "No hay datos de purga.",
+            onRetry = { onIntent(ForumBlocksIntent.Refresh) },
+        ) { purge ->
+            WorkspaceNotice(
+                tone = if (purge.stuck > 0) WorkspaceNoticeTone.WARNING else WorkspaceNoticeTone.INFO,
+                title = purge.summary(),
+                detail = purge.oldestAt?.let { "La más antigua lleva esperando desde ${formatWhen(it)}." },
+            )
+        }
     }
     state.confirmRemove?.let { pattern ->
         ConfirmDialog(

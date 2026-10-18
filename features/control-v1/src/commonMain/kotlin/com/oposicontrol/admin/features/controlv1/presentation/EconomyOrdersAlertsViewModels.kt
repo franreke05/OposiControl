@@ -11,7 +11,9 @@ import com.oposicontrol.admin.domain.model.ExamEconomyValidator
 import com.oposicontrol.admin.domain.model.FastWindow
 import com.oposicontrol.admin.domain.model.ForumCounterDrift
 import com.oposicontrol.admin.domain.model.OrderItem
+import com.oposicontrol.admin.domain.model.OrderDecision
 import com.oposicontrol.admin.domain.model.OrderNote
+import com.oposicontrol.admin.domain.model.OrderResolutionNote
 import com.oposicontrol.admin.domain.model.OrderStates
 import com.oposicontrol.admin.domain.repository.CommunitiesRepository
 import com.oposicontrol.admin.domain.repository.ControlV1Repository
@@ -166,6 +168,13 @@ data class OrdersUiState(
     val note: String = "",
     val noteError: String? = null,
     val noteResult: UiAsync<Unit> = UiAsync.Idle,
+    /** `PAYMENTS_REFUNDS_ENABLED` del servidor; sin él el reembolso no se ofrece. */
+    val refundsEnabled: Boolean = false,
+    val decision: OrderDecision? = null,
+    val resolveNote: String = "",
+    val resolveError: String? = null,
+    val confirmResolve: Boolean = false,
+    val resolveResult: UiAsync<String> = UiAsync.Idle,
 ) {
     val selected: OrderItem? get() = (orders as? UiAsync.Success)?.value?.firstOrNull { it.id == selectedId }
     val hasPrevious: Boolean get() = offset > 0
@@ -184,12 +193,18 @@ sealed interface OrdersIntent {
     data class Select(val id: String) : OrdersIntent
     data class UpdateNote(val text: String) : OrdersIntent
     data object SaveNote : OrdersIntent
+    data class SelectDecision(val decision: OrderDecision) : OrdersIntent
+    data class UpdateResolveNote(val text: String) : OrdersIntent
+    data object RequestResolve : OrdersIntent
+    data object ConfirmResolve : OrdersIntent
+    data object DismissResolve : OrdersIntent
 }
 
 /**
- * Pedidos de pago. SOLO LECTURA salvo una nota interna auditada: el estado, el saldo y los accesos de un pedido los
- * mueve el servidor (máquina de estados, webhooks, reembolso P2). Resolver un `en_revision` necesita una función de
- * administrador que el servidor aún no tiene (ver `E6-V1-PANEL-06.md`); hasta entonces el panel no finge poder hacerlo.
+ * Pedidos de pago. Una nota interna auditada no cambia nada; RESOLVER un `en_revision` (acreditar, confirmar, rechazar,
+ * reembolsar) llama a `admin_payment_order_resolve`: una sola transacción en el servidor, idempotente (repetir la
+ * decisión no mueve nada) y auditada con tu cuenta. El panel no decide qué decisión encaja con el estado real del pedido:
+ * el servidor lo comprueba y dice por qué no (pedido ya acreditado, ya resuelto, reembolsos apagados...).
  */
 class OrdersViewModel(
     dispatcherProvider: DispatcherProvider,
@@ -216,11 +231,18 @@ class OrdersViewModel(
             OrdersIntent.PreviousPage -> currentState().let { if (it.hasPrevious) load((it.offset - OrdersUiState.PAGE).coerceAtLeast(0)) }
             is OrdersIntent.Select -> updateState { state ->
                 if ((state.orders as? UiAsync.Success)?.value?.any { it.id == intent.id } == true) {
-                    state.copy(selectedId = intent.id, note = "", noteError = null, noteResult = UiAsync.Idle)
+                    state.copy(selectedId = intent.id, note = "", noteError = null, noteResult = UiAsync.Idle, decision = null, resolveNote = "", resolveError = null, confirmResolve = false, resolveResult = UiAsync.Idle)
                 } else state
             }
             is OrdersIntent.UpdateNote -> updateState { it.copy(note = intent.text, noteError = null, noteResult = UiAsync.Idle) }
             OrdersIntent.SaveNote -> saveNote()
+            is OrdersIntent.SelectDecision -> updateState {
+                if (intent.decision.available(it.refundsEnabled)) it.copy(decision = intent.decision, resolveError = null, resolveResult = UiAsync.Idle) else it
+            }
+            is OrdersIntent.UpdateResolveNote -> updateState { it.copy(resolveNote = intent.text, resolveError = null, resolveResult = UiAsync.Idle) }
+            OrdersIntent.RequestResolve -> requestResolve()
+            OrdersIntent.ConfirmResolve -> resolve()
+            OrdersIntent.DismissResolve -> updateState { it.copy(confirmResolve = false) }
         }
     }
 
@@ -239,9 +261,49 @@ class OrdersViewModel(
                     orders = if (r.value.items.isEmpty()) UiAsync.Empty else UiAsync.Success(r.value.items),
                     total = r.value.total,
                     offset = r.value.offset,
+                    refundsEnabled = r.value.refundsEnabled,
                     selectedId = keep,
                 )
             }
+        }
+    }
+
+    private fun requestResolve() {
+        val state = currentState()
+        val order = state.selected ?: return
+        if (order.state != "en_revision") return
+        val decision = state.decision
+        val error = when {
+            decision == null -> "Elige una decisión."
+            !decision.available(state.refundsEnabled) -> "Los reembolsos están desactivados en este entorno."
+            else -> OrderResolutionNote.check(state.resolveNote)
+        }
+        if (error != null) {
+            updateState { it.copy(resolveError = error, confirmResolve = false) }
+            return
+        }
+        updateState { it.copy(resolveError = null, confirmResolve = true) }
+    }
+
+    private suspend fun resolve() {
+        if (writing) return
+        val state = currentState()
+        val order = state.selected ?: return
+        val decision = state.decision ?: return
+        writing = true
+        try {
+            updateState { it.copy(confirmResolve = false, resolveResult = UiAsync.Loading) }
+            when (val r = repository.resolveOrder(order.id, decision, state.resolveNote)) {
+                is AppResult.Failure -> updateState { it.copy(resolveResult = UiAsync.Error(r.error)) }
+                is AppResult.Success -> {
+                    updateState { it.copy(decision = null, resolveNote = "", resolveResult = UiAsync.Success(r.value.message())) }
+                    // El pedido ya no está en revisión: se recarga la lista y el contador (la verdad está en el servidor).
+                    loadCount()
+                    load(currentState().offset)
+                }
+            }
+        } finally {
+            writing = false
         }
     }
 

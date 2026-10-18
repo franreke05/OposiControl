@@ -14,6 +14,8 @@ import com.oposicontrol.admin.domain.model.ForumContentType
 import com.oposicontrol.admin.domain.model.ForumQueuePage
 import com.oposicontrol.admin.domain.model.ForumQueueState
 import com.oposicontrol.admin.domain.model.ForumRestriction
+import com.oposicontrol.admin.domain.model.ForumImagePurge
+import com.oposicontrol.admin.domain.model.OrderDecision
 import com.oposicontrol.admin.domain.model.OrderItem
 import com.oposicontrol.admin.domain.model.OrderPage
 import com.oposicontrol.admin.domain.model.ReferralPage
@@ -477,5 +479,102 @@ class ControlV1ViewModelsTest {
         assertEquals(1000, vm.state.value.thresholdMs)
         assertTrue(repo.calls.all { it.startsWith("fastWindows") || it == "forumCounterDrift" }, repo.calls.toString())
         assertEquals(UiAsync.Empty, vm.state.value.drift)
+    }
+
+    // ------------------------------------------------------------------------------------------------ resolución de pedidos
+
+    @Test
+    fun resolvingNeedsADecisionAndANoteAndAConfirmationBeforeTheServerIsCalled() = runTest {
+        val repo = FakeControlV1Repository().apply {
+            orders = OrderPage(listOf(sampleOrder("o1")), 1, 25, 0, refundsEnabled = false)
+            reviewCount = 1
+        }
+        val vm = OrdersViewModel(dispatchers(), repo)
+        advanceUntilIdle()
+        vm.dispatch(OrdersIntent.Select("o1"))
+        vm.dispatch(OrdersIntent.RequestResolve)
+        advanceUntilIdle()
+        assertEquals("Elige una decisión.", vm.state.value.resolveError)
+        vm.dispatch(OrdersIntent.SelectDecision(OrderDecision.CREDIT))
+        vm.dispatch(OrdersIntent.UpdateResolveNote("ab"))
+        vm.dispatch(OrdersIntent.RequestResolve)
+        advanceUntilIdle()
+        assertNotNull(vm.state.value.resolveError)
+        assertFalse(vm.state.value.confirmResolve)
+        vm.dispatch(OrdersIntent.UpdateResolveNote("Pago verificado en Play Console"))
+        vm.dispatch(OrdersIntent.RequestResolve)
+        advanceUntilIdle()
+        assertTrue(vm.state.value.confirmResolve)
+        assertTrue(repo.calls.none { it.startsWith("resolveOrder") }, repo.calls.toString())
+        vm.dispatch(OrdersIntent.ConfirmResolve)
+        advanceUntilIdle()
+        assertTrue("resolveOrder:o1:acreditar:Pago verificado en Play Console" in repo.calls, repo.calls.toString())
+        assertEquals(UiAsync.Success("Pedido acreditado y marcado como pagado."), vm.state.value.resolveResult)
+        assertNull(vm.state.value.decision)
+        assertTrue(repo.calls.count { it == "orders:en_revision:0" } >= 2, "la lista se recarga tras resolver")
+    }
+
+    @Test
+    fun refundIsNotOfferedWhileTheServerHasItSwitchedOff() = runTest {
+        val repo = FakeControlV1Repository().apply { orders = OrderPage(listOf(sampleOrder("o1")), 1, 25, 0, refundsEnabled = false) }
+        val vm = OrdersViewModel(dispatchers(), repo)
+        advanceUntilIdle()
+        vm.dispatch(OrdersIntent.Select("o1"))
+        vm.dispatch(OrdersIntent.SelectDecision(OrderDecision.REFUND))
+        advanceUntilIdle()
+        assertNull(vm.state.value.decision)
+        assertFalse(OrderDecision.REFUND.available(false))
+        assertTrue(OrderDecision.entries.filter { it != OrderDecision.REFUND }.all { it.available(false) })
+
+        val enabled = FakeControlV1Repository().apply { orders = OrderPage(listOf(sampleOrder("o1")), 1, 25, 0, refundsEnabled = true) }
+        val vm2 = OrdersViewModel(dispatchers(), enabled)
+        advanceUntilIdle()
+        vm2.dispatch(OrdersIntent.Select("o1"))
+        vm2.dispatch(OrdersIntent.SelectDecision(OrderDecision.REFUND))
+        advanceUntilIdle()
+        assertEquals(OrderDecision.REFUND, vm2.state.value.decision)
+    }
+
+    @Test
+    fun anOrderThatIsNotInReviewCannotBeResolvedFromThePanel() = runTest {
+        val repo = FakeControlV1Repository().apply { orders = OrderPage(listOf(sampleOrder("o1", state = "pagada")), 1, 25, 0, refundsEnabled = true) }
+        val vm = OrdersViewModel(dispatchers(), repo)
+        advanceUntilIdle()
+        vm.dispatch(OrdersIntent.Select("o1"))
+        vm.dispatch(OrdersIntent.SelectDecision(OrderDecision.CREDIT))
+        vm.dispatch(OrdersIntent.UpdateResolveNote("Pago verificado"))
+        vm.dispatch(OrdersIntent.RequestResolve)
+        advanceUntilIdle()
+        assertFalse(vm.state.value.confirmResolve)
+        assertTrue(repo.calls.none { it.startsWith("resolveOrder") })
+    }
+
+    @Test
+    fun aServerRefusalOfTheDecisionIsShownAndNothingIsReloadedAsSuccess() = runTest {
+        val repo = FakeControlV1Repository().apply { orders = OrderPage(listOf(sampleOrder("o1")), 1, 25, 0) }
+        val vm = OrdersViewModel(dispatchers(), repo)
+        advanceUntilIdle()
+        vm.dispatch(OrdersIntent.Select("o1"))
+        vm.dispatch(OrdersIntent.SelectDecision(OrderDecision.REJECT))
+        vm.dispatch(OrdersIntent.UpdateResolveNote("Pago no encontrado"))
+        vm.dispatch(OrdersIntent.RequestResolve)
+        advanceUntilIdle()
+        repo.failNext = "*"
+        vm.dispatch(OrdersIntent.ConfirmResolve)
+        advanceUntilIdle()
+        assertIs<UiAsync.Error>(vm.state.value.resolveResult)
+        assertEquals(OrderDecision.REJECT, vm.state.value.decision)
+    }
+
+    @Test
+    fun theForumBlocksScreenLoadsTheReadOnlyImagePurgeSummary() = runTest {
+        val repo = FakeControlV1Repository().apply { imagePurge = ForumImagePurge(4, 1, "2026-10-17T08:00:00Z") }
+        val vm = ForumBlocksViewModel(dispatchers(), repo)
+        advanceUntilIdle()
+        val purge = (vm.state.value.imagePurge as UiAsync.Success).value
+        assertEquals(4, purge.pending)
+        assertTrue(purge.summary().contains("1 llevan 10 intentos fallidos"), purge.summary())
+        assertTrue(ForumImagePurge(0, 0, null).summary().startsWith("No hay"))
+        assertTrue("forumImagePurge" in repo.calls)
     }
 }

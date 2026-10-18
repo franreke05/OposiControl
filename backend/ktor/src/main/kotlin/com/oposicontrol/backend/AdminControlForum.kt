@@ -356,6 +356,26 @@ internal fun AdminControlV1Gateway.liftRestriction(usuarioId: String) {
     })
 }
 
+@Serializable
+data class AdminForumImagePurgeDto(
+    /** Imagenes retiradas o rechazadas cuyo objeto de almacenamiento aun no se ha borrado. */
+    val pendientes: Int = 0,
+    /** De ellas, las que el barrido dejo de reintentar (10 fallos): necesitan una persona. */
+    val atascadas: Int = 0,
+    val masAntiguaEn: String? = null,
+)
+
+/** Solo lectura. `imagenes_oposired` no tiene permiso para `service_role`: se pide a `admin_foro_imagenes_purga_resumen`. */
+internal fun AdminControlV1Gateway.forumImagePurge(): AdminForumImagePurgeDto {
+    val body = rpcOrNotProvisioned("admin_foro_imagenes_purga_resumen", buildJsonObject {})
+    val obj = json.parseToJsonElement(body) as? JsonObject ?: throw domainError(CONTROL_RPC_NOT_PROVISIONED)
+    return AdminForumImagePurgeDto(
+        pendientes = obj["pendientes"].intOr(0).coerceAtLeast(0),
+        atascadas = obj["atascadas"].intOr(0).coerceAtLeast(0),
+        masAntiguaEn = obj["masAntiguaEn"].contentOrNullSafe(),
+    )
+}
+
 fun Route.adminControlForumRoutes(gateway: AdminControlV1Gateway) {
     route("/api/v1/admin/foro") {
         get("/cola") {
@@ -411,6 +431,10 @@ fun Route.adminControlForumRoutes(gateway: AdminControlV1Gateway) {
                 withUpstreamIo { gateway.removeBlockPattern(p) }
                 call.respond(HttpStatusCode.NoContent)
             }
+        }
+        get("/imagenes-purga") {
+            call.response.header(HttpHeaders.CacheControl, "no-store")
+            call.respond(withUpstreamIo { gateway.forumImagePurge() })
         }
         route("/restricciones") {
             get {

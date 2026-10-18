@@ -1,10 +1,12 @@
 package com.oposicontrol.backend
 
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
@@ -22,7 +24,8 @@ class AdminControlOfficialQuestionsTest {
     @Test
     fun aReserveNeedsAnOrderAndAMainQuestionMustNotHaveOne() {
         assertEquals(2, OfficialQuestionFlags.parse(obj("""{"anulada":false,"esReserva":true,"ordenReserva":2}""")).ordenReserva)
-        listOf("null", "0", "11", "-1").forEach {
+        assertNull(OfficialQuestionFlags.parse(obj("""{"anulada":false,"esReserva":true}""")).ordenReserva)
+        listOf("0", "11", "-1").forEach {
             assertEquals("RESERVE_ORDER_INVALID", assertFailsWith<BackendDomainException>(it) {
                 OfficialQuestionFlags.parse(obj("""{"anulada":false,"esReserva":true,"ordenReserva":$it}"""))
             }.errorCode)
@@ -59,7 +62,7 @@ class AdminControlOfficialQuestionsTest {
     private fun fake(withReserveColumns: Boolean = true) = ControlFake { method, uri, _ ->
         when {
             uri.contains("/rpc/admin_official_rules_check") -> V1StubResponse(200, """{"problema":null,"avisos":[],"regla":"REEMPLAZO_POR_RESERVA"}""")
-            uri.contains("/rpc/admin_set_exam_question_flags") -> V1StubResponse(200, "{}")
+            uri.contains("/rpc/admin_set_exam_question_flags") -> V1StubResponse(200, """{"changed":true,"problema":null,"avisos":["MORE_RESERVES_THAN_MAX","<b>x</b>"]}""")
             uri.contains("/rest/v1/preguntas_examen") ->
                 if (uri.contains("es_reserva") && !withReserveColumns) V1StubResponse(400, """{"code":"42703","message":"column preguntas_examen.es_reserva does not exist"}""")
                 else V1StubResponse(
@@ -126,7 +129,35 @@ class AdminControlOfficialQuestionsTest {
         installControlRoutes(f.gateway())
         assertEquals(HttpStatusCode.BadRequest, sendJson(HttpMethod.Get, "/api/v1/admin/examenes/no-uuid/preguntas-oficiales").status)
         assertEquals(HttpStatusCode.BadRequest, sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/preguntas-oficiales/xx", """{"anulada":true,"esReserva":false}""").status)
-        assertEquals(HttpStatusCode.UnprocessableEntity, sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/preguntas-oficiales/$q1", """{"anulada":false,"esReserva":true}""").status)
+        assertEquals(HttpStatusCode.UnprocessableEntity, sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/preguntas-oficiales/$q1", """{"anulada":false,"esReserva":true,"ordenReserva":99}""").status)
         assertTrue(f.calls.isEmpty(), f.describe())
+    }
+
+    @Test
+    fun theFunctionResultCarriesNonBlockingWarningsBack() {
+        val dto = fake().gateway().setOfficialQuestionFlags(ControlFake.EXAM, q2, OfficialQuestionFlags.Input(false, null, true, null))!!
+        assertEquals(listOf("MORE_RESERVES_THAN_MAX", "<b>x</b>"), dto.avisos)
+        assertNull(dto.problema)
+    }
+
+    @Test
+    fun appendingAReserveSendsANullOrder() {
+        val f = fake()
+        f.gateway().setOfficialQuestionFlags(ControlFake.EXAM, q2, OfficialQuestionFlags.Input(false, null, true, null))
+        val body = obj(f.calls.first { it.pathAndQuery.contains("/rpc/admin_set_exam_question_flags") }.body)
+        assertEquals(JsonNull, body["p_orden_reserva"])
+    }
+
+    @Test
+    fun theServerDomainErrorsOfTheFunctionAreTranslatedWithConstantMessages() = testApplication {
+        val f = ControlFake { _, uri, _ ->
+            if (uri.contains("/rpc/admin_set_exam_question_flags")) {
+                V1StubResponse(400, """{"code":"P0001","message":"FLAGS_OFFICIAL_RULES_INVALID","hint":"REEMPLAZO_NOT_ENOUGH_RESERVES","details":"examen secreto"}""")
+            } else V1StubResponse(200, """[{"id":"${ControlFake.EXAM}"}]""")
+        }
+        installControlRoutes(f.gateway())
+        val r = sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/preguntas-oficiales/$q1", """{"anulada":true,"esReserva":false}""")
+        assertEquals(HttpStatusCode.UnprocessableEntity, r.status)
+        assertTrue(r.bodyAsText().contains("FLAGS_OFFICIAL_RULES_INVALID") && !r.bodyAsText().contains("secreto"), r.bodyAsText())
     }
 }

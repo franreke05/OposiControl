@@ -305,6 +305,7 @@ GET	/api/v1/admin/foro/bloqueos	CONTROL	admin	Admin v1 (Control V1): foro/bloque
 GET	/api/v1/admin/foro/canales	CONTROL	admin	Admin v1 (Control V1): foro/canales	OposiControl
 GET	/api/v1/admin/foro/cola	CONTROL	admin	Admin v1 (Control V1): foro/cola	OposiControl
 GET	/api/v1/admin/foro/restricciones	CONTROL	admin	Admin v1 (Control V1): foro/restricciones	OposiControl
+GET	/api/v1/admin/foro/imagenes-purga	CONTROL	admin	Admin v1 (Control V1): foro/imagenes-purga	OposiControl
 GET	/api/v1/admin/pedidos	CONTROL	admin	Admin v1 (Control V1): pedidos	OposiControl
 GET	/api/v1/admin/pedidos/en-revision/total	CONTROL	admin	Admin v1 (Control V1): pedidos/en-revision/total	OposiControl
 GET	/api/v1/admin/pedidos/{}	CONTROL	admin	Admin v1 (Control V1): pedidos/{}	OposiControl
@@ -315,6 +316,7 @@ POST	/api/v1/admin/foro/bloqueos	CONTROL	admin	Admin v1 (Control V1): foro/bloqu
 POST	/api/v1/admin/foro/canales	CONTROL	admin	Admin v1 (Control V1): foro/canales	OposiControl
 POST	/api/v1/admin/foro/moderar	CONTROL	admin	Admin v1 (Control V1): foro/moderar	OposiControl
 POST	/api/v1/admin/pedidos/{}/nota	CONTROL	admin	Admin v1 (Control V1): pedidos/{}/nota	OposiControl
+POST	/api/v1/admin/pedidos/{}/resolver	CONTROL	admin	Admin v1 (Control V1): pedidos/{}/resolver	OposiControl
 POST	/api/v1/admin/referidos/invitaciones/{}/revocar	CONTROL	admin	Admin v1 (Control V1): referidos/invitaciones/{}/revocar	OposiControl
 PUT	/api/v1/admin/config-v1/{}	CONTROL	admin	Admin v1 (Control V1): config-v1/{}	OposiControl
 PUT	/api/v1/admin/examenes/{}/reglas-puntuacion	CONTROL	admin	Admin v1 (Control V1): examenes/{}/reglas-puntuacion	OposiControl

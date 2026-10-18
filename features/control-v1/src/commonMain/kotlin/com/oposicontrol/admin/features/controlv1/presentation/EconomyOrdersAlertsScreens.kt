@@ -18,6 +18,7 @@ import com.oposicontrol.admin.core.ui.components.AdminTableColumn
 import com.oposicontrol.admin.core.ui.components.AdminTableRow
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.AsyncStatePane
+import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.ButtonSize
 import com.oposicontrol.admin.core.ui.components.DropdownField
 import com.oposicontrol.admin.core.ui.components.FormSection
@@ -33,8 +34,10 @@ import com.oposicontrol.admin.core.ui.components.WorkspacePill
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.ExamEconomy
+import com.oposicontrol.admin.domain.model.OrderDecision
 import com.oposicontrol.admin.domain.model.OrderItem
 import com.oposicontrol.admin.domain.model.OrderNote
+import com.oposicontrol.admin.domain.model.OrderResolutionNote
 import com.oposicontrol.admin.domain.model.OrderStates
 
 internal const val EXAM_ECONOMY_TABLE_TAG = "control-exam-economy"
@@ -178,18 +181,22 @@ internal fun OrdersContent(state: OrdersUiState, onIntent: (OrdersIntent) -> Uni
     FormSection(
         title = "Pedidos",
         description = "Los pedidos «En revisión» son pagos que el servidor no ha podido dar por buenos o malos solo. " +
-            "Aquí se leen y se anota qué se ha comprobado; el estado, el saldo y los accesos los mueve el servidor.",
+            "Aquí se leen, se anota qué se ha comprobado y se resuelven (acreditar, confirmar, rechazar o reembolsar); el servidor mueve el saldo y los accesos en una sola operación.",
         icon = AppIcon.TICKETS,
         action = { SecondaryButton(text = "Actualizar", size = ButtonSize.COMPACT, onClick = { onIntent(OrdersIntent.Refresh) }) },
     ) {
         state.reviewCount?.takeIf { it > 0 }?.let {
-            WorkspaceNotice(WorkspaceNoticeTone.WARNING, "$it pedidos esperan revisión", detail = "Hasta que el servidor ofrezca la resolución de pedidos, se comprueban con el proveedor y se anota aquí.")
+            WorkspaceNotice(WorkspaceNoticeTone.WARNING, "$it pedidos esperan revisión", detail = "Compruébalos con el proveedor y resuélvelos desde el detalle del pedido.")
         }
         FilterPills(
             options = listOf<Pair<String?, String>>(null to "Todos") + OrderStates.ALL.map { it to OrderStates.label(it) },
             selected = state.filter,
             onSelect = { onIntent(OrdersIntent.SetFilter(it)) },
         )
+        if (state.selected == null) {
+            // Tras resolver, el pedido sale de la lista (ya no está en revisión): el resultado se dice aquí, no se pierde.
+            ActionFeedback(state.resolveResult, success = (state.resolveResult as? UiAsync.Success<String>)?.value ?: "Hecho.", loading = "Aplicando…")
+        }
         AsyncStatePane(
             state = state.orders,
             emptyTitle = "Sin pedidos",
@@ -221,6 +228,19 @@ internal fun OrdersContent(state: OrdersUiState, onIntent: (OrdersIntent) -> Uni
         }
     }
     state.selected?.let { OrderDetail(it, state, onIntent) }
+    if (state.confirmResolve) {
+        val decision = state.decision
+        if (decision != null) {
+            ConfirmDialog(
+                title = "${decision.label} pedido",
+                message = decision.effect + " Queda registrado en auditoría con tu cuenta.",
+                confirmLabel = decision.label,
+                destructive = decision == OrderDecision.REJECT || decision == OrderDecision.REFUND,
+                onConfirm = { onIntent(OrdersIntent.ConfirmResolve) },
+                onDismiss = { onIntent(OrdersIntent.DismissResolve) },
+            )
+        }
+    }
 }
 
 @Composable
@@ -238,6 +258,7 @@ private fun OrderDetail(order: OrderItem, state: OrdersUiState, onIntent: (Order
             style = MaterialTheme.typography.bodySmall,
             color = tokens.textSecondary,
         )
+        if (order.state == "en_revision") ResolveOrderBlock(state, onIntent)
         order.refund?.let { r ->
             WorkspaceNotice(
                 tone = WorkspaceNoticeTone.INFO,
@@ -332,4 +353,39 @@ internal fun AlertsContent(state: AlertsUiState, onIntent: (AlertsIntent) -> Uni
             )
         }
     }
+}
+
+/**
+ * Resolución de un pedido `en_revision`. El panel ofrece las cuatro decisiones y NO adivina cuál encaja: el servidor mira
+ * el estado real (¿se acreditó ya?) y rechaza la que no corresponde con un mensaje claro. El reembolso solo aparece si el
+ * servidor lo tiene activado.
+ */
+@Composable
+private fun ResolveOrderBlock(state: OrdersUiState, onIntent: (OrdersIntent) -> Unit) {
+    val decisions = OrderDecision.entries.filter { it.available(state.refundsEnabled) }
+    DropdownField(
+        label = "Decisión",
+        selectedLabel = state.decision?.label ?: "Elige una decisión",
+        options = decisions.map { it.wire to it.label },
+        onSelect = { wire -> decisions.firstOrNull { it.wire == wire }?.let { onIntent(OrdersIntent.SelectDecision(it)) } },
+        required = true,
+        supportingText = state.decision?.effect ?: if (state.refundsEnabled) null else "El reembolso está desactivado en este entorno.",
+        isError = false,
+    )
+    LabeledField(
+        label = "Motivo de la decisión",
+        value = state.resolveNote,
+        onValueChange = { onIntent(OrdersIntent.UpdateResolveNote(it)) },
+        supportingText = state.resolveError ?: "De ${OrderResolutionNote.MIN} a ${OrderResolutionNote.MAX} caracteres. Queda en auditoría con tu cuenta.",
+        isError = state.resolveError != null,
+        singleLine = false,
+        minLines = 2,
+    )
+    ActionFeedback(state.resolveResult, success = (state.resolveResult as? UiAsync.Success<String>)?.value ?: "Hecho.", loading = "Aplicando…")
+    PrimaryButton(
+        text = "Resolver pedido",
+        size = ButtonSize.COMPACT,
+        loading = state.resolveResult is UiAsync.Loading,
+        onClick = { onIntent(OrdersIntent.RequestResolve) },
+    )
 }

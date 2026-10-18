@@ -107,6 +107,8 @@ internal class ExamsFakeControlRepo(
     override suspend fun ordersInReviewCount(): AppResult<Int> = TODO()
     override suspend fun order(id: String): AppResult<OrderItem> = TODO()
     override suspend fun addOrderNote(id: String, note: String): AppResult<Unit> = TODO()
+    override suspend fun resolveOrder(id: String, decision: com.oposicontrol.admin.domain.model.OrderDecision, note: String): AppResult<com.oposicontrol.admin.domain.model.OrderResolution> = TODO()
+    override suspend fun forumImagePurge(): AppResult<com.oposicontrol.admin.domain.model.ForumImagePurge> = TODO()
     override suspend fun fastWindows(offset: Int): AppResult<FastWindowPage> = TODO()
     override suspend fun forumCounterDrift(): AppResult<List<ForumCounterDrift>> = TODO()
 }
