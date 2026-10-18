@@ -1454,6 +1454,35 @@ class AttemptRoutesTest {
     }
 
     @Test
+    fun withTheExplanationPolicyOnTheReviewAndResultCarryThePlainTextAndTheRichStructure() = testApplication {
+        application { attemptModule() }
+        finishedFixture()
+        val rico = """{"v":1,"blocks":[{"k":"p","spans":[{"text":"Hola "},{"text":"mundo","bold":true}]}]}"""
+        fun row(n: Int) = revisionRow(n, if (n == 1) "CORRECT" else "WRONG", solution = true).replace(
+            ""","solucion":"${opt(n, 1)}"}}""",
+            ""","solucion":"${opt(n, 1)}","razonamiento":"Hola mundo","rico":$rico}}""",
+        )
+        upstream.reviewRevision = { "[" + (1..4).joinToString(",") { row(it) } + "]" }
+        upstream.resultRevision = "[" + (1..4).joinToString(",") { row(it) } + "]"
+        ExplanationPolicy.visible = true
+        try {
+            val body = client.call(HttpMethod.Get, "$base/revision").bodyAsText()
+            assertConforms("D2-65", "200", body)
+            val explanation = obj(body)["items"]!!.jsonArray[0].jsonObject["explanation"]!!.jsonObject
+            assertEquals("Hola mundo", explanation["razonamiento"]!!.jsonPrimitive.content)
+            assertEquals(obj(rico), explanation["razonamientoRico"]!!.jsonObject)
+            assertTrue(upstream.urls.any { "razonamiento:solucion" in it && "rico:solucion" in it }, "the projections of the frozen solution")
+            val result = client.call(HttpMethod.Get, "$base/resultado").bodyAsText()
+            assertConforms("D2-12", "200", result)
+            val q = obj(result)["preguntas"]!!.jsonArray[0].jsonObject
+            assertEquals("Hola mundo", q["razonamiento"]!!.jsonPrimitive.content)
+            assertEquals(obj(rico), q["razonamientoRico"]!!.jsonObject)
+        } finally {
+            ExplanationPolicy.visible = false
+        }
+    }
+
+    @Test
     fun answerRevealsTheCorrectionOfTheCommandInOneRoundTrip() = testApplication {
         application { attemptModule() }
         upstream.answerOutcome =

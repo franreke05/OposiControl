@@ -3168,3 +3168,100 @@ begin
   raise notice 'OK FA37 import with reserves';
 end $$;
 rollback;
+
+-- 20261022102100: FA38 razonado rich text: whitelist validator, plain derivation, write-path triggers (E1-V1-MARKUP-CONTRACT.md)
+-- The vectors below are SHARED with the Kotlin parser: backend/ktor RichMarkupTest reads them from this file (between the VECTORS markers), parses every
+-- source and requires exactly the JSON and plain text listed; the BAD list must be rejected by RichMarkup.validateJson as well as by private.markup_valid.
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create temp table mv_ok(src text, js text, pl text);
+create temp table mv_bad(js text);
+-- MARKUP-VECTORS-OK-BEGIN
+insert into mv_ok values
+($v$Hola **mundo**$v$, $v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"Hola "},{"text":"mundo","bold":true}]}]} $v$, $v$Hola mundo$v$),
+($v$__a__ ++b++ ~~c~~$v$, $v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"a","italic":true},{"text":" "},{"text":"b","underline":true},{"text":" "},{"text":"c","strike":true}]}]} $v$, $v$a b c$v$),
+($v$[color:red]rojo[/color] [size:18]grande[/size]$v$, $v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"rojo","color":"red"},{"text":" "},{"text":"grande","size":"lg"}]}]} $v$, $v$rojo grande$v$),
+($v$[align:center]Centrado[p]Otro[/align]$v$, $v$ {"v":1,"blocks":[{"k":"p","a":"center","spans":[{"text":"Centrado"}]},{"k":"p","a":"center","spans":[{"text":"Otro"}]}]} $v$, $v$Centrado
+Otro$v$),
+($v$Intro
+[-] uno
+[-] dos$v$, $v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"Intro"}]},{"k":"li","spans":[{"text":"uno"}]},{"k":"li","spans":[{"text":"dos"}]}]} $v$, $v$Intro
+• uno
+• dos$v$),
+($v$**negrita [color:#aa00ff]y color[/color]**$v$, $v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"negrita ","bold":true},{"text":"y color","bold":true,"color":"#AA00FF"}]}]} $v$, $v$negrita y color$v$),
+($v$5 \* 3 y [sic] y 1 * 2 *** 3$v$, $v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"5 * 3 y [sic] y 1 * 2 *** 3"}]}]} $v$, $v$5 * 3 y [sic] y 1 * 2 *** 3$v$),
+($v$linea uno
+linea dos [p] tres$v$, $v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"linea uno linea dos"}]},{"k":"p","spans":[{"text":"tres"}]}]} $v$, $v$linea uno linea dos
+tres$v$);
+-- MARKUP-VECTORS-OK-END
+-- MARKUP-VECTORS-BAD-BEGIN
+insert into mv_bad values
+($v$ {"v":2,"blocks":[]} $v$),
+($v$ {"v":1,"blocks":[],"x":1} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","spans":[]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"h1","spans":[{"text":"x"}]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","a":"middle","spans":[{"text":"x"}]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":""}]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"a\nb"}]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"x","bold":false}]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"x","size":"18"}]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"x","color":"#abc"}]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"x","color":"#aabbcc"}]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"x","href":"http://evil"}]}]} $v$),
+($v$ {"v":1,"blocks":[{"k":"p","spans":[{"text":"x‮y"}]}]} $v$),
+($v$ [1,2] $v$);
+-- MARKUP-VECTORS-BAD-END
+do $$
+declare
+  r record;
+  rr jsonb;
+  v_q uuid;
+begin
+  assert (select count(*) from mv_ok) = 8 and (select count(*) from mv_bad) = 14, 'vector counts';
+  for r in select * from mv_ok loop
+    assert private.markup_valid(r.js::jsonb), 'valid vector accepted: ' || r.src;
+    assert private.markup_plain(r.js::jsonb) = r.pl, 'plain text of the vector: ' || r.src || ' got ' || coalesce(private.markup_plain(r.js::jsonb), 'null');
+  end loop;
+  for r in select * from mv_bad loop
+    assert not private.markup_valid(r.js::jsonb), 'invalid vector rejected: ' || r.js;
+  end loop;
+  assert not private.markup_valid(null), 'null is not a document';
+  assert not has_function_privilege('authenticated', 'private.markup_valid(jsonb)', 'execute') and not has_function_privilege('anon', 'private.markup_plain(jsonb)', 'execute'), 'private functions';
+
+  -- ---- solutions: valid + consistent rich text; a stale plain edit drops it
+  insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000f6', 'MKP', 'MKP', 'mkp', true);
+  insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000f6', 'MKC', 'Com MKP', 'com-mkp');
+  insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values ('f9600000-0000-0000-0000-000000000001', 'MKP-1', 'razonada', 'Pregunta mk 1', true);
+  insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion) select ('0a960000-0000-0000-0000-00000000000' || o)::uuid, 'f9600000-0000-0000-0000-000000000001', chr(64 + o), 'op ' || o, o from generate_series(1, 4) o;
+  rr := (select js::jsonb from mv_ok where src = 'Hola **mundo**');
+  insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento, razonamiento_markup, razonamiento_rico) values ('f9600000-0000-0000-0000-000000000001', '0a960000-0000-0000-0000-000000000001', 'Hola mundo', 'Hola **mundo**', rr);
+  assert (select razonamiento_rico = rr and razonamiento_markup = 'Hola **mundo**' from public.soluciones_pregunta where pregunta_id = 'f9600000-0000-0000-0000-000000000001'), 'rich text stored';
+  assert (private.app_revision_pregunta_solucion('f9600000-0000-0000-0000-000000000001') -> 'razonamiento_rico') = rr, 'the revision snapshot carries the rich text';
+  perform pg_temp.expect_e($q$update public.soluciones_pregunta set razonamiento_rico = '{"v":1,"blocks":[{"k":"p","spans":[{"text":"otro"}]}]}'::jsonb where pregunta_id = 'f9600000-0000-0000-0000-000000000001'$q$, 'MARKUP_PLAIN_MISMATCH');
+  perform pg_temp.expect_e($q$update public.soluciones_pregunta set razonamiento_rico = '{"v":9}'::jsonb where pregunta_id = 'f9600000-0000-0000-0000-000000000001'$q$, 'MARKUP_INVALID');
+  perform pg_temp.expect_e($q$update public.soluciones_pregunta set razonamiento_markup = null where pregunta_id = 'f9600000-0000-0000-0000-000000000001'$q$, 'MARKUP_SOURCE_REQUIRED');
+  update public.soluciones_pregunta set razonamiento = 'Texto nuevo' where pregunta_id = 'f9600000-0000-0000-0000-000000000001';
+  assert (select razonamiento_rico is null and razonamiento_markup is null and razonamiento = 'Texto nuevo' from public.soluciones_pregunta where pregunta_id = 'f9600000-0000-0000-0000-000000000001'), 'a legacy plain edit drops the stale rich version';
+  assert not (private.app_revision_pregunta_solucion('f9600000-0000-0000-0000-000000000001') ? 'razonamiento_rico'), 'no rich key when there is none (revision identity unchanged)';
+
+  -- ---- the import: the staging row carries plain + rich + source; the created solution gets the rich text in the same transaction
+  insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, es_oficial)
+    values ('e9600000-0000-0000-0000-000000000001', 'MKP-EX', 'e1000000-0000-0000-0000-0000000000f6', 'c1000000-0000-0000-0000-0000000000f6', 'Razonado mk', 'razonado', 'gratuito', false, false);
+  insert into public.lotes_importacion_preguntas (id, examen_id, nombre_archivo_original, tipo_examen, estado, total_detectadas) values ('b9600000-0000-0000-0000-000000000001', 'e9600000-0000-0000-0000-000000000001', 'mk.pdf', 'razonado', 'parseado', 2);
+  perform pg_temp.expect_e($q$insert into public.preguntas_parseadas_staging (lote_id, posicion, bloque_original, titulo, opcion_a, opcion_b, opcion_c, opcion_d, respuesta_correcta, razonamiento, razonamiento_markup, razonamiento_rico, estado_parseo)
+     values ('b9600000-0000-0000-0000-000000000001', 9, 'raw', 't', 'a', 'b', 'c', 'd', 'A', 'x', 'x', '{"v":1,"blocks":[{"k":"p","spans":[{"text":"y"}]}]}', 'ok')$q$, 'MARKUP_PLAIN_MISMATCH');
+  insert into public.preguntas_parseadas_staging (lote_id, posicion, bloque_original, titulo, opcion_a, opcion_b, opcion_c, opcion_d, respuesta_correcta, razonamiento, razonamiento_markup, razonamiento_rico, estado_parseo) values
+    ('b9600000-0000-0000-0000-000000000001', 1, 'raw', 'Pregunta mk estilo', 'a1', 'b1', 'c1', 'd1', 'A', 'Hola mundo', 'Hola **mundo**', rr, 'ok'),
+    ('b9600000-0000-0000-0000-000000000001', 2, 'raw', 'Pregunta mk plana', 'a2', 'b2', 'c2', 'd2', 'B', 'Sin estilo', null, null, 'ok');
+  perform public.admin_import_lote_preguntas('b9600000-0000-0000-0000-000000000001');
+  assert (select s.razonamiento = 'Hola mundo' and s.razonamiento_rico = rr and s.razonamiento_markup = 'Hola **mundo**'
+            from public.soluciones_pregunta s join public.preguntas p on p.id = s.pregunta_id where p.titulo = 'Pregunta mk estilo'), 'import: plain column, rich text and source reach the solution';
+  assert (select s.razonamiento = 'Sin estilo' and s.razonamiento_rico is null from public.soluciones_pregunta s join public.preguntas p on p.id = s.pregunta_id where p.titulo = 'Pregunta mk plana'), 'import: an unstyled text stays plain';
+  raise notice 'OK FA38 razonado markup';
+end $$;
+rollback;

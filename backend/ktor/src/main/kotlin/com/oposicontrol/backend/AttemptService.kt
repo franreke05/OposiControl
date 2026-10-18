@@ -3,6 +3,7 @@ package com.oposicontrol.backend
 import io.ktor.http.Parameters
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.intOrNull
 import java.math.BigDecimal
@@ -197,6 +198,8 @@ internal data class ResultQuestion(
     val opcionCorrecta: String? = null,
     /** DEC-025 / DEC-040 abiertas: `null`. */
     val razonamiento: String? = null,
+    /** FA38 (aditivo): estructura con estilo; solo con la politica de explicaciones activa. */
+    val razonamientoRico: JsonObject? = null,
     val tiempoSeg: Int,
     /** DEC-019 / DEC-004 abiertas: `null`. */
     val pctAciertoGlobal: Double? = null,
@@ -251,7 +254,11 @@ internal data class ReviewFinalAnswer(val opcionId: String? = null, val esCorrec
 internal data class ReviewCorrectAnswer(val opcionId: String, val letra: String)
 
 @Serializable
-internal data class ReviewExplanation(val razonamiento: String)
+internal data class ReviewExplanation(
+    val razonamiento: String,
+    /** FA38 (aditivo): la estructura con estilo del razonamiento (`{v, blocks}`); ausente = texto sin estilo. `razonamiento` siempre lleva el texto plano. */
+    val razonamientoRico: JsonObject? = null,
+)
 
 /**
  * Recurso V1 (imagen, audio, video) tal como quedo en la revision del intento (EX14). Solo metadatos: los bytes los sirve
@@ -346,6 +353,8 @@ private data class QuestionView(
     val recursos: List<AttemptResourceDto>,
     val etiquetas: List<ReviewTag>,
     val correctId: String?,
+    val razonamiento: String? = null,
+    val razonamientoRico: JsonObject? = null,
 )
 
 // ---------- servicio ----------
@@ -658,7 +667,8 @@ internal class AttemptService(
                     sustituyeA = question.sustituyeAPosicion.takeIf { frozenRules },
                     opcionElegida = answer?.opcionSeleccionadaId?.takeUnless { annulled || question.estadoFinal == STATUS_UNUSED_RESERVE },
                     opcionCorrecta = question.correctOptionId()?.takeUnless { annulled },
-                    razonamiento = null,
+                    razonamiento = question.revision?.solucion?.razonamiento?.takeIf { ExplanationPolicy.visible && !annulled && it.isNotBlank() },
+                    razonamientoRico = question.revision?.solucion?.razonamientoRico?.takeIf { ExplanationPolicy.visible && !annulled },
                     tiempoSeg = answerSeconds(answer),
                     pctAciertoGlobal = null,
                 )
@@ -717,7 +727,8 @@ internal class AttemptService(
             correctAnswer = content.correctId?.takeUnless { annulled }?.let { correctId ->
                 options.firstOrNull { it.id == correctId }?.let { ReviewCorrectAnswer(opcionId = correctId, letra = it.letra) }
             },
-            explanation = null,
+            explanation = content.razonamiento?.takeIf { ExplanationPolicy.visible && !annulled && it.isNotBlank() }
+                ?.let { ReviewExplanation(razonamiento = it, razonamientoRico = content.razonamientoRico) },
             resources = content.recursos,
             timings = ReviewTimings(
                 tiempoRespuestaMs = shown?.let { it.tiempoRespuestaMs ?: it.tiempoRespuestaSegundos?.let { s -> s.toLong() * 1_000 }?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() }?.coerceAtLeast(0),
@@ -749,6 +760,8 @@ internal class AttemptService(
                 recursos = frozen.recursos.sortedWith(compareBy({ it.posicion }, { it.id })).mapNotNull(::resourceDto),
                 etiquetas = frozen.etiquetas.distinctBy { it.id }.sortedBy { it.nombre }.map { ReviewTag(it.id, it.nombre) },
                 correctId = revision.solucion?.opcionCorrectaId,
+                razonamiento = revision.solucion?.razonamiento,
+                razonamientoRico = revision.solucion?.razonamientoRico,
             )
         }
         val content = preguntas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()

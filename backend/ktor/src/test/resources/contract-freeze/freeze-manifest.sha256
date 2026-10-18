@@ -3,7 +3,7 @@
 # fails OpenApiFreezeManifestTest; the amendment is then recorded in CONTRACT_FREEZE.md (OposiBot repo) and this manifest updated
 # in the same change.
 73f17c2f9e8dfdeabc86bc888fe9c65ea6cc54bb2031b8b18e9ecf28cc9221e6  openapi/.redocly.lint-ignore.yaml
-a5862cffdc33db66d96722ccbdc8692333397dedac840389d8bed007e6ab3401  openapi/attempts/attempts.yaml
+742a3594972d388c9f6a0e3c0fdf7c46d92878dbe70174e65071a109ad9b35bd  openapi/attempts/attempts.yaml
 9dcbc8aadb0f03d11f9f68e7ad22222658383129d2ae9a2af0ef50be6c862fdb  openapi/auth/auth.yaml
 19358124bfcaff3bc269d22c2287983bb0a0691ca89377076731eac4e938c3fc  openapi/billing/billing.yaml
 4cfbe325889fe4a6dc480e141aaf72ce12075f4d62ddcf1fbb067b02e46eedc5  openapi/catalog/catalog.yaml
