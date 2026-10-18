@@ -6,7 +6,8 @@
 // nunca forma parte de la imagen de Ktor ni de produccion.
 import fs from 'fs';
 
-const ISSUER = 'http://localhost:54321/auth/v1';
+// the issuer carries the gateway port (ports.mjs); up.mjs writes it to .local/issuer.txt, mounted at /srv/issuer.txt
+const ISSUER = fs.readFileSync('/srv/issuer.txt').toString().trim();
 
 function b64url(s) {
   return Buffer.from(s, 'base64url');

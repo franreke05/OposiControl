@@ -15,7 +15,7 @@ requireStackLock('e2-sec01-verify.mjs');
 
 const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:/Users/franr/AndroidStudioProjects/OposiControl-PhaseB-Server/ops/local-exam/.local';
 const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8090';
-const GATEWAY = 'http://localhost:54321';
+import { GATEWAY } from './ports.mjs';
 const OUT = process.env.E2_OUT ?? path.join(process.cwd(), 'e2-phaseb-result.json');
 const secrets = JSON.parse(fs.readFileSync(path.join(stackLocal, 'secrets.json'), 'utf8'));
 const sql = (text) => execFileSync('docker', ['exec', '-i', 'oposi-exam-local-db-1', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],

@@ -2,6 +2,7 @@
 // EX15/EX16/EX11/EX12: E2E del motor de examen contra el stack LOCAL (up.mjs + run-ktor.mjs). Nunca contra MAIN.
 //   node ops/local-exam/e2e.mjs        -> imprime PASS/FAIL por caso y escribe .local/e2e-result.json
 // Cada caso parte de un intento NUEVO: se cierran (abandonan) los abiertos de los usuarios de prueba antes de empezar.
+import { GATEWAY as GATEWAY_URL } from './ports.mjs';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -94,7 +95,7 @@ republishX();
 
 // ---------- AUTH_STUB (E5-I01): /auth/v1/user solo desde los claims de un JWT local valido; nada mas de GoTrue ----------
 await scenario('AUTH_STUB', async () => {
-  const GW = 'http://localhost:54321';
+  const GW = GATEWAY_URL;
   const mint = (claims, key = crypto.createPrivateKey({ key: secrets.privateJwk, format: 'jwk' }), kid = secrets.kid) => {
     const h = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'JWT', kid })).toString('base64url');
     const b = Buffer.from(JSON.stringify(claims)).toString('base64url');
@@ -245,7 +246,7 @@ await scenario('RESOURCES', async () => {
   const sb = await start('B', EX.IMAGEN);
   const same = sql(`select count(distinct revision_pregunta_id) from public.preguntas_intento where intento_id in ('${ai}', '${sb.json.intento.id}')`);
   check('RESOURCES.unchanged_content_reuses_revision', same === '1', `distinct revisions for 2 attempts on unchanged content = ${same}`);
-  const direct = await fetch(`http://localhost:54321/storage/v1/object/recursos-pregunta/preguntas/${q(3, 1)}/${RES.IMG}.png`);
+  const direct = await fetch(`${GATEWAY_URL}/storage/v1/object/recursos-pregunta/preguntas/${q(3, 1)}/${RES.IMG}.png`);
   check('RESOURCES.private_bucket_without_signature_denied', direct.status >= 400, `${direct.status}`);
 });
 
@@ -276,7 +277,7 @@ await scenario('RESOURCES_VIDEO_SLOW', async () => {
   await reader.cancel();
   check('RESOURCES.slow_bytes_throttled_access_fast', sa.status === 200 && accessMs < 1000 && kbps < 64, `access=${accessMs.toFixed(0)}ms download=${kbps.toFixed(1)}KB/s`);
   // El lento se decodifica leyendo el objeto con la clave de servicio (sin el limite de 32 KB/s de la URL firmada).
-  const slowObj = await fetch(`http://localhost:54321/storage/v1/object/authenticated/recursos-pregunta/preguntas/f8000000-0000-4000-8000-000000000001/${slow?.id}.wav`,
+  const slowObj = await fetch(`${GATEWAY_URL}/storage/v1/object/authenticated/recursos-pregunta/preguntas/f8000000-0000-4000-8000-000000000001/${slow?.id}.wav`,
     { headers: { apikey: secrets.serviceKey, Authorization: `Bearer ${secrets.serviceKey}` } });
   const slowDec = decode(Buffer.from(await slowObj.arrayBuffer()));
   check('RESOURCES.slow_audio_decodes_30s', slowObj.ok && slowDec.decoded && Math.abs(slowDec.seconds - 30) < 0.01, `${JSON.stringify(slowDec.stream)} seconds=${slowDec.seconds} decoded=${slowDec.decoded}`);
@@ -496,7 +497,7 @@ await scenario('SCHEDULED', async () => {
   const nowS = Math.floor(Date.now() / 1000);
   const unsigned = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: XA, role: 'authenticated', aud: 'authenticated', iat: nowS, exp: nowS + 300 })}`;
   const userJwt = `${unsigned}.${crypto.createHmac('sha256', secrets.jwtSecret).update(unsigned).digest('base64url')}`;
-  const rest = async (p, jwt = userJwt) => (await (await fetch(`http://localhost:54321/rest/v1/${p}`, {
+  const rest = async (p, jwt = userJwt) => (await (await fetch(`${GATEWAY_URL}/rest/v1/${p}`, {
     headers: { apikey: ktorEnv.SUPABASE_ANON_KEY, Authorization: `Bearer ${jwt}` } })).text());
   const rows = await Promise.all([rest(`examenes?select=id&id=eq.${SCHED}`), rest('preguntas?select=id&id=eq.f9000000-0000-4000-8000-000000000001'),
     rest(`preguntas_examen?select=pregunta_id&examen_id=eq.${SCHED}`), rest('opciones_pregunta?select=id&pregunta_id=eq.f9000000-0000-4000-8000-000000000001')]);

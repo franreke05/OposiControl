@@ -16,8 +16,8 @@ docker compose --env-file ops/local-exam/.local/compose.env -f ops/local-exam/do
 
 | Pieza | Donde |
 |---|---|
-| Pasarela (rest, storage, JWKS) | `http://localhost:54321` (`/rest/v1`, `/storage/v1`, `/auth/v1/.well-known/jwks.json`) |
-| Postgres | `127.0.0.1:54329`, usuario `postgres` / `postgres` |
+| Pasarela (rest, storage, JWKS) | `http://localhost:<gateway>` (default 55321; see `.local/ports.json`, `ports.mjs`) (`/rest/v1`, `/storage/v1`, `/auth/v1/.well-known/jwks.json`) |
+| Postgres | `127.0.0.1:<db>` (default 55432; same file), usuario `postgres` / `postgres` |
 | Esquema | `supabase/baseline/main_shape_subset.sql` + `sql/00_overlay_main_objects.sql` (objetos de MAIN fuera del subconjunto) + TODAS las migraciones de `supabase/baseline/PENDING_MIGRATIONS.txt` en orden, `ON_ERROR_STOP` |
 | Fixtures | `sql/90_fixtures.sql` (usuarios A/B, examen normal, razonada, inmersiva imagen (PNG 1200x800 generado por `up.mjs` y creado por la ingesta, recurso 5e...07), inmersiva audio con envolvente, recurso invalido pdf, audio ausente, premium bloqueado, examen de 200) |
 | Cartera y derechos (PHASE B) | `sql/01_overlay_wallet_entitlement.sql` (tablas de D6-01/D6-02/D7-02 fuera del subconjunto) + `sql/92_phase_b_wallet_entitlement.sql` (A: 35 tickets, 5 movimientos de 5 categorias, potenciador activo, creditos razonado 5/2, sin premium; B vacio; P premium activa -> SUBSCRIPTION). Idempotentes: `up.mjs` los aplica siempre, sin reset |

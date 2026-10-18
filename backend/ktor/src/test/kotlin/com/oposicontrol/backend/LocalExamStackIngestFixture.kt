@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
  * (`AdminV1Gateway.addRecursoArchivo`: Storage privado + fila + `metadatos` con `durationMs`/`envelope` del audio): imagen
  * 1200x800, audio, video y audio lento.
  * Se OMITE salvo que `LOCAL_EXAM_INGEST` apunte al `.local` del stack (lo pone `up.mjs`); nunca toca otro proyecto: la
- * URL debe ser `http://localhost:54321`.
+ * URL debe ser `http://localhost:<puerto>` (ops/local-exam/ports.mjs).
  */
 class LocalExamStackIngestFixture {
     @Test
@@ -23,7 +23,7 @@ class LocalExamStackIngestFixture {
         assumeTrue("solo con el stack local (LOCAL_EXAM_INGEST)", dir != null && File(dir, "ktor.env").isFile)
         val env = File(dir, "ktor.env").readLines().filter { '=' in it }.associate { it.substringBefore('=') to it.substringAfter('=') }
         val url = env.getValue("SUPABASE_URL")
-        require(url == "http://localhost:54321") { "la ingesta de fixtures solo corre contra el stack local" }
+        require(Regex("http://localhost:\\d+").matches(url)) { "la ingesta de fixtures solo corre contra el stack local" }
         val gateway = AdminV1Gateway.forTesting(url, env.getValue("SUPABASE_SERVICE_ROLE_KEY"), Json { ignoreUnknownKeys = true }, HttpClient.newHttpClient())
 
         // (pregunta, recurso, tipo, mime, fichero) -- ids fijos de sql/90_fixtures.sql

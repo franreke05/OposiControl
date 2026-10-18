@@ -16,7 +16,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const local = path.join(here, '.local');
 const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
 const MAIL = process.env.MAILPIT_URL ?? 'http://127.0.0.1:8025';
-const GATEWAY = 'http://localhost:54321';
+import { GATEWAY } from './ports.mjs';
 const PASS = 'Real-Auth-Pass-0123456789';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),

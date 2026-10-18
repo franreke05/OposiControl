@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { requireStackLock } from './stack-lock.mjs';
+import { GATEWAY as GATEWAY_URL } from './ports.mjs';
 import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('official-rules-journey');
 
 requireStackLock('official-rules-journey.mjs');
@@ -173,7 +174,7 @@ const adminJwt = (() => { // the admin token PostgREST verifies against the LOCA
   const body = b64u(JSON.stringify({ sub: adminSub, role: 'authenticated', aud: 'authenticated', iat: now - 60, exp: now + 3600 }));
   return head + '.' + body + '.' + crypto.createHmac('sha256', secrets.jwtSecret).update(head + '.' + body).digest('base64url');
 })();
-const patchExam = (body) => fetch('http://localhost:54321/rest/v1/examenes?id=eq.' + ex(4), { method: 'PATCH', headers: { apikey: anonKey, Authorization: 'Bearer ' + adminJwt, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(body) });
+const patchExam = (body) => fetch(GATEWAY_URL + '/rest/v1/examenes?id=eq.' + ex(4), { method: 'PATCH', headers: { apikey: anonKey, Authorization: 'Bearer ' + adminJwt, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(body) });
 const auditBefore = sql(`select coalesce(string_agg(id::text, ','), '') from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = '${ex(4)}';`).trim(); // E7: auditoria_log is append-only, no DELETE
 const t1 = await patchExam({ titulo: 'Oficial OFF-4 (titulo)' });
 const p1 = await patchExam({ penalizacion_racional: true });

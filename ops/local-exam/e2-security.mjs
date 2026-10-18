@@ -17,7 +17,7 @@ requireStackLock('e2-security.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
 const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:\\Users\\franr\\AndroidStudioProjects\\OposiControl-ExamServer\\ops\\local-exam\\.local';
 const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8090';
-const GATEWAY = 'http://localhost:54321';
+import { GATEWAY } from './ports.mjs';
 const OUT = process.env.E2_OUT ?? path.join(process.cwd(), 'e2-security-result.json');
 const CONTENT = process.argv.includes('--content');
 const EXPIRY = process.argv.includes('--expiry');
