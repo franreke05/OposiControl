@@ -162,6 +162,25 @@ for (const p of [4, 5]) await answer(r4b.id, 4, p, false);
 const f4b = (await http('POST', `/api/v1/app/intentos/${r4b.id}/finalizar`)).json?.resumen;
 check('J18.a_new_attempt_after_the_change_has_no_penalty', f4b?.nota === 5 && f4b?.penalizacion === undefined, JSON.stringify(f4b));
 
+// ---- FA36b: an admin changing the grading rules of an exam (PostgREST, own JWT) leaves ONE audit row with who and old/new; a title change leaves none
+const secrets = JSON.parse(fs.readFileSync(path.join(local, 'secrets.json'), 'utf8'));
+const anonKey = secrets.anonKey;
+const adminSub = JSON.parse(Buffer.from(tokens.ADMIN.split('.')[1], 'base64url').toString()).sub;
+const b64u = (x) => Buffer.from(x).toString('base64url');
+const adminJwt = (() => { // the admin token PostgREST verifies against the LOCAL stack secret (HS256), as a logged-in admin would hold
+  const now = Math.floor(Date.now() / 1000);
+  const head = b64u(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const body = b64u(JSON.stringify({ sub: adminSub, role: 'authenticated', aud: 'authenticated', iat: now - 60, exp: now + 3600 }));
+  return head + '.' + body + '.' + crypto.createHmac('sha256', secrets.jwtSecret).update(head + '.' + body).digest('base64url');
+})();
+const patchExam = (body) => fetch('http://localhost:54321/rest/v1/examenes?id=eq.' + ex(4), { method: 'PATCH', headers: { apikey: anonKey, Authorization: 'Bearer ' + adminJwt, 'Content-Type': 'application/json', Prefer: 'return=representation' }, body: JSON.stringify(body) });
+sql(`delete from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = '${ex(4)}';`);
+const t1 = await patchExam({ titulo: 'Oficial OFF-4 (titulo)' });
+const p1 = await patchExam({ penalizacion_racional: true });
+const audit = JSON.parse(sql(`select coalesce(json_agg(a), '[]') from (select usuario_id, antes, despues from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = '${ex(4)}') a;`));
+check('J18.admin_rule_change_writes_one_audit_row_with_actor_and_old_new', t1.status === 200 && p1.status === 200 && audit.length === 1 && audit[0].usuario_id === adminSub
+  && audit[0].antes.penalizacion_racional === false && audit[0].despues.penalizacion_racional === true, `${t1.status} ${p1.status} ${JSON.stringify(audit)}`);
+
 const failed = results.filter((r) => !r).length;
 console.log(`\nJ18: ${results.length - failed}/${results.length} checks passed`);
 process.exit(failed ? 1 : 0);
