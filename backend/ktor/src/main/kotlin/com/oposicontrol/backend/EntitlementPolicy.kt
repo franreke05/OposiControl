@@ -27,7 +27,7 @@ internal enum class AccessDecision { ALLOW_FREE, ALLOW_PREMIUM, ALLOW_CREDIT, AL
 internal enum class AccessState { FREE, GRANTED, SUBSCRIPTION, DEMO, LOCKED }
 
 /** Por que se deniega (no sale por el cable: para logs y para SLICE 3, `details.accessState`). */
-internal enum class AccessDenyReason { CAPABILITY_DISABLED, DEMO_ONLY, NOT_ENTITLED }
+internal enum class AccessDenyReason { CAPABILITY_DISABLED, DEMO_ONLY, NOT_ENTITLED, SPECIALTY_MISMATCH }
 
 internal data class AccessVerdict(
     val decision: AccessDecision,
@@ -61,6 +61,8 @@ internal data class ExamAccessSubject(
     val kind: ExamKind,
     val free: Boolean,
     val demoAvailable: Boolean,
+    /** V1 (owner 2026-10-16): la especialidad del examen. `null` = no se conoce (no se aplica la puerta). */
+    val specialtyId: String? = null,
 )
 
 /** `capacidades_especialidad` de la especialidad del examen. Sin fila = todo abierto (default de la tabla). */
@@ -87,13 +89,32 @@ internal data class ExamGrantFact(val motivo: String, val validFrom: Instant, va
 }
 
 /** La proyeccion `estado_premium_usuario`. */
-internal data class PremiumFact(val esPremium: Boolean, val status: String, val endsAt: Instant?) {
+internal data class PremiumFact(
+    val esPremium: Boolean,
+    val status: String,
+    val endsAt: Instant?,
+    /** V1 Access v2: nivel del plan (0..3) al que resuelve el producto de la suscripcion; `null` = el producto no resuelve a un plan (no cubre nada, falla cerrado). */
+    val planLevel: Int? = null,
+) {
     /**
      * Premium VIGENTE: la proyeccion lo marca, el estado es EXPLICITAMENTE uno de los que dan acceso y `fin_en` no ha pasado
      * (Q-04: nada en la base caduca la fila cuando `fin_en` vence, asi que se re-comprueba al leer).
      */
     fun activeAt(now: Instant): Boolean =
-        esPremium && status in ACCESS_STATUSES && (endsAt == null || endsAt.isAfter(now))
+        esPremium && status in ACCESS_STATUSES && (endsAt == null || endsAt.isAfter(now)) && (status != "cancelada" || endsAt != null)
+
+    /**
+     * Access v2 (client 2026-10-16): el plan cubre una rafaga desde el nivel 1 y un razonado desde el nivel 2; un inmersivo NUNCA lo cubre la suscripcion
+     * por si sola (solo una concesion: compra, regalo o cupo elegido). Un plan sin resolver no cubre nada.
+     */
+    fun covers(kind: ExamKind): Boolean {
+        val level = planLevel ?: return false
+        return when (kind) {
+            ExamKind.RAFAGA -> level >= 1
+            ExamKind.RAZONADO -> level >= 2
+            ExamKind.INMERSIVO -> false
+        }
+    }
 
     companion object {
         /**
@@ -114,6 +135,8 @@ internal data class PremiumFact(val esPremium: Boolean, val status: String, val 
 internal data class UserAccessFacts(
     val premium: PremiumFact? = null,
     val grants: List<ExamGrantFact> = emptyList(),
+    /** V1: la especialidad del usuario (se fija una vez). `null` = aun no elegida: DENEGADO (nada se ve ni se abre hasta elegirla). */
+    val specialtyId: String? = null,
 )
 
 internal object EntitlementPolicy {
@@ -123,6 +146,10 @@ internal object EntitlementPolicy {
         user: UserAccessFacts,
         now: Instant,
     ): AccessVerdict {
+        // Regla 0 (V1, el propietario 2026-10-16): la especialidad es una PUERTA de acceso. Un examen de otra especialidad ni se ve ni se abre, tenga el usuario lo que tenga.
+        if (exam.specialtyId != null && user.specialtyId != exam.specialtyId) { // un usuario SIN especialidad tambien queda fuera (E2-V1-E06)
+            return AccessVerdict(AccessDecision.DENY, AccessState.LOCKED, AccessDenyReason.SPECIALTY_MISMATCH)
+        }
         if (!capabilities.allows(exam.kind)) {
             return AccessVerdict(AccessDecision.DENY, AccessState.LOCKED, AccessDenyReason.CAPABILITY_DISABLED)
         }
@@ -130,7 +157,7 @@ internal object EntitlementPolicy {
         if (user.grants.any { it.activeAt(now) }) {
             return AccessVerdict(AccessDecision.ALLOW_PURCHASED, AccessState.GRANTED)
         }
-        if (user.premium?.activeAt(now) == true) {
+        if (user.premium?.activeAt(now) == true && user.premium.covers(exam.kind)) {
             return AccessVerdict(AccessDecision.ALLOW_PREMIUM, AccessState.SUBSCRIPTION)
         }
         if (exam.demoAvailable && capabilities.allowsDemos) {

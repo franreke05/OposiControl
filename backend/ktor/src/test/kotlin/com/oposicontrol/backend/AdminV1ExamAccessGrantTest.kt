@@ -42,12 +42,24 @@ class AdminV1ExamAccessGrantTest {
     private val accesoId = "33333333-3333-4333-8333-333333333333"
 
     /** [existing] = filas de la tabla tal como las devolveria PostgREST al LEER (por usuario+examen o por id). */
+    private var rpcOutcome = "CREATED"
+    private var revokeResponse: V1StubResponse? = null
+
+    private fun revokeRow(outcome: String) =
+        V1StubResponse(200, """[{"outcome":"$outcome","grant_id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin","valido_hasta":"2026-10-16T10:00:00+00:00","concesiones":2}]""")
+
     private fun gatewayWith(existing: String = "[]", record: (HttpRequest) -> Unit): AdminV1Gateway = AdminV1Gateway.forTesting(
         supabaseUrl = "https://stub.supabase.test",
         serviceRoleKey = "stub-key",
         json = Json { ignoreUnknownKeys = true },
         client = V1StubHttpClient(record) { uri ->
             when {
+                // V1: el regalo es UNA RPC atomica (un mes fijado por el servidor, puertas de especialidad y capacidad).
+                uri.contains("/rest/v1/rpc/admin_revoke_exam_access") -> revokeResponse ?: revokeRow("REVOKED")
+                uri.contains("/rest/v1/rpc/admin_grant_exam_access") -> V1StubResponse(
+                    200,
+                    """[{"outcome":"$rpcOutcome","grant_id":"$accesoId","valido_desde":"2026-10-16T10:00:00+00:00","valido_hasta":"2026-11-15T10:00:00+00:00"}]""",
+                )
                 uri.contains("/rest/v1/perfiles_usuario") -> V1StubResponse(
                     200,
                     """[{"usuario_id":"$userId","username":"ana","nombre_mostrar":"Ana"}]""",
@@ -73,8 +85,8 @@ class AdminV1ExamAccessGrantTest {
     )
 
     private fun motivoWritten(upstream: List<HttpRequest>): String {
-        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("contenido_desbloqueado_usuario") }
-        return Json.parseToJsonElement(readRequestBody(post)).jsonArray.single().jsonObject.getValue("motivo").jsonPrimitive.content
+        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("admin_grant_exam_access") }
+        return Json.parseToJsonElement(readRequestBody(post)).jsonObject.getValue("p_motivo").jsonPrimitive.content
     }
 
     @Test fun theLegacyManualAliasIsWrittenAsAdmin() {
@@ -121,72 +133,62 @@ class AdminV1ExamAccessGrantTest {
         assertTrue(upstream.isEmpty(), "antes concedía en silencio")
     }
 
-    @Test fun aGrantIsAlwaysANewRowAndNeverReusesTheIdTheClientSent() {
+    @Test fun theGiftGoesToOneAtomicRpcWithOnlyUserExamAndReasonSoTheClientCanNeitherSetAnIdNorATerm() {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
-        gatewayWith(record = upstream::add).upsertExamAccess(input("admin"))
-        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("contenido_desbloqueado_usuario") }
-        assertFalse(post.uri().toString().contains("on_conflict"), "un upsert por id podía traspasar el acceso a otra persona")
-        val written = Json.parseToJsonElement(readRequestBody(post)).jsonArray.single().jsonObject
-        assertTrue(written.getValue("id").jsonPrimitive.content != accesoId, "el id del cliente se ignora")
-    }
-
-    @Test fun grantingWhatIsAlreadyGrantedWritesNothing() {
-        val upstream = CopyOnWriteArrayList<HttpRequest>()
-        val active = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"regalo"}]"""
-        val result = gatewayWith(active, upstream::add).upsertExamAccess(input("admin"))
+        rpcOutcome = "CREATED"
+        val result = gatewayWith(record = upstream::add).upsertExamAccess(input("admin").copy(validUntil = "2099-01-01T00:00:00Z"))
+        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("admin_grant_exam_access") }
+        val body = Json.parseToJsonElement(readRequestBody(post)).jsonObject
+        assertEquals(setOf("p_usuario", "p_examen", "p_motivo"), body.keys - "p_actor", "ni el id ni el plazo del cliente viajan: el mes lo fija el servidor")
+        assertTrue(upstream.none { it.method() == "POST" && it.uri().rawPath.endsWith("/contenido_desbloqueado_usuario") }, "ninguna escritura directa a la tabla (podia crear un acceso ilimitado)")
         assertEquals(accesoId, result.id)
-        assertEquals("regalo", result.accessType)
-        assertTrue(upstream.none { it.method() == "POST" }, "ya tenía acceso: no se duplica la fila")
+        assertEquals("2026-11-15T10:00:00+00:00", result.validUntil, "se devuelve el fin de vigencia que fijo la base")
+        assertTrue(upstream.none { it.uri().rawPath.contains("auditoria_log") }, "la auditoria se escribe DENTRO de la RPC (misma transaccion): Ktor ya no la escribe aparte")
     }
 
-    @Test fun anExpiredGrantDoesNotCountAndANewOneIsWritten() {
-        val upstream = CopyOnWriteArrayList<HttpRequest>()
-        val expired = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin","valido_hasta":"2020-01-01T00:00:00+00:00"}]"""
-        gatewayWith(expired, upstream::add).upsertExamAccess(input("admin"))
-        assertEquals("admin", motivoWritten(upstream))
+    @Test fun anAlreadyUnlimitedGrantOrAReplayReportsItsOutcomeToTheRoute() {
+        for (outcome in listOf("UNLIMITED_EXISTS", "REPLAY")) {
+            val upstream = CopyOnWriteArrayList<HttpRequest>()
+            rpcOutcome = outcome
+            val result = gatewayWith(record = upstream::add).upsertExamAccess(input("admin"))
+            assertEquals(accesoId, result.id)
+            assertEquals(outcome, gatewayWith(record = {}).upsertExamAccessResult(input("admin")).second)
+        }
+        rpcOutcome = "CREATED"
     }
 
-    @Test fun revokingClosesEveryActiveManualGrantOfThatUserAndExamAndAuditsIt() {
+    @Test fun revokingIsOneAtomicRpcWithTheActorAndNoDirectWrites() {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
-        val twin = "44444444-4444-4444-8444-444444444444"
-        val bought = "55555555-5555-4555-8555-555555555555"
-        val rows = """[
-            {"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin"},
-            {"id":"$twin","usuario_id":"$userId","examen_id":"$examenId","motivo":"regalo"},
-            {"id":"$bought","usuario_id":"$userId","examen_id":"$examenId","motivo":"compra"}
-        ]"""
-        val result = gatewayWith(rows, upstream::add).revokeExamAccess(accesoId)
+        revokeResponse = null
+        val result = gatewayWith(record = upstream::add).revokeExamAccess(accesoId)
         assertFalse(result.isActive)
-        val patch = upstream.single { it.method() == "PATCH" }
-        val target = patch.uri().toString()
-        assertTrue(target.contains(accesoId) && target.contains(twin), "dos filas vigentes: cerrar una sola no retiraba nada")
-        assertFalse(target.contains(bought), "una compra no se retira desde aquí")
-        assertTrue(readRequestBody(patch).contains("valido_hasta"))
-        assertTrue(
-            upstream.any { it.method() == "POST" && readRequestBody(it).contains("acceso_examen_retirado") },
-            "la retirada queda en auditoría: ${upstream.map { it.method() + " " + it.uri().rawPath }}",
-        )
+        assertEquals("2026-10-16T10:00:00+00:00", result.validUntil, "el fin lo pone la base con su reloj")
+        val post = upstream.single { it.method() == "POST" && it.uri().rawPath.contains("admin_revoke_exam_access") }
+        assertEquals(setOf("p_grant", "p_actor"), Json.parseToJsonElement(readRequestBody(post)).jsonObject.keys - "p_actor" + "p_actor")
+        assertTrue(upstream.none { it.method() == "PATCH" }, "ningun cierre aparte: la RPC lo hace todo bajo la cerradura")
+        assertTrue(upstream.none { it.uri().rawPath.contains("auditoria_log") }, "la auditoria de la retirada va dentro de la RPC")
     }
 
-    @Test fun revokingWhatIsAlreadyRevokedWritesNothing() {
-        val upstream = CopyOnWriteArrayList<HttpRequest>()
-        val expired = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin","valido_hasta":"2020-01-01T00:00:00+00:00"}]"""
-        val result = gatewayWith(expired, upstream::add).revokeExamAccess(accesoId)
+    @Test fun revokingWhatIsAlreadyRevokedIsAnIdempotentAnswer() {
+        revokeResponse = revokeRow("ALREADY_INACTIVE")
+        val result = gatewayWith(record = {}).revokeExamAccess(accesoId)
         assertFalse(result.isActive)
-        assertTrue(upstream.none { it.method() == "PATCH" || it.method() == "POST" })
+        revokeResponse = null
     }
 
     @Test fun aPurchaseIsNotRevokedHereAndAnUnknownGrantIsNotFound() {
-        val bought = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"compra"}]"""
-        assertEquals("GRANT_IS_PURCHASE", assertFailsWith<BackendDomainException> { gatewayWith(bought) {}.revokeExamAccess(accesoId) }.errorCode)
+        revokeResponse = V1StubResponse(400, """{"code":"P0001","message":"GRANT_IS_PURCHASE","details":null,"hint":null}""")
+        assertEquals("GRANT_IS_PURCHASE", assertFailsWith<BackendDomainException> { gatewayWith {}.revokeExamAccess(accesoId) }.errorCode)
+        revokeResponse = V1StubResponse(400, """{"code":"P0001","message":"GRANT_NOT_FOUND","details":null,"hint":null}""")
         assertEquals("GRANT_NOT_FOUND", assertFailsWith<BackendDomainException> { gatewayWith {}.revokeExamAccess(accesoId) }.errorCode)
+        revokeResponse = null
         assertFailsWith<IllegalArgumentException> { gatewayWith {}.revokeExamAccess("no-es-un-uuid") }
     }
 
     @Test fun theRevokeRouteAnswers200WithTheGrantNoLongerActive() = testApplication {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
-        val rows = """[{"id":"$accesoId","usuario_id":"$userId","examen_id":"$examenId","motivo":"admin"}]"""
-        application { accessModule(upstream, rows) }
+        revokeResponse = null
+        application { accessModule(upstream) }
         val response = client.post("/api/v1/admin/accesos/$accesoId/revocar")
         assertEquals(HttpStatusCode.OK, response.status)
         assertTrue(response.bodyAsText().contains("\"isActive\":false"), response.bodyAsText())

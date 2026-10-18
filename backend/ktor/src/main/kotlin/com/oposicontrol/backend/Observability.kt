@@ -209,6 +209,9 @@ enum class StrategicEvent {
     IMPORT_PARTIAL,
 
     STORAGE_UPLOAD_FAILED,
+
+    /** Real-auth gate: GoTrue answered 429 to a signup (60 s per user OR the hourly mail budget): the client got 202 but NO mail may have left. Alert on the rate of this event. */
+    AUTH_SIGNUP_THROTTLED,
     REPORT_RESOLVED,
     FEEDBACK_RESOLVED,
 

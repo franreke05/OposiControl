@@ -137,6 +137,7 @@ internal data class WalletMovementsQuery(val tipo: WalletTipo?, val origen: Wall
  * forma parte del cursor ni de la huella: sale del JWT en cada peticion.
  */
 internal fun parseWalletMovementsQuery(params: Parameters): WalletMovementsQuery {
+    requireOnlyKnownQueryParams(params, setOf("tipo", "origen", "cursor", "limit"))
     val issues = mutableListOf<ErrorIssue>()
     val tipo = params["tipo"]?.let { raw ->
         WalletTipo.fromWireOrNull(raw.trim()) ?: run { issues += ErrorIssue("tipo", CanonicalIssue.INVALID_FORMAT); null }

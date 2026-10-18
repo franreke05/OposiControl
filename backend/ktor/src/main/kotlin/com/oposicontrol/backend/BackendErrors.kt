@@ -33,6 +33,10 @@ private data class DomainErrorDefinition(
 )
 
 private val SUPABASE_DOMAIN_ERRORS = mapOf(
+    "STATS_RECOMPUTE_COOLDOWN" to DomainErrorDefinition(HttpStatusCode.TooManyRequests, "El recalculo de estadisticas se ha pedido hace poco: espera unos minutos."),
+    "STATS_SCOPE_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "El alcance del recalculo no es valido."),
+    "OFFICIAL_RULES_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Las reglas de anuladas y reservas del examen no son validas: revisa el bloque de reservas, el orden y la regla elegida."),
+    "DEMO_CONFLICT" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Una pregunta de la demo no puede estar anulada, ser de reserva ni cambiar de posicion."),
     "RECORD_ANSWER_INVALID_ATTEMPT" to DomainErrorDefinition(HttpStatusCode.NotFound, "El intento no existe o no pertenece al usuario."),
     "RECORD_ANSWER_QUESTION_NOT_IN_ATTEMPT" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La pregunta no pertenece al intento."),
     "RECORD_ANSWER_OPTION_NOT_IN_QUESTION" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La opción no pertenece a la pregunta."),
@@ -40,6 +44,14 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     "EVENT_IDEMPOTENCY_CONFLICT" to DomainErrorDefinition(HttpStatusCode.Conflict, "La clave de idempotencia ya fue utilizada con otro evento."),
     "EVENT_VERSION_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La versión del evento no es válida."),
     "EVENT_IDEMPOTENCY_KEY_REQUIRED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La clave de idempotencia es obligatoria."),
+    // V1: regalo de un examen (admin_grant_exam_access, un mes, puertas de especialidad y capacidad).
+    "GRANT_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "No existe el acceso indicado."),
+    "GRANT_IS_PURCHASE" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Un acceso comprado no se retira desde aqui."),
+    "GIFT_UNLIMITED_FORBIDDEN" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Un regalo no puede ser ilimitado: lleva siempre un mes."),
+    "GIFT_REASON_NOT_ALLOWED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Ese tipo de acceso no se puede conceder a mano."),
+    "GIFT_USER_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "El usuario no existe."),
+    "GIFT_EXAM_NOT_AVAILABLE" to DomainErrorDefinition(HttpStatusCode.NotFound, "El examen no existe o no esta publicado."),
+    "GIFT_NOT_USABLE" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "El usuario no podria usar ese examen: es de otra especialidad o su especialidad no admite ese tipo."),
     "WALLET_INVALID_USER" to DomainErrorDefinition(HttpStatusCode.NotFound, "El usuario de la cartera no existe."),
     "WALLET_AMOUNT_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "La cantidad de tickets no puede ser cero."),
     "WALLET_TYPE_INVALID" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "El tipo de operación de cartera no es válido."),
@@ -633,6 +645,33 @@ internal fun examCoverTypeInvalidException(): BackendDomainException =
         "La portada tiene que ser JPG, PNG o WEBP.",
     )
 
+/** V1: toda examen lleva comunidad. Ver [examCommunityRequiredException]. */
+internal const val EXAM_COMMUNITY_REQUIRED_CODE: String = "EXAM_COMMUNITY_REQUIRED"
+
+/** Un examen se crea y se edita CON comunidad (decision del propietario 2026-10-15): ausente, nula o en blanco es un 422. */
+internal fun examCommunityRequiredException(): BackendDomainException =
+    BackendDomainException(
+        EXAM_COMMUNITY_REQUIRED_CODE,
+        HttpStatusCode.UnprocessableEntity,
+        "El examen necesita una comunidad.",
+    )
+
+/** La comunidad del cuerpo no existe o no esta activa en el catalogo (`comunidades_autonomas`). */
+internal fun examCommunityUnknownException(): BackendDomainException =
+    BackendDomainException(
+        "UNKNOWN_COMMUNITY",
+        HttpStatusCode.UnprocessableEntity,
+        "La comunidad elegida no existe o no esta activa.",
+    )
+
+/** Un examen sin comunidad no se publica (los heredados sin comunidad siguen editables hasta que se les asigne una). */
+internal fun examPublishRequiresCommunityException(): BackendDomainException =
+    BackendDomainException(
+        "EXAM_PUBLISH_REQUIRES_COMMUNITY",
+        HttpStatusCode.Conflict,
+        "No se puede publicar un examen sin comunidad.",
+    )
+
 /** Código de dominio de [examPublishRequiresQuestionsException]. */
 internal const val EXAM_PUBLISH_REQUIRES_QUESTIONS_CODE: String = "EXAM_PUBLISH_REQUIRES_QUESTIONS"
 
@@ -875,6 +914,9 @@ data class ErrorDetails(
     val accessState: String? = null,
     val currentRevision: Long? = null,
     val allowedValues: List<String>? = null,
+    /** V1 economia: saldo y precio en OposiTickets (INSUFFICIENT_BALANCE, PRICE_CHANGED). Datos del propio usuario, nunca de otros. */
+    val balance: Int? = null,
+    val price: Int? = null,
 )
 
 /** Valores canonicos de `ErrorIssue.issue` genericos. Un contrato puede anadir los suyos (UPPER_SNAKE). */
@@ -918,6 +960,7 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     USERNAME_TAKEN(HttpStatusCode.Conflict, "Ese nombre de usuario ya esta en uso."),
     ALREADY_ONBOARDED_CONFLICT(HttpStatusCode.Conflict, "Tu perfil ya estaba completado con otros datos."),
     UNKNOWN_SPECIALTY(HttpStatusCode.UnprocessableEntity, "La especialidad elegida no existe o no esta activa."),
+    SPECIALTY_ALREADY_SET(HttpStatusCode.Conflict, "Tu especialidad ya esta elegida y no se puede cambiar desde la app."),
     UNKNOWN_COMMUNITY(HttpStatusCode.UnprocessableEntity, "La comunidad elegida no existe."),
     LEGAL_VERSION_NOT_ACTIVE(HttpStatusCode.UnprocessableEntity, "La version del documento legal ya no esta vigente."),
     DOCUMENT_NOT_ACTIVE(HttpStatusCode.UnprocessableEntity, "Alguno de los documentos legales no existe o no esta vigente."),
@@ -955,6 +998,9 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     QUESTION_NOT_IN_ATTEMPT(HttpStatusCode.UnprocessableEntity, "La pregunta no pertenece al intento."),
     OPTION_NOT_IN_QUESTION(HttpStatusCode.UnprocessableEntity, "La opcion no pertenece a la pregunta."),
 
+    /** EX14: el recurso no esta en ninguna revision ligada a ese intento (o su ubicacion no es la del contrato). */
+    RESOURCE_NOT_FOUND(HttpStatusCode.NotFound, "El recurso no existe."),
+
     // Noticias admin (`openapi/news/news.yaml`, D4-01..D4-11).
     NEWS_NOT_FOUND(HttpStatusCode.NotFound, "La noticia no existe."),
     NEWS_NOT_EDITABLE(HttpStatusCode.Conflict, "Solo se pueden editar las noticias en borrador o programadas."),
@@ -965,6 +1011,34 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     ASSET_PATH_UNKNOWN(HttpStatusCode.UnprocessableEntity, "La ruta del recurso no corresponde a un archivo subido."),
     SLUG_CONFLICT(HttpStatusCode.Conflict, "Ya existe un tipo de noticia con ese slug."),
     INVALID_FILTER(HttpStatusCode.BadRequest, "Algun filtro de la lista no es valido."),
+
+    // V1 economia (OposiTickets, canje de examen, pedidos de pago). Los 409 son estados que el cliente puede resolver recargando.
+    INSUFFICIENT_BALANCE(HttpStatusCode.Conflict, "No tienes OposiTickets suficientes."),
+    PRICE_CHANGED(HttpStatusCode.Conflict, "El precio del examen ha cambiado. Revisalo antes de canjear."),
+    ALREADY_ACCESSIBLE(HttpStatusCode.Conflict, "Ya tienes acceso a este examen."),
+    NOT_PURCHASABLE(HttpStatusCode.UnprocessableEntity, "Este examen no se puede canjear con OposiTickets."),
+    PRODUCT_NOT_AVAILABLE(HttpStatusCode.UnprocessableEntity, "El paquete no esta disponible."),
+    PAYMENT_PROVIDER_UNAVAILABLE(HttpStatusCode.UnprocessableEntity, "El metodo de pago no esta disponible."),
+    ORDER_NOT_FOUND(HttpStatusCode.NotFound, "El pedido no existe."),
+    POSTING_RESTRICTED(HttpStatusCode.Forbidden, "No puedes publicar ahora."),
+    DUPLICATE_POST(HttpStatusCode.Conflict, "Ya has publicado eso hace un momento."),
+    IMAGE_REJECTED(HttpStatusCode.UnprocessableEntity, "La imagen no se puede usar."),
+    CONTENT_REJECTED(HttpStatusCode.UnprocessableEntity, "El texto no cumple las normas de publicacion."),
+    USERNAME_REQUIRED(HttpStatusCode.UnprocessableEntity, "Necesitas un nombre de usuario para aparecer en el ranking."),
+    PLAN_QUOTA_NONE(HttpStatusCode.UnprocessableEntity, "Tu plan no incluye examenes inmersivos o no tienes una suscripcion activa."),
+    PLAN_QUOTA_FULL(HttpStatusCode.UnprocessableEntity, "Ya has elegido todos los inmersivos que incluye tu plan."),
+    EXAM_NOT_IMMERSIVE(HttpStatusCode.UnprocessableEntity, "Solo los examenes inmersivos se eligen con el cupo del plan."),
+    DAILY_LIMIT_REACHED(HttpStatusCode.TooManyRequests, "Has llegado al limite diario de preguntas de tu plan. Vuelve a intentarlo mas tarde."),
+    PURCHASE_CAP_REACHED(HttpStatusCode.Conflict, "Has llegado al maximo de OposiTickets que se pueden comprar hoy."),
+    RETO_OUT_OF_WINDOW(HttpStatusCode.Conflict, "El reto de hoy ya no admite respuestas."),
+    RETO_NOT_PASSED(HttpStatusCode.Conflict, "Todavia no has superado el reto de hoy."),
+    OT_EARN_CAP_REACHED(HttpStatusCode.Conflict, "Hoy no se pueden ganar mas OposiTickets con esta recompensa."),
+    RETO_CLAIM_EXPIRED(HttpStatusCode.UnprocessableEntity, "El plazo para reclamar esta recompensa ha terminado."),
+    RETO_CLAIM_NOT_ELIGIBLE(HttpStatusCode.Forbidden, "Todavia no cumples los requisitos para reclamar esta recompensa."),
+    SAVED_LIMIT_REACHED(HttpStatusCode.UnprocessableEntity, "Has llegado al maximo de preguntas guardadas. Quita alguna para guardar otra."),
+    ORDER_PENDING_LIMIT(HttpStatusCode.Conflict, "Ya tienes varios pedidos abiertos. Termina o espera a que caduquen antes de crear otro."),
+    PAYMENT_RECEIPT_INVALID(HttpStatusCode.UnprocessableEntity, "El justificante de pago no es valido para este pedido."),
+    WEBHOOK_SIGNATURE_INVALID(HttpStatusCode.Unauthorized, "La firma del aviso de pago no es valida."),
     ;
 
     fun exception(

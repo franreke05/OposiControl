@@ -143,8 +143,8 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NATURAL
-        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, USERNAME_TAKEN, PRECONDITION_FAILED, UNKNOWN_SPECIALTY, UNKNOWN_COMMUNITY, RATE_LIMITED]
-        description: 'Partial update with set semantics (same body, same state). Unknown fields return 400 VALIDATION with issue UNKNOWN_FIELD. This is also the change-specialty operation (DEC-002): especialidadId REPLACES the single active specialty (perfiles_usuario.especialidad_principal_id, returned as profile.especialidadPrincipalId); there is no add, no remove and no list, and the field cannot be cleared here. Changing it never reinterprets history: attempts and results stay tied to their original exam and that exam specialty.'
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, USERNAME_TAKEN, SPECIALTY_ALREADY_SET, PRECONDITION_FAILED, UNKNOWN_SPECIALTY, UNKNOWN_COMMUNITY, RATE_LIMITED]
+        description: 'FA23 (owner 2026-10-16): the specialty is SET ONCE. especialidadId is accepted only when the user has none (first choice) or when it equals the current one (no-op); any other id is 409 SPECIALTY_ALREADY_SET and nothing of the request is written. No other route changes it. Original text follows (the change-specialty reading of DEC-002 is superseded). Partial update with set semantics (same body, same state). Unknown fields return 400 VALIDATION with issue UNKNOWN_FIELD. This was the change-specialty operation (DEC-002): especialidadId REPLACED the single active specialty (perfiles_usuario.especialidad_principal_id, returned as profile.especialidadPrincipalId); there is no add, no remove and no list, and the field cannot be cleared here. Changing it never reinterprets history: attempts and results stay tied to their original exam and that exam specialty.'
         security:
           - bearerAuth: []
         parameters:
@@ -179,7 +179,7 @@ components:
             description: 'ACCOUNT_BLOCKED.'
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
-            description: 'USERNAME_TAKEN.'
+            description: 'USERNAME_TAKEN or SPECIALTY_ALREADY_SET (FA23).'
           '412':
             $ref: '../common/errors.yaml#/components/responses/PreconditionFailed'
           '422':

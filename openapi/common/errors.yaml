@@ -51,6 +51,14 @@ components:
           type: array
           items:
             type: string
+        balance:
+          type: integer
+          minimum: 0
+          description: 'FA22: the caller own OposiTickets balance (INSUFFICIENT_BALANCE).'
+        price:
+          type: integer
+          minimum: 0
+          description: 'FA22: the current OposiTickets price of the exam (INSUFFICIENT_BALANCE, PRICE_CHANGED).'
     ValidationIssue:
       type: object
       required: [field, issue]
@@ -109,6 +117,40 @@ components:
         - REVISION_CONFLICT
         - QUESTION_NOT_IN_ATTEMPT
         - OPTION_NOT_IN_QUESTION
+    EconomyErrorCode:
+      type: string
+      description: 'FA22 (V1 economy) codes.'
+      enum:
+        - INSUFFICIENT_BALANCE
+        - PRICE_CHANGED
+        - ALREADY_ACCESSIBLE
+        - NOT_PURCHASABLE
+        - PRODUCT_NOT_AVAILABLE
+        - PAYMENT_PROVIDER_UNAVAILABLE
+        - ORDER_NOT_FOUND
+        - PAYMENT_RECEIPT_INVALID
+        - WEBHOOK_SIGNATURE_INVALID
+        - ORDER_PENDING_LIMIT
+        - SPECIALTY_ALREADY_SET
+        - SAVED_LIMIT_REACHED
+        - PLAN_QUOTA_NONE
+        - PLAN_QUOTA_FULL
+        - EXAM_NOT_IMMERSIVE
+        - DAILY_LIMIT_REACHED
+        - PURCHASE_CAP_REACHED
+        - RETO_OUT_OF_WINDOW
+        - RETO_NOT_PASSED
+        - OT_EARN_CAP_REACHED
+        - RETO_CLAIM_EXPIRED
+        - RETO_CLAIM_NOT_ELIGIBLE
+        - OFFICIAL_RULES_INVALID
+        - STATS_SCOPE_INVALID
+        - USERNAME_REQUIRED
+        - POSTING_RESTRICTED
+        - DUPLICATE_POST
+        - CONTENT_REJECTED
+        - IMAGE_REJECTED
+        - STATS_RECOMPUTE_COOLDOWN
   headers:
     XRequestId:
       description: 'Request correlation id; equals ErrorEnvelope.requestId.'

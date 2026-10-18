@@ -180,15 +180,21 @@ class AppV1GatewayAuthorizationTest {
     @Test
     fun aWriteAsksPostgrestToReturnTheCreatedRow() {
         val sent = CopyOnWriteArrayList<HttpRequest>()
-        val gateway = gatewayWith(record = sent::add) { V1StubResponse(201, """[{"id":"fb-1"}]""") }
+        val gateway = gatewayWith(record = sent::add) { uri ->
+            when {
+                "/rest/v1/intentos_examen" in uri -> V1StubResponse(200, """[{"examen_id":"99999999-9999-4999-8999-999999999999"}]""")
+                "/rest/v1/preguntas_examen" in uri -> V1StubResponse(200, """[{"pregunta_id":"33333333-3333-4333-8333-333333333333"}]""")
+                else -> V1StubResponse(201, """[{"id":"fb-1"}]""")
+            }
+        }
 
         val feedbackId = gateway.crearFeedback(
             adminId,
-            AppFeedbackRequest(preguntaId = "33333333-3333-4333-8333-333333333333"),
+            AppFeedbackRequest(preguntaId = "33333333-3333-4333-8333-333333333333", intentoId = "44444444-4444-4444-8444-444444444444"),
         )
 
         assertEquals("fb-1", feedbackId)
-        val write = sent.single()
+        val write = sent.single { it.method() == "POST" }
         assertEquals("POST", write.method())
         assertEquals("/rest/v1/feedback_pregunta", write.uri().rawPath)
         assertEquals("return=representation", write.headers().firstValue("Prefer").orElse(null))

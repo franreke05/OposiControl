@@ -28,7 +28,12 @@ import java.time.OffsetDateTime
 //   DEC-014  sin pausa. Sin limite de tiempo: `deadline` = null y `motivoFin` siempre USER (TIMEOUT / ATTEMPT_EXPIRED no
 //            se emiten: si la duracion del examen corta el intento es una pregunta abierta del motor).
 //   DEC-004/016/019  `comparativa`, `probabilidadPlaza`, `pctAciertoGlobal` = null.
-//   DEC-025/040      D2-65 `explanation` = null y `resources` = []; D2-12 `razonamiento` = null (no se leen de la base).
+//   DEC-025          D2-65 `explanation` = null; D2-12 `razonamiento` = null (no se leen de la base; politica unica sin cambios).
+//   VERSIONADO P0    (dueno 2026-10-14, 20261022100000) el intento queda ligado a una revision INMUTABLE de cada pregunta:
+//                    D2-08 / D2-12 / D2-65 leen la revision; la correccion de D2-09 sale de ella. Intento legacy sin
+//                    revision: contenido vivo.
+//   RECURSOS V1      (dueno 2026-10-14) imagen / audio (video extensible): metadatos en D2-08 `recursos` y D2-65
+//                    `resources`; bytes via `GET /intentos/{id}/recursos/{recursoId}` (URL firmada corta).
 //   DEC-018  `resumen.modo` = tipo canonico del examen del intento.
 //   DEMO     `modo: DEMO` no abre nada que la politica no permita (semantica abierta): se ignora como modo.
 // =====================================================================
@@ -80,10 +85,20 @@ internal data class AttemptDto(
     val falladas: Int? = null,
     val sinResponder: Int,
     val ultimaPreguntaPosicion: Int? = null,
+    /** FA28: true en un intento DEMO (solo las preguntas marcadas); ausente = false. */
+    val esDemo: Boolean? = null,
 )
 
 @Serializable
-internal data class AttemptGridItem(val posicion: Int, val preguntaId: String, val revision: Int, val estado: String)
+internal data class AttemptGridItem(
+    val posicion: Int,
+    val preguntaId: String,
+    val revision: Int,
+    val estado: String,
+    /** FA31: solo `RESERVA` (ausente = PRINCIPAL). */
+    val rol: String? = null,
+    val sustituyeA: Int? = null,
+)
 
 @Serializable
 internal data class AttemptView(val intento: AttemptDto, val grid: List<AttemptGridItem>)
@@ -112,8 +127,13 @@ internal data class AttemptQuestionDto(
     val tipoPregunta: String,
     val titulo: String,
     val anulada: Boolean,
+    /** FA31: solo `RESERVA` (ausente = PRINCIPAL); `sustituyeA` = posicion de la anulada a la que sustituye. */
+    val rol: String? = null,
+    val sustituyeA: Int? = null,
     val opciones: List<QuestionOptionDto>,
     val respuesta: AttemptQuestionAnswer? = null,
+    /** Aditivo (EX14): recursos V1 de la revision ligada al intento. Nunca la solucion ni la explicacion. */
+    val recursos: List<AttemptResourceDto> = emptyList(),
 )
 
 @Serializable
@@ -136,17 +156,43 @@ internal data class ResultSummary(
     val examenId: String? = null,
     val especialidadId: String? = null,
     val modo: String,
-    val nota: Double,
+    /** FA28: true cuando el resultado es de un intento DEMO. */
+    val esDemo: Boolean? = null,
+    /** FA31: `JsonNull` explicito cuando no hubo evaluables (el contrato lo exige presente). */
+    val nota: kotlinx.serialization.json.JsonElement,
     val calificacion: String,
     val duracionSegundos: Int,
     val correctas: Int,
     val falladas: Int,
     val sinResponder: Int,
+    val evaluables: Int? = null,
+    val anuladas: Int? = null,
+    val reservasUsadas: Int? = null,
+    val anuladasSinReserva: Int? = null,
+    val reglaAnuladas: String? = null,
+    val penalizacion: Penalizacion? = null,
+)
+
+@Serializable
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+internal data class Penalizacion(
+    /** FIJA: fraccion por fallo (1/3). RACIONAL: ausentes (cada fallo resta 1/(n-1), n = opciones de ESA pregunta). */
+    val numerador: Int? = null,
+    val denominador: Int? = null,
+    /** FA36: `FIJA` | `RACIONAL`. */
+    @kotlinx.serialization.EncodeDefault
+    val tipo: String = "FIJA",
+    /** FA36 (RACIONAL, en el resultado): puntos descontados por los fallos (informativo; la nota se calcula con enteros). */
+    val descuento: Double? = null,
 )
 
 @Serializable
 internal data class ResultQuestion(
     val posicion: Int,
+    /** FA31: solo en intentos con la regla congelada. */
+    val estado: String? = null,
+    val rol: String? = null,
+    val sustituyeA: Int? = null,
     val opcionElegida: String? = null,
     val opcionCorrecta: String? = null,
     /** DEC-025 / DEC-040 abiertas: `null`. */
@@ -207,8 +253,33 @@ internal data class ReviewCorrectAnswer(val opcionId: String, val letra: String)
 @Serializable
 internal data class ReviewExplanation(val razonamiento: String)
 
+/**
+ * Recurso V1 (imagen, audio, video) tal como quedo en la revision del intento (EX14). Solo metadatos: los bytes los sirve
+ * Storage tras pedir acceso a `GET /intentos/{id}/recursos/{recursoId}` (URL firmada, temporal, nunca persistida).
+ * Contrato canonico: resourceId = [id], type = [tipo], [mimeType], version = [version], [durationMs], access = la ruta.
+ */
 @Serializable
-internal data class ReviewResource(val id: String, val tipo: String, val titulo: String)
+internal data class AttemptResourceDto(
+    val id: String,
+    val tipo: String,
+    val titulo: String,
+    val mimeType: String? = null,
+    /** Token estable del objeto (los bytes de un `recursoId` no se reescriben: la subida es idempotente por id). Clave de cache. */
+    val version: String,
+    val sizeBytes: Long? = null,
+    /** `null` hasta que la ingesta (autoria protegida) lo calcule: PROTECTED_FILE_REQUIRED. */
+    val durationMs: Long? = null,
+    /** Solo audio. `null` hasta que la ingesta lo calcule una vez (EX14, [AudioEnvelope]). */
+    val envelope: AudioEnvelopeDto? = null,
+)
+
+/** Envolvente de audio compacta: una muestra UInt8 (0..255, normalizada al pico del fichero) cada [stepMs] ms, en base64. */
+@Serializable
+internal data class AudioEnvelopeDto(val stepMs: Int, val samples: String)
+
+/** Acceso temporal a los bytes de un recurso. `url` caduca en [expiresAt]; se pide otra al caducar. */
+@Serializable
+internal data class AttemptResourceAccess(val url: String, val expiresAt: String, val mimeType: String? = null, val version: String)
 
 @Serializable
 internal data class ReviewTimings(val tiempoRespuestaMs: Int? = null, val respondidaEn: String? = null, val actualizadaEn: String? = null)
@@ -225,6 +296,9 @@ internal data class ReviewItem(
     val enunciado: String,
     val opciones: List<QuestionOptionDto>,
     val status: String,
+    /** FA31: solo `RESERVA` (ausente = PRINCIPAL). */
+    val rol: String? = null,
+    val sustituyeA: Int? = null,
     val firstAnswer: ReviewFirstAnswer? = null,
     val finalAnswer: ReviewFinalAnswer? = null,
     val cambioRespuesta: Boolean,
@@ -232,8 +306,8 @@ internal data class ReviewItem(
     val correctAnswer: ReviewCorrectAnswer? = null,
     /** DEC-025 / DEC-040 abiertas: `null`. */
     val explanation: ReviewExplanation? = null,
-    /** DEC-025 / DEC-040 abiertas: vacio. */
-    val resources: List<ReviewResource>,
+    /** Recursos V1 de la revision del intento (decision del dueno 2026-10-14); `[]` si no tiene o el intento es legacy. */
+    val resources: List<AttemptResourceDto>,
     val timings: ReviewTimings,
     val etiquetas: List<ReviewTag>,
 )
@@ -263,12 +337,24 @@ internal fun positionAfter(keys: List<JsonElement>?): Int {
 
 internal data class StartedAttempt(val response: AttemptStartResponse, val created: Boolean)
 
+/** Una pregunta del intento ya normalizada (revision inmutable o, legacy, contenido vivo). */
+private data class QuestionView(
+    val codigo: String,
+    val tipo: String,
+    val titulo: String,
+    val opciones: List<QuestionOptionDto>,
+    val recursos: List<AttemptResourceDto>,
+    val etiquetas: List<ReviewTag>,
+    val correctId: String?,
+)
+
 // ---------- servicio ----------
 
 internal class AttemptService(
     private val gateway: AttemptGateway,
     private val catalog: CatalogService,
     private val clock: () -> Instant = Instant::now,
+    private val metrics: io.micrometer.core.instrument.MeterRegistry = BackendPrometheusMetrics.registry,
 ) {
     // ----- D2-03 -----
     suspend fun start(userId: CanonicalUserId, examId: String, request: AttemptStartRequest): StartedAttempt = withUpstreamIo {
@@ -277,16 +363,21 @@ internal class AttemptService(
         val uid = userId.value
         // D7-25: la UNICA politica de acceso. Borrador, archivado e inexistente son el mismo 404.
         val access = catalog.startAccess(uid, examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
-        if (!access.verdict.allowed) {
+        val wantsDemo = request.modo == "DEMO" && access.verdict.state == AccessState.DEMO
+        if (!access.verdict.allowed && !wantsDemo) {
             throw when (access.verdict.denyReason) {
                 AccessDenyReason.CAPABILITY_DISABLED -> CanonicalErrorCode.SPECIALTY_TYPE_NOT_ALLOWED.exception()
+                AccessDenyReason.SPECIALTY_MISMATCH -> CanonicalErrorCode.EXAM_NOT_FOUND.exception()
                 else -> CanonicalErrorCode.EXAM_LOCKED.exception(details = ErrorDetails(accessState = access.verdict.state.name))
             }
         }
-        val outcome = gateway.start(uid, examId)
+        val outcome = gateway.start(uid, examId, demo = wantsDemo)
         val created = when (outcome.outcome) {
             "CREATED" -> true
             "RESUMED" -> false
+            "DEMO_LIMIT" -> throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 3_600)
+            "EXAM_LOCKED" -> throw CanonicalErrorCode.EXAM_LOCKED.exception(details = ErrorDetails(accessState = outcome.state))
+            "SPECIALTY_TYPE_NOT_ALLOWED" -> throw CanonicalErrorCode.SPECIALTY_TYPE_NOT_ALLOWED.exception()
             "EXAM_NOT_FOUND" -> throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
             "EXAM_EMPTY" -> throw CanonicalErrorCode.EXAM_EMPTY.exception()
             // El contrato congelado no define un codigo propio para "mas de 200 preguntas servibles" (x-error-codes de D2-03:
@@ -305,10 +396,10 @@ internal class AttemptService(
     suspend fun get(userId: CanonicalUserId, attemptId: String): AttemptView = withUpstreamIo {
         val now = clock()
         val row = ownedAttempt(userId, attemptId)
-        val frozen = bounded(gateway.frozenSet(row.id))
         val finished = row.estado == FINISHED
+        val frozen = bounded(gateway.frozenSet(row.id, open = !finished))
         val answers = gateway.answers(row.id, graded = finished)
-        val annulled = if (finished) emptySet() else row.examenId?.let(gateway::annulledNow).orEmpty()
+        val annulled = if (finished || frozen.none { it.rol == null }) emptySet() else row.examenId?.let(gateway::annulledNow).orEmpty()
         val reveals = !finished && revealsOnAnswer(row.kind())
         val grid = frozen.map { question ->
             val answer = answers[question.preguntaId]
@@ -316,7 +407,9 @@ internal class AttemptService(
                 posicion = question.posicion,
                 preguntaId = question.preguntaId,
                 revision = answer?.revision ?: 0,
-                estado = if (finished) gridStateFinished(question.estadoFinal, answer) else gridStateOpen(question.preguntaId in annulled, answer, reveals),
+                estado = if (finished) gridStateFinished(question.estadoFinal, answer) else gridStateOpen(question.isAnnulled(annulled), answer, reveals),
+                rol = question.wireRole(),
+                sustituyeA = question.sustituyeAPosicion,
             )
         }
         val unanswered = if (finished) null else grid.count { it.estado == GRID_UNANSWERED }
@@ -326,27 +419,40 @@ internal class AttemptService(
     // ----- D2-08 -----
     suspend fun questions(userId: CanonicalUserId, attemptId: String, page: CursorPageRequest): AttemptQuestionPage = withUpstreamIo {
         val row = ownedAttempt(userId, attemptId)
-        val rows = gateway.questionPage(row.id, positionAfter(page.after), page.fetchLimit)
+        val rows = gateway.questionPage(row.id, positionAfter(page.after), page.fetchLimit, open = row.estado != FINISHED)
         val cut = page.page(rows) { listOf(JsonPrimitive(it.posicion)) }
+        // Limitador diario (C-L1): lo que la pagina va a REVELAR se registra antes de servirla; un intento finalizado ya se vio.
+        if (row.estado != FINISHED && cut.items.isNotEmpty()) {
+            val reveal = gateway.reveal(userId.value, row.id, cut.items.map { it.preguntaId })
+            when (reveal.outcome) {
+                "OK" -> Unit
+                "DAILY_LIMIT_REACHED" -> throw CanonicalErrorCode.DAILY_LIMIT_REACHED.exception(retryAfterSeconds = (reveal.retryAfterSeconds ?: 3_600).coerceIn(1, 86_400))
+                "ATTEMPT_NOT_FOUND" -> throw CanonicalErrorCode.ATTEMPT_NOT_FOUND.exception()
+                else -> throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+            }
+        }
         // DEC-015: la correccion de lo YA respondido, igual con el intento abierto que finalizado, y solo de la fila propia.
         // Sin soluciones, explicaciones ni recursos (eso es D2-12 / D2-65).
         val reveals = row.estado == FINISHED || revealsOnAnswer(row.kind())
         val answers = gateway.answers(row.id, graded = false, questionIds = cut.items.map { it.preguntaId })
         // Con el intento finalizado manda el estado congelado; abierto, la anulacion vigente del examen.
-        val annulled = if (row.estado == FINISHED || cut.items.isEmpty()) emptySet() else row.examenId?.let(gateway::annulledNow).orEmpty()
+        val annulled = if (row.estado == FINISHED || cut.items.none { it.rol == null }) emptySet() else row.examenId?.let(gateway::annulledNow).orEmpty()
         AttemptQuestionPage(
             items = cut.items.map { question ->
-                val content = question.preguntas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+                val content = question.view()
                 val answer = answers[question.preguntaId]
-                val isAnnulled = question.estadoFinal == STATUS_ANNULLED || question.preguntaId in annulled
+                val isAnnulled = question.estadoFinal == STATUS_ANNULLED || question.isAnnulled(annulled)
                 AttemptQuestionDto(
                     posicion = question.posicion,
                     preguntaId = question.preguntaId,
-                    codigoPregunta = content.codigoPregunta.orContractError(),
-                    tipoPregunta = questionType(content.tipoPregunta),
-                    titulo = content.titulo.orContractError(),
+                    codigoPregunta = content.codigo,
+                    tipoPregunta = content.tipo,
+                    titulo = content.titulo,
                     anulada = isAnnulled,
-                    opciones = options(content),
+                    rol = question.wireRole(),
+                    sustituyeA = question.sustituyeAPosicion,
+                    opciones = content.opciones,
+                    recursos = content.recursos,
                     respuesta = answer?.let {
                         val revealed = it.takeIf { _ -> reveals && !isAnnulled && it.opcionSeleccionadaId != null }
                         AttemptQuestionAnswer(
@@ -386,14 +492,29 @@ internal class AttemptService(
                 val estado = outcome.estado?.takeIf { it in ANSWER_STATES } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
                 val respondidas = outcome.respondidas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
                 // DEC-015: solo una respuesta (primera vez o la misma opcion reenviada, que la RPC devuelve como no-op) revela;
-                // un salto y una anulada, nada. Si esta lectura falla, falla la llamada: el plugin de idempotencia no guarda
-                // errores, asi que el reintento con la misma clave cae en el no-op de la RPC y revela.
-                val revealed = if (estado == ANSWER_ANSWERED && attemptRevealsOnAnswer(userId, attemptId)) revealedAnswer(userId, attemptId, questionId) else null
+                // un salto y una anulada, nada. Desde 20261022100000 la RPC devuelve la correccion de la fila que acaba de
+                // escribir (corregida con la REVISION del intento): una sola llamada. Una base sin esa migracion no la
+                // devuelve y se lee la fila (segunda llamada); si esa lectura falla, falla la llamada (el reintento con la
+                // misma clave cae en el no-op de la RPC y revela).
+                val reveals = estado == ANSWER_ANSWERED && attemptRevealsOnAnswer(userId, attemptId)
+                val esCorrecta: Boolean?
+                val opcionCorrectaId: String?
+                if (reveals && outcome.esCorrecta != null) {
+                    esCorrecta = outcome.esCorrecta
+                    opcionCorrectaId = outcome.opcionCorrectaId?.takeIf { it.isUuid() }
+                } else if (reveals) {
+                    val row = revealedAnswer(userId, attemptId, questionId)
+                    esCorrecta = row.esCorrecta
+                    opcionCorrectaId = row.opcionCorrectaId
+                } else {
+                    esCorrecta = null
+                    opcionCorrectaId = null
+                }
                 AnswerResult(
                     revision = revision,
                     estado = estado,
-                    esCorrecta = revealed?.esCorrecta,
-                    opcionCorrectaId = revealed?.opcionCorrectaId,
+                    esCorrecta = esCorrecta,
+                    opcionCorrectaId = opcionCorrectaId,
                     esPrimeraRespuesta = outcome.esPrimeraRespuesta ?: false,
                     respondidas = respondidas,
                 )
@@ -500,26 +621,43 @@ internal class AttemptService(
         val tags = gateway.tagSummary(row.id)
         if (tags.size > AttemptGateway.MAX_ATTEMPT_QUESTIONS) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
         val evaluable = row.totalCorrectas + row.totalFalladas + row.totalSinResponder
-        val nota = gradeOf(row.totalCorrectas, evaluable)
+        // FA31: un intento con la regla congelada trae la nota calculada por la base (una sola implementacion); los anteriores, la formula DEC-013.
+        val frozenRules = row.reglaAnuladas != null
+        val nota: BigDecimal? = if (frozenRules) row.nota?.let { BigDecimal.valueOf(it).setScale(2, RoundingMode.HALF_UP) } else gradeOf(row.totalCorrectas, evaluable)
         return AttemptResult(
             resumen = ResultSummary(
                 examenId = row.examenId,
                 especialidadId = row.especialidadSnapshotId,
                 modo = row.kind().wire,
-                nota = nota.toDouble(),
-                calificacion = bandOf(nota),
+                esDemo = row.esDemo.takeIf { it },
+                nota = nota?.let { kotlinx.serialization.json.JsonPrimitive(it.toDouble()) } ?: kotlinx.serialization.json.JsonNull,
+                calificacion = nota?.let { bandOf(it) } ?: BAND_NO_EVALUABLES,
                 duracionSegundos = row.durationSeconds(),
                 correctas = row.totalCorrectas,
                 falladas = row.totalFalladas,
                 sinResponder = row.totalSinResponder,
+                evaluables = row.totalEvaluables.takeIf { frozenRules },
+                anuladas = row.totalAnuladas.takeIf { frozenRules },
+                reservasUsadas = row.reservasUsadas.takeIf { frozenRules },
+                anuladasSinReserva = row.anuladasSinReserva.takeIf { frozenRules },
+                reglaAnuladas = row.reglaAnuladas,
+                penalizacion = when {
+                    !frozenRules -> null
+                    row.penalizacionRacional == true -> Penalizacion(tipo = "RACIONAL", descuento = row.penalizacionDescuento)
+                    (row.penalizacionNum ?: 0) > 0 -> Penalizacion(row.penalizacionNum!!, (row.penalizacionDen ?: 1).coerceAtLeast(1))
+                    else -> null
+                },
             ),
             preguntas = frozen.map { question ->
                 val answer = answers[question.preguntaId]
                 val annulled = question.estadoFinal == STATUS_ANNULLED
                 ResultQuestion(
                     posicion = question.posicion,
-                    opcionElegida = answer?.opcionSeleccionadaId?.takeUnless { annulled },
-                    opcionCorrecta = gateway.correctOptionId(question.preguntas)?.takeUnless { annulled },
+                    estado = question.estadoFinal.takeIf { frozenRules },
+                    rol = question.wireRole().takeIf { frozenRules },
+                    sustituyeA = question.sustituyeAPosicion.takeIf { frozenRules },
+                    opcionElegida = answer?.opcionSeleccionadaId?.takeUnless { annulled || question.estadoFinal == STATUS_UNUSED_RESERVE },
+                    opcionCorrecta = question.correctOptionId()?.takeUnless { annulled },
                     razonamiento = null,
                     tiempoSeg = answerSeconds(answer),
                     pctAciertoGlobal = null,
@@ -541,22 +679,24 @@ internal class AttemptService(
     }
 
     private fun reviewItem(question: FrozenQuestionRow, answer: AttemptAnswerRow?): ReviewItem {
-        val content = question.preguntas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val content = question.view()
         val status = question.estadoFinal?.takeIf { it in REVIEW_STATUSES } ?: legacyStatus(answer)
         val annulled = status == STATUS_ANNULLED
-        val shown = answer?.takeUnless { annulled }
-        val options = options(content)
+        val shown = answer?.takeUnless { annulled || status == STATUS_UNUSED_RESERVE }
+        val options = content.opciones
         // Fila anterior a SLICE 3 (`actualizada_en` nulo): no hubo cambio posible, primera = final.
         val legacyRow = shown != null && shown.actualizadaEn == null
         val answeredAt = shown?.let { instant(it.respondidaEn ?: it.creadaEn) }
         return ReviewItem(
             posicion = question.posicion,
             preguntaId = question.preguntaId,
-            codigoPregunta = content.codigoPregunta.orContractError(),
-            tipoPregunta = questionType(content.tipoPregunta),
-            enunciado = content.titulo.orContractError(),
+            codigoPregunta = content.codigo,
+            tipoPregunta = content.tipo,
+            enunciado = content.titulo,
             opciones = options,
             status = status,
+            rol = question.wireRole(),
+            sustituyeA = question.sustituyeAPosicion,
             firstAnswer = shown?.let {
                 ReviewFirstAnswer(
                     opcionId = if (legacyRow) it.opcionSeleccionadaId else it.primeraOpcionId,
@@ -574,19 +714,77 @@ internal class AttemptService(
             },
             cambioRespuesta = shown?.cambioRespuesta ?: false,
             esPrimeraRespuesta = shown?.esPrimerIntentoPregunta ?: false,
-            correctAnswer = gateway.correctOptionId(content)?.takeUnless { annulled }?.let { correctId ->
+            correctAnswer = content.correctId?.takeUnless { annulled }?.let { correctId ->
                 options.firstOrNull { it.id == correctId }?.let { ReviewCorrectAnswer(opcionId = correctId, letra = it.letra) }
             },
             explanation = null,
-            resources = emptyList(),
+            resources = content.recursos,
             timings = ReviewTimings(
                 tiempoRespuestaMs = shown?.let { it.tiempoRespuestaMs ?: it.tiempoRespuestaSegundos?.let { s -> s.toLong() * 1_000 }?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() }?.coerceAtLeast(0),
                 respondidaEn = answeredAt,
                 actualizadaEn = shown?.actualizadaEn?.let(::instant),
             ),
-            etiquetas = content.etiquetas.mapNotNull { it.etiquetas }.distinctBy { it.id }.sortedBy { it.nombre }.map { ReviewTag(it.id, it.nombre) },
+            etiquetas = content.etiquetas,
         )
     }
+
+    /**
+     * El contenido de una pregunta del intento: el de SU revision inmutable (20261022100000) o, en un intento congelado
+     * antes de la migracion, el vivo. [QuestionView.correctId] solo existe si la lectura pidio la solucion (D2-12 / D2-65).
+     */
+    private fun FrozenQuestionRow.view(): QuestionView {
+        val frozen = revision?.contenido
+        if (revisionId != null && frozen != null) {
+            return QuestionView(
+                codigo = frozen.codigo.orContractError(),
+                tipo = questionType(frozen.tipo),
+                titulo = frozen.titulo.orContractError(),
+                opciones = frozen.opciones.sortedBy { it.posicion }.map { option ->
+                    QuestionOptionDto(
+                        id = option.id,
+                        letra = option.letra.takeIf { it in OPTION_LETTERS } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
+                        texto = option.texto,
+                    )
+                },
+                recursos = frozen.recursos.sortedWith(compareBy({ it.posicion }, { it.id })).mapNotNull(::resourceDto),
+                etiquetas = frozen.etiquetas.distinctBy { it.id }.sortedBy { it.nombre }.map { ReviewTag(it.id, it.nombre) },
+                correctId = revision.solucion?.opcionCorrectaId,
+            )
+        }
+        val content = preguntas ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        return QuestionView(
+            codigo = content.codigoPregunta.orContractError(),
+            tipo = questionType(content.tipoPregunta),
+            titulo = content.titulo.orContractError(),
+            opciones = options(content),
+            recursos = emptyList(),
+            etiquetas = content.etiquetas.mapNotNull { it.etiquetas }.distinctBy { it.id }.sortedBy { it.nombre }.map { ReviewTag(it.id, it.nombre) },
+            correctId = gateway.correctOptionId(content),
+        )
+    }
+
+    private fun FrozenQuestionRow.correctOptionId(): String? =
+        if (revisionId != null && revision != null) revision.solucion?.opcionCorrectaId else gateway.correctOptionId(preguntas)
+
+    // ----- EX14: acceso a los bytes de un recurso -----
+
+    /**
+     * El dueno de un intento pide acceso a un recurso de la revision de ESE intento: Ktor autoriza (dueno + recurso
+     * congelado en una revision ligada al intento), Storage sirve los bytes con una URL firmada de vida corta. Sin
+     * intento propio no hay acceso: un `recursoId` suelto no abre nada. El intento solo existe si D2-03 paso la politica
+     * de acceso (EntitlementPolicy) al empezarlo; como D2-08 / D2-65, no se re-evalua el entitlement (el conjunto congelado
+     * es el alcance). Un recurso que no es de este intento es 404 RESOURCE_NOT_FOUND; uno con bucket o ruta fuera del
+     * contrato Q3 tambien (falla cerrado, nunca se firma una ruta arbitraria).
+     */
+    suspend fun resourceAccess(userId: CanonicalUserId, attemptId: String, resourceId: String): AttemptResourceAccess = withUpstreamIo {
+        val row = ownedAttempt(userId, attemptId)
+        val started = System.nanoTime()
+        val resource = gateway.frozenResource(row.id, resourceId, open = row.estado != FINISHED)
+        metrics.timer("exam_media_metadata_seconds").record(java.time.Duration.ofNanos(System.nanoTime() - started))
+        QuestionResources.access(resource, resourceId, clock()) { bucket, path, ttl -> gateway.signedUrl(bucket, path, ttl) }
+    }
+
+    private fun resourceDto(resource: RevisionResource): AttemptResourceDto? = QuestionResources.dto(resource)
 
     private fun AttemptRow.toDto(now: Instant, openUnanswered: Int?): AttemptDto {
         if (estado !in ATTEMPT_STATES) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
@@ -612,6 +810,7 @@ internal class AttemptService(
                 openUnanswered != null -> openUnanswered
                 else -> totalPreguntas - totalRespondidas
             }.coerceAtLeast(0),
+            esDemo = esDemo.takeIf { it },
             ultimaPreguntaPosicion = ultimaPreguntaPosicion?.takeIf { it >= 1 },
         )
     }
@@ -638,10 +837,17 @@ internal class AttemptService(
         else -> GRID_WRONG
     }
 
+    /** FA31: la anulacion CONGELADA al empezar manda en los intentos con rol; los anteriores leen la anulacion viva (M10). */
+    private fun FrozenQuestionRow.isAnnulled(live: Set<String>): Boolean = if (rol != null) anuladaAlInicio == true else preguntaId in live
+
+    /** FA31: solo la reserva activada se rotula (`RESERVA`); lo demas es PRINCIPAL (ausente). */
+    private fun FrozenQuestionRow.wireRole(): String? = if (rol == "RESERVA_ACTIVA" || rol == "RESERVA_NO_USADA") "RESERVA" else null
+
     private fun gridStateFinished(status: String?, answer: AttemptAnswerRow?): String = when (status ?: legacyStatus(answer)) {
         "CORRECT" -> GRID_CORRECT
         "WRONG" -> GRID_WRONG
         STATUS_ANNULLED -> GRID_ANNULLED
+        STATUS_UNUSED_RESERVE -> GRID_UNUSED_RESERVE
         else -> GRID_UNANSWERED
     }
 
@@ -694,11 +900,14 @@ internal class AttemptService(
         private const val ORIGIN_EXAM = "EXAM"
         private const val END_USER = "USER"
         private const val STATUS_ANNULLED = "ANNULLED"
+        private const val STATUS_UNUSED_RESERVE = "RESERVA_NO_UTILIZADA"
+        private const val BAND_NO_EVALUABLES = "sin_evaluables"
         private const val GRID_UNANSWERED = "sin_responder"
         private const val GRID_ANSWERED = "respondida"
         private const val GRID_CORRECT = "correcta"
         private const val GRID_WRONG = "incorrecta"
         private const val GRID_ANNULLED = "anulada"
+        private const val GRID_UNUSED_RESERVE = "reserva_no_utilizada"
         private val ATTEMPT_STATES = setOf("en_progreso", "finalizado", "abandonado")
         private val END_REASONS = setOf("USER", "TIMEOUT")
         private val START_MODES = setOf("NORMAL", "DEMO")
@@ -718,7 +927,16 @@ internal class AttemptService(
             ExamKind.INMERSIVO -> true
         }
         private val ABANDON_REASONS = setOf("salida_usuario", "otro")
-        private val REVIEW_STATUSES = setOf("CORRECT", "WRONG", "SKIPPED", "UNANSWERED", "ANNULLED")
+        private val REVIEW_STATUSES = setOf("CORRECT", "WRONG", "SKIPPED", "UNANSWERED", "ANNULLED", "RESERVA_NO_UTILIZADA")
+
+        /** Recursos V1 (decision del dueno 2026-10-14): imagen y audio; video extensible. PDF / texto / enlace fuera. */
+        internal val RESOURCE_TYPES = setOf("imagen", "audio", "video")
+
+        /** Bucket PRIVADO de Q3 (`recursos_pregunta_ubicacion_formato_chk`). */
+        internal const val RESOURCES_BUCKET = "recursos-pregunta"
+
+        /** Vida de la URL firmada: corta (un enlace filtrado caduca pronto); el cliente pide otra al caducar. */
+        internal const val RESOURCE_URL_TTL_SECONDS = 300
         private val OPTION_LETTERS = setOf("A", "B", "C", "D")
 
         /** DEC-013 (default tecnico): correctas / evaluables * 10, half-up a 2 decimales. Sin evaluables, 0. */
@@ -737,5 +955,32 @@ internal class AttemptService(
             grade < BigDecimal(9) -> "notable"
             else -> "sobresaliente"
         }
+    }
+}
+
+/**
+ * FA31 / C-O5: GEMELO en Kotlin de `private.official_nota` (la base es la UNICA implementacion: Ktor sirve la nota que ella guarda). Existe para que una matriz
+ * de paridad (OfficialScoringParityTest, md5 fijado tambien en assertions.sql) detecte cualquier deriva de formula o de redondeo. Aritmetica entera exacta:
+ * nota = max(0, c x den - num x f) x 10 / (den x e), HALF-UP a 2 decimales UNA vez; null sin evaluables.
+ */
+internal object OfficialScoring {
+    /** FA36: lcm(1..12). Cada fallo pesa 27720 / (n - 1) unidades enteras (n = opciones de su pregunta congelada, 2..13; menos de 2: sin penalizacion; mas de 13: se trata como 13). */
+    const val UNIDADES = 27720
+
+    fun pesoFallo(opciones: Int): Int = if (opciones < 2) 0 else UNIDADES / (minOf(opciones, 13) - 1)
+
+    /** Gemelo de `private.official_nota_racional`: PD = A - E/(n-1) sobre los evaluables, misma formula unica, suelo 0, HALF-UP a 2 decimales. */
+    fun notaRacional(correctas: Int, penalizacionEscalada: Long, evaluables: Int): BigDecimal? =
+        nota(correctas, 1, evaluables, penalizacionEscalada.coerceIn(0L, 2_000_000_000L).toInt(), UNIDADES)
+
+    fun notaRacional(correctas: Int, opcionesDeLasFalladas: List<Int>, evaluables: Int): BigDecimal? =
+        notaRacional(correctas, opcionesDeLasFalladas.sumOf { pesoFallo(it).toLong() }, evaluables)
+
+    fun nota(correctas: Int, falladas: Int, evaluables: Int, num: Int, den: Int): BigDecimal? {
+        if (evaluables <= 0 || den < 1 || num < 0) return null
+        val bruto = (correctas.toLong() * den - num.toLong() * falladas).coerceAtLeast(0L)
+        val d = den.toLong() * evaluables
+        val centesimas = (bruto * 2000L + d) / (2L * d)
+        return BigDecimal.valueOf(centesimas, 2)
     }
 }

@@ -11,6 +11,7 @@ import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.ApplicationStopped
 import io.ktor.server.application.call
 import io.ktor.server.application.install
+import io.ktor.server.application.log
 import io.ktor.server.auth.Authentication
 import io.ktor.server.auth.AuthenticationConfig
 import io.ktor.server.auth.UnauthorizedResponse
@@ -141,6 +142,8 @@ internal fun scrubBreadcrumb(breadcrumb: io.sentry.Breadcrumb): io.sentry.Breadc
 }
 
 fun main() {
+    // V1 economia: el proveedor de pago sandbox no puede existir fuera de local/test. Se comprueba ANTES de nada: sin enlazar el puerto.
+    enforceSandboxProviderGuard()
     initializeSentry()
 
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
@@ -521,6 +524,14 @@ fun Application.module() {
     }
     // MASTER-ARCH-008: cierre ordenado de los recursos del runtime de auth (Valkey, HttpClient) al parar.
     authRuntime?.let { runtime -> monitor.subscribe(ApplicationStopped) { runtime.close() } }
+    // V1 wave 2: generacion diaria del reto + reintento de OT diferidos (ambos idempotentes y bajo cerrojo consultivo en la base; apagado con CHALLENGE_JOB_SECONDS=0).
+    if (serverProfile != ServerProfile.CONTROL) {
+        TransportEconomyUpstream.fromEnvironment()?.let { upstream ->
+            val images = ForoImageService.fromEnvironment()
+            val job = DailyChallengeJob.start(this, upstream, DailyChallengeJob.intervalFrom(), { message -> log.warn(message) }) { var rounds = 0; do { val purged = images?.sweep(50) ?: 0; rounds++ } while (purged >= 50 && rounds < 4) }
+            monitor.subscribe(ApplicationStopped) { job?.cancel() }
+        }
+    }
     installBackendPrometheusMetrics()
     if (consumerOnly) {
         configureConsumerAuthOnly(authRuntime ?: error("Auth consumer no configurado."))
@@ -563,9 +574,9 @@ fun Application.module() {
     } else {
         null
     }
-    val catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it) }
+    val catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it, authRuntime?.rateLimiter) }
     // SLICE 7: lecturas de cartera (D6-01, D6-02), solo lectura, misma credencial de servicio.
-    val walletRuntime = canonicalIdentityResolver?.let { WalletRuntime.fromEnvironment(it) }
+    val walletRuntime = canonicalIdentityResolver?.let { WalletRuntime.fromEnvironment(it, authRuntime?.rateLimiter) }
     // FA15: lecturas de consumidor (D7-05, D5-01, D5-16), solo lectura, misma credencial de servicio.
     val appReadsRuntime = canonicalIdentityResolver?.let { AppReadsRuntime.fromEnvironment(it) }
     // FA11 (D4-01..D4-11): noticias canonicas. UN servicio compartido con `/content/noticias*`; la auditoria usa el actor del JWT.
@@ -608,8 +619,16 @@ fun Application.module() {
         // Solicitudes de acceso de administrador: la solicitud publica vive en `bot` y la revision en `control`.
         accessRequestGateway = SupabaseAdminAccessRequestGateway.fromEnvironment(json),
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
+        economyRuntime = canonicalIdentityResolver?.let { EconomyRuntime.fromEnvironment(it, authRuntime) },
+        savedItemsRuntime = canonicalIdentityResolver?.let { SavedItemsRuntime.fromEnvironment(it, authRuntime) },
+        planQuotaRuntime = canonicalIdentityResolver?.let { PlanQuotaRuntime.fromEnvironment(it, authRuntime) },
+        challengeRuntime = canonicalIdentityResolver?.let { ChallengeRuntime.fromEnvironment(it, authRuntime) },
+        statsRuntime = canonicalIdentityResolver?.let { StatsRuntime.fromEnvironment(it, authRuntime) },
+        rankingRuntime = canonicalIdentityResolver?.let { RankingRuntime.fromEnvironment(it, authRuntime) },
+        referralRuntime = canonicalIdentityResolver?.let { ReferralRuntime.fromEnvironment(it, authRuntime) },
+        foroRuntime = canonicalIdentityResolver?.let { ForoRuntime.fromEnvironment(it, authRuntime) },
         attemptRuntime = canonicalIdentityResolver?.let { resolver ->
-            catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter) }
+            catalogRuntime?.let { AttemptRuntime.fromEnvironment(resolver, it.catalog, authRuntime?.rateLimiter, auth = authRuntime) }
         },
         // E2: `Idempotency-Key` opcional de respuesta de soporte y advertencia de moderacion (mismo almacen que noticias).
         adminIdempotencyStore = if (serverProfile.mountsControl) PostgrestIdempotencyStore.fromEnvironment() else null,
@@ -674,6 +693,22 @@ internal class CombinedRoutingDeps(
     internal val walletRuntime: WalletRuntime? = null,
     /** SLICE 3 (D2-03, D2-07..D2-12, D2-65). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val attemptRuntime: AttemptRuntime? = null,
+    /** V1 economia: canje, paquetes, pedidos de pago y avisos del proveedor. */
+    internal val economyRuntime: EconomyRuntime? = null,
+    /** V1 Guardar + OposiTeca (D4-20, D4-21, D4-24, D4-26). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val savedItemsRuntime: SavedItemsRuntime? = null,
+    /** V1 Access v2 (D7-31, D7-32). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val planQuotaRuntime: PlanQuotaRuntime? = null,
+    /** V1 wave 2 (D3-04, D3-16..D3-19): reto diario, racha, reclamar. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val challengeRuntime: ChallengeRuntime? = null,
+    /** V1 wave 3 (D3-20..D3-22): estadisticas del usuario. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val statsRuntime: StatsRuntime? = null,
+    /** V1 wave 4 (D3-24, D3-25): ranking del usuario. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val rankingRuntime: RankingRuntime? = null,
+    /** V1 wave 5a (D8-01, D8-02): Invita y gana. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val referralRuntime: ReferralRuntime? = null,
+    /** V1 wave 5b (D5-02..D5-14): Foro / Red. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val foroRuntime: ForoRuntime? = null,
     /** FA11 (D4-01..D4-11). `null` = sin runtime: las rutas canonicas existen y fallan cerrado (500); el CRUD legacy usa un servicio propio. */
     internal val newsRuntime: NewsRuntime? = null,
     /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
@@ -726,6 +761,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
         jwtVerifier,
         allowDevUser,
         identityResolver = identityResolver,
+        idempotency = attemptRuntime?.idempotency,
+        limiter = authRuntime?.rateLimiter,
     )
     // SLICE 2: catalogo y derechos del consumidor (D2-01, D2-02, D2-13, D7-02).
     catalogRoutes(catalogRuntime)
@@ -735,6 +772,22 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     appReadsRoutes(appReadsRuntime)
     // SLICE 3: runtime de examen del consumidor (D2-03, D2-07, D2-08, D2-09, D2-10, D2-11, D2-12, D2-65).
     attemptRoutes(attemptRuntime)
+    // V1 economia (OposiTickets): canje D6-03, paquetes D6-11, pedidos D6-12..D6-14 y aviso del proveedor.
+    economyRoutes(economyRuntime)
+    // V1 Guardar + OposiTeca: preguntas guardadas del usuario (D4-20, D4-21, D4-24, D4-26).
+    savedItemsRoutes(savedItemsRuntime)
+    // V1 Access v2: cupo de inmersivos del plan (D7-31, D7-32).
+    planQuotaRoutes(planQuotaRuntime)
+    // V1 wave 2: reto diario, racha y reclamar (D3-04, D3-16..D3-19).
+    challengeRoutes(challengeRuntime)
+    // V1 wave 3: estadisticas (D3-20..D3-22).
+    statsRoutes(statsRuntime)
+    // V1 wave 4: ranking (D3-24, D3-25).
+    rankingRoutes(rankingRuntime)
+    // V1 wave 5a: Invita y gana (D8-01, D8-02).
+    referralRoutes(referralRuntime)
+    // V1 wave 5b: Foro / Red (D5-02..D5-14).
+    foroRoutes(foroRuntime)
     authRuntime?.let {
         oposiBotsAuthRoutes(it)
         // SLICE 1: perfil / onboarding / documentos legales / borrado de cuenta canonicos (JWT propio, sin gateway-auth).

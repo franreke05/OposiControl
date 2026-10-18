@@ -87,11 +87,15 @@ internal const val EVENT_PROPERTIES_MAX_BYTES = 8 * 1_024
  * por `activeIdentity` (deny-by-default): solo una cuenta `activa` explicita opera; bloqueada / eliminacion pendiente /
  * desconocida / sin perfil -> 403. Para una cuenta activa la respuesta no cambia. `null` solo en pruebas aisladas.
  */
-fun Route.appV1Routes(
+internal fun Route.appV1Routes(
     gateway: AppV1Gateway,
     verifier: SupabaseJwtVerifier,
     allowDevUser: Boolean,
     identityResolver: CanonicalIdentityResolver? = null,
+    /** V1: almacen de idempotencia de `POST /feedback/pregunta` (D5-15). `null` = sin deduplicacion (pruebas aisladas); en produccion lo cablea Application. */
+    idempotency: IdempotencyStore? = null,
+    /** V1 (E2-V1-R01): limitador por usuario de `POST /feedback/pregunta`. `null` = sin limite (pruebas aisladas). */
+    limiter: OposiBotsAuthRateLimiter? = null,
 ) {
     route("/api/v1/app") {
         get("/home") {
@@ -123,14 +127,43 @@ fun Route.appV1Routes(
             call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(AppRetoResponse(gateway.retoDiario()))
         }
+        // V1 (E3, Reportar): una repeticion tras un resultado desconocido NO crea un segundo reporte. Con `Idempotency-Key` (UUID, opcional para no romper a los clientes
+        // sin ella): misma clave + mismo cuerpo = el mismo resultado (el mismo id, `Idempotent-Replayed: true`); misma clave + otro cuerpo = 422 IDEMPOTENCY_KEY_REUSED.
+        // La ruta sigue VIVA (el 410 de develop solo cubre iniciar y responder). Sin lista de motivos inventada: `tipoFeedback` sigue siendo el vocabulario del CHECK vivo.
+        val feedbackUser = io.ktor.util.AttributeKey<String>("oc-feedback-user")
         post("/feedback/pregunta") {
-            val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
-            call.respond(io.ktor.http.HttpStatusCode.Created, OkResponse(id = gateway.crearFeedback(uid, call.receive())))
-        }.legacyRoute(LegacyEndpoints.APP_FEEDBACK_PREGUNTA)
+            val uid = call.attributes.getOrNull(feedbackUser) ?: call.usuarioId(verifier, allowDevUser, identityResolver).also { call.feedbackLimits(limiter, it) }
+            val request: AppFeedbackRequest = if (idempotency != null) {
+                // el plugin de idempotencia ya leyo el cuerpo (cacheado): se decodifica de ahi, igual de permisivo que antes
+                Json { ignoreUnknownKeys = true }.decodeFromString(AppFeedbackRequest.serializer(), String(call.canonicalRawBody(), Charsets.UTF_8))
+            } else {
+                call.receive()
+            }
+            call.respond(io.ktor.http.HttpStatusCode.Created, OkResponse(id = gateway.crearFeedback(uid, request)))
+        }.also { route ->
+            if (idempotency != null) {
+                route.install(CanonicalIdempotency) {
+                    routeTemplate = "/api/v1/app/feedback/pregunta"
+                    required = false
+                    this.store = idempotency
+                    before = { call -> if (call.attributes.getOrNull(feedbackUser) == null) call.attributes.put(feedbackUser, call.usuarioId(verifier, allowDevUser, identityResolver).also { call.feedbackLimits(limiter, it) }) }
+                    actor = { call -> call.attributes[feedbackUser] }
+                }
+            }
+        }
         post("/eventos") {
             val uid = call.usuarioId(verifier, allowDevUser, identityResolver)
             call.respond(io.ktor.http.HttpStatusCode.Created, OkResponse(id = gateway.registrarEvento(uid, call.receive())))
         }.legacyRoute(LegacyEndpoints.APP_EVENTOS)
+    }
+}
+
+/** E2-V1-R01: 10 por minuto y tope diario por usuario (429 RATE_LIMITED con Retry-After), antes de leer el cuerpo o tocar la base. */
+private suspend fun ApplicationCall.feedbackLimits(limiter: OposiBotsAuthRateLimiter?, userId: String) {
+    if (limiter == null) return
+    for (operation in listOf(OposiBotsAuthOperation.FEEDBACK_REPORT, OposiBotsAuthOperation.FEEDBACK_REPORT_DAILY)) {
+        val decision = limiter.checkSubject(operation, userId)
+        if (!decision.allowed) throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = decision.retryAfterSeconds.coerceIn(1, 86_400).toInt())
     }
 }
 
@@ -796,7 +829,7 @@ class AppV1Gateway private constructor(
     }
 
     fun listExamenes(): List<AppExamenDto> {
-        val rows = get("/rest/v1/examenes?select=*&activo=eq.true&publicado_en=not.is.null&order=anio.desc.nullslast,titulo.asc")
+        val rows = get("/rest/v1/examenes?select=*&activo=eq.true${publishedByNow()}&order=anio.desc.nullslast,titulo.asc")
         val codigos = rows.comunidadCodigos()
         return rows.map { it.toExamenDto(codigos) }
     }
@@ -821,7 +854,7 @@ class AppV1Gateway private constructor(
      */
     fun examenDetalle(examenId: String): AppExamenDetalleResponse? {
         examenId.validatedUuid("examenId")
-        val examen = get("/rest/v1/examenes?select=*&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1").firstOrNull() ?: return null
+        val examen = get("/rest/v1/examenes?select=*&id=eq.$examenId&activo=eq.true${publishedByNow()}&limit=1").firstOrNull() ?: return null
         val comunidadCodigos = listOf(examen).comunidadCodigos()
         val asociaciones = get("/rest/v1/preguntas_examen?select=*&examen_id=eq.$examenId&order=posicion.asc")
         val preguntaIds = asociaciones.mapNotNull { it.str("pregunta_id") }
@@ -902,7 +935,7 @@ class AppV1Gateway private constructor(
         // Precondición: el examen existe, está activo y está publicado. Sólo se
         // pide el `id` porque lo único que se necesita saber es si la fila está.
         val existe = get(
-            "/rest/v1/examenes?select=id&id=eq.$examenId&activo=eq.true&publicado_en=not.is.null&limit=1",
+            "/rest/v1/examenes?select=id&id=eq.$examenId&activo=eq.true${publishedByNow()}&limit=1",
         ).isNotEmpty()
         // K0-6 (EX-15): 404 y no 500. `error(...)` salía como `IllegalStateException`,
         // es decir, un 500 redactado indistinguible de un Supabase caído. Mismo
@@ -1086,19 +1119,21 @@ class AppV1Gateway private constructor(
         if (req.descripcion.codePointCount(0, req.descripcion.length) > FEEDBACK_DESCRIPTION_MAX) {
             throw validationError(ErrorIssue("descripcion", CanonicalIssue.OUT_OF_RANGE))
         }
-        req.intentoId?.let { intentoId ->
+        // E2-V1-R02: sin `intentoId` cualquiera reportaria cualquier pregunta sin comprobar acceso: es OBLIGATORIO (el intento solo existe si el usuario tuvo acceso al examen).
+        val intentoRef = req.intentoId?.takeIf { it.isNotBlank() } ?: throw validationError(ErrorIssue("intentoId", CanonicalIssue.REQUIRED))
+        intentoRef.let { intentoId ->
             intentoId.validatedUuid("intentoId")
             val examenId = get("/rest/v1/intentos_examen?select=examen_id&id=eq.$intentoId&usuario_id=eq.$usuarioId&limit=1")
                 .firstOrNull()?.str("examen_id")
                 ?: throw attemptNotOwned()
-            require(
-                get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId&pregunta_id=eq.${req.preguntaId}&limit=1").isNotEmpty(),
-            ) { "La pregunta no pertenece al examen del intento." }
+            if (get("/rest/v1/preguntas_examen?select=pregunta_id&examen_id=eq.$examenId&pregunta_id=eq.${req.preguntaId}&limit=1").isEmpty()) {
+                throw CanonicalErrorCode.QUESTION_NOT_IN_ATTEMPT.exception()
+            }
         }
         val body = buildJsonObject {
             put("usuario_id", usuarioId)
             put("pregunta_id", req.preguntaId)
-            if (req.intentoId != null) put("intento_id", req.intentoId)
+            put("intento_id", intentoRef)
             put("tipo_feedback", tipoFeedback)
             if (req.descripcion.isNotBlank()) put("descripcion", req.descripcion)
             put("estado", "pendiente")

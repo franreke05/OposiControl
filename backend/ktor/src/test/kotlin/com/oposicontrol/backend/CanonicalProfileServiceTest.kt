@@ -10,6 +10,7 @@ import java.net.http.HttpRequest
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
@@ -28,13 +29,30 @@ class CanonicalProfileServiceTest {
     // ------------------------------------------------------------------ RPC: nombres, argumentos y clave de servicio
 
     @Test
+    fun onboardingWithoutASpecialtyIsRefusedWhenTheProfileHasNoneEitherAndNothingIsWritten() = runBlocking {
+        val (svc, upstream, _) = service()
+        upstream.onGet = { """[{"especialidad_principal_id":null}]""" }
+        val error = assertFailsWith<BackendDomainException> {
+            svc.completeOnboarding(identity, "token", OnboardingRequest("ada_l", "Ada", "L", null, emptyList()), context)
+        }
+        assertEquals("VALIDATION", error.errorCode)
+        assertEquals(emptyList(), upstream.rpcNames())
+        // a profile that already has one (set at register) may omit it
+        upstream.onGet = { """[{"especialidad_principal_id":"e5000000-0000-4000-8000-000000000001"}]""" }
+        upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) }
+        svc.completeOnboarding(identity, "token", OnboardingRequest("ada_l", "Ada", "L", null, emptyList()), context)
+        assertEquals(listOf("app_completar_onboarding"), upstream.rpcNames())
+    }
+
+
+    @Test
     fun onboardingCallsAppCompletarOnboardingWithExactlyTheDocumentedArguments() = runBlocking {
         val (svc, upstream, _) = service()
         upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) }
         svc.completeOnboarding(
             identity,
             "token",
-            OnboardingRequest("ada_l", " Ada ", " Lovelace ", null, emptyList()),
+            OnboardingRequest("ada_l", " Ada ", " Lovelace ", "e5000000-0000-4000-8000-000000000001", emptyList()),
             context,
         )
         assertEquals(listOf("app_completar_onboarding"), upstream.rpcNames())
@@ -45,7 +63,7 @@ class CanonicalProfileServiceTest {
         )
         assertEquals(TEST_UID, (args["p_usuario_id"] as kotlinx.serialization.json.JsonPrimitive).content)
         assertEquals("Ada", (args["p_nombre"] as kotlinx.serialization.json.JsonPrimitive).content, "se recorta")
-        assertEquals(JsonNull, args["p_especialidad_id"])
+        assertEquals(JsonPrimitive("e5000000-0000-4000-8000-000000000001"), args["p_especialidad_id"])
         assertEquals(JsonNull, args["p_plataforma"])
         assertEquals(JsonNull, args["p_attribution"])
         assertEquals(JsonNull, args["p_referral_code"])
@@ -78,7 +96,7 @@ class CanonicalProfileServiceTest {
             patch.details!!.issues,
         )
         val onboarding = assertFailsWith<BackendDomainException> {
-            svc.completeOnboarding(identity, "token", OnboardingRequest("ada_l", "Ada​", "Love lace", null, emptyList()), context)
+            svc.completeOnboarding(identity, "token", OnboardingRequest("ada_l", "Ada​", "Love lace", "e5000000-0000-4000-8000-000000000001", emptyList()), context)
         }
         assertEquals(
             listOf(ErrorIssue("nombre", CanonicalIssue.INVALID_FORMAT), ErrorIssue("apellidos", CanonicalIssue.INVALID_FORMAT)),
@@ -92,7 +110,7 @@ class CanonicalProfileServiceTest {
         val (svc, upstream, _) = service()
         upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) }
         svc.updateProfile(identity, "token", ProfilePatchRequest(nombre = "Ada 😀", apellidos = "Núñez-Lovelace d'Ávila"), null, context)
-        svc.completeOnboarding(identity, "token", OnboardingRequest("ada_l", "José", "Muñoz", null, emptyList()), context)
+        svc.completeOnboarding(identity, "token", OnboardingRequest("ada_l", "José", "Muñoz", "e5000000-0000-4000-8000-000000000001", emptyList()), context)
         assertEquals(listOf("app_actualizar_perfil", "app_completar_onboarding"), upstream.rpcNames())
     }
 
@@ -223,7 +241,7 @@ class CanonicalProfileServiceTest {
     fun theRawStoredAvatarNeverReachesTheResponse() = runBlocking {
         val (svc, upstream, _) = service()
         upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) }
-        val me = svc.completeOnboarding(identity, "t", OnboardingRequest("ada_l", "Ada", "L", null, emptyList()), context).me
+        val me = svc.completeOnboarding(identity, "t", OnboardingRequest("ada_l", "Ada", "L", "e5000000-0000-4000-8000-000000000001", emptyList()), context).me
         assertNull(me.profile.avatarUrl)
         assertFalse(testJson.encodeToString(Me.serializer(), me).contains("secret-path"))
     }

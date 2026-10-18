@@ -116,6 +116,7 @@ class OpenApiContractTest {
         "D2-11" to "POST /api/v1/app/intentos/{attemptId}/abandonar",
         "D2-12" to "GET /api/v1/app/intentos/{attemptId}/resultado",
         "D2-65" to "GET /api/v1/app/intentos/{attemptId}/revision",
+        "D2-66" to "GET /api/v1/app/intentos/{attemptId}/recursos/{recursoId}",
         // FA11: noticias admin (D4-01..D4-11) y lecturas de wallet (D6-01, D6-02), TARGET.
         "D4-01" to "GET /api/v1/admin/noticias",
         "D4-02" to "GET /api/v1/admin/noticias/{noticiaId}",
@@ -157,14 +158,66 @@ class OpenApiContractTest {
         "D5-16" to "GET /api/v1/app/opositester/me",
         // FA15: alta o cambio de un producto comercial por codigo (admin), TARGET.
         "D7-18" to "PUT /api/v1/admin/comercial/productos/{codigo}",
+        // FA22 (V1 economia): canje de examen, paquetes, pedidos de pago y aviso del proveedor, TARGET.
+        "D6-03" to "POST /api/v1/app/wallet/canjes",
+        "D6-11" to "GET /api/v1/app/wallet/paquetes",
+        "D6-12" to "POST /api/v1/app/payments/orders",
+        "D6-13" to "GET /api/v1/app/payments/orders/{orderId}",
+        "D6-14" to "POST /api/v1/app/payments/orders/{orderId}/verify",
+        "W-01" to "POST /api/v1/webhooks/payments/{provider}",
+        // FA24: reportar una pregunta (feedback), contrato propio y no deprecado.
+        "D5-15" to "POST /api/v1/app/feedback/pregunta",
+        // FA26: Guardar + OposiTeca (V1, solo preguntas).
+        "D4-20" to "PUT /api/v1/app/opositeca/guardados/{tipo}/{targetId}",
+        "D4-21" to "DELETE /api/v1/app/opositeca/guardados/{tipo}/{targetId}",
+        "D4-24" to "GET /api/v1/app/opositeca",
+        "D4-26" to "GET /api/v1/app/opositeca/guardados/{tipo}",
+        // FA27: cupo de inmersivos del plan (Access v2).
+        "D7-31" to "GET /api/v1/app/plan/cupo",
+        "D7-32" to "PUT /api/v1/app/plan/cupo/{examenId}",
+        "D7-33" to "GET /api/v1/app/plan/catalogo",
+        // FA29: reto diario, reclamar y racha (V1 ola 2).
+        "D3-16" to "GET /api/v1/app/retos/hoy",
+        "D3-17" to "PUT /api/v1/app/retos/{retoId}/respuestas/{preguntaId}",
+        "D3-18" to "POST /api/v1/app/retos/{retoId}/reclamar",
+        "D3-19" to "GET /api/v1/app/retos/{retoId}/preguntas/{preguntaId}/recursos/{recursoId}",
+        "D3-04" to "GET /api/v1/app/racha",
+        "D3-20" to "GET /api/v1/app/estadisticas/resumen",
+        "D3-21" to "GET /api/v1/app/estadisticas/debilidades",
+        "D3-22" to "GET /api/v1/app/estadisticas/dificultad/{preguntaId}",
+        "D3-23" to "POST /api/v1/admin/estadisticas/recalcular",
+        "D3-24" to "GET /api/v1/app/ranking",
+        "D3-25" to "PUT /api/v1/app/ranking/visibilidad",
+        "D9-01" to "GET /api/v1/app/me/invitacion",
+        "D9-02" to "GET /api/v1/app/me/invitaciones",
+        "D5-02" to "GET /api/v1/app/oposired/canales",
+        "D5-03" to "GET /api/v1/app/oposired/publicaciones",
+        "D5-04" to "GET /api/v1/app/oposired/publicaciones/{id}",
+        "D5-05" to "GET /api/v1/app/oposired/publicaciones/{id}/comentarios",
+        "D5-06" to "POST /api/v1/app/oposired/publicaciones",
+        "D5-07" to "POST /api/v1/app/oposired/publicaciones/{id}/comentarios",
+        "D5-08" to "DELETE /api/v1/app/oposired/publicaciones/{id}",
+        "D5-09" to "DELETE /api/v1/app/oposired/comentarios/{id}",
+        "D5-10" to "PUT /api/v1/app/oposired/publicaciones/{id}/voto",
+        "D5-11" to "DELETE /api/v1/app/oposired/publicaciones/{id}/voto",
+        "D5-12" to "PUT /api/v1/app/oposired/comentarios/{id}/voto",
+        "D5-13" to "DELETE /api/v1/app/oposired/comentarios/{id}/voto",
+        "D5-14" to "POST /api/v1/app/oposired/reportes",
+        "D5-30" to "POST /api/v1/app/oposired/imagenes",
+        "D5-31" to "PUT /api/v1/app/oposired/imagenes/{id}/contenido",
+        "D5-32" to "GET /api/v1/app/oposired/imagenes/{id}",
+        "D5-33" to "GET /api/v1/app/oposired/publicaciones/{id}/imagen",
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
-    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D4-03", "D4-09")
-    private val idempotencyOptional = setOf("D2-06", "D2-10")
+    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D4-03", "D4-09", "D6-03", "D6-12")
+    private val idempotencyOptional = setOf("D2-06", "D2-10", "D6-14", "D5-15", "D5-06", "D5-07")
 
     /** contractId -> (max, default) del limit de las listas paginadas. */
     private val cursorLists = mapOf(
+        "D5-03" to (50L to 20L),
+        "D5-05" to (50L to 20L),
+        "D9-02" to (50L to 20L),
         "D8-01" to (200L to 50L),
         "D2-01" to (50L to 20L),
         "D2-13" to (50L to 20L),
@@ -173,6 +226,7 @@ class OpenApiContractTest {
         "D2-08" to (20L to 10L),
         "D2-65" to (50L to 20L),
         "D4-01" to (100L to 50L),
+        "D4-24" to (50L to 20L),
         "D6-02" to (50L to 20L),
         "D5-20" to (50L to 20L),
         "D5-22" to (50L to 20L),
@@ -619,8 +673,8 @@ class OpenApiContractTest {
             assertEquals(false, body["additionalProperties"], "$id is strict: a specialties array would be rejected")
         }
         assertTrue(
-            (operations.single { it.contractId == "D1-13" }.op["description"] as String).contains("REPLACES the single active specialty"),
-            "D1-13 is the change-specialty operation and says it replaces the single specialty",
+            (operations.single { it.contractId == "D1-13" }.op["description"] as String).let { it.contains("SET ONCE") && it.contains("SPECIALTY_ALREADY_SET") },
+            "D1-13 (FA23, owner 2026-10-16): the specialty is set once and another id is 409 SPECIALTY_ALREADY_SET",
         )
 
         // No specialty list anywhere: no array-typed property or parameter named after a specialty.

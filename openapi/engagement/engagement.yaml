@@ -1,0 +1,403 @@
+# ENGAGEMENT (FA29, V1 wave 2): the daily challenge, its reward claim and the streak. Design: E1-V1-ENGAGEMENT-DESIGN.md v2.1 (E2 conditions C-E1..C-E7).
+# One challenge ROW per user per Madrid day (the most specific segment eligible for the user, frozen the first time it is opened that day): 3 questions (1 immersive, 1 razonado, 1 rafaga) picked by a daily
+# job, the same for every user of the segment; won with 2 or more correct. Everything is decided by the database on its own clock (no date, hour or "correct" flag ever travels from the client). Answers to
+# challenge questions never feed the exam statistics. The reward amount comes from the user's plan benefits (Control), is frozen when the challenge is passed and is paid ONLY through the claim endpoint,
+# once per user per Madrid day (idempotent through the ledger). The streak is the number of consecutive Madrid days with the challenge passed.
+components:
+  pathItems:
+    DailyChallenge:
+      get:
+        operationId: getDailyChallenge
+        summary: 'Today challenge of the current user'
+        tags: [challenge]
+        x-contract-id: D3-16
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Always 200 for an active account. estado is DISPONIBLE (not started), EN_CURSO, SUPERADO, FALLADO or NO_DISPONIBLE (no pool for the user segment today: nothing to show, the streak is NOT broken). The first open of the Madrid day stores the user row (the most specific eligible segment); later opens return the same row. The correct option is NEVER in this response: a question carries respuesta (with the correction) only after the user answered it. barraGlobal is an aggregate of the user type (no identities).'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'The challenge state.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/DailyChallenge'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    DailyChallengeAnswer:
+      put:
+        operationId: answerDailyChallengeQuestion
+        summary: 'Answer one question of the daily challenge'
+        tags: [challenge]
+        x-contract-id: D3-17
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, ANSWER_LOCKED, RETO_OUT_OF_WINDOW, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'An answer is FINAL. The same option re-sent answers 200 with the stored result (a retry never changes anything); a different option for an answered question is 409 ANSWER_LOCKED. The reto must be the row stored for the caller today and the question one of its 3 positions, otherwise 404 NOT_FOUND (no oracle); outside the window 422 RETO_OUT_OF_WINDOW. The correction is returned with the answer. The third answer closes the challenge (SUPERADO with 2 or more correct, FALLADO otherwise) and updates the streak, all in the same transaction. No reward is paid here: see the claim.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: retoId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+          - name: preguntaId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyChallengeAnswerRequest'
+        responses:
+          '200':
+            description: 'Stored answer with its correction and the challenge progress.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/DailyChallengeAnswerResult'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'ANSWER_LOCKED or RETO_OUT_OF_WINDOW (a state conflict, like RETO_NOT_PASSED; E2-V1-W01 aligned the contract to the code).'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    DailyChallengeClaim:
+      post:
+        operationId: claimDailyChallengeReward
+        summary: 'Claim the reward of a passed challenge'
+        tags: [challenge]
+        x-contract-id: D3-18
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, EMAIL_UNVERIFIED, NOT_FOUND, RETO_NOT_PASSED, OT_EARN_CAP_REACHED, RETO_CLAIM_EXPIRED, RETO_CLAIM_NOT_ELIGIBLE, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Pays the frozen reward of the user challenge row of today (or a passed row not yet claimed): one ledger entry reto_diario and, from the 3rd consecutive day (capped by the Control parameter), one bonus_racha, each idempotent per user per Madrid day. Claiming twice answers 200 with the same amounts and pays nothing more. Only the user own SUPERADO row can be claimed (404 otherwise, 409 RETO_NOT_PASSED while it is not passed). ALL OR NOTHING through the single earn function: if the daily/weekly cap does not allow the reward NOW it is DEFERRED (stored, paid by a retry job when the window allows it, expires after ot_diferido_dias_validez days with a visible state) and the claim answers 200 with recompensa.pendiente = true and reclamada = false (claiming again neither pays nor defers twice); 409 OT_EARN_CAP_REACHED only when the reward can never be paid (the source is disabled or the amount exceeds the cap itself) and nothing is paid. Gates on the FIRST claim attempt: 403 EMAIL_UNVERIFIED (verified e-mail), 403 RETO_CLAIM_NOT_ELIGIBLE (optional Control minimums: real first answers and account age, off by default), 422 RETO_CLAIM_EXPIRED when more than reto_reclamar_dias (Control, default 3) Madrid days passed since completion (the row stays unpaid).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: retoId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+        responses:
+          '200':
+            description: 'Claimed (or already claimed).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/DailyChallengeClaim'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'RETO_NOT_PASSED or OT_EARN_CAP_REACHED.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'RETO_CLAIM_EXPIRED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    DailyChallengeResource:
+      get:
+        operationId: getDailyChallengeResource
+        summary: 'Signed access to a media resource of a challenge question'
+        tags: [challenge]
+        x-contract-id: D3-19
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RESOURCE_NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Short-lived signed URL (same AttemptResourceAccess shape as D2-66). The database confirms the whole chain first: the reto is the user own stored row of today, the question belongs to that reto and the resource is an active resource of that question; anything else is 404 RESOURCE_NOT_FOUND (no probing). It never opens the parent exam.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: retoId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+          - name: preguntaId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+          - name: recursoId
+            in: path
+            required: true
+            schema:
+              type: string
+              format: uuid
+        responses:
+          '200':
+            description: 'Signed access.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '../attempts/attempts.yaml#/components/schemas/AttemptResourceAccess'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    Streak:
+      get:
+        operationId: getStreak
+        summary: 'Current and best streak'
+        tags: [challenge]
+        x-contract-id: D3-04
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Streak = consecutive Madrid days with the daily challenge PASSED; a day without an available challenge does not break it. actual is 0 when yesterday and today were both missed. Single writer: the challenge completion function.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'The streak.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Streak'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    ChallengeOption:
+      type: object
+      required: [id, letra, texto]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        letra:
+          type: string
+        texto:
+          type: string
+    ChallengeAnswer:
+      type: object
+      required: [opcionId, esCorrecta, opcionCorrectaId]
+      properties:
+        opcionId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        esCorrecta:
+          type: boolean
+        opcionCorrectaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+    ChallengeQuestion:
+      type: object
+      required: [posicion, tipoSlot, preguntaId, titulo, opciones]
+      properties:
+        posicion:
+          type: integer
+          minimum: 1
+          maximum: 3
+        tipoSlot:
+          type: string
+          enum: [INMERSIVA, RAZONADA, RAFAGA]
+        preguntaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: string
+        opciones:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChallengeOption'
+        recursos:
+          type: array
+          description: 'Media metadata of the question (same shape as the attempt resources, no bucket or path). Bytes only through D3-19.'
+          items:
+            $ref: '../attempts/attempts.yaml#/components/schemas/AttemptResource'
+        respuesta:
+          description: 'Present only after the user answered; carries the correction.'
+          oneOf:
+            - $ref: '#/components/schemas/ChallengeAnswer'
+            - type: 'null'
+    ChallengeReward:
+      type: object
+      required: [base, bonusRacha, total, reclamada]
+      properties:
+        base:
+          type: integer
+          minimum: 0
+        bonusRacha:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        reclamada:
+          type: boolean
+        pendiente:
+          type: boolean
+          description: 'True while the reward (or its bonus part) is deferred by the earn cap and waits for the retry; reclamada stays false until it is paid in full.'
+    DailyChallenge:
+      type: object
+      required: [estado, necesarios, aciertos, preguntas]
+      properties:
+        estado:
+          type: string
+          enum: [DISPONIBLE, EN_CURSO, SUPERADO, FALLADO, NO_DISPONIBLE]
+        retoId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        empiezaEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        terminaEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        necesarios:
+          type: integer
+          description: 'Correct answers needed (2).'
+        aciertos:
+          type: integer
+          minimum: 0
+        preguntas:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChallengeQuestion'
+        recompensa:
+          description: 'Amounts frozen when the challenge was passed (absent before that).'
+          oneOf:
+            - $ref: '#/components/schemas/ChallengeReward'
+            - type: 'null'
+        racha:
+          $ref: '#/components/schemas/Streak'
+        barraGlobal:
+          type: object
+          description: 'Aggregate of the user type for this challenge. No identities.'
+          required: [jugadores, superados]
+          properties:
+            jugadores:
+              type: integer
+              minimum: 0
+            superados:
+              type: integer
+              minimum: 0
+    DailyChallengeAnswerRequest:
+      type: object
+      required: [opcionSeleccionadaId]
+      additionalProperties: false
+      properties:
+        opcionSeleccionadaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+    DailyChallengeAnswerResult:
+      type: object
+      required: [esCorrecta, opcionCorrectaId, estado, aciertos, respondidas]
+      properties:
+        esCorrecta:
+          type: boolean
+        opcionCorrectaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        estado:
+          type: string
+          enum: [EN_CURSO, SUPERADO, FALLADO]
+        aciertos:
+          type: integer
+          minimum: 0
+        respondidas:
+          type: integer
+          minimum: 1
+          maximum: 3
+        recompensa:
+          oneOf:
+            - $ref: '#/components/schemas/ChallengeReward'
+            - type: 'null'
+        racha:
+          $ref: '#/components/schemas/Streak'
+    DailyChallengeClaim:
+      type: object
+      required: [recompensa, saldo]
+      properties:
+        recompensa:
+          $ref: '#/components/schemas/ChallengeReward'
+        saldo:
+          type: integer
+          description: 'OT balance after the claim.'
+    Streak:
+      type: object
+      required: [actual, maxima]
+      properties:
+        actual:
+          type: integer
+          minimum: 0
+        maxima:
+          type: integer
+          minimum: 0
+        ultimoDiaSuperado:
+          type: [string, 'null']
+          format: date

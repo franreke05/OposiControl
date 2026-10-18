@@ -121,6 +121,13 @@ internal class SupabaseOposiBotsAuthGateway(
         if ((response.status.value == 422 || response.status.value == 400) && response.error().normalizedCode in DUPLICATE_SIGNUP_CODES) {
             return OposiBotsRegisterResponse()
         }
+        // REAL-AUTH GATE (E1-V1-REAL-AUTH-RESULT.md): a real GoTrue answers 429 over_email_send_rate_limit to a signup of an EXISTING unconfirmed account (60 s per user) and to anyone when the hourly mail budget is spent;
+        // the first is an existence oracle (a new signup answers 202), so a 429 is logged and answered like a new signup. (The stub never throttles.)
+        if (response.status == HttpStatusCode.TooManyRequests) {
+            GatewayLogger.warn("auth signup throttled by upstream (indistinguishable 202 returned)")
+            logStrategicEvent(StrategicEvent.AUTH_SIGNUP_THROTTLED, requestId = context.requestId, operation = "register", result = "202_without_mail")
+            return OposiBotsRegisterResponse()
+        }
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = false, purpose = AuthPurpose.REGISTER)
         return OposiBotsRegisterResponse()
     }

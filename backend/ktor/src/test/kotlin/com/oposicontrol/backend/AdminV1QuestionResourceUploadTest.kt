@@ -60,6 +60,55 @@ class AdminV1QuestionResourceUploadTest {
         assertTrue(body.contains("token=") && body.contains("\"urlAcceso\""), "la respuesta trae la URL firmada: $body")
     }
 
+    /** EX14 (dueno 2026-10-14): un AUDIO guarda `durationMs` + `envelope` (stepMs 40, UInt8 base64) calculados en la ingesta. */
+    @Test fun unAudioGuardaSuDuracionYSuEnvolventeCalculadasEnLaIngesta() = testApplication {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        application { resourcesModule(gatewayWith(upstream, tipo = "inmersiva")) }
+        val response = client.post("/api/v1/admin/preguntas/$preguntaId/recursos/archivo") {
+            setBody(multipart("audio/wav", tipoRecurso = "audio", recursoId = recursoId, bytes = wav(1_000)))
+        }
+        assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
+        val metadatos = Json.parseToJsonElement(readRequestBody(upstream.single { it.method() == "POST" && it.uri().rawPath.endsWith("/recursos_pregunta") }))
+            .let { (it as kotlinx.serialization.json.JsonObject)["metadatos"] as kotlinx.serialization.json.JsonObject }
+        assertEquals("1000", metadatos["durationMs"].toString())
+        val envelope = metadatos["envelope"] as kotlinx.serialization.json.JsonObject
+        assertEquals("40", envelope["stepMs"].toString())
+        assertEquals(25, java.util.Base64.getDecoder().decode((envelope["samples"] as kotlinx.serialization.json.JsonPrimitive).content).size)
+        assertEquals(setOf("mime", "bytes", "durationMs", "envelope"), metadatos.keys)
+    }
+
+    /** Lo que no es audio, o un audio que no se puede decodificar, se guarda exactamente como antes (sin envolvente). */
+    @Test fun imagenYAudioIndecodificableSeGuardanSinEnvolvente() = testApplication {
+        val upstream = CopyOnWriteArrayList<HttpRequest>()
+        application { resourcesModule(gatewayWith(upstream, tipo = "inmersiva")) }
+        listOf("image/png" to "imagen", "audio/mpeg" to "audio").forEach { (mime, tipo) ->
+            upstream.clear()
+            val response = client.post("/api/v1/admin/preguntas/$preguntaId/recursos/archivo") {
+                setBody(multipart(mime, tipoRecurso = tipo, recursoId = recursoId))
+            }
+            assertEquals(HttpStatusCode.Created, response.status, "$mime: ${response.bodyAsText()}")
+            val cuerpo = readRequestBody(upstream.single { it.method() == "POST" && it.uri().rawPath.endsWith("/recursos_pregunta") })
+            assertFalse(cuerpo.contains("envelope") || cuerpo.contains("durationMs"), "$mime: $cuerpo")
+        }
+    }
+
+    private fun wav(durationMs: Int, rate: Int = 8_000): ByteArray {
+        val frames = rate * durationMs / 1_000
+        val raw = ByteArray(frames * 2)
+        for (i in 0 until frames) {
+            val s = (kotlin.math.sin(2 * Math.PI * 440 * i / rate) * 0.5 * 32_767).toInt()
+            raw[i * 2] = (s and 0xff).toByte()
+            raw[i * 2 + 1] = (s shr 8).toByte()
+        }
+        val out = java.io.ByteArrayOutputStream()
+        javax.sound.sampled.AudioSystem.write(
+            javax.sound.sampled.AudioInputStream(raw.inputStream(), javax.sound.sampled.AudioFormat(rate.toFloat(), 16, 1, true, false), frames.toLong()),
+            javax.sound.sampled.AudioFileFormat.Type.WAVE,
+            out,
+        )
+        return out.toByteArray()
+    }
+
     /** Una pregunta de ráfaga no admite material: 422 y NI UNA llamada a Storage. */
     @Test fun unaRafagaEsUn422SinTocarStorage() = testApplication {
         val upstream = CopyOnWriteArrayList<HttpRequest>()
@@ -181,6 +230,7 @@ class AdminV1QuestionResourceUploadTest {
         tipoRecurso: String,
         recursoId: String? = null,
         fileName: String = "material",
+        bytes: ByteArray = byteArrayOf(1, 2, 3),
     ) = MultiPartFormDataContent(
         formData {
             append("tipoRecurso", tipoRecurso)
@@ -188,7 +238,7 @@ class AdminV1QuestionResourceUploadTest {
             recursoId?.let { append("recursoId", it) }
             append(
                 "file",
-                byteArrayOf(1, 2, 3),
+                bytes,
                 Headers.build {
                     append(HttpHeaders.ContentDisposition, "form-data; name=\"file\"; filename=\"$fileName\"")
                     append(HttpHeaders.ContentType, contentType)

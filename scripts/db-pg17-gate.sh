@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # DB-CI-PG17: gate REPRODUCIBLE de migraciones en PostgreSQL 17 (imagen de Supabase fijada por digest), sin secretos ni MAIN.
-#   1. Manifiesto: supabase/baseline/PENDING_MIGRATIONS.txt == supabase/migrations/2026092810*.sql + 2026093*.sql + 202610*.sql; su parte
-#      2026093* == supabase/SLICE1_MIGRATIONS.txt, su parte 202610*_slice2_* == supabase/SLICE2_MIGRATIONS.txt (SLICE 2), su parte 202610*_slice7_* == supabase/SLICE7_MIGRATIONS.txt (SLICE 7) y el resto
-#      de 202610* == supabase/SLICE3_MIGRATIONS.txt (SLICE 3); cada pendiente tiene bloque ROLLBACK y VERIFY (salvo NO_VERIFY, abajo).
-#   2. Arranca un contenedor nuevo, carga supabase/baseline/main_shape_subset.sql con ON_ERROR_STOP=1 en UNA transaccion
-#      (cero errores tolerados) y toma la huella de catalogo F0.
+#   1. Manifiesto: supabase/baseline/PENDING_MIGRATIONS.txt == migraciones de supabase/migrations cuya version NO esta en
+#      supabase/baseline/MAIN_MIGRATION_HISTORY.txt (historial REAL de MAIN, leido read-only), salvo las divergencias de
+#      historial conocidas (HISTORY_DIVERGENT, abajo; README.md). Cada pendiente tiene bloque ROLLBACK y VERIFY.
+#      Los manifiestos por slice (SLICE*_MIGRATIONS.txt) los comprueba scripts/verify-migrations-manifest.sh.
+#   2. Arranca un contenedor nuevo, carga supabase/baseline/main_shape_subset.sql (captura de catalogo de MAIN de la misma
+#      fecha que el historial, scripts/db-main-catalog-capture.sql) con ON_ERROR_STOP=1 en UNA transaccion y toma la huella F0.
 #   3. Aplica cada pendiente EN ORDEN con ON_ERROR_STOP=1 y ejecuta su VERIFY justo despues: cada fila debe ser
 #      `<check>|0|...`; un valor distinto de 0, un resultado vacio o un bloque ausente FALLA. Huella F1.
 #   4. supabase/baseline/assertions.sql (transaccion con ROLLBACK): comportamiento + matriz de grants/RLS (ASSERT = fallo).
@@ -16,18 +17,22 @@ cd "${MIG_ROOT:-$(dirname "$0")/..}" || exit 2
 IMAGE="${PG17_IMAGE:-public.ecr.aws/supabase/postgres@sha256:658d1c9b09ae4f61b8e95087b6859181b4b7d6940d769cf7b605609c8aad43e9}" # 17.6.1.171
 # 20260928100100 (ya publicada) es anterior a la convencion VERIFY; su tabla la cubre assertions.sql (RLS, sin grants de cliente).
 NO_VERIFY="20260928100100_idempotency_keys"
+# Ficheros del repo cuya version no figura en el historial de MAIN y que NO son pendientes (README.md): el contenido de
+# news_canvas_schema esta aplicado en MAIN con la version 20260923090948, y 20260730120000 nunca se registro en MAIN (su
+# contenido lo cubre 20260803092306 del historial).
+HISTORY_DIVERGENT="20260730120000 20260923103000"
 fail() { echo "FAIL: $*"; exit 1; }
 
-boot=supabase/baseline/main_shape_subset.sql; pend=supabase/baseline/PENDING_MIGRATIONS.txt; man=supabase/SLICE1_MIGRATIONS.txt; man2=supabase/SLICE2_MIGRATIONS.txt; man3=supabase/SLICE3_MIGRATIONS.txt; man7=supabase/SLICE7_MIGRATIONS.txt
-for f in "$boot" "$pend" "$man" "$man2" "$man3" "$man7" supabase/baseline/assertions.sql; do [ -s "$f" ] || fail "$f vacio o ausente"; done
+boot=supabase/baseline/main_shape_subset.sql; pend=supabase/baseline/PENDING_MIGRATIONS.txt; hist=supabase/baseline/MAIN_MIGRATION_HISTORY.txt
+for f in "$boot" "$pend" "$hist" supabase/baseline/assertions.sql; do [ -s "$f" ] || fail "$f vacio o ausente"; done
 pending="$(tr -d '\r' < "$pend" | grep -Ev '^[[:space:]]*(#|$)')"
+[ -n "$pending" ] || fail "$pend sin pendientes"
 [ "$pending" = "$(echo "$pending" | sort -u)" ] || fail "$pend no esta ordenado o tiene duplicados"
-actual="$( (cd supabase/migrations && ls | grep -E '^(2026092810|2026093|202610).*\.sql$' | sed 's/\.sql$//' | sort) )"
-[ "$pending" = "$actual" ] || { echo "FAIL: $pend y supabase/migrations difieren (< pendientes, > real):"; diff <(echo "$pending") <(echo "$actual"); exit 1; }
-[ "$(echo "$pending" | grep '^2026093')" = "$(tr -d '\r' < "$man" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (2026093*) y $man difieren"
-[ "$(echo "$pending" | grep '^202610' | grep -Ev '^[0-9]+_slice[27]_')" = "$(tr -d '\r' < "$man3" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (202610*) y $man3 difieren"
-[ "$(echo "$pending" | grep -E '^202610[0-9]*_slice2_')" = "$(tr -d '\r' < "$man2" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (202610*_slice2_*) y $man2 difieren"
-[ "$(echo "$pending" | grep -E '^202610[0-9]*_slice7_')" = "$(tr -d '\r' < "$man7" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (202610*_slice7_*) y $man7 difieren"
+applied="$(tr -d '\r' < "$hist" | grep -Ev '^[[:space:]]*(#|$)' | cut -d' ' -f1)"
+[ "$(echo "$applied" | wc -l | tr -d ' ')" -ge 70 ] || fail "$hist no parece el historial completo de MAIN"
+actual="$( (cd supabase/migrations && ls | grep -E '^[0-9]{14}_.*\.sql$' | sed 's/\.sql$//' | sort) | while read -r m; do
+  v="${m%%_*}"; echo "$applied" | grep -qx "$v" && continue; case " $HISTORY_DIVERGENT " in *" $v "*) continue ;; esac; echo "$m"; done)"
+[ "$pending" = "$actual" ] || { echo "FAIL: $pend y (repo - historial de MAIN) difieren (< pendientes, > real):"; diff <(echo "$pending") <(echo "$actual"); exit 1; }
 
 block() { # bloque comentado `-- NAME-BEGIN/END` (misma regla que Slice0Db.bloqueComentado): toda linea debe empezar por --
   awk -v n="$2" '$0 ~ "^[[:space:]]*-- "n"-END[[:space:]]*$" {e=1; exit} s {print} $0 ~ "^[[:space:]]*-- "n"-BEGIN[[:space:]]*$" {s=1} END {exit !(s && e)}' "$1" \
@@ -82,6 +87,18 @@ apply_all() {
 }
 
 psqlc -1 < "$boot" >/dev/null 2>"$err" || { cat "$err"; fail "$boot no carga con ON_ERROR_STOP=1"; }
+# V1: objetos de MAIN que el bootstrap generado no arrastra y sobre los que construyen las migraciones V1 (compras_usuario, transacciones_cartera).
+extra=supabase/baseline/main_shape_subset_extra.sql
+[ -s "$extra" ] && { psqlc < "$extra" >/dev/null 2>"$err" || { cat "$err"; fail "$extra no carga con ON_ERROR_STOP=1"; }; }
+# V1 Access v2: beneficios_plan y suscripciones (objetos de MAIN fuera del subconjunto; ver el fichero).
+extra_plans=supabase/baseline/main_shape_subset_extra_plans.sql
+[ -s "$extra_plans" ] && { psqlc < "$extra_plans" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_plans no carga con ON_ERROR_STOP=1"; }; }
+# V1 wave 2: retos, registros, rachas, ranking_liga y las funciones recalcular_* de MAIN (con sus grants de cliente de HOY, que 20261022101200 retira).
+extra_auth=supabase/baseline/main_shape_auth_users.sql
+[ -s "$extra_auth" ] && { docker exec -i "$ctr" psql -U supabase_admin -h localhost -d postgres -X -q -v ON_ERROR_STOP=1 < "$extra_auth" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_auth no carga con ON_ERROR_STOP=1"; }; }
+
+extra_eng=supabase/baseline/main_shape_subset_extra_engagement.sql
+[ -s "$extra_eng" ] && { psqlc < "$extra_eng" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_eng no carga con ON_ERROR_STOP=1"; }; }
 fingerprint "$tmp/f0"
 apply_all
 fingerprint "$tmp/f1"

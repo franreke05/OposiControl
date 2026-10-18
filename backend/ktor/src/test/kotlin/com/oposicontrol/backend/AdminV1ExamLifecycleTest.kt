@@ -1,6 +1,7 @@
 package com.oposicontrol.backend
 
 import io.ktor.client.request.delete
+import io.ktor.client.request.patch
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -49,6 +50,7 @@ class AdminV1ExamLifecycleTest {
 
     private val examenId = "55555555-5555-4555-8555-555555555555"
     private val especialidadId = "66666666-6666-4666-8666-666666666666"
+    private val comunidadId = "77777777-7777-4777-8777-777777777777"
 
     // -----------------------------------------------------------------
     // E-1 · Guardar no cambia la visibilidad
@@ -409,7 +411,7 @@ class AdminV1ExamLifecycleTest {
         val response = client.post("/api/v1/admin/examenes") {
             contentType(ContentType.Application.Json)
             setBody(
-                """{"especialidadId":"$especialidadId","titulo":"Examen","tipoExamen":"chorrada"}""",
+                """{"especialidadId":"$especialidadId","comunidadId":"$comunidadId","titulo":"Examen","tipoExamen":"chorrada"}""",
             )
         }
 
@@ -421,6 +423,112 @@ class AdminV1ExamLifecycleTest {
     // -----------------------------------------------------------------
     // Andamiaje
     // -----------------------------------------------------------------
+
+    // -----------------------------------------------------------------
+    // V1 · la comunidad es OBLIGATORIA (decision del propietario 2026-10-15)
+    // -----------------------------------------------------------------
+
+    private fun createBody(community: String?): String =
+        """{"codigoExamen":"EX-V1","especialidadId":"$especialidadId",""" +
+            (if (community == null) "" else """"comunidadId":$community,""") +
+            """"titulo":"Examen V1","tipoExamen":"rafaga","tipoAcceso":"gratuito"}"""
+
+    private suspend fun io.ktor.client.HttpClient.createExam(community: String?) =
+        post("/api/v1/admin/examenes") { contentType(ContentType.Application.Json); setBody(createBody(community)) }
+
+    @Test
+    fun anExamCannotBeCreatedWithoutACommunityAndNothingReachesTheDatabase() = testApplication {
+        val sent = CopyOnWriteArrayList<String>()
+        application { examModule(record = { sent += "${it.method()} ${it.uri()}" }) { V1StubResponse(200, "[${examenRowJson()}]") } }
+
+        listOf(null, "null", "\"\"", "\"   \"").forEach { community ->
+            val response = client.createExam(community)
+            val body = response.bodyAsText()
+            assertEquals(HttpStatusCode.UnprocessableEntity, response.status, "$community -> $body")
+            assertTrue(body.contains("exam_community_required"), "$community -> $body")
+        }
+        assertTrue(sent.isEmpty(), "una comunidad ausente no debe producir ninguna peticion: $sent")
+    }
+
+    @Test
+    fun aMalformedCommunityIdIsBadRequestAndAnUnknownOrInactiveOneIsUnprocessable() = testApplication {
+        application {
+            examModule { uri ->
+                if (uri.contains("comunidades_autonomas")) V1StubResponse(200, "[]") else V1StubResponse(200, "[${examenRowJson()}]")
+            }
+        }
+
+        val malformed = client.createExam("\"not-a-uuid\"")
+        assertEquals(HttpStatusCode.BadRequest, malformed.status, malformed.bodyAsText())
+
+        val unknown = client.createExam("\"$comunidadId\"")
+        val body = unknown.bodyAsText()
+        assertEquals(HttpStatusCode.UnprocessableEntity, unknown.status, body)
+        assertTrue(body.contains("unknown_community"), body)
+    }
+
+    @Test
+    fun anExamWithAnActiveCommunityIsCreated() = testApplication {
+        val sent = CopyOnWriteArrayList<String>()
+        application {
+            examModule(record = { sent += "${it.method()} ${it.uri()}" }) { uri ->
+                if (uri.contains("comunidades_autonomas")) V1StubResponse(200, """[{"id":"$comunidadId"}]""") else V1StubResponse(200, "[${examenRowJson()}]")
+            }
+        }
+
+        val response = client.createExam("\"$comunidadId\"")
+
+        assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
+        assertTrue(sent.any { it.startsWith("GET") && it.contains("comunidades_autonomas") && it.contains("activa=eq.true") }, "$sent")
+    }
+
+    @Test
+    fun theCommunityCanBeReplacedButNeverCleared() = testApplication {
+        val sent = CopyOnWriteArrayList<String>()
+        application {
+            examModule(record = { sent += "${it.method()} ${it.uri()}" }) { uri ->
+                if (uri.contains("comunidades_autonomas")) V1StubResponse(200, """[{"id":"$comunidadId"}]""") else V1StubResponse(200, "[${examenRowJson()}]")
+            }
+        }
+
+        val cleared = client.patch("/api/v1/admin/examenes/$examenId") { contentType(ContentType.Application.Json); setBody("""{"comunidadId":null}""") }
+        val clearedBody = cleared.bodyAsText()
+        assertEquals(HttpStatusCode.UnprocessableEntity, cleared.status, clearedBody)
+        assertTrue(clearedBody.contains("exam_community_required"), clearedBody)
+        assertTrue(sent.none { it.startsWith("PATCH") }, "un borrado de comunidad no debe escribir nada: $sent")
+
+        val replaced = client.patch("/api/v1/admin/examenes/$examenId") { contentType(ContentType.Application.Json); setBody("""{"comunidadId":"$comunidadId"}""") }
+        assertEquals(HttpStatusCode.OK, replaced.status, replaced.bodyAsText())
+    }
+
+    @Test
+    fun anExamWithoutCommunityIsNotPublishedEvenIfItHasQuestions() = testApplication {
+        application {
+            examModule { uri ->
+                when {
+                    uri.contains("comunidad_id=not.is.null") -> V1StubResponse(200, "[]") // el filtro del PATCH no encuentra fila
+                    else -> V1StubResponse(200, """[{"id":"$examenId","comunidad_id":null}]""")
+                }
+            }
+        }
+
+        val response = client.post("/api/v1/admin/examenes/$examenId/publicar")
+
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.Conflict, response.status, body)
+        assertTrue(body.contains("exam_publish_requires_community"), body)
+    }
+
+    @Test
+    fun theRuleLivesInThePublishingStatementItself() {
+        val sent = CopyOnWriteArrayList<String>()
+        val gateway = gatewayWith(record = { sent += "${it.method()} ${it.uri()}" }) { V1StubResponse(200, "[${examenRowJson()}]") }
+
+        gateway.publicarExamen(examenId)
+
+        val patch = assertNotNull(sent.firstOrNull { it.startsWith("PATCH") }, "$sent")
+        assertTrue(patch.contains("comunidad_id=not.is.null") && patch.contains("total_preguntas=gt.0"), patch)
+    }
 
     /** El cuerpo exacto del único PATCH que sale hacia `examenes`. */
     private fun patchBodyFor(raw: JsonObject): String {
@@ -436,7 +544,7 @@ class AdminV1ExamLifecycleTest {
         gatewayWith(record = { bodies += it.bodyText() }) { V1StubResponse(200, "[${examenRowJson()}]") }
 
     private fun examenRowJson(): String =
-        """{"id":"$examenId","codigo_examen":"EX-1","especialidad_id":"$especialidadId","titulo":"Examen",""" +
+        """{"id":"$examenId","codigo_examen":"EX-1","especialidad_id":"$especialidadId","comunidad_id":"$comunidadId","titulo":"Examen",""" +
             """"tipo_examen":"rafaga","tipo_acceso":"gratuito","activo":true,"total_preguntas":3}"""
 
     private fun gatewayWith(
@@ -449,7 +557,7 @@ class AdminV1ExamLifecycleTest {
         client = V1StubHttpClient(record, responder),
     )
 
-    private fun Application.examModule(responder: (String) -> V1StubResponse) {
+    private fun Application.examModule(record: (HttpRequest) -> Unit = {}, responder: (String) -> V1StubResponse) {
         install(ContentNegotiation) {
             json(Json { ignoreUnknownKeys = true; explicitNulls = false })
         }
@@ -464,7 +572,7 @@ class AdminV1ExamLifecycleTest {
                 )
             }
         }
-        routing { adminV1Routes(gatewayWith(responder = responder)) }
+        routing { adminV1Routes(gatewayWith(record = record, responder = responder)) }
     }
 
     private fun HttpRequest.bodyText(): String = readRequestBody(this)

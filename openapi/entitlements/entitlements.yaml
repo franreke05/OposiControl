@@ -183,6 +183,9 @@ components:
                   $ref: '#/components/schemas/Entitlement'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+            description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
           '500':
             $ref: '../common/errors.yaml#/components/responses/Internal'
           '502':

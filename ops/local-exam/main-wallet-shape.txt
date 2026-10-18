@@ -1,0 +1,133 @@
+# Forma esperada de las tablas de cartera/compras/derechos del stack local: captura de catalogo de MAIN de solo lectura (2026-10-14) + migraciones V1
+# 20261022100300/400/500 + el ensanchamiento SOLO LOCAL del CHECK de proveedor con 'sandbox' (sql/97). La genera sql/wallet_shape.sql; la compara e2e WALLET.local_schema_matches_main.
+# Unica diferencia deliberada con MAIN: sin FK usado_en_reto_id -> retos_diarios (no existe en local).
+INDEX CREATE INDEX idx_activaciones_servicio_usuario_compra_id ON public.activaciones_servicio_usuario USING btree (compra_id)
+INDEX CREATE INDEX idx_activaciones_servicio_usuario_servicio_id ON public.activaciones_servicio_usuario USING btree (servicio_id)
+INDEX CREATE INDEX idx_activaciones_servicio_usuario_usado_en_intento_id ON public.activaciones_servicio_usuario USING btree (usado_en_intento_id)
+INDEX CREATE INDEX idx_activaciones_servicio_usuario_usado_en_reto_id ON public.activaciones_servicio_usuario USING btree (usado_en_reto_id)
+INDEX CREATE INDEX idx_activaciones_servicio_usuario_usuario_id ON public.activaciones_servicio_usuario USING btree (usuario_id)
+INDEX CREATE INDEX idx_compras_usuario_usuario ON public.compras_usuario USING btree (usuario_id)
+INDEX CREATE INDEX idx_creditos_contenido_usuario_suscripcion_id ON public.creditos_contenido_usuario USING btree (suscripcion_id)
+INDEX CREATE INDEX idx_creditos_contenido_usuario_usuario_id ON public.creditos_contenido_usuario USING btree (usuario_id)
+INDEX CREATE INDEX idx_estado_premium_usuario_premium ON public.estado_premium_usuario USING btree (es_premium)
+INDEX CREATE INDEX idx_estado_premium_usuario_usuario ON public.estado_premium_usuario USING btree (usuario_id)
+INDEX CREATE INDEX idx_suscripciones_estado ON public.suscripciones USING btree (estado)
+INDEX CREATE INDEX idx_suscripciones_usuario ON public.suscripciones USING btree (usuario_id)
+INDEX CREATE INDEX idx_transacciones_cartera_compra_id ON public.transacciones_cartera USING btree (compra_id)
+INDEX CREATE INDEX idx_transacciones_cartera_usuario ON public.transacciones_cartera USING btree (usuario_id)
+INDEX CREATE INDEX idx_transacciones_cartera_usuario_creado_id ON public.transacciones_cartera USING btree (usuario_id, creado_en DESC, id DESC)
+INDEX CREATE UNIQUE INDEX activaciones_servicio_usuario_pkey ON public.activaciones_servicio_usuario USING btree (id)
+INDEX CREATE UNIQUE INDEX carteras_usuario_pkey ON public.carteras_usuario USING btree (usuario_id)
+INDEX CREATE UNIQUE INDEX compras_usuario_pkey ON public.compras_usuario USING btree (id)
+INDEX CREATE UNIQUE INDEX creditos_contenido_usuario_pkey ON public.creditos_contenido_usuario USING btree (id)
+INDEX CREATE UNIQUE INDEX estado_premium_usuario_pkey ON public.estado_premium_usuario USING btree (usuario_id)
+INDEX CREATE UNIQUE INDEX planes_suscripcion_codigo_key ON public.planes_suscripcion USING btree (codigo)
+INDEX CREATE UNIQUE INDEX planes_suscripcion_pkey ON public.planes_suscripcion USING btree (id)
+INDEX CREATE UNIQUE INDEX productos_comerciales_codigo_key ON public.productos_comerciales USING btree (codigo)
+INDEX CREATE UNIQUE INDEX productos_comerciales_pkey ON public.productos_comerciales USING btree (id)
+INDEX CREATE UNIQUE INDEX servicios_codigo_key ON public.servicios USING btree (codigo)
+INDEX CREATE UNIQUE INDEX servicios_pkey ON public.servicios USING btree (id)
+INDEX CREATE UNIQUE INDEX suscripciones_pkey ON public.suscripciones USING btree (id)
+INDEX CREATE UNIQUE INDEX transacciones_cartera_pkey ON public.transacciones_cartera USING btree (id)
+INDEX CREATE UNIQUE INDEX transacciones_cartera_usuario_idempotency_key ON public.transacciones_cartera USING btree (usuario_id, idempotency_key)
+INDEX CREATE UNIQUE INDEX transacciones_cartera_usuario_seq_key ON public.transacciones_cartera USING btree (usuario_id, seq)
+INDEX CREATE UNIQUE INDEX ux_compras_usuario_proveedor_transaccion ON public.compras_usuario USING btree (proveedor, identificador_transaccion) WHERE (identificador_transaccion IS NOT NULL)
+INDEX CREATE UNIQUE INDEX ux_compras_usuario_usuario_idempotency ON public.compras_usuario USING btree (usuario_id, idempotency_key) WHERE (idempotency_key IS NOT NULL)
+INDEX CREATE UNIQUE INDEX ux_transacciones_cartera_compra_tipo ON public.transacciones_cartera USING btree (compra_id, tipo) WHERE (compra_id IS NOT NULL)
+activaciones_servicio_usuario COLS activa_desde timestamp with time zone t now(), activa_hasta timestamp with time zone f, compra_id uuid f, creado_en timestamp with time zone t now(), estado text t 'activa'::text, id uuid t gen_random_uuid(), metadatos jsonb t '{}'::jsonb, servicio_id uuid t, usado_en timestamp with time zone f, usado_en_intento_id uuid f, usado_en_reto_id uuid f, usos_consumidos integer t 0, usos_disponibles integer t 1, usuario_id uuid t
+activaciones_servicio_usuario CON activaciones_servicio_usuario_compra_id_fkey FOREIGN KEY (compra_id) REFERENCES public.compras_usuario(id) ON DELETE SET NULL
+activaciones_servicio_usuario CON activaciones_servicio_usuario_estado_check CHECK ((estado = ANY (ARRAY['activa'::text, 'usada'::text, 'caducada'::text, 'cancelada'::text])))
+activaciones_servicio_usuario CON activaciones_servicio_usuario_pkey PRIMARY KEY (id)
+activaciones_servicio_usuario CON activaciones_servicio_usuario_servicio_id_fkey FOREIGN KEY (servicio_id) REFERENCES public.servicios(id) ON DELETE CASCADE
+activaciones_servicio_usuario CON activaciones_servicio_usuario_usado_en_intento_id_fkey FOREIGN KEY (usado_en_intento_id) REFERENCES public.intentos_examen(id)
+activaciones_servicio_usuario CON activaciones_servicio_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE
+activaciones_servicio_usuario GRANT anon SELECT
+activaciones_servicio_usuario GRANT authenticated SELECT
+activaciones_servicio_usuario GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+activaciones_servicio_usuario POL activaciones_select_propio ((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())
+carteras_usuario COLS actualizado_en timestamp with time zone t now(), saldo_tickets integer t 0, usuario_id uuid t
+carteras_usuario CON carteras_usuario_pkey PRIMARY KEY (usuario_id)
+carteras_usuario CON carteras_usuario_saldo_tickets_check CHECK ((saldo_tickets >= 0))
+carteras_usuario CON carteras_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE
+carteras_usuario GRANT authenticated SELECT
+carteras_usuario GRANT service_role REFERENCES,SELECT,TRIGGER
+carteras_usuario POL carteras_select_propio ((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())
+compras_usuario COLS actualizado_en timestamp with time zone t now(), cantidad_tickets integer f, comprada_en timestamp with time zone f, creado_en timestamp with time zone t now(), estado text t 'pendiente'::text, expira_en timestamp with time zone f, huella_solicitud text f, id uuid t gen_random_uuid(), idempotency_key text f, identificador_transaccion text f, moneda text t 'EUR'::text, pagada_en timestamp with time zone f, payload_validacion jsonb t '{}'::jsonb, precio_centimos integer f, producto_codigo text t, proveedor text t, tipo_producto text t, usuario_id uuid t
+compras_usuario CON compras_usuario_cantidad_tickets_check CHECK (((cantidad_tickets IS NULL) OR (cantidad_tickets > 0)))
+compras_usuario CON compras_usuario_estado_check CHECK ((estado = ANY (ARRAY['pendiente'::text, 'pagada'::text, 'cancelada'::text, 'reembolsada'::text, 'fallida'::text, 'expirada'::text, 'en_revision'::text])))
+compras_usuario CON compras_usuario_pkey PRIMARY KEY (id)
+compras_usuario CON compras_usuario_precio_centimos_check CHECK (((precio_centimos IS NULL) OR (precio_centimos >= 0)))
+compras_usuario CON compras_usuario_proveedor_check CHECK ((proveedor = ANY (ARRAY['google_play'::text, 'app_store'::text, 'stripe'::text, 'manual'::text, 'sandbox'::text])))
+compras_usuario CON compras_usuario_tipo_producto_check CHECK ((tipo_producto = ANY (ARRAY['opositickets'::text, 'premium'::text, 'servicio'::text, 'contenido'::text])))
+compras_usuario CON compras_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE
+compras_usuario GRANT authenticated SELECT
+compras_usuario GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+compras_usuario POL compras_select_propio ((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())
+creditos_contenido_usuario COLS actualizado_en timestamp with time zone t now(), cantidad_total integer t, cantidad_usada integer t 0, creado_en timestamp with time zone t now(), id uuid t gen_random_uuid(), suscripcion_id uuid f, tipo_examen text t, usuario_id uuid t, valido_desde timestamp with time zone t now(), valido_hasta timestamp with time zone t
+creditos_contenido_usuario CON creditos_contenido_usuario_canonical_v2_tipo_examen_check CHECK ((tipo_examen = ANY (ARRAY['rafaga'::text, 'razonado'::text, 'inmersivo'::text])))
+creditos_contenido_usuario CON creditos_contenido_usuario_cantidad_total_check CHECK ((cantidad_total > 0))
+creditos_contenido_usuario CON creditos_contenido_usuario_cantidad_usada_check CHECK ((cantidad_usada >= 0))
+creditos_contenido_usuario CON creditos_contenido_usuario_check CHECK ((cantidad_usada <= cantidad_total))
+creditos_contenido_usuario CON creditos_contenido_usuario_pkey PRIMARY KEY (id)
+creditos_contenido_usuario CON creditos_contenido_usuario_suscripcion_id_fkey FOREIGN KEY (suscripcion_id) REFERENCES public.suscripciones(id) ON DELETE SET NULL
+creditos_contenido_usuario CON creditos_contenido_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE
+creditos_contenido_usuario GRANT authenticated SELECT
+creditos_contenido_usuario GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+creditos_contenido_usuario POL canonical_v2_creditos_select (( SELECT auth.uid() AS uid) = usuario_id)
+estado_premium_usuario COLS actualizado_en timestamp with time zone t now(), es_premium boolean t false, estado_suscripcion text t 'sin_suscripcion'::text, fin_en timestamp with time zone f, inicio_en timestamp with time zone f, producto_codigo text f, proveedor text f, renovacion_en timestamp with time zone f, usuario_id uuid t
+estado_premium_usuario CON estado_premium_usuario_estado_suscripcion_check CHECK ((estado_suscripcion = ANY (ARRAY['sin_suscripcion'::text, 'activa'::text, 'periodo_prueba'::text, 'pausada'::text, 'cancelada'::text, 'caducada'::text])))
+estado_premium_usuario CON estado_premium_usuario_pkey PRIMARY KEY (usuario_id)
+estado_premium_usuario CON estado_premium_usuario_proveedor_check CHECK (((proveedor IS NULL) OR (proveedor = ANY (ARRAY['google_play'::text, 'app_store'::text, 'stripe'::text, 'manual'::text]))))
+estado_premium_usuario CON estado_premium_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE
+estado_premium_usuario GRANT anon SELECT
+estado_premium_usuario GRANT authenticated SELECT
+estado_premium_usuario GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+estado_premium_usuario POL estado_premium_select_propio ((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())
+planes_suscripcion COLS activo boolean t true, actualizado_en timestamp with time zone t now(), codigo text t, creado_en timestamp with time zone t now(), descripcion text f, id uuid t gen_random_uuid(), nivel integer t, nombre text t, posicion integer t 1, visible boolean t true
+planes_suscripcion CON planes_suscripcion_canonical_v2_nivel_check CHECK (((nivel >= 0) AND (nivel <= 3)))
+planes_suscripcion CON planes_suscripcion_codigo_key UNIQUE (codigo)
+planes_suscripcion CON planes_suscripcion_nivel_check CHECK ((nivel >= 0))
+planes_suscripcion CON planes_suscripcion_pkey PRIMARY KEY (id)
+planes_suscripcion GRANT anon SELECT
+planes_suscripcion GRANT authenticated SELECT
+planes_suscripcion GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+planes_suscripcion POL canonical_v2_plans_public_read (activo AND visible)
+productos_comerciales COLS activo boolean t true, actualizado_en timestamp with time zone t now(), cantidad_tickets integer f, codigo text t, creado_en timestamp with time zone t now(), descripcion text f, destacado boolean t false, etiqueta_promocional text f, id uuid t gen_random_uuid(), metadatos jsonb t '{}'::jsonb, moneda text t 'EUR'::text, nombre text t, plan_id uuid f, posicion integer t 1, precio_centimos integer f, tipo_producto text t, visible boolean t true
+productos_comerciales CON productos_comerciales_codigo_key UNIQUE (codigo)
+productos_comerciales CON productos_comerciales_pkey PRIMARY KEY (id)
+productos_comerciales CON productos_comerciales_plan_fk FOREIGN KEY (plan_id) REFERENCES public.planes_suscripcion(id)
+productos_comerciales CON productos_comerciales_precio_no_negativo_check CHECK (((precio_centimos IS NULL) OR (precio_centimos >= 0)))
+productos_comerciales CON productos_comerciales_tipo_producto_check CHECK ((tipo_producto = ANY (ARRAY['suscripcion'::text, 'pack_tickets'::text, 'compra_examen'::text, 'servicio'::text, 'consumible'::text])))
+productos_comerciales GRANT anon SELECT
+productos_comerciales GRANT authenticated SELECT
+productos_comerciales GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+productos_comerciales POL canonical_v2_products_public_read (activo AND visible)
+servicios COLS activo boolean t true, actualizado_en timestamp with time zone t now(), codigo text t, creado_en timestamp with time zone t now(), descripcion text f, id uuid t gen_random_uuid(), nombre text t, precio_centimos integer f, precio_tickets integer f, tipo_servicio text t
+servicios CON servicios_codigo_key UNIQUE (codigo)
+servicios CON servicios_pkey PRIMARY KEY (id)
+servicios CON servicios_precio_centimos_check CHECK (((precio_centimos IS NULL) OR (precio_centimos >= 0)))
+servicios CON servicios_precio_tickets_check CHECK (((precio_tickets IS NULL) OR (precio_tickets >= 0)))
+servicios CON servicios_tipo_servicio_check CHECK ((tipo_servicio = ANY (ARRAY['premium'::text, 'correccion'::text, 'tutoria'::text, 'contenido_extra'::text, 'protector_racha'::text, 'protector_tickets'::text, 'protector_dual'::text, 'potenciador'::text, 'doble_oportunidad'::text, 'triple_oportunidad'::text, 'modo_papel'::text, 'carta_ccaa_comodin'::text])))
+servicios GRANT anon SELECT
+servicios GRANT authenticated SELECT
+servicios GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+servicios POL servicios_select_publico ((activo = true) OR public.es_admin())
+suscripciones COLS actualizado_en timestamp with time zone t now(), creado_en timestamp with time zone t now(), estado text t, fin_en timestamp with time zone f, id uuid t gen_random_uuid(), identificador_externo text f, inicio_en timestamp with time zone t, payload_validacion jsonb t '{}'::jsonb, producto_codigo text t, proveedor text t, renovacion_en timestamp with time zone f, usuario_id uuid t
+suscripciones CON suscripciones_estado_check CHECK ((estado = ANY (ARRAY['activa'::text, 'pausada'::text, 'cancelada'::text, 'caducada'::text, 'periodo_prueba'::text])))
+suscripciones CON suscripciones_pkey PRIMARY KEY (id)
+suscripciones CON suscripciones_proveedor_check CHECK ((proveedor = ANY (ARRAY['google_play'::text, 'app_store'::text, 'stripe'::text, 'manual'::text])))
+suscripciones CON suscripciones_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE
+suscripciones GRANT authenticated SELECT
+suscripciones GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
+suscripciones POL suscripciones_select_propio ((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())
+transacciones_cartera COLS cantidad integer t, compra_id uuid f, creado_en timestamp with time zone t now(), descripcion text f, id uuid t gen_random_uuid(), idempotency_key text f, metadatos jsonb t '{}'::jsonb, referencia_id uuid f, referencia_tipo text f, saldo_anterior integer f, saldo_resultante integer t, seq bigint f, tipo text t, usuario_id uuid t
+transacciones_cartera CON transacciones_cartera_compra_id_fkey FOREIGN KEY (compra_id) REFERENCES public.compras_usuario(id) ON DELETE SET NULL
+transacciones_cartera CON transacciones_cartera_pkey PRIMARY KEY (id)
+transacciones_cartera CON transacciones_cartera_saldo_resultante_check CHECK ((saldo_resultante >= 0))
+transacciones_cartera CON transacciones_cartera_tipo_check CHECK ((tipo = ANY (ARRAY['recarga'::text, 'pack_tickets'::text, 'gasto'::text, 'compra_examen'::text, 'compra_servicio'::text, 'ajuste'::text, 'devolucion'::text, 'regalo'::text, 'reto_diario'::text, 'bonus_racha'::text, 'referido'::text, 'reporte_validado'::text, 'potenciador'::text, 'protector'::text])))
+transacciones_cartera CON transacciones_cartera_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE
+transacciones_cartera CON transacciones_cartera_usuario_idempotency_key UNIQUE (usuario_id, idempotency_key)
+transacciones_cartera CON transacciones_cartera_usuario_seq_key UNIQUE (usuario_id, seq)
+transacciones_cartera GRANT authenticated SELECT
+transacciones_cartera GRANT service_role REFERENCES,SELECT,TRIGGER
+transacciones_cartera POL transacciones_select_propio ((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())

@@ -80,10 +80,14 @@ class CatalogRoutesTest {
                 .map { Json.parseToJsonElement(readRequestBody(it)).jsonObject }
         var grantFacts = "[]"
         var capabilities = "[]"
+        var specialties = "[]"
         var premium = "[]"
-        var plan = "[]"
+        // Access v2: el plan solo cubre rafagas/razonados segun su nivel; por defecto un plan de nivel 3 (los tests que miran D7-02 fijan el suyo)
+        var plan = """[{"planes_suscripcion":{"codigo":"pro","nivel":3}}]"""
         var credits = "[]"
         var signed = "[]"
+        var communities = """[{"codigo":"MAD","nombre":"Comunidad de Madrid"},{"codigo":"AND","nombre":"Andalucía"}]"""
+        var profileSpecialty = """[{"especialidad_principal_id":"11111111-1111-4111-8111-111111111111"}]"""
         var failOn: String? = null
 
         fun respond(rawUri: String): V1StubResponse {
@@ -93,13 +97,16 @@ class CatalogRoutesTest {
             if (uri.contains(COLLECTION_RPC)) return collection(Json.parseToJsonElement(readRequestBody(sent.last())).jsonObject)
             val body = when {
                 uri.contains("/storage/v1/object/sign/") -> signed
+                uri.contains("/rest/v1/perfiles_usuario?select=especialidad_principal_id") -> profileSpecialty
                 uri.contains("/rest/v1/estado_premium_usuario") -> premium
                 uri.contains("/rest/v1/productos_comerciales") -> plan
                 uri.contains("/rest/v1/creditos_contenido_usuario") -> credits
                 uri.contains("/rest/v1/capacidades_especialidad") -> capabilities
+                uri.contains("/rest/v1/comunidades_autonomas?select=codigo,nombre") -> communities
+                uri.contains("/rest/v1/especialidades?select=id,codigo,nombre,slug") -> specialties
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=examen_id,motivo") -> grantFacts
                 uri.contains("/rest/v1/contenido_desbloqueado_usuario?select=id,valido_desde") -> myGrants(uri)
-                uri.contains("/rest/v1/intentos_examen?select=id&usuario_id") -> openAttempt
+                uri.contains("/rest/v1/intentos_examen?select=id,estado&usuario_id") -> openAttempt
                 uri.contains("/rest/v1/intentos_examen?select=id,examen_id,estado") -> latestAttempts
                 uri.contains("/rest/v1/intentos_examen?select=id,estado,total_respondidas") -> attempts(uri)
                 uri.contains("/rest/v1/examenes?select=tipo_examen,anio,comunidades_autonomas") -> facets
@@ -152,7 +159,7 @@ class CatalogRoutesTest {
 
     private fun JsonObject.examIds(): List<String> = this["items"]!!.jsonArray.map { it.jsonObject["examen"]!!.jsonObject["id"]!!.jsonPrimitive.content }
 
-    private fun Application.catalogModule() {
+    private fun Application.catalogModule(limit: suspend (CanonicalUserId) -> Unit = {}) {
         install(ContentNegotiation) { json(testJson) }
         installRequestCorrelation()
         installBackendStatusPages()
@@ -163,7 +170,7 @@ class CatalogRoutesTest {
         )
         val gateway = CatalogGateway(TransportCatalogUpstream(transport), json)
         val clock = { now }
-        routing { catalogRoutes(CatalogRuntime(resolver, CatalogService(gateway, clock), EntitlementService(gateway, clock))) }
+        routing { catalogRoutes(CatalogRuntime(resolver, CatalogService(gateway, clock), EntitlementService(gateway, clock), limit)) }
     }
 
     private fun exam(
@@ -177,10 +184,11 @@ class CatalogRoutesTest {
         comunidad: String? = "MAD",
         demo: Boolean = false,
         anio: Int? = 2024,
+        penalty: String = "",
     ): String =
         """{"id":"$id","codigo_examen":"EX-${id.takeLast(3)}","titulo":"$titulo","descripcion":"desc","tipo_examen":"$tipo","tipo_acceso":"$acceso",""" +
             """"especialidad_id":"$especialidad","total_preguntas":10,"duracion_minutos":60,"anio":${anio ?: "null"},""" +
-            """"portada_storage_path":${cover?.let { "\"$it\"" } ?: "null"},"publicado_en":"$publicado","demo_disponible":$demo,""" +
+            """"portada_storage_path":${cover?.let { "\"$it\"" } ?: "null"},"publicado_en":"$publicado","demo_disponible":$demo,$penalty""" +
             """"comunidades_autonomas":${comunidad?.let { """{"codigo":"$it"}""" } ?: "null"}}"""
 
     private fun premiumRow(end: String? = "2099-01-01T00:00:00+00:00", estado: String = "activa", flag: Boolean = true) =
@@ -351,7 +359,8 @@ class CatalogRoutesTest {
     fun anOversizedLimitIsClampedToFifty() = testApplication {
         application { catalogModule() }
         assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/examenes?limit=500").status)
-        assertTrue(upstream.urls.single().contains("&limit=51"), upstream.urls.single())
+        val examsUrl = upstream.urls.single { it.contains("select=id,codigo_examen") }
+        assertTrue(examsUrl.contains("&limit=51"), examsUrl)
     }
 
     @Test
@@ -388,13 +397,48 @@ class CatalogRoutesTest {
         assertFalse(response.bodyAsText().contains("boom"), "el detalle del upstream no sale")
     }
 
+    // =================================================================== V1: la especialidad es una PUERTA (propietario 2026-10-16)
+
+    private val otherSpecialty = "22222222-2222-4222-8222-222222222222"
+
+    @Test
+    fun anExamOutsideTheUsersSpecialtyDoesNotExistForThemEvenIfTheyOwnIt() = testApplication {
+        application { catalogModule() }
+        upstream.profileSpecialty = """[{"especialidad_principal_id":"$otherSpecialty"}]"""
+        upstream.examById = { "[${exam(e1, acceso = "premium")}]" }
+        upstream.grantFacts = "[${grantFact(e1, motivo = "compra")}]" // a stored purchase does not open it while the specialty differs
+        val response = client.getAs("/api/v1/app/examenes/$e1")
+        assertEquals(HttpStatusCode.NotFound, response.status, response.bodyAsText())
+        assertEquals("EXAM_NOT_FOUND", code(response.bodyAsText()))
+        upstream.profileSpecialty = """[{"especialidad_principal_id":"$esp"}]"""
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/examenes/$e1").status)
+        upstream.profileSpecialty = "[]" // no specialty chosen yet: denied too (E2-V1-E06)
+        assertEquals(HttpStatusCode.NotFound, client.getAs("/api/v1/app/examenes/$e1").status)
+    }
+
+    @Test
+    fun listsAreScopedToTheUsersSpecialtyAndAnotherSpecialtyIsEmpty() = testApplication {
+        application { catalogModule() }
+        upstream.profileSpecialty = """[{"especialidad_principal_id":"$esp"}]"""
+        upstream.exams = { "[${exam(e1)}]" }
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/examenes").status)
+        assertTrue(upstream.urls.last { it.contains("/rest/v1/examenes?select=id,codigo_examen") }.contains("especialidad_id=eq.$esp"), "scoped to the own specialty without the client asking")
+        val sentBefore = upstream.urls.size
+        val other = client.getAs("/api/v1/app/examenes?especialidadId=$otherSpecialty")
+        assertEquals(HttpStatusCode.OK, other.status)
+        assertEquals(0, JsonObjectOf(other.bodyAsText())["items"]!!.jsonArray.size)
+        assertTrue(upstream.urls.drop(sentBefore).none { it.contains("/rest/v1/examenes?select=id,codigo_examen") }, "another specialty never reaches the catalog read")
+        val mine = client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO&especialidadId=$otherSpecialty")
+        assertEquals(0, JsonObjectOf(mine.bodyAsText())["items"]!!.jsonArray.size)
+    }
+
     // =================================================================== D2-02
 
     @Test
     fun detailReturnsMetadataOnlyWithAccessStateOpenAttemptAndNullPrice() = testApplication {
         application { catalogModule() }
         upstream.examById = { "[${exam(e1, acceso = "premium", cover = "exam-covers/$e1/a.png")}]" }
-        upstream.openAttempt = """[{"id":"$intento"}]"""
+        upstream.openAttempt = """[{"id":"$intento","estado":"en_progreso"}]"""
         upstream.grantFacts = "[${grantFact(e1, motivo = "regalo")}]"
         upstream.signed = """[{"path":"exam-covers/$e1/a.png","signedURL":"https://stub.supabase.test/storage/v1/object/sign/exam-resources/exam-covers/$e1/a.png?token=t"}]"""
         val response = client.getAs("/api/v1/app/examenes/${e1.uppercase()}")
@@ -410,8 +454,140 @@ class CatalogRoutesTest {
         listOf("preguntas", "opciones", "totalEvaluables", "demoDisponible", "precioRef").forEach { assertFalse(body.contains("\"$it\""), "$it no forma parte del detalle") }
         val byId = upstream.urls.single { it.contains("/rest/v1/examenes?") }
         assertTrue(byId.contains("&id=eq.$e1&activo=eq.true&publicado_en=not.is.null&publicado_en=lte.2026-10-08T12:00:00Z&limit=1"), byId)
-        assertTrue(upstream.urls.single { it.contains("intentos_examen") }.contains("usuario_id=eq.$TEST_UID&examen_id=eq.$e1&estado=eq.en_progreso"))
+        assertTrue(upstream.urls.single { it.contains("intentos_examen") }.contains("usuario_id=eq.$TEST_UID&examen_id=eq.$e1&origen_intento=eq.examen&creado_por_comando=not.is.null&es_demo=eq.false&estado=in.(en_progreso,finalizado)&order=estado.asc,finalizado_en.desc.nullslast,id.desc&limit=2"))
+        assertNull(exam["ultimoIntentoFinalizadoId"], "sin intento finalizado: el campo no viaja")
         assertNoQuestionTables()
+    }
+
+    @Test
+    fun anUnknownQueryParameterIsRejectedInsteadOfSilentlyIgnored() = testApplication {
+        application { catalogModule() }
+        for (path in listOf("/api/v1/app/examenes?especialidad=Local", "/api/v1/app/me/examenes?vista=EN_CURSO&foo=1")) {
+            val response = client.getAs(path)
+            val body = response.bodyAsText()
+            assertEquals(HttpStatusCode.BadRequest, response.status, "$path -> $body")
+            assertTrue(body.contains("UNKNOWN_FIELD"), body)
+        }
+        assertTrue(upstream.sent.isEmpty(), "un parametro desconocido no debe producir ninguna lectura upstream: ${upstream.urls}")
+    }
+
+    // =================================================================== V1 STEP 2: comunidad legible
+
+    @Test
+    fun theReadableCommunityNameIsServedOnListDetailAndCollectionNeverTheRawCode() = testApplication {
+        application { catalogModule() }
+        val e1 = "e1111111-1111-4111-8111-111111111111"
+        val e2 = "e2222222-2222-4222-8222-222222222222"
+        upstream.exams = { "[${exam(e1, comunidad = "MAD")},${exam(e2, comunidad = null)}]" }
+        val list = JsonObjectOf(client.getAs("/api/v1/app/examenes").bodyAsText())["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("Comunidad de Madrid", list.first { it["id"]!!.jsonPrimitive.content == e1 }["comunidadNombre"]!!.jsonPrimitive.content)
+        assertNull(list.first { it["id"]!!.jsonPrimitive.content == e2 }["comunidadNombre"], "un examen heredado sin comunidad no inventa nombre")
+
+        upstream.examById = { "[${exam(e1, comunidad = "MAD")}]" }
+        val detail = client.getAs("/api/v1/app/examenes/$e1")
+        assertConforms("D2-02", detail.bodyAsText())
+        assertEquals("Comunidad de Madrid", JsonObjectOf(detail.bodyAsText())["examen"]!!.jsonObject["comunidadNombre"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun aFailureReadingCommunityNamesNeverBreaksTheCatalog() = testApplication {
+        application { catalogModule() }
+        val e1 = "e1111111-1111-4111-8111-111111111111"
+        upstream.exams = { "[${exam(e1, comunidad = "MAD")}]" }
+        upstream.failOn = "comunidades_autonomas?select=codigo,nombre"
+        val response = client.getAs("/api/v1/app/examenes")
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        val item = JsonObjectOf(response.bodyAsText())["items"]!!.jsonArray[0].jsonObject
+        assertEquals("MAD", item["comunidadCodigo"]!!.jsonPrimitive.content)
+        assertNull(item["comunidadNombre"], "sin nombre el cliente no muestra cabecera: nunca el codigo crudo")
+    }
+
+    // =================================================================== E2-P02 / FA20
+
+    @Test
+    fun catalogAndEntitlementReadsShareOnePerUserBucketAnd429WithRetryAfter() = testApplication {
+        val limiter = InMemoryOposiBotsAuthRateLimiter()
+        application { catalogModule(limiter.subjectLimit(OposiBotsAuthOperation.CATALOG_READ)) }
+        val paths = listOf("/api/v1/app/examenes", "/api/v1/app/me/entitlement", "/api/v1/app/me/examenes?vista=EN_CURSO")
+        repeat(OposiBotsAuthOperation.CATALOG_READ.subjectLimit) { i ->
+            val response = client.getAs(paths[i % paths.size])
+            assertTrue(response.status != HttpStatusCode.TooManyRequests, "peticion $i dentro del limite")
+        }
+        for (path in paths + "/api/v1/app/examenes/00000000-0000-4000-8000-000000000001") {
+            val response = client.getAs(path)
+            assertEquals(HttpStatusCode.TooManyRequests, response.status, path)
+            assertEquals("RATE_LIMITED", code(response.bodyAsText()))
+            assertNotNull(response.headers[HttpHeaders.RetryAfter])
+        }
+        assertEquals(120, OposiBotsAuthOperation.CATALOG_READ.subjectLimit)
+        assertEquals(60L, OposiBotsAuthOperation.CATALOG_READ.windowSeconds)
+    }
+
+    @Test
+    fun publicSpecialtiesAreNotUserLimited() = testApplication {
+        application { catalogModule { throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 7) } }
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/public/especialidades").status)
+        assertEquals(HttpStatusCode.TooManyRequests, client.getAs("/api/v1/app/examenes").status)
+    }
+
+    // =================================================================== D2-17
+
+    @Test
+    fun publicSpecialtiesServeRealIdsWithCapabilitiesWithoutSessionAndCached() = testApplication {
+        application { catalogModule() }
+        val s1 = "5a000000-0000-4000-8000-000000000001"
+        val s2 = "5a000000-0000-4000-8000-000000000002"
+        upstream.specialties = """[{"id":"$s1","codigo":"EF","nombre":"Educacion Fisica","slug":"ef"},{"id":"$s2","codigo":"ING","nombre":"Ingles","slug":"ing"}]"""
+        upstream.capabilities = """[{"especialidad_id":"$s2","permite_rafagas":true,"permite_razonados":false,"permite_inmersivos":false,"permite_demos":true}]"""
+        val response = client.get("/api/v1/public/especialidades")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertEquals("public, max-age=300", response.headers[HttpHeaders.CacheControl])
+        assertConforms("D2-17", body)
+        val items = JsonObjectOf(body)["items"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf(s1, s2), items.map { it["id"]!!.jsonPrimitive.content })
+        assertEquals("true", items[0]["capacidades"]!!.jsonObject["permiteInmersivos"]!!.jsonPrimitive.content, "sin fila de capacidades: abierto")
+        assertEquals("false", items[1]["capacidades"]!!.jsonObject["permiteRazonados"]!!.jsonPrimitive.content)
+        assertTrue(upstream.urls.single { it.contains("/rest/v1/especialidades?") }.contains("activa=eq.true&order=posicion.asc,nombre.asc,id.asc&limit=101"))
+        val before = upstream.sent.size
+        assertEquals(HttpStatusCode.OK, client.get("/api/v1/public/especialidades").status)
+        assertEquals(before, upstream.sent.size, "segunda lectura servida por la cache de proceso")
+    }
+
+    @Test
+    fun theCoverExposesThePenaltyRuleOfTheExam() = testApplication {
+        application { catalogModule() }
+        suspend fun penalty(row: String): JsonObject? {
+            upstream.examById = { "[$row]" }
+            val body = client.getAs("/api/v1/app/examenes/$e1").bodyAsText()
+            assertConforms("D2-02", body)
+            return JsonObjectOf(body)["examen"]!!.jsonObject["penalizacion"] as? JsonObject
+        }
+        assertNull(penalty(exam(e1)), "no penalty: the field does not travel")
+        assertEquals("RACIONAL", penalty(exam(e1, penalty = """"penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":true,"""))!!["tipo"]!!.jsonPrimitive.content)
+        val fixed = penalty(exam(e1, penalty = """"penalizacion_num":1,"penalizacion_den":3,"penalizacion_racional":false,"""))!!
+        assertEquals("FIJA", fixed["tipo"]!!.jsonPrimitive.content); assertEquals("1", fixed["numerador"]!!.jsonPrimitive.content); assertEquals("3", fixed["denominador"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun detailCarriesTheLastFinishedAttemptInTheSameBoundedReadPerf01() = testApplication {
+        application { catalogModule() }
+        upstream.examById = { "[${exam(e1)}]" }
+        val done = "cccccccc-0000-4000-8000-000000000002"
+        // Sin intento abierto: la fila 1 ya es la ultima finalizada (el orden lo da PostgREST).
+        upstream.openAttempt = """[{"id":"$done","estado":"finalizado"},{"id":"cccccccc-0000-4000-8000-000000000001","estado":"finalizado"}]"""
+        val exam = JsonObjectOf(client.getAs("/api/v1/app/examenes/$e1").bodyAsText())["examen"]!!.jsonObject
+        assertEquals(done, exam["ultimoIntentoFinalizadoId"]!!.jsonPrimitive.content)
+        assertNull(exam["intentoAbiertoId"])
+        // Con abierto + finalizado: los dos, en la MISMA lectura (una sola peticion a intentos_examen).
+        upstream.openAttempt = """[{"id":"$intento","estado":"en_progreso"},{"id":"$done","estado":"finalizado"}]"""
+        val body = client.getAs("/api/v1/app/examenes/$e1").bodyAsText()
+        assertConforms("D2-02", body)
+        val both = JsonObjectOf(body)["examen"]!!.jsonObject
+        assertEquals(intento, both["intentoAbiertoId"]!!.jsonPrimitive.content)
+        assertEquals(done, both["ultimoIntentoFinalizadoId"]!!.jsonPrimitive.content)
+        assertEquals(2, upstream.urls.count { it.contains("/rest/v1/intentos_examen") }, "una lectura por portada, no paginas de D2-13")
+        assertTrue(upstream.urls.none { it.contains("app_my_exams_collection") || it.contains("contenido_desbloqueado_usuario?select=id,valido_desde") })
     }
 
     @Test
@@ -479,10 +655,14 @@ class CatalogRoutesTest {
     }
 
     @Test
-    fun myExamsUsesTheJwtSubjectOnlyAndIgnoresAnyUserInTheQuery() = testApplication {
+    fun myExamsUsesTheJwtSubjectOnlyAndRejectsAnyUserInTheQuery() = testApplication {
         application { catalogModule() }
-        client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO&usuarioId=dddddddd-dddd-4ddd-8ddd-000000000009&userId=x")
-        val url = upstream.urls.single()
+        // V1 (E5): un usuario en el query ya no se ignora en silencio, se RECHAZA (400 UNKNOWN_FIELD) y no sale ninguna lectura.
+        val forged = client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO&usuarioId=dddddddd-dddd-4ddd-8ddd-000000000009&userId=x")
+        assertEquals(HttpStatusCode.BadRequest, forged.status, forged.bodyAsText())
+        assertTrue(upstream.sent.isEmpty(), "una consulta con usuario forjado no debe llegar a la base: ${upstream.urls}")
+        client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO")
+        val url = upstream.urls.single { it.contains("intentos_examen") }
         assertTrue(url.contains("usuario_id=eq.$TEST_UID"))
         assertFalse(url.contains("dddddddd"))
     }
@@ -545,7 +725,7 @@ class CatalogRoutesTest {
         assertTrue(items.all { it["nota"] == null && it["calificacion"] == null }, "DEC-013 / Q-08: sin nota ni calificacion")
         assertEquals("https://stub.supabase.test/storage/v1/object/sign/exam-resources/exam-covers/$e1/a.png?token=t", items[0]["examen"]!!.jsonObject["portadaUrl"]!!.jsonPrimitive.content)
         assertNull(items[3]["examen"]!!.jsonObject["comunidadCodigo"])
-        assertEquals(setOf("id", "titulo", "tipoExamen", "comunidadCodigo", "portadaUrl"), items[0]["examen"]!!.jsonObject.keys, "solo los campos del contrato")
+        assertEquals(setOf("id", "titulo", "tipoExamen", "comunidadCodigo", "comunidadNombre", "portadaUrl"), items[0]["examen"]!!.jsonObject.keys, "solo los campos del contrato")
         assertEquals(
             listOf("AND" to 1, "MAD" to 2),
             page["grupos"]!!.jsonArray.map { it.jsonObject["comunidadCodigo"]!!.jsonPrimitive.content to it.jsonObject["total"]!!.jsonPrimitive.content.toInt() },
@@ -556,7 +736,7 @@ class CatalogRoutesTest {
         // UNA llamada a la funcion, con el `sub` del JWT y sin filtros; ninguna lectura directa "parcial" de concesiones o intentos.
         val call = upstream.collectionCalls.single()
         assertEquals(
-            setOf("p_usuario_id", "p_tipo_examen", "p_comunidad_id", "p_anio", "p_despues_en", "p_despues_id", "p_limite", "p_con_grupos"),
+            setOf("p_usuario_id", "p_tipo_examen", "p_comunidad_id", "p_anio", "p_despues_en", "p_despues_id", "p_limite", "p_con_grupos", "p_especialidad_id"),
             call.keys,
         )
         assertEquals(TEST_UID, call["p_usuario_id"]!!.jsonPrimitive.content)
@@ -576,7 +756,7 @@ class CatalogRoutesTest {
     fun coleccionSendsTheValidatedFiltersAndOnlyTheJwtSubjectToTheReadRpc() = testApplication {
         application { catalogModule() }
         val foreign = "dddddddd-dddd-4ddd-8ddd-000000000009"
-        val page = client.myExams("vista=COLECCION&tipoExamen=guiado&comunidadId=${com.uppercase()}&anio=2024&limit=500&usuarioId=$foreign&userId=$foreign&p_usuario_id=$foreign&especialidadId=$foreign")
+        val page = client.myExams("vista=COLECCION&tipoExamen=guiado&comunidadId=${com.uppercase()}&anio=2024&limit=500&especialidadId=$foreign")
         assertEquals(emptyList(), page.examIds())
         assertEquals(JsonArray(emptyList()), page["grupos"], "coleccion vacia: grupos vacios, no null")
         val call = upstream.collectionCalls.single()
@@ -586,7 +766,7 @@ class CatalogRoutesTest {
         assertEquals("2024", call["p_anio"]!!.jsonPrimitive.content)
         assertEquals("51", call["p_limite"]!!.jsonPrimitive.content, "limit recortado a 50 (+1)")
         assertFalse(call.toString().contains("dddddddd"), "ningun usuario del query llega a la funcion: $call")
-        assertEquals(1, upstream.sent.size, "coleccion vacia: ni derechos ni portadas")
+        assertEquals(2, upstream.sent.size, "coleccion vacia: la lectura de la especialidad del usuario y la funcion; ni derechos ni portadas")
     }
 
     @Test
@@ -666,8 +846,8 @@ class CatalogRoutesTest {
         assertEquals(HttpStatusCode.ServiceUnavailable, response.status, body)
         assertEquals("UPSTREAM_UNAVAILABLE", code(body))
         assertFalse(body.contains("PGRST202") || body.contains("app_my_exams_collection") || body.contains("items"), "ni detalle del upstream ni datos parciales: $body")
-        assertEquals(1, upstream.sent.size, "solo la llamada a la funcion: sin lectura de respaldo")
-        assertTrue(upstream.urls.single().endsWith(Upstream.COLLECTION_RPC))
+        assertEquals(2, upstream.sent.size, "la especialidad del usuario y la funcion: sin lectura de respaldo")
+        assertTrue(upstream.urls.single { it.contains(Upstream.COLLECTION_RPC) }.endsWith(Upstream.COLLECTION_RPC))
         // Las otras dos vistas no dependen de la funcion.
         assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/me/examenes?vista=ADQUIRIDOS").status)
         assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/me/examenes?vista=EN_CURSO").status)

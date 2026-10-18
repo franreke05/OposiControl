@@ -43,6 +43,59 @@ components:
             $ref: '../common/errors.yaml#/components/responses/UpstreamError'
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    QuestionFeedback:
+      post:
+        operationId: reportQuestion
+        summary: 'Report a question (feedback on an exam question)'
+        tags: [community]
+        x-contract-id: D5-15
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: OPTIONAL
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, ATTEMPT_NOT_FOUND, QUESTION_NOT_IN_ATTEMPT, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'FA24 (V1, E3 Reportar). NOT deprecated: this is the live, supported contract of the existing route (it was only listed as legacy). Creates ONE pending report that the admin sees in Control. The user is always the JWT sub. intentoId is REQUIRED: only an attempt of the caller proves access to the exam, and the question must belong to that attempt exam (422 QUESTION_NOT_IN_ATTEMPT, never a 5xx; an attempt that is not the caller is 404 ATTEMPT_NOT_FOUND). tipoFeedback is the closed vocabulary of the database CHECK (default otro); descripcion at most 2000 code points. IDEMPOTENCY: an optional Idempotency-Key (UUID); the same key and the same body return the same report (same id, Idempotent-Replayed: true, nothing is written twice), the same key with another body is 422 IDEMPOTENCY_KEY_REUSED; without a key every call creates a report. Per-user limits: 10 per minute and 50 per day (429 RATE_LIMITED with Retry-After).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyOptional'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuestionFeedbackRequest'
+        responses:
+          '201':
+            description: 'Report created (or replayed with the same key and body).'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/QuestionFeedbackCreated'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION (including a missing intentoId) or IDEMPOTENCY_KEY_INVALID.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND (also an attempt of another user).'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'QUESTION_NOT_IN_ATTEMPT or IDEMPOTENCY_KEY_REUSED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     OposiTesterMe:
       get:
         operationId: getMyOposiTesterStatus
@@ -90,6 +143,30 @@ components:
         type: string
         enum: ['private, max-age=300']
   schemas:
+    QuestionFeedbackRequest:
+      type: object
+      required: [preguntaId, intentoId]
+      additionalProperties: false
+      properties:
+        preguntaId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        intentoId:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipoFeedback:
+          type: string
+          enum: [mal_redactada, respuesta_incorrecta, explicacion_insuficiente, fuente_dudosa, recurso_roto, otro]
+          description: 'Closed vocabulary of the database CHECK; absent or blank means otro.'
+        descripcion:
+          type: string
+          maxLength: 2000
+    QuestionFeedbackCreated:
+      type: object
+      required: [ok, id]
+      properties:
+        ok:
+          type: boolean
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
     OposiRedCategoria:
       type: object
       required: [id, nombre, slug, posicion]

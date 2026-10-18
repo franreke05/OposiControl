@@ -62,6 +62,61 @@ internal enum class OposiBotsAuthOperation(
     ATTEMPT_REVIEW(240, 120, 60),
 
     /**
+     * EX14: acceso temporal a los bytes de un recurso de un intento propio. Un examen inmersivo de 200 preguntas con
+     * imagen + audio pide como mucho ~400 accesos en todo el intento (mas la renovacion de URLs caducadas a los 300 s):
+     * 300 por minuto no lo alcanza un opositor rapido y si frena una descarga masiva.
+     */
+    ATTEMPT_RESOURCE(600, 300, 60),
+
+    /**
+     * E2-S01: lecturas D2-07 / D2-08 / D2-12. El cliente real lee 1 D2-07 + ceil(N/20) D2-08 por arranque o reanudacion
+     * (como mucho 11 para 200 preguntas), lo mismo por cada resincronizacion (REVISION_CONFLICT / ANSWER_LOCKED) y 1 D2-12
+     * al terminar: 120 por minuto son mas de 10 recargas completas por minuto. Frena un bucle de lecturas sin tocar al
+     * opositor rapido.
+     */
+    ATTEMPT_READ(240, 120, 60),
+
+    /**
+     * E2-P02 / FA20: lecturas de catalogo y derechos con identidad (D2-01, D2-02, D2-13, D7-02), un solo cubo por usuario.
+     * La Home V1 pide 2-3 en paralelo y el Market pagina de 20 en 20: 120 por minuto son decenas de cargas completas y
+     * frenan un bucle o un raspado.
+     */
+    CATALOG_READ(240, 120, 60),
+
+    /** E2-P02 / FA20: lecturas de cartera (D6-01, D6-02). 60 por minuto: la Home y la pantalla de cartera piden 1-2 por carga. */
+    WALLET_READ(120, 60, 60),
+
+    /** V1 (Guardar, FA26): guardar y quitar de la OposiTeca (D4-20, D4-21): 60 por minuto y usuario. */
+    SAVED_WRITE(120, 60, 60),
+
+    /** V1 Access v2 (FA27): elegir un inmersivo con el cupo del plan (D7-32): 60 por minuto y usuario. */
+    PLAN_WRITE(120, 60, 60),
+
+    /** V1 wave 2 (FA29, E2 W-8): responder y reclamar el reto diario (D3-17, D3-18): 60 por minuto y usuario. */
+    CHALLENGE_WRITE(120, 60, 60),
+
+    /** V1 demo (FA28): inicios de intento DEMO por IP (limite por IP: 60 al dia; el limite por usuario vive en la base). */
+    DEMO_START_IP(60, 20, 86_400),
+
+    /** V1 (E2-V1-R01): reportar una pregunta (D5-15): 10 por minuto y usuario, para que nadie inunde la bandeja de Control. */
+    FEEDBACK_REPORT(60, 10, 60),
+
+    /** V1 (E2-V1-R01): tope DIARIO de reportes por usuario (D5-15). Solo limite por sujeto. */
+    FEEDBACK_REPORT_DAILY(200, 50, 86_400),
+
+    /** V1 economia: canje de un examen con OposiTickets (D6-03). Escritura economica: 10 por minuto y usuario. */
+    WALLET_WRITE(30, 10, 60),
+
+    /** V1 economia: lectura de un pedido de pago y de los paquetes (D6-11, D6-13). Se consulta por sondeo tras pagar: 60 por minuto. */
+    ORDER_READ(120, 60, 60),
+
+    /** V1 economia: crear / verificar un pedido de pago (D6-12, D6-14). 10 por minuto y usuario. */
+    ORDER_WRITE(30, 10, 60),
+
+    /** V1 economia: avisos entrantes del proveedor de pago. SOLO limite por IP (el aviso no lleva usuario). */
+    PAYMENT_WEBHOOK(300, 0, 60),
+
+    /**
      * Solicitud PUBLICA de acceso de administrador (`POST /v1/auth/admin-access-requests`, AdminAccessRequests.kt). Crea una
      * cuenta de Auth, asi que es tan estricta como [REGISTER]: pocas por IP y hora, y un tope SILENCIOSO por email.
      */
@@ -96,6 +151,20 @@ internal interface OposiBotsAuthRateLimiter : AutoCloseable {
     suspend fun checkSubject(operation: OposiBotsAuthOperation, subject: String): OposiBotsRateLimitDecision
     override fun close() = Unit
 }
+
+/**
+ * Limite por usuario como funcion `beforeLookup` de [CanonicalIdentityResolver.activeIdentity]: corre con el `sub` ya
+ * verificado y ANTES de leer el perfil. Sin limitador (pruebas, perfil sin auth) no limita.
+ */
+internal fun OposiBotsAuthRateLimiter?.subjectLimit(operation: OposiBotsAuthOperation): suspend (CanonicalUserId) -> Unit =
+    { userId ->
+        if (this != null) {
+            val decision = checkSubject(operation, userId.value)
+            if (!decision.allowed) {
+                throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = decision.retryAfterSeconds.coerceIn(1, 3_600).toInt())
+            }
+        }
+    }
 
 internal object OposiBotsAuthRateLimiterFactory {
     fun create(configuration: OposiBotsAuthConfiguration): OposiBotsAuthRateLimiter {

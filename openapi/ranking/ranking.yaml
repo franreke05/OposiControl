@@ -1,0 +1,169 @@
+# RANKING (FA33, V1 wave 4): the league of the current user, the own position inside the league, the top 3 of the own league and the place probability. Design: E1-V1-ENGAGEMENT-DESIGN.md section 3 (E2 conditions C-R1..C-R3, C-S3).
+# Leagues are tiers by the total of first-answered questions (Control data in ligas_nivel: 50/200/500/800/1000 in V1). The ranking is ALWAYS inside one tier AND one specialty (the caller's own), ordered by Nota media
+# (ties: more first answers, then a stable id). Everything is materialised by a bounded, throttled periodic job; no request computes a ranking. Own data only: the only other users ever shown are the top 3 of the caller's
+# own cohort by their PUBLIC HANDLE (the user-chosen username, opt-in, never derived from e-mail or name) and their Nota media, and only when the cohort reaches the Control minimum (cohorte_minima_comparativa).
+components:
+  pathItems:
+    Ranking:
+      get:
+        operationId: getRanking
+        summary: 'League, own position, top 3 and place probability of the current user'
+        tags: [ranking]
+        x-contract-id: D3-24
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Always 200 for an active account. liga null = the user has not reached the first tier (no ranking yet). posicion = the own position in the cohort (league x specialty), absent until the job has ranked the user; only users with a FULL Nota-media window are ranked (a user whose window is not full yet has no posicion). cohorte.tramo and top3 appear ONLY when the cohort has at least the Control minimum of ranked users, otherwise they are absent (the client shows only the own position). probabilidadPlaza = users with a worse Nota media / comparable users x 100, comparable = same specialty and same Nota-media window (the same number of questions) with a full window; disponible false carries the reason (sin_liga, ventana_incompleta, cohorte_insuficiente): the client shows "no disponible aun". calculadoEn is when the job last ranked the user (positions can be up to the job interval old).'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'The ranking view.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/RankingView'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    RankingVisibility:
+      put:
+        operationId: setRankingVisibility
+        summary: 'Opt in or out of appearing in the public top 3'
+        tags: [ranking]
+        x-contract-id: D3-25
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NATURAL
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, USERNAME_REQUIRED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Default is NOT public (opt-in). A public user appears in the top 3 of the own cohort by the username chosen at onboarding; the server never derives a handle from e-mail or name. Becoming public needs a username (422 USERNAME_REQUIRED). Opted-out users are ranked for themselves but never listed. Naturally idempotent.'
+        security:
+          - bearerAuth: []
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [publico]
+                properties:
+                  publico:
+                    type: boolean
+        responses:
+          '200':
+            description: 'The stored choice.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [publico]
+                  properties:
+                    publico:
+                      type: boolean
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'USERNAME_REQUIRED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    RankingView:
+      type: object
+      required: [visibilidad, probabilidadPlaza, top3]
+      properties:
+        liga:
+          type: [object, 'null']
+          required: [codigo, nombre]
+          properties:
+            codigo:
+              type: string
+            nombre:
+              type: string
+        posicion:
+          type: integer
+          minimum: 1
+        notaMedia:
+          type: number
+          minimum: 0
+          maximum: 10
+        cohorte:
+          type: object
+          required: [tramo]
+          description: 'Present only when the cohort reaches the Control minimum. tramo is a BUCKET (lower bound), never the exact size.'
+          properties:
+            tramo:
+              type: integer
+              minimum: 1
+        top3:
+          type: array
+          maxItems: 3
+          description: 'Empty below the minimum cohort. Only opted-in users with a username; posicion is the real position in the cohort.'
+          items:
+            type: object
+            required: [posicion, handle, notaMedia]
+            properties:
+              posicion:
+                type: integer
+                minimum: 1
+                maximum: 3
+              handle:
+                type: string
+              notaMedia:
+                type: number
+                minimum: 0
+                maximum: 10
+        probabilidadPlaza:
+          type: object
+          required: [disponible]
+          properties:
+            disponible:
+              type: boolean
+            porcentaje:
+              type: number
+              minimum: 0
+              maximum: 100
+            tramoCohorte:
+              type: integer
+              minimum: 1
+            motivo:
+              type: string
+              enum: [sin_liga, ventana_incompleta, cohorte_insuficiente]
+        visibilidad:
+          type: object
+          required: [publico]
+          properties:
+            publico:
+              type: boolean
+        calculadoEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
