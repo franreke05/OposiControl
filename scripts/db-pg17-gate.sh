@@ -99,6 +99,9 @@ extra_auth=supabase/baseline/main_shape_auth_users.sql
 
 extra_eng=supabase/baseline/main_shape_subset_extra_engagement.sql
 [ -s "$extra_eng" ] && { psqlc < "$extra_eng" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_eng no carga con ON_ERROR_STOP=1"; }; }
+# V1 NIGHT-A: la vertical de importacion en bloque de MAIN (staging + RPC de importacion), fuera del subconjunto generado.
+extra_imp=supabase/baseline/main_shape_subset_extra_import.sql
+[ -s "$extra_imp" ] && { psqlc < "$extra_imp" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_imp no carga con ON_ERROR_STOP=1"; }; }
 fingerprint "$tmp/f0"
 apply_all
 fingerprint "$tmp/f1"

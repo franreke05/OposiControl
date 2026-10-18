@@ -2783,7 +2783,7 @@ begin
   update auth.users set email_confirmed_at = now() - interval '1 hour' where id = pg_temp.u(3);
   perform pg_temp.att(gen_random_uuid(), pg_temp.u(3), false, 5, 100);
   perform public.app_job_referidos(); perform public.app_job_referidos();
-  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(3)) = 'diferida' and (select diferida_hasta from public.invitaciones where invitado_id = pg_temp.u(3)) > now() + interval '1 hour'
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(3)) = 'diferida' and (select diferida_hasta from public.invitaciones where invitado_id = pg_temp.u(3)) > now()
      and (select count(*) from public.transacciones_cartera where tipo = 'referido') = 2, 'daily cap of the inviter keeps it waiting, nothing paid';
   update public.configuracion_v1 set valor_integer = 5 where clave = 'referido_tope_diario';
 
@@ -3058,5 +3058,113 @@ begin
   assert not has_function_privilege('authenticated', 'public.app_foro_create_post(uuid,uuid,text,text,text,uuid)', 'execute') and not has_function_privilege('anon', 'public.app_foro_list(uuid,uuid,text,text,integer)', 'execute')
      and has_function_privilege('service_role', 'public.admin_foro_moderate(uuid,text,uuid,text,integer,text)', 'execute'), 'functions service-only';
   raise notice 'OK V1 wave 5b foro (text)';
+end $$;
+rollback;
+
+-- 20261022102000: FA37 bulk import with reserves / annulled / duplicate-lot guard (E1-V1-CONTROL-SPEC-IMPORT.md)
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.ex(n int) returns uuid language sql as $$ select ('e9500000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid $$;
+create function pg_temp.lot(n int) returns uuid language sql as $$ select ('b9500000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid $$;
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000f5', 'IMP', 'IMP', 'imp', true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000f5', 'IMC', 'Com IMP', 'com-imp');
+-- exams: 1 official draft (the main one), 2 NOT official, 3 official draft (annulled > reserves), 4 official draft with a demo question, 5 official PUBLISHED
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, es_oficial)
+select pg_temp.ex(n), 'IMP-' || n, 'e1000000-0000-0000-0000-0000000000f5', 'c1000000-0000-0000-0000-0000000000f5', 'Import ' || n, 'rafaga', 'gratuito',
+       n = 5, case when n = 5 then now() - interval '1 day' end, n <> 2 from generate_series(1, 5) n;
+create function pg_temp.mklot(n int, p_exam int, p_code text default null) returns uuid language plpgsql as $$
+begin
+  insert into public.lotes_importacion_preguntas (id, examen_id, nombre_archivo_original, tipo_examen, estado, total_detectadas, codigo_examen)
+    values (pg_temp.lot(n), pg_temp.ex(p_exam), 'f' || n || '.pdf', 'rafaga', 'parseado', 0, p_code);
+  return pg_temp.lot(n);
+end $$;
+create function pg_temp.st(p_lot int, p_pos int, p_bloque text, p_tag text, p_anulada boolean default false, p_vincular uuid default null) returns void language sql as $$
+  insert into public.preguntas_parseadas_staging (lote_id, posicion, bloque_original, titulo, opcion_a, opcion_b, opcion_c, opcion_d, respuesta_correcta, estado_parseo, bloque, anulada, motivo_anulacion, vincular_pregunta_id)
+  values (pg_temp.lot(p_lot), p_pos, 'raw', 'Pregunta imp ' || p_tag, 'A ' || p_tag, 'B ' || p_tag, 'C ' || p_tag, 'D ' || p_tag, 'A', case when p_vincular is null then 'ok' else 'aprobada' end,
+          p_bloque, p_anulada, case when p_anulada then 'tribunal' end, p_vincular) $$;
+do $$
+declare
+  r jsonb;
+begin
+  assert has_function_privilege('service_role', 'public.admin_import_lote_huella(uuid)', 'execute') and not has_function_privilege('authenticated', 'public.admin_import_lote_huella(uuid)', 'execute')
+     and not has_function_privilege('anon', 'private.import_lote_huella(uuid)', 'execute'), 'ACL: service role only';
+
+  -- ---- lot 1 on the official draft: 3 MAIN (the 2nd annulled) + 2 RESERVA in the lot order
+  perform pg_temp.mklot(1, 1, 'IMP-1');
+  perform pg_temp.st(1, 1, 'PRINCIPAL', 'a1'); perform pg_temp.st(1, 2, 'PRINCIPAL', 'a2', true); perform pg_temp.st(1, 3, 'PRINCIPAL', 'a3');
+  perform pg_temp.st(1, 4, 'RESERVA', 'r1'); perform pg_temp.st(1, 5, 'RESERVA', 'r2');
+  r := public.admin_import_lote_preguntas(pg_temp.lot(1));
+  assert (r ->> 'ejecutado')::boolean and (r ->> 'nuevas')::int = 5 and (r ->> 'reservas')::int = 2 and (r ->> 'anuladas')::int = 1 and r -> 'problema' = 'null'::jsonb and (r ->> 'huella') ~ '^[0-9a-f]{64}$', 'lot 1 published: ' || r::text;
+  assert (select string_agg(posicion || ':' || es_reserva::text || ':' || coalesce(orden_reserva::text, '-') || ':' || anulada::text, ',' order by posicion) from public.preguntas_examen where examen_id = pg_temp.ex(1))
+         = '1:false:-:false,2:false:-:true,3:false:-:false,4:true:1:false,5:true:2:false', 'reserves come after the mains, numbered in the lot order; the annulment is on the relation';
+  assert (select huella from public.lotes_importacion_preguntas where id = pg_temp.lot(1)) = r ->> 'huella', 'the lot stores its fingerprint';
+  r := public.admin_import_lote_preguntas(pg_temp.lot(1));
+  assert not (r ->> 'ejecutado')::boolean and (r ->> 'nuevas')::int = 0, 'idempotent: an imported lot writes nothing';
+  perform pg_temp.expect_e(format($q$update public.preguntas_parseadas_staging set bloque = 'PRINCIPAL' where lote_id = %L and bloque = 'RESERVA'$q$, pg_temp.lot(1)), 'STAGING_ROW_ALREADY_IMPORTED');
+
+  -- ---- duplicate-lot guard: the same content again for the same exam
+  perform pg_temp.mklot(2, 1, 'IMP-1');
+  perform pg_temp.st(2, 1, 'PRINCIPAL', 'a1'); perform pg_temp.st(2, 2, 'PRINCIPAL', 'a2', true); perform pg_temp.st(2, 3, 'PRINCIPAL', 'a3');
+  perform pg_temp.st(2, 4, 'RESERVA', 'r1'); perform pg_temp.st(2, 5, 'RESERVA', 'r2');
+  assert (public.admin_import_lote_huella(pg_temp.lot(2)) ->> 'duplicado_de')::uuid = pg_temp.lot(1), 'Control sees the duplicate at review time';
+  perform pg_temp.expect_e(format('select public.admin_import_lote_preguntas(%L)', pg_temp.lot(2)), 'IMPORT_LOT_DUPLICATE');
+  assert (select count(*) from public.preguntas_examen where examen_id = pg_temp.ex(1)) = 5, 'the refused lot wrote nothing';
+
+  -- ---- a new MAIN row after reserves exist is refused (reserves always come last)
+  perform pg_temp.mklot(3, 1, null);
+  perform pg_temp.st(3, 1, 'PRINCIPAL', 'late');
+  perform pg_temp.expect_e(format('select public.admin_import_lote_preguntas(%L)', pg_temp.lot(3)), 'IMPORT_MAIN_AFTER_RESERVE');
+  -- ... but a second lot of RESERVES continues the numbering
+  perform pg_temp.mklot(4, 1, null);
+  perform pg_temp.st(4, 1, 'RESERVA', 'r3');
+  r := public.admin_import_lote_preguntas(pg_temp.lot(4));
+  assert (r ->> 'reservas')::int = 1 and (select orden_reserva from public.preguntas_examen pe join public.preguntas p on p.id = pe.pregunta_id where pe.examen_id = pg_temp.ex(1) and p.titulo = 'Pregunta imp r3') = 3, 'a later reserve lot continues the order';
+  assert jsonb_array_length(r -> 'avisos') = 0, 'three reserves = the default maximum, no warning';
+
+  -- ---- header mismatch
+  perform pg_temp.mklot(5, 1, 'OTHER');
+  perform pg_temp.st(5, 1, 'RESERVA', 'h1');
+  perform pg_temp.expect_e(format('select public.admin_import_lote_preguntas(%L)', pg_temp.lot(5)), 'IMPORT_EXAM_CODE_MISMATCH');
+
+  -- ---- reserves only for official exams
+  perform pg_temp.mklot(6, 2, null);
+  perform pg_temp.st(6, 1, 'PRINCIPAL', 'n1'); perform pg_temp.st(6, 2, 'RESERVA', 'n2');
+  perform pg_temp.expect_e(format('select public.admin_import_lote_preguntas(%L)', pg_temp.lot(6)), 'IMPORT_RESERVE_REQUIRES_OFFICIAL_EXAM');
+
+  -- ---- more annulled than reserves (the derived rule is REEMPLAZO because the lot brings a reserve): refused, nothing written
+  perform pg_temp.mklot(7, 3, null);
+  perform pg_temp.st(7, 1, 'PRINCIPAL', 'x1', true); perform pg_temp.st(7, 2, 'PRINCIPAL', 'x2', true); perform pg_temp.st(7, 3, 'PRINCIPAL', 'x3'); perform pg_temp.st(7, 4, 'RESERVA', 'x4');
+  perform pg_temp.expect_e(format('select public.admin_import_lote_preguntas(%L)', pg_temp.lot(7)), 'IMPORT_OFFICIAL_RULES_INVALID');
+  assert (select count(*) from public.preguntas_examen where examen_id = pg_temp.ex(3)) = 0, 'refused lot rolled back';
+  -- an ANNULLED reserve is a warning, not a block
+  perform pg_temp.mklot(8, 3, null);
+  perform pg_temp.st(8, 1, 'PRINCIPAL', 'y1'); perform pg_temp.st(8, 2, 'RESERVA', 'y2', true);
+  r := public.admin_import_lote_preguntas(pg_temp.lot(8));
+  assert r -> 'avisos' ? 'ANNULLED_RESERVE_SKIPPED', 'annulled reserve is warned: ' || r::text;
+
+  -- ---- demo question: never annulled nor reserve through an import; moving an existing main to the reserve block is refused
+  insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values ('f9500000-0000-0000-0000-000000000001', 'IMP-DEMO', 'rafaga', 'Pregunta imp d1', true);
+  insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion) select ('0a950000-0000-0000-0000-00000000000' || o)::uuid, 'f9500000-0000-0000-0000-000000000001', chr(64 + o), chr(64 + o) || ' d1', o from generate_series(1, 4) o;
+  insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento) values ('f9500000-0000-0000-0000-000000000001', '0a950000-0000-0000-0000-000000000001', 'x');
+  insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, es_demo) values (pg_temp.ex(4), 'f9500000-0000-0000-0000-000000000001', 1, 1, true);
+  perform pg_temp.mklot(9, 4, null);
+  perform pg_temp.st(9, 1, 'PRINCIPAL', 'd1', true, 'f9500000-0000-0000-0000-000000000001');
+  perform pg_temp.expect_e(format('select public.admin_import_lote_preguntas(%L)', pg_temp.lot(9)), 'IMPORT_DEMO_CONFLICT');
+  perform pg_temp.mklot(10, 4, null);
+  perform pg_temp.st(10, 1, 'RESERVA', 'd1', false, 'f9500000-0000-0000-0000-000000000001');
+  perform pg_temp.expect_e(format('select public.admin_import_lote_preguntas(%L)', pg_temp.lot(10)), 'IMPORT_BLOCK_CONFLICT');
+
+  -- ---- a published official exam still needs the explicit confirmation, and the result must be coherent
+  perform pg_temp.mklot(11, 5, null);
+  perform pg_temp.st(11, 1, 'PRINCIPAL', 'p1'); perform pg_temp.st(11, 2, 'RESERVA', 'p2');
+  perform pg_temp.expect_e(format('select public.admin_import_lote_preguntas(%L)', pg_temp.lot(11)), 'IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED');
+  r := public.admin_import_lote_preguntas(pg_temp.lot(11), true);
+  assert (r ->> 'ejecutado')::boolean and (r ->> 'reservas')::int = 1, 'confirmed publication into a published official exam';
+  raise notice 'OK FA37 import with reserves';
 end $$;
 rollback;

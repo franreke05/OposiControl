@@ -67,6 +67,8 @@ export function converge({ psql, psqlAdmin, root = repo }) {
   // MAIN objects the bootstrap subset lacks (idempotent): beneficios_plan, suscripciones
   psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_plans.sql'), 'utf8'));
   psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_engagement.sql'), 'utf8'));
+  // NIGHT-A: the bulk-import vertical of MAIN (staging table + import RPCs), absent from the generated subset; idempotent
+  psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_import.sql'), 'utf8'));
   for (const f of files) {
     process.stdout.write(`  apply ${f.v}\n`);
     psql(f.text);
