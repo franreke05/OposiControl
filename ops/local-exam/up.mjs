@@ -18,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
 import { ensurePorts } from './ports.mjs';
+import { guardDbRecreate } from './db-guard.mjs';
 
 // Escritura en el stack compartido: falla (exit 3) si STACK_LOCK es de otro. Ver stack-lock.mjs.
 requireStackLock('up.mjs');
@@ -71,6 +72,8 @@ fs.writeFileSync(path.join(local, 'compose.env'),
   `LOCAL_JWT_SECRET=${secrets.jwtSecret}\nLOCAL_ANON_KEY=${secrets.anonKey}\nLOCAL_SERVICE_KEY=${secrets.serviceKey}\nLOCAL_DB_PORT=${ports.db}\nLOCAL_GATEWAY_PORT=${ports.gateway}\n`);
 fs.writeFileSync(path.join(local, 'issuer.txt'), `${GATEWAY}/auth/v1\n`);
 
+// DB GUARD (E1-V1-PORT-FIX): the db container has no volume; a compose recreate destroys the database. Refuses (exit 4) unless --allow-db-recreate (snapshot first). --reset is the explicit destructive path.
+if (!reset) guardDbRecreate({ composeArgs: ['--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml')], local });
 const compose = (...args) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'), ...args], { stdio: 'inherit' });
 const psql = (sql, vars = {}, user = 'postgres') => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
   'exec', '-T', 'db', 'psql', '-U', user, '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-At',
