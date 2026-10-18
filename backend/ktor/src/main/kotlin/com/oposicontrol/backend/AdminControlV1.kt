@@ -56,10 +56,15 @@ class AdminControlV1Gateway internal constructor(
     internal fun rpcOrNotProvisioned(function: String, body: JsonObject): String {
         val response = transport.rpcRaw(function, body.toString())
         if (response.status in 200..299) return response.body
-        if (response.status == 404 || response.body.contains("PGRST202") || response.body.contains("PGRST205")) {
-            throw domainError(CONTROL_RPC_NOT_PROVISIONED)
-        }
+        // Primero el error de DOMINIO que levanta la propia funcion (FORO_NOT_FOUND...): un 404 con codigo de dominio NO es
+        // "la funcion no existe". Solo PGRST202/PGRST205 en el campo `code` del cuerpo lo son.
         mapSupabaseDomainError(response.status, response.body)?.let { throw it }
+        val code = try {
+            (json.parseToJsonElement(response.body) as? JsonObject)?.get("code").contentOrNullSafe()
+        } catch (_: Exception) {
+            null
+        }
+        if (code == "PGRST202" || code == "PGRST205") throw domainError(CONTROL_RPC_NOT_PROVISIONED)
         throw IllegalStateException("Supabase rpc $function -> ${response.status}")
     }
 

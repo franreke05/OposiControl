@@ -2,6 +2,7 @@ package com.oposicontrol.admin.features.controlv1.presentation
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -22,9 +23,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.ButtonSize
+import com.oposicontrol.admin.core.ui.components.DropdownField
 import com.oposicontrol.admin.core.ui.components.FormSection
 import com.oposicontrol.admin.core.ui.components.LabeledField
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
@@ -33,26 +36,21 @@ import com.oposicontrol.admin.core.ui.components.WorkspaceNoticeTone
 import com.oposicontrol.admin.core.ui.components.WorkspacePanel
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Spacing
-import com.oposicontrol.admin.domain.model.MarkupAlign
-import com.oposicontrol.admin.domain.model.MarkupBlock
-import com.oposicontrol.admin.domain.model.MarkupColor
-import com.oposicontrol.admin.domain.model.MarkupInline
-import com.oposicontrol.admin.domain.model.MarkupSize
-import com.oposicontrol.admin.domain.model.MarkupStyle
 import com.oposicontrol.admin.domain.model.RazonadoMarkup
+import com.oposicontrol.admin.domain.model.RazonadoMarkupMessages
 
 internal const val MARKUP_INPUT_TAG = "control-markup-input"
 internal const val MARKUP_PREVIEW_TAG = "control-markup-preview"
 internal const val MARKUP_ISSUES_TAG = "control-markup-issues"
 
-/** El texto de ejemplo del editor: recorre toda la gramática. */
-internal const val MARKUP_SAMPLE = "[align:center]**Razonamiento**[/align][p]" +
-    "La respuesta correcta es la __B__ porque ++el plazo++ es de [color:red]diez días[/color] ~~hábiles~~.[p]" +
-    "[-]Primer argumento\n[-]Segundo argumento con [size:large]énfasis[/size]"
+/** Ejemplo del editor: recorre toda la gramática. */
+internal const val MARKUP_SAMPLE = "[align:center]**Razonamiento**[/align]\n" +
+    "La respuesta correcta es la __B__ porque ++el plazo++ es de [color:red]diez días[/color] ~~hábiles~~.[p]\n" +
+    "[-] Primer argumento\n[-] Segundo argumento con [size:lg]énfasis[/size]"
 
 /**
- * Editor de marcado de los razonados: escribes, ves el resultado EXACTO que verá la app y la lista de problemas. Solo
- * produce un árbol tipado: nada de lo escrito se interpreta como HTML, ni aquí ni al guardar.
+ * Editor de marcado de los razonados: escribes, ves la vista previa EXACTA que verá la app y los problemas con su causa.
+ * Solo produce un árbol tipado y nada se interpreta como HTML. El servidor repite el análisis al guardar (autoridad).
  */
 @Composable
 fun MarkupEditorScreen(modifier: Modifier = Modifier) {
@@ -61,12 +59,13 @@ fun MarkupEditorScreen(modifier: Modifier = Modifier) {
     ControlColumn(modifier) {
         FormSection(
             title = "Marcado de razonados",
-            description = "Negrita **x**, cursiva __x__, subrayado ++x++, tachado ~~x~~ (marcadores dobles: un * o _ suelto es texto). " +
-                "Color [color:red]x[/color] y tamaño [size:large]x[/size] salen de listas cerradas. Párrafo [p], viñeta [-] al empezar línea, " +
-                "alineación [align:center]x[/align]. Para escribir un marcador tal cual, antepón \\.",
+            description = "Negrita **x**, cursiva __x__, subrayado ++x++, tachado ~~x~~ (solo el marcador DOBLE es sintaxis: un * o _ suelto es texto). " +
+                "Color y tamaño salen de listas cerradas. Un salto de línea suelto es un espacio: para cortar párrafo, [p]. " +
+                "Para escribir un marcador tal cual, antepón \\.",
             icon = AppIcon.EDIT,
             action = { SecondaryButton(text = "Insertar ejemplo", size = ButtonSize.COMPACT, onClick = { text = MARKUP_SAMPLE }) },
         ) {
+            MarkupToolbar(onInsert = { snippet -> text += snippet })
             LabeledField(
                 label = "Texto",
                 value = text,
@@ -75,21 +74,28 @@ fun MarkupEditorScreen(modifier: Modifier = Modifier) {
                 placeholder = "Escribe o pega el razonamiento…",
                 singleLine = false,
                 minLines = 8,
-                maxWidth = androidx.compose.ui.unit.Dp.Unspecified,
-                supportingText = "${text.length} / ${RazonadoMarkup.MAX_LENGTH} caracteres",
-                isError = text.length > RazonadoMarkup.MAX_LENGTH,
+                maxWidth = Dp.Unspecified,
+                supportingText = "${text.length} / ${RazonadoMarkup.MAX_SOURCE} caracteres",
+                isError = text.length > RazonadoMarkup.MAX_SOURCE,
             )
         }
         MarkupIssues(result)
-        FormSection(title = "Vista previa", description = "Así lo verá quien abra el razonado.") {
+        FormSection(title = "Vista previa", description = "Así lo verá quien abra el razonado. Si el texto no tiene ninguna etiqueta, se guarda tal cual.") {
             WorkspacePanel(modifier = Modifier.testTag(MARKUP_PREVIEW_TAG)) {
-                MarkupPreview(result.document)
+                when (result) {
+                    is RazonadoMarkup.Result.Ok -> MarkupPreview(result.doc)
+                    is RazonadoMarkup.Result.Rejected -> Text(
+                        "Corrige los problemas de arriba para ver la vista previa.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = GlassTheme.tokens.textSecondary,
+                    )
+                }
             }
         }
-        if (result.document.isNotEmpty() && !result.hasErrors) {
-            FormSection(title = "Forma que se guarda", description = "El texto normalizado: abrirlo de nuevo da exactamente la misma vista previa.") {
+        if (result is RazonadoMarkup.Result.Ok && result.doc.blocks.isNotEmpty()) {
+            FormSection(title = "Texto plano de respaldo", description = "Lo que ven las versiones de la app que no dibujan estilos.") {
                 Text(
-                    text = RazonadoMarkup.normalize(result.document),
+                    text = RazonadoMarkup.plain(result.doc),
                     style = MaterialTheme.typography.bodySmall,
                     color = GlassTheme.tokens.textSecondary,
                 )
@@ -98,66 +104,86 @@ fun MarkupEditorScreen(modifier: Modifier = Modifier) {
     }
 }
 
+/** Botones que añaden la plantilla de una etiqueta al final del texto. Color, tamaño y alineación salen de listas, nunca de texto libre. */
 @Composable
-internal fun MarkupIssues(result: RazonadoMarkup.Result) {
-    if (result.issues.isEmpty()) return
-    Column(modifier = Modifier.testTag(MARKUP_ISSUES_TAG), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-        if (result.hasErrors) {
-            WorkspaceNotice(WorkspaceNoticeTone.DANGER, "Hay errores: no se puede importar así", detail = "Corrígelos y vuelve a revisar. El texto se muestra como mejor se ha podido leer.")
+private fun MarkupToolbar(onInsert: (String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            SecondaryButton(text = "Negrita", size = ButtonSize.COMPACT, onClick = { onInsert("**texto**") })
+            SecondaryButton(text = "Cursiva", size = ButtonSize.COMPACT, onClick = { onInsert("__texto__") })
+            SecondaryButton(text = "Subrayado", size = ButtonSize.COMPACT, onClick = { onInsert("++texto++") })
+            SecondaryButton(text = "Tachado", size = ButtonSize.COMPACT, onClick = { onInsert("~~texto~~") })
+            SecondaryButton(text = "Párrafo", size = ButtonSize.COMPACT, onClick = { onInsert("[p]") })
+            SecondaryButton(text = "Viñeta", size = ButtonSize.COMPACT, onClick = { onInsert("\n[-] ") })
         }
-        result.issues.take(MAX_ISSUES_SHOWN).forEach { issue ->
-            WorkspaceNotice(
-                tone = if (issue.severity == RazonadoMarkup.Severity.ERROR) WorkspaceNoticeTone.DANGER else WorkspaceNoticeTone.WARNING,
-                title = issue.message,
-                detail = "Posición ${issue.position}",
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+            DropdownField(
+                label = "Color",
+                selectedLabel = "Insertar color…",
+                options = RazonadoMarkup.COLORS.map { it to it },
+                onSelect = { name -> if (name != null) onInsert("[color:$name]texto[/color]") },
             )
-        }
-        if (result.issues.size > MAX_ISSUES_SHOWN) {
-            Text("… y ${result.issues.size - MAX_ISSUES_SHOWN} más.", style = MaterialTheme.typography.bodySmall, color = GlassTheme.tokens.textSecondary)
+            DropdownField(
+                label = "Tamaño",
+                selectedLabel = "Insertar tamaño…",
+                options = RazonadoMarkup.SIZES.map { it to it },
+                onSelect = { size -> if (size != null) onInsert("[size:$size]texto[/size]") },
+            )
+            DropdownField(
+                label = "Alineación",
+                selectedLabel = "Insertar alineación…",
+                options = RazonadoMarkup.ALIGNS.map { it to it },
+                onSelect = { align -> if (align != null) onInsert("[align:$align]texto[/align]") },
+            )
         }
     }
 }
 
-private const val MAX_ISSUES_SHOWN = 10
+@Composable
+internal fun MarkupIssues(result: RazonadoMarkup.Result) {
+    val issues = (result as? RazonadoMarkup.Result.Rejected)?.issues ?: return
+    Column(modifier = Modifier.testTag(MARKUP_ISSUES_TAG), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        WorkspaceNotice(WorkspaceNoticeTone.DANGER, "No se puede importar así", detail = "El servidor rechaza este texto mientras tenga estos problemas.")
+        issues.forEach { issue ->
+            WorkspaceNotice(
+                tone = WorkspaceNoticeTone.DANGER,
+                title = RazonadoMarkupMessages.describe(issue.code),
+                detail = "Cerca del carácter ${issue.at}",
+            )
+        }
+    }
+}
 
 /** Pinta los bloques con el estilo del diseño. Sin HTML: se construye un `AnnotatedString` desde el árbol tipado. */
 @Composable
-fun MarkupPreview(document: List<MarkupBlock>, modifier: Modifier = Modifier) {
+fun MarkupPreview(doc: RazonadoMarkup.Doc, modifier: Modifier = Modifier) {
     val tokens = GlassTheme.tokens
     val typography = MaterialTheme.typography
-    val palette: (MarkupColor) -> Color = { color ->
-        when (color) {
-            MarkupColor.RED -> tokens.danger
-            MarkupColor.GREEN -> tokens.success
-            MarkupColor.BLUE -> tokens.info
-            MarkupColor.ORANGE -> tokens.warning
-            MarkupColor.PURPLE -> tokens.accent
-            MarkupColor.GRAY -> tokens.textSecondary
+    val color: (String) -> Color = { name -> markupColor(name, tokens) }
+    val size: (String) -> TextUnit = { token ->
+        when (token) {
+            "xs" -> typography.labelMedium.fontSize
+            "sm" -> typography.bodySmall.fontSize
+            "md" -> typography.bodyMedium.fontSize
+            "lg" -> typography.titleSmall.fontSize
+            else -> typography.titleMedium.fontSize
         }
     }
-    val sizes: (MarkupSize) -> TextUnit = { size ->
-        when (size) {
-            MarkupSize.SMALL -> typography.bodySmall.fontSize
-            MarkupSize.NORMAL -> typography.bodyMedium.fontSize
-            MarkupSize.LARGE -> typography.titleMedium.fontSize
-            MarkupSize.XLARGE -> typography.titleLarge.fontSize
-        }
-    }
-    if (document.isEmpty()) {
+    if (doc.blocks.isEmpty()) {
         Text("Nada que mostrar todavía.", style = typography.bodyMedium, color = tokens.textSecondary, modifier = modifier)
         return
     }
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-        document.forEach { block ->
+        doc.blocks.forEach { block ->
             Text(
-                text = markupAnnotated(block, palette, sizes),
+                text = markupAnnotated(block, color, size),
                 style = typography.bodyMedium,
                 color = tokens.textPrimary,
                 textAlign = when (block.align) {
-                    MarkupAlign.LEFT -> TextAlign.Start
-                    MarkupAlign.CENTER -> TextAlign.Center
-                    MarkupAlign.RIGHT -> TextAlign.End
-                    MarkupAlign.JUSTIFY -> TextAlign.Justify
+                    "center" -> TextAlign.Center
+                    "right" -> TextAlign.End
+                    "justify" -> TextAlign.Justify
+                    else -> TextAlign.Start
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -165,25 +191,41 @@ fun MarkupPreview(document: List<MarkupBlock>, modifier: Modifier = Modifier) {
     }
 }
 
-/** Convierte un bloque en `AnnotatedString`. Pública para probar que cada nodo del árbol tiene su estilo. */
-internal fun markupAnnotated(block: MarkupBlock, color: (MarkupColor) -> Color, size: (MarkupSize) -> TextUnit): AnnotatedString =
-    buildAnnotatedString {
-        if (block.bullet) append("•  ")
-        block.inlines.forEach { appendInline(it, color, size) }
-    }
-
-private fun AnnotatedString.Builder.appendInline(node: MarkupInline, color: (MarkupColor) -> Color, size: (MarkupSize) -> TextUnit) {
-    when (node) {
-        is MarkupInline.Text -> append(node.text)
-        is MarkupInline.Styled -> withStyle(
-            when (node.style) {
-                MarkupStyle.BOLD -> SpanStyle(fontWeight = FontWeight.Bold)
-                MarkupStyle.ITALIC -> SpanStyle(fontStyle = FontStyle.Italic)
-                MarkupStyle.UNDERLINE -> SpanStyle(textDecoration = TextDecoration.Underline)
-                MarkupStyle.STRIKE -> SpanStyle(textDecoration = TextDecoration.LineThrough)
-            },
-        ) { node.children.forEach { appendInline(it, color, size) } }
-        is MarkupInline.Colored -> withStyle(SpanStyle(color = color(node.color))) { node.children.forEach { appendInline(it, color, size) } }
-        is MarkupInline.Sized -> withStyle(SpanStyle(fontSize = size(node.size))) { node.children.forEach { appendInline(it, color, size) } }
-    }
+/** Los nombres de la paleta apuntan a tokens del tema; un `#RRGGBB` se pinta tal cual (el servidor ya lo validó). */
+internal fun markupColor(name: String, tokens: com.oposicontrol.admin.core.ui.theme.GlassTokens): Color = when (name) {
+    "black" -> tokens.textPrimary
+    "gray" -> tokens.textSecondary
+    "red" -> tokens.danger
+    "orange", "yellow" -> tokens.warning
+    "green" -> tokens.success
+    "blue" -> tokens.info
+    "purple" -> tokens.accent
+    else -> hexColor(name) ?: tokens.textPrimary
 }
+
+internal fun hexColor(value: String): Color? {
+    if (value.length != 7 || value[0] != '#') return null
+    val rgb = value.substring(1).toLongOrNull(16) ?: return null
+    return Color((0xFF000000L or rgb).toInt())
+}
+
+/** Convierte un bloque en `AnnotatedString`. Interno para probar que cada tramo conserva su estilo. */
+internal fun markupAnnotated(block: RazonadoMarkup.Block, color: (String) -> Color, size: (String) -> TextUnit): AnnotatedString =
+    buildAnnotatedString {
+        if (block.kind == RazonadoMarkup.Kind.BULLET) append("•  ")
+        block.spans.forEach { span ->
+            val style = SpanStyle(
+                fontWeight = if (span.bold) FontWeight.Bold else null,
+                fontStyle = if (span.italic) FontStyle.Italic else null,
+                textDecoration = when {
+                    span.underline && span.strike -> TextDecoration.combine(listOf(TextDecoration.Underline, TextDecoration.LineThrough))
+                    span.underline -> TextDecoration.Underline
+                    span.strike -> TextDecoration.LineThrough
+                    else -> null
+                },
+                color = span.color?.let(color) ?: Color.Unspecified,
+                fontSize = span.size?.let(size) ?: TextUnit.Unspecified,
+            )
+            withStyle(style) { append(span.text) }
+        }
+    }

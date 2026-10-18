@@ -114,4 +114,15 @@ class ImportReservesPreflightTest {
         }
         assertTrue(importPublishProblemText("OTRO").startsWith("Falta completar"))
     }
+
+    @Test
+    fun `una explicacion con marcado invalido bloquea y una valida o sin etiquetas no`() {
+        fun withReasoning(text: String) = row("a", 1).copy(reasoning = text)
+        val bad = importPublishPreflight(batch(listOf(withReasoning("**sin cerrar"))), exam())
+        assertTrue(ImportPreflightKind.MARKUP_INVALID in kinds(bad))
+        val good = importPublishPreflight(batch(listOf(withReasoning("Con **negrita** y [color:red]color[/color]"))), exam())
+        assertFalse(ImportPreflightKind.MARKUP_INVALID in kinds(good))
+        val plain = importPublishPreflight(batch(listOf(withReasoning("Texto sin etiquetas"))), exam())
+        assertFalse(ImportPreflightKind.MARKUP_INVALID in kinds(plain))
+    }
 }

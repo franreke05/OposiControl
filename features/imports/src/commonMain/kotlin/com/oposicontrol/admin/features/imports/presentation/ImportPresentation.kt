@@ -7,6 +7,7 @@ import com.oposicontrol.admin.domain.model.ContentImportBatch
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamStatus
+import com.oposicontrol.admin.domain.model.RazonadoMarkup
 import com.oposicontrol.admin.domain.model.isReserve
 import com.oposicontrol.admin.domain.model.stagingCompletenessProblem
 
@@ -432,6 +433,9 @@ enum class ImportPreflightKind {
 
     /** Aviso: las reservas se numeran y se añaden tras las principales. */
     RESERVES_NOTE,
+
+    /** La explicación de alguna fila lleva marcado que el servidor rechazaría (gramática de razonados, FA38). */
+    MARKUP_INVALID,
 }
 
 /** Un motivo concreto. [blocking] `false` = aviso: se puede publicar, pero conviene saberlo antes. */
@@ -577,6 +581,14 @@ fun importPublishPreflight(
                 ImportPreflightKind.ROWS_INCOMPLETE,
                 "${plural(incomplete, "fila incompleta", "filas incompletas")} (falta enunciado, opciones o respuesta): " +
                     "complétalas u omítelas.",
+            )
+        }
+        // FA38: el servidor vuelve a analizar el marcado de cada explicación y rechaza la fila si es inválido; se avisa antes.
+        val badMarkup = creating.count { it.reasoning.isNotBlank() && RazonadoMarkup.parse(it.reasoning) is RazonadoMarkup.Result.Rejected }
+        if (badMarkup > 0) {
+            blocker(
+                ImportPreflightKind.MARKUP_INVALID,
+                "${plural(badMarkup, "fila tiene", "filas tienen")} marcado de explicación no válido: corrígelo (el editor «Marcado de razonados» dice qué falla).",
             )
         }
         if (reasoningRequired) {

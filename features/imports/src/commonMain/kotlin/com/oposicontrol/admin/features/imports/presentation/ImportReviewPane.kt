@@ -46,6 +46,8 @@ import com.oposicontrol.admin.domain.model.ContentExamType
 import com.oposicontrol.admin.domain.model.ContentImportBatch
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_MAIN
+import com.oposicontrol.admin.domain.model.RazonadoMarkup
+import com.oposicontrol.admin.domain.model.RazonadoMarkupMessages
 import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_RESERVE
 import com.oposicontrol.admin.domain.model.isReserve
 import com.oposicontrol.admin.domain.model.reserveOrderOf
@@ -424,6 +426,14 @@ private fun ImportStagingDetail(
                 minHeight = 56.dp,
                 enabled = editable,
             )
+            // Marcado de la explicación (FA38): lo que el servidor rechazaría se dice aquí, con su causa, antes de guardar.
+            (RazonadoMarkup.parse(draft.reasoning) as? RazonadoMarkup.Result.Rejected)?.issues?.take(3)?.forEach { issue ->
+                Text(
+                    text = RazonadoMarkupMessages.describe(issue.code),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.dangerInk,
+                )
+            }
             ImportTextField(
                 value = draft.sourceText,
                 onValueChange = { onIntent(ImportIntent.UpdateEditDraft(draft.copy(sourceText = it))) },

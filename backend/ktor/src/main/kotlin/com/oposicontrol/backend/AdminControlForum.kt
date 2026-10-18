@@ -159,11 +159,12 @@ internal fun AdminControlV1Gateway.forumQueue(tipo: String, estado: String, limi
     val entidad = if (tipo == "publicacion") "publicacion_oposired" else "comentario_oposired"
     val cursorFilter = cursor?.let {
         val (creadoEn, id) = decodeForoCursor(it)
+        if (!id.isUuid()) throw CanonicalErrorCode.INVALID_CURSOR.exception()
         "&or=(creado_en.lt.${creadoEn.urlEncode()},and(creado_en.eq.${creadoEn.urlEncode()},id.lt.$id))"
     }.orEmpty()
     val reportIds: Set<String>? = if (reportedOnly) {
         val ids = (json.parseToJsonElement(
-            get("/rest/v1/reportes_contenido?select=entidad_id&tipo_entidad=eq.$entidad&estado=eq.pendiente&limit=500"),
+            get("/rest/v1/reportes_contenido?select=entidad_id&tipo_entidad=eq.$entidad&estado=eq.pendiente&order=creado_en.desc&limit=100"),
         ) as? JsonArray).orEmpty().mapNotNull { it.jsonObject["entidad_id"].contentOrNullSafe()?.takeIf(String::isUuid) }.toSet()
         if (ids.isEmpty()) return AdminForumQueueDto(emptyList(), null)
         ids
@@ -214,7 +215,7 @@ internal fun AdminControlV1Gateway.forumQueue(tipo: String, estado: String, limi
                 creadoEn = r["creado_en"].contentOrNullSafe(),
                 tieneImagen = r["imagen_id"].contentOrNullSafe() != null,
                 reportesPendientes = rep.size,
-                motivosReporte = rep.mapNotNull { it["motivo_codigo"].contentOrNullSafe() }.distinct().sorted(),
+                motivosReporte = rep.mapNotNull { it["motivo_codigo"].contentOrNullSafe() }.filter { it in setOf("spam", "ofensivo", "incorrecto", "otro") }.distinct().sorted(),
             )
         },
         nextCursor = next,

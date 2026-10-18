@@ -272,7 +272,7 @@ private fun AdminControlV1Gateway.refundsOf(orderIds: List<String>): Map<String,
                 politica = r["politica"].contentOrNullSafe()?.controlSanitized(80),
                 creadoEn = r["creado_en"].contentOrNullSafe(),
                 resueltoEn = r["resuelto_en"].contentOrNullSafe(),
-                detalle = r["detalle"]?.toString()?.controlSanitized(2000),
+                detalle = null, // payload libre del proveedor: no se expone
             )
         }.toMap()
     } catch (_: IllegalStateException) {

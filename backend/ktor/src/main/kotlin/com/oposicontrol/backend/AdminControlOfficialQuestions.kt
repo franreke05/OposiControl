@@ -104,7 +104,10 @@ internal fun AdminControlV1Gateway.officialQuestions(examenId: String): AdminOff
     var withReserves = true
     val raw = try {
         get(base + OFFICIAL_COLUMNS_FULL)
-    } catch (_: IllegalStateException) {
+    } catch (failure: IllegalStateException) {
+        // Solo "columna inexistente" (42703 / PGRST204) degrada; un timeout o un 5xx se propagan como lo que son.
+        val text = failure.message.orEmpty()
+        if (!text.contains("42703") && !text.contains("PGRST204")) throw failure
         // Las columnas de reserva/demo pueden no existir todavía en el servidor conectado (42703): se lee lo que hay.
         withReserves = false
         get(base + OFFICIAL_COLUMNS_LEGACY)

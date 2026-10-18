@@ -192,4 +192,20 @@ class AdminControlForumTest {
         val body = obj(f.calls.single().body)
         assertEquals(ControlFake.ACTOR, body["p_actor"].contentOrNullSafe())
     }
+
+    @Test
+    fun aDomainNotFoundWithHttp404IsNotMistakenForAMissingFunction() = testApplication {
+        val f = ControlFake { _, _, _ -> V1StubResponse(404, """{"code":"P0001","message":"FORO_NOT_FOUND"}""") }
+        installControlRoutes(f.gateway())
+        val r = sendJson(HttpMethod.Post, "/api/v1/admin/foro/moderar", """{"tipo":"publicacion","id":"$id","accion":"aprobar"}""")
+        assertEquals(HttpStatusCode.NotFound, r.status)
+    }
+
+    @Test
+    fun aMalformedCursorIdIsA400() = testApplication {
+        val f = ControlFake()
+        installControlRoutes(f.gateway())
+        val bad = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString("2020-01-01T00:00:00Z|1-1-1-1-1".toByteArray())
+        assertEquals(HttpStatusCode.BadRequest, sendJson(HttpMethod.Get, "/api/v1/admin/foro/cola?cursor=$bad").status)
+    }
 }
