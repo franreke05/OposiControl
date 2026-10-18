@@ -430,6 +430,18 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
                 community.validatedUuid("comunidadId")
                 withUpstreamIo { gateway.requireActiveCommunity(community) }
                 val saved = withUpstreamIo { gateway.createExamen(body) }
+                // V1: un examen OFICIAL nace con la penalización racional activada (E1-V1-PENALTY-CONTRACT); el administrador
+                // puede apagarla en Reglas de puntuación. Mejor esfuerzo: si el servidor aún no tiene la columna, el examen
+                // se crea igual y el panel de reglas enseña el estado real.
+                if (saved.esOficial) {
+                    try {
+                        withUpstreamIo { gateway.controlV1.applyOfficialExamDefaults(saved.id) }
+                    } catch (cancellation: kotlin.coroutines.cancellation.CancellationException) {
+                        throw cancellation
+                    } catch (failure: Exception) {
+                        AuditLogger.error("official exam default (rational penalty) not applied examId={} error={}", saved.id, failure::class.simpleName)
+                    }
+                }
                 call.respond(HttpStatusCode.Created, AdminExamenResponse(saved))
             }
             // Todas las rutas `/{id}` de esta vertical validan el identificador.
@@ -4159,6 +4171,13 @@ class AdminV1Gateway private constructor(
         auth = SupabaseRequestAuthPolicy(serviceRoleKey),
         client = client,
     )
+
+    /**
+     * Superficie de Control V1 (reglas de puntuacion, importacion por lotes, invitaciones, foro, comunidad y precios,
+     * pedidos, alertas). Comparte este transporte —mismo cliente, misma politica de credenciales— y el actor de auditoria
+     * del JWT. Ver `AdminControlV1.kt`.
+     */
+    val controlV1: AdminControlV1Gateway by lazy { AdminControlV1Gateway(transport, json) }
 
     // Para ESCRIBIR en Supabase: encodeDefaults=true (envia tipo_examen="rafaga" aunque
     // sea el default) + explicitNulls=false (omite nulls para que apliquen defaults de BD).

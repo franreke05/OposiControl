@@ -38,12 +38,19 @@ import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.components.SemanticRole
 import com.oposicontrol.admin.core.ui.components.GlassToggleRow
 import com.oposicontrol.admin.core.ui.components.StatusChip
+import com.oposicontrol.admin.core.ui.components.StatusTone
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.ContentExamType
 import com.oposicontrol.admin.domain.model.ContentImportBatch
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
+import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_MAIN
+import com.oposicontrol.admin.domain.model.RazonadoMarkup
+import com.oposicontrol.admin.domain.model.RazonadoMarkupMessages
+import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_RESERVE
+import com.oposicontrol.admin.domain.model.isReserve
+import com.oposicontrol.admin.domain.model.reserveOrderOf
 
 /**
  * Etapas 3 y 4: qué ha salido del PDF y qué se hace con ello.
@@ -169,9 +176,11 @@ private fun ImportStagingList(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
     ) {
+        val all = (state.activeBatch as? UiAsync.Success)?.value?.staging.orEmpty()
         rows.forEach { item ->
             ImportStagingRow(
                 item = item,
+                reserveNumber = reserveOrderOf(all, item),
                 selected = item.id == state.selectedStagingId,
                 onClick = { onIntent(ImportIntent.SelectStaging(item.id)) },
             )
@@ -182,6 +191,7 @@ private fun ImportStagingList(
 @Composable
 private fun ImportStagingRow(
     item: ContentImportStagingItem,
+    reserveNumber: Int?,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -230,6 +240,8 @@ private fun ImportStagingRow(
             )
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalAlignment = Alignment.CenterVertically) {
                 // La anulación es un dato de la pregunta en el examen: chip propio, aparte del estado de parseo.
+                // Una reserva lleva su número futuro: solo puntúa si se anula una principal.
+                if (item.isReserve) StatusChip(status = reserveNumber?.let { "Reserva $it" } ?: "Reserva", tone = StatusTone.NEUTRAL)
                 if (item.annulled) StatusChip(status = IMPORT_ANNULLED_CHIP, tone = IMPORT_ANNULLED_TONE)
                 StatusChip(status = importRowToneLabel(tone), tone = importRowToneStatusTone(tone))
             }
@@ -414,6 +426,14 @@ private fun ImportStagingDetail(
                 minHeight = 56.dp,
                 enabled = editable,
             )
+            // Marcado de la explicación (FA38): lo que el servidor rechazaría se dice aquí, con su causa, antes de guardar.
+            (RazonadoMarkup.parse(draft.reasoning) as? RazonadoMarkup.Result.Rejected)?.issues?.take(3)?.forEach { issue ->
+                Text(
+                    text = RazonadoMarkupMessages.describe(issue.code),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.dangerInk,
+                )
+            }
             ImportTextField(
                 value = draft.sourceText,
                 onValueChange = { onIntent(ImportIntent.UpdateEditDraft(draft.copy(sourceText = it))) },
@@ -428,6 +448,17 @@ private fun ImportStagingDetail(
             )
         }
 
+        // El bloque del examen oficial: una reserva se añade después de las principales y solo puntúa si se anula alguna.
+        GlassToggleRow(
+            title = "Es una reserva",
+            description = "Se añade después de las preguntas principales y sustituye, por orden, a las anuladas. " +
+                "El número lo da su lugar entre las reservas del fichero.",
+            checked = draft.isReserve,
+            onCheckedChange = { reserve ->
+                onIntent(ImportIntent.UpdateEditDraft(draft.copy(block = if (reserve) IMPORT_BLOCK_RESERVE else IMPORT_BLOCK_MAIN)))
+            },
+            enabled = editable,
+        )
         // La anulación es un dato de la pregunta EN EL EXAMEN, no del parseo: se corrige aquí, se
         // guarda con la fila y sólo lleva motivo si está anulada.
         GlassToggleRow(

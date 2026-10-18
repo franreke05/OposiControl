@@ -30,16 +30,16 @@ class SystemHubAdminsTabTest {
         )
 
     @Test
-    fun theHubHasThreeTabsWithStatusFirst() {
-        assertEquals(listOf(SystemHubTab.STATUS, SystemHubTab.ADMINS, SystemHubTab.AUDIT), SystemHubTab.entries)
-        assertEquals(listOf("Estado", "Administradores", "Auditoría"), systemHubTabs(pendingAccessRequests = 0).map { it.label })
+    fun theHubHasFourTabsWithStatusFirst() {
+        assertEquals(listOf(SystemHubTab.STATUS, SystemHubTab.ADMINS, SystemHubTab.AUDIT, SystemHubTab.ALERTS), SystemHubTab.entries)
+        assertEquals(listOf("Estado", "Administradores", "Auditoría", "Alertas"), systemHubTabs(pendingAccessRequests = 0).map { it.label })
         assertEquals(SystemHubTab.entries.size, SystemHubTab.entries.map { it.id }.toSet().size, "ids únicos")
     }
 
     @Test
     fun theUsersHubNoLongerCarriesAccessRequests() {
         assertEquals(
-            listOf("Usuarios", "OposiTickets", "Competición", "Accesos"),
+            listOf("Usuarios", "OposiTickets", "Competición", "Accesos", "Invitaciones"),
             UsersHubTab.entries.map { it.label },
         )
     }

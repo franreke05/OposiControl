@@ -14,6 +14,10 @@ import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ContentImportBatch
+import com.oposicontrol.admin.domain.model.ContentImportPublishResult
+import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_MAIN
+import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_RESERVE
+import com.oposicontrol.admin.domain.model.isReserve
 import com.oposicontrol.admin.domain.model.ContentImportDuplicate
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.ContentImportSummary
@@ -432,7 +436,7 @@ class KtorAdminV1ContentRepositoryImpl(
                 }
             }
             response.requireBackendSuccess(endpoint)
-            response.body<AdminLoteImportResponse>().data.toDomain()
+            response.body<AdminLoteImportResponse>().let { it.data.toDomain().copy(publishResult = it.resultado?.toDomain()) }
         }
 
     /**
@@ -1019,6 +1023,13 @@ private data class AdminImportResultadoDto(
     val totalImportadas: Int = 0,
     /** Relaciones publicadas como anuladas (M10). Ausente en un backend anterior. */
     val anuladas: Int = 0,
+    /** Filas publicadas como RESERVA (FA37). Ausente en un backend anterior. */
+    val reservas: Int = 0,
+    val huella: String? = null,
+    /** Primer problema abierto de las reglas oficiales del examen, o `null`. */
+    val problema: String? = null,
+    /** Avisos que no bloquean (`MORE_RESERVES_THAN_MAX`, `ANNULLED_RESERVE_SKIPPED`). */
+    val avisos: List<String> = emptyList(),
 )
 
 /** Con el `Json` del cliente (`encodeDefaults = false`) un `false` se omitiría: se fuerza para que la decisión viaje. */
@@ -1160,6 +1171,11 @@ private data class AdminLoteDto(
     val duplicadosComprobados: Boolean = true,
     /** El recuento por estado calculado por el servidor; `null` = no lo mandó o no pudo calcularlo. */
     val resumen: AdminLoteResumenDto? = null,
+    /** `CODIGO_EXAMEN` de la cabecera del PDF (FA37). */
+    val codigoExamen: String? = null,
+    val huella: String? = null,
+    /** Lote ya importado con el mismo contenido en este examen, o `null`. */
+    val duplicadoDe: String? = null,
 )
 
 /** Cada cifra es anulable: una respuesta recortada no se lee como «0». */
@@ -1195,6 +1211,8 @@ private data class AdminStagingItemDto(
     /** Lectura: la pregunta va anulada en el examen destino (M10). Ortogonal a [estadoParseo]. */
     val anulada: Boolean = false,
     val motivoAnulacion: String? = null,
+    /** `PRINCIPAL` o `RESERVA` (FA37). Un backend anterior no lo manda: PRINCIPAL. */
+    val bloque: String = "PRINCIPAL",
 )
 
 @Serializable
@@ -1203,6 +1221,18 @@ private data class AdminImportDuplicadoDto(
     val preguntaId: String? = null,
     val codigoPregunta: String = "",
     val stagingOriginalId: String? = null,
+)
+
+private fun AdminImportResultadoDto.toDomain() = ContentImportPublishResult(
+    executed = ejecutado,
+    created = nuevas,
+    linked = vinculadas,
+    skipped = omitidas,
+    annulled = anuladas,
+    reserves = reservas,
+    fingerprint = huella,
+    problem = problema,
+    warnings = avisos,
 )
 
 private fun AdminLoteDto.toDomain() = ContentImportBatch(
@@ -1224,6 +1254,9 @@ private fun AdminLoteDto.toDomain() = ContentImportBatch(
             imported = it.importadas,
         )
     },
+    examCode = codigoExamen?.takeIf { it.isNotBlank() },
+    fingerprint = huella,
+    duplicateOfBatchId = duplicadoDe?.takeIf { it.isNotBlank() },
 )
 
 private fun AdminStagingItemDto.toDomain() = ContentImportStagingItem(
@@ -1253,6 +1286,7 @@ private fun AdminStagingItemDto.toDomain() = ContentImportStagingItem(
     },
     annulled = anulada,
     annulmentReason = motivoAnulacion,
+    block = if (bloque.equals(IMPORT_BLOCK_RESERVE, ignoreCase = true)) IMPORT_BLOCK_RESERVE else IMPORT_BLOCK_MAIN,
 )
 
 /**
@@ -1298,6 +1332,8 @@ internal fun ContentImportStagingItem.toPatchBody(): JsonObject {
         put("vincularPreguntaId", JsonPrimitive(linkQuestionId?.takeIf { !lean && it.isNotBlank() }))
         put("anulada", JsonPrimitive(annulled))
         put("motivoAnulacion", JsonPrimitive(annulmentReason?.trim()?.takeIf { annulled && it.isNotEmpty() }))
+        // El bloque viaja siempre: reenviar el valor leído no mueve nada, y el servidor rechaza cualquier valor que no sea PRINCIPAL o RESERVA.
+        put("bloque", JsonPrimitive(if (isReserve) IMPORT_BLOCK_RESERVE else IMPORT_BLOCK_MAIN))
     }
 }
 

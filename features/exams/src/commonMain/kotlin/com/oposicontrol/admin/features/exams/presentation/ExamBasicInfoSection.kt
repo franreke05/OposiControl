@@ -24,7 +24,7 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
  *    deja en blanco al crear, el servidor genera uno; si se deja en blanco al
  *    editar, se conserva el que ya tenía. Las dos cosas se dicen en el campo,
  *    porque son dos comportamientos distintos del mismo hueco vacío.
- *  - **Comunidad** es opcional: sin ella el examen es nacional. El identificador
+ *  - **Comunidad** es obligatoria (V1): todo examen tiene una, no hay «Nacional» sin comunidad. El identificador
  *    de comunidad no se enseña jamás, sólo su nombre — y cuando el catálogo no
  *    se ha podido leer, tampoco se inventa uno (ver [ExamCommunityPicker]).
  *  - **Portada** es una previsualización automática (`ExamCoverPreview`): se deduce del tipo y de
@@ -158,6 +158,7 @@ internal fun ExamBasicInfoSection(
                             selectedId = state.editorCommunityId,
                             isNew = isNew,
                             onSelected = { value -> onIntent(ExamsIntent.UpdateCommunityId(value)) },
+                            isError = examFieldError(state)?.field == ExamField.COMMUNITY,
                             onRetry = retry,
                             modifier = it,
                         )

@@ -801,11 +801,11 @@ class ExamWorkspacePresentationTest {
 
         // SIN comunidad guardada sí es nacional, lo sepa o no el catálogo.
         assertEquals(
-            "No se ha podido cargar el catálogo de comunidades. Este examen es nacional.",
+            "No se ha podido cargar el catálogo de comunidades. Este examen no tiene comunidad: elige una cuando carguen.",
             communityPickerNotice(null, caido, isNew = false)?.message,
         )
         assertEquals(
-            "No se ha podido cargar el catálogo de comunidades. El examen se creará como nacional.",
+            "No se ha podido cargar el catálogo de comunidades. Sin ellas no se puede guardar el examen: reintenta.",
             communityPickerNotice(null, caido, isNew = true)?.message,
         )
         // Con catálogo no hay aviso: hay desplegable.
@@ -1465,7 +1465,7 @@ class ExamWorkspacePresentationTest {
     @Test
     fun `cada campo señalable tiene su pestaña y su etiqueta`() {
         assertEquals(
-            listOf(ExamWorkspaceTabId.BASICA, ExamWorkspaceTabId.CONFIGURACION),
+            listOf(ExamWorkspaceTabId.BASICA, ExamWorkspaceTabId.CONFIGURACION, ExamWorkspaceTabId.BASICA),
             ExamField.entries.map { it.tab },
         )
         ExamField.entries.forEach { campo ->

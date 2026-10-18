@@ -1,5 +1,24 @@
 # Current State
 
+## Control V1 — panel y API de administración (rama `feature/december-v1-control-panel`, 2026-10-18/19) — `CURRENT_IMPLEMENTATION`, `LIVE_VERIFIED: NO`
+
+Construido contra los contratos de `feature/december-v1-server` (sin fusionar; `develop` solo se ha leído). Nada desplegado, MAIN intacto.
+
+| Área | Dónde se ve | Estado |
+|---|---|---|
+| Reglas de puntuación (anuladas, penalización racional / fracción fija excluyentes, motivo obligatorio si está publicado, historial de auditoría) | Exámenes > Configuración | CONNECTED en código y pruebas; el historial muestra además autor y motivo (fila complementaria, el trigger de la base no conoce al admin) |
+| Anuladas y reservas por pregunta | Exámenes > Configuración (solo examen oficial) | Lectura y escritura CONECTADAS a `admin_set_exam_question_flags` (migración 20261022102300 de la rama de servidor; 501 honesto si el entorno aún no la tiene); orden vacío = al final, avisos del servidor visibles |
+| Importación por lotes: bloque PRINCIPAL/RESERVA por fila, cabecera del fichero, lote repetido, reservas/avisos al publicar | Importación | Cliente listo contra `E1-V1-CONTROL-SPEC-IMPORT.md`; el servidor de esa rama aporta el parser y la RPC |
+| Marcado de razonados (paridad con el analizador del servidor, vista previa exacta) | Importación > Marcado de razonados | TEST_VERIFIED (vectores compartidos con la base de datos) |
+| Invitaciones (configuración `referido_*` + lista + revocación) | Usuarios > Invitaciones | CONNECTED a `admin_referral_list` y `admin_referral_revoke` (501 honesto si el entorno no tiene la migración) |
+| Foro: cola de moderación, canales, límites | Moderación > Foro | CONNECTED (`admin_foro_moderate` + tablas con permiso de servicio) |
+| Foro: lista de bloqueo y silencios | Moderación > Foro > Bloqueos | CONNECTED a `admin_foro_bloqueos_*` / `admin_foro_restricciones_*` (patrones LITERALES) + resumen de imágenes retiradas pendientes de purga (solo lectura, `admin_foro_imagenes_purga_resumen`, función PEDIDA a E1) |
+| Comunidad obligatoria, precio en OT y días de acceso por examen | Catálogo > Comunidad y precios | CONNECTED |
+| Pedidos en revisión y casos de reembolso | Catálogo > Pedidos | Nota interna auditada + RESOLUCIÓN (acreditar, confirmar, rechazar, reembolsar) con `admin_payment_order_resolve`; el reembolso solo se ofrece si `PAYMENTS_REFUNDS_ENABLED` está activo en el servidor |
+| Alertas: ventanas de ranking rápidas, contadores del foro | Sistema > Alertas | CONNECTED, solo lectura |
+
+Detalle, pruebas y peticiones a E1: `E6-V1-PANEL-01..08.md` y `E6-V1-PANEL-DONE.md` (carpeta de handoffs de la Fase B).
+
 ## Alpha close — 2026-10-15 (rama `develop`)
 
 `develop` es la Alpha y la base de trabajo: `main` (`cfa2e14`: Sistema rehecho, Usuarios, Catálogo,
